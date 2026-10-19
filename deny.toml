@@ -1,0 +1,38 @@
+# Licence policy: GPL-3.0-or-later project; only GPL-3-compatible dependency licences.
+[graph]
+# Check the feature set we actually build. (all-features would enable optional backends we never
+# use, e.g. rfd's GTK backend, and report their dependencies.)
+all-features = false
+# Only the platforms we build for: prunes target-specific dependencies that are never compiled
+# (e.g. muda is macOS-only in atomik-app, so its Linux GTK backend is not part of any build).
+targets = [
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+
+[licenses]
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+  "ISC", "Zlib", "Unicode-3.0", "MPL-2.0", "GPL-3.0-or-later", "GPL-3.0-only",
+  "LGPL-2.1-or-later", "LGPL-3.0-or-later", "CC0-1.0", "Unlicense", "BSL-1.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[advisories]
+yanked = "deny"
+ignore = [
+  # ttf-parser is unmaintained (no safe upgrade). It reaches us only via winit -> sctk-adwaita
+  # (Wayland client-side decorations on Linux). Not a vulnerability. Revisit on winit updates.
+  { id = "RUSTSEC-2026-0192", reason = "transitive via winit/sctk-adwaita; unmaintained notice only, no upgrade available" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

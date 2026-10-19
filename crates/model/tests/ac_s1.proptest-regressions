@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2c326235d791fcc3e23872c7a7546bc746ffec92e3c94cff481ae0f147593f47 # shrinks to ops = [TempoMap([])]
+cc a4a53b51dc3a34d9208079af6eefb8e682647368edab32e087bba4c14c064ac9 # shrinks to ops = [(3, Tempo(20.0))]

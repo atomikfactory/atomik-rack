@@ -1,0 +1,23 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,1000.00,560.00]}},
+{"fill":{"rect":[0.00,0.00,1000.00,560.00]},"brush":"#0e1013ff"},
+{"text":"No pattern","at":[500.00,266.00],"size":13.00,"weight":400,"align":"center","color":"#ece8e1ff"},
+{"text":"Create a one-bar clip with a 16-step grid on this drum machine's track","at":[500.00,282.00],"size":9.50,"weight":400,"align":"center","color":"#8f96a0ff"},
+{"fill":{"rrect":[440.00,294.00,560.00,318.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[442.00,294.50,558.00,294.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[440.50,294.50,559.50,317.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"NEW PATTERN","at":[500.00,309.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"rect":[0.00,0.00,1000.00,28.00]},"brush":{"gradient":{"linear":[0.00,0.00,0.00,28.00],"stops":[[0.00,"#2f3339ff"],[1.00,"#23262bff"]]}}},
+{"stroke":{"line":[0.00,27.50,1000.00,27.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"fill":{"rect":[0.00,0.00,4.00,28.00]},"brush":"#99d85aff"},
+{"text":"STEP EDITOR","at":[14.00,18.00],"size":8.00,"weight":700,"align":"start","color":"#8f96a0ff","spacing":1.20},
+{"text":"Drum Machine","at":[100.00,18.50],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[970.00,5.00,992.00,23.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[972.00,5.50,990.00,5.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[970.50,5.50,991.50,22.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"stroke":{"line":[977.00,10.00,985.00,18.00]},"width":1.60,"cap":"round","join":"round","brush":"#ece8e1ff"},
+{"stroke":{"line":[977.00,18.00,985.00,10.00]},"width":1.60,"cap":"round","join":"round","brush":"#ece8e1ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

@@ -1,0 +1,442 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "lead", "type": "clap.atomik.test.synth",
+      "name": "Lead", "folded": false,
+      "params": {
+        "p2": 0.6
+      },
+      "plugin": {
+        "format": "clap", "id": "atomik.test.synth",
+        "name": "Atomik Test Synth", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": null, "main_out": "stereo", "sidechain": false, "notes_in": true, "notes_out": false, "kind": "instrument",
+          "params": [
+            {"id": 2, "name": "Level", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    },
+    {
+      "id": "echo", "type": "vst3.a70f1c014a5b4c018d2e1f0000000001",
+      "name": "Echo", "folded": false,
+      "params": {
+        "p1": 0.4765625,
+        "p3": 128,
+        "p4": 0.5
+      },
+      "plugin": {
+        "format": "vst3", "id": "a70f1c014a5b4c018d2e1f0000000001",
+        "name": "Atomik Test Gain", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": "stereo", "main_out": "stereo", "sidechain": true, "notes_in": false, "notes_out": false, "kind": "effect",
+          "params": [
+            {"id": 1, "name": "Gain", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0},
+            {"id": 3, "name": "Latency", "module": "Advanced", "min": 0, "max": 1, "default": 0, "stepped": true, "steps": 512},
+            {"id": 4, "name": "Duck", "module": "Advanced", "min": 0, "max": 1, "default": 1, "stepped": false, "steps": 0}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "bass", "type": "atomik.poly-synth",
+      "name": "Bass", "folded": false,
+      "params": {
+        "master.level": -10,
+        "voices": 2
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false
+    },
+    {
+      "id": "arp", "type": "vst3.a70f1c014a5b4c018d2e1f0000000003",
+      "name": "Arp", "folded": false,
+      "params": {
+        "p1": 31
+      },
+      "plugin": {
+        "format": "vst3", "id": "a70f1c014a5b4c018d2e1f0000000003",
+        "name": "Atomik Test Note Shift", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": null, "main_out": null, "sidechain": false, "notes_in": true, "notes_out": true, "kind": "note_effect",
+          "params": [
+            {"id": 1, "name": "Semitones", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": true, "steps": 48}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "pad", "type": "clap.atomik.test.synth",
+      "name": "Pad", "folded": false,
+      "params": {
+        "p1": 1,
+        "p2": 0.5
+      },
+      "plugin": {
+        "format": "clap", "id": "atomik.test.synth",
+        "name": "Atomik Test Synth", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": null, "main_out": "stereo", "sidechain": false, "notes_in": true, "notes_out": false, "kind": "instrument",
+          "params": [
+            {"id": 1, "name": "Wave", "module": "Main", "min": 0, "max": 1, "default": 0, "stepped": true, "steps": 0},
+            {"id": 2, "name": "Level", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Console Channel 3", "folded": false
+    },
+    {
+      "id": "vox", "type": "vst3.a70f1c014a5b4c018d2e1f0000000002",
+      "name": "Vox", "folded": false,
+      "params": {
+        "p2": 0.4
+      },
+      "plugin": {
+        "format": "vst3", "id": "a70f1c014a5b4c018d2e1f0000000002",
+        "name": "Atomik Test Synth", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": null, "main_out": "stereo", "sidechain": false, "notes_in": true, "notes_out": false, "kind": "instrument",
+          "params": [
+            {"id": 2, "name": "Level", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "channel-4", "type": "atomik.channel",
+      "name": "Console Channel 4", "folded": false
+    },
+    {
+      "id": "wash", "type": "clap.atomik.test.gain",
+      "name": "Wash", "folded": false,
+      "params": {
+        "p1": -6,
+        "p3": 64
+      },
+      "plugin": {
+        "format": "clap", "id": "atomik.test.gain",
+        "name": "Atomik Test Gain", "vendor": "Atomik", "version": "1.0.0",
+        "layout": {
+          "main_in": "stereo", "main_out": "stereo", "sidechain": true, "notes_in": false, "notes_out": false, "kind": "effect",
+          "params": [
+            {"id": 1, "name": "Gain", "module": "Main", "min": -60, "max": 12, "default": 0, "stepped": false, "steps": 0},
+            {"id": 3, "name": "Latency", "module": "Advanced", "min": 0, "max": 512, "default": 0, "stepped": true, "steps": 0}
+          ]
+        },
+        "pinned": [],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "box", "type": "atomik.container",
+      "name": "Box", "folded": false,
+      "inner": {
+        "devices": [
+          {
+            "id": "syn", "type": "vst3.a70f1c014a5b4c018d2e1f0000000002",
+            "name": "Atomik Test Synth", "folded": false,
+            "params": {
+              "p1": 1,
+              "p2": 0.5
+            },
+            "plugin": {
+              "format": "vst3", "id": "a70f1c014a5b4c018d2e1f0000000002",
+              "name": "Atomik Test Synth", "vendor": "Atomik", "version": "1.0.0",
+              "layout": {
+                "main_in": null, "main_out": "stereo", "sidechain": false, "notes_in": true, "notes_out": false, "kind": "instrument",
+                "params": [
+                  {"id": 1, "name": "Wave", "module": "Main", "min": 0, "max": 1, "default": 0, "stepped": true, "steps": 1},
+                  {"id": 2, "name": "Level", "module": "Main", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0}
+                ]
+              },
+              "pinned": [],
+              "run_on_audio_thread": false, "powered": true
+            }
+          }
+        ],
+        "cables": [
+          {"from": "syn:out_l", "to": "boundary:out_l"},
+          {"from": "syn:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "syn", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    },
+    {
+      "id": "channel-5", "type": "atomik.channel",
+      "name": "Console Channel 5", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "arp:notes_out", "to": "pad:notes_in"},
+    {"from": "bass:out_l", "to": "channel-2:in_l"},
+    {"from": "bass:out_l", "to": "echo:sc_in_l"},
+    {"from": "bass:out_r", "to": "channel-2:in_r"},
+    {"from": "bass:out_r", "to": "echo:sc_in_r"},
+    {"from": "box:out_l", "to": "channel-5:in_l"},
+    {"from": "box:out_r", "to": "channel-5:in_r"},
+    {"from": "channel:insert_send_l", "to": "echo:in_l"},
+    {"from": "channel:insert_send_r", "to": "echo:in_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:out_l", "to": "master:bus_l"},
+    {"from": "channel-3:out_r", "to": "master:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-4:insert_send_l", "to": "wash:in_l"},
+    {"from": "channel-4:insert_send_r", "to": "wash:in_r"},
+    {"from": "channel-4:out_l", "to": "master:bus_l"},
+    {"from": "channel-4:out_r", "to": "master:bus_r"},
+    {"from": "channel-4:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-4:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-4:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-4:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-4:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-4:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-4:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-4:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-4:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-4:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-4:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-4:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-4:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-4:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-4:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-4:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-5:out_l", "to": "master:bus_l"},
+    {"from": "channel-5:out_r", "to": "master:bus_r"},
+    {"from": "channel-5:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-5:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-5:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-5:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-5:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-5:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-5:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-5:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-5:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-5:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-5:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-5:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-5:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-5:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-5:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-5:send8_r", "to": "master:send_bus8_r"},
+    {"from": "echo:out_l", "to": "channel:insert_return_l"},
+    {"from": "echo:out_r", "to": "channel:insert_return_r"},
+    {"from": "lead:out_l", "to": "channel:in_l"},
+    {"from": "lead:out_r", "to": "channel:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "pad:out_l", "to": "channel-3:in_l"},
+    {"from": "pad:out_r", "to": "channel-3:in_r"},
+    {"from": "vox:out_l", "to": "channel-4:in_l"},
+    {"from": "vox:out_r", "to": "channel-4:in_r"},
+    {"from": "wash:out_l", "to": "channel-4:insert_return_l"},
+    {"from": "wash:out_r", "to": "channel-4:insert_return_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "lead"},
+      {"channel": "channel-2", "source": "bass"},
+      {"channel": "channel-3", "source": "pad"},
+      {"channel": "channel-4", "source": "vox"},
+      {"channel": "channel-5", "source": "box"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 122880, "enabled": false},
+    "end": 122880,
+    "next_clip_id": 6,
+    "tracks": [
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 30720, 60, 0.8],
+                  [0, 122880, 72, 0.8],
+                  [30720, 30720, 64, 0.8],
+                  [61440, 30720, 67, 0.8],
+                  [92160, 30720, 64, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "arp", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15360, 48, 0.8],
+                  [15360, 15360, 52, 0.8],
+                  [61440, 15360, 55, 0.8],
+                  [76800, 15360, 52, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "vox", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 46080, 55, 0.8],
+                  [61440, 46080, 59, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "box", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 4, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 61440, 48, 0.8],
+                  [61440, 61440, 53, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "bass", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 5, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 30720, 36, 0.8],
+                  [30720, 30720, 36, 0.8],
+                  [61440, 30720, 41, 0.8],
+                  [92160, 30720, 41, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+[package]
+name = "atomik-audio-io"
+description = "Atomik Rack real-time audio I/O: cpal streams driving the engine, telemetry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+default = []
+# Opt-in ASIO host on Windows (needs the ASIO SDK at build time; see the audio-io crate docs).
+asio = ["cpal/asio"]
+
+[dependencies]
+atomik-core.workspace = true
+atomik-engine.workspace = true
+cpal.workspace = true
+rtrb.workspace = true
+thread-priority.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-testkit.workspace = true
+atomik-device-sdk.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

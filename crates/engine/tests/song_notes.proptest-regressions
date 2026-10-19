@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 95c992710dee465392bb8caeec5774637795529ae303bc8193cc45bae84634f0 # shrinks to a = [], b = [SongNote { tick: Ticks(12585), length: 9832, key: 40, velocity: 0.5 }], map = [(0, 378.18887803850595)], cmds = [Cmd { frame: 0, command: Locate(Ticks(0)) }, Cmd { frame: 0, command: SetLoop { start: Ticks(11121), end: Ticks(12586), enabled: true } }, Cmd { frame: 0, command: Play }, Cmd { frame: 2000, command: Locate(Ticks(0)) }, Cmd { frame: 12000, command: Stop }], block = 1

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc aeb92771864c688e9f30b8699b0d991c2b80b272abcb1d54e051893b7b00a452 # shrinks to chain_start = false, ops = [(3, Add(2, 0, None)), (3, Param(0, 0, 29221.965, None)), (3, Remove(0)), (0, Add(0, 0, None))]
+cc 6cf270ecfba8f3004f00a70789cf68c24a47bccc179c23df55ad1b992d4601a4 # shrinks to chain_start = true, ops = [Param(25, 1, 0.0, None), Remove(40)]

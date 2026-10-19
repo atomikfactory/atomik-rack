@@ -1,0 +1,22 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,900.00,40.00]}},
+{"fill":{"rect":[0.00,0.00,900.00,40.00]},"brush":"#1c1e23ff"},
+{"stroke":{"line":[0.00,0.50,900.00,0.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffe08aff"},
+{"stroke":{"line":[0.00,39.50,900.00,39.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"Atomik ended unexpectedly while these plugins were loaded: Test Synth, Test Fx","at":[14.00,24.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[590.00,8.00,670.00,32.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[592.00,8.50,668.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[590.50,8.50,669.50,31.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"DISABLE","at":[630.00,23.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"rrect":[678.00,8.00,748.00,32.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[680.00,8.50,746.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[678.50,8.50,747.50,31.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"KEEP","at":[713.00,23.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"rrect":[756.00,8.00,886.00,32.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[758.00,8.50,884.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[756.50,8.50,885.50,31.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"OPEN RECOVERY","at":[821.00,23.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

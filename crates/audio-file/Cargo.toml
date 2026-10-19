@@ -1,0 +1,23 @@
+[package]
+name = "atomik-audio-file"
+description = "Atomik Rack audio files: decoding, sample-rate conversion, WAV writing, waveform peaks, project audio assets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+symphonia = { workspace = true, features = ["wav", "aiff", "flac", "mp3", "ogg", "vorbis", "pcm", "id3v1", "id3v2"] }
+rubato.workspace = true
+hound.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

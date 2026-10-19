@@ -1,0 +1,24 @@
+[package]
+name = "atomik-engine"
+description = "Atomik Rack audio engine: graph, compiler, real-time renderer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+rtrb.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-devices.workspace = true
+atomik-testkit.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

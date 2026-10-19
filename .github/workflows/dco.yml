@@ -1,0 +1,39 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dco:
+    name: Signed-off-by check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check that every commit is signed off by its author
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          failed=0
+          for sha in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            name="$(git log -1 --format=%an "$sha")"
+            email="$(git log -1 --format=%ae "$sha")"
+            if git log -1 --format=%B "$sha" | grep -qiF "Signed-off-by: $name <$email>"; then
+              echo "ok      $sha"
+            else
+              echo "::error::commit $sha is not signed off by its author ($name <$email>). Use 'git commit -s' or 'git rebase --signoff'."
+              failed=1
+            fi
+          done
+          exit $failed

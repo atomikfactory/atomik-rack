@@ -1,0 +1,179 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "keys", "type": "atomik.sampler",
+      "name": "Keys", "folded": false, "color": "#d9822b",
+      "params": {
+        "env.amp.release": 350,
+        "master.level": -9
+      },
+      "zones": [
+        {"asset": "4f4f77707cf33817eaea87a51baefe03f47b1b2c3d7ca4f419a6beb7f66a9db9", "key_lo": 0, "key_hi": 51, "vel_lo": 1, "vel_hi": 127, "root_key": 48, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 24000, "loop_mode": "off", "loop_start": 0, "loop_end": 24000, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "0b51d6e38215c9256a810e3d0e2ccba4502b2c2db494516823bb34a5e553ccd9", "key_lo": 52, "key_hi": 57, "vel_lo": 1, "vel_hi": 127, "root_key": 55, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 19200, "loop_mode": "off", "loop_start": 0, "loop_end": 19200, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "9f653e10fd261a6a544c145af55d4d2c3acad0ded9f514f0616c285a77510890", "key_lo": 58, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "root_key": 60, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 14400, "loop_mode": "off", "loop_start": 0, "loop_end": 14400, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "a2f2cb124e6ee13b75953e2f6cd7bc9b5a37cb6ab98674172f9caee53a481b5f", "key_lo": 0, "key_hi": 127, "vel_lo": 96, "vel_hi": 127, "root_key": 60, "transpose": 0, "tune_cents": 0, "gain_db": -9, "pan": 0, "start": 0, "end": 4800, "loop_mode": "off", "loop_start": 0, "loop_end": 4800, "crossfade": 0, "trigger": "one_shot", "reverse": false}
+      ]
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    },
+    {
+      "id": "pad", "type": "atomik.sampler",
+      "name": "Pad", "folded": false, "color": "#3fa7d6",
+      "params": {
+        "env.amp.attack": 120,
+        "env.amp.release": 700,
+        "master.level": -12
+      },
+      "zones": [
+        {"asset": "bacd39dddb999a3c6e011ee8040a08071d49455615e2fafd17d6b1db8bd5193c", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "root_key": 48, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 48000, "loop_mode": "forward", "loop_start": 12000, "loop_end": 40000, "crossfade": 4000, "trigger": "gate", "reverse": false}
+      ]
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "keys:out_l", "to": "channel:in_l"},
+    {"from": "keys:out_r", "to": "channel:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "pad:out_l", "to": "channel-2:in_l"},
+    {"from": "pad:out_r", "to": "channel-2:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "keys"},
+      {"channel": "channel-2", "source": "pad"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "0b51d6e38215c9256a810e3d0e2ccba4502b2c2db494516823bb34a5e553ccd9": {"channels": 1, "sample_rate": 48000, "frames": 19200, "name": "pluck_G3.wav"},
+    "4f4f77707cf33817eaea87a51baefe03f47b1b2c3d7ca4f419a6beb7f66a9db9": {"channels": 1, "sample_rate": 48000, "frames": 24000, "name": "pluck_C3.wav"},
+    "9f653e10fd261a6a544c145af55d4d2c3acad0ded9f514f0616c285a77510890": {"channels": 1, "sample_rate": 48000, "frames": 14400, "name": "pluck_C4.wav"},
+    "a2f2cb124e6ee13b75953e2f6cd7bc9b5a37cb6ab98674172f9caee53a481b5f": {"channels": 1, "sample_rate": 48000, "frames": 4800, "name": "snap.wav"},
+    "bacd39dddb999a3c6e011ee8040a08071d49455615e2fafd17d6b1db8bd5193c": {"channels": 1, "sample_rate": 48000, "frames": 48000, "name": "pad_C3.wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 245760,
+    "next_clip_id": 3,
+    "tracks": [
+      {
+        "device": "keys", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 7680, 48, 0.5],
+                  [7680, 7680, 55, 0.95],
+                  [15360, 7680, 60, 0.5],
+                  [23040, 7680, 64, 0.95],
+                  [30720, 23040, 48, 0.7],
+                  [30720, 23040, 55, 0.7],
+                  [30720, 23040, 60, 0.7],
+                  [61440, 7680, 50, 0.45],
+                  [69120, 7680, 53, 0.6],
+                  [76800, 7680, 57, 0.75],
+                  [84480, 7680, 62, 0.9],
+                  [92160, 23040, 65, 0.98],
+                  [122880, 15360, 48, 1],
+                  [122880, 15360, 55, 1],
+                  [122880, 15360, 64, 1],
+                  [138240, 7680, 52, 0.4],
+                  [145920, 7680, 59, 0.55],
+                  [153600, 7680, 64, 0.7],
+                  [161280, 7680, 67, 0.85],
+                  [168960, 30720, 72, 0.9],
+                  [184320, 46080, 36, 0.8],
+                  [184320, 46080, 43, 0.8],
+                  [184320, 46080, 48, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "pad", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 115200, 48, 0.8],
+                  [0, 115200, 52, 0.8],
+                  [0, 115200, 55, 0.8],
+                  [122880, 115200, 53, 0.8],
+                  [122880, 115200, 57, 0.8],
+                  [122880, 115200, 60, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

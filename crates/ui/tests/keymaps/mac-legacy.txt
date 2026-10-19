@@ -1,0 +1,40 @@
+audio.settings | global | Cmd+,
+edit.delete | rack | Delete, Backspace
+edit.delete | sequencer | Delete, Backspace
+edit.delete | editor | Delete, Backspace
+edit.duplicate | rack | Cmd+D
+edit.duplicate | sequencer | Cmd+D
+edit.redo | global | Cmd+Y, Cmd+Shift+Y, Cmd+Shift+Z
+edit.select_all | sequencer | Cmd+A
+edit.select_all | editor | Cmd+A
+edit.undo | global | Cmd+Z
+editor.nudge_left | editor | Left
+editor.nudge_right | editor | Right
+editor.octave_down | editor | Shift+Down
+editor.octave_up | editor | Shift+Up
+editor.quantize | editor | Q, Shift+Q
+editor.transpose_down | editor | Down
+editor.transpose_up | editor | Up
+file.import_audio | global | Cmd+I
+file.new | global | Cmd+N
+file.open | global | Cmd+O
+file.quit | global | Cmd+Q
+file.save | global | Cmd+S
+file.save_as | global | Cmd+Shift+S
+sequencer.split_at_playhead | sequencer | Cmd+E
+transport.go_start | rack | Enter, Shift+Enter
+transport.go_start | sequencer | Enter, Shift+Enter
+transport.loop | rack | L, Shift+L
+transport.loop | sequencer | L, Shift+L
+transport.play_stop | rack | Space, Shift+Space
+transport.play_stop | sequencer | Space, Shift+Space
+transport.record | global | Cmd+Space
+transport.record | rack | R, Shift+R
+transport.record | sequencer | R, Shift+R
+view.maximise_console | global | Shift+F5
+view.toggle_browser | global | Cmd+B
+view.toggle_console | global | F5
+view.toggle_flip | global | Tab
+view.zoom_in | global | Cmd+=, Cmd+Shift+=, Cmd++, Cmd+Shift++
+view.zoom_out | global | Cmd+-
+view.zoom_reset | global | Cmd+0

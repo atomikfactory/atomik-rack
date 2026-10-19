@@ -1,0 +1,21 @@
+[package]
+name = "atomik-dsp"
+description = "Atomik Rack DSP primitives: oscillators, filters, envelopes, delay lines."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rustfft.workspace = true
+atomik-testkit.workspace = true
+
+[lints]
+workspace = true

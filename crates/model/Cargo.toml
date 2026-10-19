@@ -1,0 +1,26 @@
+[package]
+name = "atomik-model"
+description = "Atomik Rack document model: rack devices, cables, commands, undo/redo, patch v2 I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+serde.workspace = true
+# Correctly rounded float parsing: params and tempo round-trip exactly through patch files.
+# atomik-render enables it too, so every build reads patch numbers identically.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-devices.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

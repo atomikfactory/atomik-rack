@@ -1,0 +1,35 @@
+[package]
+name = "atomik-play"
+description = "Atomik Rack live player: plays a patch on an audio device with live MIDI input."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "atomik-play"
+path = "src/main.rs"
+
+[features]
+default = []
+asio = ["atomik-audio-io/asio"]
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-engine.workspace = true
+atomik-render.workspace = true
+atomik-audio-io.workspace = true
+atomik-midi-io.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-testkit.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,1200 @@
+//! Atomik Rack document model.
+//!
+//! The rack document is the single source of truth for the UI. It is pure data: no UI, no
+//! engine. Edits are [`Command`]s applied through [`Document`], which keeps undo/redo history
+//! and reports what changed as [`SyncOp`]s, so the app can update the engine.
+//!
+//! Public signatures are a stable contract: changes need review.
+
+mod console_cmd;
+mod console_insert;
+mod container;
+mod container_cmd;
+mod container_io;
+mod expand;
+mod history;
+mod patch;
+mod plugin;
+mod plugin_cmd;
+mod plugin_io;
+mod project;
+mod rules;
+mod slices;
+mod song_cmd;
+mod steps;
+mod steps_cmd;
+mod workflow;
+mod workflow_cmd;
+mod workflow_create;
+mod zones;
+
+pub use patch::{
+    MAX_OUTPUT_CHANNELS, PATCH_FORMAT, PATCH_VERSION, SAMPLE_RATES, SAVE_LENGTH_BEATS,
+};
+
+pub mod console;
+pub mod song;
+
+pub use container::{
+    BOUNDARY_KEY, CONTAINER_TYPE, ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MACRO_COUNT,
+    MAX_CONTAINER_DEPTH, MAX_CONTAINER_TARGETS, MAX_INNER_DEVICES, MAX_MACRO_NAME_CHARS,
+    MAX_MACRO_TARGETS, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, MacroTarget, NoteSplit, SPLIT_TYPE,
+    boundary_sockets, split_path,
+};
+pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
+pub use plugin::{
+    MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
+    PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
+};
+pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
+pub use slices::{
+    MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
+    to_track_notes,
+};
+pub use steps::{
+    MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
+    player_data_for,
+};
+pub use workflow::{
+    ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, neighbour_clip,
+    neighbour_device, neighbour_track,
+};
+pub use workflow_cmd::WorkflowCommand;
+pub use workflow_create::{
+    CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
+    first_free_send_slot,
+};
+pub use zones::{
+    PAD_COUNT, PAD_KEY_BASE, ZoneDoc, auto_map, fill_empty_pads, pad_key, pad_of_key, pad_zones,
+    parse_note_name, with_pad_files, zones_for,
+};
+
+use atomik_device_sdk::Registry;
+pub use console::{Console, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect};
+pub use console::{LinkKind, OutputDest, link_kind, output_dest};
+pub use console_insert::insert_chain;
+use history::Edit;
+pub use song::{
+    AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve,
+    Lane, LaneKind, Note, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track,
+    empty_song,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Most host input channels a document may ask for (the engine interface's limit).
+pub const MAX_INPUT_CHANNELS: u16 = 32;
+
+/// What the sample pool stores about an asset. Assets are immutable and identified by
+/// their content hash (`atomik-audio-file`: 64 lowercase hex digits).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetMeta {
+    /// Channel count (at least 1).
+    pub channels: u16,
+    /// Sample rate of the stored audio in Hz (at least 1).
+    pub sample_rate: u32,
+    /// Length in frames (1..=[`song::MAX_AUDIO_FRAMES`]).
+    pub frames: u64,
+    /// Display name: the imported file's name, or the name given to a recording.
+    pub original_name: String,
+}
+
+/// True for 64 lowercase hex digits, the only form accepted as an asset id. A copy of
+/// `atomik_audio_file::is_valid_hash`, so the model stays dependency-free (and I/O-free).
+pub fn is_valid_asset_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Stable, unique device key within a document (e.g. `"synth"`, `"delay-2"`); matches
+/// `[a-z][a-z0-9_-]*`. `"interface"` is reserved for the audio interface.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DeviceKey(pub String);
+
+/// The reserved key of the audio interface pseudo-device.
+pub const INTERFACE_KEY: &str = "interface";
+
+/// A socket on a device, by key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SocketRef {
+    /// Device key (`"interface"` for the audio interface).
+    pub device: DeviceKey,
+    /// Socket key from the device descriptor.
+    pub socket: String,
+}
+
+/// A cable from an output socket to an input socket.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Cable {
+    /// Output end.
+    pub from: SocketRef,
+    /// Input end (at most one cable per input).
+    pub to: SocketRef,
+}
+
+/// One device in the rack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RackDevice {
+    /// Unique key.
+    pub key: DeviceKey,
+    /// Device type id (e.g. `"atomik.poly-synth"`).
+    pub type_id: String,
+    /// User-visible name (defaults to the descriptor name, made unique).
+    pub name: String,
+    /// Param values by key (plain values, clamped). Missing keys mean the descriptor default.
+    pub params: BTreeMap<String, f32>,
+    /// Folded (collapsed) in the rack view.
+    pub folded: bool,
+    /// Optional user accent colour (sRGB).
+    pub color: Option<[u8; 3]>,
+    /// Sampler zones; empty for every device that does not take samples.
+    pub zones: Vec<ZoneDoc>,
+    /// Step sequencer patterns; `None` for every device that takes no
+    /// pattern data. A new sequencer starts with [`StepSeqDoc::default`].
+    pub steps: Option<StepSeqDoc>,
+    /// A container's inside: `Some` exactly on devices whose type is a
+    /// `DeviceKind::Container`, `None` on every other device. See [`ContainerDoc`].
+    pub inner: Option<Box<ContainerDoc>>,
+    /// A plugin device's document: `Some` exactly on devices whose type id
+    /// is a plugin type (`clap.<id>`, `vst3.<hex>`), `None` on every other device. See
+    /// [`PluginDoc`].
+    pub plugin: Option<Box<PluginDoc>>,
+}
+
+/// The rack document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RackDoc {
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Tempo in BPM.
+    pub tempo_bpm: f64,
+    /// Engine seed.
+    pub seed: u64,
+    /// Audio interface output channels.
+    pub output_channels: u16,
+    /// Audio interface input channels: the host inputs `interface:in_1..in_N`. 2
+    /// for new documents, 0 for files that predate inputs.
+    pub input_channels: u16,
+    /// The sample pool: audio assets by id. Holds the assets the song
+    /// references and those kept for undo; see [`RackDoc::prune_unreferenced_assets`].
+    pub assets: BTreeMap<String, AssetMeta>,
+    /// Devices in rack order (top to bottom).
+    pub devices: Vec<RackDevice>,
+    /// Cables, in canonical order (sorted).
+    pub cables: Vec<Cable>,
+    /// The song (tracks, clips, tempo map, loop) . Invariant, kept by every command
+    /// and loader: `song.tempo[0].bpm == tempo_bpm`.
+    pub song: Song,
+    /// The console (main mixer) section.
+    pub console: Console,
+}
+
+/// An edit. Every command is undoable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    /// Insert a new device of `type_id` at rack `index` (clamped). `key` is generated when `None`.
+    ///
+    /// When the registry has the console devices, an instrument with an audio output
+    /// also gets its console channel (and the master, if missing), auto-wired as
+    /// [`ConsoleCommand::AddChannel`] does, in the same undo step.
+    AddDevice {
+        /// Rack position.
+        index: usize,
+        /// Device type id.
+        type_id: String,
+        /// Explicit key, or `None` to generate one.
+        key: Option<DeviceKey>,
+    },
+    /// Remove a device, every cable attached to it and its song track (one undo step).
+    ///
+    /// Console bookkeeping is part of the step: a channel leaves the console; an
+    /// instrument's channel is removed with it (a non-instrument source leaves its channel
+    /// source-less); removing the master clears the master and every return; a return
+    /// effect leaves its slot.
+    RemoveDevice {
+        /// Device to remove.
+        key: DeviceKey,
+    },
+    /// Move a device to rack index `to` (clamped).
+    MoveDevice {
+        /// Device to move.
+        key: DeviceKey,
+        /// New rack position.
+        to: usize,
+    },
+    /// Fold or unfold a device.
+    SetFolded {
+        /// Device.
+        key: DeviceKey,
+        /// New state.
+        folded: bool,
+    },
+    /// Rename a device (names need not be unique).
+    Rename {
+        /// Device.
+        key: DeviceKey,
+        /// New name.
+        name: String,
+    },
+    /// Set or clear a device's accent colour.
+    SetColor {
+        /// Device.
+        key: DeviceKey,
+        /// Colour.
+        color: Option<[u8; 3]>,
+    },
+    /// Connect a cable (validated against descriptors: direction, kind, one cable per input,
+    /// no cycles). A summing input (`Direction::SummingInput`) takes any number of cables,
+    /// but not the same cable twice. For the cycle check the master is two nodes: its
+    /// `fx_send*` outputs (fed by its `send_bus*` inputs only) and the rest.
+    Connect(Cable),
+    /// Remove the cable plugged into input `to` (every cable, in one step, for a summing
+    /// input).
+    Disconnect {
+        /// Input end.
+        to: SocketRef,
+    },
+    /// Set a param (clamped by the descriptor). Consecutive `SetParam`s with the same
+    /// `merge` id on the same device and param merge into one undo step (knob drags).
+    SetParam {
+        /// Device.
+        key: DeviceKey,
+        /// Param key.
+        param: String,
+        /// Plain value.
+        value: f32,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Set the tempo (20..=999 BPM).
+    SetTempo(f64),
+    /// A song edit.
+    Song(SongCommand),
+    /// Add an audio asset to the sample pool. Idempotent: an asset already in the
+    /// pool is kept as it is (the first name wins) when `meta` has the same channels, rate
+    /// and length, and rejected when it differs. `hash` must be 64 lowercase hex digits.
+    ///
+    /// This is the one command that is not an undo step: the asset file already exists in the
+    /// bundle, the pool only grows (until [`RackDoc::prune_unreferenced_assets`] on save), so
+    /// undoing the edits that use an asset never loses it. It returns no [`SyncOp`], leaves
+    /// the redo history alone and does not end a drag-merge group.
+    RegisterAsset {
+        /// Asset id.
+        hash: String,
+        /// Format of the stored audio.
+        meta: AssetMeta,
+    },
+    /// Set the interface's input channel count (0..=[`MAX_INPUT_CHANNELS`]).
+    /// Cables from inputs above the new count are removed in the same step. Reports
+    /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
+    SetInputChannels(u16),
+    /// A console edit.
+    Console(ConsoleCommand),
+    /// Several commands as one undo step, validated in order (each against the
+    /// document as the earlier ones left it) and rejected as a whole if any fails, if the
+    /// batch is empty or if it holds anything else. **Accepted:** `Connect`, `Disconnect`
+    /// (cables; used by the audio-track input selector) and, later,
+    /// `Command::Song(SongCommand::SetClipGrid { .. })` and
+    /// `Command::Song(SongCommand::SetClipGeometry { .. })` (the step editor sets a grid and
+    /// the clip length as one step) and, later,
+    /// `Command::Song(SongCommand::AddTrack { .. })` and `Command::Song(SongCommand::AddClip { .. })`
+    /// (a new pattern on a device without a track is one step) and, later,
+    /// `Command::SetParam { .. }` and `Command::SetZones { .. }` (loading a loop into a slicer
+    /// sets `loop.beats` and the slices as one step). The batch's last allocated
+    /// clip id is [`Document::last_clip_id`] afterwards. A `merge` id inside a batched command
+    /// is ignored: a batch never joins a drag-merge group. Reports each kind of change once,
+    /// in the order of the compound rules of [`SyncOp`]: [`SyncOp::RoutingChanged`] for cables,
+    /// [`SyncOp::SongChanged`] for clip edits, [`SyncOp::ParamChanged`] for each param set and
+    /// one [`SyncOp::ZonesChanged`] per device whose zones are set.
+    Batch(Vec<Command>),
+    /// A container edit: inner devices, note splits, macros, duplicate. Each
+    /// is one undo step; `SetSplits`, `SetMacro`, `RemoveMacroTarget` and `RenameMacro` are also
+    /// accepted by [`Command::Batch`]. Inner devices are addressed by path keys in the existing
+    /// commands too (see [`RackDoc::resolve`]).
+    Container(ContainerCommand),
+    /// A plugin edit: add a plugin device, pins, run mode, power, relink
+    /// (each one undo step; `SetPinned`, `SetPower` and `Relink` are also accepted by
+    /// [`Command::Batch`]), and the data syncs `SyncState` and `SyncLayout`, which are **not**
+    /// undo steps (like `RegisterAsset`: no sync op, redo kept, drag group kept). A plugin's own
+    /// params are ordinary [`Command::SetParam`]s on the keys `p<id>`; a gesture in the plugin
+    /// window is one undo step by giving its `SetParam`s one merge id from
+    /// [`PLUGIN_GESTURE_MERGE_BASE`].
+    Plugin(PluginCommand),
+    /// Replace a sampler's whole zone list (one undo step). The device must take
+    /// samples (`Registry::takes_samples`); every zone's asset must be in the pool and every
+    /// range valid as the SDK's `SampleMap::new` demands, with frames within the asset (see
+    /// [`ZoneDoc`]). A rejected list changes nothing. Consecutive `SetZones` with the same
+    /// `merge` id on the same device merge into one undo step (zone drags). Reports
+    /// [`SyncOp::ZonesChanged`].
+    SetZones {
+        /// The sampler.
+        device: DeviceKey,
+        /// The new zone list.
+        zones: Vec<ZoneDoc>,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Replace pattern `index` (0-based) of a step sequencer (one undo step). The
+    /// device must take pattern data (`Registry::takes_player_data`) and the pattern must be
+    /// valid (see [`PatternDoc::check`]); a rejected pattern changes nothing. Consecutive
+    /// `SetPattern`s with the same `merge` id on the same device and pattern merge into one
+    /// undo step (drags). Merge ids of the sequencer editor start at 6 * 2^40. Reports
+    /// [`SyncOp::PatternsChanged`].
+    SetPattern {
+        /// The sequencer.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// The new pattern.
+        pattern: PatternDoc,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a sequencer (one
+    /// undo step); refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
+    AddPattern {
+        /// The sequencer.
+        device: DeviceKey,
+    },
+    /// Remove pattern `index` (one undo step); the later patterns move up. The
+    /// last pattern cannot be removed. When the device's `pattern` param would point past the
+    /// new count it is lowered to the last pattern in the same step (a `ParamChanged` before
+    /// the `PatternsChanged`). Reports [`SyncOp::PatternsChanged`].
+    RemovePattern {
+        /// The sequencer.
+        device: DeviceKey,
+        /// Pattern index.
+        index: u8,
+    },
+    /// Append a copy of pattern `index` (named `<name> copy`, cut to
+    /// [`MAX_NAME_CHARS`]) at the end, so the numbers of the existing patterns stay as they
+    /// are; refused at [`MAX_PATTERNS`] (one undo step). Reports [`SyncOp::PatternsChanged`].
+    DuplicatePattern {
+        /// The sequencer.
+        device: DeviceKey,
+        /// Pattern to copy.
+        index: u8,
+    },
+    /// A workflow edit: multi-device remove, duplicate, paste, move and
+    /// disconnect, duplicate track, and the clip, note and point pastes and duplicates. Each is
+    /// one undo step, planned on a scratch copy; a rejected command changes nothing. Not
+    /// accepted by [`Command::Batch`].
+    Workflow(WorkflowCommand),
+}
+
+/// What changed, for keeping the engine in sync.
+///
+/// Process the ops of one apply/undo/redo **in order**; read the current routing and device
+/// set from [`Document::doc`] when handling [`SyncOp::RoutingChanged`]. The sequences are:
+///
+/// | Change | Ops |
+/// |---|---|
+/// | device added (`AddDevice`, undo of `RemoveDevice`) | `DeviceAdded`, `ParamChanged` for each stored param (none for a new device), `RoutingChanged` |
+/// | device removed (`RemoveDevice`, undo of `AddDevice`) | `RoutingChanged`, `DeviceRemoved` |
+/// | cable connected or disconnected | `RoutingChanged` |
+/// | param set (also undo/redo; on undo to "not stored" the value is the descriptor default) | `ParamChanged` |
+/// | tempo (`SetTempo`; also sets `song.tempo[0].bpm`) | `TempoChanged` |
+/// | move, fold, rename, colour | `ViewChanged` |
+/// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
+/// | `SetInputChannels` | `RoutingChanged` |
+/// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits) |
+/// | `RegisterAsset` | none (not an undo step) |
+/// | tempo map (`SongCommand::SetTempoMap`, also sets `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
+/// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
+/// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
+/// | `SetZones` (also undo/redo) | `ZonesChanged` |
+/// | inner device added (`AddInner`) | `DeviceAdded(path)`, `RoutingChanged` (`AddInner` with `auto_split` also `SplitsChanged`) |
+/// | container removed, added back (undo), duplicated, or added with `AddDevice` | `DeviceRemoved(container)` or `DeviceAdded(container)` for the **whole inside** (the app expands it; no per-inner ops) |
+/// | `SetSplits` | `SplitsChanged`, plus `RoutingChanged` only when the list of targets changed |
+/// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
+/// | plugin added (`PluginCommand::Add`, also inside a container) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
+/// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
+/// | `SyncState`, `SyncLayout` | none (not undo steps) |
+/// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
+///
+/// A step with several parts (e.g. `AddDevice` of an instrument with its channel and
+/// master, `RemoveDevice` with its channel, `AddChannel`) reports each kind once, in this
+/// order: `DeviceAdded`s (each with its `ParamChanged`s), `RoutingChanged` (when nothing is
+/// removed), other `ParamChanged`/`TempoChanged`, `ViewChanged`, `ConsoleChanged`,
+/// `SongChanged`, then (when something is removed) `RoutingChanged` and the
+/// `DeviceRemoved`s.
+/// | undo of that removal | `DeviceAdded`, `ParamChanged`…, `RoutingChanged`, `SongChanged` |
+///
+/// The song never references a device the engine does not have: `SongChanged` comes before
+/// `DeviceRemoved` and after `DeviceAdded`. A `TempoChanged(bpm)` alone also means the song's
+/// first tempo event became `bpm`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncOp {
+    /// A device was added; the app creates and prepares an instance.
+    DeviceAdded(DeviceKey),
+    /// A device was removed; the app removes its instance after the routing update.
+    DeviceRemoved(DeviceKey),
+    /// Cables (or device set) changed; the app submits new routing.
+    RoutingChanged,
+    /// A param changed; the app sends it through the engine handle.
+    ParamChanged {
+        /// Device.
+        key: DeviceKey,
+        /// Param key.
+        param: String,
+        /// New plain value (clamped).
+        value: f32,
+    },
+    /// Tempo changed.
+    TempoChanged(f64),
+    /// Only presentation changed (fold, name, colour, order); no engine work.
+    ViewChanged,
+    /// The song changed (tracks, clips, tempo map, meter, loop); the app recompiles and
+    /// submits the engine song snapshot.
+    SongChanged,
+    /// The console changed: channels, their order, the master, returns or
+    /// compensation, or a console channel's `solo` param. The app re-reads
+    /// [`RackDoc::console`], refreshes the console view, pushes
+    /// [`RackDoc::solo_silence`] to the channels' `internal.solo_silence` params and the
+    /// compensation switch to the engine.
+    ConsoleChanged,
+    /// A sampler's zone list changed (`SetZones`, its undo and redo; not reported
+    /// when a whole device comes back or goes away, the app builds its map on insertion). The
+    /// app rebuilds the device's sample map from [`RackDevice::zones`].
+    ZonesChanged(DeviceKey),
+    /// A step sequencer's patterns changed (the four pattern commands, their undo
+    /// and redo, also inside a `Batch`; not reported when a whole device comes back or goes
+    /// away, the app builds its data on insertion). The app rebuilds the device's pattern data
+    /// with [`player_data_for`] and sends it to the engine.
+    PatternsChanged {
+        /// The sequencer.
+        device: DeviceKey,
+    },
+    /// A container's macro mapping or name changed (`SetMacro`,
+    /// `RemoveMacroTarget`, `RenameMacro`, the clean-up when a mapped device is removed, their
+    /// undo and redo). The app re-sends every mapped target and the container's macro values
+    /// ([`ExpandedRack::macro_updates`]).
+    MacrosChanged {
+        /// The container (path key).
+        container: DeviceKey,
+    },
+    /// A plugin device's pins, run mode, power or link changed (`SetPinned`,
+    /// `SetRunMode`, `SetPower`, `Relink`, their undo and redo). The app re-reads
+    /// [`RackDevice::plugin`] and updates the plugin manager (pins are view-only; run mode and
+    /// power reach the live device; after a `Relink` the device's type id may have changed, so
+    /// the app swaps the instance for the new plugin or its stand-in).
+    PluginChanged {
+        /// The plugin device (path key).
+        device: DeviceKey,
+    },
+    /// A container's split list changed (`SetSplits`, the automatic split of
+    /// `AddInner`, the clean-up when a split target is removed, their undo and redo). The app
+    /// re-sends the params of the container's `~split` device. A change of the *targets* also
+    /// reports [`SyncOp::RoutingChanged`].
+    SplitsChanged {
+        /// The container (path key).
+        container: DeviceKey,
+    },
+}
+
+/// Model errors.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ModelError {
+    /// Unknown device key.
+    #[error("unknown device `{0}`")]
+    UnknownDevice(String),
+    /// Unknown device type.
+    #[error("unknown device type `{0}`")]
+    UnknownType(String),
+    /// Unknown socket or param key.
+    #[error("unknown key `{0}`")]
+    UnknownKey(String),
+    /// Key already used or invalid.
+    #[error("invalid or duplicate device key `{0}`")]
+    BadKey(String),
+    /// Cable rejected (direction, kind, input already connected, cycle).
+    #[error("cable rejected: {0}")]
+    BadCable(String),
+    /// Value out of range (e.g. tempo).
+    #[error("value out of range: {0}")]
+    OutOfRange(String),
+    /// Song edit rejected (missing track, wrong lane kind, invalid clip data, bad asset id...).
+    #[error("song: {0}")]
+    BadSong(String),
+    /// Console edit rejected (not a channel, no master, source already has a channel…).
+    #[error("console: {0}")]
+    BadConsole(String),
+    /// Zone edit rejected (device takes no samples, asset not in the pool, bad range...).
+    #[error("zones: {0}")]
+    BadZones(String),
+    /// Pattern edit rejected (device takes no pattern data, bad index or pattern, too many or
+    /// too few patterns).
+    #[error("patterns: {0}")]
+    BadPatterns(String),
+    /// Containers nest too deep.
+    #[error("{0}")]
+    ContainerTooDeep(String),
+    /// A container or the project holds too many inner devices.
+    #[error("{0}")]
+    ContainerFull(String),
+    /// A device type that cannot live inside a container (console devices, audio tracks, the
+    /// internal note split).
+    #[error("{0}")]
+    NotAllowedInContainer(String),
+    /// Note split rejected (bad target, range or count).
+    #[error("split: {0}")]
+    BadSplit(String),
+    /// Macro edit rejected (bad index, target, name or count).
+    #[error("macro: {0}")]
+    BadMacro(String),
+    /// A param that a macro drives cannot be set by hand.
+    #[error("{0}")]
+    MacroDriven(String),
+    /// The command names something in the wrong scope (not a container, a cable between two
+    /// containers).
+    #[error("{0}")]
+    BadScope(String),
+    /// Plugin edit rejected (not a plugin device, unusable plugin layout, state too large, bad
+    /// pins, an incompatible relink...).
+    #[error("plugin: {0}")]
+    BadPlugin(String),
+    /// Patch file could not be parsed.
+    #[error("patch file: {0}")]
+    Patch(String),
+    /// A fixed part of the rack was asked to go away, move or be copied: `what`
+    /// names it (`"master"`, the console master) and `message` says what is refused. The lock is
+    /// command-level only: loaders never raise it.
+    #[error("{message}")]
+    Fixed {
+        /// The fixed thing (`"master"`).
+        what: &'static str,
+        /// The text for the user, e.g. "The Master Section cannot be deleted".
+        message: String,
+    },
+}
+
+/// A document with undo/redo history.
+///
+/// Every successful [`Document::apply`] records one undo step (or extends the open drag-merge
+/// step) and clears the redo history. A rejected command changes nothing.
+#[derive(Debug, Clone)]
+pub struct Document {
+    doc: RackDoc,
+    undo: Vec<Edit>,
+    redo: Vec<Edit>,
+    /// The open drag-merge group of the last applied command.
+    merge: Option<MergeKey>,
+    /// The clip id allocated by the last `AddClip`, `DuplicateClip` or `SplitClip`.
+    last_clip: Option<ClipId>,
+}
+
+/// What a drag-merge group is keyed on: consecutive commands with an equal key merge.
+#[derive(Debug, Clone, PartialEq)]
+enum MergeKey {
+    /// `SetParam` on one device param.
+    Param(u64, DeviceKey, String),
+    /// `SetClipGeometry` / `SetClipContent` on one clip.
+    Clip(u64, ClipId),
+    /// `SetZones` on one device.
+    Zones(u64, DeviceKey),
+    /// `SetPattern` on one pattern of one device.
+    Pattern(u64, DeviceKey, u8),
+    /// `SetSplits` on one container.
+    Splits(u64, DeviceKey),
+    /// `SetMacro` on one target (container, macro, device, param).
+    Macro(u64, DeviceKey, u8, DeviceKey, String),
+}
+
+impl Document {
+    /// Wraps a document with empty history.
+    pub fn new(doc: RackDoc) -> Self {
+        Self {
+            doc,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            merge: None,
+            last_clip: None,
+        }
+    }
+
+    /// The current document.
+    pub fn doc(&self) -> &RackDoc {
+        &self.doc
+    }
+
+    /// Applies a command (validated with `registry`) and records it for undo.
+    ///
+    /// The returned [`SyncOp`]s must be processed in order (see [`SyncOp`]).
+    pub fn apply(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        if let Command::RegisterAsset { hash, meta } = command {
+            // Not an undo step; leaves history, redo and the merge group alone.
+            return rules::register_asset(&mut self.doc, hash, meta).map(|()| Vec::new());
+        }
+        // The plugin data syncs are not undo steps either.
+        let command = match command {
+            Command::Plugin(PluginCommand::SyncState { device, state }) => {
+                return plugin_cmd::sync_state(&mut self.doc, &device, state).map(|()| Vec::new());
+            }
+            Command::Plugin(PluginCommand::SyncLayout { device, layout }) => {
+                return plugin_cmd::sync_layout(&mut self.doc, &device, layout)
+                    .map(|()| Vec::new());
+            }
+            other => other,
+        };
+        let merge = match &command {
+            Command::SetParam {
+                key,
+                param,
+                merge: Some(id),
+                ..
+            } => Some(MergeKey::Param(*id, key.clone(), param.clone())),
+            Command::Song(
+                SongCommand::SetClipGeometry {
+                    id, merge: Some(m), ..
+                }
+                | SongCommand::SetClipContent {
+                    id, merge: Some(m), ..
+                }
+                | SongCommand::SetAudioClip {
+                    id, merge: Some(m), ..
+                }
+                | SongCommand::SetClipGrid {
+                    clip: id,
+                    merge: Some(m),
+                    ..
+                },
+            ) => Some(MergeKey::Clip(*m, *id)),
+            Command::SetZones {
+                device,
+                merge: Some(m),
+                ..
+            } => Some(MergeKey::Zones(*m, device.clone())),
+            Command::SetPattern {
+                device,
+                index,
+                merge: Some(m),
+                ..
+            } => Some(MergeKey::Pattern(*m, device.clone(), *index)),
+            Command::Container(ContainerCommand::SetSplits {
+                container,
+                merge: Some(m),
+                ..
+            }) => Some(MergeKey::Splits(*m, container.clone())),
+            Command::Container(ContainerCommand::SetMacro {
+                container,
+                index,
+                target,
+                merge: Some(m),
+            }) => Some(MergeKey::Macro(
+                *m,
+                container.clone(),
+                *index,
+                target.device.clone(),
+                target.param.clone(),
+            )),
+            _ => None,
+        };
+        let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
+        let ops = edit.perform(&mut self.doc);
+        self.redo.clear();
+        let merged = merge.is_some() && merge == self.merge;
+        match (self.undo.last_mut(), &edit) {
+            (Some(Edit::Param { new, .. }), Edit::Param { new: latest, .. }) if merged => {
+                *new = *latest;
+            }
+            (Some(Edit::Clip { new, .. }), Edit::Clip { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Zones { new, .. }), Edit::Zones { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Steps { new, .. }), Edit::Steps { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Splits { new, .. }), Edit::Splits { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Macro { new, .. }), Edit::Macro { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            _ => self.undo.push(edit),
+        }
+        self.merge = merge;
+        if new_clip.is_some() {
+            self.last_clip = new_clip;
+        }
+        Ok(ops)
+    }
+
+    /// Undoes the last step; `None` when there is nothing to undo.
+    pub fn undo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
+        self.merge = None;
+        let edit = self.undo.pop()?;
+        let ops = edit.inverse().perform(&mut self.doc);
+        self.redo.push(edit);
+        Some(ops)
+    }
+
+    /// Redoes the last undone step; `None` when there is nothing to redo.
+    pub fn redo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
+        self.merge = None;
+        let edit = self.redo.pop()?;
+        let ops = edit.perform(&mut self.doc);
+        self.undo.push(edit);
+        Some(ops)
+    }
+
+    /// The id allocated by the last successful `AddClip`, `DuplicateClip` or `SplitClip`.
+    ///
+    /// Other commands, undo and redo leave it unchanged. The UI reads it right after applying
+    /// one of those commands (e.g. to select the new clip).
+    pub fn last_clip_id(&self) -> Option<ClipId> {
+        self.last_clip
+    }
+
+    /// Every asset id the document needs: those its song and sampler zones reference, plus those referenced by
+    /// clips and zones in the undo and redo history (undo or redo must find them in the pool). The app
+    /// keeps exactly these files in the bundle's `Audio/` folder on save.
+    pub fn referenced_assets(&self) -> BTreeSet<String> {
+        let mut out = self.doc.referenced_assets();
+        for edit in self.undo.iter().chain(&self.redo) {
+            edit.collect_assets(&mut out);
+        }
+        out
+    }
+
+    /// Drops every pool asset that neither the song nor the undo/redo history references
+    /// (see [`Document::referenced_assets`]); undo and redo stay valid. Call it on save. It is
+    /// not an undoable command: it removes nothing a step could bring back.
+    pub fn prune_unreferenced_assets(&mut self) {
+        let keep = self.referenced_assets();
+        self.doc.assets.retain(|h, _| keep.contains(h));
+    }
+
+    /// Whether undo is possible.
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// Whether redo is possible.
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Ends any open drag-merge group (call on pointer release).
+    pub fn end_merge(&mut self) {
+        self.merge = None;
+    }
+
+    /// Validates `command` against the current document and turns it into a reversible edit.
+    fn plan(
+        doc: &RackDoc,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<(Edit, Option<ClipId>), ModelError> {
+        let edit = match command {
+            Command::Batch(commands) => {
+                if commands.is_empty() {
+                    return Err(ModelError::BadCable("empty cable batch".into()));
+                }
+                let mut scratch = doc.clone();
+                let mut edits = Vec::with_capacity(commands.len());
+                let mut new_clip = None;
+                for command in commands {
+                    if !matches!(
+                        command,
+                        Command::Connect(_)
+                            | Command::Disconnect { .. }
+                            | Command::SetParam { .. }
+                            | Command::SetZones { .. }
+                            | Command::SetPattern { .. }
+                            | Command::AddPattern { .. }
+                            | Command::RemovePattern { .. }
+                            | Command::DuplicatePattern { .. }
+                            | Command::Plugin(
+                                PluginCommand::SetPinned { .. }
+                                    | PluginCommand::SetPower { .. }
+                                    | PluginCommand::Relink { .. }
+                            )
+                            | Command::Container(
+                                ContainerCommand::SetSplits { .. }
+                                    | ContainerCommand::SetMacro { .. }
+                                    | ContainerCommand::RemoveMacroTarget { .. }
+                                    | ContainerCommand::RenameMacro { .. }
+                            )
+                            | Command::Song(
+                                SongCommand::AddTrack { .. }
+                                    | SongCommand::AddClip { .. }
+                                    | SongCommand::SetClipGrid { .. }
+                                    | SongCommand::SetClipGeometry { .. }
+                            )
+                    ) {
+                        return Err(ModelError::BadCable(format!(
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid and SetClipGeometry can be batched, not {command:?}"
+                        )));
+                    }
+                    let (edit, clip) = Self::plan(&scratch, command, registry)?;
+                    edit.perform(&mut scratch);
+                    edits.push(edit);
+                    new_clip = clip.or(new_clip);
+                }
+                return Ok((Edit::Compound(edits), new_clip));
+            }
+            Command::AddDevice {
+                index,
+                type_id,
+                key,
+            } => {
+                let desc = rules::descriptor(registry, &type_id)?;
+                plugin_cmd::refuse_generic_add(&type_id)?;
+                if type_id == SPLIT_TYPE {
+                    return Err(ModelError::NotAllowedInContainer(format!(
+                        "{} is internal; the container expansion creates it",
+                        desc.name
+                    )));
+                }
+                let key = match key {
+                    Some(k) => {
+                        rules::check_new_key(doc, &k.0)?;
+                        k
+                    }
+                    None => rules::generate_key(doc, &type_id),
+                };
+                let instrument = desc.kind == atomik_device_sdk::DeviceKind::Instrument;
+                let device = container::new_device(
+                    registry,
+                    desc,
+                    key.clone(),
+                    rules::unique_name(doc, desc.name),
+                );
+                // an instrument gets its console channel in the same undo step, when
+                // the registry has the console devices. An instrument without audio
+                // outputs gets none.
+                console_cmd::insert_with_channel(doc, registry, index, device, instrument)
+            }
+            Command::RemoveDevice { key } => {
+                // The device's track goes with it, first: the song stops playing the device
+                // before the engine removes it (and comes back after it on undo). Console
+                // bookkeeping (its channel, master, return slot) is part of the same step.
+                if key.0.contains('/') {
+                    container_cmd::remove_inner(doc, &key)?
+                } else {
+                    rules::index_of(doc, &key)?;
+                    let mut p = console_cmd::Planner::new(doc, registry);
+                    console_cmd::remove_device(&mut p, &key)?;
+                    p.finish()
+                }
+            }
+            Command::MoveDevice { key, to } => {
+                if key.0.contains('/') {
+                    container_cmd::move_inner(doc, &key, to)?
+                } else {
+                    let from = rules::index_of(doc, &key)?;
+                    let to = to.min(doc.devices.len() - 1);
+                    // The master stays where it is, and nothing goes above it.
+                    let mut order: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
+                    let moved = order.remove(from);
+                    order.insert(to, moved);
+                    rules::check_move(doc, std::slice::from_ref(&key), order.first().copied())?;
+                    Edit::Move { from, to }
+                }
+            }
+            Command::SetFolded { key, folded } => Edit::Folded {
+                old: rules::resolve(doc, &key)?.folded,
+                new: folded,
+                key,
+            },
+            Command::Rename { key, name } => Edit::Name {
+                old: rules::resolve(doc, &key)?.name.clone(),
+                new: name,
+                key,
+            },
+            Command::SetColor { key, color } => Edit::Color {
+                old: rules::resolve(doc, &key)?.color,
+                new: color,
+                key,
+            },
+            Command::Connect(cable) => container_cmd::connect(doc, registry, &cable)?,
+            Command::Disconnect { to } if to.device.0.contains('/') => {
+                container_cmd::disconnect(doc, registry, &to)?
+            }
+            Command::Disconnect { to } => {
+                let (_, direction) = rules::socket(doc, registry, &to)?;
+                if !direction.is_input() {
+                    return Err(ModelError::BadCable(format!("{to} is not an input")));
+                }
+                // A summing input loses every cable plugged into it, in one step.
+                let mut cables: Vec<Edit> = doc
+                    .cables
+                    .iter()
+                    .filter(|c| c.to == to)
+                    .cloned()
+                    .map(Edit::Disconnect)
+                    .collect();
+                match cables.len() {
+                    0 => return Err(ModelError::BadCable(format!("{to} is not connected"))),
+                    1 => cables.remove(0),
+                    _ => Edit::Compound(cables),
+                }
+            }
+            Command::SetParam {
+                key, param, value, ..
+            } => {
+                let device = rules::resolve(doc, &key)?;
+                if console::is_internal_param(&param) {
+                    // Set by the app from derived state; never stored.
+                    return Err(ModelError::UnknownKey(param));
+                }
+                let desc = rules::descriptor(registry, &device.type_id)?;
+                let p = desc
+                    .param_by_key(&param)
+                    .ok_or_else(|| ModelError::UnknownKey(param.clone()))?;
+                if value.is_nan() {
+                    return Err(ModelError::OutOfRange(format!("{key} {param:?} is NaN")));
+                }
+                if let Some((container, index)) = doc.macro_driver(&key, &param) {
+                    return Err(ModelError::MacroDriven(format!(
+                        "{key} {param} is driven by macro {} of {container}; unmap it first",
+                        index + 1
+                    )));
+                }
+                Edit::Param {
+                    old: device.params.get(&param).copied(),
+                    new: Some(p.clamp(value)),
+                    default: p.default,
+                    key,
+                    param,
+                }
+            }
+            Command::SetZones { device, zones, .. } => {
+                let d = rules::resolve(doc, &device)?;
+                if !registry.takes_samples(&d.type_id) {
+                    return Err(ModelError::BadZones(format!(
+                        "{device} ({}) does not take samples",
+                        d.type_id
+                    )));
+                }
+                zones::check_zones(&doc.assets, &zones)
+                    .map_err(|(i, m)| ModelError::BadZones(format!("zone {i}: {m}")))?;
+                Edit::Zones {
+                    old: d.zones.clone(),
+                    new: zones,
+                    key: device,
+                }
+            }
+            command @ (Command::SetPattern { .. }
+            | Command::AddPattern { .. }
+            | Command::RemovePattern { .. }
+            | Command::DuplicatePattern { .. }) => steps_cmd::plan(doc, registry, command)?,
+            Command::Container(c) => container_cmd::plan(doc, registry, c)?,
+            Command::Plugin(c) => plugin_cmd::plan(doc, registry, c)?,
+            Command::RegisterAsset { .. } => unreachable!("handled before planning"),
+            Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
+            Command::SetTempo(bpm) => {
+                if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
+                    return Err(ModelError::OutOfRange(format!(
+                        "{bpm} BPM is outside {TEMPO_MIN}..={TEMPO_MAX}"
+                    )));
+                }
+                Edit::Tempo {
+                    old: doc.tempo_bpm,
+                    new: bpm,
+                }
+            }
+            Command::Console(console_command) => console_cmd::plan(doc, registry, console_command)?,
+            Command::Song(song_command) => return song_cmd::plan(doc, registry, song_command),
+            Command::Workflow(c) => return workflow_cmd::plan(doc, registry, c),
+        };
+        Ok((edit, None))
+    }
+}
+
+/// Lowest accepted tempo in BPM.
+pub const TEMPO_MIN: f64 = 20.0;
+/// Highest accepted tempo in BPM.
+pub const TEMPO_MAX: f64 = 999.0;
+
+impl DeviceKey {
+    /// The key as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for DeviceKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::fmt::Display for SocketRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.device.0, self.socket)
+    }
+}
+
+impl RackDoc {
+    /// The device `key`, if present.
+    pub fn device(&self, key: &DeviceKey) -> Option<&RackDevice> {
+        self.devices.iter().find(|d| &d.key == key)
+    }
+
+    /// The effective plain value of a param: the stored value, or the descriptor default when
+    /// none is stored. `None` if the device, its type or the param is unknown. `key` may be a
+    /// path key.
+    pub fn param_value(&self, key: &DeviceKey, param: &str, registry: &Registry) -> Option<f32> {
+        let device = self.resolve(key)?;
+        let desc = registry
+            .get(&device.type_id)?
+            .descriptor
+            .param_by_key(param)?;
+        Some(device.params.get(param).copied().unwrap_or(desc.default))
+    }
+
+    /// The derived `internal.solo_silence` state of every console channel, in console order
+    /// (additive solo-in-place): when any channel is soloed (`solo` ≥ 0.5), every
+    /// channel that is not soloed is silenced. Returns are not channels, so they are
+    /// solo-safe. Mute plays no part. The app pushes these values to the engine.
+    pub fn solo_silence(&self, registry: &Registry) -> Vec<(DeviceKey, bool)> {
+        let soloed: Vec<(DeviceKey, bool)> = self
+            .console
+            .channels
+            .iter()
+            .map(|c| {
+                let solo = self.param_value(&c.channel, "solo", registry);
+                (c.channel.clone(), solo.is_some_and(|v| v >= 0.5))
+            })
+            .collect();
+        let any = soloed.iter().any(|(_, s)| *s);
+        soloed.into_iter().map(|(k, s)| (k, any && !s)).collect()
+    }
+
+    /// True if `device` has a track that is an audio track and the device is an
+    /// `atomik.audio-track`.
+    pub fn is_audio_track(&self, device: &DeviceKey, registry: &Registry) -> bool {
+        self.device(device).is_some_and(|d| {
+            d.type_id == song::AUDIO_TRACK_TYPE
+                && registry.get(&d.type_id).is_some()
+                && self.song.track(device).is_some_and(Track::is_audio)
+        })
+    }
+
+    /// The asset ids the song's audio clips and the devices' zones reference (clips on every
+    /// audio lane, muted or not). The app uses it to find orphaned files in the bundle; see also
+    /// [`Document::referenced_assets`], which includes the undo history.
+    pub fn referenced_assets(&self) -> BTreeSet<String> {
+        self.song
+            .tracks
+            .iter()
+            .flat_map(|t| &t.lanes)
+            .flat_map(|l| &l.clips)
+            .filter_map(|c| match &c.content {
+                ClipContent::Audio(a) => Some(a.asset.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .chain({
+                let mut zones = BTreeSet::new();
+                for d in &self.devices {
+                    container::collect_device_assets(d, &mut zones);
+                }
+                zones
+            })
+            .collect()
+    }
+
+    /// Removes the pool assets the song does not reference. Not an undoable command, and not
+    /// aware of undo history: prune a clone that is about to be saved, or use
+    /// [`Document::prune_unreferenced_assets`] on a live document.
+    pub fn prune_unreferenced_assets(&mut self) {
+        let keep = self.referenced_assets();
+        self.assets.retain(|h, _| keep.contains(h));
+    }
+
+    /// The cable plugged into input `to`, if any.
+    pub fn cable_into(&self, to: &SocketRef) -> Option<&Cable> {
+        self.cables.iter().find(|c| &c.to == to)
+    }
+}
+
+/// An empty rack at 48 kHz, 120 BPM, stereo out, seed 0.
+pub fn empty_doc() -> RackDoc {
+    RackDoc {
+        sample_rate: 48_000,
+        tempo_bpm: 120.0,
+        seed: 0,
+        output_channels: 2,
+        input_channels: 2,
+        assets: BTreeMap::new(),
+        devices: Vec::new(),
+        cables: Vec::new(),
+        song: empty_song(120.0),
+        console: Console::default(),
+    }
+}
+
+/// The starter document of File, New: [`empty_doc`] plus the console master,
+/// one `atomik.master` device keyed `master` (named "Master") placed first, so it sits directly
+/// under Audio I/O, with the cables `master:main_l -> interface:out_1` and
+/// `master:main_r -> interface:out_2` (the second skipped below two outputs). No channels, no
+/// returns, compensation on, one transport track as in `empty_doc`. It is built by the same code
+/// that creates the master with the first channel, is deterministic and saves byte-identically.
+/// [`empty_doc`] is unchanged; loaders and Open never call this.
+pub fn new_project_doc() -> RackDoc {
+    let mut doc = empty_doc();
+    console_cmd::install_starter_master(&mut doc);
+    doc
+}
+
+/// Loads a patch file (format v1 or v2) into a document, validating against `registry`.
+///
+/// v1 files carry no layout: names default to the descriptor name made unique in rack order
+/// (`"Poly Synth"`, `"Poly Synth 2"`), devices are unfolded and uncoloured. Params are
+/// clamped through their descriptors; `notes` are accepted and ignored; the song is
+/// [`empty_song`] at the file's tempo. Cables are validated
+/// with the engine's rules and sorted. Errors are [`ModelError::Patch`] with a message
+/// `"<json path>: <what is wrong>"`, e.g. `devices[1].params.mixx: … has no param "mixx"`.
+pub fn load_patch(json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
+    patch::load(json, registry)
+}
+
+/// [`load_project`] and the load warnings: today only the rename of a device keyed `boundary`
+/// in a file older than version 8 (the key is reserved for a container's inside edge since
+/// then; the device becomes `boundary-1`, cables and references follow).
+pub fn load_project_with_warnings(
+    json: &str,
+    registry: &Registry,
+) -> Result<(RackDoc, Vec<String>), ModelError> {
+    project::load_with_warnings(json, registry)
+}
+
+/// Saves a document as a patch file, format v2. Patches have no inputs, audio tracks or
+/// pool: cables from `interface:in_k` do not load back.
+///
+/// Writes every v1 field (`length_beats` is [`SAVE_LENGTH_BEATS`], no `notes`) plus each
+/// device's `name`, `folded` and, when set, `color` (`"#rrggbb"`), with devices in rack order
+/// and cables in canonical order. The output is deterministic and [`load_patch`] reads it
+/// back to an equal document.
+pub fn save_patch(doc: &RackDoc) -> String {
+    patch::save(doc)
+}
+
+/// Loads an `.atomik` project file, or a patch v1/v2 file as a song-less
+/// project. Errors are [`ModelError::Patch`] with a message `"<json path>: <what is wrong>"`,
+/// e.g. `song.tracks[0].lanes[0].clips[0].notes[1]: notes must be sorted…`. The schema is in
+/// [`save_project`] docs.
+pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
+    project::load(json, registry)
+}
+
+/// Saves a document as an `.atomik` project file, format [`PROJECT_FORMAT`] version
+/// [`PROJECT_VERSION`] (9): the patch v2 rack fields (plus each device's `"zones"` when it has
+/// any, `"steps"` when present, a container's `"inner"` and a plugin device's `"plugin"`) (without `length_beats`),
+/// `"input_channels"`, `"console"` (channels with their sources, master, 8 returns,
+/// compensation), `"assets"` (the sample pool) and `"song"` with every song field, clip ids
+/// and `next_clip_id`. The output is deterministic and canonical,
+/// and [`load_project`] reads it back bit-exactly.
+pub fn save_project(doc: &RackDoc) -> String {
+    project::save(doc)
+}

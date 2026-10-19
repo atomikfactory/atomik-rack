@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question or share an idea (Discussions)
+    url: https://github.com/atomikfactory/atomik-rack/discussions
+    about: Questions, usage help and open-ended ideas belong in Discussions, not in issues.
+  - name: Report a security vulnerability (private)
+    url: https://github.com/atomikfactory/atomik-rack/security/advisories/new
+    about: Report security problems privately. Do not open a public issue for them.

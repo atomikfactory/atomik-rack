@@ -1,0 +1,187 @@
+//! Decoding of WAV, AIFF, FLAC, MP3 and OGG/Vorbis through symphonia.
+//!
+//! Integer PCM becomes `f32` as `i / 2^(bits-1)` (symphonia's exact conversion). Lossless
+//! sources (PCM, FLAC) must decode completely: a stream that ends early is an error. For the
+//! lossy codecs (MP3, Vorbis) a packet that fails to decode is skipped, as is usual for damaged
+//! files, but a file that yields no audio at all is an error.
+//!
+//! Encoder padding: MP3 and Vorbis encoders add priming samples. Symphonia trims what the
+//! container declares (gapless info); anything the container does not declare stays in the
+//! output, so lossy files may decode a little longer than the source.
+
+use std::fs::File;
+use std::io::{Cursor, Read, SeekFrom};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
+
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::well_known::{
+    CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_VORBIS,
+};
+use symphonia::core::errors::Error as SymError;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
+use symphonia::core::io::{MediaSource, MediaSourceStream};
+use symphonia::core::meta::MetadataOptions;
+
+use crate::data::AudioData;
+use crate::error::{AudioFileError, Result};
+
+/// Refuse streams beyond this many samples (all channels), about 8 GiB of `f32`.
+const MAX_SAMPLES: u64 = 1 << 31;
+
+/// Decodes a file. The extension is used as a probe hint only.
+pub fn decode_file(path: &Path) -> Result<AudioData> {
+    let file = File::open(path)?;
+    let ext = path.extension().and_then(|e| e.to_str());
+    decode_source(Box::new(file), ext)
+}
+
+/// Decodes an in-memory file. `ext_hint` is an optional extension such as `"mp3"`; a wrong
+/// hint is harmless because the probe falls back to the content.
+pub fn decode_bytes(bytes: &[u8], ext_hint: Option<&str>) -> Result<AudioData> {
+    decode_source(Box::new(Cursor::new(bytes.to_vec())), ext_hint)
+}
+
+fn decode_source(source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<AudioData> {
+    // Symphonia should never panic on bad data; if a decoder bug does, report it as an error.
+    catch_unwind(AssertUnwindSafe(|| decode_inner(source, ext))).unwrap_or_else(|_| {
+        Err(AudioFileError::Decode(
+            "decoder panicked on malformed data".into(),
+        ))
+    })
+}
+
+fn map_sym(e: SymError) -> AudioFileError {
+    match e {
+        SymError::IoError(e) => AudioFileError::Io(e),
+        SymError::Unsupported(m) => AudioFileError::Unsupported(m.into()),
+        other => AudioFileError::Decode(other.to_string()),
+    }
+}
+
+/// Most channels accepted in a WAV header. Symphonia 0.6.1 overflows a shift while fixing the
+/// channel mask of a corrupt header with more than 32 channels (a panic when overflow checks are
+/// on), and a 32-bit channel mask cannot place more positions anyway.
+const MAX_WAV_CHANNELS: u16 = 32;
+
+/// Looks at the first bytes of a RIFF/WAVE stream and rejects headers symphonia mishandles.
+fn precheck_wav(source: &mut dyn MediaSource) -> Result<()> {
+    let mut head = Vec::with_capacity(4096);
+    (&mut *source).take(4096).read_to_end(&mut head)?;
+    source.seek(SeekFrom::Start(0))?;
+    if head.len() < 12 || &head[..4] != b"RIFF" || &head[8..12] != b"WAVE" {
+        return Ok(());
+    }
+    let mut pos = 12usize;
+    while let Some(chunk) = head.get(pos..pos + 8) {
+        let size = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as usize;
+        if &chunk[..4] == b"fmt " {
+            if let Some(f) = head.get(pos + 8..pos + 12) {
+                let channels = u16::from_le_bytes([f[2], f[3]]);
+                if channels == 0 {
+                    return Err(AudioFileError::Decode("WAV has no channels".into()));
+                }
+                if channels > MAX_WAV_CHANNELS {
+                    return Err(AudioFileError::Unsupported(format!(
+                        "WAV with {channels} channels"
+                    )));
+                }
+            }
+            return Ok(());
+        }
+        pos = pos
+            .saturating_add(8)
+            .saturating_add(size)
+            .saturating_add(size & 1);
+    }
+    Ok(())
+}
+
+fn decode_inner(mut source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<AudioData> {
+    precheck_wav(source.as_mut())?;
+    let mss = MediaSourceStream::new(source, Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = ext {
+        hint.with_extension(ext);
+    }
+    let mut format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .map_err(map_sym)?;
+
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or_else(|| AudioFileError::Unsupported("no audio track".into()))?;
+    let track_id = track.id;
+    let declared_frames = track.num_frames;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or_else(|| AudioFileError::Unsupported("no audio codec parameters".into()))?;
+    let lossy = [CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_VORBIS].contains(&params.codec);
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
+        .map_err(map_sym)?;
+
+    let mut rate = 0u32;
+    let mut channels: Vec<Vec<f32>> = Vec::new();
+    let mut scratch: Vec<Vec<f32>> = Vec::new();
+    loop {
+        let packet = match format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            Err(SymError::ResetRequired) => {
+                return Err(AudioFileError::Unsupported("chained streams".into()));
+            }
+            Err(e) => return Err(map_sym(e)),
+        };
+        if packet.track_id != track_id {
+            continue;
+        }
+        let buf = match decoder.decode(&packet) {
+            Ok(b) => b,
+            Err(SymError::DecodeError(_)) if lossy => continue,
+            Err(e) => return Err(map_sym(e)),
+        };
+        if buf.frames() == 0 {
+            continue;
+        }
+        let spec = buf.spec();
+        let (r, n) = (spec.rate(), buf.num_planes());
+        if channels.is_empty() {
+            rate = r;
+            channels = vec![Vec::new(); n];
+        } else if r != rate || n != channels.len() {
+            return Err(AudioFileError::InvalidData(
+                "stream changes format mid-way".into(),
+            ));
+        }
+        buf.copy_to_vecs_planar::<f32>(&mut scratch);
+        for (dst, src) in channels.iter_mut().zip(&scratch) {
+            dst.extend_from_slice(src);
+        }
+        if (channels[0].len() as u64) * (n as u64) > MAX_SAMPLES {
+            return Err(AudioFileError::Unsupported("audio too long".into()));
+        }
+    }
+
+    if channels.is_empty() || channels[0].is_empty() {
+        return Err(AudioFileError::Empty);
+    }
+    if !lossy
+        && let Some(declared) = declared_frames
+        && (channels[0].len() as u64) < declared
+    {
+        return Err(AudioFileError::Decode(format!(
+            "truncated: decoded {} of {declared} frames",
+            channels[0].len()
+        )));
+    }
+    AudioData::new(rate, channels)
+}

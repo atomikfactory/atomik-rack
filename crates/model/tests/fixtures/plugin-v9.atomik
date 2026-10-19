@@ -1,0 +1,150 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "plain", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false
+    },
+    {
+      "id": "lead", "type": "clap.test.synth",
+      "name": "Test Synth", "folded": false,
+      "params": {
+        "p10": 0.25,
+        "p42": 4
+      },
+      "plugin": {
+        "format": "clap", "id": "test.synth",
+        "name": "Test Synth", "vendor": "Atomik Test", "version": "1.2.3",
+        "path_hint": "C:/Program Files/Common Files/CLAP/Test \"Synth\".clap",
+        "layout": {
+          "main_in": null, "main_out": "stereo", "sidechain": false, "notes_in": true, "notes_out": false, "kind": "instrument",
+          "params": [
+            {"id": 10, "name": "Cutoff", "module": "Filter", "min": 0, "max": 1, "default": 0.5, "stepped": false, "steps": 0},
+            {"id": 11, "name": "Resonance", "module": "Filter", "min": 0, "max": 1, "default": 0, "stepped": false, "steps": 0},
+            {"id": 42, "name": "Voices", "min": 1, "max": 16, "default": 8, "stepped": true, "steps": 0}
+          ]
+        },
+        "state": "c3ludGggcGF0Y2g=",
+        "pinned": [42, 10],
+        "run_on_audio_thread": false, "powered": true
+      }
+    },
+    {
+      "id": "verb", "type": "vst3.00112233445566778899aabbccddeeff",
+      "name": "Vee Fx", "folded": false,
+      "params": {
+        "p5": 0.5,
+        "p7": 2
+      },
+      "plugin": {
+        "format": "vst3", "id": "00112233445566778899aabbccddeeff",
+        "name": "Vee Fx", "vendor": "Vee", "version": "1.0",
+        "layout": {
+          "main_in": "stereo", "main_out": "stereo", "sidechain": false, "notes_in": false, "notes_out": false, "kind": "effect",
+          "params": [
+            {"id": 5, "name": "Drive", "min": 0, "max": 1, "default": 0.25, "stepped": false, "steps": 0},
+            {"id": 7, "name": "Mode", "min": 0, "max": 1, "default": 0.5, "stepped": true, "steps": 4}
+          ]
+        },
+        "state": "AAEC",
+        "pinned": [],
+        "run_on_audio_thread": true, "powered": false
+      }
+    },
+    {
+      "id": "layer", "type": "atomik.container",
+      "name": "Container", "folded": false,
+      "inner": {
+        "devices": [
+          {
+            "id": "comp", "type": "clap.test.fx",
+            "name": "Test Fx", "folded": false,
+            "plugin": {
+              "format": "clap", "id": "test.fx",
+              "name": "Test Fx", "vendor": "Atomik Test", "version": "2.0.0",
+              "layout": {
+                "main_in": "stereo", "main_out": "stereo", "sidechain": true, "notes_in": false, "notes_out": false, "kind": "effect",
+                "params": [
+                  {"id": 1, "name": "Gain", "min": -60, "max": 12, "default": 0, "stepped": false, "steps": 0}
+                ]
+              },
+              "state": "3q2+7wABAg==",
+              "pinned": [],
+              "run_on_audio_thread": false, "powered": true
+            }
+          }
+        ],
+        "cables": [
+          {"from": "boundary:in_l", "to": "comp:in_l"},
+          {"from": "boundary:in_r", "to": "comp:in_r"},
+          {"from": "comp:out_l", "to": "boundary:out_l"},
+          {"from": "comp:out_r", "to": "boundary:out_r"}
+        ],
+        "macros": [
+          {"name": "", "targets": [
+            {"device": "comp", "param": "p1", "min": -60, "max": 12}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": []
+      }
+    }
+  ],
+  "cables": [
+    {"from": "lead:out_l", "to": "verb:in_l"},
+    {"from": "lead:out_r", "to": "verb:in_r"},
+    {"from": "verb:out_l", "to": "layer:in_l"},
+    {"from": "verb:out_r", "to": "layer:in_r"}
+  ],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 2,
+    "tracks": [
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          },
+          {
+            "kind": "automation", "param": "p11",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 960, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0.2, "linear"],
+                  [480, 0.8, "step"]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

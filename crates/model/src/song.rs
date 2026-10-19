@@ -1,0 +1,624 @@
+//! Song data and song commands.
+//!
+//! All times are in ticks ([`atomik_core::PPQ`] per quarter note). The song references rack
+//! devices by [`DeviceKey`]; a track belongs to exactly one device with a Notes input.
+//!
+//! Public types are a stable contract: changes need review.
+
+use crate::DeviceKey;
+
+/// Stable, unique id of a clip within a song (never reused while the song lives).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClipId(pub u64);
+
+/// One note in a note clip, relative to the clip's content start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Note {
+    /// Start tick relative to the clip content (0 = clip content start).
+    pub tick: i64,
+    /// Length in ticks (> 0).
+    pub length: i64,
+    /// MIDI key 0..=127.
+    pub key: u8,
+    /// Velocity in (0, 1].
+    pub velocity: f32,
+}
+
+/// Interpolation from one automation point to the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Curve {
+    /// Linear ramp to the next point.
+    Linear,
+    /// Hold this value until the next point.
+    Step,
+}
+
+/// One automation point, relative to the clip content start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AutomationPoint {
+    /// Tick relative to the clip content.
+    pub tick: i64,
+    /// Plain parameter value (clamped by the descriptor).
+    pub value: f32,
+    /// Segment shape towards the next point.
+    pub curve: Curve,
+}
+
+/// The shape of an audio fade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeCurve {
+    /// Gain ramps linearly with position.
+    Linear,
+    /// Gain follows a quarter sine (`sin(t * pi / 2)` in, mirrored out), so two crossfading
+    /// clips keep constant power.
+    EqualPower,
+}
+
+/// What an audio clip plays.
+///
+/// The clip's `start` and `length` stay in ticks; playback runs from `source_offset` for the
+/// clip's duration in real time (no stretch), cut at the clip end or the asset end. The
+/// clip's own `offset` is always 0 and its `loop_length` always `None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioClipContent {
+    /// Asset id in [`crate::RackDoc::assets`] (64 lowercase hex digits).
+    pub asset: String,
+    /// First asset frame played (`<=` the asset's frame count).
+    pub source_offset: u64,
+    /// Clip gain in dB (finite, [`AUDIO_GAIN_DB_MIN`]..=[`AUDIO_GAIN_DB_MAX`]).
+    pub gain_db: f32,
+    /// Fade-in length in frames, from the clip start.
+    pub fade_in: u64,
+    /// Fade-out length in frames, ending at the clip end.
+    pub fade_out: u64,
+    /// Shape of both fades.
+    pub fade_curve: FadeCurve,
+}
+
+/// What a clip contains.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClipContent {
+    /// Notes, sorted by (tick, key).
+    Notes(Vec<Note>),
+    /// Automation points, sorted by tick, for the lane's parameter.
+    Automation(Vec<AutomationPoint>),
+    /// Audio from the sample pool (audio lanes only).
+    Audio(AudioClipContent),
+}
+
+/// A clip placed on a lane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Clip {
+    /// Stable id.
+    pub id: ClipId,
+    /// Song tick where the clip starts.
+    pub start: i64,
+    /// Clip length in ticks (> 0).
+    pub length: i64,
+    /// Content offset in ticks (content tick shown at the clip start).
+    pub offset: i64,
+    /// If `Some(n)`, the content loops every `n` ticks inside the clip.
+    pub loop_length: Option<i64>,
+    /// Muted clips do not play.
+    pub muted: bool,
+    /// The step grid: `Some` only on a note clip (the model rejects it
+    /// on audio and automation clips). It drives swing in [`flatten_notes`] and the step
+    /// editor; it never changes the clip's length or notes.
+    pub grid: Option<StepGrid>,
+    /// Content.
+    pub content: ClipContent,
+}
+
+/// The length of one step of a [`StepGrid`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StepResolution {
+    /// 1/8 note: `PPQ / 2` ticks.
+    Eighth,
+    /// 1/16 note: `PPQ / 4` ticks.
+    Sixteenth,
+    /// 1/32 note: `PPQ / 8` ticks.
+    ThirtySecond,
+}
+
+impl StepResolution {
+    /// The step length in ticks: 7 680, 3 840 or 1 920 at PPQ 15 360.
+    pub fn ticks(self) -> i64 {
+        match self {
+            StepResolution::Eighth => atomik_core::PPQ / 2,
+            StepResolution::Sixteenth => atomik_core::PPQ / 4,
+            StepResolution::ThirtySecond => atomik_core::PPQ / 8,
+        }
+    }
+}
+
+/// Fewest steps of a [`StepGrid`].
+pub const GRID_STEPS_MIN: u16 = 16;
+/// Most steps of a [`StepGrid`].
+pub const GRID_STEPS_MAX: u16 = 64;
+/// Largest swing of a [`StepGrid`], in percent.
+pub const GRID_SWING_MAX: u8 = 75;
+
+/// A step grid on a note clip: the step length, the number of steps the step editor
+/// shows and the swing. Swing delays the notes in odd steps; see [`flatten_notes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepGrid {
+    /// Step length.
+    pub resolution: StepResolution,
+    /// Number of steps, [`GRID_STEPS_MIN`]..=[`GRID_STEPS_MAX`].
+    pub steps: u16,
+    /// Swing in percent of half a step, 0..=[`GRID_SWING_MAX`].
+    pub swing: u8,
+}
+
+impl StepGrid {
+    /// Checks the ranges; `Err` says what is wrong.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(GRID_STEPS_MIN..=GRID_STEPS_MAX).contains(&self.steps) {
+            return Err(format!(
+                "grid steps {} is outside {GRID_STEPS_MIN}..={GRID_STEPS_MAX}",
+                self.steps
+            ));
+        }
+        if self.swing > GRID_SWING_MAX {
+            return Err(format!(
+                "grid swing {} is outside 0..={GRID_SWING_MAX}",
+                self.swing
+            ));
+        }
+        Ok(())
+    }
+
+    /// The swing delay in ticks of a note in an odd step: `(swing * s + 100) / 200` with
+    /// `s` the step length (swing percent of half a step, rounded half up).
+    pub fn swing_ticks(&self) -> i64 {
+        (i64::from(self.swing) * self.resolution.ticks() + 100) / 200
+    }
+
+    /// The swung start of a note whose content tick is `t`: `t` plus [`StepGrid::swing_ticks`]
+    /// when `t mod 2s` lies in `[s, 2s)`, else `t`.
+    pub fn swung(&self, t: i64) -> i64 {
+        let s = self.resolution.ticks();
+        if t.rem_euclid(2 * s) >= s {
+            t + self.swing_ticks()
+        } else {
+            t
+        }
+    }
+}
+
+/// A lane: the note lane, or an automation lane for one parameter of the track's device.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LaneKind {
+    /// Notes into the device's notes input.
+    Notes,
+    /// Automation of the parameter with this key.
+    Automation(String),
+    /// Audio clips (the only lane of a track on an `atomik.audio-track` device).
+    Audio,
+}
+
+/// A lane with its clips (sorted by start; clips may overlap: later clips win).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lane {
+    /// Lane kind.
+    pub kind: LaneKind,
+    /// Clips, sorted by (start, id).
+    pub clips: Vec<Clip>,
+}
+
+/// A track bound to one rack device.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Track {
+    /// The device this track plays.
+    pub device: DeviceKey,
+    /// Track mute.
+    pub muted: bool,
+    /// Track solo.
+    pub solo: bool,
+    /// Armed for recording.
+    pub armed: bool,
+    /// Lanes: index 0 is the note lane, or the audio lane of an audio track.
+    pub lanes: Vec<Lane>,
+}
+
+/// A tempo change at a tick (step change).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TempoEvent {
+    /// Tick where the tempo takes effect.
+    pub tick: i64,
+    /// Tempo in BPM (20..=999).
+    pub bpm: f64,
+}
+
+/// The song: tracks, tempo map, meter, loop.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Song {
+    /// Tracks in display order.
+    pub tracks: Vec<Track>,
+    /// Tempo changes, sorted by tick; the first is at tick 0 and mirrors `RackDoc::tempo_bpm`.
+    pub tempo: Vec<TempoEvent>,
+    /// Time signature numerator (beats per bar).
+    pub beats_per_bar: u8,
+    /// Time signature denominator (beat unit: 2, 4, 8, 16).
+    pub beat_unit: u8,
+    /// Loop range `[start, end)` in ticks.
+    pub loop_range: (i64, i64),
+    /// Loop enabled.
+    pub loop_enabled: bool,
+    /// Song end (for bounce length), in ticks.
+    pub end: i64,
+    /// Next clip id to allocate.
+    pub next_clip_id: u64,
+}
+
+/// Song edits (wrapped in `Command::Song`). Every command is undoable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SongCommand {
+    /// Create the track for a device (error if it exists, or if the device has no Notes input
+    /// and is not an `atomik.audio-track`). An audio-track device gets an audio lane at index 0
+    /// (no cables are made; see [`SongCommand::AddAudioTrack`]).
+    AddTrack {
+        /// Device.
+        device: DeviceKey,
+    },
+    /// Remove a device's track (its clips go to undo history).
+    RemoveTrack {
+        /// Device.
+        device: DeviceKey,
+    },
+    /// Set mute/solo/arm.
+    SetTrackFlags {
+        /// Device.
+        device: DeviceKey,
+        /// Mute.
+        muted: bool,
+        /// Solo.
+        solo: bool,
+        /// Armed.
+        armed: bool,
+    },
+    /// Add an automation lane for a parameter (creates the track if needed).
+    AddAutomationLane {
+        /// Device.
+        device: DeviceKey,
+        /// Param key.
+        param: String,
+    },
+    /// Insert a clip on a lane. `clip.id` is ignored and allocated; the command result reports
+    /// the allocated id via `SyncOp::SongChanged`'s companion `Document::last_clip_id()`.
+    AddClip {
+        /// Device (track).
+        device: DeviceKey,
+        /// Lane index.
+        lane: usize,
+        /// Clip (id ignored).
+        clip: Clip,
+    },
+    /// Remove a clip.
+    RemoveClip {
+        /// Clip id.
+        id: ClipId,
+    },
+    /// Move/resize a clip (start, length, offset, loop length, mute) keeping its content.
+    /// `merge` groups drags into one undo step.
+    SetClipGeometry {
+        /// Clip id.
+        id: ClipId,
+        /// New start.
+        start: i64,
+        /// New length.
+        length: i64,
+        /// New content offset.
+        offset: i64,
+        /// New loop length.
+        loop_length: Option<i64>,
+        /// New mute state.
+        muted: bool,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+    /// Replace a clip's content (notes or automation points) — used by the piano roll and
+    /// automation editors and by recording. `merge` groups drags into one undo step.
+    SetClipContent {
+        /// Clip id.
+        id: ClipId,
+        /// New content (must match the lane kind).
+        content: ClipContent,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+    /// Split a clip at a song tick (both halves keep content alignment).
+    SplitClip {
+        /// Clip id.
+        id: ClipId,
+        /// Song tick strictly inside the clip.
+        at: i64,
+    },
+    /// Duplicate a clip to a new start on the same lane.
+    DuplicateClip {
+        /// Clip id.
+        id: ClipId,
+        /// Start of the copy.
+        start: i64,
+    },
+    /// Replace the tempo map (first event must be at tick 0).
+    SetTempoMap(Vec<TempoEvent>),
+    /// Set the time signature.
+    SetMeter {
+        /// Beats per bar (1..=32).
+        beats_per_bar: u8,
+        /// Beat unit (2, 4, 8 or 16).
+        beat_unit: u8,
+    },
+    /// Set the loop range and enable flag.
+    SetLoop {
+        /// Range `[start, end)`, start < end.
+        range: (i64, i64),
+        /// Enabled.
+        enabled: bool,
+    },
+    /// Set the song end.
+    SetSongEnd(i64),
+    /// Set or clear a note clip's step grid. The clip must be a note
+    /// clip (audio and automation clips take no grid) and the grid must satisfy
+    /// [`StepGrid::validate`]. The clip's length and notes do not change. `merge` groups drags
+    /// (swing) into one undo step, in the same group as the other clip edits of that clip.
+    /// Reports [`crate::SyncOp::SongChanged`].
+    SetClipGrid {
+        /// Clip id.
+        clip: ClipId,
+        /// New grid, or `None` to clear it.
+        grid: Option<StepGrid>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+    /// One undo step that adds an `atomik.audio-track` device (appended to the rack,
+    /// key `audio-track`, `audio-track-2`, ...; named `name`, or the descriptor name made
+    /// unique), its console channel and master as `AddDevice` does, its track with a single
+    /// audio lane, and the cables `interface:in_1/in_2` to `in_l`/`in_r` (a lone `in_1` feeds
+    /// both when the document has one input; none without inputs).
+    AddAudioTrack {
+        /// Device name; blank names are rejected.
+        name: Option<String>,
+    },
+    /// Add an audio clip to the device's audio lane. The asset must be in the pool
+    /// (`Command::RegisterAsset`). The new id is reported by `Document::last_clip_id()`. A
+    /// recorded take is just this command (later clips win).
+    AddAudioClip {
+        /// Device (an audio track).
+        device: DeviceKey,
+        /// Start tick.
+        start: i64,
+        /// Length in ticks (> 0).
+        length: i64,
+        /// Asset id.
+        asset: String,
+        /// First asset frame played.
+        source_offset: u64,
+        /// Gain in dB.
+        gain_db: f32,
+        /// Fade-in frames.
+        fade_in: u64,
+        /// Fade-out frames.
+        fade_out: u64,
+        /// Fade shape.
+        fade_curve: FadeCurve,
+    },
+    /// Change an audio clip's start, length, mute and content in one undo step (a
+    /// trim moves the start and the source offset together). `merge` groups drags, as
+    /// `SetClipGeometry` does.
+    SetAudioClip {
+        /// Clip id.
+        id: ClipId,
+        /// New start tick.
+        start: i64,
+        /// New length in ticks.
+        length: i64,
+        /// New mute state.
+        muted: bool,
+        /// New content.
+        content: AudioClipContent,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+}
+
+/// An empty song at the given tempo, 4/4, loop bars 1–5 disabled, end at bar 17.
+pub fn empty_song(bpm: f64) -> Song {
+    let bar = atomik_core::PPQ * 4;
+    Song {
+        tracks: Vec::new(),
+        tempo: vec![TempoEvent { tick: 0, bpm }],
+        beats_per_bar: 4,
+        beat_unit: 4,
+        loop_range: (0, 4 * bar),
+        loop_enabled: false,
+        end: 16 * bar,
+        next_clip_id: 1,
+    }
+}
+
+mod flatten;
+
+pub use flatten::{
+    AudioRegion, audible_spans, effective_tracks, flatten_audio, flatten_automation, flatten_notes,
+};
+
+/// Lowest accepted audio clip gain in dB.
+pub const AUDIO_GAIN_DB_MIN: f32 = -120.0;
+/// Highest accepted audio clip gain in dB.
+pub const AUDIO_GAIN_DB_MAX: f32 = 24.0;
+/// Largest asset frame count, source offset or fade length the model accepts (2^40 frames,
+/// about 250 days at 48 kHz).
+pub const MAX_AUDIO_FRAMES: u64 = 1 << 40;
+/// The device type of an audio track (built by the engine).
+pub const AUDIO_TRACK_TYPE: &str = "atomik.audio-track";
+
+/// Largest tick, clip length, offset or note length the song accepts: 2^40 ticks (about 9 days
+/// at 120 BPM). Keeps every sum of two tick values far from `i64` overflow.
+pub const MAX_TICK: i64 = 1 << 40;
+
+/// Most repetitions a looped clip may hold (`length <= loop_length * MAX_LOOP_REPEATS`), so
+/// flattening stays bounded.
+pub const MAX_LOOP_REPEATS: i64 = 4096;
+
+/// Accepted beat units (time signature denominators).
+pub const BEAT_UNITS: [u8; 4] = [2, 4, 8, 16];
+
+/// Largest accepted beats per bar.
+pub const MAX_BEATS_PER_BAR: u8 = 32;
+
+impl Song {
+    /// The track of `device`, if any.
+    pub fn track(&self, device: &DeviceKey) -> Option<&Track> {
+        self.tracks.iter().find(|t| &t.device == device)
+    }
+
+    /// A clip by id, with its track and lane index.
+    pub fn clip(&self, id: ClipId) -> Option<(&Track, usize, &Clip)> {
+        self.tracks.iter().find_map(|t| {
+            t.lanes
+                .iter()
+                .enumerate()
+                .find_map(|(lane, l)| l.clips.iter().find(|c| c.id == id).map(|c| (t, lane, c)))
+        })
+    }
+
+    /// The song frame of a tick: `round(seconds(tick) * sample_rate)` with the tempo map
+    /// (ties up, 0 for negative ticks), computed as the engine's `song_frame` does (each
+    /// segment's start time accumulated once from integer tick spans, then one division), so
+    /// the model and the engine agree on every frame position.
+    pub fn frame_at(&self, tick: i64, sample_rate: u32) -> u64 {
+        TempoFrames::new(&self.tempo).frame_at(tick, sample_rate)
+    }
+
+    /// The time signature as `(beats_per_bar, beat_unit)`.
+    pub fn meter(&self) -> (u8, u8) {
+        (self.beats_per_bar, self.beat_unit)
+    }
+
+    /// Ticks per bar under the song's meter.
+    pub fn bar_ticks(&self) -> i64 {
+        bar_ticks(self.meter())
+    }
+}
+
+/// A tempo map with each segment's start time, for tick to frame maths.
+pub(crate) struct TempoFrames {
+    /// `(tick, seconds at tick, bpm)`.
+    segments: Vec<(i64, f64, f64)>,
+}
+
+impl TempoFrames {
+    pub(crate) fn new(tempo: &[TempoEvent]) -> Self {
+        let mut segments: Vec<(i64, f64, f64)> = Vec::with_capacity(tempo.len());
+        for e in tempo {
+            let seconds = segments.last().map_or(0.0, |&(t, s, bpm)| {
+                s + ((e.tick - t) as f64 * 60.0) / (bpm * atomik_core::PPQ as f64)
+            });
+            segments.push((e.tick, seconds, e.bpm));
+        }
+        Self { segments }
+    }
+
+    pub(crate) fn frame_at(&self, tick: i64, sample_rate: u32) -> u64 {
+        let k = self.segments.partition_point(|s| s.0 <= tick);
+        let Some(&(t0, s0, bpm)) = self.segments.get(k.saturating_sub(1)) else {
+            return 0;
+        };
+        let seconds = s0 + ((tick as f64 - t0 as f64) * 60.0) / (bpm * atomik_core::PPQ as f64);
+        let f = (seconds * f64::from(sample_rate)).round();
+        if f > 0.0 { f as u64 } else { 0 }
+    }
+}
+
+impl Track {
+    /// True for an audio track: its first lane is the audio lane. (A track only knows its
+    /// device key; [`crate::RackDoc::is_audio_track`] checks the device type too.)
+    pub fn is_audio(&self) -> bool {
+        self.lanes.first().is_some_and(|l| l.kind.is_audio())
+    }
+
+    /// Index of the audio lane, if any.
+    pub fn audio_lane(&self) -> Option<usize> {
+        self.lanes.iter().position(|l| l.kind.is_audio())
+    }
+
+    /// Index of the automation lane of `param`, if any.
+    pub fn automation_lane(&self, param: &str) -> Option<usize> {
+        self.lanes
+            .iter()
+            .position(|l| matches!(&l.kind, LaneKind::Automation(p) if p == param))
+    }
+}
+
+impl Clip {
+    /// Song tick where the clip ends (exclusive).
+    pub fn end(&self) -> i64 {
+        self.start + self.length
+    }
+}
+
+impl ClipContent {
+    /// True for note content.
+    pub fn is_notes(&self) -> bool {
+        matches!(self, ClipContent::Notes(_))
+    }
+
+    /// True for audio content.
+    pub fn is_audio(&self) -> bool {
+        matches!(self, ClipContent::Audio(_))
+    }
+}
+
+impl LaneKind {
+    /// True for the note lane.
+    pub fn is_notes(&self) -> bool {
+        matches!(self, LaneKind::Notes)
+    }
+
+    /// True for the audio lane.
+    pub fn is_audio(&self) -> bool {
+        matches!(self, LaneKind::Audio)
+    }
+}
+
+/// Ticks per beat for a meter (`PPQ * 4 / beat_unit`; at least 1).
+pub fn beat_ticks(meter: (u8, u8)) -> i64 {
+    (atomik_core::PPQ * 4 / i64::from(meter.1.max(1))).max(1)
+}
+
+/// Ticks per bar for a meter (at least 1).
+pub fn bar_ticks(meter: (u8, u8)) -> i64 {
+    beat_ticks(meter) * i64::from(meter.0.max(1))
+}
+
+/// A song tick as a 1-based bar, a 1-based beat and the ticks into that beat, under
+/// `meter = (beats_per_bar, beat_unit)`. Negative ticks read as 0; the bar saturates at
+/// `u32::MAX`.
+pub fn bars_beats_ticks(tick: i64, meter: (u8, u8)) -> (u32, u32, u32) {
+    let tick = tick.max(0);
+    let (bar, beat) = (bar_ticks(meter), beat_ticks(meter));
+    let in_bar = tick % bar;
+    let sat = |x: i64| u32::try_from(x).unwrap_or(u32::MAX);
+    (
+        sat(tick / bar).saturating_add(1),
+        sat(in_bar / beat + 1),
+        sat(in_bar % beat),
+    )
+}
+
+/// The inverse of [`bars_beats_ticks`]: `(bar, beat, ticks)` (bar and beat 1-based; 0 reads
+/// as 1) to a song tick.
+pub fn ticks_from_bars_beats_ticks(bbt: (u32, u32, u32), meter: (u8, u8)) -> i64 {
+    let (bar, beat, tick) = bbt;
+    i64::from(bar.saturating_sub(1)) * bar_ticks(meter)
+        + i64::from(beat.saturating_sub(1)) * beat_ticks(meter)
+        + i64::from(tick)
+}
+
+/// A song tick as `"bar.beat.tick"` (e.g. `"2.2.5"`), for position readouts.
+pub fn format_bbt(tick: i64, meter: (u8, u8)) -> String {
+    let (bar, beat, t) = bars_beats_ticks(tick, meter);
+    format!("{bar}.{beat}.{t}")
+}

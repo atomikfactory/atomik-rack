@@ -1,0 +1,22 @@
+# Normalise line endings to LF in the repository and working tree on every platform,
+# so `cargo fmt --check` and golden hashes behave the same on Windows, macOS and Linux.
+* text=auto eol=lf
+
+# Text files whose exact bytes matter (hashes, golden files, shell scripts).
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.atomik text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.sh text eol=lf
+
+# Binary files
+*.wav binary
+*.png binary
+*.ico binary
+*.aif binary
+*.aiff binary
+*.flac binary
+*.mp3 binary
+*.ogg binary

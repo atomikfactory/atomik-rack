@@ -1,0 +1,1093 @@
+//! App commands and the menu model shared by the in-window menu bar and the native (macOS)
+//! menus.
+//!
+//! Keys are not decided here: every [`AppCommand`] maps to a command id of the registry
+//! ([`AppCommand::command_id`]) and the shortcut text of a menu item is derived from the active
+//! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
+
+use crate::record::InputQuantize;
+use atomik_ui::keymap::Keymap;
+use atomik_ui::{CableVisibility, Flip, TransportAction};
+
+/// Something the user asked the app to do (menu item or shortcut).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppCommand {
+    /// File ▸ New.
+    New,
+    /// File ▸ Open….
+    Open,
+    /// File ▸ Save.
+    Save,
+    /// File ▸ Save As….
+    SaveAs,
+    /// File ▸ Import Audio…: pick audio files for new tracks or the selected
+    /// audio track.
+    ImportAudio,
+    /// File ▸ Export Patch… (the rack as patch v2, without the song).
+    ExportPatch,
+    /// File ▸ Stress Rack: 100 devices, 300 cables.
+    StressRack,
+    /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
+    StressSong,
+    /// File ▸ Quit.
+    Quit,
+    /// Edit ▸ Undo.
+    Undo,
+    /// Edit ▸ Redo.
+    Redo,
+    /// Edit ▸ Cut (the focused pane's selection to the clipboard, removed).
+    Cut,
+    /// Edit ▸ Copy.
+    Copy,
+    /// Edit ▸ Paste.
+    Paste,
+    /// Edit ▸ Duplicate.
+    Duplicate,
+    /// Edit ▸ Delete.
+    Delete,
+    /// Edit ▸ Select All.
+    SelectAll,
+    /// View ▸ Front/Back.
+    ToggleFlip,
+    /// View ▸ Cables ▸ Show / Hover / Hide.
+    Cables(CableVisibility),
+    /// View ▸ Zoom In.
+    ZoomIn,
+    /// View ▸ Zoom Out.
+    ZoomOut,
+    /// View ▸ Actual Size.
+    ZoomReset,
+    /// View ▸ Device Browser.
+    ToggleBrowser,
+    /// View ▸ Arrangement (show or hide the song area below the transport bar).
+    ToggleSong,
+    /// View ▸ Piano Roll (open it on the selected or first note clip, or close it).
+    TogglePianoRoll,
+    /// View ▸ Sample Editor (open it on the selected or first sampler, or close it).
+    ToggleSampleEditor,
+    /// View ▸ Step Editor (open it on the selected or first drum machine, or
+    /// close it).
+    ToggleStepEditor,
+    /// View ▸ Slice Editor (open it on the selected or first loop slicer, or
+    /// close it).
+    ToggleSliceEditor,
+    /// Transport ▸ … (play, stop, record, loop, metronome, return to zero).
+    Transport(TransportAction),
+    /// Transport ▸ Input Quantize.
+    Quantize(InputQuantize),
+    /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
+    ToggleConsoleDevices,
+    /// View > Show Console Links: draw the channel to master cables on the back of
+    /// the rack (a channel otherwise shows "Output: Master").
+    ToggleConsoleLinks,
+    /// Mixer ▸ Console (F5): swap the arrangement and the console in the lower pane.
+    ToggleConsole,
+    /// Mixer ▸ Maximise Console (Shift+F5): the console over the rack, or back.
+    MaximiseConsole,
+    /// Mixer ▸ Add Channel…: show the console and open its "add channel" picker.
+    AddChannel,
+    /// Mixer ▸ Delay Compensation (on/off, undoable).
+    ToggleCompensation,
+    /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
+    CreateInstrument,
+    /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
+    CreateEffect,
+    /// Create ▸ Create Audio Track (Ctrl+T).
+    CreateAudioTrack,
+    /// Create ▸ Create Mixer Channel (Ctrl+Shift+M): the console's add-channel picker.
+    CreateMixerChannel,
+    /// View ▸ Rack (F6): show or hide the rack (a layout flag in `workflow.json`).
+    ToggleRack,
+    /// View ▸ Sequencer Only (F7): hide the rack and the console; again restores the layout.
+    SequencerOnly,
+    /// View ▸ Clip Editor (F8): open the editor of the selected clip, or close the open one.
+    ToggleEditor,
+    /// Audio ▸ Settings….
+    AudioSettings,
+    /// Audio ▸ Plugins…: the third-party plugin settings, scan and list.
+    PluginSettings,
+    /// Audio ▸ Restart Audio.
+    RestartAudio,
+}
+
+impl AppCommand {
+    /// The registry command id and argument of this command, `None` only for
+    /// `Transport(Locate(_))`, a pointer action that is not a command.
+    pub fn command_id(&self) -> Option<(&'static str, Option<&'static str>)> {
+        Some(match self {
+            AppCommand::New => ("file.new", None),
+            AppCommand::Open => ("file.open", None),
+            AppCommand::Save => ("file.save", None),
+            AppCommand::SaveAs => ("file.save_as", None),
+            AppCommand::ImportAudio => ("file.import_audio", None),
+            AppCommand::ExportPatch => ("file.export_patch", None),
+            AppCommand::StressRack => ("file.stress_rack", None),
+            AppCommand::StressSong => ("file.stress_song", None),
+            AppCommand::Quit => ("file.quit", None),
+            AppCommand::Undo => ("edit.undo", None),
+            AppCommand::Redo => ("edit.redo", None),
+            AppCommand::Cut => ("edit.cut", None),
+            AppCommand::Copy => ("edit.copy", None),
+            AppCommand::Paste => ("edit.paste", None),
+            AppCommand::Duplicate => ("edit.duplicate", None),
+            AppCommand::Delete => ("edit.delete", None),
+            AppCommand::SelectAll => ("edit.select_all", None),
+            AppCommand::ToggleFlip => ("view.toggle_flip", None),
+            AppCommand::Cables(CableVisibility::Show) => ("view.cables", Some("show")),
+            AppCommand::Cables(CableVisibility::HoverOnly) => ("view.cables", Some("hover")),
+            AppCommand::Cables(CableVisibility::Hide) => ("view.cables", Some("hide")),
+            AppCommand::ZoomIn => ("view.zoom_in", None),
+            AppCommand::ZoomOut => ("view.zoom_out", None),
+            AppCommand::ZoomReset => ("view.zoom_reset", None),
+            AppCommand::ToggleBrowser => ("view.toggle_browser", None),
+            AppCommand::ToggleSong => ("view.toggle_song", None),
+            AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
+            AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
+            AppCommand::ToggleStepEditor => ("view.toggle_step_editor", None),
+            AppCommand::ToggleSliceEditor => ("view.toggle_slice_editor", None),
+            AppCommand::Transport(TransportAction::Play) => ("transport.play", None),
+            AppCommand::Transport(TransportAction::Stop) => ("transport.stop", None),
+            AppCommand::Transport(TransportAction::TogglePlay) => ("transport.play_stop", None),
+            AppCommand::Transport(TransportAction::ReturnToZero) => ("transport.go_start", None),
+            AppCommand::Transport(TransportAction::ToggleLoop) => ("transport.loop", None),
+            AppCommand::Transport(TransportAction::ToggleRecord) => ("transport.record", None),
+            AppCommand::Transport(TransportAction::ToggleMetronome) => {
+                ("transport.metronome", None)
+            }
+            AppCommand::Transport(TransportAction::Locate(_)) => return None,
+            AppCommand::Quantize(InputQuantize::Off) => ("transport.input_quantize", Some("off")),
+            AppCommand::Quantize(InputQuantize::Eighth) => {
+                ("transport.input_quantize", Some("eighth"))
+            }
+            AppCommand::Quantize(InputQuantize::Sixteenth) => {
+                ("transport.input_quantize", Some("sixteenth"))
+            }
+            AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
+            AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
+            AppCommand::ToggleConsole => ("view.toggle_console", None),
+            AppCommand::MaximiseConsole => ("view.maximise_console", None),
+            AppCommand::AddChannel => ("mixer.add_channel", None),
+            AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
+            AppCommand::CreateInstrument => ("create.instrument", None),
+            AppCommand::CreateEffect => ("create.effect", None),
+            AppCommand::CreateAudioTrack => ("create.audio_track", None),
+            AppCommand::CreateMixerChannel => ("create.mixer_channel", None),
+            AppCommand::ToggleRack => ("view.toggle_rack", None),
+            AppCommand::SequencerOnly => ("view.sequencer_only", None),
+            AppCommand::ToggleEditor => ("view.toggle_editor", None),
+            AppCommand::AudioSettings => ("audio.settings", None),
+            AppCommand::PluginSettings => ("audio.plugins", None),
+            AppCommand::RestartAudio => ("audio.restart", None),
+        })
+    }
+
+    /// The command a registry id (and argument) stands for, if the app has one: the inverse
+    /// of [`Self::command_id`]. Ids of commands the shell does not run yet give `None`.
+    pub fn from_command(id: &str, arg: Option<&str>) -> Option<AppCommand> {
+        Some(match (id, arg) {
+            ("file.new", None) => AppCommand::New,
+            ("file.open", None) => AppCommand::Open,
+            ("file.save", None) => AppCommand::Save,
+            ("file.save_as", None) => AppCommand::SaveAs,
+            ("file.import_audio", None) => AppCommand::ImportAudio,
+            ("file.export_patch", None) => AppCommand::ExportPatch,
+            ("file.stress_rack", None) => AppCommand::StressRack,
+            ("file.stress_song", None) => AppCommand::StressSong,
+            ("file.quit", None) => AppCommand::Quit,
+            ("edit.undo", None) => AppCommand::Undo,
+            ("edit.redo", None) => AppCommand::Redo,
+            ("edit.cut", None) => AppCommand::Cut,
+            ("edit.copy", None) => AppCommand::Copy,
+            ("edit.paste", None) => AppCommand::Paste,
+            ("edit.duplicate", None) => AppCommand::Duplicate,
+            ("edit.delete", None) => AppCommand::Delete,
+            ("edit.select_all", None) => AppCommand::SelectAll,
+            ("view.toggle_flip", None) => AppCommand::ToggleFlip,
+            ("view.cables", Some("show")) => AppCommand::Cables(CableVisibility::Show),
+            ("view.cables", Some("hover")) => AppCommand::Cables(CableVisibility::HoverOnly),
+            ("view.cables", Some("hide")) => AppCommand::Cables(CableVisibility::Hide),
+            ("view.zoom_in", None) => AppCommand::ZoomIn,
+            ("view.zoom_out", None) => AppCommand::ZoomOut,
+            ("view.zoom_reset", None) => AppCommand::ZoomReset,
+            ("view.toggle_browser", None) => AppCommand::ToggleBrowser,
+            ("view.toggle_song", None) => AppCommand::ToggleSong,
+            ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
+            ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
+            ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
+            ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
+            ("transport.play", None) => AppCommand::Transport(TransportAction::Play),
+            ("transport.stop", None) => AppCommand::Transport(TransportAction::Stop),
+            ("transport.play_stop", None) => AppCommand::Transport(TransportAction::TogglePlay),
+            ("transport.go_start", None) => AppCommand::Transport(TransportAction::ReturnToZero),
+            ("transport.loop", None) => AppCommand::Transport(TransportAction::ToggleLoop),
+            ("transport.record", None) => AppCommand::Transport(TransportAction::ToggleRecord),
+            ("transport.metronome", None) => {
+                AppCommand::Transport(TransportAction::ToggleMetronome)
+            }
+            ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::Off),
+            ("transport.input_quantize", Some("eighth")) => {
+                AppCommand::Quantize(InputQuantize::Eighth)
+            }
+            ("transport.input_quantize", Some("sixteenth")) => {
+                AppCommand::Quantize(InputQuantize::Sixteenth)
+            }
+            ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
+            ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
+            ("view.toggle_console", None) => AppCommand::ToggleConsole,
+            ("view.maximise_console", None) => AppCommand::MaximiseConsole,
+            ("mixer.add_channel", None) => AppCommand::AddChannel,
+            ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
+            ("create.instrument", None) => AppCommand::CreateInstrument,
+            ("create.effect", None) => AppCommand::CreateEffect,
+            ("create.audio_track", None) => AppCommand::CreateAudioTrack,
+            ("create.mixer_channel", None) => AppCommand::CreateMixerChannel,
+            ("view.toggle_rack", None) => AppCommand::ToggleRack,
+            ("view.sequencer_only", None) => AppCommand::SequencerOnly,
+            ("view.toggle_editor", None) => AppCommand::ToggleEditor,
+            ("audio.settings", None) => AppCommand::AudioSettings,
+            ("audio.plugins", None) => AppCommand::PluginSettings,
+            ("audio.restart", None) => AppCommand::RestartAudio,
+            _ => return None,
+        })
+    }
+
+    /// The shortcut text of this command in `keymap`, if it has a command id and a binding.
+    pub fn shortcut_text(&self, keymap: &Keymap) -> Option<String> {
+        let (id, arg) = self.command_id()?;
+        keymap.shortcut_text(id, arg)
+    }
+}
+
+/// The text of a menu shortcut as a native macOS accelerator (`Cmd+Shift+S` becomes
+/// `CmdOrCtrl+Shift+S`, `Opt` becomes `Alt`); only chords that start with the primary
+/// modifier get one (Tab, F-keys and the like stay with the window).
+pub fn native_accelerator_text(shortcut: &str) -> Option<String> {
+    let rest = shortcut.strip_prefix("Cmd+")?;
+    Some(format!("CmdOrCtrl+{}", rest.replace("Opt+", "Alt+")))
+}
+
+/// What the menus show as checked or enabled.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuState {
+    /// Visible side.
+    pub flip: Flip,
+    /// Cable visibility.
+    pub cables: CableVisibility,
+    /// Browser shown.
+    pub browser: bool,
+    /// Undo possible.
+    pub can_undo: bool,
+    /// Redo possible.
+    pub can_redo: bool,
+    /// The focused pane has a selection Cut, Copy, Duplicate and Delete can work on.
+    pub can_edit: bool,
+    /// The clipboard holds something the focused pane can paste.
+    pub can_paste: bool,
+    /// The arrangement area is shown.
+    pub song_visible: bool,
+    /// The piano roll is open.
+    pub piano_roll: bool,
+    /// The sample editor is open.
+    pub sample_editor: bool,
+    /// The step editor is open.
+    pub step_editor: bool,
+    /// The slice editor is open.
+    pub slice_editor: bool,
+    /// Playing.
+    pub playing: bool,
+    /// Recording.
+    pub recording: bool,
+    /// The song loop is on.
+    pub loop_enabled: bool,
+    /// The metronome is on.
+    pub metronome: bool,
+    /// Input quantize for recording.
+    pub quantize: InputQuantize,
+    /// The console shows in the lower pane.
+    pub console: bool,
+    /// The console is maximised over the rack.
+    pub console_maximised: bool,
+    /// Delay compensation is on (document switch).
+    pub compensation: bool,
+    /// Console devices are shown in the rack.
+    pub console_devices: bool,
+    /// The console links are drawn as cables.
+    pub console_links: bool,
+    /// The rack is shown.
+    pub rack: bool,
+    /// The sequencer-only layout (F7) is active.
+    pub sequencer_only: bool,
+    /// An editor (piano roll, sample, step, slice, ...) is open.
+    pub editor: bool,
+}
+
+/// One menu item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuItem {
+    /// Label (`…` marks items that open a dialog).
+    pub label: &'static str,
+    /// What it does.
+    pub command: AppCommand,
+    /// Shortcut text derived from the keymap and the OS, e.g. `Ctrl+S` (`Cmd+S` on macOS).
+    pub shortcut: Option<String>,
+    /// `Some(checked)` for check/radio items.
+    pub checked: Option<bool>,
+    /// Whether it can be chosen.
+    pub enabled: bool,
+}
+
+/// A menu entry.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MenuEntry {
+    /// An item.
+    Item(MenuItem),
+    /// A separator line.
+    Separator,
+}
+
+/// A top-level menu.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Menu {
+    /// Title in the menu bar.
+    pub title: &'static str,
+    /// Entries, top to bottom.
+    pub entries: Vec<MenuEntry>,
+}
+
+impl Menu {
+    /// The items (separators skipped).
+    pub fn items(&self) -> impl Iterator<Item = &MenuItem> {
+        self.entries.iter().filter_map(|e| match e {
+            MenuEntry::Item(i) => Some(i),
+            MenuEntry::Separator => None,
+        })
+    }
+}
+
+/// The menu bar: File, Edit, View, Transport, Mixer, Audio. Shortcut texts come from `keymap`
+/// (its OS decides `Ctrl` or `Cmd`); no key is written in this function.
+pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
+    let make = |label, command: AppCommand, checked, enabled| {
+        MenuEntry::Item(MenuItem {
+            label,
+            command,
+            shortcut: command.shortcut_text(keymap),
+            checked,
+            enabled,
+        })
+    };
+    let item = |label, command| make(label, command, None, true);
+    let check = |label, command, checked| make(label, command, Some(checked), true);
+    let enabled = |label, command, enabled| make(label, command, None, enabled);
+    let cables = |label, v: CableVisibility| check(label, AppCommand::Cables(v), state.cables == v);
+    let quantize =
+        |label, q: InputQuantize| check(label, AppCommand::Quantize(q), state.quantize == q);
+    let transport = AppCommand::Transport;
+    vec![
+        Menu {
+            title: "File",
+            entries: vec![
+                item("New", AppCommand::New),
+                item("Open\u{2026}", AppCommand::Open),
+                item("Save", AppCommand::Save),
+                item("Save As\u{2026}", AppCommand::SaveAs),
+                item("Import Audio\u{2026}", AppCommand::ImportAudio),
+                item("Export Patch\u{2026}", AppCommand::ExportPatch),
+                MenuEntry::Separator,
+                item("Stress Rack", AppCommand::StressRack),
+                item("Stress Song", AppCommand::StressSong),
+                MenuEntry::Separator,
+                item("Quit", AppCommand::Quit),
+            ],
+        },
+        Menu {
+            title: "Edit",
+            entries: vec![
+                enabled("Undo", AppCommand::Undo, state.can_undo),
+                enabled("Redo", AppCommand::Redo, state.can_redo),
+                MenuEntry::Separator,
+                enabled("Cut", AppCommand::Cut, state.can_edit),
+                enabled("Copy", AppCommand::Copy, state.can_edit),
+                enabled("Paste", AppCommand::Paste, state.can_paste),
+                enabled("Duplicate", AppCommand::Duplicate, state.can_edit),
+                enabled("Delete", AppCommand::Delete, state.can_edit),
+                MenuEntry::Separator,
+                item("Select All", AppCommand::SelectAll),
+            ],
+        },
+        Menu {
+            title: "View",
+            entries: vec![
+                check(
+                    "Back of Rack",
+                    AppCommand::ToggleFlip,
+                    state.flip == Flip::Back,
+                ),
+                MenuEntry::Separator,
+                cables("Cables: Show", CableVisibility::Show),
+                cables("Cables: Hover", CableVisibility::HoverOnly),
+                cables("Cables: Hide", CableVisibility::Hide),
+                MenuEntry::Separator,
+                item("Zoom In", AppCommand::ZoomIn),
+                item("Zoom Out", AppCommand::ZoomOut),
+                item("Actual Size", AppCommand::ZoomReset),
+                MenuEntry::Separator,
+                check("Device Browser", AppCommand::ToggleBrowser, state.browser),
+                check("Rack", AppCommand::ToggleRack, state.rack),
+                check(
+                    "Sequencer Only",
+                    AppCommand::SequencerOnly,
+                    state.sequencer_only,
+                ),
+                check("Clip Editor", AppCommand::ToggleEditor, state.editor),
+                MenuEntry::Separator,
+                check("Arrangement", AppCommand::ToggleSong, state.song_visible),
+                check("Piano Roll", AppCommand::TogglePianoRoll, state.piano_roll),
+                check(
+                    "Sample Editor",
+                    AppCommand::ToggleSampleEditor,
+                    state.sample_editor,
+                ),
+                check(
+                    "Step Editor",
+                    AppCommand::ToggleStepEditor,
+                    state.step_editor,
+                ),
+                check(
+                    "Slice Editor",
+                    AppCommand::ToggleSliceEditor,
+                    state.slice_editor,
+                ),
+                MenuEntry::Separator,
+                check(
+                    "Show Console Devices in Rack",
+                    AppCommand::ToggleConsoleDevices,
+                    state.console_devices,
+                ),
+                check(
+                    "Show Console Links",
+                    AppCommand::ToggleConsoleLinks,
+                    state.console_links,
+                ),
+            ],
+        },
+        Menu {
+            title: "Transport",
+            entries: vec![
+                check(
+                    "Play / Stop",
+                    transport(TransportAction::TogglePlay),
+                    state.playing,
+                ),
+                check(
+                    "Record",
+                    transport(TransportAction::ToggleRecord),
+                    state.recording,
+                ),
+                item("Return to Zero", transport(TransportAction::ReturnToZero)),
+                MenuEntry::Separator,
+                check(
+                    "Loop",
+                    transport(TransportAction::ToggleLoop),
+                    state.loop_enabled,
+                ),
+                check(
+                    "Metronome",
+                    transport(TransportAction::ToggleMetronome),
+                    state.metronome,
+                ),
+                MenuEntry::Separator,
+                quantize("Input Quantize: Off", InputQuantize::Off),
+                quantize("Input Quantize: 1/8", InputQuantize::Eighth),
+                quantize("Input Quantize: 1/16", InputQuantize::Sixteenth),
+            ],
+        },
+        Menu {
+            title: "Mixer",
+            entries: vec![
+                check("Console", AppCommand::ToggleConsole, state.console),
+                check(
+                    "Maximise Console",
+                    AppCommand::MaximiseConsole,
+                    state.console_maximised,
+                ),
+                MenuEntry::Separator,
+                item("Add Channel\u{2026}", AppCommand::AddChannel),
+                MenuEntry::Separator,
+                check(
+                    "Delay Compensation",
+                    AppCommand::ToggleCompensation,
+                    state.compensation,
+                ),
+            ],
+        },
+        Menu {
+            title: "Create",
+            entries: vec![
+                item("Create Instrument\u{2026}", AppCommand::CreateInstrument),
+                item("Create Effect\u{2026}", AppCommand::CreateEffect),
+                item("Create Audio Track", AppCommand::CreateAudioTrack),
+                item(
+                    "Create Mixer Channel\u{2026}",
+                    AppCommand::CreateMixerChannel,
+                ),
+            ],
+        },
+        Menu {
+            title: "Audio",
+            entries: vec![
+                item("Settings\u{2026}", AppCommand::AudioSettings),
+                item("Plugins\u{2026}", AppCommand::PluginSettings),
+                item("Restart Audio", AppCommand::RestartAudio),
+            ],
+        },
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atomik_ui::keymap::{Os, Profile, Registry};
+
+    fn legacy(os: Os) -> Keymap {
+        Keymap::bundled(Profile::Legacy, os)
+    }
+
+    fn state() -> MenuState {
+        MenuState {
+            flip: Flip::Front,
+            cables: CableVisibility::Show,
+            browser: false,
+            can_undo: true,
+            can_redo: false,
+            can_edit: false,
+            can_paste: false,
+            song_visible: true,
+            piano_roll: false,
+            sample_editor: false,
+            step_editor: false,
+            slice_editor: false,
+            playing: false,
+            recording: false,
+            loop_enabled: false,
+            metronome: false,
+            quantize: InputQuantize::Off,
+            console: false,
+            console_maximised: false,
+            compensation: true,
+            console_devices: false,
+            console_links: false,
+            rack: true,
+            sequencer_only: false,
+            editor: false,
+        }
+    }
+
+    /// Every app command (a variant of each kind), for the bijection tests.
+    fn all_commands() -> Vec<AppCommand> {
+        let mut v = vec![
+            AppCommand::New,
+            AppCommand::Open,
+            AppCommand::Save,
+            AppCommand::SaveAs,
+            AppCommand::ImportAudio,
+            AppCommand::ExportPatch,
+            AppCommand::StressRack,
+            AppCommand::StressSong,
+            AppCommand::Quit,
+            AppCommand::Undo,
+            AppCommand::Redo,
+            AppCommand::Cut,
+            AppCommand::Copy,
+            AppCommand::Paste,
+            AppCommand::Duplicate,
+            AppCommand::Delete,
+            AppCommand::SelectAll,
+            AppCommand::ToggleFlip,
+            AppCommand::ZoomIn,
+            AppCommand::ZoomOut,
+            AppCommand::ZoomReset,
+            AppCommand::ToggleBrowser,
+            AppCommand::ToggleSong,
+            AppCommand::TogglePianoRoll,
+            AppCommand::ToggleSampleEditor,
+            AppCommand::ToggleStepEditor,
+            AppCommand::ToggleSliceEditor,
+            AppCommand::ToggleConsoleDevices,
+            AppCommand::ToggleConsoleLinks,
+            AppCommand::ToggleConsole,
+            AppCommand::MaximiseConsole,
+            AppCommand::AddChannel,
+            AppCommand::ToggleCompensation,
+            AppCommand::CreateInstrument,
+            AppCommand::CreateEffect,
+            AppCommand::CreateAudioTrack,
+            AppCommand::CreateMixerChannel,
+            AppCommand::ToggleRack,
+            AppCommand::SequencerOnly,
+            AppCommand::ToggleEditor,
+            AppCommand::AudioSettings,
+            AppCommand::PluginSettings,
+            AppCommand::RestartAudio,
+        ];
+        for c in [
+            CableVisibility::Show,
+            CableVisibility::HoverOnly,
+            CableVisibility::Hide,
+        ] {
+            v.push(AppCommand::Cables(c));
+        }
+        for t in [
+            TransportAction::Play,
+            TransportAction::Stop,
+            TransportAction::TogglePlay,
+            TransportAction::ReturnToZero,
+            TransportAction::ToggleLoop,
+            TransportAction::ToggleRecord,
+            TransportAction::ToggleMetronome,
+        ] {
+            v.push(AppCommand::Transport(t));
+        }
+        for q in [
+            InputQuantize::Off,
+            InputQuantize::Eighth,
+            InputQuantize::Sixteenth,
+        ] {
+            v.push(AppCommand::Quantize(q));
+        }
+        v
+    }
+
+    #[test]
+    fn command_ids_are_a_bijection_onto_registry_commands() {
+        let registry = Registry::bundled();
+        let mut seen = Vec::new();
+        for c in all_commands() {
+            let (id, arg) = c.command_id().expect("every command has an id");
+            assert!(registry.validate(id, arg), "{c:?} -> {id} {arg:?}");
+            assert_eq!(AppCommand::from_command(id, arg), Some(c), "{id}");
+            assert!(!seen.contains(&(id, arg)), "{id} {arg:?} is used twice");
+            seen.push((id, arg));
+        }
+        assert_eq!(
+            AppCommand::Transport(TransportAction::Locate(4)).command_id(),
+            None,
+            "a locate is a pointer action, not a command"
+        );
+        assert_eq!(AppCommand::from_command("create.nothing", None), None);
+        assert_eq!(AppCommand::from_command("view.cables", None), None);
+        assert_eq!(
+            AppCommand::from_command("view.cables", Some("sideways")),
+            None
+        );
+    }
+
+    #[test]
+    fn every_menu_item_maps_to_a_menu_command_of_the_registry() {
+        let registry = Registry::bundled();
+        let keymap = legacy(Os::Windows);
+        for menu in menus(&state(), &keymap) {
+            for item in menu.items() {
+                let (id, _) = item.command.command_id().expect("menu items have ids");
+                let def = registry.get(id).expect("registered");
+                assert!(def.menu, "{id} is in a menu so the registry says menu");
+                assert!(!def.label.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn menu_commands_in_the_registry_all_have_a_menu_item() {
+        let keymap = legacy(Os::Windows);
+        let model = menus(&state(), &keymap);
+        let in_menu: Vec<AppCommand> = model
+            .iter()
+            .flat_map(Menu::items)
+            .map(|i| i.command)
+            .collect();
+        for def in Registry::bundled().commands().iter().filter(|d| d.menu) {
+            let any = all_commands()
+                .into_iter()
+                .filter(|c| c.command_id().is_some_and(|(id, _)| id == def.id))
+                .any(|c| in_menu.contains(&c));
+            assert!(any, "{} is marked menu but has no item", def.id);
+        }
+    }
+
+    /// The `shortcut()` function this file had before the configurable keymap, kept here as the oracle of
+    /// the legacy profile: Ctrl or Cmd was the command modifier.
+    fn old_shortcut(key: &atomik_ui::Key, modifiers: atomik_ui::Modifiers) -> Option<AppCommand> {
+        use atomik_ui::Key;
+        if modifiers.alt {
+            return None;
+        }
+        if *key == Key::F(5) && !(modifiers.ctrl || modifiers.meta) {
+            return Some(if modifiers.shift {
+                AppCommand::MaximiseConsole
+            } else {
+                AppCommand::ToggleConsole
+            });
+        }
+        let command = modifiers.ctrl || modifiers.meta;
+        if *key == Key::Space && command && !modifiers.shift {
+            return Some(AppCommand::Transport(TransportAction::ToggleRecord));
+        }
+        if !command {
+            return (*key == Key::Tab && !modifiers.shift).then_some(AppCommand::ToggleFlip);
+        }
+        let Key::Char(c) = key else {
+            return None;
+        };
+        let shift = modifiers.shift;
+        Some(match (c.to_ascii_lowercase(), shift) {
+            ('n', false) => AppCommand::New,
+            ('o', false) => AppCommand::Open,
+            ('s', false) => AppCommand::Save,
+            ('s', true) => AppCommand::SaveAs,
+            ('q', false) => AppCommand::Quit,
+            ('i', false) => AppCommand::ImportAudio,
+            ('z', false) => AppCommand::Undo,
+            ('z', true) | ('y', _) => AppCommand::Redo,
+            ('=' | '+', _) => AppCommand::ZoomIn,
+            ('-', false) => AppCommand::ZoomOut,
+            ('0', false) => AppCommand::ZoomReset,
+            ('b', false) => AppCommand::ToggleBrowser,
+            (',', false) => AppCommand::AudioSettings,
+            _ => return None,
+        })
+    }
+
+    /// The legacy profile in the `Global` context, through the router's own resolution.
+    fn legacy_shortcut(
+        keymap: &Keymap,
+        key: &atomik_ui::Key,
+        modifiers: atomik_ui::Modifiers,
+    ) -> Option<AppCommand> {
+        use atomik_ui::keymap::{ContextStack, Resolution};
+        match keymap.resolve_event(key, modifiers, &ContextStack::global()) {
+            Resolution::Bound(list) => list
+                .iter()
+                .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref())),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn the_legacy_profile_reproduces_the_old_shortcut_function_exactly() {
+        use atomik_ui::{Key, Modifiers};
+        let mut keys: Vec<Key> =
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789=+-_,.;/[]"
+                .chars()
+                .map(Key::Char)
+                .collect();
+        keys.extend([
+            Key::Space,
+            Key::Enter,
+            Key::Tab,
+            Key::Escape,
+            Key::Backspace,
+            Key::Delete,
+            Key::Up,
+            Key::Down,
+            Key::Left,
+            Key::Right,
+            Key::Home,
+            Key::End,
+            Key::PageUp,
+            Key::PageDown,
+            Key::F(1),
+            Key::F(4),
+            Key::F(5),
+            Key::F(6),
+            Key::F(12),
+            Key::Other,
+        ]);
+        // On Windows and Linux the command modifier is Control; on macOS it is Command. (The
+        // old function accepted either everywhere; the new keyboard matching is strict
+        // (d), so each OS is compared with its own primary modifier.)
+        for os in Os::ALL {
+            let keymap = legacy(os);
+            for shift in [false, true] {
+                for alt in [false, true] {
+                    for primary in [false, true] {
+                        let mods = Modifiers {
+                            shift,
+                            alt,
+                            ctrl: primary && os != Os::Mac,
+                            meta: primary && os == Os::Mac,
+                        };
+                        for key in &keys {
+                            assert_eq!(
+                                legacy_shortcut(&keymap, key, mods),
+                                old_shortcut(key, mods),
+                                "{os:?} {key:?} {mods:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn menu_shortcut_text_is_derived_from_the_keymap_and_the_os() {
+        let find = |model: &[Menu], label: &str| {
+            model
+                .iter()
+                .flat_map(Menu::items)
+                .find(|i| i.label == label)
+                .unwrap()
+                .shortcut
+                .clone()
+        };
+        let win = menus(&state(), &legacy(Os::Windows));
+        let mac = menus(&state(), &legacy(Os::Mac));
+        assert_eq!(
+            find(&win, "Save As\u{2026}").as_deref(),
+            Some("Ctrl+Shift+S")
+        );
+        assert_eq!(
+            find(&mac, "Save As\u{2026}").as_deref(),
+            Some("Cmd+Shift+S")
+        );
+        assert_eq!(
+            find(&win, "Import Audio\u{2026}").as_deref(),
+            Some("Ctrl+I")
+        );
+        assert_eq!(find(&win, "Record").as_deref(), Some("Ctrl+Space"));
+        assert_eq!(find(&win, "Redo").as_deref(), Some("Ctrl+Y"));
+        assert_eq!(find(&win, "Zoom In").as_deref(), Some("Ctrl+="));
+        assert_eq!(find(&win, "Return to Zero").as_deref(), Some("Enter"));
+        assert_eq!(find(&win, "Back of Rack").as_deref(), Some("Tab"));
+        assert_eq!(find(&win, "Maximise Console").as_deref(), Some("Shift+F5"));
+        assert_eq!(find(&win, "Cables: Hide"), None);
+        // The standard profile shows its own keys, so a remap changes the menu.
+        let reference = Keymap::bundled(Profile::Standard, Os::Mac);
+        let model = menus(&state(), &reference);
+        assert_eq!(
+            find(&model, "Import Audio\u{2026}").as_deref(),
+            Some("Cmd+Opt+I")
+        );
+        assert_eq!(find(&model, "Record").as_deref(), Some("Cmd+Enter"));
+        assert_eq!(
+            find(&model, "Create Instrument\u{2026}").as_deref(),
+            Some("Cmd+I")
+        );
+        assert_eq!(find(&model, "Rack").as_deref(), Some("F6"));
+        assert_eq!(find(&model, "Device Browser").as_deref(), Some("F3"));
+    }
+
+    #[test]
+    fn no_shortcut_text_is_a_string_literal_in_this_file() {
+        let source = include_str!("commands.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        for needle in [
+            "\"Ctrl+",
+            "\"Cmd+",
+            "\"Shift+F",
+            "Some(\"F5",
+            "Some(\"Tab\"",
+        ] {
+            assert!(
+                !production.contains(needle) || needle == "\"Cmd+",
+                "{needle} found: shortcuts come from the keymap"
+            );
+        }
+        assert_eq!(
+            production.matches("\"Cmd+\"").count(),
+            1,
+            "the only literal is the prefix that native_accelerator_text strips"
+        );
+    }
+
+    #[test]
+    fn native_accelerators_follow_the_mac_shortcut_text() {
+        assert_eq!(
+            native_accelerator_text("Cmd+Shift+S").as_deref(),
+            Some("CmdOrCtrl+Shift+S")
+        );
+        assert_eq!(
+            native_accelerator_text("Cmd+Opt+I").as_deref(),
+            Some("CmdOrCtrl+Alt+I")
+        );
+        assert_eq!(native_accelerator_text("Tab"), None);
+        assert_eq!(native_accelerator_text("F5"), None);
+        assert_eq!(native_accelerator_text("Ctrl+Space"), None);
+    }
+
+    #[test]
+    fn the_menu_bar_has_the_five_menus_with_their_items() {
+        let m = menus(&state(), &legacy(Os::Windows));
+        let titles: Vec<_> = m.iter().map(|m| m.title).collect();
+        assert_eq!(
+            titles,
+            [
+                "File",
+                "Edit",
+                "View",
+                "Transport",
+                "Mixer",
+                "Create",
+                "Audio"
+            ]
+        );
+        let labels = |i: usize| m[i].items().map(|it| it.label).collect::<Vec<_>>();
+        assert_eq!(
+            labels(0),
+            [
+                "New",
+                "Open\u{2026}",
+                "Save",
+                "Save As\u{2026}",
+                "Import Audio\u{2026}",
+                "Export Patch\u{2026}",
+                "Stress Rack",
+                "Stress Song",
+                "Quit"
+            ]
+        );
+        assert_eq!(
+            labels(1),
+            [
+                "Undo",
+                "Redo",
+                "Cut",
+                "Copy",
+                "Paste",
+                "Duplicate",
+                "Delete",
+                "Select All"
+            ]
+        );
+        assert_eq!(
+            labels(2),
+            [
+                "Back of Rack",
+                "Cables: Show",
+                "Cables: Hover",
+                "Cables: Hide",
+                "Zoom In",
+                "Zoom Out",
+                "Actual Size",
+                "Device Browser",
+                "Rack",
+                "Sequencer Only",
+                "Clip Editor",
+                "Arrangement",
+                "Piano Roll",
+                "Sample Editor",
+                "Step Editor",
+                "Slice Editor",
+                "Show Console Devices in Rack",
+                "Show Console Links",
+            ]
+        );
+        assert_eq!(
+            labels(4),
+            [
+                "Console",
+                "Maximise Console",
+                "Add Channel\u{2026}",
+                "Delay Compensation"
+            ]
+        );
+        assert_eq!(
+            labels(5),
+            [
+                "Create Instrument\u{2026}",
+                "Create Effect\u{2026}",
+                "Create Audio Track",
+                "Create Mixer Channel\u{2026}"
+            ]
+        );
+        assert_eq!(
+            labels(6),
+            ["Settings\u{2026}", "Plugins\u{2026}", "Restart Audio"]
+        );
+    }
+
+    #[test]
+    fn checks_and_enabled_states_follow_the_state() {
+        let keymap = legacy(Os::Windows);
+        let m = menus(
+            &MenuState {
+                flip: Flip::Back,
+                cables: CableVisibility::HoverOnly,
+                browser: true,
+                can_undo: false,
+                can_redo: true,
+                can_edit: true,
+                can_paste: false,
+                song_visible: false,
+                piano_roll: true,
+                sample_editor: false,
+                step_editor: false,
+                slice_editor: false,
+                playing: true,
+                recording: false,
+                loop_enabled: true,
+                metronome: false,
+                quantize: InputQuantize::Eighth,
+                console: true,
+                console_maximised: false,
+                compensation: false,
+                console_devices: true,
+                console_links: false,
+                rack: true,
+                sequencer_only: false,
+                editor: false,
+            },
+            &keymap,
+        );
+        let find = |label: &str| {
+            m.iter()
+                .flat_map(|m| m.items())
+                .find(|i| i.label == label)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(find("Back of Rack").checked, Some(true));
+        assert_eq!(find("Cables: Show").checked, Some(false));
+        assert_eq!(find("Cables: Hover").checked, Some(true));
+        assert_eq!(find("Cables: Hide").checked, Some(false));
+        assert_eq!(find("Device Browser").checked, Some(true));
+        assert_eq!(find("Arrangement").checked, Some(false));
+        assert_eq!(find("Piano Roll").checked, Some(true));
+        assert_eq!(find("Sample Editor").checked, Some(false));
+        assert_eq!(find("Play / Stop").checked, Some(true));
+        assert_eq!(find("Loop").checked, Some(true));
+        assert_eq!(find("Input Quantize: 1/8").checked, Some(true));
+        assert_eq!(find("Input Quantize: Off").checked, Some(false));
+        assert!(!find("Undo").enabled);
+        assert!(find("Redo").enabled);
+        assert_eq!(find("Save").checked, None);
+        assert_eq!(find("Console").checked, Some(true));
+        assert_eq!(find("Maximise Console").checked, Some(false));
+        assert_eq!(find("Delay Compensation").checked, Some(false));
+        assert_eq!(find("Show Console Devices in Rack").checked, Some(true));
+        let front = menus(&state(), &keymap);
+        let back = front[2].items().next().unwrap();
+        assert_eq!(back.checked, Some(false));
+        assert_eq!(back.shortcut.as_deref(), Some("Tab"));
+    }
+
+    #[test]
+    fn a_menu_item_with_an_argument_shows_only_its_own_binding() {
+        use atomik_ui::keymap::UserKeymap;
+        let (user, _) = UserKeymap::from_json(
+            r#"{"bindings":[{"command":"view.cables","arg":"hide","context":"global","chords":["Cmd+Alt+H"]}]}"#,
+        )
+        .unwrap();
+        let built = user.build(Profile::Legacy, Os::Windows);
+        assert_eq!(
+            AppCommand::Cables(CableVisibility::Hide)
+                .shortcut_text(&built.keymap)
+                .as_deref(),
+            Some("Ctrl+Alt+H")
+        );
+        assert_eq!(
+            AppCommand::Cables(CableVisibility::Show).shortcut_text(&built.keymap),
+            None
+        );
+    }
+}

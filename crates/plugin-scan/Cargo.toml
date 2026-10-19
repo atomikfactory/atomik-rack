@@ -1,0 +1,30 @@
+[package]
+name = "atomik-plugin-scan"
+description = "Atomik Rack out-of-process plugin scanner: loads one plugin file, prints its layout as JSON."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "atomik_plugin_scan"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atomik-plugin-scan"
+path = "src/main.rs"
+
+[dependencies]
+atomik-device-sdk.workspace = true
+atomik-plugin-host.workspace = true
+atomik-plugin-clap.workspace = true
+atomik-plugin-vst3.workspace = true
+
+[dev-dependencies]
+atomik-test-plugin-core.workspace = true
+
+[lints]
+workspace = true

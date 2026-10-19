@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bb76be586dcfb548186a6bea00ca105ad6f9c87d2bfc93ec30a87ef93caa35ee # shrinks to gs = [Field { which: 2, dy: -201, shift: false }]

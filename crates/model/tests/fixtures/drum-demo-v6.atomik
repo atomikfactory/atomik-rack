@@ -1,0 +1,184 @@
+{
+  "format": "atomik-project",
+  "version": 6,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "drums", "type": "atomik.drum-machine",
+      "name": "Drums", "folded": false, "color": "#d94f4f",
+      "params": {
+        "master.level": 0,
+        "pad1.decay": 450,
+        "pad1.level": -2,
+        "pad11.choke": 1,
+        "pad11.decay": 600,
+        "pad11.level": -10,
+        "pad3.decay": 300,
+        "pad3.level": -4,
+        "pad4.decay": 250,
+        "pad4.level": -8,
+        "pad7.choke": 1,
+        "pad7.decay": 90,
+        "pad7.level": -10
+      },
+      "zones": [
+        {"asset": "8e35538078d92988393d1043ea65a74eab225474562ed8942c1a85cde8780b8f", "key_lo": 36, "key_hi": 36, "vel_lo": 1, "vel_hi": 127, "root_key": 36, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 14400, "loop_mode": "off", "loop_start": 0, "loop_end": 14400, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "73edbb38821c26a317b0f93411c5258217aadbbaf0bd64012b8b156484de963c", "key_lo": 38, "key_hi": 38, "vel_lo": 1, "vel_hi": 127, "root_key": 38, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 9600, "loop_mode": "off", "loop_start": 0, "loop_end": 9600, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "48a5b51ac4bb759fcefce3bb24e27937ffb7604967a01bdde7178c84fac67cce", "key_lo": 42, "key_hi": 42, "vel_lo": 1, "vel_hi": 127, "root_key": 42, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 2880, "loop_mode": "off", "loop_start": 0, "loop_end": 2880, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "15a86345eebd550ff40dfd2ee7a9661f55f81bec3b227aba4927ce6433d60264", "key_lo": 46, "key_hi": 46, "vel_lo": 1, "vel_hi": 127, "root_key": 46, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 14400, "loop_mode": "off", "loop_start": 0, "loop_end": 14400, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "35b8e2f7133eae30556682804deb34ae4cde37a038a39a055eb7e5625b95bb4e", "key_lo": 39, "key_hi": 39, "vel_lo": 1, "vel_hi": 127, "root_key": 39, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 7200, "loop_mode": "off", "loop_start": 0, "loop_end": 7200, "crossfade": 0, "trigger": "gate", "reverse": false}
+      ]
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Snare", "folded": false,
+      "params": {
+        "pan": 0.15
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "drums:out_l", "to": "channel:in_l"},
+    {"from": "drums:out_r", "to": "channel:in_r"},
+    {"from": "drums:pad3_out_l", "to": "channel-2:in_l"},
+    {"from": "drums:pad3_out_r", "to": "channel-2:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "drums"},
+      {"channel": "channel-2", "source": "drums"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "15a86345eebd550ff40dfd2ee7a9661f55f81bec3b227aba4927ce6433d60264": {"channels": 1, "sample_rate": 48000, "frames": 14400, "name": "hat_open.wav"},
+    "35b8e2f7133eae30556682804deb34ae4cde37a038a39a055eb7e5625b95bb4e": {"channels": 1, "sample_rate": 48000, "frames": 7200, "name": "clap.wav"},
+    "48a5b51ac4bb759fcefce3bb24e27937ffb7604967a01bdde7178c84fac67cce": {"channels": 1, "sample_rate": 48000, "frames": 2880, "name": "hat_closed.wav"},
+    "73edbb38821c26a317b0f93411c5258217aadbbaf0bd64012b8b156484de963c": {"channels": 1, "sample_rate": 48000, "frames": 9600, "name": "snare.wav"},
+    "8e35538078d92988393d1043ea65a74eab225474562ed8942c1a85cde8780b8f": {"channels": 1, "sample_rate": 48000, "frames": 14400, "name": "kick.wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 122880, "enabled": false},
+    "end": 122880,
+    "next_clip_id": 2,
+    "tracks": [
+      {
+        "device": "drums", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.8],
+                  [3840, 3840, 42, 0.45],
+                  [7680, 3840, 42, 0.8],
+                  [11520, 3840, 42, 0.45],
+                  [15360, 3840, 38, 1],
+                  [15360, 3840, 42, 0.8],
+                  [19200, 3840, 42, 0.45],
+                  [23040, 3840, 36, 0.75],
+                  [23040, 3840, 42, 0.8],
+                  [26880, 3840, 42, 0.45],
+                  [30720, 3840, 42, 0.8],
+                  [34560, 3840, 42, 0.45],
+                  [38400, 3840, 36, 0.75],
+                  [38400, 3840, 42, 0.8],
+                  [42240, 3840, 42, 0.45],
+                  [46080, 3840, 38, 1],
+                  [46080, 3840, 39, 0.45],
+                  [46080, 3840, 42, 0.8],
+                  [49920, 3840, 42, 0.45],
+                  [53760, 3840, 46, 0.85],
+                  [57600, 3840, 42, 0.45],
+                  [61440, 3840, 36, 1],
+                  [61440, 3840, 42, 0.8],
+                  [65280, 3840, 42, 0.45],
+                  [69120, 3840, 42, 0.8],
+                  [72960, 3840, 42, 0.45],
+                  [76800, 3840, 38, 1],
+                  [76800, 3840, 42, 0.8],
+                  [80640, 3840, 42, 0.45],
+                  [84480, 3840, 36, 0.75],
+                  [84480, 3840, 42, 0.8],
+                  [88320, 3840, 42, 0.45],
+                  [92160, 3840, 42, 0.8],
+                  [96000, 3840, 42, 0.45],
+                  [99840, 3840, 36, 0.75],
+                  [99840, 3840, 42, 0.8],
+                  [103680, 3840, 42, 0.45],
+                  [107520, 3840, 38, 0.8],
+                  [107520, 3840, 39, 0.45],
+                  [107520, 3840, 42, 0.8],
+                  [111360, 3840, 42, 0.45],
+                  [115200, 3840, 36, 0.75],
+                  [115200, 3840, 46, 0.85],
+                  [119040, 3840, 42, 0.45]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 32, "swing": 30}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,900.00,40.00]}},
+{"fill":{"rect":[0.00,0.00,900.00,40.00]},"brush":"#1c1e23ff"},
+{"stroke":{"line":[0.00,0.50,900.00,0.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffe08aff"},
+{"stroke":{"line":[0.00,39.50,900.00,39.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"This project uses 3 third-party plugins","at":[14.00,24.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[688.00,8.00,758.00,32.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[690.00,8.50,756.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[688.50,8.50,757.50,31.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"LOAD","at":[723.00,23.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"rrect":[766.00,8.00,886.00,32.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[768.00,8.50,884.00,8.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[766.50,8.50,885.50,31.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"OPEN WITHOUT","at":[826.00,23.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

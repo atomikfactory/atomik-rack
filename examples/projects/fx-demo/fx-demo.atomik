@@ -1,0 +1,786 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "drums", "type": "atomik.drum-machine",
+      "name": "Drums", "folded": false,
+      "params": {
+        "master.level": 0,
+        "pad1.decay": 450,
+        "pad1.level": -1,
+        "pad11.choke": 1,
+        "pad11.decay": 500,
+        "pad11.level": -12,
+        "pad4.decay": 250,
+        "pad4.level": -7,
+        "pad7.choke": 1,
+        "pad7.decay": 90,
+        "pad7.level": -12
+      },
+      "zones": [
+        {"asset": "47c2aa12dedaf1a1d9d1d543a5180f24ef204df1ca1deb7e720a1647f2520041", "key_lo": 36, "key_hi": 36, "vel_lo": 1, "vel_hi": 127, "root_key": 36, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 14400, "loop_mode": "off", "loop_start": 0, "loop_end": 14400, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "48a5b51ac4bb759fcefce3bb24e27937ffb7604967a01bdde7178c84fac67cce", "key_lo": 42, "key_hi": 42, "vel_lo": 1, "vel_hi": 127, "root_key": 42, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 2880, "loop_mode": "off", "loop_start": 0, "loop_end": 2880, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "15a86345eebd550ff40dfd2ee7a9661f55f81bec3b227aba4927ce6433d60264", "key_lo": 46, "key_hi": 46, "vel_lo": 1, "vel_hi": 127, "root_key": 46, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 14400, "loop_mode": "off", "loop_start": 0, "loop_end": 14400, "crossfade": 0, "trigger": "gate", "reverse": false},
+        {"asset": "35b8e2f7133eae30556682804deb34ae4cde37a038a39a055eb7e5625b95bb4e", "key_lo": 39, "key_hi": 39, "vel_lo": 1, "vel_hi": 127, "root_key": 39, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 7200, "loop_mode": "off", "loop_start": 0, "loop_end": 7200, "crossfade": 0, "trigger": "gate", "reverse": false}
+      ]
+    },
+    {
+      "id": "channel-5", "type": "atomik.channel",
+      "name": "Kick", "folded": false
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Drums", "folded": false,
+      "params": {
+        "pan": 0,
+        "send1.level": -14,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    },
+    {
+      "id": "bass", "type": "atomik.poly-synth",
+      "name": "Bass", "folded": false,
+      "params": {
+        "env.amp.attack": 3,
+        "env.amp.decay": 200,
+        "env.amp.release": 60,
+        "env.amp.sustain": 0.85,
+        "filter.cutoff": 700,
+        "filter.env_amount": 0.2,
+        "filter.resonance": 0.15,
+        "master.level": -6,
+        "osc.mix": 0,
+        "osc1.wave": 0,
+        "voices": 1
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Bass", "folded": false,
+      "params": {
+        "pan": 0
+      }
+    },
+    {
+      "id": "pads", "type": "atomik.poly-synth",
+      "name": "Pads", "folded": false,
+      "params": {
+        "env.amp.attack": 450,
+        "env.amp.decay": 600,
+        "env.amp.release": 700,
+        "env.amp.sustain": 0.8,
+        "filter.cutoff": 1800,
+        "filter.env_amount": 0,
+        "master.level": -14,
+        "osc.mix": 0.5,
+        "osc1.wave": 0,
+        "osc2.wave": 2
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Pads", "folded": false,
+      "params": {
+        "pan": -0.2,
+        "send1.level": -7,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "lead", "type": "atomik.poly-synth",
+      "name": "Lead", "folded": false,
+      "params": {
+        "env.amp.attack": 4,
+        "env.amp.decay": 250,
+        "env.amp.release": 160,
+        "env.amp.sustain": 0.6,
+        "filter.cutoff": 3500,
+        "filter.env_amount": 0.2,
+        "master.level": -16,
+        "osc.mix": 0,
+        "osc1.wave": 1,
+        "voices": 1
+      }
+    },
+    {
+      "id": "channel-4", "type": "atomik.channel",
+      "name": "Lead", "folded": false,
+      "params": {
+        "pan": 0.25,
+        "send1.level": -8,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "bass-comp", "type": "atomik.compressor",
+      "name": "Bass Comp", "folded": false,
+      "params": {
+        "attack": 1.5,
+        "knee": 4,
+        "lookahead": 3,
+        "makeup": 3,
+        "ratio": 8,
+        "release": 140,
+        "sc_enable": 1,
+        "threshold": -34
+      }
+    },
+    {
+      "id": "pad-chorus", "type": "atomik.modulation",
+      "name": "Pad Chorus", "folded": false,
+      "params": {
+        "delay": 12,
+        "depth": 0.6,
+        "mix": 0.5,
+        "mode": 0,
+        "rate": 0.35,
+        "spread": 120
+      }
+    },
+    {
+      "id": "lead-dist", "type": "atomik.distortion",
+      "name": "Lead Drive", "folded": false,
+      "params": {
+        "curve": 0,
+        "drive": 14,
+        "mix": 0.8,
+        "output": -6,
+        "oversample": 2,
+        "tone": -0.2
+      }
+    },
+    {
+      "id": "lead-eq", "type": "atomik.eq",
+      "name": "Lead EQ", "folded": false,
+      "params": {
+        "band1.freq": 180,
+        "band1.on": 1,
+        "band4.freq": 2800,
+        "band4.gain": 3,
+        "band4.q": 1.2,
+        "band6.freq": 9000,
+        "band6.on": 1
+      }
+    },
+    {
+      "id": "hall", "type": "atomik.reverb",
+      "name": "Hall", "folded": false,
+      "params": {
+        "algorithm": 1,
+        "damping": 0.5,
+        "decay": 2.8,
+        "mix": 1,
+        "output": -3,
+        "predelay": 28
+      }
+    },
+    {
+      "id": "master-fx", "type": "atomik.mastering",
+      "name": "Mastering", "folded": false,
+      "params": {
+        "ceiling": -1,
+        "output": 0,
+        "width": 1.1
+      }
+    }
+  ],
+  "cables": [
+    {"from": "bass:out_l", "to": "channel-2:in_l"},
+    {"from": "bass:out_r", "to": "channel-2:in_r"},
+    {"from": "bass-comp:out_l", "to": "channel-2:insert_return_l"},
+    {"from": "bass-comp:out_r", "to": "channel-2:insert_return_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:insert_send_l", "to": "bass-comp:in_l"},
+    {"from": "channel-2:insert_send_r", "to": "bass-comp:in_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:insert_send_l", "to": "pad-chorus:in_l"},
+    {"from": "channel-3:insert_send_r", "to": "pad-chorus:in_r"},
+    {"from": "channel-3:out_l", "to": "master:bus_l"},
+    {"from": "channel-3:out_r", "to": "master:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-4:insert_send_l", "to": "lead-dist:in_l"},
+    {"from": "channel-4:insert_send_r", "to": "lead-dist:in_r"},
+    {"from": "channel-4:out_l", "to": "master:bus_l"},
+    {"from": "channel-4:out_r", "to": "master:bus_r"},
+    {"from": "channel-4:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-4:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-4:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-4:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-4:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-4:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-4:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-4:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-4:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-4:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-4:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-4:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-4:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-4:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-4:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-4:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-5:insert_send_l", "to": "bass-comp:sc_in_l"},
+    {"from": "channel-5:insert_send_r", "to": "bass-comp:sc_in_r"},
+    {"from": "channel-5:out_l", "to": "master:bus_l"},
+    {"from": "channel-5:out_r", "to": "master:bus_r"},
+    {"from": "channel-5:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-5:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-5:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-5:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-5:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-5:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-5:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-5:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-5:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-5:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-5:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-5:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-5:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-5:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-5:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-5:send8_r", "to": "master:send_bus8_r"},
+    {"from": "drums:out_l", "to": "channel:in_l"},
+    {"from": "drums:out_r", "to": "channel:in_r"},
+    {"from": "drums:pad1_out_l", "to": "channel-5:in_l"},
+    {"from": "drums:pad1_out_r", "to": "channel-5:in_r"},
+    {"from": "hall:out_l", "to": "master:return1_l"},
+    {"from": "hall:out_r", "to": "master:return1_r"},
+    {"from": "lead:out_l", "to": "channel-4:in_l"},
+    {"from": "lead:out_r", "to": "channel-4:in_r"},
+    {"from": "lead-dist:out_l", "to": "lead-eq:in_l"},
+    {"from": "lead-dist:out_r", "to": "lead-eq:in_r"},
+    {"from": "lead-eq:out_l", "to": "channel-4:insert_return_l"},
+    {"from": "lead-eq:out_r", "to": "channel-4:insert_return_r"},
+    {"from": "master:fx_send1_l", "to": "hall:in_l"},
+    {"from": "master:fx_send1_r", "to": "hall:in_r"},
+    {"from": "master:insert_send_l", "to": "master-fx:in_l"},
+    {"from": "master:insert_send_r", "to": "master-fx:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "master-fx:out_l", "to": "master:insert_return_l"},
+    {"from": "master-fx:out_r", "to": "master:insert_return_r"},
+    {"from": "pad-chorus:out_l", "to": "channel-3:insert_return_l"},
+    {"from": "pad-chorus:out_r", "to": "channel-3:insert_return_r"},
+    {"from": "pads:out_l", "to": "channel-3:in_l"},
+    {"from": "pads:out_r", "to": "channel-3:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "drums"},
+      {"channel": "channel-2", "source": "bass"},
+      {"channel": "channel-3", "source": "pads"},
+      {"channel": "channel-4", "source": "lead"},
+      {"channel": "channel-5", "source": "drums"}
+    ],
+    "master": "master",
+    "returns": ["hall", null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "15a86345eebd550ff40dfd2ee7a9661f55f81bec3b227aba4927ce6433d60264": {"channels": 1, "sample_rate": 48000, "frames": 14400, "name": "hat_open.wav"},
+    "35b8e2f7133eae30556682804deb34ae4cde37a038a39a055eb7e5625b95bb4e": {"channels": 1, "sample_rate": 48000, "frames": 7200, "name": "clap.wav"},
+    "47c2aa12dedaf1a1d9d1d543a5180f24ef204df1ca1deb7e720a1647f2520041": {"channels": 1, "sample_rate": 48000, "frames": 14400, "name": "kick.wav"},
+    "48a5b51ac4bb759fcefce3bb24e27937ffb7604967a01bdde7178c84fac67cce": {"channels": 1, "sample_rate": 48000, "frames": 2880, "name": "hat_closed.wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 491520, "enabled": false},
+    "end": 491520,
+    "next_clip_id": 33,
+    "tracks": [
+      {
+        "device": "drums", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 42, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 5, "start": 61440, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 46, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 9, "start": 122880, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 42, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 13, "start": 184320, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 46, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 17, "start": 245760, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 42, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 21, "start": 307200, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 46, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 25, "start": 368640, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 42, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              },
+              {
+                "id": 29, "start": 430080, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 3840, 36, 1],
+                  [0, 3840, 42, 0.5],
+                  [7680, 3840, 42, 0.8],
+                  [15360, 3840, 36, 1],
+                  [15360, 3840, 39, 0.7],
+                  [15360, 3840, 42, 0.5],
+                  [23040, 3840, 42, 0.8],
+                  [30720, 3840, 36, 1],
+                  [30720, 3840, 42, 0.5],
+                  [38400, 3840, 42, 0.8],
+                  [46080, 3840, 36, 1],
+                  [46080, 3840, 39, 0.7],
+                  [46080, 3840, 42, 0.5],
+                  [53760, 3840, 46, 0.8]
+                ],
+                "grid": {"resolution": "sixteenth", "steps": 16, "swing": 0}
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "bass", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 45, 0.95],
+                  [7680, 5760, 45, 0.7],
+                  [15360, 5760, 57, 0.95],
+                  [23040, 5760, 45, 0.7],
+                  [30720, 5760, 45, 0.95],
+                  [38400, 5760, 57, 0.7],
+                  [46080, 5760, 45, 0.95],
+                  [53760, 5760, 52, 0.7]
+                ]
+              },
+              {
+                "id": 6, "start": 61440, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 41, 0.95],
+                  [7680, 5760, 41, 0.7],
+                  [15360, 5760, 53, 0.95],
+                  [23040, 5760, 41, 0.7],
+                  [30720, 5760, 41, 0.95],
+                  [38400, 5760, 53, 0.7],
+                  [46080, 5760, 41, 0.95],
+                  [53760, 5760, 48, 0.7]
+                ]
+              },
+              {
+                "id": 10, "start": 122880, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 48, 0.95],
+                  [7680, 5760, 48, 0.7],
+                  [15360, 5760, 60, 0.95],
+                  [23040, 5760, 48, 0.7],
+                  [30720, 5760, 48, 0.95],
+                  [38400, 5760, 60, 0.7],
+                  [46080, 5760, 48, 0.95],
+                  [53760, 5760, 55, 0.7]
+                ]
+              },
+              {
+                "id": 14, "start": 184320, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 43, 0.95],
+                  [7680, 5760, 43, 0.7],
+                  [15360, 5760, 55, 0.95],
+                  [23040, 5760, 43, 0.7],
+                  [30720, 5760, 43, 0.95],
+                  [38400, 5760, 55, 0.7],
+                  [46080, 5760, 43, 0.95],
+                  [53760, 5760, 50, 0.7]
+                ]
+              },
+              {
+                "id": 18, "start": 245760, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 45, 0.95],
+                  [7680, 5760, 45, 0.7],
+                  [15360, 5760, 57, 0.95],
+                  [23040, 5760, 45, 0.7],
+                  [30720, 5760, 45, 0.95],
+                  [38400, 5760, 57, 0.7],
+                  [46080, 5760, 45, 0.95],
+                  [53760, 5760, 52, 0.7]
+                ]
+              },
+              {
+                "id": 22, "start": 307200, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 41, 0.95],
+                  [7680, 5760, 41, 0.7],
+                  [15360, 5760, 53, 0.95],
+                  [23040, 5760, 41, 0.7],
+                  [30720, 5760, 41, 0.95],
+                  [38400, 5760, 53, 0.7],
+                  [46080, 5760, 41, 0.95],
+                  [53760, 5760, 48, 0.7]
+                ]
+              },
+              {
+                "id": 26, "start": 368640, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 48, 0.95],
+                  [7680, 5760, 48, 0.7],
+                  [15360, 5760, 60, 0.95],
+                  [23040, 5760, 48, 0.7],
+                  [30720, 5760, 48, 0.95],
+                  [38400, 5760, 60, 0.7],
+                  [46080, 5760, 48, 0.95],
+                  [53760, 5760, 55, 0.7]
+                ]
+              },
+              {
+                "id": 30, "start": 430080, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 43, 0.95],
+                  [7680, 5760, 43, 0.7],
+                  [15360, 5760, 55, 0.95],
+                  [23040, 5760, 43, 0.7],
+                  [30720, 5760, 43, 0.95],
+                  [38400, 5760, 55, 0.7],
+                  [46080, 5760, 43, 0.95],
+                  [53760, 5760, 50, 0.7]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "pads", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 57, 0.7],
+                  [0, 57600, 60, 0.7],
+                  [0, 57600, 64, 0.7]
+                ]
+              },
+              {
+                "id": 7, "start": 61440, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 53, 0.7],
+                  [0, 57600, 57, 0.7],
+                  [0, 57600, 60, 0.7]
+                ]
+              },
+              {
+                "id": 11, "start": 122880, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 55, 0.7],
+                  [0, 57600, 60, 0.7],
+                  [0, 57600, 64, 0.7]
+                ]
+              },
+              {
+                "id": 15, "start": 184320, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 55, 0.7],
+                  [0, 57600, 59, 0.7],
+                  [0, 57600, 62, 0.7]
+                ]
+              },
+              {
+                "id": 19, "start": 245760, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 57, 0.7],
+                  [0, 57600, 60, 0.7],
+                  [0, 57600, 64, 0.7]
+                ]
+              },
+              {
+                "id": 23, "start": 307200, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 53, 0.7],
+                  [0, 57600, 57, 0.7],
+                  [0, 57600, 60, 0.7]
+                ]
+              },
+              {
+                "id": 27, "start": 368640, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 55, 0.7],
+                  [0, 57600, 60, 0.7],
+                  [0, 57600, 64, 0.7]
+                ]
+              },
+              {
+                "id": 31, "start": 430080, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 57600, 55, 0.7],
+                  [0, 57600, 59, 0.7],
+                  [0, 57600, 62, 0.7]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 4, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 76, 0.85],
+                  [30720, 13440, 72, 0.85],
+                  [46080, 13440, 74, 0.85]
+                ]
+              },
+              {
+                "id": 8, "start": 61440, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 77, 0.85],
+                  [30720, 13440, 76, 0.85],
+                  [46080, 13440, 72, 0.85]
+                ]
+              },
+              {
+                "id": 12, "start": 122880, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 79, 0.85],
+                  [30720, 13440, 76, 0.85],
+                  [46080, 13440, 74, 0.85]
+                ]
+              },
+              {
+                "id": 16, "start": 184320, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 28800, 74, 0.85],
+                  [30720, 28800, 71, 0.85]
+                ]
+              },
+              {
+                "id": 20, "start": 245760, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 76, 0.85],
+                  [30720, 13440, 72, 0.85],
+                  [46080, 13440, 74, 0.85]
+                ]
+              },
+              {
+                "id": 24, "start": 307200, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 77, 0.85],
+                  [30720, 13440, 76, 0.85],
+                  [46080, 13440, 72, 0.85]
+                ]
+              },
+              {
+                "id": 28, "start": 368640, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 21120, 79, 0.85],
+                  [30720, 13440, 76, 0.85],
+                  [46080, 13440, 74, 0.85]
+                ]
+              },
+              {
+                "id": 32, "start": 430080, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 13440, 79, 0.85],
+                  [15360, 13440, 76, 0.85],
+                  [30720, 13440, 74, 0.85],
+                  [46080, 13440, 71, 0.85]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

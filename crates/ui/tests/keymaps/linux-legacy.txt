@@ -1,0 +1,40 @@
+audio.settings | global | Ctrl+,
+edit.delete | rack | Delete, Backspace
+edit.delete | sequencer | Delete, Backspace
+edit.delete | editor | Delete, Backspace
+edit.duplicate | rack | Ctrl+D
+edit.duplicate | sequencer | Ctrl+D
+edit.redo | global | Ctrl+Y, Ctrl+Shift+Y, Ctrl+Shift+Z
+edit.select_all | sequencer | Ctrl+A
+edit.select_all | editor | Ctrl+A
+edit.undo | global | Ctrl+Z
+editor.nudge_left | editor | Left
+editor.nudge_right | editor | Right
+editor.octave_down | editor | Shift+Down
+editor.octave_up | editor | Shift+Up
+editor.quantize | editor | Q, Shift+Q
+editor.transpose_down | editor | Down
+editor.transpose_up | editor | Up
+file.import_audio | global | Ctrl+I
+file.new | global | Ctrl+N
+file.open | global | Ctrl+O
+file.quit | global | Ctrl+Q
+file.save | global | Ctrl+S
+file.save_as | global | Ctrl+Shift+S
+sequencer.split_at_playhead | sequencer | Ctrl+E
+transport.go_start | rack | Enter, Shift+Enter
+transport.go_start | sequencer | Enter, Shift+Enter
+transport.loop | rack | L, Shift+L
+transport.loop | sequencer | L, Shift+L
+transport.play_stop | rack | Space, Shift+Space
+transport.play_stop | sequencer | Space, Shift+Space
+transport.record | global | Ctrl+Space
+transport.record | rack | R, Shift+R
+transport.record | sequencer | R, Shift+R
+view.maximise_console | global | Shift+F5
+view.toggle_browser | global | Ctrl+B
+view.toggle_console | global | F5
+view.toggle_flip | global | Tab
+view.zoom_in | global | Ctrl+=, Ctrl+Shift+=, Ctrl++, Ctrl+Shift++
+view.zoom_out | global | Ctrl+-
+view.zoom_reset | global | Ctrl+0

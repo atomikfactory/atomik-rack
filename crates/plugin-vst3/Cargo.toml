@@ -1,0 +1,36 @@
+[package]
+name = "atomik-plugin-vst3"
+description = "Atomik Rack VST3 plugin host backend over the vst3 bindings."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-plugin-host.workspace = true
+libloading = "0.9.0"
+rtrb.workspace = true
+vst3 = "=0.3.0"
+
+[dev-dependencies]
+atomik-engine.workspace = true
+atomik-plugin-clap.workspace = true
+atomik-test-plugin-core.workspace = true
+atomik-testkit.workspace = true
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+float_cmp = "deny"
+disallowed_types = "deny"
+disallowed_methods = "deny"
+undocumented_unsafe_blocks = "deny"

@@ -1,0 +1,49 @@
+# Build output
+/target
+
+# Rendered audio (the renderer writes WAV files wherever -o points).
+# Golden reference files for the renderer's tests are kept, if any exist.
+*.wav
+!crates/render/tests/golden/**/*.wav
+
+# Coverage
+lcov.info
+*.profraw
+*.profdata
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# OS files
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Local third-party SDKs (e.g. the ASIO SDK); never committed
+/tools/
+!crates/audio-file/tests/fixtures/*.wav
+!examples/projects/*/Audio/*.wav
+examples/projects/*/Audio/.peaks/
+
+# Local tool configuration files (not part of the project)
+/.claude/
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
+/.cursor/
+/.cursorrules
+/.windsurfrules
+/.clinerules
+/.aider*
+/.github/copilot-instructions.md
+/.codex/

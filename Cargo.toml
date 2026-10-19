@@ -1,0 +1,87 @@
+[workspace]
+resolver = "3"
+# `crates/[!t]*` is every crate whose directory does not start with `t`; the two that do are
+# listed on their own (`crates/testplugins` holds crates one level down, with no manifest of its own).
+members = ["crates/[!t]*", "crates/testkit", "crates/testplugins/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/atomikfactory/atomik-rack"
+authors = ["Atomik Rack contributors"]
+
+[workspace.dependencies]
+atomik-core = { path = "crates/core" }
+atomik-device-sdk = { path = "crates/device-sdk" }
+atomik-dsp = { path = "crates/dsp" }
+atomik-devices = { path = "crates/devices" }
+atomik-engine = { path = "crates/engine" }
+atomik-testkit = { path = "crates/testkit" }
+atomik-audio-io = { path = "crates/audio-io" }
+atomik-midi-io = { path = "crates/midi-io" }
+atomik-render = { path = "crates/render" }
+atomik-model = { path = "crates/model" }
+atomik-ui = { path = "crates/ui" }
+atomik-audio-file = { path = "crates/audio-file" }
+atomik-plugin-host = { path = "crates/plugin-host" }
+atomik-test-plugin-core = { path = "crates/testplugins/core" }
+atomik-plugin-clap = { path = "crates/plugin-clap" }
+atomik-plugin-scan = { path = "crates/plugin-scan" }
+atomik-test-clap-shell = { path = "crates/testplugins/clap-shell" }
+atomik-plugin-vst3 = { path = "crates/plugin-vst3" }
+atomik-test-vst3-shell = { path = "crates/testplugins/vst3-shell" }
+rtrb = "0.4.0"
+cpal = "0.18.2"
+midir = "0.11.1"
+thread-priority = "3.1.1"
+ctrlc = "3.5.2"
+vello = "0.11.0"
+vello_cpu = "0.3.0"
+parley = "0.12.0"
+winit = "0.30.13"
+muda = "0.21.2"
+rfd = "0.17.2"
+pollster = "0.4"
+symphonia = { version = "0.6.1", default-features = false }
+rubato = "5.0.1"
+png = "0.18.1"
+thiserror = "2.0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+hound = "3.5.1"
+clap = { version = "4.6.7", features = ["derive"] }
+proptest = "1.12.0"
+criterion = "0.8.2"
+rustfft = "6"
+sha2 = "0.10"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+float_cmp = "deny"
+disallowed_types = "deny"
+disallowed_methods = "deny"
+
+# Debug info policy (disk): keep file/line tables for backtraces, drop variable info; none for
+# dependencies. Full-debug builds are one `--config profile.dev.debug=2` away.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
+[profile.release]
+debug = 1

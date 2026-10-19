@@ -1,0 +1,21 @@
+[package]
+name = "atomik-testkit"
+description = "Atomik Rack test kit: fake devices, signal analysis, allocation guard (dev only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+rustfft.workspace = true
+
+[dev-dependencies]
+
+
+[lints]
+workspace = true

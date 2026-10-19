@@ -1,0 +1,10 @@
+# HI-2 determinism: no hash-ordered collections or wall-clock/time-based sources in production code.
+# Local `#[allow]` only with a justification comment (e.g. CLI --stats timing).
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "HI-2: iteration order is nondeterministic; use BTreeMap or Vec" },
+  { path = "std::collections::HashSet", reason = "HI-2: iteration order is nondeterministic; use BTreeSet" },
+]
+disallowed-methods = [
+  { path = "std::time::Instant::now", reason = "HI-2: no time-dependent behaviour in engine/devices" },
+  { path = "std::time::SystemTime::now", reason = "HI-2: no time-dependent behaviour in engine/devices" },
+]

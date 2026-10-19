@@ -1,0 +1,67 @@
+[package]
+name = "atomik-app"
+description = "Atomik Rack standalone app: the rack UI with live audio and MIDI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "atomik_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atomik"
+path = "src/main.rs"
+
+[features]
+default = []
+asio = ["atomik-audio-io/asio"]
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-devices.workspace = true
+# Transient detection for the loop slicer, run on a worker thread.
+atomik-dsp.workspace = true
+atomik-engine.workspace = true
+atomik-model.workspace = true
+# Audio import, project bundles and waveform peaks.
+atomik-audio-file.workspace = true
+# The audio recording writer thread writes its in-progress WAV files incrementally.
+hound.workspace = true
+# The song → engine input conversion shared with project bounces (one implementation).
+atomik-render.workspace = true
+# Third-party plugin hosting: the manager, the catalog and the scan cache types.
+atomik-plugin-host.workspace = true
+# The scanner code, shared: `atomik --plugin-scan` runs it when no atomik-plugin-scan program is beside the app.
+atomik-plugin-scan.workspace = true
+atomik-ui.workspace = true
+atomik-audio-io.workspace = true
+atomik-midi-io.workspace = true
+midir.workspace = true
+vello.workspace = true
+winit.workspace = true
+rfd.workspace = true
+pollster.workspace = true
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+
+# Native menus: only macOS attaches muda menus without `unsafe` (`Menu::init_for_nsapp`).
+# Windows (`init_for_hwnd` is unsafe) and Linux (needs a GTK window) use the in-window menu bar.
+[target.'cfg(target_os = "macos")'.dependencies]
+# default-features off: the gtk3 feature is only for Linux, where we do not use muda.
+muda = { workspace = true, default-features = false }
+
+[dev-dependencies]
+# The key-script helpers (`keymap::script`) for the end-to-end key tests of the shell.
+atomik-ui = { workspace = true, features = ["testkit"] }
+
+[lints]
+workspace = true

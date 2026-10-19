@@ -1,0 +1,13 @@
+{"ops":[
+{"transform":[1.00,0.00,0.00,1.00,0.00,0.00]},
+{"clip":{"rect":[0.00,0.00,760.00,560.00]}},
+{"fill":{"rect":[0.00,0.00,760.00,560.00]},"brush":"#0e1013ff"},
+{"text":"PLUGINS","at":[14.00,29.00],"size":11.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rrect":[650.00,12.00,746.00,36.00,3.00]},"brush":"#3b4047ff"},
+{"stroke":{"line":[652.00,12.50,744.00,12.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
+{"stroke":{"rrect":[650.50,12.50,745.50,35.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
+{"text":"ENABLE","at":[698.00,27.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"text":"Third-party plugins are off. Press ENABLE (top right) to scan folders and use plugins.","at":[14.00,61.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"pop_clip":true},
+{"pop_transform":true}
+]}

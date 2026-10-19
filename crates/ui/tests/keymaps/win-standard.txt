@@ -1,0 +1,88 @@
+audio.settings | global | Ctrl+,
+browser.cancel | browser | Esc
+browser.create | browser | Enter
+browser.move_down | browser | Down
+browser.move_up | browser | Up
+create.audio_track | global | Ctrl+T
+create.effect | global | Ctrl+E
+create.instrument | global | Ctrl+I, Insert
+create.mixer_channel | global | Ctrl+Shift+M
+edit.copy | global | Ctrl+C
+edit.cut | global | Ctrl+X
+edit.delete | global | Delete, Backspace
+edit.duplicate | global | Ctrl+D
+edit.paste | global | Ctrl+V
+edit.redo | global | Ctrl+Y, Ctrl+Shift+Z
+edit.select_all | global | Ctrl+A
+edit.undo | global | Ctrl+Z
+editor.nudge_left | editor | Ctrl+Left
+editor.nudge_right | editor | Ctrl+Right
+editor.octave_down | editor | Ctrl+Shift+Down
+editor.octave_up | editor | Ctrl+Shift+Up
+editor.quantize | editor | Ctrl+K
+editor.transpose_down | editor | Ctrl+Down
+editor.transpose_up | editor | Ctrl+Up
+file.import_audio | global | Ctrl+Shift+I
+file.new | global | Ctrl+N
+file.open | global | Ctrl+O
+file.quit | global | Ctrl+Q
+file.save | global | Ctrl+S
+file.save_as | global | Ctrl+Shift+S
+rack.extend_next | rack | Shift+Down
+rack.extend_prev | rack | Shift+Up
+rack.select_next | rack | Down
+rack.select_prev | rack | Up
+sequencer.follow | sequencer | F
+sequencer.follow | editor | F
+sequencer.join | sequencer | Ctrl+J
+sequencer.open_clip | sequencer | Enter
+sequencer.select_next_clip | sequencer | Right
+sequencer.select_next_track | sequencer | Down
+sequencer.select_prev_clip | sequencer | Left
+sequencer.select_prev_track | sequencer | Up
+sequencer.snap_toggle | sequencer | S
+sequencer.snap_toggle | editor | S
+sequencer.split_at_playhead | sequencer | Alt+X
+sequencer.zoom_selection | sequencer | Z
+sequencer.zoom_selection | editor | Z
+tool.eraser | sequencer | E
+tool.eraser | editor | E
+tool.pencil | sequencer | W
+tool.pencil | editor | W
+tool.razor | sequencer | R
+tool.razor | editor | R
+tool.select | sequencer | Q
+tool.select | editor | Q
+transport.bar_back | global | Numpad7
+transport.bar_forward | global | Numpad8
+transport.forward_bar | global | Numpad5
+transport.go_locator left | global | Numpad1, Alt+Left
+transport.go_locator right | global | Numpad2, Alt+Right
+transport.go_start | global | NumpadDecimal, Enter
+transport.loop | global | L, NumpadDiv
+transport.loop_and_play | sequencer | P
+transport.loop_to_selection | sequencer | Ctrl+L
+transport.metronome | global | C, Numpad9
+transport.play | global | NumpadEnter
+transport.play_stop | global | Space
+transport.record | global | Ctrl+Enter, Ctrl+Space, NumpadMul
+transport.rewind_bar | global | Numpad4
+transport.stop | global | Shift+Enter, Numpad0
+transport.tempo_down | global | NumpadSub
+transport.tempo_up | global | NumpadAdd
+view.cables_cycle | global | K
+view.focus_browser_search | global | Ctrl+Shift+F
+view.maximise_console | global | Shift+F5
+view.sequencer_only | global | F7
+view.toggle_browser | global | F3, Ctrl+F, Ctrl+B
+view.toggle_console | global | F5
+view.toggle_editor | global | F8, Shift+Tab
+view.toggle_flip | global | Tab
+view.toggle_rack | global | F6
+view.zoom_in | global | Ctrl+=, Ctrl++, Ctrl+Shift+=, Ctrl+Shift++
+view.zoom_in | sequencer | H
+view.zoom_in | editor | H
+view.zoom_out | global | Ctrl+-
+view.zoom_out | sequencer | G
+view.zoom_out | editor | G
+view.zoom_reset | global | Ctrl+0

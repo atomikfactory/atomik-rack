@@ -1,0 +1,128 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 100,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "slicer", "type": "atomik.loop-slicer",
+      "name": "Loop Slicer", "folded": false, "color": "#c24d8f",
+      "params": {
+        "env.attack": 1,
+        "env.decay": 150,
+        "env.mode": 0,
+        "loop.beats": 8,
+        "master.level": -6
+      },
+      "zones": [
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 24, "key_hi": 24, "vel_lo": 1, "vel_hi": 127, "root_key": 24, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 0, "end": 20544, "loop_mode": "off", "loop_start": 0, "loop_end": 20544, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 25, "key_hi": 25, "vel_lo": 1, "vel_hi": 127, "root_key": 25, "transpose": 0, "tune_cents": 0, "gain_db": -4, "pan": 0, "start": 20544, "end": 30816, "loop_mode": "off", "loop_start": 20544, "loop_end": 30816, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 26, "key_hi": 26, "vel_lo": 1, "vel_hi": 127, "root_key": 26, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 30816, "end": 51384, "loop_mode": "off", "loop_start": 30816, "loop_end": 51384, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 27, "key_hi": 27, "vel_lo": 1, "vel_hi": 127, "root_key": 27, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0.4, "start": 51384, "end": 71952, "loop_mode": "off", "loop_start": 51384, "loop_end": 71952, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 28, "key_hi": 28, "vel_lo": 1, "vel_hi": 127, "root_key": 28, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 71952, "end": 82248, "loop_mode": "off", "loop_start": 71952, "loop_end": 82248, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 29, "key_hi": 29, "vel_lo": 1, "vel_hi": 127, "root_key": 29, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 82248, "end": 102816, "loop_mode": "off", "loop_start": 82248, "loop_end": 102816, "crossfade": 0, "trigger": "one_shot", "reverse": true},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 30, "key_hi": 30, "vel_lo": 1, "vel_hi": 127, "root_key": 30, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 102816, "end": 113112, "loop_mode": "off", "loop_start": 102816, "loop_end": 113112, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 31, "key_hi": 31, "vel_lo": 1, "vel_hi": 127, "root_key": 31, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 113112, "end": 133680, "loop_mode": "off", "loop_start": 113112, "loop_end": 133680, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 32, "key_hi": 32, "vel_lo": 1, "vel_hi": 127, "root_key": 32, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 133680, "end": 154248, "loop_mode": "off", "loop_start": 133680, "loop_end": 154248, "crossfade": 0, "trigger": "one_shot", "reverse": false},
+        {"asset": "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622", "key_lo": 33, "key_hi": 33, "vel_lo": 1, "vel_hi": 127, "root_key": 33, "transpose": 0, "tune_cents": 0, "gain_db": 0, "pan": 0, "start": 154248, "end": 164571, "loop_mode": "off", "loop_start": 154248, "loop_end": 164571, "crossfade": 0, "trigger": "one_shot", "reverse": false}
+      ]
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "slicer:out_l", "to": "channel:in_l"},
+    {"from": "slicer:out_r", "to": "channel:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "slicer"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "8554a628c1479f5d08fce5520d98a639d15f20fe59a98f36f9f7f182bf2fb622": {"channels": 1, "sample_rate": 48000, "frames": 164571, "name": "drum-loop-140.wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 100}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 245760,
+    "next_clip_id": 3,
+    "tracks": [
+      {
+        "device": "slicer", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15340, 24, 0.78740156],
+                  [15340, 7669, 25, 0.78740156],
+                  [23009, 15358, 26, 0.78740156],
+                  [38367, 15357, 27, 0.78740156],
+                  [53724, 7688, 28, 0.78740156],
+                  [61412, 15357, 29, 0.78740156],
+                  [76769, 7688, 30, 0.78740156],
+                  [84457, 15358, 31, 0.78740156],
+                  [99815, 15357, 32, 0.78740156],
+                  [115172, 7708, 33, 0.78740156]
+                ]
+              },
+              {
+                "id": 2, "start": 122880, "length": 122880, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15340, 24, 0.78740156],
+                  [15340, 7669, 25, 0.78740156],
+                  [23009, 15358, 26, 0.78740156],
+                  [38367, 15357, 27, 0.78740156],
+                  [53724, 7688, 28, 0.78740156],
+                  [61412, 15357, 29, 0.78740156],
+                  [76769, 7688, 30, 0.78740156],
+                  [84457, 15358, 31, 0.78740156],
+                  [99815, 15357, 32, 0.78740156],
+                  [115172, 7708, 33, 0.78740156]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

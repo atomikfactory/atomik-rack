@@ -1,0 +1,48 @@
+[package]
+name = "atomik-render"
+description = "Atomik Rack offline renderer: patch or project JSON to WAV."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "atomik_render"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atomik-render"
+path = "src/main.rs"
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-engine.workspace = true
+atomik-devices.workspace = true
+# Project files (.atomik): the song model and its loader.
+atomik-model.workspace = true
+# Project bundles: the `Audio/` store a bounce loads its assets from.
+atomik-audio-file.workspace = true
+# Third-party plugins in a bounce: the shared provider and the CLAP backend.
+atomik-plugin-host.workspace = true
+atomik-plugin-clap.workspace = true
+atomik-plugin-vst3.workspace = true
+serde.workspace = true
+# Correctly rounded float parsing: params and tempo round-trip exactly through patch files.
+# atomik-render enables it too, so every build reads patch numbers identically.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+hound.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-testkit.workspace = true
+# The slicer-demo test slices its generated loop with the transient detector.
+atomik-dsp.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

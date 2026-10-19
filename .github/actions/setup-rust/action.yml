@@ -1,0 +1,58 @@
+name: Set up Rust
+description: >
+  Install the Rust toolchain pinned by rust-toolchain.toml (single source of truth)
+  with rustup, then restore the Cargo cache with Swatinem/rust-cache.
+
+inputs:
+  components:
+    description: Comma-separated rustup components to install in addition to rustfmt and clippy.
+    required: false
+    default: ""
+  cache-key:
+    description: Extra key that separates caches of jobs with different build settings.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned channel from rust-toolchain.toml
+      id: channel
+      shell: bash
+      run: |
+        channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+        if [ -z "$channel" ]; then
+          echo "::error file=rust-toolchain.toml::could not read the toolchain channel"
+          exit 1
+        fi
+        echo "Pinned toolchain: $channel"
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+    - name: Install system audio/MIDI libraries (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      # cpal (ALSA) and midir (ALSA sequencer) need the ALSA headers; parley/fontique needs fontconfig.
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q --no-install-recommends libasound2-dev libfontconfig1-dev pkg-config
+
+    - name: Install toolchain
+      shell: bash
+      env:
+        CHANNEL: ${{ steps.channel.outputs.channel }}
+        EXTRA_COMPONENTS: ${{ inputs.components }}
+      run: |
+        args="--component rustfmt --component clippy"
+        for c in $(echo "$EXTRA_COMPONENTS" | tr ',' ' '); do
+          args="$args --component $c"
+        done
+        # shellcheck disable=SC2086
+        rustup toolchain install "$CHANNEL" --profile minimal --no-self-update $args
+        rustup default "$CHANNEL"
+        rustc --version
+        cargo --version
+
+    - name: Cache Cargo registry and target
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        key: ${{ inputs.cache-key }}

@@ -1,0 +1,366 @@
+//! `Shell` tests (layout): rack on top, divider, transport bar,
+//! arrangement or piano roll; pointer routing, focus, transport shortcuts, menus, files.
+
+use super::*;
+use crate::app_core::Pane;
+use crate::commands::MenuEntry;
+use crate::record::InputQuantize;
+use crate::session::NullBackend;
+use crate::ui_state::UiState;
+use atomik_model::{Command, DeviceKey, SongCommand};
+use atomik_ui::transport::TRANSPORT_HEIGHT;
+use atomik_ui::{DisplayList, Key, Modifiers, PointerButton, TransportAction, TransportButton};
+
+const W: f64 = 1000.0;
+const H: f64 = 800.0;
+
+fn shell_at(ui_state_path: Option<PathBuf>) -> Shell<NullBackend> {
+    let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
+    let mut s = Shell::new(
+        AppCore::new(session),
+        ShellOptions {
+            os: Some(atomik_ui::keymap::Os::Windows),
+            profile: None,
+            in_window_menu: true,
+            settings_path: None,
+            ui_state_path,
+        },
+    );
+    s.handle(&UiEvent::ScaleChanged(1.0));
+    s.handle(&UiEvent::Resize(Size::new(W, H)));
+    s
+}
+
+fn shell() -> Shell<NullBackend> {
+    shell_at(None)
+}
+
+fn key_event(key: Key, modifiers: Modifiers) -> UiEvent {
+    UiEvent::Key {
+        key,
+        modifiers,
+        pressed: true,
+    }
+}
+
+/// A key press and its release (a held key would be a repeat).
+fn tap(s: &mut Shell<NullBackend>, key: Key) {
+    s.handle(&press(key.clone()));
+    s.handle(&UiEvent::Key {
+        key,
+        modifiers: Modifiers::NONE,
+        pressed: false,
+    });
+}
+
+fn press(key: Key) -> UiEvent {
+    key_event(key, Modifiers::NONE)
+}
+
+fn down_n(p: Point, clicks: u8) -> UiEvent {
+    UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks,
+    }
+}
+
+fn down(p: Point) -> UiEvent {
+    down_n(p, 1)
+}
+
+fn up(p: Point) -> UiEvent {
+    UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn moved(p: Point) -> UiEvent {
+    UiEvent::PointerMove {
+        pos: p,
+        modifiers: Modifiers::NONE,
+    }
+}
+
+fn click(s: &mut Shell<NullBackend>, p: Point) -> Vec<ShellRequest> {
+    let mut r = s.handle(&down(p));
+    r.extend(s.handle(&up(p)));
+    r
+}
+
+fn temp(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("atomik-app-shell-song-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join(name)
+}
+
+fn demo(s: &mut Shell<NullBackend>) {
+    s.core_mut()
+        .open_str(include_str!("../../../examples/projects/demo.atomik"), None)
+        .unwrap();
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+#[test]
+fn the_window_stacks_rack_divider_transport_bar_and_arrangement() {
+    let s = shell();
+    let l = s.layout();
+    assert!(close(l.rack.y0, MENU_BAR_HEIGHT));
+    let divider = l.divider.expect("a divider while the arrangement shows");
+    assert!(close(divider.y0, l.rack.y1));
+    assert!(close(l.transport.y0, divider.y1));
+    assert!(close(l.transport.height(), TRANSPORT_HEIGHT));
+    let song = l.song.expect("the arrangement area");
+    assert!(close(song.y0, l.transport.y1));
+    assert!(close(song.y1, H - STATUS_BAR_HEIGHT));
+    assert!(close(l.rack.width(), W) && close(song.width(), W));
+    // The views are placed there.
+    assert_eq!(s.view_size(), l.rack.size());
+    assert_eq!(s.core().transport_bar().bounds(), l.transport);
+    assert_eq!(s.core().arrangement().bounds(), song);
+    // Default split: about half each.
+    assert!((l.rack.height() - song.height()).abs() < 2.0);
+}
+
+#[test]
+fn dragging_the_divider_moves_the_split_and_saves_it_in_the_ui_state() {
+    let path = temp("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let mut s = shell_at(Some(path.clone()));
+    let d = s.layout().divider.unwrap().center();
+    s.handle(&down(d));
+    s.handle(&moved(Point::new(d.x, d.y - 100.0)));
+    // Captured: moving over the rack does not reach it.
+    s.handle(&moved(Point::new(d.x, d.y - 150.0)));
+    s.handle(&up(Point::new(d.x, d.y - 150.0)));
+    let l = s.layout();
+    assert!(close(l.divider.unwrap().center().y, d.y - 150.0));
+    let saved = UiState::load(&path);
+    assert!((saved.rack_split - s.ui_state().rack_split).abs() < 1e-9);
+    assert!(saved.rack_split < 0.45);
+    // A new shell with that file starts with the same split.
+    let t = shell_at(Some(path.clone()));
+    assert!(close(t.layout().rack.height(), l.rack.height()));
+    // The split is clamped so both panes stay usable.
+    s.handle(&down(l.divider.unwrap().center()));
+    s.handle(&moved(Point::new(d.x, 0.0)));
+    s.handle(&up(Point::new(d.x, 0.0)));
+    assert!(s.layout().rack.height() >= MIN_PANE_HEIGHT - 1e-9);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn hiding_the_arrangement_gives_the_rack_the_space_and_keeps_the_transport_bar() {
+    let mut s = shell();
+    s.execute(AppCommand::ToggleSong);
+    let l = s.layout();
+    assert!(l.song.is_none() && l.divider.is_none());
+    assert!(close(l.transport.y1, H - STATUS_BAR_HEIGHT));
+    assert!(close(l.rack.y1, l.transport.y0));
+    assert!(!s.menu_state().song_visible);
+    s.execute(AppCommand::ToggleSong);
+    assert!(s.layout().song.is_some());
+}
+
+#[test]
+fn transport_bar_buttons_drive_the_transport() {
+    let mut s = shell();
+    let play = s
+        .core()
+        .transport_bar()
+        .button_center(TransportButton::Play);
+    click(&mut s, play);
+    assert!(s.core().is_playing());
+    let stop = s
+        .core()
+        .transport_bar()
+        .button_center(TransportButton::Stop);
+    click(&mut s, stop);
+    assert!(!s.core().is_playing());
+    let metronome = s
+        .core()
+        .transport_bar()
+        .button_center(TransportButton::Metronome);
+    click(&mut s, metronome);
+    assert!(s.core().metronome());
+    assert!(s.menu_state().metronome);
+}
+
+#[test]
+fn space_toggles_play_while_the_rack_has_focus_without_a_focused_control() {
+    let mut s = shell();
+    tap(&mut s, Key::Space);
+    assert!(s.core().is_playing());
+    tap(&mut s, Key::Space);
+    assert!(!s.core().is_playing());
+    tap(&mut s, Key::Char('l'));
+    assert!(s.core().doc().song.loop_enabled, "L toggles the loop");
+    // Ctrl+Space arms recording (here: no armed track, so it is refused with a message).
+    s.handle(&key_event(Key::Space, Modifiers::CTRL));
+    assert!(!s.core().is_recording());
+    assert!(s.core().last_rejection().unwrap().contains("arm"));
+}
+
+#[test]
+fn ctrl_space_records_on_an_armed_track() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: 0,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(DeviceKey("bass".into())),
+        })
+        .unwrap();
+    for c in [
+        SongCommand::AddTrack {
+            device: DeviceKey("bass".into()),
+        },
+        SongCommand::SetTrackFlags {
+            device: DeviceKey("bass".into()),
+            muted: false,
+            solo: false,
+            armed: true,
+        },
+    ] {
+        s.core_mut().apply_command(Command::Song(c)).unwrap();
+    }
+    s.handle(&key_event(Key::Space, Modifiers::CTRL));
+    assert!(s.core().is_recording() && s.core().is_playing());
+    assert!(s.menu_state().recording);
+    s.execute(AppCommand::Transport(TransportAction::Stop));
+    assert!(!s.core().is_recording());
+}
+
+#[test]
+fn clicking_a_view_focuses_it_and_keys_follow_the_focus() {
+    let mut s = shell();
+    let song = s.layout().song.unwrap();
+    click(&mut s, Point::new(song.x0 + 400.0, song.y1 - 20.0));
+    assert_eq!(s.focus(), Pane::Arrangement);
+    assert!(s.core().arrangement().focused());
+    // The arrangement maps Space itself (same transport shortcut).
+    tap(&mut s, Key::Space);
+    assert!(s.core().is_playing());
+    let rack = s.layout().rack.center();
+    click(&mut s, rack);
+    assert_eq!(s.focus(), Pane::Rack);
+    assert!(!s.core().arrangement().focused());
+}
+
+#[test]
+fn while_the_tempo_is_typed_every_key_goes_to_the_transport_bar() {
+    let mut s = shell();
+    let tempo = s.core().transport_bar().tempo_center();
+    s.handle(&down_n(tempo, 1));
+    s.handle(&up(tempo));
+    s.handle(&down_n(tempo, 2));
+    s.handle(&up(tempo));
+    assert!(s.core().transport_bar().is_editing_tempo());
+    for c in ['9', '5'] {
+        tap(&mut s, Key::Char(c));
+    }
+    tap(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space does not play while typing");
+    tap(&mut s, Key::Enter);
+    assert!((s.core().doc().tempo_bpm - 95.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_piano_roll_opens_in_place_of_the_arrangement() {
+    let mut s = shell();
+    demo(&mut s);
+    assert!(!s.menu_state().piano_roll);
+    s.execute(AppCommand::TogglePianoRoll);
+    assert!(s.core().piano_roll_clip().is_some());
+    assert!(s.menu_state().piano_roll);
+    let song = s.layout().song.unwrap();
+    assert_eq!(s.core().piano_roll().bounds(), song);
+    // Its pane gets the clicks there now.
+    click(&mut s, Point::new(song.x0 + 300.0, song.y0 + 100.0));
+    assert_eq!(s.focus(), Pane::PianoRoll);
+    s.execute(AppCommand::TogglePianoRoll);
+    assert!(s.core().piano_roll_clip().is_none());
+    // Without a note clip the roll cannot open: the user is told.
+    let mut empty = shell();
+    empty.execute(AppCommand::TogglePianoRoll);
+    assert!(empty.core().piano_roll_clip().is_none());
+    assert!(empty.core().last_rejection().is_some());
+}
+
+#[test]
+fn each_frame_shows_the_transport_and_paints_every_pane() {
+    let mut s = shell();
+    demo(&mut s);
+    s.frame();
+    let mut list = DisplayList::new();
+    s.paint(&mut list);
+    let texts = list.texts();
+    let (bbt, _) = s.core().transport_bar().position_text();
+    assert!(texts.iter().any(|t| *t == bbt), "{texts:?}");
+    assert!(texts.contains(&"Bass"), "track names: {texts:?}");
+    assert!(texts.contains(&"File"));
+    assert!(!s.needs_repaint());
+}
+
+#[test]
+fn file_menu_exports_patches_and_opens_the_e3_2_stress_song() {
+    let mut s = shell();
+    assert_eq!(
+        s.execute(AppCommand::ExportPatch),
+        vec![ShellRequest::PickExportFile]
+    );
+    let path = temp("export.json");
+    s.export_to(&path);
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("atomik-patch")
+    );
+    assert!(s.execute(AppCommand::StressSong).is_empty());
+    let song = &s.core().doc().song;
+    assert_eq!(song.tracks.len(), 8);
+    assert!(song.tracks.iter().all(|t| t.lanes.len() >= 2));
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn transport_menu_lists_the_transport_and_quantize_choices() {
+    let mut s = shell();
+    let model = s.menu_model();
+    let titles: Vec<_> = model.iter().map(|m| m.title).collect();
+    assert_eq!(
+        titles,
+        [
+            "File",
+            "Edit",
+            "View",
+            "Transport",
+            "Mixer",
+            "Create",
+            "Audio"
+        ]
+    );
+    let labels: Vec<_> = model[3].items().map(|i| i.label).collect();
+    for want in [
+        "Play / Stop",
+        "Record",
+        "Return to Zero",
+        "Loop",
+        "Metronome",
+        "Input Quantize: Off",
+        "Input Quantize: 1/8",
+        "Input Quantize: 1/16",
+    ] {
+        assert!(labels.contains(&want), "{want} missing in {labels:?}");
+    }
+    assert!(model[3].entries.contains(&MenuEntry::Separator));
+    s.execute(AppCommand::Quantize(InputQuantize::Sixteenth));
+    assert_eq!(s.core().input_quantize(), InputQuantize::Sixteenth);
+    assert_eq!(s.menu_state().quantize, InputQuantize::Sixteenth);
+}

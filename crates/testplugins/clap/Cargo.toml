@@ -1,0 +1,29 @@
+[package]
+name = "atomik-test-clap"
+description = "Atomik Rack CLAP test plugin library `clap` (not shipped)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+atomik-test-clap-shell.workspace = true
+atomik-test-plugin-core.workspace = true
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+float_cmp = "deny"
+disallowed_types = "deny"
+disallowed_methods = "deny"
+undocumented_unsafe_blocks = "deny"

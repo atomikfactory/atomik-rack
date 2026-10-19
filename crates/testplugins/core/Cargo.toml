@@ -1,0 +1,17 @@
+[package]
+name = "atomik-test-plugin-core"
+description = "Atomik Rack test plugins: the pure, deterministic DSP and state shared by the CLAP and VST3 test plugins (not shipped)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true

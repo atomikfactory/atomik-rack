@@ -1,0 +1,22 @@
+[package]
+name = "atomik-devices"
+description = "Atomik Rack built-in devices: poly-synth, line-mixer, stereo-delay."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-dsp.workspace = true
+
+[dev-dependencies]
+atomik-testkit.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

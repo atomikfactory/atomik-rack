@@ -1,0 +1,35 @@
+[package]
+name = "atomik-ui"
+description = "Atomik Rack UI toolkit: view tree, widgets, procedural rack panels, cables, vello rendering."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-audio-file.workspace = true
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-model.workspace = true
+vello.workspace = true
+parley.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+atomik-devices.workspace = true
+atomik-plugin-host.workspace = true
+atomik-dsp.workspace = true
+vello_cpu.workspace = true
+proptest.workspace = true
+
+[features]
+# The `KeyScript` test driver (keymap::script), for the key-script tests of other crates.
+testkit = []
+
+[lints]
+workspace = true

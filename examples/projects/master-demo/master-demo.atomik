@@ -1,0 +1,194 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Master", "folded": false,
+      "params": {
+        "send1.level": -4
+      }
+    },
+    {
+      "id": "hall", "type": "atomik.reverb",
+      "name": "Hall", "folded": false,
+      "params": {
+        "mix": 1
+      }
+    },
+    {
+      "id": "lead", "type": "atomik.poly-synth",
+      "name": "Lead", "folded": false,
+      "params": {
+        "env.amp.attack": 8,
+        "env.amp.decay": 250,
+        "env.amp.release": 220,
+        "env.amp.sustain": 0.7,
+        "filter.cutoff": 3000,
+        "master.level": -10,
+        "osc.mix": 0,
+        "osc1.wave": 1,
+        "voices": 4
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": true,
+      "params": {
+        "send1.level": -6,
+        "send1.on": 1
+      }
+    },
+    {
+      "id": "bass", "type": "atomik.poly-synth",
+      "name": "Bass", "folded": false,
+      "params": {
+        "env.amp.attack": 8,
+        "env.amp.decay": 250,
+        "env.amp.release": 220,
+        "env.amp.sustain": 0.7,
+        "filter.cutoff": 700,
+        "master.level": -8,
+        "osc.mix": 0,
+        "osc1.wave": 0,
+        "voices": 4
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": true
+    }
+  ],
+  "cables": [
+    {"from": "bass:out_l", "to": "channel-2:in_l"},
+    {"from": "bass:out_r", "to": "channel-2:in_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "hall:out_l", "to": "master:return1_l"},
+    {"from": "hall:out_r", "to": "master:return1_r"},
+    {"from": "lead:out_l", "to": "channel:in_l"},
+    {"from": "lead:out_r", "to": "channel:in_r"},
+    {"from": "master:fx_send1_l", "to": "hall:in_l"},
+    {"from": "master:fx_send1_r", "to": "hall:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "lead"},
+      {"channel": "channel-2", "source": "bass"}
+    ],
+    "master": "master",
+    "returns": ["hall", null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 245760,
+    "next_clip_id": 3,
+    "tracks": [
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 53760, 69, 0.7],
+                  [0, 53760, 72, 0.7],
+                  [0, 53760, 76, 0.7],
+                  [61440, 53760, 65, 0.7],
+                  [61440, 53760, 69, 0.7],
+                  [61440, 53760, 72, 0.7],
+                  [122880, 53760, 64, 0.7],
+                  [122880, 53760, 67, 0.7],
+                  [122880, 53760, 72, 0.7],
+                  [184320, 53760, 62, 0.7],
+                  [184320, 53760, 67, 0.7],
+                  [184320, 53760, 71, 0.7]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "bass", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 2, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 11520, 45, 0.85],
+                  [15360, 11520, 45, 0.85],
+                  [30720, 11520, 45, 0.85],
+                  [46080, 11520, 45, 0.85],
+                  [61440, 11520, 41, 0.85],
+                  [76800, 11520, 41, 0.85],
+                  [92160, 11520, 41, 0.85],
+                  [107520, 11520, 41, 0.85],
+                  [122880, 11520, 36, 0.85],
+                  [138240, 11520, 36, 0.85],
+                  [153600, 11520, 36, 0.85],
+                  [168960, 11520, 36, 0.85],
+                  [184320, 11520, 43, 0.85],
+                  [199680, 11520, 43, 0.85],
+                  [215040, 11520, 43, 0.85],
+                  [230400, 11520, 43, 0.85]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

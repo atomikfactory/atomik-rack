@@ -1,0 +1,278 @@
+preset,stage,param,t0,t50,t100,interp,source,note
+reel,bump,freq_hz,70,70,70,lin,original,head bump corner
+reel,bump,gain_db,2,2,2,lin,original,
+reel,sat,drive_db,3,9,18,lin,original,tape drive rises with Transform
+reel,sat,makeup_db,-1.5,-3.5,-5,lin,original,partial make-up
+reel,lp,freq_hz,17000,11000,7000,log,original,top roll-off closes with Transform
+reel,lp,q,0.7,0.7,0.7,lin,original,
+reel,wobble,depth_ms,0,0.1,0.3,lin,original,wow and flutter depth
+reel,wobble,wow_hz,0.6,0.6,0.6,lin,original,
+reel,wobble,flutter_hz,6,6,6,lin,original,
+reel,hiss,level_db,-120,-78,-58,lin,original,silent at Transform 0
+reel,chain,target_gain_db,1,1,1,lin,original,
+reel,chain,noise_follows_gain,0,0,0,lin,original,
+reel,chain,presence_hold_s,3,3,3,lin,original,
+reel,chain,presence_fade_s,2,2,2,lin,original,
+loudness,low,freq_hz,100,100,100,lin,original,
+loudness,low,gain_db,0,4.5,9,lin,original,bass lift
+loudness,mid,freq_hz,1600,1600,1600,lin,original,
+loudness,mid,q,0.7,0.7,0.7,lin,original,
+loudness,mid,gain_db,0,-1.5,-3,lin,original,mid scoop
+loudness,high,freq_hz,8000,8000,8000,lin,original,
+loudness,high,gain_db,0,3,6,lin,original,treble lift
+loudness,comp,threshold_db,-24,-24,-24,lin,original,
+loudness,comp,ratio,1,1.5,2,lin,original,
+loudness,comp,attack_ms,10,10,10,lin,original,
+loudness,comp,release_ms,120,120,120,lin,original,
+loudness,comp,makeup_db,0,1.5,3,lin,original,
+loudness,chain,target_gain_db,0,0,0,lin,original,
+loudness,chain,noise_follows_gain,0,0,0,lin,original,
+loudness,chain,presence_hold_s,3,3,3,lin,original,
+loudness,chain,presence_fade_s,2,2,2,lin,original,
+sparkle,hp,freq_hz,20,60,180,log,original,bass removal
+sparkle,hp,q,0.707,0.707,0.707,lin,original,
+sparkle,shelf,freq_hz,6000,6000,6000,lin,original,
+sparkle,shelf,gain_db,0,4.5,9,lin,original,
+sparkle,xhp,freq_hz,4000,4000,4000,lin,original,exciter band
+sparkle,xhp,q,0.707,0.707,0.707,lin,original,
+sparkle,xlp,freq_hz,7000,7000,7000,lin,original,band limit ahead of the exciter
+sparkle,xlp,q,0.707,0.707,0.707,lin,original,
+sparkle,xsat,drive_db,12,12,12,lin,original,
+sparkle,xsat,makeup_db,0,0,0,lin,original,
+sparkle,xpost,freq_hz,11000,11000,11000,lin,original,band limit after the exciter saturation
+sparkle,xpost,q,0.707,0.707,0.707,lin,original,
+sparkle,chain,target_gain_db,0,0,0,lin,original,
+sparkle,chain,noise_follows_gain,0,0,0,lin,original,
+sparkle,chain,presence_hold_s,3,3,3,lin,original,
+sparkle,chain,presence_fade_s,2,2,2,lin,original,
+low-end,hp,freq_hz,25,25,25,lin,original,
+low-end,hp,q,0.707,0.707,0.707,lin,original,
+low-end,bump,freq_hz,45,63,90,log,original,bump centre rises
+low-end,bump,q,1.2,1.2,1.2,lin,original,
+low-end,bump,gain_db,0,4,8,lin,original,
+low-end,bhp,freq_hz,40,40,40,lin,original,parallel band edges
+low-end,bhp,q,0.707,0.707,0.707,lin,original,
+low-end,blp,freq_hz,120,120,120,lin,original,
+low-end,blp,q,0.707,0.707,0.707,lin,original,
+low-end,comp,threshold_db,-30,-30,-30,lin,original,
+low-end,comp,ratio,2,3,4,lin,original,
+low-end,comp,attack_ms,3,3,3,lin,original,
+low-end,comp,release_ms,60,60,60,lin,original,
+low-end,comp,makeup_db,6,6,6,lin,original,
+low-end,sat,drive_db,12,12,12,lin,original,
+low-end,sat,makeup_db,0,0,0,lin,original,
+low-end,chain,target_gain_db,0,0,0,lin,original,
+low-end,chain,noise_follows_gain,0,0,0,lin,original,
+low-end,chain,presence_hold_s,3,3,3,lin,original,
+low-end,chain,presence_fade_s,2,2,2,lin,original,
+wide,ms,side_gain,1,1.6,2.2,lin,original,width
+wide,ms,decorr,0.2,0.4,0.7,lin,original,decorrelated mid added to the side
+wide,ms,tilt_db,0,1,2,lin,original,
+wide,chain,target_gain_db,-2,-2,-2,lin,original,
+wide,chain,noise_follows_gain,0,0,0,lin,original,
+wide,chain,presence_hold_s,3,3,3,lin,original,
+wide,chain,presence_fade_s,2,2,2,lin,original,
+pocket-radio,hp,freq_hz,300,450,700,log,original,
+pocket-radio,hp,q,0.9,0.9,0.9,lin,original,
+pocket-radio,pk,freq_hz,1500,1500,1500,lin,original,
+pocket-radio,pk,q,1,1,1,lin,original,
+pocket-radio,pk,gain_db,4,4,4,lin,original,
+pocket-radio,bl,freq_hz,12000,12000,12000,lin,original,band limit ahead of the saturation
+pocket-radio,bl,q,0.707,0.707,0.707,lin,original,
+pocket-radio,sat,drive_db,0,6,12,lin,original,
+pocket-radio,sat,makeup_db,0,-3,-6,lin,original,
+pocket-radio,lp,freq_hz,6000,4000,2500,log,original,
+pocket-radio,lp,q,0.8,0.8,0.8,lin,original,
+pocket-radio,comp,threshold_db,-24,-24,-24,lin,original,
+pocket-radio,comp,ratio,3,3,3,lin,original,
+pocket-radio,comp,attack_ms,5,5,5,lin,original,
+pocket-radio,comp,release_ms,80,80,80,lin,original,
+pocket-radio,comp,makeup_db,6,6,6,lin,original,
+pocket-radio,hiss,level_db,-75,-65,-55,lin,original,band noise before the filters
+pocket-radio,chain,target_gain_db,0.4,0.4,0.4,lin,original,
+pocket-radio,chain,noise_follows_gain,0,0,0,lin,original,
+pocket-radio,chain,presence_hold_s,3,3,3,lin,original,
+pocket-radio,chain,presence_fade_s,2,2,2,lin,original,
+camcorder,lp,freq_hz,12000,8500,6000,log,original,
+camcorder,lp,q,0.7,0.7,0.7,lin,original,
+camcorder,wobble,depth_ms,0,0.12,0.3,lin,original,
+camcorder,wobble,wow_hz,0.7,0.7,0.7,lin,original,
+camcorder,wobble,flutter_hz,8,8,8,lin,original,
+camcorder,lev,ratio,0.5,0.5,0.5,lin,original,automatic gain control
+camcorder,lev,ceiling_db,-14,-14,-14,lin,original,
+camcorder,lev,attack_ms,8,8,8,lin,original,
+camcorder,lev,release_ms,400,400,400,lin,original,
+camcorder,lev,makeup_db,0,0,0,lin,original,
+camcorder,width,side_gain,0.5,0.5,0.5,lin,original,narrowed image
+camcorder,hiss,level_db,-120,-72,-52,lin,original,
+camcorder,clk,level_db,-66,-66,-66,lin,original,head switch ticks
+camcorder,clk,rate_hz,50,50,50,lin,original,
+camcorder,chain,target_gain_db,1.5,1.5,1.5,lin,original,
+camcorder,chain,noise_follows_gain,0,0,0,lin,original,
+camcorder,chain,presence_hold_s,3,3,3,lin,original,
+camcorder,chain,presence_fade_s,2,2,2,lin,original,
+dusty-groove,hp,freq_hz,30,30,30,lin,original,
+dusty-groove,hp,q,0.707,0.707,0.707,lin,original,
+dusty-groove,mono,freq_hz,150,150,150,lin,original,mono below this
+dusty-groove,lp,freq_hz,14000,10000,7000,log,original,
+dusty-groove,lp,q,0.7,0.7,0.7,lin,original,
+dusty-groove,wobble,depth_ms,0,0.1,0.2,lin,original,warp
+dusty-groove,wobble,wow_hz,0.55,0.55,0.55,lin,original,
+dusty-groove,wobble,flutter_hz,1,1,1,lin,original,
+dusty-groove,hiss,level_db,-120,-74,-56,lin,original,surface noise
+dusty-groove,rum,level_db,-120,-70,-50,lin,original,
+dusty-groove,crackle,rate_hz,0.5,6,30,log,original,events per second
+dusty-groove,crackle,amp,0.05,0.05,0.05,lin,original,
+dusty-groove,crackle,decay_ms,0.5,0.5,0.5,lin,original,
+dusty-groove,crackle,level_db,-6,-6,-6,lin,original,
+dusty-groove,crackle,pop_rate_hz,0.05,0.3,1,log,original,
+dusty-groove,crackle,pop_level_db,-12,-12,-12,lin,original,
+dusty-groove,chain,target_gain_db,2.2,2.2,2.2,lin,original,
+dusty-groove,chain,noise_follows_gain,0,0,0,lin,original,
+dusty-groove,chain,presence_hold_s,3,3,3,lin,original,
+dusty-groove,chain,presence_fade_s,2,2,2,lin,original,
+lossy,bell1,freq_hz,6500,6500,6500,lin,original,top lift before the coder
+lossy,bell1,q,0.8,0.8,0.8,lin,original,
+lossy,bell1,gain_db,4,4,4,lin,original,
+lossy,spec,thresh_db,-85,-65,-42,lin,original,holes open as Transform rises
+lossy,spec,hold_ms,60,35,15,lin,original,shorter hold means more holes
+lossy,spec,step_db,1,3,9,lin,original,coarser band levels
+lossy,spec,dropout,0,0.06,0.2,lin,original,seeded band dropouts per frame
+lossy,bell2,freq_hz,6500,6500,6500,lin,original,
+lossy,bell2,q,0.8,0.8,0.8,lin,original,
+lossy,bell2,gain_db,-4,-4,-4,lin,original,top dip after the coder
+lossy,lp,freq_hz,16000,12650,10000,log,original,resonant edge
+lossy,lp,q,1.4,1.4,1.4,lin,original,
+lossy,chain,target_gain_db,0,0,0,lin,original,
+lossy,chain,noise_follows_gain,0,0,0,lin,original,
+lossy,chain,presence_hold_s,3,3,3,lin,original,
+lossy,chain,presence_fade_s,2,2,2,lin,original,
+swirl,ph,rate_hz,0.1,0.35,1.2,log,original,phaser rate
+swirl,ph,depth_oct,0.8,1.4,2,lin,original,sweep depth
+swirl,ph,feedback,0,0.35,0.7,lin,original,
+swirl,ph,center_hz,700,700,700,lin,original,
+swirl,ph,mix,0.8,0.8,0.8,lin,original,
+swirl,ph,stereo,0.6,0.6,0.6,lin,original,
+swirl,wob,depth_ms,0,0.1,0.2,lin,original,slow pitch wobble deepens
+swirl,wob,wow_hz,0.3,0.3,0.3,lin,original,
+swirl,wob,flutter_hz,3,3,3,lin,original,
+swirl,pan,rate_hz,0.1,0.35,1.2,log,original,pan rate follows the phaser
+swirl,pan,depth,0.2,0.45,0.7,lin,original,
+swirl,echo,time_ms,120,120,120,lin,original,
+swirl,echo,feedback,0,0.2,0.4,lin,original,
+swirl,echo,mix,0.3,0.3,0.3,lin,original,
+swirl,echo,mod_rate_hz,0.4,0.4,0.4,lin,original,
+swirl,echo,mod_depth_ms,0.5,0.5,0.5,lin,original,
+swirl,chain,target_gain_db,4.2,4.2,4.2,lin,original,
+swirl,chain,noise_follows_gain,0,0,0,lin,original,
+swirl,chain,presence_hold_s,3,3,3,lin,original,
+swirl,chain,presence_fade_s,2,2,2,lin,original,
+torn-cone,hp,freq_hz,150,150,150,lin,original,
+torn-cone,hp,q,0.707,0.707,0.707,lin,original,
+torn-cone,sat,drive_db,12,27,42,lin,original,heavy hard clip
+torn-cone,sat,makeup_db,-3.4,-2.9,4.2,lin,original,
+torn-cone,cone,freq_hz,1200,1200,1200,lin,original,cone peak
+torn-cone,cone,q,3,3,3,lin,original,
+torn-cone,cone,gain_db,8,8,8,lin,original,
+torn-cone,lp,freq_hz,6000,4243,3000,log,original,the band closes
+torn-cone,lp,q,0.8,0.8,0.8,lin,original,
+torn-cone,rattle,amount,0,0.3,0.6,lin,original,noise keyed by the envelope
+torn-cone,rattle,tone_hz,2500,2500,2500,lin,original,
+torn-cone,comp,threshold_db,-18,-18,-18,lin,original,
+torn-cone,comp,ratio,4,4,4,lin,original,
+torn-cone,comp,attack_ms,5,5,5,lin,original,
+torn-cone,comp,release_ms,120,120,120,lin,original,
+torn-cone,comp,makeup_db,0,0,0,lin,original,
+torn-cone,chain,target_gain_db,1.5,1.5,1.5,lin,original,
+torn-cone,chain,noise_follows_gain,0,0,0,lin,original,
+torn-cone,chain,presence_hold_s,3,3,3,lin,original,
+torn-cone,chain,presence_fade_s,2,2,2,lin,original,
+tin-robot,comb,delay_ms,6,3,1.5,log,original,comb pitch rises with Transform
+tin-robot,comb,feedback,0.3,0.6,0.85,lin,original,
+tin-robot,comb,feedforward,0,0,0,lin,original,
+tin-robot,comb,detune,0.03,0.03,0.03,lin,original,right channel detune
+tin-robot,comb,wander,0.02,0.02,0.02,lin,original,slow seeded detune
+tin-robot,hp,freq_hz,800,800,800,lin,original,
+tin-robot,hp,q,0.707,0.707,0.707,lin,original,
+tin-robot,lp,freq_hz,3000,3000,3000,lin,original,
+tin-robot,lp,q,0.707,0.707,0.707,lin,original,
+tin-robot,f1,freq_hz,1100,1100,1100,lin,original,formant like peak
+tin-robot,f1,q,4,4,4,lin,original,
+tin-robot,f1,gain_db,6,6,6,lin,original,
+tin-robot,f2,freq_hz,2300,2300,2300,lin,original,formant like peak
+tin-robot,f2,q,4,4,4,lin,original,
+tin-robot,f2,gain_db,5,5,5,lin,original,
+tin-robot,ring,freq_hz,55,55,55,lin,original,
+tin-robot,ring,amount,0,0.25,0.5,lin,original,
+tin-robot,chain,target_gain_db,8.5,8.5,8.5,lin,original,
+tin-robot,chain,noise_follows_gain,0,0,0,lin,original,
+tin-robot,chain,presence_hold_s,3,3,3,lin,original,
+tin-robot,chain,presence_fade_s,2,2,2,lin,original,
+bit-bender,crush,bits,12,6,2,lin,original,bit depth falls with Transform
+bit-bender,crush,rate_hz,24000,6000,1500,log,original,hold rate falls with Transform
+bit-bender,crush,mod_rate_hz,0.5,2,8,log,original,random modulation rate
+bit-bender,crush,mod_depth,0,0.5,1,lin,original,random modulation depth
+bit-bender,crush,makeup_db,0,-1.5,-7,lin,original,
+bit-bender,dc,freq_hz,15,15,15,lin,original,DC blocker
+bit-bender,dc,q,0.707,0.707,0.707,lin,original,
+bit-bender,pops,rate_hz,0,0,0,lin,original,
+bit-bender,pops,amp,0.05,0.05,0.05,lin,original,
+bit-bender,pops,decay_ms,0.5,0.5,0.5,lin,original,
+bit-bender,pops,level_db,-60,-60,-60,lin,original,
+bit-bender,pops,pop_rate_hz,0.1,0.4,1.5,log,original,gated pops
+bit-bender,pops,pop_level_db,-14,-14,-14,lin,original,
+bit-bender,chain,target_gain_db,1.5,1.5,1.5,lin,original,
+bit-bender,chain,noise_follows_gain,0,0,0,lin,original,
+bit-bender,chain,presence_hold_s,3,3,3,lin,original,
+bit-bender,chain,presence_fade_s,2,2,2,lin,original,
+spin-cycle,trem,rate_hz,0.8,2.4,7,log,original,drum tremolo rate
+spin-cycle,trem,depth,0.2,0.5,0.8,lin,original,
+spin-cycle,trem,phase,0.25,0.25,0.25,lin,original,channel offset
+spin-cycle,slosh,lo_hz,400,400,400,lin,original,
+spin-cycle,slosh,hi_hz,3000,3000,3000,lin,original,
+spin-cycle,slosh,sweep_hz,0.25,0.25,0.25,lin,original,
+spin-cycle,slosh,depth,0.2,0.6,1,lin,original,slosh depth
+spin-cycle,slosh,q,1.2,1.2,1.2,lin,original,
+spin-cycle,room,size,0.35,0.35,0.35,lin,original,resonant box
+spin-cycle,room,rt60_s,0.35,0.35,0.35,lin,original,
+spin-cycle,room,damping,0.5,0.5,0.5,lin,original,
+spin-cycle,echo,time_ms,380,380,380,lin,original,long wash
+spin-cycle,echo,feedback,0.55,0.55,0.55,lin,original,
+spin-cycle,echo,mix,1,1,1,lin,original,fully wet
+spin-cycle,echo,mod_rate_hz,0.3,0.3,0.3,lin,original,
+spin-cycle,echo,mod_depth_ms,4,4,4,lin,original,
+spin-cycle,hum,level_db,-120,-45,-30,lin,original,motor hum
+spin-cycle,hum,freq_hz,55,55,55,lin,original,
+spin-cycle,water,rate_hz,0.5,1.7,6,log,original,noise bursts per second
+spin-cycle,water,level_db,-42,-42,-42,lin,original,
+spin-cycle,water,decay_ms,120,120,120,lin,original,
+spin-cycle,water,tone_hz,2500,2500,2500,lin,original,
+spin-cycle,chain,target_gain_db,0,0,0,lin,original,
+spin-cycle,chain,noise_follows_gain,0,0,0,lin,original,
+spin-cycle,chain,presence_hold_s,3,3,3,lin,original,
+spin-cycle,chain,presence_fade_s,2,2,2,lin,original,
+ion-sweep,flange,delay_ms,9,1.64,0.3,log,original,Transform is the sweep position
+ion-sweep,flange,feedback,0.85,0.85,0.85,lin,original,
+ion-sweep,flange,feedforward,0.5,0.5,0.5,lin,original,
+ion-sweep,flange,detune,0.07,0.07,0.07,lin,original,channel offset of the sweep
+ion-sweep,flange,wander,0,0,0,lin,original,
+ion-sweep,bp,freq_hz,400,1789,8000,log,original,sweeps with the comb
+ion-sweep,bp,q,3,3,3,lin,original,
+ion-sweep,bp,makeup_db,10,10,10,lin,original,
+ion-sweep,ring,freq_hz,440,440,440,lin,original,faint ring tone
+ion-sweep,ring,amount,0.1,0.1,0.1,lin,original,
+ion-sweep,chain,target_gain_db,4,4,4,lin,original,
+ion-sweep,chain,noise_follows_gain,0,0,0,lin,original,
+ion-sweep,chain,presence_hold_s,3,3,3,lin,original,
+ion-sweep,chain,presence_fade_s,2,2,2,lin,original,
+ghost-pipes,hp,freq_hz,120,120,120,lin,original,light excitation high-pass
+ghost-pipes,hp,q,0.707,0.707,0.707,lin,original,
+ghost-pipes,modal,root_hz,110,311,880,log,original,root pitch
+ghost-pipes,modal,decay_s,0.2,0.9,4,log,original,per mode decay
+ghost-pipes,modal,detune,0.002,0.011,0.02,lin,original,seeded detune spread
+ghost-pipes,modal,active,4,8,12,lin,original,active mode count
+ghost-pipes,modal,gain,9,15,29,lin,original,
+ghost-pipes,chain,target_gain_db,12,12,12,lin,original,
+ghost-pipes,chain,noise_follows_gain,0,0,0,lin,original,
+ghost-pipes,chain,presence_hold_s,3,3,3,lin,original,
+ghost-pipes,chain,presence_fade_s,2,2,2,lin,original,

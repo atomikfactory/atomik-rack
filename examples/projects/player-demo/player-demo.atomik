@@ -1,0 +1,298 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "seq", "type": "atomik.step-sequencer",
+      "name": "Bass Line", "folded": false,
+      "steps": {
+        "patterns": [
+          {
+            "name": "Bass Line", "length": 16, "resolution": "sixteenth", "swing": 20,
+            "steps": [
+              {"on": true, "key": 45, "velocity": 110, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 45, "velocity": 90, "gate": 50, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 48, "velocity": 100, "gate": 80, "prob": 100, "tie": true},
+              {"on": true, "key": 50, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 52, "velocity": 85, "gate": 60, "prob": 50, "tie": false},
+              {"on": true, "key": 45, "velocity": 110, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 45, "velocity": 90, "gate": 50, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 43, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 47, "velocity": 95, "gate": 70, "prob": 100, "tie": false},
+              {"on": true, "key": 48, "velocity": 80, "gate": 60, "prob": 60, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false}
+            ]
+          },
+          {
+            "name": "Variation", "length": 12, "resolution": "eighth", "swing": 0,
+            "steps": [
+              {"on": true, "key": 45, "velocity": 110, "gate": 90, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 52, "velocity": 90, "gate": 60, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 50, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 48, "velocity": 100, "gate": 80, "prob": 70, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "bass", "type": "atomik.poly-synth",
+      "name": "Bass", "folded": false,
+      "params": {
+        "env.amp.attack": 3,
+        "env.amp.decay": 200,
+        "env.amp.release": 60,
+        "env.amp.sustain": 0.85,
+        "filter.cutoff": 700,
+        "filter.env_amount": 0.2,
+        "filter.resonance": 0.15,
+        "master.level": -6,
+        "osc.mix": 0,
+        "osc1.wave": 0,
+        "voices": 1
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    },
+    {
+      "id": "voice", "type": "atomik.poly-synth",
+      "name": "Arp Voice", "folded": false,
+      "params": {
+        "cv.cutoff_amount": 4,
+        "env.amp.attack": 4,
+        "env.amp.decay": 150,
+        "env.amp.release": 120,
+        "env.amp.sustain": 0.5,
+        "filter.cutoff": 900,
+        "master.level": -14,
+        "osc.mix": 0,
+        "osc1.wave": 1
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false
+    },
+    {
+      "id": "arp", "type": "atomik.arpeggiator",
+      "name": "Arp", "folded": false,
+      "params": {
+        "gate": 60,
+        "mode": 2,
+        "octaves": 2,
+        "rate": 4,
+        "run": 0
+      }
+    }
+  ],
+  "cables": [
+    {"from": "arp:notes_out", "to": "voice:notes_in"},
+    {"from": "bass:out_l", "to": "channel:in_l"},
+    {"from": "bass:out_r", "to": "channel:in_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "seq:notes_out", "to": "bass:notes_in"},
+    {"from": "seq:pitch_cv_out", "to": "voice:cutoff_cv_in"},
+    {"from": "voice:out_l", "to": "channel-2:in_l"},
+    {"from": "voice:out_r", "to": "channel-2:in_r"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "bass"},
+      {"channel": "channel-2", "source": "voice"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 245760,
+    "next_clip_id": 2,
+    "tracks": [
+      {
+        "device": "arp", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 245760, 57, 0.8],
+                  [0, 245760, 60, 0.8],
+                  [0, 245760, 64, 0.8]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "format": "atomik-patch",
+  "version": 1,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "length_beats": 2,
+  "output_channels": 2,
+  "devices": [
+    { "id": "synth", "type": "atomik.poly-synth", "params": { "filter.cutoff": 1500 } }
+  ],
+  "cables": [
+    { "from": "synth:out_l", "to": "interface:out_1" },
+    { "from": "synth:out_r", "to": "interface:out_2" }
+  ],
+  "notes": [
+    { "device": "synth", "socket": "notes_in", "at_beats": 0, "length_beats": 1, "key": 57, "velocity": 0.8 }
+  ]
+}

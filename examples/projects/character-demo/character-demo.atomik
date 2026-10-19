@@ -1,0 +1,453 @@
+{
+  "format": "atomik-project",
+  "version": 9,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "lead", "type": "atomik.container",
+      "name": "Lead", "folded": false,
+      "inner": {
+        "devices": [
+          {
+            "id": "syn", "type": "atomik.poly-synth",
+            "name": "Synth", "folded": false,
+            "params": {
+              "env.amp.attack": 4,
+              "env.amp.decay": 250,
+              "env.amp.release": 200,
+              "env.amp.sustain": 0.6,
+              "filter.cutoff": 3500,
+              "filter.env_amount": 0.2,
+              "master.level": -14,
+              "osc.mix": 0,
+              "osc1.wave": 1,
+              "voices": 4
+            }
+          },
+          {
+            "id": "chr", "type": "atomik.character",
+            "name": "Character", "folded": false
+          }
+        ],
+        "cables": [
+          {"from": "chr:out_l", "to": "boundary:out_l"},
+          {"from": "chr:out_r", "to": "boundary:out_r"},
+          {"from": "syn:out_l", "to": "chr:in_l"},
+          {"from": "syn:out_r", "to": "chr:in_r"}
+        ],
+        "macros": [
+          {"name": "Preset", "targets": [
+            {"device": "chr", "param": "preset", "min": 0, "max": 15}
+          ]},
+          {"name": "Transform", "targets": [
+            {"device": "chr", "param": "transform", "min": 0, "max": 1}
+          ]},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []},
+          {"name": "", "targets": []}
+        ],
+        "splits": [
+          {"target": "syn", "key_lo": 0, "key_hi": 127, "vel_lo": 1, "vel_hi": 127, "transpose": 0}
+        ]
+      }
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    },
+    {
+      "id": "seq", "type": "atomik.step-sequencer",
+      "name": "Bass Line", "folded": false,
+      "steps": {
+        "patterns": [
+          {
+            "name": "Bass Line", "length": 16, "resolution": "sixteenth", "swing": 10,
+            "steps": [
+              {"on": true, "key": 45, "velocity": 110, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 45, "velocity": 90, "gate": 50, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 48, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 50, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 52, "velocity": 95, "gate": 60, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 45, "velocity": 105, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": true, "key": 43, "velocity": 90, "gate": 60, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false},
+              {"on": false, "key": 60, "velocity": 100, "gate": 80, "prob": 100, "tie": false}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "bass", "type": "atomik.poly-synth",
+      "name": "Bass", "folded": false,
+      "params": {
+        "env.amp.attack": 3,
+        "env.amp.decay": 220,
+        "env.amp.release": 90,
+        "env.amp.sustain": 0.8,
+        "filter.cutoff": 900,
+        "filter.resonance": 0.15,
+        "master.level": -8,
+        "osc.mix": 0,
+        "osc1.wave": 0,
+        "voices": 1
+      }
+    },
+    {
+      "id": "channel-2", "type": "atomik.channel",
+      "name": "Console Channel 2", "folded": false
+    },
+    {
+      "id": "bass-fx", "type": "atomik.character",
+      "name": "Bass Character", "folded": false,
+      "params": {
+        "mix": 0.8,
+        "preset": 14,
+        "transform": 0.75,
+        "transform_cv_trim": 0.5
+      }
+    },
+    {
+      "id": "pad", "type": "atomik.poly-synth",
+      "name": "Pad", "folded": false,
+      "params": {
+        "env.amp.attack": 450,
+        "env.amp.decay": 600,
+        "env.amp.release": 700,
+        "env.amp.sustain": 0.8,
+        "filter.cutoff": 1800,
+        "filter.env_amount": 0,
+        "master.level": -15,
+        "osc.mix": 0.5,
+        "osc1.wave": 0,
+        "osc2.wave": 2,
+        "voices": 6
+      }
+    },
+    {
+      "id": "channel-3", "type": "atomik.channel",
+      "name": "Console Channel 3", "folded": false
+    },
+    {
+      "id": "pad-fx", "type": "atomik.character",
+      "name": "Pad Character", "folded": false,
+      "params": {
+        "mix": 0.7,
+        "preset": 8,
+        "transform": 0.45
+      }
+    }
+  ],
+  "cables": [
+    {"from": "bass:out_l", "to": "channel-2:in_l"},
+    {"from": "bass:out_r", "to": "channel-2:in_r"},
+    {"from": "bass-fx:out_l", "to": "channel-2:insert_return_l"},
+    {"from": "bass-fx:out_r", "to": "channel-2:insert_return_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-2:insert_send_l", "to": "bass-fx:in_l"},
+    {"from": "channel-2:insert_send_r", "to": "bass-fx:in_r"},
+    {"from": "channel-2:out_l", "to": "master:bus_l"},
+    {"from": "channel-2:out_r", "to": "master:bus_r"},
+    {"from": "channel-2:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-2:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-2:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-2:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-2:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-2:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-2:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-2:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-2:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-2:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-2:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-2:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-2:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-2:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-2:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-2:send8_r", "to": "master:send_bus8_r"},
+    {"from": "channel-3:insert_send_l", "to": "pad-fx:in_l"},
+    {"from": "channel-3:insert_send_r", "to": "pad-fx:in_r"},
+    {"from": "channel-3:out_l", "to": "master:bus_l"},
+    {"from": "channel-3:out_r", "to": "master:bus_r"},
+    {"from": "channel-3:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel-3:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel-3:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel-3:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel-3:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel-3:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel-3:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel-3:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel-3:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel-3:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel-3:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel-3:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel-3:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel-3:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel-3:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel-3:send8_r", "to": "master:send_bus8_r"},
+    {"from": "lead:out_l", "to": "channel:in_l"},
+    {"from": "lead:out_r", "to": "channel:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"},
+    {"from": "pad:out_l", "to": "channel-3:in_l"},
+    {"from": "pad:out_r", "to": "channel-3:in_r"},
+    {"from": "pad-fx:out_l", "to": "channel-3:insert_return_l"},
+    {"from": "pad-fx:out_r", "to": "channel-3:insert_return_r"},
+    {"from": "seq:notes_out", "to": "bass:notes_in"},
+    {"from": "seq:pitch_cv_out", "to": "bass-fx:transform_cv_in"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "lead"},
+      {"channel": "channel-2", "source": "bass"},
+      {"channel": "channel-3", "source": "pad"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [4, 4],
+    "loop": {"start": 0, "end": 491520, "enabled": false},
+    "end": 491520,
+    "next_clip_id": 6,
+    "tracks": [
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 69, 0.75],
+                  [7680, 5760, 72, 0.75],
+                  [15360, 5760, 76, 0.75],
+                  [23040, 5760, 72, 0.75],
+                  [30720, 5760, 76, 0.75],
+                  [38400, 5760, 72, 0.75],
+                  [46080, 5760, 76, 0.75],
+                  [53760, 5760, 69, 0.75],
+                  [61440, 5760, 65, 0.75],
+                  [69120, 5760, 69, 0.75],
+                  [76800, 5760, 72, 0.75],
+                  [84480, 5760, 69, 0.75],
+                  [92160, 5760, 72, 0.75],
+                  [99840, 5760, 69, 0.75],
+                  [107520, 5760, 72, 0.75],
+                  [115200, 5760, 65, 0.75],
+                  [122880, 5760, 67, 0.75],
+                  [130560, 5760, 72, 0.75],
+                  [138240, 5760, 76, 0.75],
+                  [145920, 5760, 72, 0.75],
+                  [153600, 5760, 76, 0.75],
+                  [161280, 5760, 72, 0.75],
+                  [168960, 5760, 76, 0.75],
+                  [176640, 5760, 67, 0.75],
+                  [184320, 5760, 67, 0.75],
+                  [192000, 5760, 71, 0.75],
+                  [199680, 5760, 74, 0.75],
+                  [207360, 5760, 71, 0.75],
+                  [215040, 5760, 74, 0.75],
+                  [222720, 5760, 71, 0.75],
+                  [230400, 5760, 74, 0.75],
+                  [238080, 5760, 67, 0.75]
+                ]
+              },
+              {
+                "id": 2, "start": 245760, "length": 245760, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 5760, 69, 0.75],
+                  [7680, 5760, 72, 0.75],
+                  [15360, 5760, 76, 0.75],
+                  [23040, 5760, 72, 0.75],
+                  [30720, 5760, 76, 0.75],
+                  [38400, 5760, 72, 0.75],
+                  [46080, 5760, 76, 0.75],
+                  [53760, 5760, 69, 0.75],
+                  [61440, 5760, 65, 0.75],
+                  [69120, 5760, 69, 0.75],
+                  [76800, 5760, 72, 0.75],
+                  [84480, 5760, 69, 0.75],
+                  [92160, 5760, 72, 0.75],
+                  [99840, 5760, 69, 0.75],
+                  [107520, 5760, 72, 0.75],
+                  [115200, 5760, 65, 0.75],
+                  [122880, 5760, 67, 0.75],
+                  [130560, 5760, 72, 0.75],
+                  [138240, 5760, 76, 0.75],
+                  [145920, 5760, 72, 0.75],
+                  [153600, 5760, 76, 0.75],
+                  [161280, 5760, 72, 0.75],
+                  [168960, 5760, 76, 0.75],
+                  [176640, 5760, 67, 0.75],
+                  [184320, 5760, 67, 0.75],
+                  [192000, 5760, 71, 0.75],
+                  [199680, 5760, 74, 0.75],
+                  [207360, 5760, 71, 0.75],
+                  [215040, 5760, 74, 0.75],
+                  [222720, 5760, 71, 0.75],
+                  [230400, 5760, 74, 0.75],
+                  [238080, 5760, 67, 0.75]
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "automation", "param": "macro1",
+            "clips": [
+              {
+                "id": 4, "start": 0, "length": 491520, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0, "step"],
+                  [122880, 0.6, "step"],
+                  [245760, 0.46666667, "step"],
+                  [368640, 0.33333334, "step"]
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "automation", "param": "macro2",
+            "clips": [
+              {
+                "id": 5, "start": 0, "length": 491520, "offset": 0, "loop_length": null, "muted": false,
+                "points": [
+                  [0, 0.2, "linear"],
+                  [245760, 0.9, "linear"],
+                  [491519, 0.4, "step"]
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "device": "pad", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 0, "length": 491520, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 61440, 57, 0.6],
+                  [0, 61440, 60, 0.6],
+                  [0, 61440, 64, 0.6],
+                  [61440, 61440, 53, 0.6],
+                  [61440, 61440, 57, 0.6],
+                  [61440, 61440, 60, 0.6],
+                  [122880, 61440, 55, 0.6],
+                  [122880, 61440, 60, 0.6],
+                  [122880, 61440, 64, 0.6],
+                  [184320, 61440, 55, 0.6],
+                  [184320, 61440, 59, 0.6],
+                  [184320, 61440, 62, 0.6],
+                  [245760, 61440, 57, 0.6],
+                  [245760, 61440, 60, 0.6],
+                  [245760, 61440, 64, 0.6],
+                  [307200, 61440, 53, 0.6],
+                  [307200, 61440, 57, 0.6],
+                  [307200, 61440, 60, 0.6],
+                  [368640, 61440, 55, 0.6],
+                  [368640, 61440, 60, 0.6],
+                  [368640, 61440, 64, 0.6],
+                  [430080, 61440, 55, 0.6],
+                  [430080, 61440, 59, 0.6],
+                  [430080, 61440, 62, 0.6]
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
