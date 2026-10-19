@@ -55,7 +55,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 proptest = "1.12.0"
 criterion = "0.8.2"
 rustfft = "6"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
