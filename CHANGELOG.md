@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.1.0]
 
-First public version. Windows (x86-64) is the primary platform; macOS and Linux are compile-checked. Project files are format version 9 (older versions load).
+First public version. Windows (x86-64) is the primary platform; Linux has been tried on Ubuntu 26.04; macOS is compile-checked only. Project files are format version 9 (older versions load).
 
 ### Added
 - **Engine.** A real-time engine with fixed 64-frame batches that is allocation-free and lock-free on the render path, hot edits of the rack while audio plays, multicore rendering with bit-identical output for any worker count and host block size, plugin delay compensation across the whole graph, and cable validation (types, direction, cycles).

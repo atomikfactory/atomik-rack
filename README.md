@@ -10,7 +10,8 @@ The project is original work, released under the GPL-3.0-or-later. It is pre-1.0
 ## Status
 
 - **Windows (x86-64) is the primary platform.** It is the platform the application is developed and hand-tested on, including ASIO audio.
-- **macOS and Linux compile and are linted and tested in CI configurations, but have not been verified by hand on real audio hardware or with real plugins.** Expect rough edges there, and please report them.
+- **Linux has been built and tried by the maintainer on Ubuntu 26.04.** Other distributions, audio setups and plugins have not been checked yet, so expect rough edges and please report them.
+- **macOS compiles and is linted, but has not been run on a Mac yet.** Reports from Mac users are especially welcome.
 - Nothing is stable yet. See [ROADMAP.md](ROADMAP.md) for what is planned and what is missing.
 
 There are no screenshots in the repository yet. The user interface is drawn procedurally (vector graphics, system fonts); build the application and run one of the example projects below to see it.
