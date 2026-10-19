@@ -4,7 +4,7 @@ This is a list of intentions, not promises. There are no dates, and the order is
 
 ## Platforms and distribution
 
-- **macOS and Linux verification.** Both compile and are linted, but they have not been verified by hand with real audio devices and plugins. Verifying and fixing them is a priority.
+- **macOS and Linux verification.** Linux has been tried on Ubuntu 26.04 only; other distributions, audio setups and real plugins still need checking. macOS compiles and is linted but has not been run on a Mac. Verifying and fixing both is a priority.
 - **Release pipeline and binaries.** A tag-triggered build that produces Windows, macOS and Linux artifacts with checksums (without the ASIO SDK), and a short release process document.
 - **VST3 on Linux.** Run-loop support for editors that need file-descriptor handlers.
 - **Wayland plugin windows.** Embedding plugin editors on Wayland (today the parameter pane is the fallback).
