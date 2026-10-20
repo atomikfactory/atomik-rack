@@ -7,6 +7,8 @@ Atomik Rack is a free, open-source, rack-based digital audio workstation written
 
 The project is original work, released under the GPL-3.0-or-later. It is pre-1.0: file formats, APIs and behaviour will change (see [CHANGELOG.md](CHANGELOG.md)).
 
+☕ Buy me a coffe: https://buymeacoffee.com/atomik.factory
+
 ## Status
 
 - **Windows (x86-64) is the primary platform.** It is the platform the application is developed and hand-tested on, including ASIO audio.
