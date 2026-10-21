@@ -44,8 +44,11 @@ fn record() {
             // TEMP-DIAG
             let d = depth.get();
             depth.set(0);
-            eprintln!("TEMP-DIAG alloc in guard:
-{}", std::backtrace::Backtrace::force_capture());
+            eprintln!(
+                "TEMP-DIAG alloc in guard:
+{}",
+                std::backtrace::Backtrace::force_capture()
+            );
             depth.set(d);
             let _ = VIOLATIONS.try_with(|v| v.set(v.get() + 1));
         }
