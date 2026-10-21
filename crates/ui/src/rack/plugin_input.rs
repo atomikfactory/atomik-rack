@@ -13,7 +13,7 @@ use crate::plugin_panel::{self, PluginButton};
 use atomik_device_sdk::DeviceDescriptor;
 use atomik_model::{Command, ConsoleCommand, DeviceKey, PluginCommand, PluginDoc};
 use std::sync::Arc;
-use vello::kurbo::{Point, Rect, RoundedRect, Vec2};
+use vello::kurbo::{Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Height of one row of the RELINK menu.
@@ -136,7 +136,7 @@ impl RackView {
             return None;
         }
         let r = d.spec.plugin?.button(b);
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// The rows of the open RELINK menu: (label, centre in logical view coordinates).
@@ -229,7 +229,7 @@ impl RackView {
         }
         let h = entries.len() as f64 * MENU_ROW_H + 4.0;
         let x0 =
-            rp.x.min(f64::from(atomik_device_sdk::RACK_WIDTH) - 16.0 - MENU_W);
+            rp.x.min(self.devices[i].x + f64::from(atomik_device_sdk::RACK_WIDTH) - 16.0 - MENU_W);
         let bottom = self.view_to_rack(Point::new(0.0, self.size.height)).y;
         let y0 = if rp.y + h > bottom { rp.y - h } else { rp.y };
         self.plugin_menu = Some(PluginMenu {

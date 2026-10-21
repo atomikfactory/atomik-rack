@@ -90,6 +90,9 @@ pub(crate) fn plan(
             layout,
             path_hint,
         } => relink(doc, registry, device, &plugin, layout, path_hint),
+        PluginCommand::AddAt { .. } => {
+            unreachable!("a slot add is planned with the column commands")
+        }
         PluginCommand::SyncState { .. } | PluginCommand::SyncLayout { .. } => {
             unreachable!("the data syncs are handled before planning")
         }

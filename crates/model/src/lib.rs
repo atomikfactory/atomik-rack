@@ -18,6 +18,7 @@ mod plugin;
 mod plugin_cmd;
 mod plugin_io;
 mod project;
+mod rack_columns;
 mod rules;
 mod slices;
 mod song_cmd;
@@ -47,6 +48,7 @@ pub use plugin::{
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
 };
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
+pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
     to_track_notes,
@@ -74,6 +76,7 @@ pub use console::{Console, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOT
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;
 use history::Edit;
+use rack_columns::Placement;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve,
     Lane, LaneKind, Note, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track,
@@ -160,6 +163,9 @@ pub struct RackDevice {
     /// is a plugin type (`clap.<id>`, `vst3.<hex>`), `None` on every other device. See
     /// [`PluginDoc`].
     pub plugin: Option<Box<PluginDoc>>,
+    /// The rack column the device is shown in (top level only; always 0 for a device inside a
+    /// container). See [`RackDoc::columns`] for the ordering invariant.
+    pub column: u16,
 }
 
 /// The rack document.
@@ -179,8 +185,14 @@ pub struct RackDoc {
     /// The sample pool: audio assets by id. Holds the assets the song
     /// references and those kept for undo; see [`RackDoc::prune_unreferenced_assets`].
     pub assets: BTreeMap<String, AssetMeta>,
-    /// Devices in rack order (top to bottom).
+    /// Devices in rack order (top to bottom, column 0 first). **Invariant**, kept by every
+    /// command and loader and checked by [`RackDoc::check_columns`]: the list is stable-sorted
+    /// by [`RackDevice::column`], so each column is a contiguous run of this list. Signal and
+    /// graph order never depend on columns.
     pub devices: Vec<RackDevice>,
+    /// Number of rack columns shown side by side (at least 1, at most [`MAX_RACK_COLUMNS`]);
+    /// empty columns count. Every device's column is below it.
+    pub columns: u16,
     /// Cables, in canonical order (sorted).
     pub cables: Vec<Cable>,
     /// The song (tracks, clips, tempo map, loop) . Invariant, kept by every command
@@ -206,6 +218,30 @@ pub enum Command {
         /// Explicit key, or `None` to generate one.
         key: Option<DeviceKey>,
     },
+    /// Like [`Command::AddDevice`], at a rack column slot (see [`RackSlot`]): the device
+    /// lands at `slot.index` of column `slot.column` (an empty or too-high index goes to the
+    /// end of the column; column 0 never goes above the Master Section). `slot.column ==
+    /// columns` appends a new column in the same undo step. Reports `DeviceAdded`,
+    /// `RoutingChanged` (and `ViewChanged` when a column is added).
+    AddDeviceAt {
+        /// Where the device goes.
+        slot: RackSlot,
+        /// Device type id.
+        type_id: String,
+        /// Explicit key, or `None` to generate one.
+        key: Option<DeviceKey>,
+    },
+    /// Append an empty rack column (one undo step; refused at [`MAX_RACK_COLUMNS`]).
+    /// Reports [`SyncOp::ViewChanged`].
+    AddRackColumn,
+    /// Remove rack column `column` (one undo step). A non-empty column's devices keep their
+    /// place in the rack order and join the end of the column to the left (the start of the
+    /// next column when column 0 goes); higher columns shift down by one. The last column
+    /// cannot be removed. Reports [`SyncOp::ViewChanged`].
+    RemoveRackColumn {
+        /// The column to remove.
+        column: u16,
+    },
     /// Remove a device, every cable attached to it and its song track (one undo step).
     ///
     /// Console bookkeeping is part of the step: a channel leaves the console; an
@@ -216,7 +252,8 @@ pub enum Command {
         /// Device to remove.
         key: DeviceKey,
     },
-    /// Move a device to rack index `to` (clamped).
+    /// Move a device to rack index `to` (clamped). It takes the column of the device before its
+    /// new position (column 0 at the top).
     MoveDevice {
         /// Device to move.
         key: DeviceKey,
@@ -408,7 +445,7 @@ pub enum Command {
 /// | container removed, added back (undo), duplicated, or added with `AddDevice` | `DeviceRemoved(container)` or `DeviceAdded(container)` for the **whole inside** (the app expands it; no per-inner ops) |
 /// | `SetSplits` | `SplitsChanged`, plus `RoutingChanged` only when the list of targets changed |
 /// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
-/// | plugin added (`PluginCommand::Add`, also inside a container) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
+/// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
@@ -527,6 +564,9 @@ pub enum ModelError {
     /// too few patterns).
     #[error("patterns: {0}")]
     BadPatterns(String),
+    /// Rack column edit rejected (no such column, the last column, too many columns).
+    #[error("rack column: {0}")]
+    BadColumn(String),
     /// Containers nest too deep.
     #[error("{0}")]
     ContainerTooDeep(String),
@@ -889,16 +929,50 @@ impl Document {
                 if key.0.contains('/') {
                     container_cmd::move_inner(doc, &key, to)?
                 } else {
-                    let from = rules::index_of(doc, &key)?;
+                    rules::index_of(doc, &key)?;
                     let to = to.min(doc.devices.len() - 1);
                     // The master stays where it is, and nothing goes above it.
-                    let mut order: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
-                    let moved = order.remove(from);
-                    order.insert(to, moved);
-                    rules::check_move(doc, std::slice::from_ref(&key), order.first().copied())?;
-                    Edit::Move { from, to }
+                    rack_columns::plan_move(doc, std::slice::from_ref(&key), Placement::Flat(to))?
                 }
             }
+            Command::AddDeviceAt { slot, type_id, key } => {
+                let at = doc.resolve_slot(slot)?;
+                let (edit, _) = Self::plan(
+                    doc,
+                    Command::AddDevice {
+                        index: at.index,
+                        type_id,
+                        key,
+                    },
+                    registry,
+                )?;
+                rack_columns::place_new_device(doc, at, edit)
+            }
+            Command::Plugin(PluginCommand::AddAt {
+                slot,
+                plugin,
+                layout,
+                path_hint,
+                key,
+            }) => {
+                let at = doc.resolve_slot(slot)?;
+                let edit = plugin_cmd::plan(
+                    doc,
+                    registry,
+                    PluginCommand::Add {
+                        index: at.index,
+                        container: None,
+                        plugin,
+                        layout,
+                        path_hint,
+                        key,
+                        auto_split: false,
+                    },
+                )?;
+                rack_columns::place_new_device(doc, at, edit)
+            }
+            Command::AddRackColumn => rack_columns::plan_add_column(doc)?,
+            Command::RemoveRackColumn { column } => rack_columns::plan_remove_column(doc, column)?,
             Command::SetFolded { key, folded } => Edit::Folded {
                 old: rules::resolve(doc, &key)?.folded,
                 new: folded,
@@ -1128,6 +1202,7 @@ pub fn empty_doc() -> RackDoc {
         input_channels: 2,
         assets: BTreeMap::new(),
         devices: Vec::new(),
+        columns: 1,
         cables: Vec::new(),
         song: empty_song(120.0),
         console: Console::default(),

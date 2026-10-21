@@ -256,6 +256,46 @@ fn the_view_toggles_are_registry_commands_with_menu_items() {
 }
 
 #[test]
+fn the_rack_navigator_toggles_from_the_view_menu_and_persists_in_ui_state() {
+    let path = temp("ui-state-navigator.json");
+    let _ = std::fs::remove_file(&path);
+    let mut s = shell_at(Some(path.clone()));
+    // On by default: the strip is there and the View menu item is checked.
+    assert!(s.core().view().navigator_visible());
+    assert!(s.menu_state().rack_navigator);
+    let item = s
+        .menu_model()
+        .iter()
+        .flat_map(|m| m.items())
+        .find(|i| i.label == "Rack Navigator")
+        .map(|i| (i.command, i.checked));
+    assert_eq!(item, Some((AppCommand::ToggleRackNavigator, Some(true))));
+    assert_eq!(
+        AppCommand::ToggleRackNavigator.command_id(),
+        Some(("view.toggle_rack_navigator", None))
+    );
+    s.execute(AppCommand::ToggleRackNavigator);
+    assert!(!s.core().view().navigator_visible());
+    assert!(!s.menu_state().rack_navigator);
+    assert!(!UiState::load(&path).show_rack_navigator);
+    // A new start reads it back; a file from before the update shows the strip.
+    assert!(
+        !shell_at(Some(path.clone()))
+            .core()
+            .view()
+            .navigator_visible()
+    );
+    std::fs::write(&path, r#"{"rack_split": 0.4}"#).unwrap();
+    assert!(
+        shell_at(Some(path.clone()))
+            .core()
+            .view()
+            .navigator_visible()
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn deleting_the_master_says_why_and_changes_nothing() {
     let mut s = shell();
     add_synth(&mut s, "a");

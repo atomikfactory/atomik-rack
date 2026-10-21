@@ -422,6 +422,7 @@ impl<B: AudioBackend> Shell<B> {
             let view = shell.core.view_mut();
             view.set_show_console_devices(shell.ui.show_console_devices);
             view.set_show_console_links(shell.ui.show_console_links);
+            view.set_navigator_visible(shell.ui.show_rack_navigator);
         }
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
@@ -823,6 +824,7 @@ impl<B: AudioBackend> Shell<B> {
             compensation: self.core.doc().console.compensation,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
+            rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
             sequencer_only: self.in_sequencer_only(),
             editor: !self.ui.show_console
@@ -1365,6 +1367,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.cancel_file_drag();
                 return Vec::new();
             }
+            // Escape ends a device dragged out of the browser, whichever pane has the focus.
+            if self.core.view().is_browser_dragging() && *pressed && *key == Key::Escape {
+                self.forward(Pane::Rack, event);
+                return Vec::new();
+            }
             if self.core.transport_bar().is_editing_tempo() {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
@@ -1813,6 +1820,7 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
+            columns: doc.columns,
         }
     }
 
@@ -2336,6 +2344,14 @@ impl<B: AudioBackend> Shell<B> {
                 self.save_ui_state();
                 Vec::new()
             }
+            AppCommand::ToggleRackNavigator => {
+                let view = self.core.view_mut();
+                let show = !view.navigator_visible();
+                view.set_navigator_visible(show);
+                self.ui.show_rack_navigator = show;
+                self.save_ui_state();
+                Vec::new()
+            }
             AppCommand::ToggleConsole => {
                 if self.console_shown() {
                     self.ui.show_console = false;
@@ -2512,6 +2528,10 @@ impl<B: AudioBackend> Shell<B> {
     /// `now_seconds` (any monotonic clock).
     pub fn frame_at(&mut self, now_seconds: f64) {
         self.frame();
+        // A device dragged to an edge of the rack scrolls it.
+        if self.core.view_mut().tick(now_seconds) {
+            self.repaint = true;
+        }
         self.core.plugin_tick(now_seconds);
         if self.console_shown() {
             self.core.update_console_meters(now_seconds);

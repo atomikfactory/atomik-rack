@@ -14,6 +14,7 @@ use crate::console_cmd::{Planner, add_channel, console_available, is_instrument}
 use crate::container::{SPLIT_TYPE, split_path};
 use crate::history::Edit;
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
+use crate::rack_columns::{self, Placement};
 use crate::song::{AUDIO_TRACK_TYPE, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note};
 use crate::song_cmd::{
     check_audio, check_content, check_geometry, has_notes_input, is_audio_track_type,
@@ -21,8 +22,8 @@ use crate::song_cmd::{
 use crate::workflow::{ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot};
 use crate::workflow_create::{self, CreateOptions, CreateSource, CreateTarget};
 use crate::{
-    Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, console_cmd,
-    container_cmd, rules, zones,
+    Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, RackSlot, SocketRef,
+    console_cmd, container_cmd, rules, zones,
 };
 use atomik_device_sdk::Registry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -75,6 +76,56 @@ pub enum WorkflowCommand {
         keys: Vec<DeviceKey>,
         /// Target index.
         to: usize,
+    },
+    /// Moves the devices together to a rack column slot ([`RackSlot`]): they keep their
+    /// relative rack order and end up contiguous at `slot.index` among the devices that stay
+    /// in `slot.column` (all take that column). `slot.column == columns` appends a new column in
+    /// the same undo step; column 0 never goes above the Master Section. Inside a container only
+    /// `slot.index` counts (like [`WorkflowCommand::MoveDevices`]). A move that changes nothing
+    /// is rejected. One undo step; reports `ViewChanged` only.
+    MoveDevicesToSlot {
+        /// The devices, in one scope.
+        keys: Vec<DeviceKey>,
+        /// Target slot.
+        slot: RackSlot,
+    },
+    /// [`WorkflowCommand::PasteDevices`] at a rack column slot: the copies land at
+    /// `slot.index` of `slot.column` (a column past the last appends one). Inside a
+    /// `container` only `slot.index` counts.
+    PasteDevicesAt {
+        /// What to paste.
+        snapshot: DeviceSnapshot,
+        /// The container to paste into, or `None` for the top level.
+        container: Option<DeviceKey>,
+        /// Where the first copy goes.
+        slot: RackSlot,
+    },
+    /// [`WorkflowCommand::CreateInstrument`] at a rack column slot (see [`crate::Command::AddDeviceAt`]
+    /// for how the slot resolves). The instrument's console channel lands by the console rules.
+    CreateInstrumentAt {
+        /// Where the instrument goes.
+        slot: RackSlot,
+        /// What to add.
+        source: CreateSource,
+        /// Explicit key, or `None` to generate one.
+        key: Option<DeviceKey>,
+        /// Routing options.
+        options: CreateOptions,
+    },
+    /// [`WorkflowCommand::CreateEffect`] at a rack column slot: the effect is inserted exactly
+    /// there and the routing rules run as if the device directly above the slot (the previous
+    /// device of that column) were selected. A slot at the top of its column has no such
+    /// device: the effect is only added, without auto-route. Instruments and console devices
+    /// are rejected.
+    CreateEffectAt {
+        /// Where the effect goes.
+        slot: RackSlot,
+        /// What to add.
+        source: CreateSource,
+        /// Explicit key, or `None` to generate one.
+        key: Option<DeviceKey>,
+        /// Routing options (`skip_track` and `disarm` do not apply to effects).
+        options: CreateOptions,
     },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
@@ -270,6 +321,45 @@ pub(crate) fn plan(
         } => plain(workflow_create::create_effect(
             doc, registry, &source, &target, key, &options,
         )),
+        WorkflowCommand::CreateInstrumentAt {
+            slot,
+            source,
+            key,
+            options,
+        } => {
+            let at = doc.resolve_slot(slot)?;
+            let edit = workflow_create::create_instrument(
+                doc, registry, at.index, &source, key, &options,
+            )?;
+            Ok((rack_columns::place_new_device(doc, at, edit), None))
+        }
+        WorkflowCommand::CreateEffectAt {
+            slot,
+            source,
+            key,
+            options,
+        } => plain(workflow_create::create_effect_at(
+            doc, registry, slot, &source, key, &options,
+        )),
+        WorkflowCommand::MoveDevicesToSlot { keys, slot } => {
+            plain(move_devices(doc, &keys, Placement::Slot(slot)))
+        }
+        WorkflowCommand::PasteDevicesAt {
+            snapshot,
+            container,
+            slot,
+        } => {
+            let mut p = Planner::new(doc, registry);
+            let (at, column) = match &container {
+                None => {
+                    let r = doc.resolve_slot(slot)?;
+                    (r.index, Some(r.column))
+                }
+                Some(_) => (slot.index, None),
+            };
+            paste_devices(&mut p, &snapshot, container.as_ref(), at, column)?;
+            Ok((p.finish(), None))
+        }
         WorkflowCommand::AutoRoute { devices, options } => plain(workflow_create::auto_route(
             doc, registry, &devices, &options,
         )),
@@ -288,10 +378,12 @@ pub(crate) fn plan(
             at,
         } => {
             let mut p = Planner::new(doc, registry);
-            paste_devices(&mut p, &snapshot, container.as_ref(), at)?;
+            paste_devices(&mut p, &snapshot, container.as_ref(), at, None)?;
             Ok((p.finish(), None))
         }
-        WorkflowCommand::MoveDevices { keys, to } => plain(move_devices(doc, &keys, to)),
+        WorkflowCommand::MoveDevices { keys, to } => {
+            plain(move_devices(doc, &keys, Placement::Flat(to)))
+        }
         WorkflowCommand::DuplicateTrack { device } => {
             plain(duplicate_track(doc, registry, &device))
         }
@@ -435,7 +527,7 @@ fn duplicate_devices(
     let last = &snapshot.devices[snapshot.devices.len() - 1].key;
     let at = after_with_channels(doc, parent.as_ref(), last);
     let mut p = Planner::new(doc, registry);
-    paste_devices(&mut p, &snapshot, parent.as_ref(), at)?;
+    paste_devices(&mut p, &snapshot, parent.as_ref(), at, None)?;
     Ok(p.finish())
 }
 
@@ -451,7 +543,7 @@ fn duplicate_track(
     let snapshot = DeviceSnapshot::capture(doc, std::slice::from_ref(device), true)?;
     let at = after_with_channels(doc, None, device);
     let mut p = Planner::new(doc, registry);
-    paste_devices(&mut p, &snapshot, None, at)?;
+    paste_devices(&mut p, &snapshot, None, at, None)?;
     Ok(p.finish())
 }
 
@@ -494,12 +586,15 @@ fn try_channel(p: &mut Planner<'_>, source: &DeviceKey) {
 }
 
 /// Plans the paste of `snapshot` (see [`WorkflowCommand::PasteDevices`]) on `p`; returns the new
-/// keys in snapshot order.
+/// keys in snapshot order. At the top level the copies all go to `column` (a column equal to
+/// the rack's column count is appended first), by default the column of the device before the
+/// first copy; inside a container they are in column 0.
 fn paste_devices(
     p: &mut Planner<'_>,
     snapshot: &DeviceSnapshot,
     container: Option<&DeviceKey>,
     at: usize,
+    column: Option<u16>,
 ) -> Result<Vec<DeviceKey>, ModelError> {
     if snapshot.devices.is_empty() {
         return Err(bad_scope("the clipboard holds no devices"));
@@ -527,6 +622,17 @@ fn paste_devices(
         None => rules::top_index(p.doc(), at),
         Some(_) => at.min(p.doc().scope_devices(container).map_or(0, <[_]>::len)),
     };
+    let column = match container {
+        None => column.unwrap_or_else(|| p.doc().column_at(first)),
+        Some(_) => 0,
+    };
+    if container.is_none() && column >= p.doc().columns {
+        let old = p.doc().columns;
+        p.push(Edit::Columns {
+            old,
+            new: column + 1,
+        });
+    }
     let mut map: BTreeMap<DeviceKey, DeviceKey> = BTreeMap::new();
     let mut new_keys = Vec::with_capacity(snapshot.devices.len());
     for (i, d) in snapshot.devices.iter().enumerate() {
@@ -556,6 +662,7 @@ fn paste_devices(
         let mut copy = d.clone();
         copy.key = new_key.clone();
         copy.name = pasted_name(scope, &d.name);
+        copy.column = column;
         let index = (first + i).min(scope.len());
         p.push(match container {
             None => Edit::Insert {
@@ -694,7 +801,7 @@ fn wire_inputs(p: &mut Planner<'_>, device: &DeviceKey) -> Result<(), ModelError
     Ok(())
 }
 
-fn move_devices(doc: &RackDoc, keys: &[DeviceKey], to: usize) -> Result<Edit, ModelError> {
+fn move_devices(doc: &RackDoc, keys: &[DeviceKey], place: Placement) -> Result<Edit, ModelError> {
     let first = keys
         .first()
         .ok_or_else(|| bad_scope("nothing is selected"))?;
@@ -710,6 +817,20 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], to: usize) -> Result<Edit, Mo
         rules::resolve(doc, k)?;
         wanted.insert(local);
     }
+    if parent.is_none() {
+        let edit = rack_columns::plan_move(doc, keys, place)?;
+        if rack_columns::is_noop(&edit) {
+            return Err(ModelError::OutOfRange(
+                "the devices are already there".into(),
+            ));
+        }
+        return Ok(edit);
+    }
+    // Inside a container: one column, only the index counts.
+    let to = match place {
+        Placement::Flat(to) => to,
+        Placement::Slot(slot) => slot.index,
+    };
     let order: Vec<DeviceKey> = doc
         .scope_devices(parent.as_ref())
         .ok_or_else(|| ModelError::UnknownDevice(first.0.clone()))?
@@ -730,11 +851,6 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], to: usize) -> Result<Edit, Mo
     let mut target = rest[..at].to_vec();
     target.extend(group.iter().cloned());
     target.extend_from_slice(&rest[at..]);
-    // The master stays where it is, and nothing goes above it; the lock is about the
-    // top level.
-    if parent.is_none() {
-        rules::check_move(doc, &group, target.first())?;
-    }
     if target == order {
         return Err(ModelError::OutOfRange(
             "the devices are already there".into(),
@@ -750,13 +866,10 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], to: usize) -> Result<Edit, Mo
         if from != i {
             let k = current.remove(from);
             current.insert(i, k);
-            edits.push(match &parent {
-                None => Edit::Move { from, to: i },
-                Some(c) => Edit::InnerMove {
-                    container: c.clone(),
-                    from,
-                    to: i,
-                },
+            edits.push(Edit::InnerMove {
+                container: parent.clone().expect("a container scope"),
+                from,
+                to: i,
             });
         }
     }

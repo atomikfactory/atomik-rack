@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **Multi-column rack.** The rack can have several columns side by side (saved in the project, project format 11; older files load as one column). Add Column and Remove Column are in the rack context menu; an empty column stays until it is removed, and removing a column moves its devices to the one on its left. Each column scrolls with the rack, which now also scrolls sideways to reach all of them.
+- **Dragging between columns.** A device, or a selected group, can be dragged to any place in any column; the drop line shows where it lands, and dropping to the right of the last column makes a new column. The whole move is one undo step. The rack scrolls by itself when you drag near its edges.
+- **Drag devices from the browser.** Drag a row of the device browser onto the rack to create the device exactly where you drop it, in any column; an effect is routed as if the device above the drop point were selected. Release over the browser, or press Esc, to cancel. A double-click still adds below the selection.
+- **Rack navigator.** A strip at the right edge of the rack (View, Rack Navigator; on by default) shows every column as small coloured blocks and the part of the rack you are looking at. Click to centre the view there, drag to scroll, use the mouse wheel as over the rack; inside a container it shows the container's column. The choice is kept between sessions.
+- **Paste and plugin drops in columns.** Paste from the rack's context menu lands where you right-clicked, and a keyboard paste lands below the selected device in its column. A plugin that is neither an instrument nor an effect can be dragged from the browser into a column or the new-column zone like any other device, and the new-column zone now stays on screen while you drag, whatever the window width.
+
 ## [0.1.0] - 2026-10-21
 
 First public version. Windows (x86-64) is the primary platform and is tested by hand; the test suite runs in CI on Windows, macOS and Linux, Linux has been tried on Ubuntu 26.04, and macOS has not been run on real hardware yet. Project files are format version 10 (versions 1 to 9 load).

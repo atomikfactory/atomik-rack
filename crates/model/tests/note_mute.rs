@@ -72,8 +72,8 @@ fn flatten_notes_skips_muted_notes() {
 // ---- format v10 -------------------------------------------------------------------------
 
 #[test]
-fn the_project_version_is_ten() {
-    assert_eq!(PROJECT_VERSION, 10);
+fn the_project_version_is_eleven() {
+    assert_eq!(PROJECT_VERSION, 11);
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn only_muted_notes_get_a_fifth_element_and_it_round_trips_byte_for_byte() {
     let r = registry();
     let d = doc_with_muted_note(&r);
     let text = save_project(d.doc());
-    assert!(text.contains("\"version\": 10"));
+    assert!(text.contains("\"version\": 11"));
     assert!(
         text.contains(&format!("[0, {PPQ}, 60, 0.7, true]")),
         "{text}"
@@ -114,14 +114,14 @@ fn versions_before_ten_refuse_a_five_element_note_and_name_the_version() {
     let r = registry();
     let text = save_project(doc_with_muted_note(&r).doc());
     for v in 3..=9 {
-        let old = text.replace("\"version\": 10", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 11", &format!("\"version\": {v}"));
         let e = load_project(&old, &r).unwrap_err().to_string();
         assert!(e.contains(&format!("version {v}")), "v{v}: {e}");
     }
 }
 
 #[test]
-fn a_v9_project_loads_with_every_note_unmuted_and_saves_as_v10() {
+fn a_v9_project_loads_with_every_note_unmuted_and_saves_as_v11() {
     let r = console_registry();
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/demo-v9.atomik");
@@ -132,15 +132,15 @@ fn a_v9_project_loads_with_every_note_unmuted_and_saves_as_v10() {
     assert!(!notes.is_empty());
     assert!(notes.iter().all(|n| !n.muted));
     let saved = save_project(&doc);
-    assert_eq!(saved, file.replace("\"version\": 9", "\"version\": 10"));
+    assert_eq!(saved, file.replace("\"version\": 9", "\"version\": 11"));
 }
 
 #[test]
-fn a_version_above_ten_is_refused() {
+fn a_version_above_eleven_is_refused() {
     let r = registry();
-    let text = save_project(&empty_doc()).replace("\"version\": 10", "\"version\": 11");
+    let text = save_project(&empty_doc()).replace("\"version\": 11", "\"version\": 12");
     let e = load_project(&text, &r).unwrap_err().to_string();
-    assert!(e.contains("unsupported version 11"), "{e}");
+    assert!(e.contains("unsupported version 12"), "{e}");
 }
 
 // ---- SetClipsMuted ----------------------------------------------------------------------

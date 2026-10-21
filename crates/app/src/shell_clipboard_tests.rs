@@ -32,6 +32,8 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
     // These tests are about the instruments and effects: the rack as it looked before
     // With the console devices hidden.
     s.core_mut().view_mut().set_show_console_devices(false);
+    // And without the rack navigator, whose strip would take the right edge of the rack area.
+    s.core_mut().view_mut().set_navigator_visible(false);
     s
 }
 
@@ -434,7 +436,7 @@ fn the_menu_swallows_the_keys_while_it_is_open() {
 }
 
 #[test]
-fn right_click_on_the_empty_rack_offers_paste_create_and_select_all() {
+fn right_click_on_the_empty_rack_offers_paste_create_columns_and_select_all() {
     let mut s = rack3();
     let l = s.layout();
     let empty = Point::new(500.0, l.rack.y1 - 4.0);
@@ -446,6 +448,8 @@ fn right_click_on_the_empty_rack_offers_paste_create_and_select_all() {
             "edit.paste",
             "create.instrument",
             "create.effect",
+            "rack.add_column",
+            "rack.remove_column",
             "edit.select_all"
         ]
     );
@@ -985,4 +989,162 @@ fn the_disconnect_item_is_enabled_for_a_group_too() {
     assert_eq!(selection(&s), ["b", "c"]);
     let items = open_menu_on(&mut s, "b");
     assert!(enabled(&items), "Disconnect works on a group");
+}
+
+#[test]
+fn add_column_and_remove_column_from_the_rack_menu() {
+    let mut s = rack3();
+    let empty = Point::new(500.0, s.layout().rack.y1 - 4.0);
+    let items = open_menu(&mut s, empty);
+    let enabled = |items: &[(String, Option<String>, bool)], id: &str| {
+        items.iter().find(|(c, _, _)| c == id).unwrap().2
+    };
+    assert!(enabled(&items, "rack.add_column"));
+    assert!(!enabled(&items, "rack.remove_column"), "one column only");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.add_column")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 2);
+    // Remove Column is now enabled and removes the column under the pointer, one undo step.
+    let items = open_menu(&mut s, empty);
+    assert!(enabled(&items, "rack.remove_column"));
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.remove_column")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 1);
+    assert!(s.core().document().can_undo());
+}
+
+// ------------------------------------------------------------------ paste into columns
+
+/// `a` and `b` in column 0, `c` in column 1, an empty column 2, in a window wide enough to show
+/// all three.
+fn columns_rack() -> Shell<NullBackend> {
+    let mut s = shell_for(Os::Windows);
+    s.handle(&UiEvent::Resize(Size::new(2800.0, 2400.0)));
+    add(&mut s, SYNTH, "a");
+    add(&mut s, DELAY, "b");
+    for _ in 0..2 {
+        s.core_mut().apply_command(Command::AddRackColumn).unwrap();
+    }
+    s.core_mut()
+        .apply_command(Command::AddDeviceAt {
+            slot: atomik_model::RackSlot {
+                column: 1,
+                index: 0,
+            },
+            type_id: DELAY.to_string(),
+            key: Some(key("c")),
+        })
+        .unwrap();
+    s.core_mut().after_view_change();
+    s.set_focus(Pane::Rack);
+    s
+}
+
+/// The (key, column) of every device but the console's, in rack order.
+fn placed(s: &Shell<NullBackend>) -> Vec<(String, u16)> {
+    s.core()
+        .doc()
+        .devices
+        .iter()
+        .filter(|d| !atomik_model::console::is_console_type(&d.type_id))
+        .map(|d| (d.key.0.clone(), d.column))
+        .collect()
+}
+
+/// A view point in column `column` at rack height `y`, as the shell sees it.
+fn in_column(s: &Shell<NullBackend>, column: u16, y: f64) -> Point {
+    let p = s.core().view().rack_to_view(Point::new(
+        f64::from(column) * (f64::from(atomik_device_sdk::RACK_WIDTH) + atomik_ui::COLUMN_GAP)
+            + 300.0,
+        y,
+    ));
+    Point::new(p.x, p.y + s.layout().rack.y0)
+}
+
+#[test]
+fn keyboard_paste_with_a_selection_lands_below_it_in_its_column() {
+    let mut s = columns_rack();
+    let b = plate(&s, "b");
+    click(&mut s, b, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+C");
+    // Below `c` in column 1, not below `b` in column 0 and not at the end of the rack.
+    let c = plate(&s, "c");
+    click(&mut s, c, Modifiers::NONE);
+    let before = saved(&s);
+    tap(&mut s, Os::Windows, "Cmd+V");
+    let at: Vec<_> = placed(&s);
+    assert_eq!(at.len(), 4);
+    assert_eq!(
+        at.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        [0, 0, 1, 1],
+        "{at:?}"
+    );
+    assert_eq!(at[2].0, "c", "the copy sits below the selected device");
+    // Below `a` in column 0: between `a` and `b`.
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(saved(&s), before, "one undo step");
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+V");
+    let at = placed(&s);
+    assert_eq!(at[0].0, "a");
+    assert_eq!(at[2].0, "b", "{at:?}");
+    assert_eq!(at.iter().map(|(_, c)| *c).collect::<Vec<_>>(), [0, 0, 0, 1]);
+}
+
+#[test]
+fn paste_from_the_rack_menu_lands_where_the_menu_was_opened() {
+    let mut s = columns_rack();
+    // Something to paste, then the selection is somewhere else (column 0).
+    let b = plate(&s, "b");
+    click(&mut s, b, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+C");
+    let a = plate(&s, "a");
+    click(&mut s, a, Modifiers::NONE);
+    // Right click on the empty rack below `c` in column 1.
+    let below_c = in_column(&s, 1, 3.0 * f64::from(atomik_device_sdk::RACK_UNIT) * 4.0);
+    let items = open_menu(&mut s, below_c);
+    assert!(items.iter().any(|(c, _, on)| c == "edit.paste" && *on));
+    let at = s.context_menu().unwrap().item_center("edit.paste").unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    let placed_now = placed(&s);
+    assert_eq!(placed_now.len(), 4);
+    assert_eq!(
+        placed_now.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        [0, 0, 1, 1],
+        "the copy joined column 1 (the selection was in column 0): {placed_now:?}"
+    );
+    assert_eq!(placed_now[3].1, 1);
+    // Into the empty column 2.
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    let at = s.context_menu().unwrap().item_center("edit.paste").unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    let col2: Vec<_> = placed(&s).into_iter().filter(|(_, c)| *c == 2).collect();
+    assert_eq!(col2.len(), 1, "{:?}", placed(&s));
+}
+
+#[test]
+fn a_stale_menu_position_does_not_steer_a_later_keyboard_paste() {
+    let mut s = columns_rack();
+    let b = plate(&s, "b");
+    click(&mut s, b, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+C");
+    // Open the menu in column 2 and dismiss it with a click on the rack.
+    let empty = in_column(&s, 2, 200.0);
+    open_menu(&mut s, empty);
+    let c = plate(&s, "c");
+    click(&mut s, c, Modifiers::NONE);
+    click(&mut s, c, Modifiers::NONE);
+    tap(&mut s, Os::Windows, "Cmd+V");
+    assert!(placed(&s).iter().all(|(_, c)| *c != 2), "{:?}", placed(&s));
 }

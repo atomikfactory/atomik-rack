@@ -36,10 +36,12 @@ use crate::console_insert::{insert_chain, set_insert, stereo_effect_type};
 use crate::container::split_path;
 use crate::history::Edit;
 use crate::plugin::{PluginCommand, key_base_of_name};
+use crate::rack_columns;
 use crate::song::Track;
 use crate::song_cmd::{has_notes_input, new_track};
 use crate::{
-    Cable, Command, ConsoleCommand, DeviceKey, ModelError, RackDoc, SocketRef, console_cmd, rules,
+    Cable, Command, ConsoleCommand, DeviceKey, ModelError, RackDoc, RackSlot, SocketRef,
+    console_cmd, rules,
 };
 use atomik_device_sdk::{
     DeviceDescriptor, DeviceKind, PluginLayout, PluginRef, Registry, SocketKind,
@@ -386,6 +388,40 @@ pub(crate) fn create_effect(
         Some(edit) => Ok(edit),
         None => plain(fallback),
     }
+}
+
+/// `CreateEffectAt`: the effect goes exactly to `slot`, routed as if the device above the slot
+/// (the previous one of its column) were selected; at the top of a column there is none and
+/// the effect is only added.
+pub(crate) fn create_effect_at(
+    doc: &RackDoc,
+    registry: &Registry,
+    slot: RackSlot,
+    source: &CreateSource,
+    key: Option<DeviceKey>,
+    options: &CreateOptions,
+) -> Result<Edit, ModelError> {
+    let at = doc.resolve_slot(slot)?;
+    let above = (!at.adds_column && at.index > doc.column_range(at.column).start)
+        .then(|| doc.devices[at.index - 1].key.clone());
+    let edit = match above {
+        Some(k) => create_effect(
+            doc,
+            registry,
+            source,
+            &CreateTarget::Selected(k),
+            key,
+            options,
+        )?,
+        None => {
+            let plain = CreateOptions {
+                route: false,
+                ..options.clone()
+            };
+            create_effect(doc, registry, source, &CreateTarget::Nothing, key, &plain)?
+        }
+    };
+    Ok(rack_columns::place_new_device(doc, at, edit))
 }
 
 /// The rack index a new send effect goes to: right after the last effect on a return, or after

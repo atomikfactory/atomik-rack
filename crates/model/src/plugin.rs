@@ -26,7 +26,7 @@
 //! is kept in `params`, in automation lanes and in macro targets, and saved back unchanged;
 //! nothing treats it as an error at load. New edits cannot name a dead key.
 
-use crate::{DeviceKey, ModelError, RackDevice, RackDoc};
+use crate::{DeviceKey, ModelError, RackDevice, RackDoc, RackSlot};
 use atomik_device_sdk::{
     Channels, PluginFormat, PluginKindHint, PluginLayout, PluginRef, PluginStateBlob,
     descriptor_for, is_plugin_type_id,
@@ -142,6 +142,23 @@ pub enum PluginCommand {
         key: Option<DeviceKey>,
         /// Also add a full-range split to an instrument inside a container.
         auto_split: bool,
+    },
+    /// [`PluginCommand::Add`] at a rack column slot at the top level (see
+    /// [`crate::Command::AddDeviceAt`] for how the slot resolves): the plugin lands at
+    /// `slot.index` of `slot.column`, and `slot.column == columns` appends a new column in the
+    /// same undo step. For a plugin that is neither an instrument nor an effect (those go
+    /// through the creation commands); an instrument still gets its console channel.
+    AddAt {
+        /// Where the plugin goes.
+        slot: RackSlot,
+        /// The plugin.
+        plugin: PluginRef,
+        /// Its layout, as the scan reports it.
+        layout: PluginLayout,
+        /// Where the plugin was found (kept in the project as a hint).
+        path_hint: Option<String>,
+        /// Explicit (local) key, or `None` to generate one.
+        key: Option<DeviceKey>,
     },
     /// Store the plugin's state blob (not an undo step; refused above 16 MiB per blob or 128 MiB
     /// per project). The app sends it after every capture.

@@ -25,24 +25,29 @@ use atomik_device_sdk::{
 };
 use atomik_model::{
     BOUNDARY_KEY, Cable, Command, ConsoleCommand, ContainerCommand, CreateOptions, CreateSource,
-    CreateTarget, DeviceKey, INTERFACE_KEY, PatternDoc, RackDevice, RackDoc, SocketRef,
+    CreateTarget, DeviceKey, INTERFACE_KEY, PatternDoc, RackDevice, RackDoc, RackSlot, SocketRef,
     WorkflowCommand,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use vello::kurbo::{Affine, Circle, Line, ParamCurve, Point, Rect, Size, Vec2};
+use vello::kurbo::{Affine, Circle, ParamCurve, Point, Rect, Size, Vec2};
 use vello::peniko::Color;
 
+mod columns;
 mod console_links;
 mod container_input;
+mod device_drag;
 mod fx_input;
 mod io_input;
+mod navigator;
+pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
 mod player_input;
 mod plugin_input;
 mod selection;
 
 pub use crate::paint::Side as Flip;
+pub use columns::COLUMN_GAP;
 pub use console_links::OutputDisplay;
 
 /// Smallest zoom.
@@ -234,7 +239,11 @@ struct DeviceView {
     /// The key sockets of this view are addressed by, when it is not the view key (the two
     /// boundary panels of a container's inside both use `boundary`).
     socket_device: Option<DeviceKey>,
+    /// Left edge in rack coordinates (the left of its column).
+    x: f64,
     y: f64,
+    /// The column it sits in (always 0 inside a container).
+    column: u16,
     height: f64,
     folded: bool,
     cache_id: u64,
@@ -260,7 +269,16 @@ fn descriptor_id(registry: &Registry, d: &RackDevice) -> usize {
 
 impl DeviceView {
     fn rect(&self) -> Rect {
-        Rect::new(0.0, self.y, f64::from(RACK_WIDTH), self.y + self.height)
+        Rect::new(
+            self.x,
+            self.y,
+            self.x + f64::from(RACK_WIDTH),
+            self.y + self.height,
+        )
+    }
+    /// Where the panel's origin is in rack coordinates.
+    fn offset(&self) -> Vec2 {
+        Vec2::new(self.x, self.y)
     }
     fn is_interface(&self) -> bool {
         self.device.is_none()
@@ -297,11 +315,19 @@ enum Drag {
     },
     Move {
         dev: usize,
-        start_y: f64,
-        y: f64,
+        /// The press and the pointer, rack coordinates.
+        start: Point,
+        at: Point,
         /// A plain press on a member of a multi-selection: a release in place collapses the
         /// selection to this device.
         collapse: bool,
+    },
+    /// A device-browser row is dragged: `active` once the pointer travelled past the threshold
+    /// (a click without travel only highlights the row). Positions are view coordinates.
+    Browser {
+        row: crate::browser::BrowserRow,
+        start: Point,
+        active: bool,
     },
     Pan {
         last: Point,
@@ -311,6 +337,11 @@ enum Drag {
         dev: usize,
         start_y: f64,
         start: u8,
+    },
+    /// The navigator strip is dragged: the viewport follows the pointer, keeping `grab` (rack
+    /// units from the viewport's top-left) under it.
+    Navigator {
+        grab: Vec2,
     },
     /// A drum pad is held: its audition note is on until release.
     Pad {
@@ -400,6 +431,23 @@ pub struct RackView {
     toast: Option<String>,
     repaint: bool,
     content_height: f64,
+    /// How many columns the view lays out (1 inside a container).
+    columns: u16,
+    /// The column a right click on the empty rack was in (the target of Remove Column).
+    column_target: u16,
+    /// The slot under the last right click on the empty rack, for a paste from its menu.
+    context_slot: Option<RackSlot>,
+    /// The clock of the last auto-scroll tick, while one is running.
+    tick_clock: Option<f64>,
+    /// The rack navigator is switched on (see [`NAVIGATOR_WIDTH`]).
+    navigator: bool,
+    /// The pointer is over the navigator strip.
+    nav_hover: bool,
+    /// Bumped by every rebuild of the device views: the navigator's block cache key.
+    nav_layout: u64,
+    /// The revision stamp of the navigator's cached block list.
+    nav_revision: u64,
+    nav_cache: Option<navigator::NavCache>,
     show_console: bool,
     /// Draw the channel-to-master console links as cables (default off).
     show_links: bool,
@@ -522,6 +570,15 @@ impl RackView {
             toast: None,
             repaint: true,
             content_height: 0.0,
+            columns: 1,
+            column_target: 0,
+            context_slot: None,
+            tick_clock: None,
+            navigator: false,
+            nav_hover: false,
+            nav_layout: 0,
+            nav_revision: 0,
+            nav_cache: None,
             show_console: true,
             show_links: false,
             links: BTreeSet::new(),
@@ -610,6 +667,11 @@ impl RackView {
         self.show_links
     }
 
+    /// Whether a device is being dragged out of the device browser (Escape cancels it).
+    pub fn is_browser_dragging(&self) -> bool {
+        matches!(self.drag, Drag::Browser { .. })
+    }
+
     /// The tooltip of the locked Master Section.
     pub const MASTER_LOCKED_TEXT: &'static str =
         "The Master Section is locked: it cannot be moved or deleted";
@@ -653,12 +715,14 @@ impl RackView {
         let same_structure = self.synced
             && self.input_channels == doc.input_channels
             && self.output_channels == doc.output_channels
+            && self.columns == if trailing == 1 { 1 } else { doc.columns.max(1) }
             && self.devices.len() == shown.len() + 1 + trailing
             && self.devices[1..=shown.len()]
                 .iter()
                 .zip(&shown)
                 .all(|(v, d)| {
                     v.key == d.key
+                        && (trailing == 1 || v.column == d.column.min(self.columns - 1))
                         && v.device
                             .as_ref()
                             .is_some_and(|s| s.type_id == d.type_id && s.folded == d.folded)
@@ -862,7 +926,6 @@ impl RackView {
         let mut old: BTreeMap<DeviceKey, DeviceView> =
             self.devices.drain(..).map(|d| (d.key.clone(), d)).collect();
         let unit = f64::from(RACK_UNIT);
-        let mut y = 0.0;
 
         let scoped = !self.scope.is_empty();
         let (iface_desc, iface_key, iface_name, iface_caption) = if scoped {
@@ -917,16 +980,23 @@ impl RackView {
             plugin_status: PluginDeviceStatus::default(),
             desc_id: 0,
             socket_device: None,
-            y,
+            x: 0.0,
+            y: 0.0,
+            column: 0,
             height,
             folded: false,
             cache_id,
             revision,
             lists,
         });
-        y += height;
+        // Each column stacks from its own top; the Audio I/O strip heads column 0.
+        let columns = if scoped { 1 } else { doc.columns.max(1) };
+        let mut ys = vec![0.0; usize::from(columns)];
+        ys[0] = height;
 
         for d in self.shown(doc, registry) {
+            let column = if scoped { 0 } else { d.column.min(columns - 1) };
+            let (x, y) = (columns::column_left(column), ys[usize::from(column)]);
             let desc = registry.get(&d.type_id).map(|f| *f.descriptor);
             let desc_id = descriptor_id(registry, d);
             let samples = registry.takes_samples(&d.type_id);
@@ -1032,15 +1102,18 @@ impl RackView {
                 plugin_status,
                 desc_id,
                 socket_device: None,
+                x,
                 y,
+                column,
                 height,
                 folded: d.folded,
                 cache_id,
                 revision,
                 lists,
             });
-            y += height;
+            ys[usize::from(column)] += height;
         }
+        let y = ys[0];
         if scoped {
             let desc = boundary_out_descriptor();
             let key = DeviceKey(format!("{BOUNDARY_KEY}~out"));
@@ -1077,16 +1150,20 @@ impl RackView {
                 plugin_status: PluginDeviceStatus::default(),
                 desc_id: 0,
                 socket_device: Some(DeviceKey(BOUNDARY_KEY.to_string())),
+                x: 0.0,
                 y,
+                column: 0,
                 height,
                 folded: false,
                 cache_id,
                 revision,
                 lists,
             });
-            y += height;
+            ys[0] += height;
         }
-        self.content_height = y;
+        self.nav_layout += 1;
+        self.columns = columns;
+        self.content_height = ys.iter().copied().fold(0.0, f64::max);
         self.cables.clone_from(&doc.cables);
         self.refresh_console(doc, registry, true);
         self.input_channels = doc.input_channels;
@@ -1112,7 +1189,7 @@ impl RackView {
         let mut sockets = BTreeMap::new();
         let root = tree.root();
         for (i, d) in self.devices.iter().enumerate() {
-            let off = Vec2::new(0.0, d.y);
+            let off = d.offset();
             let dn = tree.add(root, d.rect(), Hit::Device(i), false);
             if !d.is_interface() {
                 let pn = tree.add(
@@ -1255,7 +1332,7 @@ impl RackView {
             for ps in &d.spec.back {
                 let s = &desc.sockets[ps.socket];
                 let pos = if d.folded {
-                    Point::new(ps.center().x, d.y + d.height / 2.0)
+                    Point::new(d.x + ps.center().x, d.y + d.height / 2.0)
                 } else {
                     ps.center() + off
                 };
@@ -1309,17 +1386,21 @@ impl RackView {
     // ------------------------------------------------------------------ geometry
 
     fn rack_area(&self) -> Rect {
-        let x0 = if self.browser.visible {
+        let x0 = self.browser_edge();
+        let x1 = self
+            .navigator_rect()
+            .map_or(self.size.width, |r| r.x0)
+            .max(x0);
+        Rect::new(x0, self.bar_height(), x1, self.size.height)
+    }
+
+    /// The right edge of the device browser (0 while it is closed).
+    fn browser_edge(&self) -> f64 {
+        if self.browser.visible {
             BROWSER_WIDTH
         } else {
             0.0
-        };
-        Rect::new(
-            x0,
-            self.bar_height(),
-            self.size.width.max(x0),
-            self.size.height,
-        )
+        }
     }
 
     /// Height of the breadcrumb bar: only inside a container.
@@ -1331,22 +1412,40 @@ impl RackView {
         }
     }
 
+    /// Whether the columns alone are wider than the rack area: the rack then scrolls sideways
+    /// from the left; otherwise it is centred.
+    fn is_wide(&self) -> bool {
+        self.content_width() * self.zoom + 2.0 * RACK_MARGIN > self.rack_area().width()
+    }
+
     fn origin(&self) -> Point {
         let area = self.rack_area();
-        let rack_w = f64::from(RACK_WIDTH) * self.zoom;
+        let rack_w = self.content_width() * self.zoom;
         let avail = area.width() - 2.0 * RACK_MARGIN;
-        let x = if rack_w <= avail {
-            area.x0 + RACK_MARGIN + (avail - rack_w) / 2.0
-        } else {
+        let x = if self.is_wide() {
             area.x0 + RACK_MARGIN - self.scroll.x
+        } else {
+            let centred = area.x0 + RACK_MARGIN + (avail - rack_w) / 2.0;
+            if self.zone_visible() {
+                // The new-column zone of a drag stays in view: a rack that fits moves left only
+                // as far as it takes, even if that cuts the margin on its left.
+                centred.min(area.x1 - RACK_MARGIN - self.extent_width() * self.zoom)
+            } else {
+                centred
+            }
         };
         Point::new(x, area.y0 + RACK_MARGIN - self.scroll.y)
     }
 
     fn max_scroll(&self) -> Vec2 {
         let area = self.rack_area();
+        // A rack that fits is centred and does not scroll sideways.
         Vec2::new(
-            (f64::from(RACK_WIDTH) * self.zoom + 2.0 * RACK_MARGIN - area.width()).max(0.0),
+            if self.is_wide() {
+                (self.extent_width() * self.zoom + 2.0 * RACK_MARGIN - area.width()).max(0.0)
+            } else {
+                0.0
+            },
             (self.content_height * self.zoom + 2.0 * RACK_MARGIN - area.height()).max(0.0),
         )
     }
@@ -1366,9 +1465,14 @@ impl RackView {
         self.origin() + p.to_vec2() * self.zoom
     }
 
-    /// Height of all devices (rack coordinates).
+    /// Height of the tallest column (rack coordinates).
     pub fn content_height(&self) -> f64 {
         self.content_height
+    }
+
+    /// Width of all the columns (rack coordinates): one rack width for a single column.
+    pub fn content_width(&self) -> f64 {
+        columns::columns_width(self.columns)
     }
 
     /// A device's rectangle in rack coordinates (`"interface"` is the top strip).
@@ -1404,7 +1508,7 @@ impl RackView {
             ControlKind::Knob => Point::new(pc.rect.center().x, pc.rect.y0 + paint::KNOB_DY),
             _ => pc.rect.center(),
         };
-        Some(self.rack_to_view(c + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(c + d.offset()))
     }
 
     /// Centre of the Edit button of a sampler panel (logical view coordinates), when it is on
@@ -1423,7 +1527,7 @@ impl RackView {
             (None, Some(drum)) => drum.edit,
             (None, None) => return None,
         };
-        Some(self.rack_to_view(b.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(b.center() + d.offset()))
     }
 
     /// The rectangle `pick` selects of a slicer panel and the device's y (front, unfolded).
@@ -1431,7 +1535,7 @@ impl RackView {
         &self,
         key: &DeviceKey,
         pick: impl Fn(&autolayout::SlicerPanel) -> Rect,
-    ) -> Option<(Rect, f64)> {
+    ) -> Option<(Rect, Vec2)> {
         if self.flip != Flip::Front {
             return None;
         }
@@ -1439,7 +1543,7 @@ impl RackView {
         if d.folded {
             return None;
         }
-        Some((pick(&d.spec.slicer?), d.y))
+        Some((pick(&d.spec.slicer?), d.offset()))
     }
 
     fn slicer_point(
@@ -1447,8 +1551,8 @@ impl RackView {
         key: &DeviceKey,
         pick: impl Fn(&autolayout::SlicerPanel) -> Rect,
     ) -> Option<Point> {
-        let (rect, y) = self.slicer_rect(key, pick)?;
-        Some(self.rack_to_view(rect.center() + Vec2::new(0.0, y)))
+        let (rect, off) = self.slicer_rect(key, pick)?;
+        Some(self.rack_to_view(rect.center() + off))
     }
 
     /// Centre of the Slice button of a slicer panel (logical view coordinates), when it is on
@@ -1470,9 +1574,9 @@ impl RackView {
 
     /// Centre of the sensitivity knob of a slicer panel (logical view coordinates).
     pub fn sensitivity_knob_center(&self, key: &DeviceKey) -> Option<Point> {
-        let (rect, y) = self.slicer_rect(key, |s| s.sens)?;
+        let (rect, off) = self.slicer_rect(key, |s| s.sens)?;
         let c = autolayout::slicer_sens_knob(rect);
-        Some(self.rack_to_view(c + Vec2::new(0.0, y)))
+        Some(self.rack_to_view(c + off))
     }
 
     /// The slicing sensitivity (percent) of a loop slicer panel, `None` for other devices. The
@@ -1513,7 +1617,7 @@ impl RackView {
             return None;
         }
         let b = d.spec.drum?.to_channel;
-        Some(self.rack_to_view(b.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(b.center() + d.offset()))
     }
 
     /// The selected pad (1..=16) of a drum machine panel; `None` for other devices.
@@ -1538,7 +1642,7 @@ impl RackView {
             return None;
         }
         let r = autolayout::drum_pad_rect(d.spec.drum?.pads, pad);
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// A point of the pad grid between two pads (logical view coordinates): the background that
@@ -1553,7 +1657,7 @@ impl RackView {
             g.x0 + autolayout::DRUM_PAD_CELL.0,
             g.y1 - autolayout::DRUM_PAD_CELL.1 / 2.0,
         );
-        Some(self.rack_to_view(p + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(p + d.offset()))
     }
 
     /// The drum pad files are being dragged over (highlighted as a drop target).
@@ -1574,17 +1678,15 @@ impl RackView {
     /// Centre of a device's name plate (logical view coordinates).
     pub fn plate_center(&self, key: &DeviceKey) -> Option<Point> {
         let d = &self.devices[self.device_index(key)?];
-        (!d.is_interface()).then(|| {
-            self.rack_to_view(paint::plate_rect(d.height, d.folded).center() + Vec2::new(0.0, d.y))
-        })
+        (!d.is_interface())
+            .then(|| self.rack_to_view(paint::plate_rect(d.height, d.folded).center() + d.offset()))
     }
 
     /// Centre of a device's fold button (logical view coordinates).
     pub fn fold_button_center(&self, key: &DeviceKey) -> Option<Point> {
         let d = &self.devices[self.device_index(key)?];
-        (!d.is_interface()).then(|| {
-            self.rack_to_view(paint::fold_button_center(d.height, d.folded) + Vec2::new(0.0, d.y))
-        })
+        (!d.is_interface())
+            .then(|| self.rack_to_view(paint::fold_button_center(d.height, d.folded) + d.offset()))
     }
 
     /// Midpoint of a cable's curve (logical view coordinates).
@@ -2023,8 +2125,11 @@ impl RackView {
                 modifiers,
                 clicks,
             } => self.pointer_down(*pos, *button, *modifiers, *clicks, doc, registry, &mut out),
-            UiEvent::PointerUp { pos, .. } => self.pointer_up(*pos, doc, &mut out),
+            UiEvent::PointerUp { pos, modifiers, .. } => {
+                self.pointer_up(*pos, *modifiers, doc, &mut out)
+            }
             UiEvent::PointerLeave => {
+                self.nav_hover = false;
                 self.hover = None;
                 self.hover_cable = None;
                 self.browser.hover = None;
@@ -2234,22 +2339,28 @@ impl RackView {
             }
             Drag::Move {
                 dev,
-                start_y,
+                start,
                 collapse,
                 ..
             } => {
                 self.drag = Drag::Move {
                     dev,
-                    start_y,
-                    y: rp.y,
+                    start,
+                    at: rp,
                     collapse,
                 };
+                self.repaint = true;
+            }
+            Drag::Browser { row, start, active } => {
+                let active = active || (pos - start).hypot() > MOVE_THRESHOLD;
+                self.drag = Drag::Browser { row, start, active };
                 self.repaint = true;
             }
             Drag::Pan { last } => {
                 self.drag = Drag::Pan { last: pos };
                 self.scroll_by(last - pos);
             }
+            Drag::Navigator { .. } => self.navigator_follow(pos),
             Drag::Pad { .. } => {}
             Drag::Sens {
                 dev,
@@ -2260,7 +2371,12 @@ impl RackView {
                 self.store_sens(dev, v.round().clamp(0.0, 100.0) as u8);
             }
             Drag::None => {
-                if self.in_browser(pos) {
+                self.navigator_hover(pos);
+                if self.in_navigator(pos) {
+                    if self.hover.take().is_some() || self.hover_cable.take().is_some() {
+                        self.repaint = true;
+                    }
+                } else if self.in_browser(pos) {
                     let row = self.browser.row_at(pos, 64);
                     if row != self.browser.hover || self.hover.is_some() {
                         self.browser.hover = row;
@@ -2287,6 +2403,7 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.toast = None;
+        self.context_slot = None;
         self.pointer = pos;
         self.repaint = true;
         if self.macro_press(pos, out) || self.plugin_menu_press(pos) {
@@ -2298,6 +2415,9 @@ impl RackView {
         if self.crumb_press(pos, button) {
             return;
         }
+        if self.navigator_press(pos, button) {
+            return;
+        }
         if self.in_browser(pos) {
             self.browser.focused = true;
             let rows = self.browser.list(registry);
@@ -2307,6 +2427,13 @@ impl RackView {
                 self.browser.highlighted = i;
                 if clicks >= 2 && button == PointerButton::Primary {
                     out.extend(self.add_row_action(&rows[i], doc, modifiers));
+                } else if button == PointerButton::Primary {
+                    // A press that travels past the threshold drags the device out.
+                    self.drag = Drag::Browser {
+                        row: rows[i].clone(),
+                        start: pos,
+                        active: false,
+                    };
                 }
             }
             return;
@@ -2338,8 +2465,8 @@ impl RackView {
                 }
                 self.drag = Drag::Move {
                     dev: i,
-                    start_y: rp.y,
-                    y: rp.y,
+                    start: rp,
+                    at: rp,
                     collapse,
                 };
             }
@@ -2514,10 +2641,14 @@ impl RackView {
                 out.push(UiAction::OpenBrowser);
             }
             (Hit::Rack, PointerButton::Primary) => self.clear_selection_by_click(),
-            (Hit::Rack, PointerButton::Secondary) => out.push(UiAction::ContextMenu {
-                target: ContextTarget::Rack,
-                at: pos,
-            }),
+            (Hit::Rack, PointerButton::Secondary) => {
+                self.column_target = self.column_at(rp.x);
+                self.context_slot = self.slot_at(rp, doc);
+                out.push(UiAction::ContextMenu {
+                    target: ContextTarget::Rack,
+                    at: pos,
+                });
+            }
             _ => {}
         }
     }
@@ -2616,12 +2747,24 @@ impl RackView {
         };
     }
 
-    fn pointer_up(&mut self, pos: Point, doc: &RackDoc, out: &mut Vec<UiAction>) {
+    fn pointer_up(
+        &mut self,
+        pos: Point,
+        modifiers: Modifiers,
+        doc: &RackDoc,
+        out: &mut Vec<UiAction>,
+    ) {
         self.pointer = pos;
-        let drag = std::mem::replace(&mut self.drag, Drag::None);
+        // A device drop is worked out in the layout of the drag (which may show the new-column
+        // zone), so that drag ends after it.
+        let drag = if matches!(self.drag, Drag::Move { .. } | Drag::Browser { .. }) {
+            self.drag.clone()
+        } else {
+            std::mem::replace(&mut self.drag, Drag::None)
+        };
         self.repaint = true;
         match drag {
-            Drag::None | Drag::Pan { .. } => {}
+            Drag::None | Drag::Pan { .. } | Drag::Navigator { .. } => {}
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Eq(_) => out.push(UiAction::EndMerge),
@@ -2665,77 +2808,25 @@ impl RackView {
             }
             Drag::Move {
                 dev,
-                start_y,
-                y,
+                start,
+                at,
                 collapse,
             } => {
-                if (y - start_y).abs() > MOVE_THRESHOLD {
-                    let key = self.devices[dev].key.clone();
-                    // The dragged device, or the whole selection when it is part of one.
-                    let moving: Vec<DeviceKey> = if self.drags_as_group(dev) {
-                        self.local_selection()
-                    } else {
-                        vec![key.clone()]
-                    };
-                    // Visible devices above the drop point (excluding the moving ones)u{2026}
-                    let inner = self.inner_range();
-                    let visible: Vec<&DeviceKey> = self.devices[inner.clone()]
-                        .iter()
-                        .filter(|d| !moving.contains(&d.key))
-                        .map(|d| &d.key)
-                        .collect();
-                    let mut k = self.devices[inner]
-                        .iter()
-                        .filter(|d| !moving.contains(&d.key) && d.y + d.height / 2.0 < y)
-                        .count();
-                    // Nothing goes above the locked Master Section (it is the first device).
-                    let master_first = self
-                        .locked
-                        .as_ref()
-                        .is_some_and(|m| visible.first().is_some_and(|f| *f == m));
-                    if master_first {
-                        k = k.max(1);
-                    }
-                    if self.locked.as_ref().is_some_and(|m| moving.contains(m)) {
-                        self.toast = Some(Self::MASTER_LOCKED_TEXT.to_string());
-                        self.drag = Drag::None;
-                        self.update_hover(pos);
-                        return;
-                    }
-                    // u{2026}mapped to a document index (hidden console devices count there).
-                    let others: Vec<&DeviceKey> = doc
-                        .devices
-                        .iter()
-                        .map(|d| &d.key)
-                        .filter(|d| !moving.contains(d))
-                        .collect();
-                    let pos = |k: &DeviceKey| others.iter().position(|o| *o == k);
-                    let to = if k == 0 {
-                        visible.first().and_then(|f| pos(f)).unwrap_or(0)
-                    } else {
-                        pos(visible[k - 1]).map_or(others.len(), |p| p + 1)
-                    };
-                    if moving.len() > 1 {
-                        // Where the group would end up, compared with where it is now.
-                        let mut target: Vec<&DeviceKey> = others.clone();
-                        let at = to.min(target.len());
-                        for (n, m) in moving.iter().enumerate() {
-                            target.insert(at + n, m);
-                        }
-                        let now: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
-                        if target != now {
-                            out.push(UiAction::Command(Command::Workflow(
-                                WorkflowCommand::MoveDevices { keys: moving, to },
-                            )));
-                        }
-                    } else if doc.devices.iter().position(|d| d.key == key) != Some(to) {
-                        out.push(UiAction::Command(Command::MoveDevice { key, to }));
-                    }
+                // Released over the navigator the move is dropped, not applied.
+                if (at - start).hypot() > MOVE_THRESHOLD && !self.in_navigator(pos) {
+                    self.move_drop(dev, doc, out);
                 } else if collapse {
                     self.collapse_to(dev, out);
                 }
             }
+            Drag::Browser {
+                row, active: true, ..
+            } => self.browser_drop(&row, doc, modifiers, out),
+            Drag::Browser { .. } => {}
         }
+        self.drag = Drag::None;
+        // A drag may have shown the new-column zone: the range is the columns again.
+        self.clamp_scroll();
         self.update_hover(pos);
     }
 
@@ -2766,6 +2857,9 @@ impl RackView {
         self.choice_menu = None;
         self.macro_menu = None;
         self.plugin_menu = None;
+        if self.navigator_wheel(delta, pos, modifiers) {
+            return;
+        }
         if self.in_browser(pos) {
             let rows = self.browser.list(registry).len() as f64;
             let max = (rows * 36.0 - (self.size.height - 80.0)).max(0.0);
@@ -2803,13 +2897,18 @@ impl RackView {
             }
             return;
         }
+        self.wheel_scroll(delta, modifiers);
+        self.update_hover(pos);
+    }
+
+    /// Scrolls the rack by a wheel delta (Shift turns the vertical wheel sideways).
+    fn wheel_scroll(&mut self, delta: Vec2, modifiers: Modifiers) {
         let d = if modifiers.shift && delta.x.abs() < 1e-9 {
             Vec2::new(-delta.y, 0.0)
         } else {
             -delta
         };
         self.scroll_by(d * SCROLL_STEP);
-        self.update_hover(pos);
     }
 
     /// Where a device added from the browser goes: below the selection, else at the end.
@@ -2824,10 +2923,9 @@ impl RackView {
         &self,
         type_id: &str,
         kind: atomik_device_sdk::DeviceKind,
-        doc: &RackDoc,
+        index: usize,
         modifiers: Modifiers,
     ) -> UiAction {
-        let index = self.add_index(doc);
         // At the top level an instrument or an effect is created through the creation chain
         //; inside a container, and for every other device, it is a plain add.
         match self.creation_of(kind) {
@@ -2900,13 +2998,22 @@ impl RackView {
         doc: &RackDoc,
         modifiers: Modifiers,
     ) -> Option<UiAction> {
+        self.add_row_action_at(row, self.add_index(doc), modifiers)
+    }
+
+    /// [`Self::add_row_action`] at rack index `index` (the flat index of the add commands).
+    pub(super) fn add_row_action_at(
+        &self,
+        row: &crate::browser::BrowserRow,
+        index: usize,
+        modifiers: Modifiers,
+    ) -> Option<UiAction> {
         match row {
             crate::browser::BrowserRow::Device(d) => {
-                Some(self.add_device_action(d.type_id, d.kind, doc, modifiers))
+                Some(self.add_device_action(d.type_id, d.kind, index, modifiers))
             }
             crate::browser::BrowserRow::Plugin(n) => {
                 let e = self.plugin_catalog.get(*n)?;
-                let index = self.add_index(doc);
                 let create = match e.kind {
                     atomik_device_sdk::PluginKindHint::Instrument => Some(CreateKind::Instrument),
                     atomik_device_sdk::PluginKindHint::Effect => Some(CreateKind::Effect),
@@ -2951,6 +3058,7 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.repaint = true;
+        self.context_slot = None;
         // Chords with the primary modifier are commands (undo, duplicate, ...): the shell
         // resolves them through the keymap and offers them to `command`.
         if modifiers.command() {
@@ -2958,6 +3066,13 @@ impl RackView {
         }
         if self.rename.is_some() {
             self.rename_key_press(key, out);
+            return;
+        }
+        // Escape drops a device being dragged out of the browser, whatever has the focus.
+        if matches!(self.drag, Drag::Browser { .. }) && matches!(key, Key::Escape) {
+            self.drag = Drag::None;
+            self.tick_clock = None;
+            self.clamp_scroll();
             return;
         }
         if self.browser.visible && self.browser.focused {
@@ -3137,12 +3252,16 @@ impl RackView {
         canvas.push_transform(Affine::translate(origin.to_vec2()) * Affine::scale(self.zoom));
         let top = self.view_to_rack(Point::new(area.x0, area.y0)).y;
         let bottom = self.view_to_rack(Point::new(area.x0, h)).y;
-        paint::rails(
-            canvas,
-            &self.theme,
-            top.min(0.0) - 40.0,
-            bottom.max(self.content_height) + 40.0,
-        );
+        let (rail_top, rail_bottom) = (top.min(0.0) - 40.0, bottom.max(self.content_height) + 40.0);
+        for column in 0..self.columns {
+            if column == 0 {
+                paint::rails(canvas, &self.theme, rail_top, rail_bottom);
+            } else {
+                canvas.push_transform(Affine::translate((columns::column_left(column), 0.0)));
+                paint::rails(canvas, &self.theme, rail_top, rail_bottom);
+                canvas.pop_transform();
+            }
+        }
         let side = self.flip as usize;
         for i in 0..self.devices.len() {
             let d = &self.devices[i];
@@ -3203,7 +3322,7 @@ impl RackView {
                 self.devices[i].lists[side] = Some(list);
             }
             let d = &self.devices[i];
-            canvas.push_transform(Affine::translate((0.0, d.y)));
+            canvas.push_transform(Affine::translate(d.offset()));
             if let Some(list) = &d.lists[side] {
                 canvas.draw_list(list);
             }
@@ -3212,6 +3331,7 @@ impl RackView {
         self.paint_overlays(canvas, doc, top, bottom);
         canvas.pop_transform();
         canvas.pop_clip();
+        self.paint_navigator(canvas);
         if let Some(t) = self.tooltip() {
             paint::tooltip(canvas, &self.theme, self.pointer, &t);
         }
@@ -3222,6 +3342,7 @@ impl RackView {
             let send = self.browser_send_entry(doc);
             self.browser.paint(canvas, &self.theme, registry, h, send);
         }
+        self.paint_browser_ghost(canvas);
         canvas.pop_transform();
         self.tree.clear_dirty();
         self.repaint = false;
@@ -3247,7 +3368,7 @@ impl RackView {
             if d.y + d.height < top || d.y > bottom {
                 continue;
             }
-            let plate = paint::plate_rect(d.height, d.folded) + Vec2::new(0.0, d.y);
+            let plate = paint::plate_rect(d.height, d.folded) + d.offset();
             if let Some(o) = self.outputs.get(&d.key) {
                 paint::output_display(c, theme, plate, d.folded, &o.text, o.warn);
             }
@@ -3271,7 +3392,7 @@ impl RackView {
         if let Some((i, pad)) = self.drop_pad
             && let Some(dr) = self.devices[i].spec.drum
         {
-            let r = autolayout::drum_pad_rect(dr.pads, pad) + Vec2::new(0.0, self.devices[i].y);
+            let r = autolayout::drum_pad_rect(dr.pads, pad) + self.devices[i].offset();
             paint::fill_rect(c, r, theme.highlight.with_alpha(0.3));
             paint::outline(c, r.inset(-1.0), 3.0, 2.5, theme.highlight);
         }
@@ -3333,39 +3454,7 @@ impl RackView {
         self.paint_choice_menu(c);
         self.paint_macro_menu(c);
         self.paint_plugin_menu(c);
-        if let Drag::Move {
-            dev, start_y, y, ..
-        } = &self.drag
-            && (y - start_y).abs() > MOVE_THRESHOLD
-        {
-            // The dragged device, or every device of the selection it belongs to.
-            let group = self.drags_as_group(*dev);
-            let moving =
-                |i: usize, d: &DeviceView| i == *dev || (group && self.selection.contains(&d.key));
-            for (i, d) in self.devices.iter().enumerate() {
-                if moving(i, d) {
-                    paint::fill_rect(c, d.rect(), theme.dim.with_alpha(0.4));
-                }
-            }
-            // The drop line starts below the locked Master Section.
-            let mut line_y = self.devices.get(1).map_or(0.0, |d| {
-                if self.locked.as_ref() == Some(&d.key) {
-                    d.y + d.height
-                } else {
-                    d.y
-                }
-            });
-            for (k, other) in self.devices.iter().enumerate().skip(1) {
-                if !other.is_interface() && !moving(k, other) && other.y + other.height / 2.0 < *y {
-                    line_y = other.y + other.height;
-                }
-            }
-            c.stroke(
-                &Line::new((-8.0, line_y), (f64::from(RACK_WIDTH) + 8.0, line_y)).into(),
-                &vello::kurbo::Stroke::new(3.0),
-                &theme.highlight.into(),
-            );
-        }
+        self.paint_drag_feedback(c);
     }
 }
 

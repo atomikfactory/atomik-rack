@@ -529,10 +529,15 @@ fn dragging_a_plate_reorders_devices() {
     let a = v.handle(&up(target), &doc, &reg);
     assert_eq!(
         commands(&a),
-        vec![Command::MoveDevice {
-            key: key("mixer"),
-            to: 0
-        }]
+        vec![Command::Workflow(
+            atomik_model::WorkflowCommand::MoveDevicesToSlot {
+                keys: vec![key("mixer")],
+                slot: atomik_model::RackSlot {
+                    column: 0,
+                    index: 0
+                }
+            }
+        )]
     );
 }
 

@@ -671,10 +671,15 @@ fn moving_a_device_past_hidden_ones_uses_document_indices() {
     // After removing "bass", "keys" is at document index 3; dropping below it is index 4.
     assert_eq!(
         commands(&a),
-        [Command::MoveDevice {
-            key: key("bass"),
-            to: 4
-        }]
+        [Command::Workflow(
+            atomik_model::WorkflowCommand::MoveDevicesToSlot {
+                keys: vec![key("bass")],
+                slot: atomik_model::RackSlot {
+                    column: 0,
+                    index: 4
+                }
+            }
+        )]
     );
 }
 

@@ -102,8 +102,8 @@ use crate::console::{
 };
 use crate::patch::{
     DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
-    DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str, load_rack, number,
-    object, string, uint, write_devices_and_cables,
+    DEVICE_FIELDS_V11, DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str,
+    load_rack, number, object, string, uint, write_devices_and_cables,
 };
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AudioClipContent, AutomationPoint, Clip, ClipContent,
@@ -130,8 +130,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// The project format version [`crate::save_project`] writes. [`crate::load_project`] reads
 /// it and versions 1 (no console section; migrated on load), 2 (no inputs, pool or audio) and
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
-/// plugin devices) and 9 (no note mute).
-pub const PROJECT_VERSION: u32 = 10;
+/// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load).
+pub const PROJECT_VERSION: u32 = 11;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -196,6 +196,21 @@ const ROOT_FIELDS_V7: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V8: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V9: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V10: &[&str] = ROOT_FIELDS_V3;
+const ROOT_FIELDS_V11: &[&str] = &[
+    "format",
+    "version",
+    "sample_rate",
+    "tempo_bpm",
+    "seed",
+    "output_channels",
+    "input_channels",
+    "rack_columns",
+    "devices",
+    "cables",
+    "console",
+    "assets",
+    "song",
+];
 const PATTERNS_FIELDS: &[&str] = &["patterns"];
 const PATTERN_FIELDS: &[&str] = &["name", "length", "resolution", "swing", "steps"];
 const STEP_FIELDS: &[&str] = &["on", "key", "velocity", "gate", "prob", "tie"];
@@ -425,6 +440,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         8 => (ROOT_FIELDS_V8, ROOT_REQUIRED_V2),
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
+        11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -432,7 +448,9 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         }
     };
     object(value, &root, fields, required)?;
-    let device_fields = if version >= 9 {
+    let device_fields = if version >= 11 {
+        DEVICE_FIELDS_V11
+    } else if version >= 9 {
         DEVICE_FIELDS_V9
     } else if version >= 8 {
         DEVICE_FIELDS_V8
@@ -460,6 +478,15 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
     };
     let registry = stand_ins.as_ref().unwrap_or(registry);
     let mut doc = load_rack(obj, &root, fmt, registry)?;
+    if let Some(v) = obj.get("rack_columns") {
+        let p = root.field("rack_columns");
+        let n = uint(v, &p, u64::from(crate::MAX_RACK_COLUMNS))? as u16;
+        if n == 0 {
+            return Err(p.error(format!("0 is outside 1..={}", crate::MAX_RACK_COLUMNS)));
+        }
+        doc.columns = n;
+    }
+    check_device_columns(&doc, &root.field("devices"))?;
     if let Some(assets) = obj.get("assets") {
         doc.assets = load_assets(assets, &root.field("assets"))?;
     }
@@ -470,6 +497,28 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
     }
     doc.console = load_console(&obj["console"], &root.field("console"), &doc)?;
     Ok(doc)
+}
+
+/// A device's column must exist and the list must be sorted by column.
+fn check_device_columns(doc: &RackDoc, path: &JsonPath) -> Result<(), ModelError> {
+    let mut last = 0;
+    for (i, d) in doc.devices.iter().enumerate() {
+        let p = path.index(i).field("column");
+        if d.column >= doc.columns {
+            return Err(p.error(format!(
+                "column {} does not exist (rack_columns is {})",
+                d.column, doc.columns
+            )));
+        }
+        if d.column < last {
+            return Err(p.error(format!(
+                "devices must be sorted by column; column {} follows column {last}",
+                d.column
+            )));
+        }
+        last = d.column;
+    }
+    Ok(())
 }
 
 /// Version 1 → 2: when the registry has the console devices, every
@@ -1361,6 +1410,10 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     let _ = writeln!(w, "  \"seed\": {},", doc.seed);
     let _ = writeln!(w, "  \"output_channels\": {},", doc.output_channels);
     let _ = writeln!(w, "  \"input_channels\": {},", doc.input_channels);
+    // Optional, like the device `column`: a single-column rack (the default) writes neither.
+    if doc.columns != 1 {
+        let _ = writeln!(w, "  \"rack_columns\": {},", doc.columns);
+    }
     write_devices_and_cables(w, doc, true);
     let _ = writeln!(w, ",");
     write_console(w, &doc.console);

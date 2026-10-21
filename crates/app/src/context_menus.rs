@@ -28,6 +28,8 @@ pub struct MenuEnable {
     pub master_only: bool,
     /// Rack: "Use as Send Effect" can work on the selection (the model would accept it).
     pub assign_send: bool,
+    /// Rack: how many columns the rack has (Remove Column needs two, Add Column room).
+    pub columns: u16,
 }
 
 fn item(command: &'static str, on: bool) -> Spec {
@@ -70,6 +72,12 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             Spec::Separator,
             item("create.instrument", true),
             item("create.effect", true),
+            Spec::Separator,
+            item(
+                "rack.add_column",
+                e.columns < atomik_model::MAX_RACK_COLUMNS,
+            ),
+            item("rack.remove_column", e.columns > 1),
             Spec::Separator,
             item("edit.select_all", true),
         ],
@@ -185,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn the_rack_background_menu_offers_paste_create_and_select_all() {
+    fn the_rack_background_menu_offers_paste_create_columns_and_select_all() {
         let got: Vec<&str> = ids(ContextTarget::Rack, &MenuEnable::default())
             .iter()
             .map(|(c, _)| *c)
@@ -196,9 +204,31 @@ mod tests {
                 "edit.paste",
                 "create.instrument",
                 "create.effect",
+                "rack.add_column",
+                "rack.remove_column",
                 "edit.select_all"
             ]
         );
+    }
+
+    #[test]
+    fn remove_column_needs_two_columns_and_add_column_needs_room() {
+        let on = |columns: u16, id: &str| {
+            ids(
+                ContextTarget::Rack,
+                &MenuEnable {
+                    columns,
+                    ..Default::default()
+                },
+            )
+            .into_iter()
+            .find(|(c, _)| *c == id)
+            .map(|(_, on)| on)
+            .unwrap()
+        };
+        assert!(!on(1, "rack.remove_column") && on(1, "rack.add_column"));
+        assert!(on(2, "rack.remove_column"));
+        assert!(!on(atomik_model::MAX_RACK_COLUMNS, "rack.add_column"));
     }
 
     #[test]

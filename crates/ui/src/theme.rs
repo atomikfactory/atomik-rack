@@ -325,6 +325,7 @@ mod tests {
             steps: None,
             inner: None,
             plugin: None,
+            column: 0,
         };
         assert_eq!(t.accent_for(&dev).to_rgba8().to_u8_array(), [1, 2, 3, 255]);
     }

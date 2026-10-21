@@ -10,6 +10,7 @@
 //! { "rack_split": 0.5, "show_song": true, "input_quantize": "1/16",
 //!   "show_console": false, "console_maximised": false,
 //!   "show_console_devices": true, "show_console_links": false,
+//!   "show_rack_navigator": true,
 //!   "console_notice_seen": false }
 //! ```
 
@@ -44,6 +45,9 @@ pub struct UiState {
     pub show_console_devices: bool,
     /// The channel to master links are drawn as cables in the rack.
     pub show_console_links: bool,
+    /// The rack navigator (the overview strip at the right of the rack) shows. An absent key in
+    /// the file means shown.
+    pub show_rack_navigator: bool,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -68,6 +72,7 @@ impl Default for UiState {
             console_maximised: false,
             show_console_devices: true,
             show_console_links: false,
+            show_rack_navigator: true,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,
@@ -159,6 +164,7 @@ mod tests {
             console_maximised: true,
             show_console_devices: false,
             show_console_links: true,
+            show_rack_navigator: false,
             console_notice_seen: true,
             file_browser_visible: true,
             ..UiState::default()
@@ -175,8 +181,11 @@ mod tests {
         let old = UiState::load(&path);
         assert!(old.show_console_devices && !old.show_console_links);
         assert!(!old.show_song);
+        assert!(old.show_rack_navigator, "an older file shows the navigator");
         std::fs::write(&path, r#"{"show_console_devices": false}"#).unwrap();
         assert!(!UiState::load(&path).show_console_devices);
+        std::fs::write(&path, r#"{"show_rack_navigator": false}"#).unwrap();
+        assert!(!UiState::load(&path).show_rack_navigator);
         assert_eq!(
             ui_state_path(Path::new("a/settings.json")),
             Path::new("a").join(UI_STATE_FILE)

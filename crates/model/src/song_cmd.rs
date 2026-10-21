@@ -273,6 +273,7 @@ fn add_audio_track(
             steps: None,
             inner: None,
             plugin: None,
+            column: 0,
         },
         cables: Vec::new(),
     };

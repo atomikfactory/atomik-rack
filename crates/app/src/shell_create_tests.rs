@@ -28,6 +28,8 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
     s.handle(&UiEvent::Resize(Size::new(1100.0, 2400.0)));
+    // The tests drop at fixed points of the full-width rack: no rack navigator strip.
+    s.core_mut().view_mut().set_navigator_visible(false);
     s.set_focus(Pane::Rack);
     s
 }
@@ -526,4 +528,169 @@ fn the_ninth_effect_says_all_eight_slots_are_in_use() {
         s.core().last_rejection(),
         Some("All 8 send and return slots are in use")
     );
+}
+
+/// Presses on the browser row of `type_id`, drags to `to` (shell coordinates) and releases.
+fn drag_row(s: &mut Shell<NullBackend>, type_id: &str, to: Point, up_modifiers: Modifiers) {
+    let view = s.core().view();
+    let i = view
+        .browser_rows(s.core().registry())
+        .iter()
+        .position(|t| *t == type_id)
+        .unwrap();
+    let row = view.browser_row_center(i).unwrap();
+    let from = Point::new(row.x, row.y + s.layout().rack.y0);
+    s.handle(&UiEvent::PointerDown {
+        pos: from,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    s.handle(&UiEvent::PointerMove {
+        pos: to,
+        modifiers: Modifiers::NONE,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: to,
+        button: PointerButton::Primary,
+        modifiers: up_modifiers,
+    });
+}
+
+#[test]
+fn dragging_a_browser_row_into_the_rack_creates_through_the_creation_chain() {
+    let mut s = shell_for(Os::Windows);
+    s.core_mut().view_mut().set_browser_visible(true);
+    let y = s.layout().rack.y0 + 300.0;
+    drag_row(&mut s, SYNTH, Point::new(500.0, y), Modifiers::NONE);
+    let doc = s.core().doc();
+    let synth = doc
+        .devices
+        .iter()
+        .find(|d| d.type_id == SYNTH)
+        .unwrap()
+        .key
+        .clone();
+    assert!(
+        doc.console.channel_of(&synth).is_some(),
+        "routed like Enter"
+    );
+    assert_eq!(armed(&s), vec![synth.0.clone()]);
+    assert_eq!(
+        s.core().view().selected(),
+        Some(&synth),
+        "the new device is selected"
+    );
+    // A second instrument dropped right of the last column makes a column, in one step.
+    let created = saved(&s);
+    drag_row(&mut s, SYNTH, Point::new(1080.0, y), Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 2);
+    let second = s.core().view().selected().unwrap().clone();
+    assert_ne!(second, synth);
+    assert_eq!(s.core().doc().device(&second).unwrap().column, 1);
+    assert_eq!(
+        armed(&s),
+        vec![second.0.clone()],
+        "the first track was disarmed"
+    );
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert_eq!(
+        saved(&s),
+        created,
+        "one undo removes the device and its column"
+    );
+}
+
+#[test]
+fn a_browser_row_released_over_the_browser_creates_nothing() {
+    let mut s = shell_for(Os::Windows);
+    s.core_mut().view_mut().set_browser_visible(true);
+    let start = saved(&s);
+    let y = s.layout().rack.y0 + 300.0;
+    drag_row(&mut s, SYNTH, Point::new(100.0, y), Modifiers::NONE);
+    assert_eq!(saved(&s), start);
+    assert!(!s.core().document().can_undo());
+}
+
+#[test]
+fn the_frame_clock_scrolls_the_rack_while_a_device_is_dragged_to_an_edge() {
+    let mut s = shell_for(Os::Windows);
+    s.core_mut().view_mut().set_browser_visible(true);
+    let l = s.layout();
+    let row = {
+        let view = s.core().view();
+        let i = view
+            .browser_rows(s.core().registry())
+            .iter()
+            .position(|t| *t == SYNTH)
+            .unwrap();
+        view.browser_row_center(i).unwrap()
+    };
+    s.handle(&UiEvent::PointerDown {
+        pos: Point::new(row.x, row.y + l.rack.y0),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    // Near the bottom edge of the rack pane.
+    s.handle(&UiEvent::PointerMove {
+        pos: Point::new(600.0, l.rack.y1 - 4.0),
+        modifiers: Modifiers::NONE,
+    });
+    assert!(s.core().view().is_auto_scrolling());
+    s.frame_at(1.0);
+    s.frame_at(1.05);
+    s.handle(&UiEvent::PointerUp {
+        pos: Point::new(600.0, l.rack.y1 - 4.0),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    assert!(!s.core().view().is_auto_scrolling());
+}
+
+#[test]
+fn escape_during_a_device_browser_drag_reaches_the_rack_and_cancels_with_no_command() {
+    for focus in [Pane::Rack, Pane::Arrangement] {
+        let mut s = shell_for(Os::Windows);
+        s.core_mut().view_mut().set_browser_visible(true);
+        let before = saved(&s);
+        let view = s.core().view();
+        let i = view
+            .browser_rows(s.core().registry())
+            .iter()
+            .position(|t| *t == SYNTH)
+            .unwrap();
+        let row = view.browser_row_center(i).unwrap();
+        let from = Point::new(row.x, row.y + s.layout().rack.y0);
+        let to = Point::new(600.0, s.layout().rack.y0 + 300.0);
+        s.handle(&UiEvent::PointerDown {
+            pos: from,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        });
+        s.handle(&UiEvent::PointerMove {
+            pos: to,
+            modifiers: Modifiers::NONE,
+        });
+        // Whatever pane has the keyboard focus, Escape ends the drag.
+        s.set_focus(focus);
+        for pressed in [true, false] {
+            s.handle(&UiEvent::Key {
+                key: atomik_ui::Key::Escape,
+                modifiers: Modifiers::NONE,
+                pressed,
+            });
+        }
+        s.handle(&UiEvent::PointerUp {
+            pos: to,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        });
+        assert_eq!(saved(&s), before, "focus on {focus:?}: nothing was created");
+        assert!(
+            !s.core().document().can_undo(),
+            "focus on {focus:?}: no command was applied"
+        );
+    }
 }

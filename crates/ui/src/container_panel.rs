@@ -391,6 +391,7 @@ mod tests {
             steps: None,
             inner: None,
             plugin: None,
+            column: 0,
         });
         inner
             .splits
