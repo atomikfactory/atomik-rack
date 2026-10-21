@@ -204,12 +204,7 @@ fn a_real_engine_feeds_the_compressor_meters_while_it_works() {
     }))
     .unwrap();
     let len = 4 * atomik_core::PPQ;
-    let note = Note {
-        tick: 0,
-        length: len,
-        key: 60,
-        velocity: 1.0,
-    };
+    let note = Note::new(0, len, 60, 1.0);
     c.apply_command(Command::Song(SongCommand::AddClip {
         device: key("synth"),
         lane: 0,
@@ -322,14 +317,7 @@ fn source(c: &mut AppCore<OfflineSink>, k: &str, sustain: f32, note: u8, len: i6
     }))
     .unwrap();
     let ppq = atomik_core::PPQ;
-    let notes = (0..4)
-        .map(|b| Note {
-            tick: b * ppq,
-            length: len,
-            key: note,
-            velocity: 1.0,
-        })
-        .collect();
+    let notes = (0..4).map(|b| Note::new(b * ppq, len, note, 1.0)).collect();
     c.apply_command(Command::Song(SongCommand::AddClip {
         device: key,
         lane: 0,

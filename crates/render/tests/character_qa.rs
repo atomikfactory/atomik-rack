@@ -85,7 +85,10 @@ fn a_project_with_every_preset_round_trips_save_load_save_byte_identically() {
         assert_eq!(d.params["preset"], p as f32, "preset {p}");
     }
     // The preset is a plain numeric param, so no new project field appeared.
-    assert!(first.contains("\"version\": 9"), "the format is unchanged");
+    assert!(
+        first.contains("\"version\": 10"),
+        "saved in the current format"
+    );
 }
 
 fn point(tick: i64, value: f32, curve: Curve) -> AutomationPoint {
@@ -174,14 +177,7 @@ fn automated_doc() -> RackDoc {
         Command::Song(SongCommand::AddTrack { device: key("box") }),
     );
     let notes = (0..BARS)
-        .flat_map(|bar| {
-            [57u8, 64].map(|k| Note {
-                tick: bar * BAR,
-                length: BAR - PPQ / 4,
-                key: k,
-                velocity: 0.8,
-            })
-        })
+        .flat_map(|bar| [57u8, 64].map(|k| Note::new(bar * BAR, BAR - PPQ / 4, k, 0.8)))
         .collect();
     apply(
         &mut doc,

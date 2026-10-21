@@ -451,12 +451,7 @@ mod live {
             content: ClipContent::Notes(
                 [(0, 60u8), (PPQ / 2, 64), (PPQ, 67)]
                     .into_iter()
-                    .map(|(tick, k)| Note {
-                        tick,
-                        length: PPQ / 2,
-                        key: k,
-                        velocity: 0.8,
-                    })
+                    .map(|(tick, k)| Note::new(tick, PPQ / 2, k, 0.8))
                     .collect(),
             ),
         }

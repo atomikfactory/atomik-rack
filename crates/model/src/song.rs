@@ -22,6 +22,21 @@ pub struct Note {
     pub key: u8,
     /// Velocity in (0, 1].
     pub velocity: f32,
+    /// A muted note stays in the clip (and the editors) but is never played.
+    pub muted: bool,
+}
+
+impl Note {
+    /// An unmuted note.
+    pub const fn new(tick: i64, length: i64, key: u8, velocity: f32) -> Self {
+        Self {
+            tick,
+            length,
+            key,
+            velocity,
+            muted: false,
+        }
+    }
 }
 
 /// Interpolation from one automation point to the next.

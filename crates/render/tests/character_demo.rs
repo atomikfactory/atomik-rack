@@ -202,12 +202,7 @@ fn clip(content: ClipContent) -> Clip {
 }
 
 fn note(tick: i64, length: i64, k: u8, velocity: f32) -> Note {
-    Note {
-        tick,
-        length,
-        key: k,
-        velocity,
-    }
+    Note::new(tick, length, k, velocity)
 }
 
 /// The chord tones per bar (Am F C G, twice).
@@ -473,7 +468,10 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 9"), "the format is unchanged");
+    assert!(
+        text.contains("\"version\": 10"),
+        "saved in the current format"
+    );
 }
 
 #[test]

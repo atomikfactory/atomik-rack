@@ -148,11 +148,13 @@ type Step = (f64, f64, u8, f32);
 fn notes(steps: &[Step]) -> Vec<Note> {
     steps
         .iter()
-        .map(|&(beat, length, key, velocity)| Note {
-            tick: (beat * PPQ as f64) as i64,
-            length: (length * PPQ as f64) as i64,
-            key,
-            velocity,
+        .map(|&(beat, length, key, velocity)| {
+            Note::new(
+                (beat * PPQ as f64) as i64,
+                (length * PPQ as f64) as i64,
+                key,
+                velocity,
+            )
         })
         .collect()
 }

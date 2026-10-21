@@ -781,12 +781,12 @@ impl PianoRollView {
                 }
                 let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
                 let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
-                let note = seq_edit::clamp_note(Note {
+                let note = seq_edit::clamp_note(Note::new(
                     tick,
                     length,
-                    key: self.key_at(pos.y),
-                    velocity: DEFAULT_VELOCITY,
-                });
+                    self.key_at(pos.y),
+                    DEFAULT_VELOCITY,
+                ));
                 let base = self.notes().to_vec();
                 let merge = self.merge_id();
                 let (list, sel) = with_note(&base, note);

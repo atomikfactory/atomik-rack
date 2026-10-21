@@ -784,12 +784,7 @@ fn a_swing_edit_retimes_the_notes_in_the_engine_song_without_touching_the_docume
     let mut c = drum_core();
     let notes: Vec<Note> = [(0i64, 36u8), (1, 36), (2, 36), (3, 36)]
         .iter()
-        .map(|&(step, key)| Note {
-            tick: step * 3840,
-            length: 3840,
-            key,
-            velocity: 0.8,
-        })
+        .map(|&(step, key)| Note::new(step * 3840, 3840, key, 0.8))
         .collect();
     let id = add_track_and_clip(&mut c, "drm", note_clip(0, BAR, notes.clone()));
     c.sink_mut().take();

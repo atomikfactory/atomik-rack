@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Project format 10: per-note mute. A muted note is a fifth element `true` in the note's array; muted notes stay in the clip and are skipped by playback and bounce. Versions 1 to 9 still load. New `SetClipsMuted` workflow command mutes or unmutes several clips in one undo step.
 - **File browser.** A docked panel (View, File Browser, `F4`) with a folder tree (Favourites, Tags, Bookmarks, drives) over a file list of folders and audio files, a search field (words, `#tag`, `fav`, optionally in sub-folders), instant preview on click with a 5 ms crossfade when switching (live only, outside the routing and the meters), favourites, tags and bookmarked folders kept in `library.json` in the configuration folder, and drag to the arrangement, sample editor and sampler panels like an OS file drop. New crate `atomik-library`; `atomik --file-browser [DIR]` shows the panel at start. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#6j-the-file-browser).
 
 ### Changed

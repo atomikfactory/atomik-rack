@@ -58,12 +58,7 @@ pub fn grid(res: StepResolution, steps: u16, swing: u8) -> StepGrid {
 }
 
 pub fn step_note(step: i64, pad: u8, velocity: f32) -> Note {
-    Note {
-        tick: step * S16,
-        length: S16,
-        key: pad_key(pad),
-        velocity,
-    }
+    Note::new(step * S16, S16, pad_key(pad), velocity)
 }
 
 /// The reference rack plus drum machine `drums` (assets, zones) with a note track holding

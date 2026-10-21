@@ -1189,7 +1189,7 @@ pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelErr
 }
 
 /// Saves a document as an `.atomik` project file, format [`PROJECT_FORMAT`] version
-/// [`PROJECT_VERSION`] (9): the patch v2 rack fields (plus each device's `"zones"` when it has
+/// [`PROJECT_VERSION`] (10): the patch v2 rack fields (plus each device's `"zones"` when it has
 /// any, `"steps"` when present, a container's `"inner"` and a plugin device's `"plugin"`) (without `length_beats`),
 /// `"input_channels"`, `"console"` (channels with their sources, master, 8 returns,
 /// compensation), `"assets"` (the sample pool) and `"song"` with every song field, clip ids
