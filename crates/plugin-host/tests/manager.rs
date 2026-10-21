@@ -332,6 +332,8 @@ fn a_device_dropped_while_restarting_is_still_torn_down() {
     assert_eq!(stats.activated(), stats.deactivated());
 }
 
+// The guard is a `debug_assert!` (`threads::assert_main_thread`): release builds do not check.
+#[cfg(debug_assertions)]
 #[test]
 fn every_manager_entry_point_refuses_to_run_off_the_main_thread() {
     // A thread that never called `mark_main_thread`: the guard trips (debug builds).
