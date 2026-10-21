@@ -11,7 +11,7 @@ This is a list of intentions, not promises. There are no dates, and the order is
 
 ## Features
 
-- **Browser and library.** A browsable library of devices, patches, samples and projects with search and tags.
+- **Browser and library.** Audio files are done: a file browser with search, tags, favourites and preview (see [the architecture notes](docs/ARCHITECTURE.md#6j-the-file-browser)). Devices, patches and projects in the library remain.
 - **LFO and CV source device.** A general modulation source that can drive any CV input.
 - **More factory devices.** More original instruments and effects built from the existing DSP blocks.
 - **Keyboard workflow improvements.** Nudge by beat or tick, a keymap for the remaining editors, and a text-owner model for the console.
