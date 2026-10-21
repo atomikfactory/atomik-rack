@@ -238,10 +238,10 @@ fn a_full_scan_of_a_folder_with_bundles_survives_bad_ones_and_the_catalog_follow
         .write(true)
         .open(&binary)
         .unwrap();
-    f.set_modified(
-        std::fs::metadata(&binary).unwrap().modified().unwrap() + Duration::from_secs(9),
-    )
-    .unwrap();
+    // Newer than every file in the bundle: a copy may keep the build's old file time while the
+    // files written next to it (macOS `Info.plist`) are new.
+    f.set_modified(std::time::SystemTime::now() + Duration::from_secs(9))
+        .unwrap();
     drop(f);
     let changed = scan_dir(&plugins, &mut cache, &runner, RescanMode::Incremental);
     assert_eq!(

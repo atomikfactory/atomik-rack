@@ -77,18 +77,28 @@ fn cycle(
     descriptor
 }
 
-fn leak_setup(format: Format) -> (TestLib, PluginManager, PluginRef) {
+/// As [`leak_setup`], also returning the library's entry-call count from before the manager
+/// touched it. The counters live in the library image: where the OS keeps an unloaded image
+/// resident (macOS does for dylibs with thread-locals), an earlier test in this process has
+/// already counted its entry call, so a test counts its own from this base.
+fn leak_setup_counted(format: Format) -> (TestLib, PluginManager, PluginRef, u64) {
     let path = format.install(package(format));
     let lib = TestLib::open_path(&path);
+    let entry_base = lib.counter(counter::ENTRY_INIT);
     let m = manager_for(format, &[path]);
-    (lib, m, leak_ref(format))
+    (lib, m, leak_ref(format), entry_base)
+}
+
+fn leak_setup(format: Format) -> (TestLib, PluginManager, PluginRef) {
+    let (lib, m, plugin, _) = leak_setup_counted(format);
+    (lib, m, plugin)
 }
 
 #[test]
 fn five_hundred_instances_leave_every_counter_where_it_started() {
     let _s = serial();
     for format in FORMATS {
-        let (lib, mut m, plugin) = leak_setup(format);
+        let (lib, mut m, plugin, entry_base) = leak_setup_counted(format);
         // A first round warms everything up (the library is loaded, the descriptor is interned).
         let first = cycle(&mut m, &plugin, true);
         let threads_before = thread_count();
@@ -130,7 +140,7 @@ fn five_hundred_instances_leave_every_counter_where_it_started() {
             );
         }
         assert_eq!(
-            lib.counter(counter::ENTRY_INIT),
+            lib.counter(counter::ENTRY_INIT) - entry_base,
             1,
             "{}: the library entry ran once",
             format.name()
