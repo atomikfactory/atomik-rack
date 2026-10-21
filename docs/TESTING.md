@@ -95,7 +95,15 @@ You can also measure by hand:
 cargo run --release -p atomik-render -- examples/patches/slice-demo.json -o demo.wav --stats
 ```
 
-A normal `cargo test --workspace` reports 2 ignored tests: this one, and the `ignore` code example in the `no_alloc` module docs.
+The file browser has three more timing tests with the same rule (`#[ignore]`, release only):
+
+```sh
+cargo test -p atomik-library --release -- --ignored
+cargo test -p atomik-ui --release --test file_browser -- --ignored
+cargo test -p atomik-audio-file --release -- --ignored stream
+```
+
+They check a two-word query over 50 000 rows, filtering and sorting 100 000 rows in the panel, and the latency of the first decoded chunk of a file. The preview voice's allocation test is not ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_alloc.rs) runs with the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the real-time factor test and the `ignore` code example in the `no_alloc` module docs.
 
 ## Listening check
 

@@ -24,6 +24,7 @@ fn the_app_runs_headless_without_audio() {
             in_window_menu: true,
             settings_path: None,
             ui_state_path: None,
+            library_path: None,
         },
     );
     shell.handle(&UiEvent::ScaleChanged(1.5));
@@ -111,6 +112,7 @@ fn the_app_starts_with_the_starter_project_and_paints_it() {
             in_window_menu: true,
             settings_path: None,
             ui_state_path: None,
+            library_path: None,
         },
     );
     shell.handle(&UiEvent::Resize(Size::new(1280.0, 860.0)));

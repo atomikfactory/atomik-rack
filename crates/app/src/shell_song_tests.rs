@@ -24,6 +24,7 @@ fn shell_at(ui_state_path: Option<PathBuf>) -> Shell<NullBackend> {
             in_window_menu: true,
             settings_path: None,
             ui_state_path,
+            library_path: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));

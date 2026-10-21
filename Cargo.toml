@@ -25,6 +25,7 @@ atomik-render = { path = "crates/render" }
 atomik-model = { path = "crates/model" }
 atomik-ui = { path = "crates/ui" }
 atomik-audio-file = { path = "crates/audio-file" }
+atomik-library = { path = "crates/library" }
 atomik-plugin-host = { path = "crates/plugin-host" }
 atomik-test-plugin-core = { path = "crates/testplugins/core" }
 atomik-plugin-clap = { path = "crates/plugin-clap" }

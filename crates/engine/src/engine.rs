@@ -58,7 +58,7 @@ use atomik_device_sdk::{DeviceDescriptor, PlayerDataRef, PrepareInfo, SampleMapR
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Former capacity of the plan submission queue. Plans travel through the
 /// ordered control queue ([`CONTROL_QUEUE_CAPACITY`]); kept for compatibility.
@@ -285,6 +285,13 @@ enum ControlOp {
         id: DeviceInstanceId,
         data: Option<PlayerDataRef>,
     },
+    /// Start a preview stream (the current one fades out).
+    PreviewStart {
+        stream: crate::PreviewStream,
+        gain: f32,
+    },
+    /// Fade the preview out.
+    PreviewStop,
 }
 
 /// A complete arena plus routing. Travels to the engine as the new state and back to the handle
@@ -302,6 +309,7 @@ pub(crate) enum Retired {
     Tap(#[allow(dead_code)] Box<TapRt>),
     Samples(#[allow(dead_code)] SampleMapRef),
     PlayerData(#[allow(dead_code)] PlayerDataRef),
+    Preview(#[allow(dead_code)] crate::PreviewStream),
 }
 
 /// Something the engine must hand back instead of dropping.
@@ -390,6 +398,10 @@ pub struct Engine {
     latencies: Arc<Latencies>,
     /// The record tap, if one is installed.
     tap: Option<Box<TapRt>>,
+    /// The preview voice (outside the graph).
+    preview: crate::preview::PreviewVoice,
+    /// Whether the preview voice is sounding, published once per batch.
+    preview_active: Arc<AtomicBool>,
 }
 
 /// The non-RT half: submits plans, routings, devices, params and notes, and drops whatever the
@@ -412,6 +424,8 @@ pub struct EngineHandle {
     latencies: Arc<Latencies>,
     /// Disk streaming for audio clips: the streamer thread and its counters.
     streams: StreamControl,
+    /// Whether the preview voice is sounding (published by the engine each batch).
+    preview_active: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -488,6 +502,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let transport = player.shared();
     let meters = Arc::new(Meters::new(caps.arena));
     let latencies = Arc::new(Latencies::new(caps.arena));
+    let preview_active = Arc::new(AtomicBool::new(false));
     let engine = Engine {
         config: cfg,
         tempo: cfg.tempo,
@@ -514,6 +529,8 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         meters: Arc::clone(&meters),
         latencies: Arc::clone(&latencies),
         tap: None,
+        preview: crate::preview::PreviewVoice::new(cfg.sample_rate.hz()),
+        preview_active: Arc::clone(&preview_active),
     };
     let handle = EngineHandle {
         config: cfg,
@@ -529,6 +546,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         meters,
         latencies,
         streams: StreamControl::new(stream_stats, request_rx),
+        preview_active,
     };
     (engine, handle)
 }
@@ -732,6 +750,34 @@ impl EngineHandle {
     /// its data missing (the missing frames play as silence). Never blocks.
     pub fn stream_underruns(&self) -> u64 {
         self.streams.stats.underruns.load(Ordering::Relaxed)
+    }
+
+    /// Starts previewing `stream` (a file at `source_rate` Hz) at linear `gain`, live only.
+    /// Replaces a preview that is playing (it fades out over 5 ms).
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`]; the stream is then dropped here (its feed sees it abandoned).
+    pub fn preview_start(
+        &mut self,
+        stream: crate::PreviewStream,
+        gain: f32,
+    ) -> Result<(), EngineError> {
+        let gain = if gain.is_finite() { gain.max(0.0) } else { 0.0 };
+        // On a full queue the message, and the stream in it, is dropped here (see `push`).
+        self.push(0, ControlOp::PreviewStart { stream, gain })
+    }
+
+    /// Stops the preview with a 5 ms fade-out. No-op when nothing plays.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn preview_stop(&mut self) -> Result<(), EngineError> {
+        self.push(0, ControlOp::PreviewStop)
+    }
+
+    /// True while a preview voice is sounding (including its fade-out). Never blocks.
+    pub fn preview_active(&self) -> bool {
+        self.preview_active.load(Ordering::Relaxed)
     }
 
     /// True when every streamed audio track has at least 1 s of audio buffered for the current
@@ -1166,6 +1212,9 @@ impl Engine {
         }
         self.arena.publish_device_values(&self.meters);
         self.player.mix_metronome(&mut self.out_fifo);
+        self.preview.mix(&mut self.out_fifo);
+        self.preview_active
+            .store(self.preview.is_active(), Ordering::Relaxed);
         self.frame += BATCH as u64;
     }
 
@@ -1177,6 +1226,12 @@ impl Engine {
             self.retire(old);
         }
         while self.pending_retire.is_none() {
+            // Streams the preview voice finished since the last boundary go back first, so
+            // the voice's dead list is empty when a control message is applied.
+            self.drain_preview();
+            if self.pending_retire.is_some() {
+                break;
+            }
             match self.control_rx.peek() {
                 Ok(c) if c.frame <= self.frame => {}
                 _ => break,
@@ -1261,11 +1316,31 @@ impl Engine {
                     self.retire(Garbage::Retired(Retired::PlayerData(old)));
                 }
             }
+            ControlOp::PreviewStart { stream, gain } => {
+                if let Some(cut) = self.preview.start(stream, gain) {
+                    self.retire(Garbage::Retired(Retired::Preview(cut)));
+                }
+            }
+            ControlOp::PreviewStop => {
+                if let Some(cut) = self.preview.stop() {
+                    self.retire(Garbage::Retired(Retired::Preview(cut)));
+                }
+            }
             ControlOp::Tap(new) => {
                 if let Some(old) = std::mem::replace(&mut self.tap, new) {
                     self.retire(Garbage::Retired(Retired::Tap(old)));
                 }
             }
+        }
+    }
+
+    /// Retires the preview streams that ended, one by one, until the return queue is full.
+    fn drain_preview(&mut self) {
+        while self.pending_retire.is_none() {
+            let Some(stream) = self.preview.take_dead() else {
+                break;
+            };
+            self.retire(Garbage::Retired(Retired::Preview(stream)));
         }
     }
 

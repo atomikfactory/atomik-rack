@@ -260,6 +260,7 @@ pub mod container_panel;
 pub mod context_menu;
 pub mod display_list;
 pub mod event;
+pub mod file_browser;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
@@ -293,7 +294,9 @@ pub mod viewport;
 pub mod widget;
 pub mod zone_edit;
 
-pub use action::{ContextTarget, ImportTarget, SliceMode, TransportAction, UiAction};
+pub use action::{
+    BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
+};
 pub use arrangement::{ArrangementView, AudioHandle, TrackButton};
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
@@ -301,6 +304,7 @@ pub use console_meter::ChannelMeters;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use display_list::{DisplayList, Op};
 pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
+pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
 pub use piano_roll::PianoRollView;
 pub use plugin_banner::{BannerKind, PluginBannerView};

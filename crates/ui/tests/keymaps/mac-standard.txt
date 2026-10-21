@@ -28,6 +28,21 @@ file.open | global | Cmd+O
 file.quit | global | Cmd+Q
 file.save | global | Cmd+S
 file.save_as | global | Cmd+Shift+S
+files.down | files | Down
+files.end | files | End
+files.favorite | files | F
+files.home | files | Home
+files.left | files | Left
+files.open | files | Enter
+files.page_down | files | PageDown
+files.page_up | files | PageUp
+files.parent | files | Backspace, Opt+Up
+files.right | files | Right
+files.search | files | Cmd+F
+files.select_all | files | Cmd+A
+files.stop | files | Esc
+files.toggle_preview | files | Space
+files.up | files | Up
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
 rack.select_next | rack | Down
@@ -77,6 +92,7 @@ view.sequencer_only | global | F7, Cmd+Opt+Digit7
 view.toggle_browser | global | F3, Cmd+F, Cmd+B, Cmd+Opt+Digit3
 view.toggle_console | global | F5, Cmd+Opt+Digit5
 view.toggle_editor | global | F8, Shift+Tab, Cmd+Opt+Digit8
+view.toggle_file_browser | global | F4, Cmd+Opt+Digit4
 view.toggle_flip | global | Tab
 view.toggle_rack | global | F6, Cmd+Opt+Digit6
 view.zoom_in | global | Cmd+=, Cmd++, Cmd+Shift+=, Cmd+Shift++

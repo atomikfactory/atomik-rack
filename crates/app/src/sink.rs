@@ -6,8 +6,8 @@ use crate::target::{NoteTarget, Target};
 use atomik_core::{NoteKind, ParamId, Tempo};
 use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
-    DeviceInstanceId, Endpoint, EngineConfig, EngineError, MeterReading, RecordTap, RoutingPlan,
-    SongInput, SongSnapshot, Topology, TransportCommand, TransportState,
+    DeviceInstanceId, Endpoint, EngineConfig, EngineError, MeterReading, PreviewStream, RecordTap,
+    RoutingPlan, SongInput, SongSnapshot, Topology, TransportCommand, TransportState,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -147,6 +147,20 @@ pub trait EngineSink {
     fn engine_error(&self) -> Option<String> {
         None
     }
+    /// [`atomik_engine::EngineHandle::preview_start`]: plays a file browser preview (live only;
+    /// the engine fades a previous one out). Without an engine the stream is dropped, which its
+    /// feed sees as abandoned.
+    fn preview_start(&mut self, _stream: PreviewStream, _gain: f32) -> Result<(), EngineError> {
+        Ok(())
+    }
+    /// [`atomik_engine::EngineHandle::preview_stop`].
+    fn preview_stop(&mut self) -> Result<(), EngineError> {
+        Ok(())
+    }
+    /// [`atomik_engine::EngineHandle::preview_active`]: false when no engine runs.
+    fn preview_active(&self) -> bool {
+        false
+    }
 }
 
 /// One call recorded by [`RecordingSink`].
@@ -214,6 +228,23 @@ pub enum SinkCall {
     },
     /// [`EngineSink::set_recording`].
     Recording(Vec<DeviceInstanceId>),
+    /// [`EngineSink::preview_start`] (the stream itself is held in
+    /// [`RecordingSink::previews`]).
+    PreviewStart {
+        /// Linear gain.
+        gain: f32,
+    },
+    /// [`EngineSink::preview_stop`].
+    PreviewStop,
+}
+
+/// A preview stream held by [`RecordingSink`] so its feed is not abandoned while a test runs.
+pub struct HeldStream(pub PreviewStream);
+
+impl std::fmt::Debug for HeldStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HeldStream")
+    }
 }
 
 /// A fake engine that records every call (garbage collection is counted, not recorded). It can
@@ -249,6 +280,9 @@ pub struct RecordingSink {
     pub no_engine: bool,
     /// What [`EngineSink::host_channels`] returns.
     pub host_channels: Option<(u16, u16)>,
+    /// The preview stream the fake keeps alive (at most one: a new start replaces it, a stop
+    /// drops it, as the engine retires streams). Nothing reads it; its feed sees it as playing.
+    pub previews: Vec<HeldStream>,
 }
 
 impl RecordingSink {
@@ -402,5 +436,22 @@ impl EngineSink for RecordingSink {
 
     fn has_engine(&self) -> bool {
         !self.no_engine
+    }
+
+    fn preview_start(&mut self, stream: PreviewStream, gain: f32) -> Result<(), EngineError> {
+        self.record(SinkCall::PreviewStart { gain })?;
+        self.previews.clear();
+        self.previews.push(HeldStream(stream));
+        Ok(())
+    }
+
+    fn preview_stop(&mut self) -> Result<(), EngineError> {
+        self.record(SinkCall::PreviewStop)?;
+        self.previews.clear();
+        Ok(())
+    }
+
+    fn preview_active(&self) -> bool {
+        !self.previews.is_empty()
     }
 }

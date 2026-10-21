@@ -84,6 +84,11 @@ fn reference_shadows_are_the_expected_notes() {
         [
             "sequencer Return sequencer.open_clip over transport.go_start",
             "browser Return browser.create over transport.go_start",
+            "files Return files.open over transport.go_start",
+            "files Space files.toggle_preview over transport.play_stop",
+            "files Backspace files.parent over edit.delete",
+            "files Cmd+A files.select_all over edit.select_all",
+            "files Cmd+F files.search over view.toggle_browser",
         ]
     );
     assert!(find_shadows(&km(Profile::Legacy, Os::Windows)).is_empty());
@@ -874,4 +879,179 @@ fn zoom_in_works_with_the_plus_character_typed_with_shift_in_both_profiles() {
             }
         }
     }
+}
+
+// ------------------------------------------------------------------ the file browser
+
+#[test]
+fn the_file_browser_toggle_is_f4_in_every_profile_and_context() {
+    for os in Os::ALL {
+        for profile in Profile::ALL {
+            let k = km(profile, os);
+            for ctxs in [
+                &[][..],
+                &[Context::Files][..],
+                &[Context::Text, Context::Files][..],
+                &[Context::Rack][..],
+                &[Context::Sequencer][..],
+            ] {
+                assert_eq!(
+                    first(k.resolve(&chord("F4", os), &stack(ctxs))).command,
+                    "view.toggle_file_browser",
+                    "{os:?} {profile:?} {ctxs:?}"
+                );
+            }
+            assert_eq!(
+                k.shortcut_text("view.toggle_file_browser", None).as_deref(),
+                Some("F4")
+            );
+        }
+    }
+    // Function keys are media keys on a Mac keyboard: the same alternative as F3 and F5.
+    let mac = km(Profile::Standard, Os::Mac);
+    assert_eq!(
+        first(mac.resolve(&chord("Cmd+Alt+Digit4", Os::Mac), &stack(&[]))).command,
+        "view.toggle_file_browser"
+    );
+}
+
+#[test]
+fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
+    let rows: &[(&str, &str)] = &[
+        ("Up", "files.up"),
+        ("Down", "files.down"),
+        ("Left", "files.left"),
+        ("Right", "files.right"),
+        ("PageUp", "files.page_up"),
+        ("PageDown", "files.page_down"),
+        ("Home", "files.home"),
+        ("End", "files.end"),
+        ("Return", "files.open"),
+        ("Escape", "files.stop"),
+        ("Space", "files.toggle_preview"),
+        ("Backspace", "files.parent"),
+        ("Alt+Up", "files.parent"),
+        ("F", "files.favorite"),
+        ("Cmd+F", "files.search"),
+        ("Cmd+A", "files.select_all"),
+    ];
+    let globals: &[(&str, &str)] = &[
+        ("Cmd+S", "file.save"),
+        ("Cmd+Z", "edit.undo"),
+        ("F4", "view.toggle_file_browser"),
+        ("F5", "view.toggle_console"),
+        ("F3", "view.toggle_browser"),
+        ("Cmd+Shift+Z", "edit.redo"),
+        ("Delete", "edit.delete"),
+        ("Cmd+Return", "transport.record"),
+    ];
+    for os in Os::ALL {
+        for profile in Profile::ALL {
+            let k = km(profile, os);
+            let st = stack(&[Context::Files]);
+            for (c, want) in rows {
+                assert_eq!(
+                    first(k.resolve(&chord(c, os), &st)).command,
+                    *want,
+                    "{os:?} {profile:?} {c}"
+                );
+            }
+            for (c, want) in globals {
+                if profile == Profile::Legacy && matches!(*c, "F3" | "Delete" | "Cmd+Return") {
+                    continue;
+                }
+                assert_eq!(
+                    first(k.resolve(&chord(c, os), &st)).command,
+                    *want,
+                    "{os:?} {profile:?} {c}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn files_commands_are_in_their_own_group_and_context() {
+    let r = Registry::bundled();
+    let files: Vec<&CommandDef> = r
+        .commands()
+        .iter()
+        .filter(|d| d.id.starts_with("files."))
+        .collect();
+    assert_eq!(files.len(), 15);
+    for d in files {
+        assert_eq!(d.group, Group::Files, "{}", d.id);
+        assert_eq!(d.context, Context::Files, "{}", d.id);
+        assert!(!d.menu, "{}", d.id);
+    }
+    let toggle = r.get("view.toggle_file_browser").unwrap();
+    assert_eq!(
+        (toggle.group, toggle.context),
+        (Group::View, Context::Global)
+    );
+    assert!(toggle.menu);
+    assert_eq!(toggle.label, "File Browser");
+    // Held arrows and page keys repeat while browsing; the one-shot keys do not.
+    for id in ["files.up", "files.down", "files.page_up", "files.page_down"] {
+        assert!(r.get(id).unwrap().repeatable, "{id}");
+    }
+    assert!(!r.get("files.toggle_preview").unwrap().repeatable);
+}
+
+#[test]
+fn while_a_panel_field_has_the_text_only_chords_and_esc_run() {
+    for os in Os::ALL {
+        for profile in Profile::ALL {
+            let k = km(profile, os);
+            let t = stack(&[Context::Text, Context::Files]);
+            for c in [
+                "Space",
+                "Up",
+                "Down",
+                "F",
+                "Backspace",
+                "Return",
+                "Home",
+                "Alt+Up",
+            ] {
+                assert_eq!(
+                    k.resolve(&chord(c, os), &t),
+                    Resolution::Text,
+                    "{os:?} {profile:?} {c}"
+                );
+            }
+            // Esc reaches the field first as a command of the panel, then the rest.
+            assert_eq!(
+                first(k.resolve(&chord("Escape", os), &t)).command,
+                "files.stop"
+            );
+            assert_eq!(
+                first(k.resolve(&chord("Cmd+A", os), &t)).command,
+                "files.select_all"
+            );
+            assert_eq!(
+                first(k.resolve(&chord("Cmd+F", os), &t)).command,
+                "files.search"
+            );
+            assert_eq!(
+                first(k.resolve(&chord("Cmd+S", os), &t)).command,
+                "file.save"
+            );
+        }
+    }
+}
+
+#[test]
+fn script_the_panel_keys_win_over_play_and_delete() {
+    KeyScript::run(
+        "os win\nprofile standard\nctx files\n\
+         down Space\nexpect command files.toggle_preview\nup Space\n\
+         down Backspace\nexpect command files.parent\n\
+         down Cmd+S\nexpect command file.save\nup Cmd+S\n\
+         down F4\nexpect command view.toggle_file_browser\nup F4\n\
+         ctx text files\n\
+         up Space\ndown Space\nexpect text\n\
+         down Cmd+S\nexpect command file.save\n",
+    )
+    .unwrap();
 }

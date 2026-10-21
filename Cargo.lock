@@ -224,6 +224,7 @@ dependencies = [
  "atomik-devices",
  "atomik-dsp",
  "atomik-engine",
+ "atomik-library",
  "atomik-midi-io",
  "atomik-model",
  "atomik-plugin-host",
@@ -248,6 +249,7 @@ dependencies = [
 name = "atomik-audio-file"
 version = "0.1.0"
 dependencies = [
+ "atomik-library",
  "hound",
  "proptest",
  "rubato",
@@ -318,6 +320,16 @@ dependencies = [
  "atomik-testkit",
  "proptest",
  "rtrb",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "atomik-library"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 
@@ -579,6 +591,7 @@ dependencies = [
  "atomik-device-sdk",
  "atomik-devices",
  "atomik-dsp",
+ "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
  "parley",

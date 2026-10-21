@@ -19,19 +19,23 @@ pub enum Context {
     Mixer,
     /// The device browser with its query focused.
     Browser,
-    /// Any text owner: tempo field, rename, browser filter, settings text.
+    /// The file browser panel while it has the focus (the shell forwards its commands to it
+    /// as the keys the panel reads).
+    Files,
+    /// Any text owner: tempo field, rename, browser filter, file search, settings text.
     Text,
 }
 
 impl Context {
     /// Every context, `Global` first, in listing order.
-    pub const ALL: [Context; 7] = [
+    pub const ALL: [Context; 8] = [
         Context::Global,
         Context::Rack,
         Context::Sequencer,
         Context::Editor,
         Context::Mixer,
         Context::Browser,
+        Context::Files,
         Context::Text,
     ];
 
@@ -44,6 +48,7 @@ impl Context {
             Context::Editor => "editor",
             Context::Mixer => "mixer",
             Context::Browser => "browser",
+            Context::Files => "files",
             Context::Text => "text",
         }
     }

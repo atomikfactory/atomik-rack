@@ -13,6 +13,7 @@ mod live;
 mod offline;
 mod plan;
 mod player;
+mod preview;
 mod record;
 mod seq;
 mod stream;
@@ -38,6 +39,9 @@ pub use offline::{
     OfflineJob, render_offline, render_offline_scripted, render_offline_song, render_offline_with,
 };
 pub use plan::RenderPlan;
+pub use preview::{
+    PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
+};
 pub use record::RecordTap;
 pub use seq::{
     SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,

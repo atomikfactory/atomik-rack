@@ -11,6 +11,7 @@ mod error;
 mod hash;
 mod peaks;
 mod resample;
+mod stream_decode;
 mod wav;
 
 pub use bundle::{AssetInfo, Bundle, is_valid_hash, save_text_atomic};
@@ -20,4 +21,5 @@ pub use error::{AudioFileError, Result};
 pub use hash::content_hash;
 pub use peaks::{PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks};
 pub use resample::resample;
+pub use stream_decode::{StreamDecoder, probe_file};
 pub use wav::{WavStreamReader, read_wav_f32, write_wav_f32};

@@ -31,6 +31,8 @@ atomik-engine.workspace = true
 atomik-model.workspace = true
 # Audio import, project bundles and waveform peaks.
 atomik-audio-file.workspace = true
+# The file browser's library database (favourites, tags, bookmarks) and file rows.
+atomik-library.workspace = true
 # The audio recording writer thread writes its in-progress WAV files incrementally.
 hound.workspace = true
 # The song → engine input conversion shared with project bounces (one implementation).

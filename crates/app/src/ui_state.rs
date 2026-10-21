@@ -14,6 +14,7 @@
 //! ```
 
 use crate::record::InputQuantize;
+use atomik_ui::FileBrowserView;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -21,9 +22,11 @@ use std::path::{Path, PathBuf};
 pub const UI_STATE_FILE: &str = "ui-state.json";
 /// Default share of the content height given to the rack.
 pub const DEFAULT_RACK_SPLIT: f64 = 0.5;
+/// Default share of the file browser panel's height given to its tree.
+pub const DEFAULT_TREE_FRACTION: f64 = 0.4;
 
 /// Window state (see the module docs).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
     /// Share of the rack + song height given to the rack (0..1).
@@ -43,6 +46,16 @@ pub struct UiState {
     pub show_console_links: bool,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
+    /// The file browser panel shows on the left.
+    pub file_browser_visible: bool,
+    /// The width the user gave the file browser column.
+    pub file_browser_width: f64,
+    /// The share of the panel's height given to its folder tree (the rest is the file list).
+    pub file_browser_tree_fraction: f64,
+    /// Selecting a file previews it at once. The sub-folder search is not kept.
+    pub file_browser_auto_preview: bool,
+    /// The folder the file list showed last.
+    pub file_browser_folder: Option<PathBuf>,
 }
 
 impl Default for UiState {
@@ -56,6 +69,11 @@ impl Default for UiState {
             show_console_devices: true,
             show_console_links: false,
             console_notice_seen: false,
+            file_browser_visible: false,
+            file_browser_width: FileBrowserView::DEFAULT_WIDTH,
+            file_browser_tree_fraction: DEFAULT_TREE_FRACTION,
+            file_browser_auto_preview: true,
+            file_browser_folder: None,
         }
     }
 }
@@ -82,15 +100,40 @@ impl UiState {
         std::fs::write(path, text + "\n")
     }
 
-    /// The split clamped into 0.05..=0.95 (0.5 when not finite).
+    /// The split clamped into 0.05..=0.95 (0.5 when not finite), the file browser width to at
+    /// least its minimum and its tree share into 0.05..=0.95.
     pub fn sanitized(self) -> Self {
         let rack_split = if self.rack_split.is_finite() {
             self.rack_split.clamp(0.05, 0.95)
         } else {
             DEFAULT_RACK_SPLIT
         };
-        Self { rack_split, ..self }
+        let file_browser_width = if self.file_browser_width.is_finite() {
+            self.file_browser_width.max(FileBrowserView::MIN_WIDTH)
+        } else {
+            FileBrowserView::DEFAULT_WIDTH
+        };
+        let file_browser_tree_fraction = if self.file_browser_tree_fraction.is_finite() {
+            self.file_browser_tree_fraction.clamp(0.05, 0.95)
+        } else {
+            DEFAULT_TREE_FRACTION
+        };
+        Self {
+            rack_split,
+            file_browser_width,
+            file_browser_tree_fraction,
+            ..self
+        }
     }
+}
+
+/// The file browser library file name.
+pub const LIBRARY_FILE: &str = "library.json";
+
+/// The file browser library (favourites, tags, bookmarks) next to a settings file: the
+/// `<config dir>/library.json` of the default settings path.
+pub fn library_path(settings_path: &Path) -> PathBuf {
+    settings_path.with_file_name(LIBRARY_FILE)
 }
 
 /// The UI state file next to a settings file.
@@ -117,6 +160,8 @@ mod tests {
             show_console_devices: false,
             show_console_links: true,
             console_notice_seen: true,
+            file_browser_visible: true,
+            ..UiState::default()
         };
         s.save(&path).unwrap();
         assert_eq!(UiState::load(&path), s);
@@ -136,6 +181,53 @@ mod tests {
             ui_state_path(Path::new("a/settings.json")),
             Path::new("a").join(UI_STATE_FILE)
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_file_browser_keys_default_round_trip_and_are_sanitized() {
+        let dir = std::env::temp_dir().join(format!("atomik-ui-state-fb-{}", std::process::id()));
+        let path = dir.join(UI_STATE_FILE);
+        let _ = std::fs::remove_dir_all(&dir);
+        // Absent keys are the defaults (an older file keeps loading).
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, r#"{"show_song": false}"#).unwrap();
+        let old = UiState::load(&path);
+        assert!(!old.file_browser_visible);
+        assert_eq!(old.file_browser_width, FileBrowserView::DEFAULT_WIDTH);
+        assert_eq!(old.file_browser_tree_fraction, 0.4);
+        assert!(old.file_browser_auto_preview);
+        assert_eq!(old.file_browser_folder, None);
+        // They round trip, and the recursive search is not among them.
+        let s = UiState {
+            file_browser_visible: true,
+            file_browser_width: 410.0,
+            file_browser_tree_fraction: 0.3,
+            file_browser_auto_preview: false,
+            file_browser_folder: Some(PathBuf::from("samples/drums")),
+            ..UiState::default()
+        };
+        s.save(&path).unwrap();
+        assert_eq!(UiState::load(&path), s);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("recursive"), "{text}");
+        // Nonsense values are repaired.
+        std::fs::write(
+            &path,
+            r#"{"file_browser_width": 3, "file_browser_tree_fraction": 7}"#,
+        )
+        .unwrap();
+        let bad = UiState::load(&path);
+        assert_eq!(bad.file_browser_width, FileBrowserView::MIN_WIDTH);
+        assert_eq!(bad.file_browser_tree_fraction, 0.95);
+        std::fs::write(
+            &path,
+            r#"{"file_browser_width": -1e30, "file_browser_tree_fraction": 0}"#,
+        )
+        .unwrap();
+        let low = UiState::load(&path);
+        assert_eq!(low.file_browser_tree_fraction, 0.05);
+        assert!(low.file_browser_width >= FileBrowserView::MIN_WIDTH);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

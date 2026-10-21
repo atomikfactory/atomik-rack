@@ -138,6 +138,9 @@ pub struct Cli {
     /// Debug: show the console maximised at start (as Shift+F5).
     #[arg(long)]
     pub console_max: bool,
+    /// Debug: show the file browser at start (as F4), on `DIR` when given.
+    #[arg(long = "file-browser", value_name = "DIR", num_args = 0..=1)]
+    pub file_browser: Option<Option<PathBuf>>,
     /// Debug: select this device at start (e.g. `bass`; also picks the piano-roll clip).
     #[arg(long, value_name = "KEY")]
     pub select: Option<String>,
@@ -639,5 +642,15 @@ mod tests {
         let cli = parse(&["demo.atomik", "--console"]);
         assert!(cli.console && !cli.console_max);
         assert!(parse(&["--console-max"]).console_max);
+    }
+
+    #[test]
+    fn file_browser_flag_takes_an_optional_folder() {
+        assert_eq!(parse(&[]).file_browser, None);
+        assert_eq!(parse(&["--file-browser"]).file_browser, Some(None));
+        assert_eq!(
+            parse(&["--file-browser", "D:/Samples"]).file_browser,
+            Some(Some(PathBuf::from("D:/Samples")))
+        );
     }
 }

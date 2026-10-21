@@ -210,9 +210,9 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.bundle.as_ref().map(|b| b.bundle.root())
     }
 
-    /// True while an import or an asset load runs.
+    /// True while an import or an asset load runs, or the file browser has work in flight.
     pub fn is_busy(&self) -> bool {
-        self.audio.pending > 0
+        self.audio.pending > 0 || self.browser_busy()
     }
 
     /// A status-bar text while audio is being imported or loaded.

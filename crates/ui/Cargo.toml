@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 atomik-audio-file.workspace = true
+atomik-library.workspace = true
 atomik-core.workspace = true
 atomik-device-sdk.workspace = true
 atomik-model.workspace = true

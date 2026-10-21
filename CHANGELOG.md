@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **File browser.** A docked panel (View, File Browser, `F4`) with a folder tree (Favourites, Tags, Bookmarks, drives) over a file list of folders and audio files, a search field (words, `#tag`, `fav`, optionally in sub-folders), instant preview on click with a 5 ms crossfade when switching (live only, outside the routing and the meters), favourites, tags and bookmarked folders kept in `library.json` in the configuration folder, and drag to the arrangement, sample editor and sampler panels like an OS file drop. New crate `atomik-library`; `atomik --file-browser [DIR]` shows the panel at start. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#6j-the-file-browser).
 - Release archives for Windows (zip), macOS (universal `Atomik Rack.app`, ad-hoc signed, in a zip) and Linux (tar.gz), each smoke-tested before a draft release is created, with per-archive `.sha256` files and a `SHA256SUMS` file.
 
 ### Changed

@@ -23,6 +23,8 @@ pub enum Group {
     Mixer,
     /// Device browser.
     Browser,
+    /// The file browser panel.
+    Files,
     /// Creating devices, tracks and channels.
     Create,
     /// The tool palette.
@@ -31,7 +33,7 @@ pub enum Group {
 
 impl Group {
     /// Every group, in listing order.
-    pub const ALL: [Group; 11] = [
+    pub const ALL: [Group; 12] = [
         Group::Global,
         Group::Transport,
         Group::View,
@@ -41,6 +43,7 @@ impl Group {
         Group::Editor,
         Group::Mixer,
         Group::Browser,
+        Group::Files,
         Group::Create,
         Group::Tools,
     ];
@@ -57,6 +60,7 @@ impl Group {
             Group::Editor => "Editor",
             Group::Mixer => "Mixer",
             Group::Browser => "Browser",
+            Group::Files => "Files",
             Group::Create => "Create",
             Group::Tools => "Tools",
         }
@@ -237,6 +241,26 @@ const COMMANDS: &[CommandDef] = &[
     cmd("file.save_as", "Save As", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
     cmd("file.stress_song", "Stress Song", G::Global, C::Global).menu(),
+    cmd("files.down", "Next Item", G::Files, C::Files).rep(),
+    cmd("files.end", "Last Item", G::Files, C::Files),
+    cmd("files.favorite", "Toggle Favourite", G::Files, C::Files),
+    cmd("files.home", "First Item", G::Files, C::Files),
+    cmd("files.left", "Collapse", G::Files, C::Files).rep(),
+    cmd("files.open", "Open", G::Files, C::Files),
+    cmd("files.page_down", "Next Page", G::Files, C::Files).rep(),
+    cmd("files.page_up", "Previous Page", G::Files, C::Files).rep(),
+    cmd("files.parent", "Parent Folder", G::Files, C::Files),
+    cmd("files.right", "Expand", G::Files, C::Files).rep(),
+    cmd("files.search", "Search Files", G::Files, C::Files),
+    cmd("files.select_all", "Select All Files", G::Files, C::Files),
+    cmd("files.stop", "Stop Preview", G::Files, C::Files),
+    cmd(
+        "files.toggle_preview",
+        "Play / Stop Preview",
+        G::Files,
+        C::Files,
+    ),
+    cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd(
         "mixer.toggle_compensation",
@@ -452,6 +476,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_editor", "Clip Editor", G::View, C::Global).menu(),
+    cmd(
+        "view.toggle_file_browser",
+        "File Browser",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
     cmd("view.toggle_piano_roll", "Piano Roll", G::View, C::Global).menu(),
     cmd("view.toggle_rack", "Rack", G::View, C::Global).menu(),
@@ -556,6 +587,7 @@ mod tests {
                 Group::Editor => &["editor"],
                 Group::Mixer => &["mixer"],
                 Group::Browser => &["browser"],
+                Group::Files => &["files"],
                 Group::Create => &["create"],
                 Group::Tools => &["tool"],
             };
@@ -592,7 +624,7 @@ mod tests {
 
     #[test]
     fn group_titles_cover_every_group() {
-        assert_eq!(Group::ALL.len(), 11);
+        assert_eq!(Group::ALL.len(), 12);
         for g in Group::ALL {
             assert!(!g.title().is_empty());
         }

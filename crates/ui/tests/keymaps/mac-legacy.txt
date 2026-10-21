@@ -21,6 +21,21 @@ file.open | global | Cmd+O
 file.quit | global | Cmd+Q
 file.save | global | Cmd+S
 file.save_as | global | Cmd+Shift+S
+files.down | files | Down
+files.end | files | End
+files.favorite | files | F
+files.home | files | Home
+files.left | files | Left
+files.open | files | Enter
+files.page_down | files | PageDown
+files.page_up | files | PageUp
+files.parent | files | Backspace, Opt+Up
+files.right | files | Right
+files.search | files | Cmd+F
+files.select_all | files | Cmd+A
+files.stop | files | Esc
+files.toggle_preview | files | Space
+files.up | files | Up
 sequencer.split_at_playhead | sequencer | Cmd+E
 transport.go_start | rack | Enter, Shift+Enter
 transport.go_start | sequencer | Enter, Shift+Enter
@@ -34,6 +49,7 @@ transport.record | sequencer | R, Shift+R
 view.maximise_console | global | Shift+F5
 view.toggle_browser | global | Cmd+B
 view.toggle_console | global | F5
+view.toggle_file_browser | global | F4
 view.toggle_flip | global | Tab
 view.zoom_in | global | Cmd+=, Cmd+Shift+=, Cmd++, Cmd+Shift++
 view.zoom_out | global | Cmd+-

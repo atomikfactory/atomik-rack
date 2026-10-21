@@ -331,6 +331,7 @@ mod tests {
             flip: Flip::Front,
             cables: CableVisibility::Show,
             browser: false,
+            file_browser: false,
             can_undo: false,
             can_redo: false,
             can_edit: false,
