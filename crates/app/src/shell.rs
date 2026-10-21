@@ -1813,6 +1813,7 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
+            columns: doc.columns,
         }
     }
 
@@ -2512,6 +2513,10 @@ impl<B: AudioBackend> Shell<B> {
     /// `now_seconds` (any monotonic clock).
     pub fn frame_at(&mut self, now_seconds: f64) {
         self.frame();
+        // A device dragged to an edge of the rack scrolls it.
+        if self.core.view_mut().tick(now_seconds) {
+            self.repaint = true;
+        }
         self.core.plugin_tick(now_seconds);
         if self.console_shown() {
             self.core.update_console_meters(now_seconds);

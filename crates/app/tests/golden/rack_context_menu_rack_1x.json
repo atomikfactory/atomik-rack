@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[856.40,1176.00,1102.00,1298.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[854.40,1173.00,1100.00,1295.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[854.40,1173.00,1100.00,1295.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[856.40,1176.00,1102.00,1355.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[854.40,1173.00,1100.00,1352.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[854.40,1173.00,1100.00,1352.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Paste","at":[886.40,1193.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"Ctrl+V","at":[1086.00,1193.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"fill":{"rect":[864.40,1205.00,1090.00,1206.00]},"brush":"#ffffff1c"},
@@ -10,6 +10,9 @@
 {"text":"Create Effect","at":[886.40,1250.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+E","at":[1086.00,1250.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"fill":{"rect":[864.40,1262.00,1090.00,1263.00]},"brush":"#ffffff1c"},
-{"text":"Select All","at":[886.40,1283.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Ctrl+A","at":[1086.00,1283.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"}
+{"text":"Add Column","at":[886.40,1283.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Remove Column","at":[886.40,1307.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"fill":{"rect":[864.40,1319.00,1090.00,1320.00]},"brush":"#ffffff1c"},
+{"text":"Select All","at":[886.40,1340.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Ctrl+A","at":[1086.00,1340.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"}
 ]}

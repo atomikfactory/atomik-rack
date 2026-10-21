@@ -6,7 +6,8 @@
 use super::*;
 use crate::sink::RecordingSink;
 use atomik_model::{
-    CreateOptions, CreateSource, CreateTarget, DeviceKey, SongCommand, WorkflowCommand, empty_doc,
+    CreateOptions, CreateSource, CreateTarget, DeviceKey, RackSlot, SongCommand, WorkflowCommand,
+    empty_doc,
 };
 
 const SYNTH: &str = "atomik.poly-synth";
@@ -526,4 +527,72 @@ mod live {
         let live = play(&mut core, frames, 512);
         assert!(same_bits(&live, &reference), "after a restart");
     }
+}
+
+fn instrument_at(c: &mut AppCore<RecordingSink>, slot: RackSlot) -> Result<(), ModelError> {
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateInstrumentAt {
+        slot,
+        source: CreateSource::Type(SYNTH.into()),
+        key: None,
+        options: CreateOptions::default(),
+    }))
+}
+
+#[test]
+fn creating_at_a_slot_takes_the_same_path_as_creating_at_an_index() {
+    let mut c = core();
+    instrument_at(
+        &mut c,
+        RackSlot {
+            column: 0,
+            index: 0,
+        },
+    )
+    .unwrap();
+    let first = c.view().selected().unwrap().clone();
+    // A new column: the instrument lands in it, is selected, and its track is armed.
+    instrument_at(
+        &mut c,
+        RackSlot {
+            column: 1,
+            index: 0,
+        },
+    )
+    .unwrap();
+    let second = c.view().selected().unwrap().clone();
+    assert_ne!(first, second, "the created device is selected");
+    assert_eq!(c.doc().columns, 2);
+    assert_eq!(c.doc().device(&second).unwrap().column, 1);
+    assert_eq!(target_name(&c), Some(second.0.clone()));
+    // The track the first creation armed was disarmed, as for the index variant.
+    assert_eq!(armed(&c), vec![second.0.clone()]);
+    assert!(
+        c.last_rejection().is_some_and(|m| m.starts_with("Created")),
+        "the status names what was made: {:?}",
+        c.last_rejection()
+    );
+    // One undo step takes both the device and the column away.
+    assert!(c.undo());
+    assert_eq!(c.doc().columns, 1);
+}
+
+#[test]
+fn an_effect_dropped_at_a_slot_is_selected_and_routed_from_the_device_above() {
+    let mut c = core();
+    instrument(&mut c, SYNTH).unwrap();
+    let synth = c.view().selected().unwrap().clone();
+    let at = c.doc().slot_of(&synth).unwrap();
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateEffectAt {
+        slot: RackSlot {
+            column: at.column,
+            index: at.index + 1,
+        },
+        source: CreateSource::Type(DELAY.into()),
+        key: None,
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    let fx = c.view().selected().unwrap().clone();
+    assert_ne!(fx, synth);
+    assert_eq!(c.doc().device(&fx).unwrap().type_id, DELAY);
 }

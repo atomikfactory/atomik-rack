@@ -380,9 +380,12 @@ fn dragging_a_selected_device_moves_the_group_in_one_command() {
     let a = drag(&mut v, &doc, &reg, from, below);
     assert_eq!(
         commands(&a),
-        vec![Command::Workflow(WorkflowCommand::MoveDevices {
+        vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
             keys: vec![key("synth"), key("delay")],
-            to: 1
+            slot: atomik_model::RackSlot {
+                column: 0,
+                index: 1
+            }
         })]
     );
 }
@@ -401,13 +404,16 @@ fn a_group_drag_that_changes_nothing_sends_no_move() {
 }
 
 #[test]
-fn a_single_device_still_moves_with_the_plain_command() {
+fn a_single_device_moves_with_a_slot_command_of_one_key() {
     let (doc, reg, mut v) = setup();
     let from = v.plate_center(&key("synth")).unwrap();
     let below = Point::new(from.x, v.content_height() - 4.0);
     let a = drag(&mut v, &doc, &reg, from, below);
     assert!(
-        matches!(commands(&a).as_slice(), [Command::MoveDevice { .. }]),
+        matches!(
+            commands(&a).as_slice(),
+            [Command::Workflow(WorkflowCommand::MoveDevicesToSlot { keys, .. })] if keys.len() == 1
+        ),
         "{a:?}"
     );
 }

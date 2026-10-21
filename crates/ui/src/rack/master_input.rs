@@ -6,7 +6,7 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::master_panel;
 use atomik_device_sdk::RACK_WIDTH;
 use atomik_model::DeviceKey;
-use vello::kurbo::{Point, Rect, RoundedRect, Vec2};
+use vello::kurbo::{Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Height of one row of a pick list.
@@ -53,10 +53,11 @@ impl RackView {
             return;
         };
         let d = &self.devices[i];
-        let cell = d.spec.front[slot].rect + Vec2::new(0.0, d.y);
+        let cell = d.spec.front[slot].rect + d.offset();
         let (lcd_top, lcd_bottom) = (cell.y0 + 3.0, cell.y0 + 19.0);
         let h = names.len() as f64 * ROW_H + 4.0;
-        let x0 = (cell.center().x - MENU_W / 2.0).clamp(0.0, f64::from(RACK_WIDTH) - 16.0 - MENU_W);
+        let x0 = (cell.center().x - MENU_W / 2.0)
+            .clamp(d.x, d.x + f64::from(RACK_WIDTH) - 16.0 - MENU_W);
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, self.rack_area().y0)).y,
             self.view_to_rack(Point::new(0.0, self.size.height)).y,
@@ -164,7 +165,7 @@ impl RackView {
             .front
             .iter()
             .find(|pc| desc.params[d.spec.param_index(&desc, pc, d.pad)].key == param)?;
-        let r = pc.rect + Vec2::new(0.0, d.y);
+        let r = pc.rect + d.offset();
         Some(self.rack_to_view(Point::new(r.center().x, r.y0 + 11.0)))
     }
 
@@ -211,7 +212,7 @@ impl RackView {
             .into_iter()
             .find(|(s, _)| *s == slot)?
             .1;
-        (!d.folded).then(|| self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        (!d.folded).then(|| self.rack_to_view(r.center() + d.offset()))
     }
 
     /// The tooltip of a return's EDIT button.

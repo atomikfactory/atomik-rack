@@ -748,6 +748,7 @@ impl ApplicationHandler for App {
         // Audio imports and loads finish on worker threads: poll them even without a stream.
         let running = self.shell.core().sink().is_running()
             || self.shell.is_busy()
+            || self.shell.core().view().is_auto_scrolling()
             || self.plugin_windows.any()
             || self.shell.core().plugin_instance_count() > 0
             || !self.shell.core().plugins_ready();

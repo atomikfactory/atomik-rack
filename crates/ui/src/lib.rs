@@ -310,7 +310,7 @@ pub use piano_roll::PianoRollView;
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
-pub use rack::{CableVisibility, Flip, LayoutProvider, RackView, SocketHighlight};
+pub use rack::{COLUMN_GAP, CableVisibility, Flip, LayoutProvider, RackView, SocketHighlight};
 pub use sample_editor::SampleEditorView;
 pub use scene_canvas::{SceneCache, SceneCanvas};
 pub use seq_editor::SeqEditorView;

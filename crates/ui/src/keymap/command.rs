@@ -275,6 +275,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
     cmd("rack.disconnect", "Disconnect", G::Rack, C::Rack),
@@ -287,6 +288,7 @@ const COMMANDS: &[CommandDef] = &[
     .rep(),
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
+    cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),
     cmd(
         "rack.select_prev",

@@ -4,7 +4,7 @@
 use super::{Flip, Hit, RackView};
 use crate::interface::INTERFACE_TYPE_ID;
 use crate::io_panel::{self, IoSocketState};
-use vello::kurbo::{Point, Vec2};
+use vello::kurbo::Point;
 
 impl RackView {
     /// The index of the Audio I/O panel, when the view shows it (not inside a container).
@@ -116,7 +116,7 @@ impl RackView {
         let cell = io_panel::cells(self.devices[i].desc.as_ref()?)
             .into_iter()
             .find(|c| c.socket == socket)?;
-        Some(self.rack_to_view(cell.clip.center() + Vec2::new(0.0, self.devices[i].y)))
+        Some(self.rack_to_view(cell.clip.center() + self.devices[i].offset()))
     }
 
     /// Centre of the Audio I/O panel's name plate (logical view coordinates).
@@ -124,7 +124,7 @@ impl RackView {
         let i = self.io_index()?;
         let d = &self.devices[i];
         let r = crate::paint::plate_rect(d.height, d.folded);
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// A press on the clip lamp of `socket` clears it, a press on the plate clears them all.

@@ -1033,6 +1033,8 @@ fn engine_facing_code_never_walks_the_raw_document_lists() {
             "app_core.rs",
             "doc.devices.iter().find_map(|d| self.target_of(&d.key))",
         ),
+        // The device above a top-level slot of `CreateEffectAt`.
+        ("app_core_clipboard.rs", "doc.devices[at.index - 1]"),
         ("app_core_containers.rs", "doc.devices"),
         (
             "app_core_drums.rs",

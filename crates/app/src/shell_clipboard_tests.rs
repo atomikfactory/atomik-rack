@@ -434,7 +434,7 @@ fn the_menu_swallows_the_keys_while_it_is_open() {
 }
 
 #[test]
-fn right_click_on_the_empty_rack_offers_paste_create_and_select_all() {
+fn right_click_on_the_empty_rack_offers_paste_create_columns_and_select_all() {
     let mut s = rack3();
     let l = s.layout();
     let empty = Point::new(500.0, l.rack.y1 - 4.0);
@@ -446,6 +446,8 @@ fn right_click_on_the_empty_rack_offers_paste_create_and_select_all() {
             "edit.paste",
             "create.instrument",
             "create.effect",
+            "rack.add_column",
+            "rack.remove_column",
             "edit.select_all"
         ]
     );
@@ -985,4 +987,34 @@ fn the_disconnect_item_is_enabled_for_a_group_too() {
     assert_eq!(selection(&s), ["b", "c"]);
     let items = open_menu_on(&mut s, "b");
     assert!(enabled(&items), "Disconnect works on a group");
+}
+
+#[test]
+fn add_column_and_remove_column_from_the_rack_menu() {
+    let mut s = rack3();
+    let empty = Point::new(500.0, s.layout().rack.y1 - 4.0);
+    let items = open_menu(&mut s, empty);
+    let enabled = |items: &[(String, Option<String>, bool)], id: &str| {
+        items.iter().find(|(c, _, _)| c == id).unwrap().2
+    };
+    assert!(enabled(&items, "rack.add_column"));
+    assert!(!enabled(&items, "rack.remove_column"), "one column only");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.add_column")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 2);
+    // Remove Column is now enabled and removes the column under the pointer, one undo step.
+    let items = open_menu(&mut s, empty);
+    assert!(enabled(&items, "rack.remove_column"));
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.remove_column")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(s.core().doc().columns, 1);
+    assert!(s.core().document().can_undo());
 }

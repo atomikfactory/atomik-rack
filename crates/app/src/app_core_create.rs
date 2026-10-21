@@ -30,6 +30,17 @@ impl<S: EngineSink> AppCore<S> {
                 key,
                 options: with_armed(options),
             }),
+            Command::Workflow(WorkflowCommand::CreateInstrumentAt {
+                slot,
+                source,
+                key,
+                options,
+            }) => Command::Workflow(WorkflowCommand::CreateInstrumentAt {
+                slot,
+                source,
+                key,
+                options: with_armed(options),
+            }),
             Command::Workflow(WorkflowCommand::AutoRoute { devices, options }) => {
                 Command::Workflow(WorkflowCommand::AutoRoute {
                     devices,

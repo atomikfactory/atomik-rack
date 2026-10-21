@@ -359,6 +359,11 @@ impl RackView {
                     },
                 )));
             }
+            "rack.add_column" | "rack.remove_column" => {
+                if let Some(refusal) = self.column_command(id, &mut out) {
+                    return Some(refusal);
+                }
+            }
             _ => return None,
         }
         self.repaint = true;

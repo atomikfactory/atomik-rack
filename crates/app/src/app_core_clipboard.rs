@@ -371,6 +371,27 @@ impl<S: EngineSink> AppCore<S> {
                     options,
                     ..
                 } => atomik_model::effect_route_note(doc, &self.registry, source, target, options),
+                // Routed as if the device above the slot (none at the top of a column).
+                WorkflowCommand::CreateEffectAt {
+                    slot,
+                    source,
+                    options,
+                    ..
+                } => {
+                    let above = doc.resolve_slot(*slot).ok().and_then(|at| {
+                        (!at.adds_column && at.index > doc.column_range(at.column).start)
+                            .then(|| doc.devices[at.index - 1].key.clone())
+                    });
+                    above.and_then(|k| {
+                        atomik_model::effect_route_note(
+                            doc,
+                            &self.registry,
+                            source,
+                            &atomik_model::CreateTarget::Selected(k),
+                            options,
+                        )
+                    })
+                }
                 _ => None,
             },
             ..WorkflowPre::default()
@@ -381,7 +402,8 @@ impl<S: EngineSink> AppCore<S> {
                 .map(|(p, _)| DeviceKey(p.to_string()))
         };
         match command {
-            WorkflowCommand::PasteDevices { container, .. } => pre.scope = container.clone(),
+            WorkflowCommand::PasteDevices { container, .. }
+            | WorkflowCommand::PasteDevicesAt { container, .. } => pre.scope = container.clone(),
             WorkflowCommand::DuplicateDevices { keys } => {
                 pre.scope = keys.first().and_then(scope_of);
             }
@@ -390,10 +412,13 @@ impl<S: EngineSink> AppCore<S> {
         if matches!(
             command,
             WorkflowCommand::PasteDevices { .. }
+                | WorkflowCommand::PasteDevicesAt { .. }
                 | WorkflowCommand::DuplicateDevices { .. }
                 | WorkflowCommand::DuplicateTrack { .. }
                 | WorkflowCommand::CreateInstrument { .. }
+                | WorkflowCommand::CreateInstrumentAt { .. }
                 | WorkflowCommand::CreateEffect { .. }
+                | WorkflowCommand::CreateEffectAt { .. }
                 | WorkflowCommand::AutoRoute { .. }
         ) {
             pre.scope_keys = doc

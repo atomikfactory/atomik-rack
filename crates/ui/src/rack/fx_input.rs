@@ -11,7 +11,7 @@ use crate::widget;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::{RACK_WIDTH, Registry};
 use atomik_model::{DeviceKey, RackDoc};
-use vello::kurbo::{Point, Rect, RoundedRect, Vec2};
+use vello::kurbo::{Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 impl RackView {
@@ -81,7 +81,7 @@ impl RackView {
         let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
         let bands = fx::eq_bands_of(&d.desc?, d.device.as_ref());
         let p = fx_layout::eq_handle_pos(fx.plot, &bands[band]);
-        Some(self.rack_to_view(p + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(p + d.offset()))
     }
 
     /// Centre of the "SC from" button of a compressor panel (logical view coordinates).
@@ -91,7 +91,7 @@ impl RackView {
         }
         let d = &self.devices[self.device_index(key)?];
         let b = d.spec.fx?.button?;
-        (!d.folded).then(|| self.rack_to_view(b.center() + Vec2::new(0.0, d.y)))
+        (!d.folded).then(|| self.rack_to_view(b.center() + d.offset()))
     }
 
     /// The labels of the open "SC from" list (empty when closed).
@@ -120,7 +120,7 @@ impl RackView {
     fn eq_plot(&self, i: usize) -> Option<Rect> {
         let d = self.devices.get(i)?;
         let fx = d.spec.fx.filter(|f| f.kind == FxKind::Eq)?;
-        Some(fx.plot + Vec2::new(0.0, d.y))
+        Some(fx.plot + d.offset())
     }
 
     fn eq_bands(&self, i: usize) -> Option<[fx::EqBand; 6]> {
@@ -272,7 +272,7 @@ impl RackView {
         }
         let g = d.spec.fx?.character?;
         let r = crate::character_panel::cell_rect(g.matrix, preset);
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// The `preset` value of device `i`, rounded into the matrix.
@@ -347,10 +347,10 @@ impl RackView {
         let entries = sidechain::sidechain_entries(doc, registry, &d.key);
         let current = sidechain::current_source(doc, &d.key);
         let rows = entries.len().min(SC_MAX_ROWS);
-        let b = button + Vec2::new(0.0, d.y);
+        let b = button + d.offset();
         let w = b.width().max(160.0);
         let h = rows as f64 * SC_ROW_H + 4.0;
-        let x0 = b.x0.min(f64::from(RACK_WIDTH) - 16.0 - w);
+        let x0 = b.x0.min(d.x + f64::from(RACK_WIDTH) - 16.0 - w);
         let bottom = self.view_to_rack(Point::new(0.0, self.size.height)).y;
         let y0 = if b.y1 + 2.0 + h > bottom {
             b.y0 - 2.0 - h

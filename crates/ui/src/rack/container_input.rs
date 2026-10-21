@@ -618,7 +618,7 @@ impl RackView {
             return None;
         }
         let r = d.spec.container?.button(b);
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// Centre of a macro's name on a container panel (logical view coordinates), macro `n`
@@ -629,7 +629,7 @@ impl RackView {
             return None;
         }
         let r = d.spec.container?.names[usize::from(n)];
-        Some(self.rack_to_view(r.center() + Vec2::new(0.0, d.y)))
+        Some(self.rack_to_view(r.center() + d.offset()))
     }
 
     /// The macro name being edited in place on the panel of `key`: (macro 0-based, text).
@@ -765,7 +765,8 @@ impl RackView {
                 .collect()
         };
         let h = entries.len() as f64 * MENU_ROW_H + 4.0;
-        let x0 = rp.x.min(f64::from(RACK_WIDTH) - 16.0 - MENU_W);
+        let x0 =
+            rp.x.min(self.devices[i].x + f64::from(RACK_WIDTH) - 16.0 - MENU_W);
         let bottom = self.view_to_rack(Point::new(0.0, self.size.height)).y;
         let y0 = if rp.y + h > bottom { rp.y - h } else { rp.y };
         self.macro_menu = Some(MacroMenu {

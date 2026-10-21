@@ -7,7 +7,7 @@ use crate::event::{Key, Modifiers};
 use crate::seq_panel::{self, PlayState, RenameKey, SeqButton};
 use crate::widget::current_value;
 use atomik_model::{Command, DeviceKey, MAX_PATTERNS, PatternDoc};
-use vello::kurbo::{Point, Rect, Vec2};
+use vello::kurbo::{Point, Rect};
 
 /// Meter values kept per player panel (sequencer 3, arpeggiator 9).
 const MAX_PLAYER_METERS: usize = 16;
@@ -53,7 +53,7 @@ impl RackView {
     }
 
     fn view_center(&self, d: &DeviceView, r: Rect) -> Point {
-        self.rack_to_view(r.center() + Vec2::new(0.0, d.y))
+        self.rack_to_view(r.center() + d.offset())
     }
 
     /// Centre of a button of a step sequencer panel (logical view coordinates), front side

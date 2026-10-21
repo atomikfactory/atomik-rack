@@ -111,7 +111,10 @@ fn the_master_plate_cannot_be_dragged_and_nothing_goes_above_it() {
     let out = v.handle(&up(at + Vec2::new(0.0, 300.0)), doc, &reg);
     assert!(commands(&out).iter().all(|c| !matches!(
         c,
-        Command::MoveDevice { .. } | Command::Workflow(WorkflowCommand::MoveDevices { .. })
+        Command::MoveDevice { .. }
+            | Command::Workflow(
+                WorkflowCommand::MoveDevices { .. } | WorkflowCommand::MoveDevicesToSlot { .. }
+            )
     )));
     assert_eq!(v.selected(), Some(&key("master")));
 
@@ -123,10 +126,13 @@ fn the_master_plate_cannot_be_dragged_and_nothing_goes_above_it() {
     let out = v.handle(&up(Point::new(synth.x, top)), doc, &reg);
     assert_eq!(
         commands(&out),
-        [Command::MoveDevice {
-            key: key("bass"),
-            to: 1
-        }]
+        [Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            keys: vec![key("bass")],
+            slot: atomik_model::RackSlot {
+                column: 0,
+                index: 1
+            }
+        })]
     );
 }
 
