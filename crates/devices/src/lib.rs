@@ -13,6 +13,7 @@ pub mod channel;
 pub mod character;
 pub mod compressor;
 pub mod container;
+mod cv;
 pub mod distortion;
 pub mod drum_machine;
 pub mod eq;

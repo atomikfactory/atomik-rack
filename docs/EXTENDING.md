@@ -112,6 +112,15 @@ The engine zeroes every Audio/CV batch of the device before each `process` call 
   - gain-like amounts use `cv.clamp(0, 1)` (the mixer's level CV).
 - If a CV input should do nothing when unconnected, check `ctx.is_connected` rather than treating 0 as a value. The mixer does this, because an unconnected level CV must mean "gain × 1", not "gain × 0".
 - A CV output should stay within −1..+1. The synth's `lfo_cv_out` does.
+
+#### CV inputs on instruments: amount and unit convention (poly synth, sampler, drum machine, loop slicer)
+
+The instruments' `<target>_cv_in` sockets (`pitch_cv_in`, `resonance_cv_in`, `level_cv_in`, `pan_cv_in`, `cutoff_cv_in`; per pad `padN_level_cv_in`, `padN_pan_cv_in`) all follow one rule, with the shared helpers in [crates/devices/src/cv.rs](../crates/devices/src/cv.rs):
+
+- Each input has one **signed** amount param, `cv.<target>_amount` (drum machine: `padN.cv_<target>_amount`), whose range is bipolar and whose default is a useful, non-zero depth. The CV sample is clamped to −1..+1 (NaN counts as 0), multiplied by the amount and **added in the target's own unit**: pitch in semitones (amount ±24), level in decibels (amount ±24 dB, applied as a gain 10^(amount·cv/20)), cutoff in octaves, pan in pan units (amount ±1, added to the pan before the pan law), resonance in normalised units (amount ±1, added, then clamped to 0..1). A negative amount inverts the CV; amount 0 switches the input off.
+- The value is applied **only while the socket is connected** (`is_connected`). An open socket takes a different code path (or none), so the output is bit for bit what it was before the input existed. The device tests prove it: amounts at odd values with no cable give identical bits.
+- CV is read **per sample** where the target is per sample (level, pan); pitch, resonance and cutoff are read at the 16-sample control rate and the filter coefficient is ramped in between. There is no extra smoothing: a stepped CV gives a stepped gain.
+- Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan, drum pad level and pan).
 - Audio is nominally ±1.0. Keep outputs finite. The synth adds a soft limiter so its output is always bounded.
 
 ## 4. Registering the device

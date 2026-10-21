@@ -22,8 +22,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 |---|---|---|---|
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. Reads 0 when unconnected. |
+| `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch of every voice by `cv.pitch_amount` semitones. |
+| `resonance_cv_in` | CV | in | Clamped to −1..+1. Adds `cv.resonance_amount` × CV to the normalised resonance (result clamped to 0..1). |
+| `level_cv_in` | CV | in | Clamped to −1..+1. Scales the output by `cv.level_amount` × CV decibels. |
+| `pan_cv_in` | CV | in | Clamped to −1..+1. Balances the output by `cv.pan_amount` × CV (−1 = left, +1 = right). |
 | `out_l` | Audio | out | Left output |
-| `out_r` | Audio | out | Right output: currently identical to `out_l` (see below) |
+| `out_r` | Audio | out | Right output: identical to `out_l` unless `pan_cv_in` is cabled (see below) |
 | `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
 
 ### Params
@@ -61,6 +65,10 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
 | `voices` | 1 to 16 | 16 | none | Linear | yes |
 | `master.level` | −60 to 6 (−60 = silent) | −6 | dB | dB | no |
+| `cv.pitch_amount` | −24 to 24 | 12 | semitones | Linear | no |
+| `cv.resonance_amount` | −1 to 1 | 0.5 | percent | Linear | no |
+| `cv.level_amount` | −24 to 24 | 12 | dB | Linear | no |
+| `cv.pan_amount` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -74,7 +82,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 - **Output level.**
   - The output is the sum of voices × 0.5 × the master gain (smoothed over 5 ms).
   - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
-- **Mono output.** `out_l` **equals** `out_r`. There is no stereo spread in this version.
+- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo spread in this version.
+- **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is clamped to −1..+1 and multiplied by the signed amount param (a negative amount inverts the CV). All four act on the whole instrument, not per voice.
+  - *Pitch:* semitones, added to every oscillator of every voice (key + offsets + LFO·`lfo.to_pitch` + `cv.pitch_amount`·CV), read at the 16-sample control rate like the cutoff.
+  - *Resonance:* the normalised resonance becomes clamp(`filter.resonance` + `cv.resonance_amount`·CV, 0, 1); the filter damping ramps over each 16-sample control step.
+  - *Level:* the master gain is multiplied per sample by 10^(`cv.level_amount`·CV/20), before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
+  - *Pan:* per sample, the mono sum is balanced by `cv.pan_amount`·CV after the limiter: unity on both sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device instance, so renders are reproducible.
 
 ---

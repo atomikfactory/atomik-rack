@@ -26,8 +26,10 @@ use atomik_device_sdk::{
 };
 use atomik_dsp::{
     Adsr, AdsrStage, FilterMode, Lfo, LfoShape, PolyBlepOsc, Rng, Smoother, Svf, Waveform,
-    note_to_hz,
+    balance_gains, note_to_hz,
 };
+
+use crate::cv::{clean, db_gain};
 
 /// Number of preallocated voices.
 pub const MAX_VOICES: usize = 16;
@@ -90,7 +92,11 @@ const P_VEL_AMP: u32 = 27;
 const P_CV_AMOUNT: u32 = 28;
 const P_VOICES: u32 = 29;
 const P_MASTER: u32 = 30;
-const PARAM_COUNT: usize = 31;
+const P_CV_PITCH: u32 = 31;
+const P_CV_RESONANCE: u32 = 32;
+const P_CV_LEVEL: u32 = 33;
+const P_CV_PAN: u32 = 34;
+const PARAM_COUNT: usize = 35;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -374,13 +380,53 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Db,
         false,
     ),
+    param(
+        P_CV_PITCH,
+        "cv.pitch_amount",
+        "CV to pitch",
+        (-24.0, 24.0, 12.0),
+        Lin,
+        Unit::Semitones,
+        false,
+    ),
+    param(
+        P_CV_RESONANCE,
+        "cv.resonance_amount",
+        "CV to resonance",
+        (-1.0, 1.0, 0.5),
+        Lin,
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_CV_LEVEL,
+        "cv.level_amount",
+        "CV to level",
+        (-24.0, 24.0, 12.0),
+        Lin,
+        Unit::Db,
+        false,
+    ),
+    param(
+        P_CV_PAN,
+        "cv.pan_amount",
+        "CV to pan",
+        (-1.0, 1.0, 1.0),
+        Lin,
+        Unit::None,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
 const CUTOFF_CV_IN: SocketId = SocketId(1);
-const OUT_L: SocketId = SocketId(2);
-const OUT_R: SocketId = SocketId(3);
-const LFO_CV_OUT: SocketId = SocketId(4);
+const PITCH_CV_IN: SocketId = SocketId(2);
+const RESONANCE_CV_IN: SocketId = SocketId(3);
+const LEVEL_CV_IN: SocketId = SocketId(4);
+const PAN_CV_IN: SocketId = SocketId(5);
+const OUT_L: SocketId = SocketId(6);
+const OUT_R: SocketId = SocketId(7);
+const LFO_CV_OUT: SocketId = SocketId(8);
 
 const fn socket(
     id: SocketId,
@@ -398,7 +444,7 @@ const fn socket(
     }
 }
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 9] = [
     socket(
         NOTES_IN,
         "notes_in",
@@ -410,6 +456,34 @@ static SOCKETS: [SocketDescriptor; 5] = [
         CUTOFF_CV_IN,
         "cutoff_cv_in",
         "Cutoff CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        PITCH_CV_IN,
+        "pitch_cv_in",
+        "Pitch CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        RESONANCE_CV_IN,
+        "resonance_cv_in",
+        "Resonance CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        LEVEL_CV_IN,
+        "level_cv_in",
+        "Level CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        PAN_CV_IN,
+        "pan_cv_in",
+        "Pan CV",
         SocketKind::Cv,
         Direction::Input,
     ),
@@ -492,12 +566,35 @@ struct Shared {
     filter_mode: FilterMode,
     cutoff: f32,
     k: f32,
+    /// Normalised resonance (the base of the resonance CV).
+    resonance: f32,
     env_amount: f32,
     key_track: f32,
     lfo_to_pitch: f32,
     lfo_to_cutoff: f32,
     velocity_amount: f32,
     cv_amount: f32,
+    cv_pitch_amount: f32,
+    cv_resonance_amount: f32,
+    /// Set per batch: the resonance CV socket is cabled.
+    cv_resonance_on: bool,
+}
+
+/// Control-rate modulation values read by a voice.
+#[derive(Debug, Clone, Copy)]
+struct Ctl {
+    lfo: f32,
+    cutoff: f32,
+    pitch: f32,
+    resonance: f32,
+}
+
+/// Per-sample modulation sources of one render segment (all aligned with the output slice).
+struct Mods<'a> {
+    lfo: &'a [f32],
+    cutoff: &'a [f32],
+    pitch: &'a [f32],
+    resonance: &'a [f32],
 }
 
 /// One preallocated voice.
@@ -517,6 +614,10 @@ struct Voice {
     g_target: f32,
     g_step: f32,
     snap_g: bool,
+    /// Filter damping while the resonance CV is cabled (`k` ramps like `g`).
+    k: f32,
+    k_target: f32,
+    k_step: f32,
 }
 
 impl Voice {
@@ -536,6 +637,9 @@ impl Voice {
             g_target: 0.0,
             g_step: 0.0,
             snap_g: true,
+            k: 1.0,
+            k_target: 1.0,
+            k_step: 0.0,
         }
     }
 
@@ -590,11 +694,13 @@ impl Voice {
     }
 
     /// Control-rate update: oscillator pitch and the filter coefficient target.
-    fn control(&mut self, lfo: f32, cv: f32, p: &Shared) {
+    fn control(&mut self, c: Ctl, p: &Shared) {
+        let (lfo, cv) = (c.lfo, c.cutoff);
         let key = f32::from(self.key);
+        let cv_pitch = p.cv_pitch_amount * clean(c.pitch);
         for (o, offset) in self.osc.iter_mut().zip(p.pitch_offset) {
             o.set_frequency(
-                note_to_hz(key + offset + lfo * p.lfo_to_pitch, 0.0),
+                note_to_hz(key + offset + lfo * p.lfo_to_pitch + cv_pitch, 0.0),
                 p.sample_rate,
             );
         }
@@ -608,23 +714,49 @@ impl Voice {
         self.g = if self.snap_g { g } else { self.g_target };
         self.g_target = g;
         self.g_step = (g - self.g) / CONTROL_INTERVAL as f32;
+        if p.cv_resonance_on {
+            let r = (p.resonance + p.cv_resonance_amount * clean(c.resonance)).clamp(0.0, 1.0);
+            let k = 1.0 / Svf::resonance_to_q(r);
+            self.k = if self.snap_g { k } else { self.k_target };
+            self.k_target = k;
+            self.k_step = (k - self.k) / CONTROL_INTERVAL as f32;
+        } else {
+            self.k = p.k;
+            self.k_target = p.k;
+            self.k_step = 0.0;
+        }
         if self.snap_g || self.g_step == 0.0 {
-            self.filter.set_coefficients(self.g, p.k);
+            self.filter.set_coefficients(self.g, self.k_now(p));
             self.snap_g = false;
         }
     }
 
-    /// Adds this voice into `out`. `lfo` and `cv` are aligned with `out`.
-    fn render(&mut self, out: &mut [f32], lfo: &[f32], cv: &[f32], p: &Shared) {
-        for n in 0..out.len() {
+    /// The filter damping in use: the base value, or the ramped value under resonance CV.
+    #[inline]
+    fn k_now(&self, p: &Shared) -> f32 {
+        if p.cv_resonance_on { self.k } else { p.k }
+    }
+
+    /// Adds this voice into `out`. The modulation slices are aligned with `out`.
+    fn render(&mut self, out: &mut [f32], m: &Mods<'_>, p: &Shared) {
+        for (n, o) in out.iter_mut().enumerate() {
             if self.countdown == 0 {
-                self.control(lfo[n], cv[n], p);
+                let c = Ctl {
+                    lfo: m.lfo[n],
+                    cutoff: m.cutoff[n],
+                    pitch: m.pitch[n],
+                    resonance: m.resonance[n],
+                };
+                self.control(c, p);
                 self.countdown = CONTROL_INTERVAL;
             }
             self.countdown -= 1;
-            if self.g_step != 0.0 {
+            if p.cv_resonance_on {
+                self.k += self.k_step;
+            }
+            if self.g_step != 0.0 || (p.cv_resonance_on && self.k_step != 0.0) {
                 self.g += self.g_step;
-                self.filter.set_coefficients(self.g, p.k);
+                self.filter.set_coefficients(self.g, self.k_now(p));
             }
             let o1 = self.osc[0].next_sample();
             let o2 = self.osc[1].next_sample();
@@ -639,7 +771,7 @@ impl Voice {
             }
             self.fenv.next_sample();
             let amp = self.amp.next_sample();
-            out[n] += y * amp * self.vel_gain.next_value() * VOICE_GAIN;
+            *o += y * amp * self.vel_gain.next_value() * VOICE_GAIN;
             if !self.amp.is_active() {
                 match self.pending.take() {
                     Some((key, velocity)) => self.start(key, velocity, p),
@@ -665,6 +797,8 @@ pub struct PolySynth {
     next_order: u64,
     lfo: Lfo,
     master: Smoother,
+    cv_level_db: f32,
+    cv_pan_amount: f32,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -691,18 +825,24 @@ impl PolySynth {
                 filter_mode: FilterMode::Lowpass,
                 cutoff: 4_000.0,
                 k: 1.0,
+                resonance: 0.2,
                 env_amount: 0.0,
                 key_track: 0.0,
                 lfo_to_pitch: 0.0,
                 lfo_to_cutoff: 0.0,
                 velocity_amount: 0.5,
                 cv_amount: 2.0,
+                cv_pitch_amount: 12.0,
+                cv_resonance_amount: 0.5,
+                cv_resonance_on: false,
             },
             voices: std::array::from_fn(|i| Voice::new(derive_seed(0, i as u64 + 1))),
             voice_limit: MAX_VOICES,
             next_order: 0,
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
+            cv_level_db: 12.0,
+            cv_pan_amount: 1.0,
             fresh: true,
             seed: 0,
             #[cfg(test)]
@@ -743,7 +883,10 @@ impl PolySynth {
             P_NOISE => self.shared.noise = v,
             P_FILTER_MODE => self.shared.filter_mode = FilterMode::from_index(choice(v)),
             P_CUTOFF => self.shared.cutoff = v,
-            P_RESONANCE => self.shared.k = 1.0 / Svf::resonance_to_q(v),
+            P_RESONANCE => {
+                self.shared.k = 1.0 / Svf::resonance_to_q(v);
+                self.shared.resonance = v;
+            }
             P_ENV_AMOUNT => self.shared.env_amount = v,
             P_KEY_TRACK => self.shared.key_track = v,
             P_AMP_A => voices.iter_mut().for_each(|vc| vc.amp.set_attack_ms(v)),
@@ -760,6 +903,10 @@ impl PolySynth {
             P_LFO_CUTOFF => self.shared.lfo_to_cutoff = v,
             P_VEL_AMP => self.shared.velocity_amount = v,
             P_CV_AMOUNT => self.shared.cv_amount = v,
+            P_CV_PITCH => self.shared.cv_pitch_amount = v,
+            P_CV_RESONANCE => self.shared.cv_resonance_amount = v,
+            P_CV_LEVEL => self.cv_level_db = v,
+            P_CV_PAN => self.cv_pan_amount = v,
             P_VOICES => {
                 self.voice_limit = (v.round().max(1.0) as usize).min(MAX_VOICES);
                 for vc in &mut voices[self.voice_limit..] {
@@ -890,6 +1037,9 @@ impl Device for PolySynth {
             *s = self.lfo.next_sample();
         }
         let cv = *ctx.input(CUTOFF_CV_IN);
+        let cv_pitch = *ctx.input(PITCH_CV_IN);
+        let cv_res = *ctx.input(RESONANCE_CV_IN);
+        self.shared.cv_resonance_on = ctx.is_connected(RESONANCE_CV_IN);
         let mut mix = [0.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
@@ -904,16 +1054,41 @@ impl Device for PolySynth {
                 .get(next)
                 .map_or(BATCH, |e| (e.offset as usize).clamp(start + 1, BATCH));
             let p = self.shared;
+            let m = Mods {
+                lfo: &lfo[start..end],
+                cutoff: &cv[start..end],
+                pitch: &cv_pitch[start..end],
+                resonance: &cv_res[start..end],
+            };
             for v in self.voices.iter_mut().filter(|v| v.is_active()) {
-                v.render(&mut mix[start..end], &lfo[start..end], &cv[start..end], &p);
+                v.render(&mut mix[start..end], &m, &p);
             }
             start = end;
         }
-        for s in &mut mix {
-            *s = soft_limit(*s * self.master.next_value());
+        let level_on = ctx.is_connected(LEVEL_CV_IN);
+        let cv_level = *ctx.input(LEVEL_CV_IN);
+        for (s, &lv) in mix.iter_mut().zip(&cv_level) {
+            let mut g = self.master.next_value();
+            if level_on {
+                g *= db_gain(self.cv_level_db, lv);
+            }
+            *s = soft_limit(*s * g);
         }
-        *ctx.output(OUT_L) = mix;
-        *ctx.output(OUT_R) = mix;
+        if ctx.is_connected(PAN_CV_IN) {
+            // Mono voice sum balanced by the pan CV (unity at the centre, like a stereo balance).
+            let cv_pan = *ctx.input(PAN_CV_IN);
+            let (mut l, mut r) = (mix, mix);
+            for n in 0..BATCH {
+                let (gl, gr) = balance_gains(self.cv_pan_amount * clean(cv_pan[n]));
+                l[n] *= gl;
+                r[n] *= gr;
+            }
+            *ctx.output(OUT_L) = l;
+            *ctx.output(OUT_R) = r;
+        } else {
+            *ctx.output(OUT_L) = mix;
+            *ctx.output(OUT_R) = mix;
+        }
         *ctx.output(LFO_CV_OUT) = lfo;
         #[cfg(test)]
         self.update_probe();
@@ -1023,8 +1198,22 @@ mod tests {
                 "cv.cutoff_amount",
                 "voices",
                 "master.level",
+                "cv.pitch_amount",
+                "cv.resonance_amount",
+                "cv.level_amount",
+                "cv.pan_amount",
             ],
-            &["notes_in", "cutoff_cv_in", "out_l", "out_r", "lfo_cv_out"],
+            &[
+                "notes_in",
+                "cutoff_cv_in",
+                "pitch_cv_in",
+                "resonance_cv_in",
+                "level_cv_in",
+                "pan_cv_in",
+                "out_l",
+                "out_r",
+                "lfo_cv_out",
+            ],
         );
         assert_eq!(DESCRIPTOR.type_id, "atomik.poly-synth");
         assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
@@ -1217,6 +1406,191 @@ mod tests {
         assert!((none - zero).abs() < 1e-6);
         assert!(up > zero * 2.0, "{up} vs {zero}");
         assert!(down < zero * 0.8, "{down} vs {zero}");
+    }
+
+    /// Renders 0.4 s of a held note with an optional CV on `socket` and the given amount.
+    fn cv_render(
+        setup: impl Fn(&mut DeviceHarness),
+        socket: &str,
+        amount_key: &str,
+        amount: f32,
+        cv: Option<f32>,
+    ) -> Vec<Vec<f32>> {
+        let (mut h, _) = synth();
+        setup(&mut h);
+        h.set_param(amount_key, amount);
+        if let Some(cv) = cv {
+            *h.input_mut(socket) = [cv; BATCH];
+        }
+        h.push_note("notes_in", on(0, 57, 1.0)); // 220 Hz
+        h.render(seconds(0.4), &OUT)
+    }
+
+    #[test]
+    fn process_pitch_cv_shifts_by_amount_semitones() {
+        let freq = |cv: Option<f32>, amount: f32| {
+            let o = cv_render(pure_sine, "pitch_cv_in", "cv.pitch_amount", amount, cv);
+            dominant_frequency(&o[0][4_800..], SR)
+        };
+        let up = freq(Some(0.5), 12.0); // +6 semitones
+        assert!((up - 220.0 * 2.0f64.powf(0.5)).abs() < 3.0, "{up}");
+        let down = freq(Some(-1.0), 12.0);
+        assert!((down - 110.0).abs() < 2.0, "{down}");
+        let none = freq(Some(1.0), 0.0);
+        assert!((none - 220.0).abs() < 2.0, "amount 0: {none}");
+        let clamped = freq(Some(3.0), 12.0);
+        assert!((clamped - 440.0).abs() < 4.0, "clamped to +1: {clamped}");
+        let neg = freq(Some(1.0), -12.0);
+        assert!((neg - 110.0).abs() < 2.0, "negative amount: {neg}");
+    }
+
+    #[test]
+    fn process_resonance_cv_adds_to_resonance_and_clamps() {
+        let level = |cv: Option<f32>, amount: f32| {
+            let o = cv_render(
+                |h| {
+                    pure_sine(h);
+                    h.set_param("filter.cutoff", 220.0);
+                    h.set_param("filter.resonance", 0.0);
+                    h.set_param("master.level", -40.0);
+                },
+                "resonance_cv_in",
+                "cv.resonance_amount",
+                amount,
+                cv,
+            );
+            rms(&o[0][9_600..])
+        };
+        let base = level(None, 1.0);
+        assert!(level(Some(1.0), 1.0) > base * 5.0);
+        assert!(
+            (level(Some(1.0), 0.0) - base).abs() < base * 1e-4,
+            "amount 0 cancels"
+        );
+        assert!(
+            (level(Some(-1.0), 1.0) - base).abs() < base * 1e-4,
+            "clamped at 0"
+        );
+        let (a, b) = (level(Some(1.0), 1.0), level(Some(5.0), 1.0));
+        assert!((a - b).abs() < a * 1e-6, "cv beyond +1 acts as +1");
+    }
+
+    #[test]
+    fn process_level_cv_scales_gain_in_db() {
+        let level = |cv: Option<f32>, amount: f32| {
+            let o = cv_render(
+                |h| {
+                    pure_sine(h);
+                    h.set_param("master.level", -24.0);
+                },
+                "level_cv_in",
+                "cv.level_amount",
+                amount,
+                cv,
+            );
+            rms(&o[0][9_600..])
+        };
+        let base = level(None, 12.0);
+        let up = level(Some(0.5), 12.0); // +6 dB
+        assert!(
+            (db(up) - db(base) - 6.0).abs() < 0.05,
+            "{}",
+            db(up) - db(base)
+        );
+        let down = level(Some(-1.0), 12.0);
+        assert!((db(down) - db(base) + 12.0).abs() < 0.05);
+        assert!((level(Some(1.0), 0.0) - base).abs() < base * 1e-6);
+        assert!((level(Some(9.0), 12.0) - level(Some(1.0), 12.0)).abs() < 1e-9);
+        assert!((db(level(Some(1.0), -12.0)) - db(base) + 12.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn process_pan_cv_balances_left_and_right() {
+        let sides = |cv: Option<f32>, amount: f32| {
+            let o = cv_render(pure_sine, "pan_cv_in", "cv.pan_amount", amount, cv);
+            (rms(&o[0][9_600..]), rms(&o[1][9_600..]))
+        };
+        let (l0, r0) = sides(None, 1.0);
+        assert_eq!(l0.to_bits(), r0.to_bits(), "unconnected: dual mono");
+        let (l, r) = sides(Some(1.0), 1.0);
+        assert!(l < r0 * 1e-3 && (r - r0).abs() < r0 * 1e-3, "{l} {r}");
+        let (l, r) = sides(Some(-1.0), 1.0);
+        assert!(r < r0 * 1e-3 && (l - l0).abs() < l0 * 1e-3, "{l} {r}");
+        let (l, r) = sides(Some(0.0), 1.0);
+        assert!(
+            (l - l0).abs() < l0 * 1e-3 && (r - r0).abs() < r0 * 1e-3,
+            "centre is unity"
+        );
+        let (l, r) = sides(Some(1.0), 0.0);
+        assert!(
+            (l - l0).abs() < l0 * 1e-3 && (r - r0).abs() < r0 * 1e-3,
+            "amount 0 cancels"
+        );
+        let (l2, r2) = sides(Some(4.0), 1.0);
+        let (l1, r1) = sides(Some(1.0), 1.0);
+        assert_eq!((l1.to_bits(), r1.to_bits()), (l2.to_bits(), r2.to_bits()));
+        let (l, r) = sides(Some(1.0), -1.0); // negative amount mirrors
+        assert!(r < r0 * 1e-3 && l > l0 * 0.99, "{l} {r}");
+    }
+
+    #[test]
+    fn process_new_cv_inputs_unconnected_leave_output_bit_identical() {
+        let render = |amounts: Option<[f32; 4]>| {
+            let (mut h, _) = synth();
+            h.set_param("lfo.wave", 4.0);
+            h.set_param("lfo.to_pitch", 1.0);
+            h.set_param("filter.env_amount", 0.6);
+            if let Some(a) = amounts {
+                for (k, v) in [
+                    "cv.pitch_amount",
+                    "cv.resonance_amount",
+                    "cv.level_amount",
+                    "cv.pan_amount",
+                ]
+                .into_iter()
+                .zip(a)
+                {
+                    h.set_param(k, v);
+                }
+            }
+            h.push_note("notes_in", on(0, 45, 0.9));
+            h.push_note("notes_in", on(10, 52, 0.7));
+            h.render(seconds(0.3), &OUT)
+        };
+        let a = render(None);
+        let b = render(Some([-20.0, -0.9, 17.0, -0.4]));
+        for (x, y) in a.iter().flatten().zip(b.iter().flatten()) {
+            assert_eq!(x.to_bits(), y.to_bits());
+        }
+    }
+
+    #[test]
+    fn process_new_cv_inputs_at_zero_do_not_change_the_sound() {
+        // Connected but silent CV: pitch, resonance and level add nothing.
+        let base = cv_render(pure_sine, "none", "cv.pitch_amount", 12.0, None);
+        let (mut h, _) = synth();
+        pure_sine(&mut h);
+        for s in ["pitch_cv_in", "resonance_cv_in", "level_cv_in"] {
+            *h.input_mut(s) = [0.0; BATCH];
+        }
+        h.push_note("notes_in", on(0, 57, 1.0));
+        let o = h.render(seconds(0.4), &OUT);
+        for (x, y) in base[0].iter().zip(&o[0]) {
+            assert!((x - y).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn process_cv_inputs_are_allocation_free() {
+        let (mut h, _) = synth();
+        for s in ["pitch_cv_in", "resonance_cv_in", "level_cv_in", "pan_cv_in"] {
+            *h.input_mut(s) = [0.7; BATCH];
+        }
+        h.push_note("notes_in", on(0, 50, 1.0));
+        h.push_note("notes_in", on(5, 55, 1.0));
+        for _ in 0..20 {
+            h.process();
+        }
     }
 
     #[test]

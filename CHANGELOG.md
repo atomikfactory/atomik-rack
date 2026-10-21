@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Drag devices from the browser.** Drag a row of the device browser onto the rack to create the device exactly where you drop it, in any column; an effect is routed as if the device above the drop point were selected. Release over the browser, or press Esc, to cancel. A double-click still adds below the selection.
 - **Rack navigator.** A strip at the right edge of the rack (View, Rack Navigator; on by default) shows every column as small coloured blocks and the part of the rack you are looking at. Click to centre the view there, drag to scroll, use the mouse wheel as over the rack; inside a container it shows the container's column. The choice is kept between sessions.
 - **Paste and plugin drops in columns.** Paste from the rack's context menu lands where you right-clicked, and a keyboard paste lands below the selected device in its column. A plugin that is neither an instrument nor an effect can be dragged from the browser into a column or the new-column zone like any other device, and the new-column zone now stays on screen while you drag, whatever the window width.
+- **CV inputs on the instruments.** The poly synth takes pitch, resonance, level and pan CV, the sampler resonance, level and pan CV, the drum machine level and pan CV for each pad, and the loop slicer level and cutoff CV (with a new global low-pass, `filter.cutoff`, which is open by default). Each has a bipolar amount param; unconnected inputs change nothing.
 
 ## [0.1.0] - 2026-10-21
 
