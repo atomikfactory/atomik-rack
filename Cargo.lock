@@ -322,6 +322,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomik-library"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "atomik-midi-io"
 version = "0.1.0"
 dependencies = [
