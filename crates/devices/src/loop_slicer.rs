@@ -45,9 +45,10 @@ use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SampleMap, SampleMapRef, SocketDescriptor, SocketId, SocketKind, Zone, velocity_to_7bit,
 };
-use atomik_dsp::Smoother;
+use atomik_dsp::{FilterMode, Smoother, Svf};
 use std::sync::Arc;
 
+use crate::cv::{clean, db_gain};
 use crate::poly_synth::soft_limit;
 
 mod voice;
@@ -72,6 +73,15 @@ fn slice_of(key: u8) -> Option<usize> {
         .then(|| usize::from(key - SLICE_KEY_BASE))
 }
 
+/// `filter.cutoff` at its maximum: the filter is open (bypassed unless the cutoff CV is cabled).
+const FILTER_OPEN_HZ: f32 = 20_000.0;
+/// Samples between control-rate updates of the filter coefficient.
+const FILTER_CONTROL_INTERVAL: usize = 16;
+/// Highest filter cutoff as a fraction of the sample rate.
+const MAX_CUTOFF_RATIO: f32 = 0.45;
+/// Damping `1/Q` of the 12 dB low-pass (Butterworth, Q = 1/sqrt 2).
+const FILTER_K: f32 = std::f32::consts::SQRT_2;
+
 const P_MASTER: u32 = 0;
 const P_VOICES: u32 = 1;
 const P_TUNE_SEMI: u32 = 2;
@@ -81,7 +91,10 @@ const P_MODE: u32 = 5;
 const P_VEL_AMP: u32 = 6;
 const P_BEATS: u32 = 7;
 const P_CV_PITCH: u32 = 8;
-const PARAM_COUNT: usize = 9;
+const P_FILTER_CUTOFF: u32 = 9;
+const P_CV_CUTOFF: u32 = 10;
+const P_CV_LEVEL: u32 = 11;
+const PARAM_COUNT: usize = 12;
 
 const fn param(
     id: u32,
@@ -189,14 +202,43 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Semitones,
         false,
     ),
+    param(
+        P_FILTER_CUTOFF,
+        "filter.cutoff",
+        "Filter cutoff",
+        (20.0, FILTER_OPEN_HZ, FILTER_OPEN_HZ),
+        Taper::Exponential,
+        Unit::Hz,
+        false,
+    ),
+    param(
+        P_CV_CUTOFF,
+        "cv.cutoff_amount",
+        "CV to cutoff",
+        (-4.0, 4.0, 2.0),
+        Taper::Linear,
+        Unit::Octaves,
+        false,
+    ),
+    param(
+        P_CV_LEVEL,
+        "cv.level_amount",
+        "CV to level",
+        (-24.0, 24.0, 12.0),
+        Taper::Linear,
+        Unit::Db,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
 const PITCH_CV_IN: SocketId = SocketId(1);
-const OUT_L: SocketId = SocketId(2);
-const OUT_R: SocketId = SocketId(3);
+const CUTOFF_CV_IN: SocketId = SocketId(2);
+const LEVEL_CV_IN: SocketId = SocketId(3);
+const OUT_L: SocketId = SocketId(4);
+const OUT_R: SocketId = SocketId(5);
 
-static SOCKETS: [SocketDescriptor; 4] = [
+static SOCKETS: [SocketDescriptor; 6] = [
     SocketDescriptor {
         id: NOTES_IN,
         key: "notes_in",
@@ -208,6 +250,20 @@ static SOCKETS: [SocketDescriptor; 4] = [
         id: PITCH_CV_IN,
         key: "pitch_cv_in",
         name: "Pitch CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: CUTOFF_CV_IN,
+        key: "cutoff_cv_in",
+        name: "Cutoff CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: LEVEL_CV_IN,
+        key: "level_cv_in",
+        name: "Level CV",
         kind: SocketKind::Cv,
         direction: Direction::Input,
     },
@@ -266,6 +322,9 @@ pub(crate) struct Shared {
     pub velocity_amount: f32,
     pub tune_semi: f32,
     pub cv_pitch: f32,
+    pub filter_cutoff: f32,
+    pub cv_cutoff: f32,
+    pub cv_level_db: f32,
 }
 
 /// Index of the first slice zone of every key in the current map (`u32::MAX`: none).
@@ -298,6 +357,12 @@ pub struct LoopSlicer {
     shared: Shared,
     master: Smoother,
     fresh: bool,
+    /// The global low-pass over the summed voices (stereo pair) and its coefficient ramp.
+    filters: [Svf; 2],
+    fg: f32,
+    fg_target: f32,
+    fg_step: f32,
+    filter_ready: bool,
     voices: Vec<Voice>,
     voice_limit: usize,
     next_order: u64,
@@ -331,9 +396,17 @@ impl LoopSlicer {
                 velocity_amount: 0.5,
                 tune_semi: 0.0,
                 cv_pitch: 12.0,
+                filter_cutoff: FILTER_OPEN_HZ,
+                cv_cutoff: 2.0,
+                cv_level_db: 12.0,
             },
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             fresh: true,
+            filters: [Svf::new(); 2],
+            fg: 0.0,
+            fg_target: 0.0,
+            fg_step: 0.0,
+            filter_ready: false,
             voices: vec![Voice::new(); MAX_VOICES],
             voice_limit: MAX_VOICES,
             next_order: 0,
@@ -386,6 +459,9 @@ impl LoopSlicer {
             P_MODE => self.shared.gate = v < 0.5,
             P_VEL_AMP => self.shared.velocity_amount = v,
             P_CV_PITCH => self.shared.cv_pitch = v,
+            P_FILTER_CUTOFF => self.shared.filter_cutoff = v,
+            P_CV_CUTOFF => self.shared.cv_cutoff = v,
+            P_CV_LEVEL => self.shared.cv_level_db = v,
             _ => {}
         }
     }
@@ -501,6 +577,59 @@ impl LoopSlicer {
     }
 }
 
+impl LoopSlicer {
+    /// Control-rate update of the global low-pass: the cutoff is `filter.cutoff` times
+    /// `2^(cv.cutoff_amount * cv)` (octaves); the coefficient ramps over the next 16 samples.
+    fn filter_control(&mut self, cv: f32, connected: bool) {
+        let sh = &self.shared;
+        let octaves = if connected {
+            sh.cv_cutoff * clean(cv)
+        } else {
+            0.0
+        };
+        let cutoff =
+            (sh.filter_cutoff * octaves.exp2()).clamp(20.0, MAX_CUTOFF_RATIO * sh.sample_rate);
+        let g = Svf::cutoff_to_g(cutoff, sh.sample_rate);
+        let snap = !self.filter_ready;
+        self.filter_ready = true;
+        if snap {
+            self.filters.iter_mut().for_each(Svf::reset);
+        }
+        // Land exactly on the previous target (no drift), then ramp towards the new one.
+        self.fg = if snap { g } else { self.fg_target };
+        self.fg_target = g;
+        self.fg_step = (g - self.fg) / FILTER_CONTROL_INTERVAL as f32;
+        if snap || self.fg_step == 0.0 {
+            for f in &mut self.filters {
+                f.set_coefficients(self.fg, FILTER_K);
+            }
+        }
+    }
+
+    /// Filters the summed voices in place (only called while the filter is engaged).
+    fn filter_mix(&mut self, mix: &mut [[f32; BATCH]; 2], cv: &[f32; BATCH], connected: bool) {
+        for n in 0..BATCH {
+            if n % FILTER_CONTROL_INTERVAL == 0 {
+                self.filter_control(cv[n], connected);
+            }
+            if self.fg_step != 0.0 {
+                self.fg += self.fg_step;
+                for f in &mut self.filters {
+                    f.set_coefficients(self.fg, FILTER_K);
+                }
+            }
+            let yl = self.filters[0].process_mode(mix[0][n], FilterMode::Lowpass);
+            let yr = self.filters[1].process_mode(mix[1][n], FilterMode::Lowpass);
+            if yl.is_finite() && yr.is_finite() {
+                (mix[0][n], mix[1][n]) = (yl, yr);
+            } else {
+                self.filters.iter_mut().for_each(Svf::reset);
+                (mix[0][n], mix[1][n]) = (0.0, 0.0);
+            }
+        }
+    }
+}
+
 impl Device for LoopSlicer {
     fn descriptor(&self) -> &'static DeviceDescriptor {
         &DESCRIPTOR
@@ -525,6 +654,8 @@ impl Device for LoopSlicer {
         let m = self.master.target();
         self.master.set_immediate(m);
         self.fresh = true;
+        self.filters.iter_mut().for_each(Svf::reset);
+        self.filter_ready = false;
         #[cfg(test)]
         self.update_probe();
     }
@@ -604,6 +735,10 @@ impl Device for LoopSlicer {
             self.fresh = false;
         }
         let cv = *ctx.input(PITCH_CV_IN);
+        let cv_cutoff = *ctx.input(CUTOFF_CV_IN);
+        let cutoff_on = ctx.is_connected(CUTOFF_CV_IN);
+        let level_on = ctx.is_connected(LEVEL_CV_IN);
+        let cv_level = *ctx.input(LEVEL_CV_IN);
         let mut mix = [[0.0f32; BATCH]; 2];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
@@ -644,9 +779,17 @@ impl Device for LoopSlicer {
             }
             start = end;
         }
+        if cutoff_on || self.shared.filter_cutoff < FILTER_OPEN_HZ {
+            self.filter_mix(&mut mix, &cv_cutoff, cutoff_on);
+        } else {
+            self.filter_ready = false;
+        }
         let [mix_l, mix_r] = &mut mix;
-        for (l, r) in mix_l.iter_mut().zip(mix_r.iter_mut()) {
-            let m = self.master.next_value();
+        for (n, (l, r)) in mix_l.iter_mut().zip(mix_r.iter_mut()).enumerate() {
+            let mut m = self.master.next_value();
+            if level_on {
+                m *= db_gain(self.shared.cv_level_db, cv_level[n]);
+            }
             *l = soft_limit(*l * m);
             *r = soft_limit(*r * m);
         }

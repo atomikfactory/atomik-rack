@@ -670,6 +670,8 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 |---|---|---|---|
 | `notes_in` | Notes in | Notes | in |
 | `pitch_cv_in` | Pitch CV | CV | in |
+| `cutoff_cv_in` | Cutoff CV | CV | in |
+| `level_cv_in` | Level CV | CV | in |
 | `out_l` | Out L | Audio | out |
 | `out_r` | Out R | Audio | out |
 
@@ -686,6 +688,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 | `velocity.amp` | 0 to 1 | 0.5 | percent | Linear | no |
 | `loop.beats` | 1 to 64 | 4 | none | Linear | yes |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
+| `filter.cutoff` | 20 to 20 000 | 20 000 | Hz | Exp | no |
+| `cv.cutoff_amount` | −4 to 4 | 2 | octaves | Linear | no |
+| `cv.level_amount` | −24 to 24 | 12 | dB | Linear | no |
 
 ### Behaviour (as built)
 
@@ -696,6 +701,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 - **Reverse.** A reversed slice plays from `end − 1` down to `start` (see the sampler's Zones section).
 - **Pitch.** Ratio 2^((key − root + transpose + `tune.semi`)/12 + zone cents/1200 + CV·`cv.pitch_amount`/12), CV clamped to ±1 and updated every 16 samples. Slices normally have their key as root: unity ratio, so a slice is reproduced bit for bit once the attack is over.
 - **Level and pan.** Voice gain = envelope × zone gain × (1 − `velocity.amp` × (1 − velocity)). A mono loop goes through a constant-power pan by the zone pan (−3 dB at the centre), a stereo loop is balanced (unity at the centre). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth.
+- **Filter and CV inputs (cutoff, level).** The slicer had no filter; it now has one global 12 dB low-pass (Butterworth, Q = 1/√2) over the summed voices, placed before `master.level`. It is engaged only while `cutoff_cv_in` is cabled or `filter.cutoff` is below its maximum of 20 kHz; otherwise the signal is not touched, so a patch that does not use either is bit for bit what it was before. Each CV is clamped to −1..+1 and multiplied by the signed amount param.
+  - *Cutoff:* `filter.cutoff` × 2^(`cv.cutoff_amount`·CV), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient ramped in between. It acts on all voices together, not per voice.
+  - *Level:* the master gain is multiplied per sample by 10^(`cv.level_amount`·CV/20), before the soft limiter. No extra smoothing.
 - **`loop.beats`** is stored but unused by the audio; the app and the editor use it for grid slicing and for writing the loop as a note clip.
 - **Map swaps.** Exactly as the sampler and the drum machine; a pending hit survives only if the new map has a slice zone of its key at the same index that still matches its velocity.
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps.

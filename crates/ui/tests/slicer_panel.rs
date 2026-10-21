@@ -115,7 +115,7 @@ fn every_device_knob_is_on_the_panel() {
             .unwrap_or_else(|| panic!("no control for {p}"));
         assert!(panel.contains(v.view_to_rack(c)), "{p} outside the panel");
     }
-    assert_eq!(SLICER_PARAMS.len(), 9);
+    assert_eq!(SLICER_PARAMS.len(), 12);
 }
 
 #[test]
