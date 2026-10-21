@@ -350,6 +350,10 @@ pub fn plugin_channel(id: InstanceId) -> (DeviceEnd, ManagerEnd) {
             dropped: AtomicU64::new(0),
         }),
     };
+    // `std`'s mutex on Apple targets boxes its pthread mutex lazily on the first lock. `post`
+    // runs on the audio thread (a plugin may call back from `process`), so take the lock once
+    // here, off the audio thread, to make that allocation happen now (HI-1).
+    drop(messenger.inner.producer.lock());
     let slot = PluginSlot {
         inner: Arc::new(SlotInner {
             id,
