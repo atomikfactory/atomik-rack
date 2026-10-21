@@ -91,6 +91,22 @@ pub enum PluginMessage {
     },
 }
 
+/// Takes `m`'s lock once, so that its first real lock cannot allocate.
+///
+/// `std`'s mutex on Apple targets boxes its pthread mutex lazily on the first lock. A mutex that
+/// the audio thread may lock (a host callback a plugin makes from `process`) must be warmed here,
+/// off the audio thread, when it is created, or that first lock allocates inside the render path
+/// (HI-1). Use [`warmed`] where the mutex is built, or `warm` on one already built.
+pub fn warm<T>(m: &Mutex<T>) {
+    drop(m.lock());
+}
+
+/// `m`, with its lock already taken once: see [`warm`].
+pub fn warmed<T>(m: Mutex<T>) -> Mutex<T> {
+    warm(&m);
+    m
+}
+
 /// The sender side of the message ring, shared by every thread that may call a host callback.
 /// Posting never blocks: when the ring is full or another thread is posting at that instant,
 /// the message is dropped and counted.
@@ -350,10 +366,8 @@ pub fn plugin_channel(id: InstanceId) -> (DeviceEnd, ManagerEnd) {
             dropped: AtomicU64::new(0),
         }),
     };
-    // `std`'s mutex on Apple targets boxes its pthread mutex lazily on the first lock. `post`
-    // runs on the audio thread (a plugin may call back from `process`), so take the lock once
-    // here, off the audio thread, to make that allocation happen now (HI-1).
-    drop(messenger.inner.producer.lock());
+    // `post` runs on the audio thread (a plugin may call back from `process`): see `warm`.
+    warm(&messenger.inner.producer);
     let slot = PluginSlot {
         inner: Arc::new(SlotInner {
             id,
