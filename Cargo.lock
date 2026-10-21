@@ -590,6 +590,7 @@ dependencies = [
  "atomik-device-sdk",
  "atomik-devices",
  "atomik-dsp",
+ "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
  "parley",

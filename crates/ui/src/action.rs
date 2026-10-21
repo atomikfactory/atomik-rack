@@ -286,6 +286,9 @@ pub enum UiAction {
         /// (plugin param id, plain value).
         params: Vec<(u32, f32)>,
     },
+    /// A file browser request ([`crate::FileBrowserView`]); the app owns the disk, the
+    /// library database and the preview player.
+    Browse(BrowseAction),
 }
 
 /// What a context menu was opened on (see [`UiAction::ContextMenu`]).
@@ -350,4 +353,75 @@ pub enum TransportAction {
     ToggleRecord,
     /// Toggle the metronome click.
     ToggleMetronome,
+}
+
+/// Something the file browser shows in its list: a folder, or a library collection.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Place {
+    /// The contents of a folder (with sub-folders, or recursively when searching below it).
+    Folder(PathBuf),
+    /// Every favourite file.
+    Favorites,
+    /// Every file with this tag.
+    Tag(String),
+}
+
+/// A request from [`crate::FileBrowserView`] (see [`UiAction::Browse`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum BrowseAction {
+    /// Show this place in the list: list it on a worker, then call `set_location` and `set_rows`.
+    Show(Place),
+    /// Go to the parent of the current folder.
+    Parent,
+    /// List the current place again.
+    Refresh,
+    /// The sub-folders of this folder are needed for the tree (it was expanded): list them
+    /// on a worker and answer with `set_children`.
+    ListChildren(PathBuf),
+    /// Search below the current folder (true) or in it only (false). The query itself stays
+    /// in the view; when true the app streams matching candidates with `append_rows`.
+    SetRecursive(bool),
+    /// Auto-preview on selection changed (persist it).
+    SetAutoPreview(bool),
+    /// Start previewing this audio file (replaces any preview).
+    Preview(PathBuf),
+    /// Stop the preview.
+    StopPreview,
+    /// Toggle favourite on these files together (see `LibraryDb::toggle_favorite`).
+    ToggleFavorite(Vec<PathBuf>),
+    /// Tag these files.
+    AddTag {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// Tag name as typed (the app validates it with `atomik_library::Tag::new`).
+        tag: String,
+    },
+    /// Untag these files.
+    RemoveTag {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// Tag name.
+        tag: String,
+    },
+    /// Rename a tag everywhere.
+    RenameTag {
+        /// Current name.
+        from: String,
+        /// New name as typed.
+        to: String,
+    },
+    /// Delete a tag everywhere.
+    DeleteTag(String),
+    /// Bookmark a folder under Places.
+    AddPlace(PathBuf),
+    /// Remove a bookmark.
+    RemovePlace(PathBuf),
+    /// The pointer dragged these files past the drag threshold: the app takes the drag over
+    /// and delivers it to the pane under the pointer as a file hover/drop.
+    DragFiles(Vec<PathBuf>),
+    /// These visible audio rows have no `AudioInfo` yet: probe them (each path is requested
+    /// once until the rows are replaced).
+    RequestInfo(Vec<PathBuf>),
+    /// The panel width or tree/list split changed by a drag (persist them).
+    LayoutChanged,
 }
