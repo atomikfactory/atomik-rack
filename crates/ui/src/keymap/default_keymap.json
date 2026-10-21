@@ -24,6 +24,7 @@
         { "command": "create.audio_track", "context": "global", "chords": ["Cmd+T"] },
         { "command": "create.mixer_channel", "context": "global", "chords": ["Cmd+Shift+M"] },
         { "command": "view.toggle_browser", "context": "global", "chords": ["F3", "Cmd+F", "Cmd+B"], "os": { "mac": ["F3", "Cmd+F", "Cmd+B", "Cmd+Alt+Digit3"] } },
+        { "command": "view.toggle_file_browser", "context": "global", "chords": ["F4"], "os": { "mac": ["F4", "Cmd+Alt+Digit4"] } },
         { "command": "view.focus_browser_search", "context": "global", "chords": ["Cmd+Shift+F"] },
         { "command": "view.toggle_console", "context": "global", "chords": ["F5"], "os": { "mac": ["F5", "Cmd+Alt+Digit5"] } },
         { "command": "view.maximise_console", "context": "global", "chords": ["Shift+F5"] },
@@ -91,7 +92,22 @@
         { "command": "browser.move_up", "context": "browser", "chords": ["Up"] },
         { "command": "browser.move_down", "context": "browser", "chords": ["Down"] },
         { "command": "browser.create", "context": "browser", "chords": ["Return"] },
-        { "command": "browser.cancel", "context": "browser", "chords": ["Escape"] }
+        { "command": "browser.cancel", "context": "browser", "chords": ["Escape"] },
+        { "command": "files.up", "context": "files", "chords": ["Up"] },
+        { "command": "files.down", "context": "files", "chords": ["Down"] },
+        { "command": "files.left", "context": "files", "chords": ["Left"] },
+        { "command": "files.right", "context": "files", "chords": ["Right"] },
+        { "command": "files.page_up", "context": "files", "chords": ["PageUp"] },
+        { "command": "files.page_down", "context": "files", "chords": ["PageDown"] },
+        { "command": "files.home", "context": "files", "chords": ["Home"] },
+        { "command": "files.end", "context": "files", "chords": ["End"] },
+        { "command": "files.open", "context": "files", "chords": ["Return"] },
+        { "command": "files.stop", "context": "files", "chords": ["Escape"] },
+        { "command": "files.toggle_preview", "context": "files", "chords": ["Space"] },
+        { "command": "files.parent", "context": "files", "chords": ["Backspace", "Alt+Up"] },
+        { "command": "files.favorite", "context": "files", "chords": ["F"] },
+        { "command": "files.search", "context": "files", "chords": ["Cmd+F"] },
+        { "command": "files.select_all", "context": "files", "chords": ["Cmd+A"] }
       ]
     },
     {
@@ -110,6 +126,7 @@
         { "command": "view.zoom_out", "context": "global", "chords": ["Cmd+-"] },
         { "command": "view.zoom_reset", "context": "global", "chords": ["Cmd+0"] },
         { "command": "view.toggle_browser", "context": "global", "chords": ["Cmd+B"] },
+        { "command": "view.toggle_file_browser", "context": "global", "chords": ["F4"] },
         { "command": "view.toggle_flip", "context": "global", "chords": ["Tab"] },
         { "command": "view.toggle_console", "context": "global", "chords": ["F5"] },
         { "command": "view.maximise_console", "context": "global", "chords": ["Shift+F5"] },
@@ -136,7 +153,22 @@
         { "command": "editor.octave_up", "context": "editor", "chords": ["Shift+Up"] },
         { "command": "editor.octave_down", "context": "editor", "chords": ["Shift+Down"] },
         { "command": "editor.nudge_left", "context": "editor", "chords": ["Left"] },
-        { "command": "editor.nudge_right", "context": "editor", "chords": ["Right"] }
+        { "command": "editor.nudge_right", "context": "editor", "chords": ["Right"] },
+        { "command": "files.up", "context": "files", "chords": ["Up"] },
+        { "command": "files.down", "context": "files", "chords": ["Down"] },
+        { "command": "files.left", "context": "files", "chords": ["Left"] },
+        { "command": "files.right", "context": "files", "chords": ["Right"] },
+        { "command": "files.page_up", "context": "files", "chords": ["PageUp"] },
+        { "command": "files.page_down", "context": "files", "chords": ["PageDown"] },
+        { "command": "files.home", "context": "files", "chords": ["Home"] },
+        { "command": "files.end", "context": "files", "chords": ["End"] },
+        { "command": "files.open", "context": "files", "chords": ["Return"] },
+        { "command": "files.stop", "context": "files", "chords": ["Escape"] },
+        { "command": "files.toggle_preview", "context": "files", "chords": ["Space"] },
+        { "command": "files.parent", "context": "files", "chords": ["Backspace", "Alt+Up"] },
+        { "command": "files.favorite", "context": "files", "chords": ["F"] },
+        { "command": "files.search", "context": "files", "chords": ["Cmd+F"] },
+        { "command": "files.select_all", "context": "files", "chords": ["Cmd+A"] }
       ]
     }
   ]

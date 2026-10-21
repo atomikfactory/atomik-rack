@@ -24,6 +24,7 @@ fn shell_with(os: Os, profile: Option<Profile>, settings: Option<PathBuf>) -> Sh
             in_window_menu: true,
             settings_path: settings,
             ui_state_path: None,
+            library_path: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));

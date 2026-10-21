@@ -658,6 +658,31 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         self.running.is_some()
     }
 
+    fn preview_start(
+        &mut self,
+        stream: atomik_engine::PreviewStream,
+        gain: f32,
+    ) -> Result<(), EngineError> {
+        // Without an engine the stream is dropped: its feed sees it abandoned.
+        match &mut self.running {
+            Some(r) => r.handle.preview_start(stream, gain),
+            None => Ok(()),
+        }
+    }
+
+    fn preview_stop(&mut self) -> Result<(), EngineError> {
+        match &mut self.running {
+            Some(r) => r.handle.preview_stop(),
+            None => Ok(()),
+        }
+    }
+
+    fn preview_active(&self) -> bool {
+        self.running
+            .as_ref()
+            .is_some_and(|r| r.handle.preview_active())
+    }
+
     fn engine_error(&self) -> Option<String> {
         self.status.error.clone()
     }

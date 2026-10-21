@@ -179,6 +179,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
             profile: None,
             in_window_menu: !cfg!(target_os = "macos"),
             ui_state_path: settings_path.as_deref().map(ui_state_path),
+            library_path: settings_path.as_deref().map(crate::ui_state::library_path),
             settings_path,
         },
     );
@@ -214,6 +215,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
         }
         if !shell.menu_state().console {
             shell.execute(AppCommand::ToggleConsole);
+        }
+    }
+    if let Some(folder) = &cli.file_browser {
+        if let Some(dir) = folder {
+            shell.core_mut().set_file_browser_folder(Some(dir.clone()));
+        }
+        if !shell.menu_state().file_browser {
+            shell.execute(AppCommand::ToggleFileBrowser);
         }
     }
     if cli.play {
@@ -299,6 +308,7 @@ impl App {
             return;
         }
         self.stopped = true;
+        self.shell.shutdown();
         self.shell.poll_status();
         eprintln!("atomik: at exit: {}", self.shell.status_text());
         // MIDI, stream, then the engine, all dropped here on the UI thread; then the plugins

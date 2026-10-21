@@ -224,6 +224,7 @@ dependencies = [
  "atomik-devices",
  "atomik-dsp",
  "atomik-engine",
+ "atomik-library",
  "atomik-midi-io",
  "atomik-model",
  "atomik-plugin-host",

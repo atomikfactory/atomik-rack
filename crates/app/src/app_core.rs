@@ -82,6 +82,8 @@ pub enum Pane {
     ContainerEditor,
     /// The plugin parameter pane (in place of the arrangement).
     PluginParams,
+    /// The file browser, docked on the left of the window.
+    FileBrowser,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 32;
@@ -234,6 +236,8 @@ pub struct AppCore<S: EngineSink> {
     /// The plugin parameter pane and whether it is shown.
     plugin_params: PluginParamsView,
     plugin_params_open: bool,
+    file_browser: atomik_ui::FileBrowserView,
+    browser: browser::BrowserState,
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
@@ -352,6 +356,8 @@ impl<S: EngineSink> AppCore<S> {
             fx_meter_seq: BTreeMap::new(),
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             plugin_params: PluginParamsView::new(theme),
+            file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
+            browser: browser::BrowserState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
             piano_clip: None,
@@ -533,6 +539,7 @@ impl<S: EngineSink> AppCore<S> {
                 on,
             } => self.audition_velocity(&device, key, velocity, on),
             UiAction::Transport(t) => self.transport_action(t),
+            UiAction::Browse(b) => self.browse(b),
             UiAction::Audition { device, key, on } => self.audition(&device, key, on),
             a @ (UiAction::OpenPluginGui { .. }
             | UiAction::OpenPluginParams { .. }
@@ -577,6 +584,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SeqEditor => self.seq_editor.handle(event, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.handle(event, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
+            Pane::FileBrowser => self.file_browser.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -791,6 +799,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_device_meters();
         self.sync_io_host();
         self.feed_io_meters();
+        self.browser_frame();
     }
 
     /// Feeds the rack view the values every metered effect publishes
@@ -1351,6 +1360,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SeqEditor => self.seq_editor.paint(canvas, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.paint(canvas, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
+            Pane::FileBrowser => self.file_browser.paint(canvas),
         }
     }
 
@@ -1753,6 +1763,9 @@ mod create_ops;
 #[path = "app_core_io.rs"]
 mod io_ops;
 
+#[path = "app_core_browser.rs"]
+mod browser;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
@@ -1837,3 +1850,7 @@ mod create_tests;
 #[cfg(test)]
 #[path = "app_core_starter_tests.rs"]
 mod starter_tests;
+
+#[cfg(test)]
+#[path = "app_core_browser_tests.rs"]
+mod browser_tests;
