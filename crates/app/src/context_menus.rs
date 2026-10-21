@@ -19,6 +19,10 @@ pub struct MenuEnable {
     pub join: bool,
     /// Arrangement: a selected clip is a note clip (Open in the editor).
     pub open_clip: bool,
+    /// Arrangement: every selected clip is muted ("Unmute" instead of "Mute").
+    pub clips_muted: bool,
+    /// Piano roll: every selected note is muted ("Unmute Notes" instead of "Mute Notes").
+    pub notes_muted: bool,
     /// Rack: the selection is the Master Section alone: it cannot be cut, copied, duplicated
     /// or deleted.
     pub master_only: bool,
@@ -77,6 +81,12 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.open_clip", e.open_clip),
                 item("sequencer.split_at_playhead", true),
                 item("sequencer.join", e.join),
+                Spec::Separator,
+                item("sequencer.toggle_mute", e.selection).labelled(if e.clips_muted {
+                    "Unmute"
+                } else {
+                    "Mute"
+                }),
             ]);
             v
         }
@@ -90,6 +100,11 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             v.extend([
                 Spec::Separator,
                 item("editor.quantize", e.selection),
+                item("editor.toggle_note_mute", e.selection).labelled(if e.notes_muted {
+                    "Unmute Notes"
+                } else {
+                    "Mute Notes"
+                }),
                 item("edit.select_all", true),
             ]);
             v
@@ -225,5 +240,56 @@ mod tests {
         e.open_clip = true;
         let list = ids(ContextTarget::Clip, &e);
         assert!(on(&list, "sequencer.join") && on(&list, "sequencer.open_clip"));
+    }
+
+    fn labels(target: ContextTarget, e: &MenuEnable) -> Vec<(&'static str, Option<&'static str>)> {
+        specs(target, e)
+            .into_iter()
+            .filter_map(|s| match s {
+                Spec::Item { command, label, .. } => Some((command, label)),
+                Spec::Separator => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_clip_menu_labels_the_mute_item_by_the_toggle_result() {
+        let mut e = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        let find = |e: &MenuEnable| {
+            labels(ContextTarget::Clip, e)
+                .into_iter()
+                .find(|(c, _)| *c == "sequencer.toggle_mute")
+                .unwrap()
+                .1
+        };
+        assert_eq!(find(&e), Some("Mute"));
+        e.clips_muted = true;
+        assert_eq!(find(&e), Some("Unmute"));
+        assert!(
+            ids(ContextTarget::Clip, &MenuEnable::default())
+                .contains(&("sequencer.toggle_mute", false)),
+            "disabled without a selection"
+        );
+    }
+
+    #[test]
+    fn the_notes_menu_labels_the_mute_item_by_the_toggle_result() {
+        let mut e = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        let find = |e: &MenuEnable| {
+            labels(ContextTarget::Notes, e)
+                .into_iter()
+                .find(|(c, _)| *c == "editor.toggle_note_mute")
+                .unwrap()
+                .1
+        };
+        assert_eq!(find(&e), Some("Mute Notes"));
+        e.notes_muted = true;
+        assert_eq!(find(&e), Some("Unmute Notes"));
     }
 }

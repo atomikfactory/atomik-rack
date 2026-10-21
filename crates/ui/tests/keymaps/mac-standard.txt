@@ -20,6 +20,7 @@ editor.nudge_right | editor | Cmd+Right
 editor.octave_down | editor | Cmd+Shift+Down
 editor.octave_up | editor | Cmd+Shift+Up
 editor.quantize | editor | Cmd+K
+editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Cmd+Down
 editor.transpose_up | editor | Cmd+Up
 file.import_audio | global | Cmd+Opt+I
@@ -58,6 +59,7 @@ sequencer.select_prev_track | sequencer | Up
 sequencer.snap_toggle | sequencer | S
 sequencer.snap_toggle | editor | S
 sequencer.split_at_playhead | sequencer | Opt+X
+sequencer.toggle_mute | sequencer | M
 sequencer.zoom_selection | sequencer | Z
 sequencer.zoom_selection | editor | Z
 tool.eraser | sequencer | E

@@ -578,6 +578,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.toggle_mute",
         ]
     );
     let enabled = |id: &str| items.iter().find(|(c, _, _)| c == id).unwrap().2;
@@ -790,6 +791,7 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "edit.duplicate",
             "edit.delete",
             "editor.quantize",
+            "editor.toggle_note_mute",
             "edit.select_all"
         ]
     );
@@ -801,6 +803,100 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
         .unwrap();
     click(&mut s, item, Modifiers::NONE);
     assert_eq!(s.core().piano_roll().selected_notes(), vec![0]);
+}
+
+#[test]
+fn the_clip_menu_mutes_and_unmutes_the_selection_with_a_label_that_follows() {
+    let mut s = with_clips();
+    let r = s.core().arrangement().clip_rect(ClipId(1)).unwrap();
+    let items = open_menu(&mut s, r.center());
+    let label = |s: &Shell<NullBackend>| {
+        s.context_menu()
+            .unwrap()
+            .items()
+            .find(|i| i.command == "sequencer.toggle_mute")
+            .unwrap()
+            .label
+            .clone()
+    };
+    let _ = items;
+    assert_eq!(label(&s), "Mute");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("sequencer.toggle_mute")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    let muted = |s: &Shell<NullBackend>| s.core().doc().song.clip(ClipId(1)).unwrap().2.muted;
+    assert!(muted(&s));
+    assert_eq!(s.core().arrangement().selected_clips(), vec![ClipId(1)]);
+    open_menu(&mut s, r.center());
+    assert_eq!(label(&s), "Unmute");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("sequencer.toggle_mute")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(!muted(&s));
+}
+
+#[test]
+fn the_notes_menu_mutes_the_selected_notes_and_says_unmute_afterwards() {
+    let mut s = with_clips();
+    s.core_mut().open_piano_roll(ClipId(1));
+    s.set_focus(Pane::PianoRoll);
+    s.core_mut().piano_roll_mut().set_selected_notes(&[0]);
+    let roll = s.core().piano_roll();
+    let top = s.layout().song.unwrap().y0;
+    let at = Point::new(roll.tick_to_x(3 * 15_360), top + 160.0);
+    let label = |s: &Shell<NullBackend>| {
+        s.context_menu()
+            .unwrap()
+            .items()
+            .find(|i| i.command == "editor.toggle_note_mute")
+            .unwrap()
+            .label
+            .clone()
+    };
+    let items = open_menu(&mut s, at);
+    let _ = items;
+    assert_eq!(label(&s), "Mute Notes");
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center("editor.toggle_note_mute")
+        .unwrap();
+    click(&mut s, item, Modifiers::NONE);
+    assert_eq!(
+        s.core()
+            .piano_roll()
+            .notes()
+            .iter()
+            .filter(|n| n.muted)
+            .count(),
+        1
+    );
+    assert!(s.core().piano_roll().notes()[0].muted);
+    open_menu(&mut s, at);
+    assert_eq!(label(&s), "Unmute Notes");
+}
+
+#[test]
+fn m_mutes_the_selected_clips_and_undo_restores_them() {
+    let mut s = with_clips();
+    s.set_focus(Pane::Arrangement);
+    s.core_mut()
+        .arrangement_mut()
+        .set_selected_clips(&[ClipId(1)]);
+    let muted = |s: &Shell<NullBackend>| s.core().doc().song.clip(ClipId(1)).unwrap().2.muted;
+    tap(&mut s, Os::Windows, "M");
+    assert!(muted(&s));
+    tap(&mut s, Os::Windows, "M");
+    assert!(!muted(&s));
+    tap(&mut s, Os::Windows, "M");
+    tap(&mut s, Os::Windows, "Cmd+Z");
+    assert!(!muted(&s), "one undo step");
 }
 
 // ------------------------------------------------------------------ random gestures

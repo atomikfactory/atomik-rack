@@ -390,3 +390,51 @@ fn right_click_on_the_grid_asks_for_the_notes_menu() {
         "{a:?}"
     );
 }
+
+// ------------------------------------------------------------------ note mute
+
+#[test]
+fn toggle_note_mute_flips_only_the_selected_notes_in_one_command() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[0, 2]);
+    let before = v.notes().to_vec();
+    let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
+    let sets = notes_of(out.actions());
+    assert_eq!(sets.len(), 1, "one SetClipContent, one undo step");
+    let got = &sets[0];
+    assert_eq!(got.len(), before.len());
+    for (i, n) in got.iter().enumerate() {
+        assert_eq!(n.muted, i == 0 || i == 2, "note {i}");
+        assert_eq!(
+            (n.tick, n.length, n.key),
+            (before[i].tick, before[i].length, before[i].key)
+        );
+        assert_eq!(n.velocity, before[i].velocity);
+    }
+}
+
+#[test]
+fn toggle_note_mute_unmutes_a_muted_selection_and_is_quiet_without_one() {
+    let (mut v, mut doc, reg) = setup();
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if let ClipContent::Notes(ns) = &mut c.content
+                    && c.id == ClipId(1)
+                {
+                    for n in ns.iter_mut() {
+                        n.muted = true;
+                    }
+                }
+            }
+        }
+    }
+    v.sync(&doc, &reg);
+    v.set_selected_notes(&[1]);
+    let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
+    let got = &notes_of(out.actions())[0];
+    assert!(!got[1].muted && got[0].muted && got[2].muted);
+    v.set_selected_notes(&[]);
+    let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
+    assert_eq!(out, CommandOutcome::Handled(vec![]));
+}

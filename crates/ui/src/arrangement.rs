@@ -52,6 +52,10 @@ pub const LANE_HEIGHT: f64 = 52.0;
 /// Height of an "add track" row.
 pub const ADD_ROW_HEIGHT: f64 = 28.0;
 const CLIP_HEADER: f64 = 12.0;
+/// Side of the mute button at the right end of a clip header.
+const MUTE_BUTTON: f64 = 10.0;
+/// Space the fade-out handle of an audio clip takes at the right end of the header.
+const AUDIO_HANDLE_INSET: f64 = 12.0;
 const EDGE_PX: f64 = 6.0;
 const DRAG_THRESHOLD: f64 = 3.0;
 const POINT_RADIUS: f64 = 6.0;
@@ -157,6 +161,8 @@ enum ClipPart {
     FadeIn,
     FadeOut,
     Gain,
+    /// The mute button in the header strip.
+    Mute,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -676,6 +682,18 @@ impl ArrangementView {
         let (track, lane, clip) = self.find_clip(id)?;
         let row = self.row_of(track, lane)?;
         Some(self.clip_rect_in(self.row_rect(row), clip))
+    }
+
+    fn is_audio(&self, id: ClipId) -> bool {
+        self.find_clip(id)
+            .is_some_and(|(_, _, c)| matches!(c.content, ClipContent::Audio(_)))
+    }
+
+    /// Centre of a clip's header mute button, `None` when the clip is hidden or too narrow
+    /// to show one.
+    pub fn mute_button_center(&self, id: ClipId) -> Option<Point> {
+        let r = self.clip_rect(id)?;
+        Some(mute_button_rect(r, self.timeline_rect(), self.is_audio(id))?.center())
     }
 
     /// Centre of a track header control.
@@ -1209,6 +1227,16 @@ impl ArrangementView {
                             };
                         }
                     }
+                    if mute_button_rect(r, tl, matches!(clip.content, ClipContent::Audio(_)))
+                        .is_some_and(|b| b.contains(pos))
+                    {
+                        return Hit::Clip {
+                            track,
+                            lane,
+                            id,
+                            part: ClipPart::Mute,
+                        };
+                    }
                     if let Some(part) = self.audio_handle_at(pos, r, clip, tl) {
                         return Hit::Clip {
                             track,
@@ -1615,6 +1643,13 @@ impl ArrangementView {
         };
         let clip = clip.clone();
         let primary = button == PointerButton::Primary;
+        if part == ClipPart::Mute {
+            // The button acts on its own clip only: no selection change, no drag, any tool.
+            if primary {
+                out.push(mute_cmd(vec![id], !clip.muted));
+            }
+            return;
+        }
         if primary {
             match self.vp.effective_tool(modifiers) {
                 Tool::Razor => {
@@ -2350,6 +2385,16 @@ impl ArrangementView {
                 let only: Option<Vec<ClipId>> = (!self.selection.is_empty())
                     .then(|| self.selected_in_order().iter().map(|c| c.id).collect());
                 CommandOutcome::Handled(self.split_all_at_in(at, only.as_deref()))
+            }
+            "sequencer.toggle_mute" => {
+                let clips = self.selected_in_order();
+                if clips.is_empty() {
+                    return CommandOutcome::Handled(Vec::new());
+                }
+                // Any unmuted target mutes them all; only an all-muted selection unmutes.
+                let muted = clips.iter().any(|c| !c.muted);
+                let ids = clips.iter().map(|c| c.id).collect();
+                CommandOutcome::Handled(vec![mute_cmd(ids, muted)])
             }
             "sequencer.open_clip" => {
                 let first = self
@@ -3113,6 +3158,7 @@ impl ArrangementView {
                 c.fill_with(notch, st.base.plate);
             }
         }
+        let button = mute_button_rect(r, tl, matches!(clip.content, ClipContent::Audio(_)));
         if vis.width() > 34.0 {
             // Audio clips keep the label clear of the fade-in handle.
             let x = vis.x0.max(tl.x0)
@@ -3125,8 +3171,16 @@ impl ArrangementView {
                 ClipContent::Automation(_) => param.name,
                 ClipContent::Notes(_) | ClipContent::Audio(_) => name,
             };
-            let text = fit_label(label, vis.x1 - x - 4.0, 8.0);
+            let right = button.map_or(vis.x1, |b| b.x0);
+            let text = fit_label(label, right - x - 4.0, 8.0);
             c.text(&TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.plate).weight(700));
+        }
+        if let Some(b) = button {
+            let hover = matches!(
+                &self.hover,
+                Some(Hit::Clip { id, part: ClipPart::Mute, .. }) if *id == clip.id
+            );
+            self.paint_mute_button(c, b, clip.muted, hover);
         }
         c.pop_clip();
         let (w, col) = if selected {
@@ -3135,6 +3189,28 @@ impl ArrangementView {
             (1.0, st.base.bevel_dark)
         };
         c.stroke_with(RoundedRect::from_rect(vis, 3.0), w, col);
+    }
+
+    /// The "M" toggle of a clip header: lit when the clip itself is muted.
+    fn paint_mute_button(&self, c: &mut dyn Canvas, b: Rect, on: bool, hover: bool) {
+        let st = &self.st;
+        let shape = RoundedRect::from_rect(b, 2.0);
+        if on {
+            c.fill_with(shape, st.base.highlight);
+        } else {
+            let a = if hover { 0.45 } else { 0.22 };
+            c.fill_with(shape, st.base.plate.with_alpha(a));
+        }
+        let ink = if on { st.base.plate } else { st.base.text };
+        c.text(
+            &TextRun::new(
+                "M",
+                pt(b.x0 + 2.2, b.y1 - 2.2),
+                8.0,
+                ink.with_alpha(if on { 1.0 } else { 0.8 }),
+            )
+            .weight(700),
+        );
     }
 
     fn point_positions_for(
@@ -3628,6 +3704,26 @@ fn find_clip(song: &Song, id: ClipId) -> Option<(usize, usize, &Clip)> {
 
 fn workflow_cmd(c: WorkflowCommand) -> UiAction {
     UiAction::Command(Command::Workflow(c))
+}
+
+/// The mute button of a clip header at the right end of the visible strip, `None` when the
+/// clip is narrower than three buttons (it would cover the label and the edge handle).
+fn mute_button_rect(r: Rect, tl: Rect, audio: bool) -> Option<Rect> {
+    // Audio clips keep the top-right corner for the fade-out handle.
+    let right = r.x1.min(tl.x1) - if audio { AUDIO_HANDLE_INSET } else { 0.0 };
+    if r.width() < 3.0 * MUTE_BUTTON || right - r.x0.max(tl.x0) < 3.0 * MUTE_BUTTON {
+        return None;
+    }
+    Some(Rect::new(
+        right - 2.0 - MUTE_BUTTON,
+        r.y0 + 1.0,
+        right - 2.0,
+        r.y0 + 1.0 + MUTE_BUTTON,
+    ))
+}
+
+fn mute_cmd(ids: Vec<ClipId>, muted: bool) -> UiAction {
+    workflow_cmd(WorkflowCommand::SetClipsMuted { ids, muted })
 }
 
 fn song_cmd(c: SongCommand) -> UiAction {
