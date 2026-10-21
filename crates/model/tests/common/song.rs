@@ -16,12 +16,7 @@ pub fn sc(c: SongCommand) -> Command {
 }
 
 pub fn note(tick: i64, length: i64, key: u8, velocity: f32) -> Note {
-    Note {
-        tick,
-        length,
-        key,
-        velocity,
-    }
+    Note::new(tick, length, key, velocity)
 }
 
 pub fn point(tick: i64, value: f32, curve: Curve) -> AutomationPoint {

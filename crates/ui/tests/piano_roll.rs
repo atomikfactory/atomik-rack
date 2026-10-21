@@ -98,12 +98,7 @@ fn clicking_empty_space_draws_a_snapped_note_and_auditions_it() {
     assert!(merge.is_some());
     assert_valid(notes);
     assert_eq!(notes.len(), 17);
-    let added = Note {
-        tick: 2 * PPQ + PPQ / 4,
-        length: PPQ / 4,
-        key: 50,
-        velocity: 0.8,
-    };
+    let added = Note::new(2 * PPQ + PPQ / 4, PPQ / 4, 50, 0.8);
     let i = notes.iter().position(|n| *n == added).expect("new note");
     assert_eq!(v.selected_notes(), vec![i]);
     assert_eq!(auditions(&a), vec![(50, true)]);

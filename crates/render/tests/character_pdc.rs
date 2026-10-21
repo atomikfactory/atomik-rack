@@ -116,12 +116,7 @@ impl Builder {
             device: key(device),
         }));
         let notes = (0..bars * 4)
-            .map(|b| Note {
-                tick: b * PPQ,
-                length: PPQ / 8,
-                key: 84,
-                velocity: 1.0,
-            })
+            .map(|b| Note::new(b * PPQ, PPQ / 8, 84, 1.0))
             .collect();
         self.apply(Command::Song(SongCommand::AddClip {
             device: key(device),

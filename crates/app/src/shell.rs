@@ -1790,6 +1790,15 @@ impl<B: AudioBackend> Shell<B> {
                 .primary()
                 .is_some_and(|d| doc.song.track(&d).is_some()),
             join: clips.len() >= 2,
+            clips_muted: !clips.is_empty()
+                && clips
+                    .iter()
+                    .all(|id| doc.song.clip(*id).is_some_and(|(_, _, c)| c.muted)),
+            notes_muted: {
+                let sel = core.piano_roll().selected_notes();
+                let notes = core.piano_roll().notes();
+                !sel.is_empty() && sel.iter().all(|i| notes.get(*i).is_some_and(|n| n.muted))
+            },
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)

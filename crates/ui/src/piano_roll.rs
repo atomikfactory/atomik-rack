@@ -495,7 +495,8 @@ impl PianoRollView {
 
     // ------------------------------------------------------------------ geometry
 
-    fn notes(&self) -> &[Note] {
+    /// The notes of the open clip, sorted (empty when none is open).
+    pub fn notes(&self) -> &[Note] {
         match self.clip.as_ref().map(|c| &c.content) {
             Some(ClipContent::Notes(n)) => n,
             _ => &[],
@@ -781,12 +782,12 @@ impl PianoRollView {
                 }
                 let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
                 let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
-                let note = seq_edit::clamp_note(Note {
+                let note = seq_edit::clamp_note(Note::new(
                     tick,
                     length,
-                    key: self.key_at(pos.y),
-                    velocity: DEFAULT_VELOCITY,
-                });
+                    self.key_at(pos.y),
+                    DEFAULT_VELOCITY,
+                ));
                 let base = self.notes().to_vec();
                 let merge = self.merge_id();
                 let (list, sel) = with_note(&base, note);
@@ -1219,6 +1220,28 @@ impl PianoRollView {
                 self.quantize(&mut out);
                 CommandOutcome::Handled(out)
             }
+            "editor.toggle_note_mute" => {
+                let sel = self.selection.items().clone();
+                if sel.is_empty() {
+                    return CommandOutcome::Handled(Vec::new());
+                }
+                let notes: Vec<Note> = self
+                    .notes()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        if sel.contains(&i) {
+                            Note {
+                                muted: !n.muted,
+                                ..*n
+                            }
+                        } else {
+                            *n
+                        }
+                    })
+                    .collect();
+                CommandOutcome::Handled(self.content(notes, None).into_iter().collect())
+            }
             "editor.transpose_up" => self.move_selection(0, 1),
             "editor.transpose_down" => self.move_selection(0, -1),
             "editor.octave_up" => self.move_selection(0, 12),
@@ -1436,11 +1459,13 @@ impl PianoRollView {
             let base = if selected { st.selection } else { self.accent };
             let fill = mix(mix(base, st.lane, 0.45), base, n.velocity);
             let rr = RoundedRect::from_rect(Rect::new(r.x0, r.y0, r.x1.max(r.x0 + 2.0), r.y1), 2.0);
-            c.fill_with(rr, fill);
-            let (w, col) = if selected {
-                (1.5, st.base.text)
-            } else {
-                (1.0, st.base.bevel_dark)
+            // A muted note is hollow: a faint fill inside a clear outline in the note colour,
+            // which velocity shading (a solid fill) never produces.
+            c.fill_with(rr, if n.muted { fill.with_alpha(0.22) } else { fill });
+            let (w, col) = match (selected, n.muted) {
+                (true, _) => (1.5, st.base.text),
+                (false, true) => (1.0, base.with_alpha(0.85)),
+                (false, false) => (1.0, st.base.bevel_dark),
             };
             c.stroke_with(rr, w, col);
         }
@@ -1593,8 +1618,12 @@ impl PianoRollView {
             let col = if selected { st.selection } else { self.accent };
             let y = top + (1.0 - f64::from(n.velocity)) * h;
             let bottom = top + h;
-            c.fill_with(Rect::new(x - 1.0, y, x + 1.0, bottom), col.with_alpha(0.85));
-            c.fill_with(Rect::new(x - 3.0, y - 1.5, x + 3.0, y + 1.5), col);
+            let (bar, cap) = if n.muted { (0.25, 0.4) } else { (0.85, 1.0) };
+            c.fill_with(Rect::new(x - 1.0, y, x + 1.0, bottom), col.with_alpha(bar));
+            c.fill_with(
+                Rect::new(x - 3.0, y - 1.5, x + 3.0, y + 1.5),
+                col.with_alpha(cap),
+            );
         }
         sp::line(c, vr.x0, vr.y0 + 0.5, vr.x1, vr.y0 + 0.5, st.separator);
         c.pop_clip();

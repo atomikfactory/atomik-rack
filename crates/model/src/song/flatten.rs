@@ -116,8 +116,8 @@ pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
         let from = notes.partition_point(|n| n.tick < cs);
         for n in notes[from..].iter().take_while(|n| n.tick < ce) {
             let tick = clip.grid.map_or(n.tick, |g| g.swung(n.tick));
-            if tick >= ce {
-                continue; // swung out of the piece
+            if n.muted || tick >= ce {
+                continue; // muted, or swung out of the piece
             }
             let t = s + (tick - cs);
             out.push((t, n.length.min(e - t), n.key, n.velocity));

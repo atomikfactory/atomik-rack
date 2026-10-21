@@ -60,12 +60,7 @@ fn note_clip(start: i64, notes: &[(i64, u8)]) -> Clip {
         content: ClipContent::Notes(
             notes
                 .iter()
-                .map(|&(tick, key)| Note {
-                    tick,
-                    length: PPQ / 2,
-                    key,
-                    velocity: 0.8,
-                })
+                .map(|&(tick, key)| Note::new(tick, PPQ / 2, key, 0.8))
                 .collect(),
         ),
     }

@@ -233,6 +233,7 @@ pub fn clamp_note(n: Note) -> Note {
         length: n.length.max(1),
         key: n.key.min(MAX_KEY),
         velocity,
+        ..n
     }
 }
 
@@ -450,12 +451,7 @@ mod tests {
     }
 
     fn note(tick: i64, key: u8) -> Note {
-        Note {
-            tick,
-            length: PPQ,
-            key,
-            velocity: 0.8,
-        }
+        Note::new(tick, PPQ, key, 0.8)
     }
 
     fn set(v: &[usize]) -> BTreeSet<usize> {
@@ -625,12 +621,7 @@ mod tests {
 
     #[test]
     fn notes_are_clamped_and_sorted_with_tracking() {
-        let bad = Note {
-            tick: -5,
-            length: 0,
-            key: 200,
-            velocity: 1.5,
-        };
+        let bad = Note::new(-5, 0, 200, 1.5);
         let c = clamp_note(bad);
         assert_eq!((c.tick, c.length, c.key), (0, 1, MAX_KEY));
         assert!((c.velocity - 1.0).abs() < 1e-9);

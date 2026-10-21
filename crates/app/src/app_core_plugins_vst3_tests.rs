@@ -183,12 +183,7 @@ fn a_vst3_effect_and_a_clap_effect_sound_the_same_on_a_console_insert() {
                     loop_length: None,
                     muted: false,
                     grid: None,
-                    content: ClipContent::Notes(vec![Note {
-                        tick: 0,
-                        length: 2 * PPQ,
-                        key: 60,
-                        velocity: 0.8,
-                    }]),
+                    content: ClipContent::Notes(vec![Note::new(0, 2 * PPQ, 60, 0.8)]),
                 },
             }),
         );

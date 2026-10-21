@@ -205,12 +205,7 @@ pub fn demo_doc() -> RackDoc {
     b.connect(("arp", "notes_out"), ("voice", "notes_in"));
     b.apply(Command::Song(SongCommand::AddTrack { device: key("arp") }));
     let length = BARS * BAR;
-    let chord = [57u8, 60, 64].map(|k| Note {
-        tick: 0,
-        length,
-        key: k,
-        velocity: 0.8,
-    });
+    let chord = [57u8, 60, 64].map(|k| Note::new(0, length, k, 0.8));
     b.apply(Command::Song(SongCommand::AddClip {
         device: key("arp"),
         lane: 0,
@@ -287,7 +282,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     let again = load_project(&save_project(&doc), &registry).unwrap();
     assert_eq!(again, doc);
-    assert!(text.contains("\"version\": 9"));
+    assert!(text.contains("\"version\": 10"));
 }
 
 #[test]

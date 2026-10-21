@@ -136,14 +136,7 @@ mod tests {
 
     fn notes(n: usize, span: i64) -> ClipboardData {
         ClipboardData::Notes(NoteSnapshot {
-            notes: (0..n)
-                .map(|i| Note {
-                    tick: i as i64,
-                    length: 1,
-                    key: 60,
-                    velocity: 0.5,
-                })
-                .collect(),
+            notes: (0..n).map(|i| Note::new(i as i64, 1, 60, 0.5)).collect(),
             span,
         })
     }

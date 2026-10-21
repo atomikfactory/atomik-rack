@@ -70,6 +70,7 @@
 use crate::action::UiAction;
 use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::keymap::CommandOutcome;
 use crate::seq_edit;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -460,6 +461,18 @@ impl StepEditorView {
             .filter(|n| n.key == key && in_cell(n.tick, step, s))
             .map(|n| n.velocity)
             .fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.max(v))))
+    }
+
+    /// Whether a cell is on and every note starting in it is muted.
+    pub fn cell_muted(&self, pad: u8, step: u16) -> bool {
+        let key = pad_key(pad);
+        let s = self.step_ticks();
+        let mut inside = self
+            .notes()
+            .iter()
+            .filter(|n| n.key == key && in_cell(n.tick, step, s))
+            .peekable();
+        inside.peek().is_some() && inside.all(|n| n.muted)
     }
 
     /// Number of notes the grid does not show (key outside the pads, tick outside the grid).
@@ -1184,6 +1197,44 @@ impl StepEditorView {
         self.clamp_scrolls();
     }
 
+    /// Runs a registry command the shell offers to this view. `editor.toggle_note_mute`
+    /// toggles the notes of the cell under the pointer (the grid has no selection): all muted
+    /// becomes unmuted, else all become muted; one `SetClipContent`. No on cell under the
+    /// pointer is a quiet no-op; any other command is declined.
+    pub fn command(
+        &mut self,
+        id: &str,
+        _arg: Option<&str>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> CommandOutcome {
+        if id != "editor.toggle_note_mute" {
+            return CommandOutcome::Declined;
+        }
+        self.sync(doc, registry);
+        let Hit::Cell(pad, step) = self.hover else {
+            return CommandOutcome::Handled(Vec::new());
+        };
+        if self.cell_velocity(pad, step).is_none() {
+            return CommandOutcome::Handled(Vec::new());
+        }
+        let (key, s) = (pad_key(pad), self.step_ticks());
+        let muted = !self.cell_muted(pad, step);
+        let notes: Vec<Note> = self
+            .notes()
+            .iter()
+            .map(|n| {
+                if n.key == key && in_cell(n.tick, step, s) {
+                    Note { muted, ..*n }
+                } else {
+                    *n
+                }
+            })
+            .collect();
+        self.repaint = true;
+        CommandOutcome::Handled(self.content(notes, None).into_iter().collect())
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
         if modifiers.command() {
@@ -1242,12 +1293,7 @@ fn cell_has(notes: &[Note], key: u8, step: u16, s: i64) -> bool {
 /// `notes` plus one note at the start of `step` (length one step), sorted like the piano roll.
 fn with_step(notes: &[Note], key: u8, step: u16, s: i64, velocity: f32) -> Vec<Note> {
     let mut list = notes.to_vec();
-    list.push(Note {
-        tick: i64::from(step) * s,
-        length: s,
-        key,
-        velocity,
-    });
+    list.push(Note::new(i64::from(step) * s, s, key, velocity));
     seq_edit::normalize_notes(list, &BTreeSet::new()).0
 }
 

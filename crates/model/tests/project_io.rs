@@ -237,7 +237,7 @@ fn save_writes_project_header_and_song() {
     let doc = demo(&reg);
     let v: Value = serde_json::from_str(&save_project(&doc)).unwrap();
     assert_eq!(v["format"], "atomik-project");
-    assert_eq!(v["version"], 9);
+    assert_eq!(v["version"], 10);
     assert_eq!(v["input_channels"], 0);
     assert_eq!(v["assets"], json!({}));
     assert_eq!(v["tempo_bpm"], 120);
@@ -367,7 +367,7 @@ fn load_rejects_bad_projects_with_paths() {
             "atomik-project",
         ),
         (
-            Box::new(|v| v["version"] = json!(10)),
+            Box::new(|v| v["version"] = json!(11)),
             "version".into(),
             "unsupported version",
         ),
@@ -914,7 +914,7 @@ fn ac_x6_v1_projects_migrate_losslessly() {
     assert_console_invariants(&doc);
     // Saved as version 6, it reads back identically.
     let v3 = save_project(&doc);
-    assert!(v3.contains("\"version\": 9,"));
+    assert!(v3.contains("\"version\": 10,"));
     assert_eq!(load_project(&v3, &reg).unwrap(), doc);
 }
 

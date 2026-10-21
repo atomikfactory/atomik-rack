@@ -271,12 +271,7 @@ pub fn demo_doc() -> RackDoc {
     ];
     let mut notes: Vec<Note> = score
         .iter()
-        .map(|&(beat, beats, k)| Note {
-            tick: beat * PPQ,
-            length: beats * PPQ,
-            key: k,
-            velocity: 0.8,
-        })
+        .map(|&(beat, beats, k)| Note::new(beat * PPQ, beats * PPQ, k, 0.8))
         .collect();
     notes.sort_by_key(|n| (n.tick, n.key));
     b.apply(Command::Song(SongCommand::AddClip {
@@ -435,7 +430,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 9"));
+    assert!(text.contains("\"version\": 10"));
     assert!(text.contains("\"inner\""));
 }
 

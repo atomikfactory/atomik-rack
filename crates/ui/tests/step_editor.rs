@@ -250,12 +250,7 @@ fn clicking_an_on_cell_removes_its_notes_and_nothing_else() {
 fn a_note_inside_a_step_but_not_on_its_start_counts_as_on_and_is_removed_with_it() {
     let mut clip = beat_clip();
     if let ClipContent::Notes(n) = &mut clip.content {
-        n.push(Note {
-            tick: 9 * S16 + 700,
-            length: 500,
-            key: pad_key(4),
-            velocity: 0.5,
-        });
+        n.push(Note::new(9 * S16 + 700, 500, pad_key(4), 0.5));
         n.sort_by_key(|n| (n.tick, n.key));
     }
     let (mut d, reg, mut v) = setup_with(drum_doc_with(Some(clip)), Some(CLIP));
@@ -509,12 +504,7 @@ fn shrinking_the_grid_never_deletes_notes() {
     clip.grid = Some(grid(StepResolution::Sixteenth, 32, 0));
     if let ClipContent::Notes(n) = &mut clip.content {
         n.push(step_note(20, 1, 0.5));
-        n.push(Note {
-            tick: 0,
-            length: 100,
-            key: 60,
-            velocity: 0.5,
-        });
+        n.push(Note::new(0, 100, 60, 0.5));
         n.sort_by_key(|n| (n.tick, n.key));
     }
     let (mut d, reg, mut v) = setup_with(drum_doc_with(Some(clip)), Some(CLIP));
@@ -988,7 +978,7 @@ proptest! {
         let mut doc = drum_doc();
         // A note the grid never shows (key 60 is no pad).
         if let ClipContent::Notes(n) = &mut doc.song.tracks[0].lanes[0].clips[0].content {
-            n.push(Note { tick: 5, length: 10, key: 60, velocity: 0.5 });
+            n.push(Note::new(5, 10, 60, 0.5));
             n.sort_by_key(|n| (n.tick, n.key));
         }
         let mut v = editor(&doc, &reg, Some(CLIP));

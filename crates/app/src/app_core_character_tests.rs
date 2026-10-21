@@ -104,12 +104,7 @@ fn track<S: EngineSink>(c: &mut AppCore<S>, device: &str, beats: i64, k: u8) {
     }))
     .unwrap();
     let notes = (0..beats)
-        .map(|b| Note {
-            tick: b * PPQ,
-            length: PPQ / 2,
-            key: k,
-            velocity: 0.9,
-        })
+        .map(|b| Note::new(b * PPQ, PPQ / 2, k, 0.9))
         .collect();
     c.apply_command(Command::Song(SongCommand::AddClip {
         device: key(device),

@@ -133,6 +133,8 @@ fn legacy_golden_table_of_todays_keys() {
             "sequencer.split_at_playhead",
         ),
         ("Cmd+D", &[Context::Sequencer], "edit.duplicate"),
+        ("M", &[Context::Sequencer], "sequencer.toggle_mute"),
+        ("M", &[Context::Editor], "editor.toggle_note_mute"),
         ("Cmd+D", &[Context::Rack], "edit.duplicate"),
         ("Cmd+A", &[Context::Editor], "edit.select_all"),
         ("Q", &[Context::Editor], "editor.quantize"),
@@ -258,6 +260,8 @@ fn reference_default_table_of_the_plan() {
             None,
         ),
         ("Cmd+J", &[Context::Sequencer], "sequencer.join", None),
+        ("M", &[Context::Sequencer], "sequencer.toggle_mute", None),
+        ("M", &[Context::Editor], "editor.toggle_note_mute", None),
         ("Return", &[Context::Sequencer], "sequencer.open_clip", None),
         (
             "Cmd+L",

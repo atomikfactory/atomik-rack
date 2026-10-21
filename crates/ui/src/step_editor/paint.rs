@@ -250,7 +250,7 @@ fn rows(v: &StepEditorView, c: &mut dyn Canvas) {
             };
             sp::line(c, gx, y, gx, y + ROW_HEIGHT, col);
             if let Some(vel) = v.cell_velocity(pad, k) {
-                on_cell(v, c, cell, vel);
+                on_cell(v, c, cell, vel, v.cell_muted(pad, k));
             }
         }
         sp::line(
@@ -273,13 +273,23 @@ fn rows(v: &StepEditorView, c: &mut dyn Canvas) {
     c.pop_clip();
 }
 
-fn on_cell(v: &StepEditorView, c: &mut dyn Canvas, cell: Rect, vel: f32) {
+fn on_cell(v: &StepEditorView, c: &mut dyn Canvas, cell: Rect, vel: f32, muted: bool) {
     let col = level_color(v, VelocityLevel::of_velocity(vel));
     let slot = cell.inset(-2.0);
     sp::rect(c, slot, col.with_alpha(0.16));
     let h = (slot.height() * f64::from(vel.clamp(0.0, 1.0))).max(1.5);
-    sp::rect(c, Rect::new(slot.x0, slot.y1 - h, slot.x1, slot.y1), col);
-    c.stroke_with(slot, 1.0, col.with_alpha(0.9));
+    // A muted cell is hollow: a faint level bar inside the outline.
+    let bar = if muted { col.with_alpha(0.2) } else { col };
+    sp::rect(c, Rect::new(slot.x0, slot.y1 - h, slot.x1, slot.y1), bar);
+    c.stroke_with(slot, 1.0, col.with_alpha(if muted { 0.5 } else { 0.9 }));
+    if muted {
+        // A strike across the cell: never produced by a velocity level.
+        c.stroke_with(
+            vello::kurbo::Line::new((slot.x0, slot.y1), (slot.x1, slot.y0)),
+            1.0,
+            col.with_alpha(0.5),
+        );
+    }
 }
 
 fn header(v: &StepEditorView, c: &mut dyn Canvas, pad: u8, y: f64) {

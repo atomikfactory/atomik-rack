@@ -28,6 +28,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::Rack => self.view.command(id, arg, doc, &self.registry),
             Pane::Arrangement => self.arrangement.command(id, arg, doc, &self.registry),
             Pane::PianoRoll => self.piano_roll.command(id, arg, doc, &self.registry),
+            Pane::StepEditor => self.step_editor.command(id, arg, doc, &self.registry),
             _ => CommandOutcome::Declined,
         };
         match outcome {

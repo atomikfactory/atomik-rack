@@ -359,12 +359,7 @@ fn a_double_click_on_a_drum_clip_opens_the_step_editor_and_a_synth_clip_the_pian
         loop_length: None,
         muted: false,
         grid: None,
-        content: ClipContent::Notes(vec![Note {
-            tick: 0,
-            length: PPQ,
-            key: 36,
-            velocity: 0.8,
-        }]),
+        content: ClipContent::Notes(vec![Note::new(0, PPQ, 36, 0.8)]),
     };
     let mut ids = Vec::new();
     for k in ["drm", "syn"] {

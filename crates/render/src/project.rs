@@ -784,12 +784,7 @@ mod tests {
                 loop_length: None,
                 muted: false,
                 grid: None,
-                content: ClipContent::Notes(vec![Note {
-                    tick: 0,
-                    length: PPQ / 2,
-                    key: 60,
-                    velocity: 0.5,
-                }]),
+                content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, 60, 0.5)]),
             },
         }));
         apply(Command::Song(SongCommand::AddAutomationLane {

@@ -584,3 +584,109 @@ fn the_view_key_handler_keeps_escape_and_home_and_drops_every_command_key() {
     v.handle(&press(Key::Escape, Modifiers::NONE), &doc, &reg);
     assert!(v.selected_clips().is_empty());
 }
+
+// ------------------------------------------------------------------ mute
+
+fn mute_clip_in_doc(doc: &mut atomik_model::RackDoc, id: u64) {
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(id) {
+                    c.muted = true;
+                }
+            }
+        }
+    }
+}
+
+fn mute_cmd(ids: &[u64], muted: bool) -> UiAction {
+    UiAction::Command(Command::Workflow(WorkflowCommand::SetClipsMuted {
+        ids: ids.iter().map(|i| ClipId(*i)).collect(),
+        muted,
+    }))
+}
+
+#[test]
+fn toggle_mute_mutes_the_selection_across_clip_kinds() {
+    let (mut v, doc, reg) = setup();
+    select(&mut v, &[1, 4]); // a note clip and an automation clip
+    let s = v.command("sequencer.toggle_mute", None, &doc, &reg);
+    assert_eq!(s.actions(), [mute_cmd(&[1, 4], true)]);
+}
+
+#[test]
+fn toggle_mute_unmutes_only_when_every_selected_clip_is_muted() {
+    let (mut v, mut doc, reg) = setup();
+    mute_clip_in_doc(&mut doc, 1);
+    v.sync(&doc, &reg);
+    select(&mut v, &[1, 4]);
+    let s = v.command("sequencer.toggle_mute", None, &doc, &reg);
+    assert_eq!(
+        s.actions(),
+        [mute_cmd(&[1, 4], true)],
+        "mixed selection mutes all"
+    );
+    mute_clip_in_doc(&mut doc, 4);
+    v.sync(&doc, &reg);
+    let s = v.command("sequencer.toggle_mute", None, &doc, &reg);
+    assert_eq!(s.actions(), [mute_cmd(&[1, 4], false)]);
+}
+
+#[test]
+fn toggle_mute_with_nothing_selected_is_a_quiet_no_op() {
+    let (mut v, doc, reg) = setup();
+    select(&mut v, &[]);
+    let s = v.command("sequencer.toggle_mute", None, &doc, &reg);
+    assert_eq!(s, CommandOutcome::Handled(vec![]));
+}
+
+#[test]
+fn the_header_button_toggles_only_its_clip_and_keeps_the_selection() {
+    let (mut v, _doc, _reg) = setup();
+    select(&mut v, &[1, 3]);
+    let p = v
+        .mute_button_center(ClipId(2))
+        .expect("a wide clip has one");
+    let out = click(&mut v, p, Modifiers::NONE);
+    assert_eq!(out, [mute_cmd(&[2], true)]);
+    assert_eq!(v.selected_clips(), vec![ClipId(1), ClipId(3)]);
+    assert!(!v.is_dragging());
+}
+
+#[test]
+fn the_header_button_of_a_muted_clip_unmutes_it_and_wins_over_the_razor() {
+    let (mut v, mut doc, reg) = setup();
+    mute_clip_in_doc(&mut doc, 2);
+    v.sync(&doc, &reg);
+    v.set_tool(Tool::Razor);
+    let p = v.mute_button_center(ClipId(2)).unwrap();
+    let out = {
+        let (d, r) = (doc.clone(), reg);
+        run(
+            |e| v.handle(e, &d, &r),
+            &[
+                down_mods(p, Modifiers::NONE, 1),
+                up_mods(p, Modifiers::NONE),
+            ],
+        )
+    };
+    assert_eq!(out, [mute_cmd(&[2], false)]);
+}
+
+#[test]
+fn a_clip_narrower_than_three_buttons_has_no_header_button() {
+    let (mut v, mut doc, reg) = setup();
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(5) {
+                    c.length = PPQ / 2;
+                    c.loop_length = None;
+                }
+            }
+        }
+    }
+    v.sync(&doc, &reg);
+    assert!(v.mute_button_center(ClipId(5)).is_none());
+    assert!(v.mute_button_center(ClipId(1)).is_some());
+}

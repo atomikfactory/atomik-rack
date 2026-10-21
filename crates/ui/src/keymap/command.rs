@@ -225,6 +225,12 @@ const COMMANDS: &[CommandDef] = &[
     .rep(),
     cmd("editor.quantize", "Quantize", G::Editor, C::Editor),
     cmd(
+        "editor.toggle_note_mute",
+        "Mute Notes",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd(
         "editor.transpose_down",
         "Transpose Down",
         G::Editor,
@@ -341,6 +347,12 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.split_at_playhead",
         "Split at Playhead",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
+        "sequencer.toggle_mute",
+        "Mute Clips",
         G::Sequencer,
         C::Sequencer,
     ),

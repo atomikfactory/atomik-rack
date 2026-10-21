@@ -112,6 +112,15 @@ pub enum WorkflowCommand {
         /// The clips.
         ids: Vec<ClipId>,
     },
+    /// Sets `muted` on every listed clip (note, automation and audio clips) in one undo step.
+    /// An unknown clip rejects the command, and so does one that would change nothing (every
+    /// clip already has that state) or an empty list.
+    SetClipsMuted {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// The new mute state.
+        muted: bool,
+    },
     /// Joins unlooped note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
     /// window, notes cut at the window end); where two notes or points coincide the later
@@ -298,6 +307,7 @@ pub(crate) fn plan(
         }
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
         WorkflowCommand::RemoveClips { ids } => plain(remove_clips(doc, &ids)),
+        WorkflowCommand::SetClipsMuted { ids, muted } => plain(set_clips_muted(doc, &ids, muted)),
         WorkflowCommand::PasteNotes {
             clip,
             at_tick,
@@ -870,6 +880,33 @@ fn remove_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<Edit, ModelError> {
             old: Some(c.clone()),
             new: None,
         });
+    }
+    Ok(Edit::Compound(edits))
+}
+
+fn set_clips_muted(doc: &RackDoc, ids: &[ClipId], muted: bool) -> Result<Edit, ModelError> {
+    let wanted: BTreeSet<ClipId> = ids.iter().copied().collect();
+    if wanted.is_empty() {
+        return Err(bad_song("no clips are selected"));
+    }
+    let mut edits = Vec::new();
+    for id in &wanted {
+        let (device, lane, c) = clip_of(doc, *id)?;
+        if c.muted != muted {
+            edits.push(Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip { muted, ..c.clone() }),
+            });
+        }
+    }
+    if edits.is_empty() {
+        return Err(bad_song(if muted {
+            "the clips are already muted"
+        } else {
+            "the clips are not muted"
+        }));
     }
     Ok(Edit::Compound(edits))
 }

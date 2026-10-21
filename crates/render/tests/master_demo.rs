@@ -79,12 +79,7 @@ fn clip(notes: Vec<(i64, i64, u8)>, velocity: f32) -> Clip {
         content: ClipContent::Notes(
             notes
                 .into_iter()
-                .map(|(tick, length, k)| Note {
-                    tick,
-                    length,
-                    key: k,
-                    velocity,
-                })
+                .map(|(tick, length, k)| Note::new(tick, length, k, velocity))
                 .collect(),
         ),
     }
@@ -253,7 +248,10 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 9"), "the format is unchanged");
+    assert!(
+        text.contains("\"version\": 10"),
+        "saved in the current format"
+    );
 }
 
 #[test]
