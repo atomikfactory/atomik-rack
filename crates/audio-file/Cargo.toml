@@ -15,6 +15,7 @@ rubato.workspace = true
 hound.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+atomik-library.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

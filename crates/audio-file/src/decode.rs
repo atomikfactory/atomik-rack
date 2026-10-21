@@ -52,7 +52,7 @@ fn decode_source(source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<Audi
     })
 }
 
-fn map_sym(e: SymError) -> AudioFileError {
+pub(crate) fn map_sym(e: SymError) -> AudioFileError {
     match e {
         SymError::IoError(e) => AudioFileError::Io(e),
         SymError::Unsupported(m) => AudioFileError::Unsupported(m.into()),
@@ -66,7 +66,7 @@ fn map_sym(e: SymError) -> AudioFileError {
 const MAX_WAV_CHANNELS: u16 = 32;
 
 /// Looks at the first bytes of a RIFF/WAVE stream and rejects headers symphonia mishandles.
-fn precheck_wav(source: &mut dyn MediaSource) -> Result<()> {
+pub(crate) fn precheck_wav(source: &mut dyn MediaSource) -> Result<()> {
     let mut head = Vec::with_capacity(4096);
     (&mut *source).take(4096).read_to_end(&mut head)?;
     source.seek(SeekFrom::Start(0))?;

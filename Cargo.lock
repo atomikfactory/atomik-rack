@@ -248,6 +248,7 @@ dependencies = [
 name = "atomik-audio-file"
 version = "0.1.0"
 dependencies = [
+ "atomik-library",
  "hound",
  "proptest",
  "rubato",
