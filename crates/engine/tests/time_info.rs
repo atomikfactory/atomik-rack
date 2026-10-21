@@ -55,6 +55,9 @@ fn rig() -> (Engine, EngineHandle, Log) {
     let (engine, mut handle) = engine_with(c, 0, None);
     // Preallocated: pushing inside the capacity does not allocate (renders run under the guard).
     let log: Log = Arc::new(Mutex::new(Vec::with_capacity(2_000)));
+    // Apple's `std` mutex boxes its pthread mutex on the first lock: take it once outside the
+    // no-alloc render section.
+    drop(log.lock());
     let id = DeviceInstanceId(1);
     handle
         .insert_device(id, Box::new(Probe(Arc::clone(&log))), &[])

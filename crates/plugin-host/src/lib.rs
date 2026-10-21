@@ -61,7 +61,7 @@ pub use settings::{
 };
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
-    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel,
+    ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel, warm, warmed,
 };
 pub use standin::{PluginStandIn, stand_in};
 pub use threads::{

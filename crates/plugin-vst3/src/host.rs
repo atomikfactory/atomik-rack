@@ -12,7 +12,7 @@
 
 use crate::util::write_utf16;
 use crate::values::{self, Steps};
-use atomik_plugin_host::{HostMessenger, ParamPhase, PluginMessage};
+use atomik_plugin_host::{HostMessenger, ParamPhase, PluginMessage, warmed};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -48,8 +48,9 @@ impl Hub {
     pub(crate) fn new(messenger: HostMessenger) -> Arc<Self> {
         Arc::new(Self {
             messenger,
-            steps: Mutex::new(Arc::new(Vec::new())),
-            edits: Mutex::new(None),
+            // `performEdit` may arrive on any thread, the audio thread included: warm both locks.
+            steps: warmed(Mutex::new(Arc::new(Vec::new()))),
+            edits: warmed(Mutex::new(None)),
             layout_dirty: AtomicBool::new(false),
             midi_dirty: AtomicBool::new(false),
             edits_dropped: AtomicU32::new(0),

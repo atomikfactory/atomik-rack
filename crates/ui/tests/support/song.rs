@@ -5,6 +5,7 @@ use super::*;
 use atomik_model::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, LaneKind, Note, Track,
 };
+use atomik_ui::keymap::{Os, Roles};
 use atomik_ui::kurbo::Rect;
 use atomik_ui::{ArrangementView, PianoRollView, TransportBar};
 
@@ -179,6 +180,9 @@ pub const ARR_BOUNDS: Rect = Rect::new(0.0, 0.0, 1200.0, 420.0);
 /// A synced arrangement at 96 px per bar, unscrolled.
 pub fn arrangement(doc: &RackDoc, reg: &Registry) -> ArrangementView {
     let mut v = ArrangementView::new(Theme::dark());
+    // The tests press Ctrl and Alt: pin the role defaults of an OS where those are the roles
+    // (on macOS the defaults use Command and Option).
+    v.set_roles(Roles::defaults(Os::Windows));
     v.set_bounds(ARR_BOUNDS);
     v.sync(doc, reg);
     v

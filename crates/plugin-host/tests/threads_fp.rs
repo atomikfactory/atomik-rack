@@ -31,6 +31,8 @@ fn the_main_thread_is_the_one_that_marked_itself() {
     assert!(!elsewhere, "marking is per thread");
 }
 
+// The guard is a `debug_assert!` (`threads::assert_main_thread`): release builds do not check.
+#[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "main thread")]
 fn a_main_thread_call_from_another_thread_trips_the_guard() {

@@ -349,13 +349,21 @@ fn the_file_is_readable_while_the_take_runs() {
         render(&mut rig.engine, b * 4_096, 4_096, 64);
         std::thread::sleep(Duration::from_millis(12));
     }
-    std::thread::sleep(Duration::from_millis(60));
-    let reader = WavStreamReader::open(&partial).expect("a valid WAV mid-take");
-    assert_eq!(reader.channel_count(), 2);
+    // The writer thread flushes on its own schedule: on a loaded machine it can lag the renders,
+    // so wait (bounded) for the header to show the first flush instead of a fixed pause.
+    let mut frames = 0;
+    for _ in 0..500 {
+        let reader = WavStreamReader::open(&partial).expect("a valid WAV mid-take");
+        assert_eq!(reader.channel_count(), 2);
+        frames = reader.frames();
+        if frames >= 24_000 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(
-        reader.frames() >= 24_000,
-        "at least the first flush is in the header: {}",
-        reader.frames()
+        frames >= 24_000,
+        "at least the first flush is in the header: {frames}"
     );
     ctl.send(Ctl::Cancel).unwrap();
 }

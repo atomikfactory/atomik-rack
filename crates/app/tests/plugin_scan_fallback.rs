@@ -150,10 +150,8 @@ fn scanning_a_folder_finds_clap_and_vst3_plugins_with_no_scanner_program_beside_
     let _ = std::fs::remove_dir_all(dir);
 }
 
-#[test]
-fn a_single_file_vst3_is_found_too() {
-    let dir = temp("flat");
-    let exe = lonely_exe(&dir);
+/// A VST3 module copied as a plain `single.vst3` file in a fresh plugin folder.
+fn single_file_vst3_folder(dir: &Path) -> PathBuf {
     let folder = dir.join("plugins");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::copy(
@@ -161,6 +159,16 @@ fn a_single_file_vst3_is_found_too() {
         folder.join("single.vst3"),
     )
     .unwrap();
+    folder
+}
+
+// Windows and Linux accept a single-file VST3; on macOS a VST3 is always a bundle folder.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_single_file_vst3_is_found_too() {
+    let dir = temp("flat");
+    let exe = lonely_exe(&dir);
+    let folder = single_file_vst3_folder(&dir);
     let mut core = core_scanning(&exe, vec![folder]);
     scan(&mut core);
     let data = core.plugin_settings_data();
@@ -241,6 +249,31 @@ fn a_broken_file_is_a_failure_with_a_reason_and_the_rest_still_scan() {
             .any(|l| l.contains("junk.vst3") && l.contains("failed")),
         "the failure and its reason are in the log: {:?}",
         data.log
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_single_file_vst3_is_refused_on_macos_without_crashing_the_scanner() {
+    let dir = temp("flat-mac");
+    let exe = lonely_exe(&dir);
+    let folder = single_file_vst3_folder(&dir);
+    let mut core = core_scanning(&exe, vec![folder]);
+    scan(&mut core);
+    let data = core.plugin_settings_data();
+    assert!(
+        !data
+            .plugins
+            .iter()
+            .any(|r| r.plugin.format == PluginFormat::Vst3),
+        "{:?}",
+        data.plugins
+    );
+    assert!(
+        data.failed.iter().all(|f| !f.reason.contains("signal")),
+        "the scanner must refuse the file, not crash: {:?}",
+        data.failed
     );
     let _ = std::fs::remove_dir_all(dir);
 }

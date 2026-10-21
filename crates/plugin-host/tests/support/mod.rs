@@ -447,6 +447,11 @@ impl Probe {
             tail: AtomicU8::new(0),
             emit: Mutex::new(Vec::with_capacity(64)),
         });
+        // Apple's `std` mutex boxes its pthread mutex on the first lock; take each lock once here so
+        // that allocation is not charged to the no-alloc render section.
+        drop(shared.log.lock());
+        drop(shared.out_value.lock());
+        drop(shared.emit.lock());
         (
             Self {
                 shared: Arc::clone(&shared),
