@@ -65,10 +65,10 @@ jobs:
           cache-key: test-${{ matrix.profile }}
       - name: cargo test (debug)
         if: matrix.profile == 'debug'
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
       - name: cargo test (release)
         if: matrix.profile == 'release'
-        run: cargo test --workspace --release
+        run: cargo test --workspace --release --no-fail-fast
 
   deny:
     name: cargo-deny

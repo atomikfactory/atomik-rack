@@ -73,6 +73,9 @@ fn rig(n: usize, threads: u16, pinned: impl Fn(usize) -> bool) -> Rig {
     for i in 0..n {
         let flag = Arc::new(AtomicBool::new(pinned(i)));
         let log: Log = Arc::new(Mutex::new(Vec::with_capacity(4_000)));
+        // Apple's `std` mutex boxes its pthread mutex on the first lock: take it once outside the
+        // no-alloc render section.
+        drop(log.lock());
         let id = DeviceInstanceId(i as u32 + 1);
         handle
             .insert_device(

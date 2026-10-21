@@ -42,11 +42,16 @@ pub(crate) fn plist_executable(plist: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// The binaries a `.vst3` path may hold, most likely first. A file is its own binary; a bundle
-/// folder is searched by the layout of `os` for CPU `arch` (`std::env::consts::ARCH` names).
+/// The binaries a `.vst3` path may hold, most likely first. On Windows and Linux a file is its
+/// own binary; on macOS a VST3 is always a bundle folder (the entry takes its `CFBundleRef`), so
+/// a plain file has none. A bundle folder is searched by the layout of `os` for CPU `arch`
+/// (`std::env::consts::ARCH` names).
 pub(crate) fn module_binaries(path: &Path, os: Os, arch: &str) -> Vec<PathBuf> {
     if path.is_file() {
-        return vec![path.to_path_buf()];
+        return match os {
+            Os::MacOs => Vec::new(),
+            Os::Windows | Os::Linux => vec![path.to_path_buf()],
+        };
     }
     let stem = path
         .file_stem()
@@ -422,6 +427,13 @@ mod tests {
             module_binaries(&f, Os::Windows, "x86_64"),
             std::slice::from_ref(&f)
         );
+        assert_eq!(
+            module_binaries(&f, Os::Linux, "x86_64"),
+            std::slice::from_ref(&f)
+        );
+        // On macOS a VST3 is always a bundle folder; a plain file is not a plugin there (handing
+        // it to CoreFoundation as a bundle traps the scanner).
+        assert!(module_binaries(&f, Os::MacOs, "aarch64").is_empty());
         assert!(matches!(
             Module::load(&d.join("missing.vst3")),
             Err(BackendError::NotAPlugin(_))

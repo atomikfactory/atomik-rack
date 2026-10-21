@@ -62,6 +62,10 @@ fn cycle(m: &mut PluginManager, restart: bool) -> &'static atomik_device_sdk::De
 fn five_hundred_instances_leave_every_counter_where_it_started() {
     let _s = serial();
     let lib = TestLib::open(PKG);
+    // The counters live in the library image. Where the OS keeps an unloaded image resident
+    // (macOS does for dylibs with thread-locals), an earlier test in this process has already
+    // counted its entry call, so count this test's own from here.
+    let entry_base = lib.counter(counter::ENTRY_INIT);
     let mut m = manager_for(&[PKG]);
     // A first round warms everything up (the library is loaded, the descriptor is interned).
     let first = cycle(&mut m, true);
@@ -99,7 +103,7 @@ fn five_hundred_instances_leave_every_counter_where_it_started() {
         assert!(after <= before + 1, "threads {before} -> {after}");
     }
     assert_eq!(
-        lib.counter(counter::ENTRY_INIT),
+        lib.counter(counter::ENTRY_INIT) - entry_base,
         1,
         "the library entry was initialised once"
     );
