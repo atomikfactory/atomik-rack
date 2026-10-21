@@ -307,6 +307,10 @@ impl RackView {
         if matches!(self.drag, Drag::Browser { .. }) && !self.rack_area().contains(self.pointer) {
             return;
         }
+        // A move released over the navigator is dropped: no line, no zone highlight.
+        if self.in_navigator(self.pointer) {
+            return;
+        }
         let dp = self.drop_point(self.view_to_rack(self.pointer), &moving);
         if self.zone_visible() {
             let zone = self.zone_rect();

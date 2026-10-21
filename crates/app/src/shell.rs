@@ -422,6 +422,7 @@ impl<B: AudioBackend> Shell<B> {
             let view = shell.core.view_mut();
             view.set_show_console_devices(shell.ui.show_console_devices);
             view.set_show_console_links(shell.ui.show_console_links);
+            view.set_navigator_visible(shell.ui.show_rack_navigator);
         }
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
@@ -823,6 +824,7 @@ impl<B: AudioBackend> Shell<B> {
             compensation: self.core.doc().console.compensation,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
+            rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
             sequencer_only: self.in_sequencer_only(),
             editor: !self.ui.show_console
@@ -2334,6 +2336,14 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !view.show_console_links();
                 view.set_show_console_links(show);
                 self.ui.show_console_links = show;
+                self.save_ui_state();
+                Vec::new()
+            }
+            AppCommand::ToggleRackNavigator => {
+                let view = self.core.view_mut();
+                let show = !view.navigator_visible();
+                view.set_navigator_visible(show);
+                self.ui.show_rack_navigator = show;
                 self.save_ui_state();
                 Vec::new()
             }

@@ -501,6 +501,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("view.toggle_piano_roll", "Piano Roll", G::View, C::Global).menu(),
     cmd("view.toggle_rack", "Rack", G::View, C::Global).menu(),
     cmd(
+        "view.toggle_rack_navigator",
+        "Rack Navigator",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "view.toggle_sample_editor",
         "Sample Editor",
         G::View,

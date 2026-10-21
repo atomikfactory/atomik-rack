@@ -176,20 +176,17 @@ impl RackView {
     // ------------------------------------------------------------------ navigator seam
 
     /// How many columns the view shows (1 inside a container).
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn column_count(&self) -> u16 {
         self.columns
     }
 
     /// The left edge of a column in rack coordinates.
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn column_x(&self, column: u16) -> f64 {
         column_left(column)
     }
 
     /// The panels of a column, top to bottom, as (key, rack-space rectangle, accent colour):
     /// column 0 starts with the Audio I/O strip (or the container's input strip).
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn column_device_rects(&self, column: u16) -> Vec<(DeviceKey, Rect, Color)> {
         self.devices
             .iter()
@@ -199,13 +196,11 @@ impl RackView {
     }
 
     /// The size of the whole rack in rack coordinates: all the columns by the tallest one.
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn content_size(&self) -> Size {
         Size::new(self.content_width(), self.content_height)
     }
 
     /// The part of the rack the rack area shows now, in rack coordinates.
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn viewport_rack_rect(&self) -> Rect {
         let area = self.rack_area();
         Rect::from_points(
@@ -214,15 +209,8 @@ impl RackView {
         )
     }
 
-    /// The scroll offset in logical view pixels.
-    #[allow(dead_code, reason = "read by the rack navigator")]
-    pub(crate) fn scroll_offset(&self) -> Vec2 {
-        self.scroll
-    }
-
     /// Scrolls so the top-left of the rack area shows rack point `top_left` (clamped to the
     /// content).
-    #[allow(dead_code, reason = "read by the rack navigator")]
     pub(crate) fn scroll_to_rack(&mut self, top_left: Point) {
         self.scroll = Vec2::new(
             top_left.x * self.zoom + RACK_MARGIN,
@@ -308,7 +296,7 @@ mod tests {
         assert!((r.x0 - 700.0).abs() < 1e-6, "{r:?}");
         assert!((r.y0 - 30.0).abs() < 1e-6, "{r:?}");
         assert!((r.width() - (1200.0 - 2.0 * 0.0) / v.zoom()).abs() < 1e-6);
-        let off = v.scroll_offset();
+        let off = v.scroll;
         assert!((off.x - (700.0 + RACK_MARGIN)).abs() < 1e-6);
         // Clamped at the far end and at the start.
         v.scroll_to_rack(Point::new(1e9, 1e9));
@@ -316,7 +304,7 @@ mod tests {
         assert!(end.x1 >= v.content_size().width - 1e-6);
         assert!(end.y1 >= v.content_size().height - 1e-6);
         v.scroll_to_rack(Point::new(-1e9, -1e9));
-        assert!(v.scroll_offset().hypot() < 1e-9);
+        assert!(v.scroll.hypot() < 1e-9);
     }
 
     #[test]

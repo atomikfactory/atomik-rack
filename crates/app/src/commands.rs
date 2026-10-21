@@ -61,6 +61,8 @@ pub enum AppCommand {
     ToggleBrowser,
     /// View ▸ File Browser (the docked audio file panel on the left).
     ToggleFileBrowser,
+    /// View ▸ Rack Navigator (the overview strip at the right of the rack).
+    ToggleRackNavigator,
     /// View ▸ Arrangement (show or hide the song area below the transport bar).
     ToggleSong,
     /// View ▸ Piano Roll (open it on the selected or first note clip, or close it).
@@ -176,6 +178,7 @@ impl AppCommand {
             AppCommand::CreateAudioTrack => ("create.audio_track", None),
             AppCommand::CreateMixerChannel => ("create.mixer_channel", None),
             AppCommand::ToggleRack => ("view.toggle_rack", None),
+            AppCommand::ToggleRackNavigator => ("view.toggle_rack_navigator", None),
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::AudioSettings => ("audio.settings", None),
@@ -246,6 +249,7 @@ impl AppCommand {
             ("create.audio_track", None) => AppCommand::CreateAudioTrack,
             ("create.mixer_channel", None) => AppCommand::CreateMixerChannel,
             ("view.toggle_rack", None) => AppCommand::ToggleRack,
+            ("view.toggle_rack_navigator", None) => AppCommand::ToggleRackNavigator,
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("audio.settings", None) => AppCommand::AudioSettings,
@@ -319,6 +323,8 @@ pub struct MenuState {
     pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
+    /// The rack navigator is on.
+    pub rack_navigator: bool,
     /// The rack is shown.
     pub rack: bool,
     /// The sequencer-only layout (F7) is active.
@@ -445,6 +451,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.file_browser,
                 ),
                 check("Rack", AppCommand::ToggleRack, state.rack),
+                check(
+                    "Rack Navigator",
+                    AppCommand::ToggleRackNavigator,
+                    state.rack_navigator,
+                ),
                 check(
                     "Sequencer Only",
                     AppCommand::SequencerOnly,
@@ -589,6 +600,7 @@ mod tests {
             compensation: true,
             console_devices: false,
             console_links: false,
+            rack_navigator: true,
             rack: true,
             sequencer_only: false,
             editor: false,
@@ -637,6 +649,7 @@ mod tests {
             AppCommand::CreateAudioTrack,
             AppCommand::CreateMixerChannel,
             AppCommand::ToggleRack,
+            AppCommand::ToggleRackNavigator,
             AppCommand::SequencerOnly,
             AppCommand::ToggleEditor,
             AppCommand::AudioSettings,
@@ -987,6 +1000,7 @@ mod tests {
                 "Device Browser",
                 "File Browser",
                 "Rack",
+                "Rack Navigator",
                 "Sequencer Only",
                 "Clip Editor",
                 "Arrangement",
@@ -1050,6 +1064,7 @@ mod tests {
                 compensation: false,
                 console_devices: true,
                 console_links: false,
+                rack_navigator: true,
                 rack: true,
                 sequencer_only: false,
                 editor: false,

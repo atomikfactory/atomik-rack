@@ -351,6 +351,7 @@ mod tests {
             compensation: true,
             console_devices: false,
             console_links: false,
+            rack_navigator: true,
             rack: true,
             sequencer_only: false,
             editor: false,

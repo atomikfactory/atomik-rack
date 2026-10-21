@@ -32,6 +32,8 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
     // These tests are about the instruments and effects: the rack as it looked before
     // With the console devices hidden.
     s.core_mut().view_mut().set_show_console_devices(false);
+    // And without the rack navigator, whose strip would take the right edge of the rack area.
+    s.core_mut().view_mut().set_navigator_visible(false);
     s
 }
 

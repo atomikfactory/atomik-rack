@@ -39,6 +39,8 @@ mod container_input;
 mod device_drag;
 mod fx_input;
 mod io_input;
+mod navigator;
+pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
 mod player_input;
 mod plugin_input;
@@ -336,6 +338,11 @@ enum Drag {
         start_y: f64,
         start: u8,
     },
+    /// The navigator strip is dragged: the viewport follows the pointer, keeping `grab` (rack
+    /// units from the viewport's top-left) under it.
+    Navigator {
+        grab: Vec2,
+    },
     /// A drum pad is held: its audition note is on until release.
     Pad {
         device: DeviceKey,
@@ -430,6 +437,15 @@ pub struct RackView {
     column_target: u16,
     /// The clock of the last auto-scroll tick, while one is running.
     tick_clock: Option<f64>,
+    /// The rack navigator is switched on (see [`NAVIGATOR_WIDTH`]).
+    navigator: bool,
+    /// The pointer is over the navigator strip.
+    nav_hover: bool,
+    /// Bumped by every rebuild of the device views: the navigator's block cache key.
+    nav_layout: u64,
+    /// The revision stamp of the navigator's cached block list.
+    nav_revision: u64,
+    nav_cache: Option<navigator::NavCache>,
     show_console: bool,
     /// Draw the channel-to-master console links as cables (default off).
     show_links: bool,
@@ -555,6 +571,11 @@ impl RackView {
             columns: 1,
             column_target: 0,
             tick_clock: None,
+            navigator: false,
+            nav_hover: false,
+            nav_layout: 0,
+            nav_revision: 0,
+            nav_cache: None,
             show_console: true,
             show_links: false,
             links: BTreeSet::new(),
@@ -1132,6 +1153,7 @@ impl RackView {
             });
             ys[0] += height;
         }
+        self.nav_layout += 1;
         self.columns = columns;
         self.content_height = ys.iter().copied().fold(0.0, f64::max);
         self.cables.clone_from(&doc.cables);
@@ -1356,17 +1378,21 @@ impl RackView {
     // ------------------------------------------------------------------ geometry
 
     fn rack_area(&self) -> Rect {
-        let x0 = if self.browser.visible {
+        let x0 = self.browser_edge();
+        let x1 = self
+            .navigator_rect()
+            .map_or(self.size.width, |r| r.x0)
+            .max(x0);
+        Rect::new(x0, self.bar_height(), x1, self.size.height)
+    }
+
+    /// The right edge of the device browser (0 while it is closed).
+    fn browser_edge(&self) -> f64 {
+        if self.browser.visible {
             BROWSER_WIDTH
         } else {
             0.0
-        };
-        Rect::new(
-            x0,
-            self.bar_height(),
-            self.size.width.max(x0),
-            self.size.height,
-        )
+        }
     }
 
     /// Height of the breadcrumb bar: only inside a container.
@@ -2084,6 +2110,7 @@ impl RackView {
                 self.pointer_up(*pos, *modifiers, doc, &mut out)
             }
             UiEvent::PointerLeave => {
+                self.nav_hover = false;
                 self.hover = None;
                 self.hover_cable = None;
                 self.browser.hover = None;
@@ -2314,6 +2341,7 @@ impl RackView {
                 self.drag = Drag::Pan { last: pos };
                 self.scroll_by(last - pos);
             }
+            Drag::Navigator { .. } => self.navigator_follow(pos),
             Drag::Pad { .. } => {}
             Drag::Sens {
                 dev,
@@ -2324,7 +2352,12 @@ impl RackView {
                 self.store_sens(dev, v.round().clamp(0.0, 100.0) as u8);
             }
             Drag::None => {
-                if self.in_browser(pos) {
+                self.navigator_hover(pos);
+                if self.in_navigator(pos) {
+                    if self.hover.take().is_some() || self.hover_cable.take().is_some() {
+                        self.repaint = true;
+                    }
+                } else if self.in_browser(pos) {
                     let row = self.browser.row_at(pos, 64);
                     if row != self.browser.hover || self.hover.is_some() {
                         self.browser.hover = row;
@@ -2360,6 +2393,9 @@ impl RackView {
             return;
         }
         if self.crumb_press(pos, button) {
+            return;
+        }
+        if self.navigator_press(pos, button) {
             return;
         }
         if self.in_browser(pos) {
@@ -2701,7 +2737,7 @@ impl RackView {
         let drag = std::mem::replace(&mut self.drag, Drag::None);
         self.repaint = true;
         match drag {
-            Drag::None | Drag::Pan { .. } => {}
+            Drag::None | Drag::Pan { .. } | Drag::Navigator { .. } => {}
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Eq(_) => out.push(UiAction::EndMerge),
@@ -2749,7 +2785,8 @@ impl RackView {
                 at,
                 collapse,
             } => {
-                if (at - start).hypot() > MOVE_THRESHOLD {
+                // Released over the navigator the move is dropped, not applied.
+                if (at - start).hypot() > MOVE_THRESHOLD && !self.in_navigator(pos) {
                     self.move_drop(dev, doc, out);
                 } else if collapse {
                     self.collapse_to(dev, out);
@@ -2790,6 +2827,9 @@ impl RackView {
         self.choice_menu = None;
         self.macro_menu = None;
         self.plugin_menu = None;
+        if self.navigator_wheel(delta, pos, modifiers) {
+            return;
+        }
         if self.in_browser(pos) {
             let rows = self.browser.list(registry).len() as f64;
             let max = (rows * 36.0 - (self.size.height - 80.0)).max(0.0);
@@ -2827,13 +2867,18 @@ impl RackView {
             }
             return;
         }
+        self.wheel_scroll(delta, modifiers);
+        self.update_hover(pos);
+    }
+
+    /// Scrolls the rack by a wheel delta (Shift turns the vertical wheel sideways).
+    fn wheel_scroll(&mut self, delta: Vec2, modifiers: Modifiers) {
         let d = if modifiers.shift && delta.x.abs() < 1e-9 {
             Vec2::new(-delta.y, 0.0)
         } else {
             -delta
         };
         self.scroll_by(d * SCROLL_STEP);
-        self.update_hover(pos);
     }
 
     /// Where a device added from the browser goes: below the selection, else at the end.
@@ -3254,6 +3299,7 @@ impl RackView {
         self.paint_overlays(canvas, doc, top, bottom);
         canvas.pop_transform();
         canvas.pop_clip();
+        self.paint_navigator(canvas);
         if let Some(t) = self.tooltip() {
             paint::tooltip(canvas, &self.theme, self.pointer, &t);
         }

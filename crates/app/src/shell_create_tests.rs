@@ -28,6 +28,8 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
     s.handle(&UiEvent::Resize(Size::new(1100.0, 2400.0)));
+    // The tests drop at fixed points of the full-width rack: no rack navigator strip.
+    s.core_mut().view_mut().set_navigator_visible(false);
     s.set_focus(Pane::Rack);
     s
 }
