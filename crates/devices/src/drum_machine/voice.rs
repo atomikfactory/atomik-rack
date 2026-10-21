@@ -2,6 +2,7 @@
 
 use super::{PAD_COUNT, Pad, Shared};
 use crate::sampler::{tail_gain, zone_region};
+use atomik_core::BATCH;
 use atomik_core::db_to_gain;
 use atomik_device_sdk::{LoopMode, SampleMap, TriggerMode, Zone, velocity_to_7bit};
 use atomik_dsp::{LoopKind, PlayRegion, Playhead, balance_gains, pan_gains_mono};
@@ -46,6 +47,38 @@ const IDLE_ZONE: Zone = Zone {
     reverse: false,
 };
 
+/// Per-pad CV modulation of one batch: for a pad whose CV socket is cabled, the linear level gain
+/// (`10^(amount * cv / 20)`) and the pan offset (`amount * cv`) of every sample.
+pub(super) struct PadCv {
+    pub level_on: [bool; PAD_COUNT],
+    pub pan_on: [bool; PAD_COUNT],
+    pub level: [[f32; BATCH]; PAD_COUNT],
+    pub pan: [[f32; BATCH]; PAD_COUNT],
+}
+
+impl PadCv {
+    pub fn new() -> Self {
+        Self {
+            level_on: [false; PAD_COUNT],
+            pan_on: [false; PAD_COUNT],
+            level: [[1.0; BATCH]; PAD_COUNT],
+            pan: [[0.0; BATCH]; PAD_COUNT],
+        }
+    }
+
+    /// The view of a render segment that starts at batch sample `start`.
+    pub fn at(&self, start: usize) -> CvView<'_> {
+        CvView { cv: self, start }
+    }
+}
+
+/// [`PadCv`] seen from the first sample of one render segment.
+#[derive(Clone, Copy)]
+pub(super) struct CvView<'a> {
+    cv: &'a PadCv,
+    start: usize,
+}
+
 /// Values that stay constant over one render segment.
 #[derive(Debug, Clone, Copy)]
 struct Segment {
@@ -53,6 +86,8 @@ struct Segment {
     level: f32,
     pan_l: f32,
     pan_r: f32,
+    /// The pad pan plus the zone pan (the base the pan CV is added to).
+    pan: f32,
 }
 
 /// One preallocated voice.
@@ -215,6 +250,7 @@ impl Voice {
             level: p.level,
             pan_l,
             pan_r,
+            pan,
         }
     }
 
@@ -227,6 +263,7 @@ impl Voice {
         out: [&mut [f32]; 2],
         pads: &[Pad; PAD_COUNT],
         sh: &Shared,
+        cv: &CvView<'_>,
     ) {
         let [out_l, out_r] = out;
         let mut map = own;
@@ -252,9 +289,25 @@ impl Voice {
                 1.0
             };
             let tail = tail_gain(&self.head, &self.zone, sh.sample_rate);
-            let g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
-            out_l[n] += xl * seg.pan_l * g;
-            out_r[n] += xr * seg.pan_r * g;
+            let mut g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
+            let pad = usize::from(self.pad);
+            let at = cv.start + n;
+            if cv.cv.level_on[pad] {
+                g *= cv.cv.level[pad][at];
+            }
+            let (pan_l, pan_r) = if cv.cv.pan_on[pad] {
+                // The pad and zone pan plus the pan CV, through the law of the pad.
+                let pan = seg.pan + cv.cv.pan[pad][at];
+                if self.stereo {
+                    balance_gains(pan)
+                } else {
+                    pan_gains_mono(pan)
+                }
+            } else {
+                (seg.pan_l, seg.pan_r)
+            };
+            out_l[n] += xl * pan_l * g;
+            out_r[n] += xr * pan_r * g;
             self.head.advance(seg.ratio);
             let mut ended = self.head.finished();
             if !(self.gate && self.held) {

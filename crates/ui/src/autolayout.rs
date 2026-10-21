@@ -537,7 +537,9 @@ impl PanelSpec {
 fn pad_of_socket(key: &str) -> Option<u8> {
     let rest = key.strip_prefix("pad")?;
     let (n, tail) = rest.split_once('_')?;
-    tail.starts_with("out").then(|| n.parse().ok()).flatten()
+    (tail.starts_with("out") || tail.ends_with("_cv_in"))
+        .then(|| n.parse().ok())
+        .flatten()
 }
 
 /// The panel of `atomik.drum-machine`: a 4x4 pad grid, the eight knobs of the selected pad
@@ -680,7 +682,7 @@ pub const SLICER_STRIP_W: f64 = 222.0;
 /// Width of one knob column of the slicer panel.
 const SLICER_COL_W: f64 = 64.0;
 /// The slicer's device params in front layout order (six per row, two rows).
-pub const SLICER_PARAMS: [&str; 9] = [
+pub const SLICER_PARAMS: [&str; 12] = [
     "master.level",
     "voices",
     "tune.semi",
@@ -690,6 +692,9 @@ pub const SLICER_PARAMS: [&str; 9] = [
     "velocity.amp",
     "loop.beats",
     "cv.pitch_amount",
+    "filter.cutoff",
+    "cv.cutoff_amount",
+    "cv.level_amount",
 ];
 
 /// Geometry of the slicer panel's extras (front, panel coordinates).

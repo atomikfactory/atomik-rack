@@ -54,10 +54,11 @@ use atomik_device_sdk::{
 use atomik_dsp::Smoother;
 use std::sync::Arc;
 
+use crate::cv::{clean, db_gain};
 use crate::poly_synth::soft_limit;
 
 mod voice;
-use voice::{Pending, Slot, Voice};
+use voice::{PadCv, Pending, Slot, Voice};
 
 /// Number of pads.
 pub const PAD_COUNT: usize = 16;
@@ -79,8 +80,11 @@ pub(crate) fn is_pad_zone(zone: &Zone, key: u8) -> bool {
 }
 
 const PARAMS_PER_PAD: usize = 8;
-const PARAM_COUNT: usize = 1 + PAD_COUNT * PARAMS_PER_PAD;
-const SOCKET_COUNT: usize = 3 + PAD_COUNT * 2;
+/// Params after the per-pad blocks: per pad `cv_level_amount` and `cv_pan_amount`.
+const CV_PARAMS_PER_PAD: usize = 2;
+const CV_PARAM_BASE: usize = 1 + PAD_COUNT * PARAMS_PER_PAD;
+const PARAM_COUNT: usize = CV_PARAM_BASE + PAD_COUNT * CV_PARAMS_PER_PAD;
+const SOCKET_COUNT: usize = 3 + PAD_COUNT * 4;
 
 const P_MASTER: u32 = 0;
 const K_LEVEL: u32 = 0;
@@ -91,6 +95,8 @@ const K_DECAY: u32 = 4;
 const K_MODE: u32 = 5;
 const K_CHOKE: u32 = 6;
 const K_VELOCITY: u32 = 7;
+const K_CV_LEVEL: u32 = 0;
+const K_CV_PAN: u32 = 1;
 
 const fn param(
     id: u32,
@@ -203,6 +209,26 @@ macro_rules! pad_params {
                     false,
                 ),
             )*
+            $(
+                param(
+                    CV_PARAM_BASE as u32 + ($n - 1) * CV_PARAMS_PER_PAD as u32 + K_CV_LEVEL,
+                    concat!("pad", $n, ".cv_level_amount"),
+                    concat!("Pad ", $n, " CV to level"),
+                    (-24.0, 24.0, 12.0),
+                    Taper::Linear,
+                    Unit::Db,
+                    false,
+                ),
+                param(
+                    CV_PARAM_BASE as u32 + ($n - 1) * CV_PARAMS_PER_PAD as u32 + K_CV_PAN,
+                    concat!("pad", $n, ".cv_pan_amount"),
+                    concat!("Pad ", $n, " CV to pan"),
+                    (-1.0, 1.0, 1.0),
+                    Taper::Linear,
+                    Unit::None,
+                    false,
+                ),
+            )*
         ]
     };
 }
@@ -217,6 +243,24 @@ const OUT_R: SocketId = SocketId(2);
 /// The individual output sockets of zero-based pad `pad`.
 const fn pad_out(pad: usize) -> (SocketId, SocketId) {
     (SocketId(3 + 2 * pad as u16), SocketId(4 + 2 * pad as u16))
+}
+
+/// The level and pan CV input sockets of zero-based pad `pad`.
+const fn pad_cv_in(pad: usize) -> (SocketId, SocketId) {
+    (
+        SocketId(3 + 2 * PAD_COUNT as u16 + 2 * pad as u16),
+        SocketId(4 + 2 * PAD_COUNT as u16 + 2 * pad as u16),
+    )
+}
+
+const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
+    SocketDescriptor {
+        id: SocketId(id),
+        key,
+        name,
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    }
 }
 
 const fn audio_out(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
@@ -251,6 +295,18 @@ macro_rules! pad_sockets {
                     4 + ($n - 1) * 2,
                     concat!("pad", $n, "_out_r"),
                     concat!("Pad ", $n, " out R"),
+                ),
+            )*
+            $(
+                cv_in(
+                    3 + 2 * PAD_COUNT as u16 + ($n - 1) * 2,
+                    concat!("pad", $n, "_level_cv_in"),
+                    concat!("Pad ", $n, " level CV"),
+                ),
+                cv_in(
+                    4 + 2 * PAD_COUNT as u16 + ($n - 1) * 2,
+                    concat!("pad", $n, "_pan_cv_in"),
+                    concat!("Pad ", $n, " pan CV"),
                 ),
             )*
         ]
@@ -302,6 +358,9 @@ pub(crate) struct Pad {
     pub gate: bool,
     pub choke: u8,
     pub velocity: f32,
+    /// `padN.cv_level_amount` (dB per unit CV) and `padN.cv_pan_amount` (pan per unit CV).
+    pub cv_level_db: f32,
+    pub cv_pan: f32,
 }
 
 impl Pad {
@@ -316,6 +375,8 @@ impl Pad {
             gate: false,
             choke: 0,
             velocity: 0.7,
+            cv_level_db: 12.0,
+            cv_pan: 1.0,
         }
     }
 
@@ -438,6 +499,15 @@ impl DrumMachine {
         if id == P_MASTER {
             self.master
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v));
+            return;
+        }
+        if id as usize >= CV_PARAM_BASE {
+            let j = id - CV_PARAM_BASE as u32;
+            let p = &mut self.pads[(j / CV_PARAMS_PER_PAD as u32) as usize];
+            match j % CV_PARAMS_PER_PAD as u32 {
+                K_CV_LEVEL => p.cv_level_db = v,
+                _ => p.cv_pan = v,
+            }
             return;
         }
         let (pad, k) = (
@@ -697,6 +767,24 @@ impl Device for DrumMachine {
             let (l, rr) = pad_out(p);
             *r = ctx.is_connected(l) || ctx.is_connected(rr);
         }
+        let mut cv = PadCv::new();
+        for p in 0..PAD_COUNT {
+            let (lv, pn) = pad_cv_in(p);
+            if ctx.is_connected(lv) {
+                cv.level_on[p] = true;
+                let src = *ctx.input(lv);
+                for (g, c) in cv.level[p].iter_mut().zip(&src) {
+                    *g = db_gain(self.pads[p].cv_level_db, *c);
+                }
+            }
+            if ctx.is_connected(pn) {
+                cv.pan_on[p] = true;
+                let src = *ctx.input(pn);
+                for (g, c) in cv.pan[p].iter_mut().zip(&src) {
+                    *g = self.pads[p].cv_pan * clean(*c);
+                }
+            }
+        }
         let mut mix = [[0.0f32; BATCH]; 2];
         let mut pad_mix = [[[0.0f32; BATCH]; 2]; PAD_COUNT];
         let events = ctx.notes_in(NOTES_IN);
@@ -739,6 +827,7 @@ impl Device for DrumMachine {
                     [&mut l[start..end], &mut r[start..end]],
                     pads,
                     &sh,
+                    &cv.at(start),
                 );
             }
             start = end;

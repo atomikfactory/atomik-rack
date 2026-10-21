@@ -621,10 +621,11 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `out_l`, `out_r` | Audio | out | Main mix of every pad whose individual output is not cabled |
 | `pad1_out_l`, `pad1_out_r` … `pad16_out_l`, `pad16_out_r` | Audio | out | Individual stereo output of pad *n* (sockets 3 to 34 in this order) |
+| `pad1_level_cv_in`, `pad1_pan_cv_in` … `pad16_level_cv_in`, `pad16_pan_cv_in` | CV | in | Level and pan CV of pad *n* (sockets 35 to 66 in this order), clamped to −1..+1. Level: `padN.cv_level_amount` × CV decibels. Pan: `padN.cv_pan_amount` × CV added to the pan. |
 
 ### Params
 
-`master.level` first, then eight params per pad *N* = 1 to 16 in this order (129 params; ids follow the order):
+`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then the two CV amounts of each pad (161 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -637,6 +638,8 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `padN.mode` | 0–1: gate, one-shot | 1 (one-shot) | choice | Linear | yes |
 | `padN.choke` | 0 to 4 (0 = none) | 0 | none | Linear | yes |
 | `padN.velocity` | 0 to 1 | 0.7 | percent | Linear | no |
+| `padN.cv_level_amount` | −24 to 24 | 12 | dB | Linear | no |
+| `padN.cv_pan_amount` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -646,6 +649,10 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 - **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end fade is at `start`), exactly as in the sampler.
 - **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared playhead (zone start/end and loops as in the sampler).
 - **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity` × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample (−3 dB at the centre), balance for a stereo sample (unity at the centre).
+- **CV inputs (level and pan, per pad).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. The CV is clamped to −1..+1 and multiplied by the pad's signed amount. It acts on every voice of that pad (and so on its individual output too) and on no other pad.
+  - *Level:* the voice gain is multiplied per sample by 10^(`padN.cv_level_amount`·CV/20). No extra smoothing, so a stepped CV gives a stepped gain.
+  - *Pan:* per voice and per sample, the pan is `padN.pan` + zone pan + `padN.cv_pan_amount`·CV, through the pad's law (constant power for a mono sample, balance for a stereo one).
+  - The panel has no front knobs for the two amounts (the front is full); they are params of the device, set at their defaults or from the project.
 - **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group 0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
 - **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level` and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither scaled nor limited (non-finite values become 0).
 - **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one draining map and hands one back per swap. A voice whose zone index exists in the new map with a pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A pending hit survives only if the new map has a zone of its pad at the same index that still matches its velocity.
