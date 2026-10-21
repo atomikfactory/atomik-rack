@@ -1,8 +1,9 @@
 name: Release
 
-# Builds release binaries for Windows, macOS and Linux. Pushing a tag vX.Y.Z also creates a
-# DRAFT GitHub release with the archives and checksums attached; a maintainer publishes it by
-# hand after checking it. A manual run only produces workflow artifacts. The optional ASIO
+# Builds release archives for Windows (zip), macOS (universal .app in a zip) and Linux (tar.gz),
+# smoke-tests each packaged archive, and on a tag vX.Y.Z (which must equal the Cargo.toml version)
+# creates a DRAFT GitHub release with the archives and checksums attached; a maintainer publishes
+# it by hand after checking it. A manual run builds and smoke-tests but never creates a release. The optional ASIO
 # backend (which needs a Steinberg SDK that is not part of this repository) is never built here.
 on:
   push:
@@ -22,73 +23,106 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve the version (tag must match Cargo.toml)
+        id: v
+        run: echo "version=$(sh scripts/release/version.sh)" >> "$GITHUB_OUTPUT"
+
   build:
-    name: build (${{ matrix.os }})
+    name: build (${{ matrix.label }})
+    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - { label: linux-x86_64, os: ubuntu-latest, package: package-tar.sh }
+          - { label: windows-x86_64, os: windows-latest, package: package-zip.sh }
+          - { label: macos-universal, os: macos-latest, package: package-macos.sh }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          cache-key: release
+          cache-key: release-${{ matrix.label }}
       - name: Build
+        if: runner.os != 'macOS'
         run: cargo build --release --locked -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan
+      - name: Build (macOS, both architectures)
+        if: runner.os == 'macOS'
+        run: |
+          set -eu
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target "$target" -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan
+          done
       - name: Package
         shell: bash
         env:
-          REF_NAME: ${{ github.ref_name }}
-          RUNNER_OS_NAME: ${{ runner.os }}
-        run: |
-          set -eu
-          version="$REF_NAME"
-          case "$GITHUB_REF" in
-            refs/tags/*) ;;
-            *) version="dev-$(git rev-parse --short HEAD)" ;;
-          esac
-          os="$(echo "$RUNNER_OS_NAME" | tr '[:upper:]' '[:lower:]')"
-          arch="$(uname -m)"
-          name="atomik-rack-$version-$os-$arch"
-          mkdir -p "dist/$name"
-          ext=""
-          if [ "$RUNNER_OS_NAME" = "Windows" ]; then ext=".exe"; fi
-          for bin in atomik atomik-render atomik-play atomik-plugin-scan; do
-            cp "target/release/$bin$ext" "dist/$name/"
-          done
-          cp LICENSE README.md CHANGELOG.md "dist/$name/"
-          cd dist
-          if [ "$RUNNER_OS_NAME" = "Windows" ]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
-            archive="$name.zip"
-          else
-            tar -czf "$name.tar.gz" "$name"
-            archive="$name.tar.gz"
-          fi
-          if command -v sha256sum > /dev/null 2>&1; then
-            sha256sum "$archive" > "$archive.sha256"
-          else
-            shasum -a 256 "$archive" > "$archive.sha256"
-          fi
-          rm -rf "$name"
-          ls -l
+          VERSION: ${{ needs.version.outputs.version }}
+          PACKAGE: ${{ matrix.package }}
+        run: sh "scripts/release/$PACKAGE" "$VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: atomik-rack-${{ matrix.os }}
+          name: atomik-rack-${{ matrix.label }}
           path: |
             dist/*.zip
             dist/*.tar.gz
             dist/*.sha256
           if-no-files-found: error
 
+  smoke:
+    name: smoke (${{ matrix.label }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x86_64, os: ubuntu-latest }
+          - { label: windows-x86_64, os: windows-latest }
+          - { label: macos-universal, os: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: atomik-rack-${{ matrix.label }}
+          path: dist
+      - name: Verify the checksum and run the smoke checks on the packaged archive
+        shell: bash
+        run: |
+          set -eu
+          cd dist
+          ls -l
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum -c ./*.sha256
+          else
+            shasum -a 256 -c ./*.sha256
+          fi
+          cd ..
+          for archive in dist/*.zip dist/*.tar.gz; do
+            [ -f "$archive" ] || continue
+            sh scripts/release/smoke.sh "$archive" "$PWD"
+          done
+
   draft-release:
     name: draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -105,9 +139,11 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -eu
-          ls -l dist
+          cd dist
+          sha256sum atomik-rack-*.zip atomik-rack-*.tar.gz > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          ls -l
+          cd ..
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/* --repo "$REPO" --draft --verify-tag $prerelease \
-            --title "Atomik Rack $TAG" \
-            --notes "Release notes: see CHANGELOG.md. Verify the downloads against the .sha256 files."
+          gh release create "$TAG" dist/* --repo "$REPO" --draft --verify-tag $prerelease             --title "Atomik Rack $TAG"             --notes "Release notes: see CHANGELOG.md. The builds are unsigned (macOS is ad-hoc signed only); see the README for first-run steps. Verify the downloads against SHA256SUMS."
