@@ -16,6 +16,7 @@ fn shell() -> Shell<NullBackend> {
             in_window_menu: true,
             settings_path: None,
             ui_state_path: None,
+            library_path: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));

@@ -12,6 +12,7 @@ pub mod app_core;
 pub mod audio_import;
 pub mod audio_record;
 pub mod audio_writer;
+pub mod browser_workers;
 pub mod cli;
 pub mod clicks;
 pub mod clipboard;
@@ -19,6 +20,7 @@ pub mod commands;
 pub mod context_menus;
 pub mod keyboard_tab;
 pub mod keymap_store;
+pub mod library_store;
 pub mod menubar;
 pub mod midi;
 #[cfg(test)]

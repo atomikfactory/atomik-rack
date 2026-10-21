@@ -271,4 +271,25 @@ impl EngineSink for OfflineSink {
     fn stream_threshold_bytes(&self) -> Option<u64> {
         self.threshold
     }
+
+    // This sink is the hand-rendered test engine, so it takes previews like the live session
+    // does (the browser tests listen to them). Real offline renders (bounce) never get one:
+    // they do not go through `EngineSink`.
+    fn preview_start(
+        &mut self,
+        stream: atomik_engine::PreviewStream,
+        gain: f32,
+    ) -> Result<(), EngineError> {
+        handle!(self).preview_start(stream, gain)
+    }
+
+    fn preview_stop(&mut self) -> Result<(), EngineError> {
+        handle!(self).preview_stop()
+    }
+
+    fn preview_active(&self) -> bool {
+        self.handle
+            .as_ref()
+            .is_some_and(EngineHandle::preview_active)
+    }
 }

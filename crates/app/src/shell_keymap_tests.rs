@@ -28,6 +28,7 @@ fn shell_in(dir: &Path, os: Os, profile: Option<Profile>) -> Shell<NullBackend> 
             in_window_menu: true,
             settings_path: Some(dir.join("settings.json")),
             ui_state_path: None,
+            library_path: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));

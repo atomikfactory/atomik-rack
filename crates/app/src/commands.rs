@@ -59,6 +59,8 @@ pub enum AppCommand {
     ZoomReset,
     /// View ▸ Device Browser.
     ToggleBrowser,
+    /// View ▸ File Browser (the docked audio file panel on the left).
+    ToggleFileBrowser,
     /// View ▸ Arrangement (show or hide the song area below the transport bar).
     ToggleSong,
     /// View ▸ Piano Roll (open it on the selected or first note clip, or close it).
@@ -140,6 +142,7 @@ impl AppCommand {
             AppCommand::ZoomOut => ("view.zoom_out", None),
             AppCommand::ZoomReset => ("view.zoom_reset", None),
             AppCommand::ToggleBrowser => ("view.toggle_browser", None),
+            AppCommand::ToggleFileBrowser => ("view.toggle_file_browser", None),
             AppCommand::ToggleSong => ("view.toggle_song", None),
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
@@ -210,6 +213,7 @@ impl AppCommand {
             ("view.zoom_out", None) => AppCommand::ZoomOut,
             ("view.zoom_reset", None) => AppCommand::ZoomReset,
             ("view.toggle_browser", None) => AppCommand::ToggleBrowser,
+            ("view.toggle_file_browser", None) => AppCommand::ToggleFileBrowser,
             ("view.toggle_song", None) => AppCommand::ToggleSong,
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
@@ -275,6 +279,8 @@ pub struct MenuState {
     pub cables: CableVisibility,
     /// Browser shown.
     pub browser: bool,
+    /// File browser panel shown.
+    pub file_browser: bool,
     /// Undo possible.
     pub can_undo: bool,
     /// Redo possible.
@@ -433,6 +439,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 item("Actual Size", AppCommand::ZoomReset),
                 MenuEntry::Separator,
                 check("Device Browser", AppCommand::ToggleBrowser, state.browser),
+                check(
+                    "File Browser",
+                    AppCommand::ToggleFileBrowser,
+                    state.file_browser,
+                ),
                 check("Rack", AppCommand::ToggleRack, state.rack),
                 check(
                     "Sequencer Only",
@@ -558,6 +569,7 @@ mod tests {
             flip: Flip::Front,
             cables: CableVisibility::Show,
             browser: false,
+            file_browser: false,
             can_undo: true,
             can_redo: false,
             can_edit: false,
@@ -608,6 +620,7 @@ mod tests {
             AppCommand::ZoomOut,
             AppCommand::ZoomReset,
             AppCommand::ToggleBrowser,
+            AppCommand::ToggleFileBrowser,
             AppCommand::ToggleSong,
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
@@ -765,9 +778,11 @@ mod tests {
     ) -> Option<AppCommand> {
         use atomik_ui::keymap::{ContextStack, Resolution};
         match keymap.resolve_event(key, modifiers, &ContextStack::global()) {
+            // F4 (the file browser) is new: it is not part of the old function being compared.
             Resolution::Bound(list) => list
                 .iter()
-                .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref())),
+                .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref()))
+                .filter(|c| *c != AppCommand::ToggleFileBrowser),
             _ => None,
         }
     }
@@ -970,6 +985,7 @@ mod tests {
                 "Zoom Out",
                 "Actual Size",
                 "Device Browser",
+                "File Browser",
                 "Rack",
                 "Sequencer Only",
                 "Clip Editor",
@@ -1014,6 +1030,7 @@ mod tests {
                 flip: Flip::Back,
                 cables: CableVisibility::HoverOnly,
                 browser: true,
+                file_browser: false,
                 can_undo: false,
                 can_redo: true,
                 can_edit: true,

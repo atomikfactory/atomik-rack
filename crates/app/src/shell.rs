@@ -49,6 +49,33 @@
 //! [`ShellRequest::PickLoadSamples`] too. Esc, its close button and the slicer's removal show
 //! the arrangement again.
 //!
+//! # File browser hosting
+//!
+//! View ▸ File Browser (`view.toggle_file_browser`, F4) docks the file browser panel
+//! ([`Pane::FileBrowser`]) as a full-height column left of everything else, from the menu bar to
+//! the status bar ([`Layout::file_browser`]). Its width is the panel's own (it resizes by
+//! dragging its right edge; the shell lays out again while it moves and saves on release), kept
+//! so the rest of the window has [`MIN_REST_WIDTH`]; the rack, divider, transport bar and lower
+//! pane all start at its right edge (the rack view's pointer events are shifted by its
+//! origin). The plugin banner starts there too. Clicking the panel focuses it; hiding it moves
+//! the focus to the rack.
+//!
+//! While the panel has the focus the key context is `Files` (over `Global`): its keys are the
+//! `files.*` commands, which the shell hands to the panel as the key they stand for
+//! (`files_key`), so a remap of the chord still drives the panel and they win over global
+//! chords such as Space (play) and Backspace (delete). While its search or tag field owns the
+//! keyboard the context is `Text` over `Files`: plain keys are typed, chords with the primary
+//! modifier, function keys and Esc resolve as commands (Esc reaches the field as
+//! `files.stop`). F4 and the other global chords run in both.
+//!
+//! The panel's `DragFiles` action starts a shell-owned drag ([`Capture::FileDrag`]): moves are
+//! file hovers over the pane under the pointer (the same targeting as OS drops), the release
+//! is a file drop exactly like an OS drop, and a release over the panel or over nothing that
+//! takes files, or Esc, cancels. A small label (the file name, or the count) follows the
+//! pointer. Width, split, auto-preview, visibility and the last folder are saved in
+//! `ui-state.json` ([`UiState`]); the library file is `ShellOptions::library_path`, written on
+//! [`Shell::shutdown`].
+//!
 //! # Routing
 //!
 //! - **Pointer** events go to the pane under the pointer (the rack view gets its own
@@ -105,11 +132,12 @@ use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
     Context, ContextStack, Keymap, KeymapEditor, Os, Profile, Roles, Route, Router, UserKeymap,
 };
-use atomik_ui::kurbo::{Affine, Point, Rect, Size};
+use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    Canvas, CanvasExt, ConsoleButton, Flip, Key, Modifiers, NumpadKey, PluginBannerView,
-    PluginSettingsView, PointerButton, TextRun, UiAction, UiEvent,
+    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
+    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, TextRun, UiAction,
+    UiEvent,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -125,6 +153,8 @@ pub const CONSOLE_DEVICES_NOTICE: &str = "Console devices are now shown in the r
 pub const STATUS_BAR_HEIGHT: f64 = 22.0;
 /// Height of the rack / arrangement divider, logical pixels.
 pub const DIVIDER_HEIGHT: f64 = 6.0;
+/// The width the window keeps for everything but the file browser column.
+pub const MIN_REST_WIDTH: f64 = 400.0;
 /// Smallest height the divider leaves to the rack and to the song area.
 pub const MIN_PANE_HEIGHT: f64 = 80.0;
 
@@ -171,6 +201,9 @@ pub struct ShellOptions {
     pub os: Option<Os>,
     /// The keymap profile (`None`: [`APP_DEFAULT_PROFILE`]).
     pub profile: Option<Profile>,
+    /// Where the file browser's library (favourites, tags, bookmarks) is kept
+    /// (`<config dir>/library.json`; `None`: in memory only).
+    pub library_path: Option<PathBuf>,
 }
 
 /// Where the window's parts are, in logical pixels.
@@ -184,7 +217,20 @@ pub struct Layout {
     pub transport: Rect,
     /// The lower pane: arrangement, piano roll or console (only while it shows).
     pub song: Option<Rect>,
+    /// The file browser column (only while it shows): the full height below the menu bar, to
+    /// the left of everything else.
+    pub file_browser: Option<Rect>,
 }
+
+/// A drag of files that left the file browser: the shell owns it until the release.
+struct FileDrag {
+    paths: Vec<PathBuf>,
+    /// Where the pointer last was (the label follows it); `None` before the first move.
+    pos: Option<Point>,
+    /// Esc was pressed: nothing is delivered any more; the release ends the gesture.
+    cancelled: bool,
+}
+
 /// An open context menu and the pane whose selection its commands work on.
 struct OpenContextMenu {
     menu: ContextMenu,
@@ -199,6 +245,9 @@ enum Capture {
     Divider {
         grab: f64,
     },
+    /// A drag of files out of the file browser: the shell delivers it to the pane under the
+    /// pointer as file hovers and a drop.
+    FileDrag,
 }
 
 /// The window content.
@@ -249,6 +298,11 @@ pub struct Shell<B: AudioBackend> {
     keymap_stamp: Option<(SystemTime, u64)>,
     /// The layout F7 (sequencer only) replaced, to restore on the next F7.
     seq_only_prev: Option<SeqOnlyPrev>,
+    /// The right edge of the file browser column as last laid out (0 while hidden), to notice a
+    /// resize drag of the panel.
+    browser_edge: f64,
+    /// The file drag in progress (see [`Capture::FileDrag`]).
+    file_drag: Option<FileDrag>,
 }
 
 /// The layout flags F7 remembers.
@@ -323,6 +377,7 @@ impl<B: AudioBackend> Shell<B> {
         let built = user_keymap.build(user_keymap.profile.unwrap_or(default_profile), os);
         startup_notes.extend(built.report.summary());
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
+        let options_library_path = options.library_path.clone();
         let mut shell = Self {
             core,
             menubar: options.in_window_menu.then(MenuBar::new),
@@ -353,15 +408,20 @@ impl<B: AudioBackend> Shell<B> {
             workflow,
             keymap_stamp,
             seq_only_prev: None,
+            browser_edge: 0.0,
+            file_drag: None,
         };
         shell.core.set_roles(&shell.roles);
+        shell.core.set_library_path(options_library_path);
+        // Before anything saves the window state: a save copies the panel's values.
+        shell.restore_file_browser();
         shell.apply_workflow_to_views();
         // The rack's console display preferences (shown unless the user
         // switched them off).
         {
             let view = shell.core.view_mut();
-            view.set_show_console_devices(ui.show_console_devices);
-            view.set_show_console_links(ui.show_console_links);
+            view.set_show_console_devices(shell.ui.show_console_devices);
+            view.set_show_console_links(shell.ui.show_console_links);
         }
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
@@ -382,7 +442,7 @@ impl<B: AudioBackend> Shell<B> {
         for note in startup_notes {
             shell.notify(note);
         }
-        shell.core.set_input_quantize(ui.input_quantize);
+        shell.core.set_input_quantize(shell.ui.input_quantize);
         let gain = shell.core.sink().settings().metronome_gain;
         if (gain - shell.core.metronome_gain()).abs() > f32::EPSILON {
             shell.core.set_metronome_gain(gain);
@@ -459,7 +519,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The window state (split, song area shown, input quantize).
     pub fn ui_state(&self) -> UiState {
-        self.ui
+        self.ui.clone()
     }
 
     /// The pane that receives keys (the last one clicked).
@@ -727,6 +787,10 @@ impl<B: AudioBackend> Shell<B> {
             Pane::PluginParams if self.core.plugin_params().is_text_owner() => {
                 ContextStack::new(&[Context::Text])
             }
+            Pane::FileBrowser if self.core.file_browser().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Files])
+            }
+            Pane::FileBrowser => ContextStack::new(&[Context::Files]),
             Pane::Transport | Pane::PluginParams => ContextStack::global(),
         }
     }
@@ -739,6 +803,7 @@ impl<B: AudioBackend> Shell<B> {
             flip: view.flip(),
             cables: view.cable_visibility(),
             browser: view.browser_visible(),
+            file_browser: self.ui.file_browser_visible,
             can_undo: self.core.document().can_undo(),
             can_redo: self.core.document().can_redo(),
             can_edit: self.core.has_selection(self.live_pane(self.focus)),
@@ -807,58 +872,80 @@ impl<B: AudioBackend> Shell<B> {
         )
     }
 
+    /// The file browser column, when it shows: the full height below the menu bar. Its width is
+    /// the panel's own (it resizes by drag), kept so the rest of the window keeps
+    /// [`MIN_REST_WIDTH`].
+    fn file_browser_rect(&self) -> Option<Rect> {
+        if !self.ui.file_browser_visible {
+            return None;
+        }
+        let top = self.bar_height();
+        let bottom = (self.size.height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let most = (self.size.width - MIN_REST_WIDTH).max(0.0);
+        let least = FileBrowserView::MIN_WIDTH.min(most);
+        let width = self.core.file_browser().width().clamp(least, most);
+        Some(Rect::new(0.0, top, width, bottom))
+    }
+
     /// Where the rack, divider, transport bar and song area are (module docs).
     pub fn layout(&self) -> Layout {
-        let w = self.size.width.max(1.0);
+        let fb = self.file_browser_rect();
+        let x0 = fb.map_or(0.0, |r| r.x1);
+        let w = (self.size.width - x0).max(1.0);
+        let x1 = x0 + w;
         let top = self.top();
         let bottom = (self.size.height - STATUS_BAR_HEIGHT).max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
-                rack: Rect::new(0.0, top, w, top),
+                rack: Rect::new(x0, top, x1, top),
                 divider: None,
-                transport: Rect::new(0.0, transport_top, w, bottom),
-                song: Some(Rect::new(0.0, top, w, transport_top)),
+                transport: Rect::new(x0, transport_top, x1, bottom),
+                song: Some(Rect::new(x0, top, x1, transport_top)),
+                file_browser: fb,
             };
         }
         if !self.ui.show_song {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
-                rack: Rect::new(0.0, top, w, transport_top),
+                rack: Rect::new(x0, top, x1, transport_top),
                 divider: None,
-                transport: Rect::new(0.0, transport_top, w, bottom),
+                transport: Rect::new(x0, transport_top, x1, bottom),
                 song: None,
+                file_browser: fb,
             };
         }
         if self.rack_hidden() {
-            let transport = Rect::new(0.0, top, w, top + TRANSPORT_HEIGHT);
+            let transport = Rect::new(x0, top, x1, top + TRANSPORT_HEIGHT);
             return Layout {
-                rack: Rect::new(0.0, top, w, top),
+                rack: Rect::new(x0, top, x1, top),
                 divider: None,
                 transport,
                 song: Some(Rect::new(
-                    0.0,
+                    x0,
                     transport.y1,
-                    w,
+                    x1,
                     bottom.max(transport.y1 + 1.0),
                 )),
+                file_browser: fb,
             };
         }
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
         let rack_h = (avail * self.ui.rack_split).clamp(lo, avail - lo);
-        let divider = Rect::new(0.0, top + rack_h, w, top + rack_h + DIVIDER_HEIGHT);
-        let transport = Rect::new(0.0, divider.y1, w, divider.y1 + TRANSPORT_HEIGHT);
+        let divider = Rect::new(x0, top + rack_h, x1, top + rack_h + DIVIDER_HEIGHT);
+        let transport = Rect::new(x0, divider.y1, x1, divider.y1 + TRANSPORT_HEIGHT);
         Layout {
-            rack: Rect::new(0.0, top, w, divider.y0),
+            rack: Rect::new(x0, top, x1, divider.y0),
             divider: Some(divider),
             transport,
             song: Some(Rect::new(
-                0.0,
+                x0,
                 transport.y1,
-                w,
+                x1,
                 bottom.max(transport.y1 + 1.0),
             )),
+            file_browser: fb,
         }
     }
 
@@ -882,6 +969,10 @@ impl<B: AudioBackend> Shell<B> {
             self.core.handle_event(&UiEvent::Resize(l.rack.size()));
         }
         self.core.transport_bar_mut().set_bounds(l.transport);
+        if let Some(fb) = l.file_browser {
+            self.core.file_browser_mut().set_bounds(fb);
+        }
+        self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
             self.core.arrangement_mut().set_bounds(song);
             self.core.piano_roll_mut().set_bounds(song);
@@ -894,10 +985,11 @@ impl<B: AudioBackend> Shell<B> {
             self.core.console_mut().set_bounds(song);
         }
         let bar = self.bar_height();
+        let banner_x = l.file_browser.map_or(0.0, |r| r.x1);
         self.banner.set_bounds(Rect::new(
-            0.0,
+            banner_x,
             bar,
-            self.size.width,
+            self.size.width.max(banner_x),
             bar + self.banner.height(),
         ));
         if self.plugin_settings.is_some() {
@@ -967,6 +1059,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
+            Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if self.rack_hidden() => self.song_pane(),
             other => other,
@@ -1003,6 +1096,9 @@ impl<B: AudioBackend> Shell<B> {
             .transport_bar_mut()
             .set_focused(pane == Pane::Transport);
         self.core.console_mut().set_focused(pane == Pane::Console);
+        self.core
+            .file_browser_mut()
+            .set_focused(pane == Pane::FileBrowser);
     }
 
     /// The pane under a window point, if any (the divider and the bars are not panes).
@@ -1013,7 +1109,9 @@ impl<B: AudioBackend> Shell<B> {
     /// What is under a window point: a pane, the divider (`Err(())`), or nothing.
     fn hit(&self, pos: Point) -> Option<Result<Pane, ()>> {
         let l = self.layout();
-        if l.rack.contains(pos) {
+        if l.file_browser.is_some_and(|r| r.contains(pos)) {
+            Some(Ok(Pane::FileBrowser))
+        } else if l.rack.contains(pos) {
             Some(Ok(Pane::Rack))
         } else if l.divider.is_some_and(|d| d.contains(pos)) {
             Some(Err(()))
@@ -1081,6 +1179,43 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// A pointer event during a drag out of the file browser: moves are file hovers over
+    /// whatever takes files under the pointer (cancels over the panel or anything else), the
+    /// release is a file drop exactly like an OS drop, and a release over the panel or over
+    /// nothing that takes files cancels.
+    fn file_drag_event(&mut self, event: &UiEvent, pos: Point) {
+        self.repaint = true;
+        let Some(drag) = self.file_drag.as_mut() else {
+            return;
+        };
+        drag.pos = Some(pos);
+        if drag.cancelled {
+            return;
+        }
+        let paths = drag.paths.clone();
+        match event {
+            UiEvent::PointerMove { .. } => self.file_event(&UiEvent::FileHover { pos, paths }),
+            UiEvent::PointerUp { .. } => {
+                let over_panel = self.hit_pane(pos) == Some(Pane::FileBrowser);
+                if !over_panel && self.file_target(pos).is_some() {
+                    self.file_event(&UiEvent::FileDrop { pos, paths });
+                } else {
+                    self.file_event(&UiEvent::FileHoverCancel);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Esc during a file drag: nothing is delivered any more and the targets let go of their
+    /// hover; the release that ends the gesture is swallowed.
+    fn cancel_file_drag(&mut self) {
+        if let Some(drag) = &mut self.file_drag {
+            drag.cancelled = true;
+        }
+        self.file_event(&UiEvent::FileHoverCancel);
+    }
+
     /// The pane files at a window point go to, if it takes files.
     fn file_target(&self, pos: Point) -> Option<Pane> {
         match self.hit(pos)? {
@@ -1138,6 +1273,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.core.transport_bar_mut().set_scale(*scale);
                 self.core.console_mut().set_scale(*scale);
+                self.core.file_browser_mut().set_scale(*scale);
                 self.repaint = true;
                 return Vec::new();
             }
@@ -1225,6 +1361,10 @@ impl<B: AudioBackend> Shell<B> {
             && !bar_open
         {
             self.repaint = true;
+            if self.file_drag.is_some() && *pressed && *key == Key::Escape {
+                self.cancel_file_drag();
+                return Vec::new();
+            }
             if self.core.transport_bar().is_editing_tempo() {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
@@ -1257,9 +1397,11 @@ impl<B: AudioBackend> Shell<B> {
                     self.forward(pane, event);
                 }
                 Capture::Divider { grab } => self.drag_divider(pos, grab, released),
+                Capture::FileDrag => self.file_drag_event(event, pos),
             }
             if released {
                 self.capture = None;
+                self.file_drag = None;
             }
             return Vec::new();
         }
@@ -1268,7 +1410,8 @@ impl<B: AudioBackend> Shell<B> {
             && let Some(pos) = pointer_pos(event)
         {
             let bar = self.bar_height();
-            if pos.y >= bar && pos.y < bar + self.banner.height() {
+            let banner_x = self.layout().file_browser.map_or(0.0, |r| r.x1);
+            if pos.x >= banner_x && pos.y >= bar && pos.y < bar + self.banner.height() {
                 self.repaint = true;
                 let actions = self.banner.handle(event);
                 for action in actions {
@@ -1374,6 +1517,17 @@ impl<B: AudioBackend> Shell<B> {
                     atomik_ui::CableVisibility::Hide => atomik_ui::CableVisibility::Show,
                 };
                 view.set_cable_visibility(next);
+            }
+            (files, None) if files.starts_with("files.") => {
+                let (key, modifiers) = files_key(files, self.os)?;
+                self.forward(
+                    Pane::FileBrowser,
+                    &UiEvent::Key {
+                        key,
+                        modifiers,
+                        pressed: true,
+                    },
+                );
             }
             ("view.focus_browser_search", None) => {
                 self.show_rack();
@@ -1536,11 +1690,23 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn save_ui_state(&mut self) {
+        let view = self.core.file_browser();
+        self.ui.file_browser_width = view.width();
+        self.ui.file_browser_tree_fraction = view.tree_fraction();
+        self.ui.file_browser_auto_preview = view.auto_preview();
         if let Some(path) = &self.ui_state_path
             && let Err(e) = self.ui.save(path)
         {
             let message = format!("window state not saved: {e}");
             self.notify(message);
+        }
+    }
+
+    /// The panel was dragged wider or narrower: lay the other views out again.
+    fn follow_browser_resize(&mut self) {
+        let edge = self.layout().file_browser.map_or(0.0, |r| r.x1);
+        if (edge - self.browser_edge).abs() > f64::EPSILON {
+            self.layout_view();
         }
     }
 
@@ -1550,12 +1716,15 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
+            if pane == Pane::FileBrowser {
+                self.follow_browser_resize();
+            }
             self.pane_actions(&actions);
             self.open_context_menus(pane, &actions);
             return actions;
         }
-        let dy = self.layout().rack.y0;
-        let shift = |p: Point| Point::new(p.x, p.y - dy);
+        let origin = self.layout().rack.origin();
+        let shift = |p: Point| Point::new(p.x - origin.x, p.y - origin.y);
         let moved = match event.clone() {
             UiEvent::PointerMove { pos, modifiers } => UiEvent::PointerMove {
                 pos: shift(pos),
@@ -1709,7 +1878,10 @@ impl<B: AudioBackend> Shell<B> {
         for action in actions {
             if let UiAction::ContextMenu { target, at } = action {
                 let at = if pane == Pane::Rack {
-                    Point::new(at.x, at.y + self.layout().rack.y0)
+                    {
+                        let o = self.layout().rack.origin();
+                        Point::new(at.x + o.x, at.y + o.y)
+                    }
                 } else {
                     *at
                 };
@@ -1770,6 +1942,26 @@ impl<B: AudioBackend> Shell<B> {
                     if self.focus == Pane::SliceEditor {
                         self.set_focus(Pane::Arrangement);
                     }
+                }
+                UiAction::Browse(BrowseAction::LayoutChanged) => {
+                    // Keep what the window could show, not what the pointer asked for.
+                    if let Some(fb) = self.layout().file_browser {
+                        self.core.file_browser_mut().set_width(fb.width());
+                    }
+                    self.save_ui_state();
+                }
+                UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.save_ui_state(),
+                UiAction::Browse(BrowseAction::DragFiles(paths)) => {
+                    self.file_drag = Some(FileDrag {
+                        paths: paths.clone(),
+                        pos: None,
+                        cancelled: false,
+                    });
+                    self.capture = Some(Capture::FileDrag);
+                }
+                UiAction::Browse(BrowseAction::Show(Place::Folder(folder))) => {
+                    self.ui.file_browser_folder = Some(folder.clone());
+                    self.save_ui_state();
                 }
                 UiAction::RunCommand { id, arg } => {
                     if let Some(mut requests) = self.run_command(id, arg.as_deref()) {
@@ -1913,6 +2105,30 @@ impl<B: AudioBackend> Shell<B> {
         self.set_focus(Pane::SliceEditor);
     }
 
+    /// Gives the panel the saved width, split, auto-preview switch and folder, then shows it
+    /// when it was shown last time (the core lists the folders on the first show).
+    fn restore_file_browser(&mut self) {
+        let ui = self.ui.clone();
+        let view = self.core.file_browser_mut();
+        view.set_width(ui.file_browser_width);
+        view.set_tree_fraction(ui.file_browser_tree_fraction);
+        view.set_auto_preview(ui.file_browser_auto_preview);
+        self.core.set_file_browser_folder(ui.file_browser_folder);
+        if ui.file_browser_visible {
+            self.core.set_file_browser_visible(true);
+        }
+    }
+
+    /// Shows or hides the file browser column: the core is told (the first show lists the
+    /// folders), focus leaves a hidden panel and the layout and the saved state follow.
+    fn set_file_browser_visible(&mut self, visible: bool) {
+        self.ui.file_browser_visible = visible;
+        self.core.set_file_browser_visible(visible);
+        self.set_focus(self.live_pane(self.focus));
+        self.layout_view();
+        self.save_ui_state();
+    }
+
     fn console_changed(&mut self) {
         if !self.console_shown() && self.focus == Pane::Console {
             self.set_focus(self.live_pane(Pane::Arrangement));
@@ -1998,6 +2214,10 @@ impl<B: AudioBackend> Shell<B> {
                 let view = self.core.view_mut();
                 let visible = !view.browser_visible();
                 view.set_browser_visible(visible);
+                Vec::new()
+            }
+            AppCommand::ToggleFileBrowser => {
+                self.set_file_browser_visible(!self.ui.file_browser_visible);
                 Vec::new()
             }
             AppCommand::ToggleSong => {
@@ -2264,6 +2484,16 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Before the app exits: the last folder and the panel's values go to `ui-state.json`
+    /// and the library (favourites, tags, bookmarks) is written if it changed.
+    pub fn shutdown(&mut self) {
+        if let Some(folder) = self.core.file_browser_folder() {
+            self.ui.file_browser_folder = Some(folder);
+        }
+        self.save_ui_state();
+        self.core.flush_library();
+    }
+
     /// True while audio is being imported or loaded (the platform loop keeps ticking).
     pub fn is_busy(&self) -> bool {
         self.core.is_busy()
@@ -2328,6 +2558,7 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint
             || self.core.view().needs_repaint()
             || self.core.transport_bar().needs_repaint()
+            || (self.ui.file_browser_visible && self.core.file_browser().needs_repaint())
             || (self.ui.show_song
                 && match self.song_pane() {
                     Pane::PianoRoll => self.core.piano_roll().needs_repaint(),
@@ -2348,14 +2579,24 @@ impl<B: AudioBackend> Shell<B> {
         let l = self.layout();
         let (w, h) = (self.size.width, self.size.height);
         if l.rack.height() > 0.0 {
-            canvas
-                .push_clip(&Rect::new(0.0, l.rack.y0 * scale, w * scale, l.rack.y1 * scale).into());
-            canvas.push_transform(Affine::translate((0.0, l.rack.y0 * scale)));
+            canvas.push_clip(
+                &Rect::new(
+                    l.rack.x0 * scale,
+                    l.rack.y0 * scale,
+                    l.rack.x1 * scale,
+                    l.rack.y1 * scale,
+                )
+                .into(),
+            );
+            canvas.push_transform(Affine::translate((l.rack.x0 * scale, l.rack.y0 * scale)));
             self.core.paint_pane(Pane::Rack, canvas);
             canvas.pop_transform();
             canvas.pop_clip();
         }
         self.core.paint_pane(Pane::Transport, canvas);
+        if l.file_browser.is_some() {
+            self.core.paint_pane(Pane::FileBrowser, canvas);
+        }
         if l.song.is_some() {
             let pane = self.song_pane();
             self.core.paint_pane(pane, canvas);
@@ -2396,6 +2637,25 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(open) = &self.context_menu {
             open.menu.paint(canvas, &theme);
         }
+        if let Some(drag) = &self.file_drag
+            && !drag.cancelled
+            && let Some(pos) = drag.pos
+        {
+            let text = drag_label(&drag.paths);
+            let width = text.chars().count() as f64 * 7.0 + 16.0;
+            let at = Point::new(
+                (pos.x + 14.0).min((w - width).max(0.0)),
+                (pos.y + 16.0).min(h - 24.0),
+            );
+            let label = Rect::new(at.x, at.y, at.x + width, at.y + 20.0);
+            canvas.fill_with(RoundedRect::from_rect(label, 4.0), theme.browser_row);
+            canvas.text(&TextRun::new(
+                text,
+                Point::new(at.x + 8.0, at.y + 14.0),
+                12.0,
+                theme.text,
+            ));
+        }
         if let Some(dialog) = &self.dialog {
             dialog.paint(canvas, &theme, self.size);
         }
@@ -2431,6 +2691,49 @@ fn text_form(event: &UiEvent) -> UiEvent {
         key,
         modifiers: *modifiers,
         pressed: *pressed,
+    }
+}
+
+/// The key the file browser panel reads for one of its `files.*` commands: the shell hands the
+/// command to the panel as this key (so a user remap of the chord still drives the panel).
+/// `None` for an id that is not a panel command.
+fn files_key(id: &str, os: Os) -> Option<(Key, Modifiers)> {
+    let command = if os == Os::Mac {
+        Modifiers {
+            meta: true,
+            ..Modifiers::NONE
+        }
+    } else {
+        Modifiers::CTRL
+    };
+    Some(match id {
+        "files.up" => (Key::Up, Modifiers::NONE),
+        "files.down" => (Key::Down, Modifiers::NONE),
+        "files.left" => (Key::Left, Modifiers::NONE),
+        "files.right" => (Key::Right, Modifiers::NONE),
+        "files.page_up" => (Key::PageUp, Modifiers::NONE),
+        "files.page_down" => (Key::PageDown, Modifiers::NONE),
+        "files.home" => (Key::Home, Modifiers::NONE),
+        "files.end" => (Key::End, Modifiers::NONE),
+        "files.open" => (Key::Enter, Modifiers::NONE),
+        "files.stop" => (Key::Escape, Modifiers::NONE),
+        "files.toggle_preview" => (Key::Space, Modifiers::NONE),
+        "files.parent" => (Key::Backspace, Modifiers::NONE),
+        "files.favorite" => (Key::Char('f'), Modifiers::NONE),
+        "files.search" => (Key::Char('f'), command),
+        "files.select_all" => (Key::Char('a'), command),
+        _ => return None,
+    })
+}
+
+/// What the drag label says: the file's name, or how many files.
+fn drag_label(paths: &[PathBuf]) -> String {
+    match paths {
+        [one] => one.file_name().map_or_else(
+            || one.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        ),
+        many => format!("{} files", many.len()),
     }
 }
 
@@ -2503,3 +2806,7 @@ mod clipboard_tests;
 #[cfg(test)]
 #[path = "shell_create_tests.rs"]
 mod create_tests;
+
+#[cfg(test)]
+#[path = "shell_browser_tests.rs"]
+mod shell_browser_tests;
