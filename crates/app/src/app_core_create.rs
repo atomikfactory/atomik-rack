@@ -67,7 +67,9 @@ impl<S: EngineSink> AppCore<S> {
         // "Add the device only" is the plain add: no selection change, no message.
         let routed = match command {
             WorkflowCommand::CreateInstrument { options, .. }
-            | WorkflowCommand::CreateEffect { options, .. } => options.route,
+            | WorkflowCommand::CreateInstrumentAt { options, .. }
+            | WorkflowCommand::CreateEffect { options, .. }
+            | WorkflowCommand::CreateEffectAt { options, .. } => options.route,
             _ => true,
         };
         if !routed {
@@ -106,7 +108,8 @@ impl<S: EngineSink> AppCore<S> {
     ) -> Option<String> {
         let doc = self.document.doc();
         match command {
-            WorkflowCommand::CreateInstrument { .. } => {
+            WorkflowCommand::CreateInstrument { .. }
+            | WorkflowCommand::CreateInstrumentAt { .. } => {
                 let mut parts = Vec::new();
                 if doc.console.channel_of(key).is_some() {
                     parts.push("a mixer channel");
@@ -119,7 +122,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 Some(format!("Created {name} with {}", parts.join(" and ")))
             }
-            WorkflowCommand::CreateEffect { .. } => {
+            WorkflowCommand::CreateEffect { .. } | WorkflowCommand::CreateEffectAt { .. } => {
                 // Created with the master selected: the first free send/return.
                 if let Some(slot) = doc.console.return_slot(key) {
                     return Some(format!("Effect routed to send/return {}", slot + 1));

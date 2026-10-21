@@ -481,6 +481,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             WorkflowCommand::PasteDevices { .. }
+            | WorkflowCommand::PasteDevicesAt { .. }
             | WorkflowCommand::DuplicateDevices { .. }
             | WorkflowCommand::DuplicateTrack { .. } => self.select_new_devices(&pre),
             WorkflowCommand::PasteNotes { .. } | WorkflowCommand::DuplicateNotes { .. } => {
@@ -495,11 +496,14 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             WorkflowCommand::CreateInstrument { .. }
+            | WorkflowCommand::CreateInstrumentAt { .. }
             | WorkflowCommand::CreateEffect { .. }
+            | WorkflowCommand::CreateEffectAt { .. }
             | WorkflowCommand::AutoRoute { .. } => self.created(command, &pre),
             WorkflowCommand::RemoveDevices { .. }
             | WorkflowCommand::DeleteDevices { .. }
             | WorkflowCommand::MoveDevices { .. }
+            | WorkflowCommand::MoveDevicesToSlot { .. }
             | WorkflowCommand::RemoveClips { .. }
             | WorkflowCommand::SetClipsMuted { .. }
             | WorkflowCommand::DisconnectDevice { .. }

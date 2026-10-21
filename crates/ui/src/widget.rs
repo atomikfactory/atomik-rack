@@ -258,6 +258,7 @@ mod tests {
             steps: None,
             inner: None,
             plugin: None,
+            column: 0,
         };
         assert!(close(current_value(&dev, &LIN), 0.25));
         dev.params.insert("a.lin".into(), 7.0);

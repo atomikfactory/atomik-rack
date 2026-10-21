@@ -7,7 +7,7 @@ use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, TempoEvent, Track};
 use crate::steps::StepSeqDoc;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One reversible, already-validated change to a [`RackDoc`].
 #[derive(Debug, Clone, PartialEq)]
@@ -24,10 +24,16 @@ pub(crate) enum Edit {
         device: RackDevice,
         cables: Vec<Cable>,
     },
-    /// Move the device at index `from` to index `to`.
-    Move {
-        from: usize,
-        to: usize,
+    /// Re-arrange the top-level devices: `old` and `new` hold every device's key and column in
+    /// rack order (the same keys in both). Used by every move and by column removal.
+    Layout {
+        old: Vec<(DeviceKey, u16)>,
+        new: Vec<(DeviceKey, u16)>,
+    },
+    /// The number of rack columns.
+    Columns {
+        old: u16,
+        new: u16,
     },
     /// Change presentation fields of a device.
     Folded {
@@ -275,7 +281,8 @@ impl Edit {
                 device,
                 cables,
             },
-            Edit::Move { from, to } => Edit::Move { from: to, to: from },
+            Edit::Layout { old, new } => Edit::Layout { old: new, new: old },
+            Edit::Columns { old, new } => Edit::Columns { old: new, new: old },
             Edit::Folded { key, old, new } => Edit::Folded {
                 key,
                 old: new,
@@ -460,6 +467,12 @@ impl Edit {
                 device,
                 cables,
             } => {
+                // A new device never breaks the column order: its column is held between its
+                // neighbours' (a plain `AddDevice` carries column 0 and so joins the column of
+                // the device before it).
+                let mut device = device.clone();
+                let (lo, hi) = doc.column_bounds(*index);
+                device.column = device.column.clamp(lo, hi);
                 doc.devices.insert(*index, device.clone());
                 doc.cables.extend(cables.iter().cloned());
                 doc.cables.sort();
@@ -487,9 +500,19 @@ impl Edit {
                     SyncOp::DeviceRemoved(device.key.clone()),
                 ]
             }
-            Edit::Move { from, to } => {
-                let d = doc.devices.remove(*from);
-                doc.devices.insert(*to, d);
+            Edit::Layout { new, .. } => {
+                let mut by_key: BTreeMap<DeviceKey, RackDevice> =
+                    doc.devices.drain(..).map(|d| (d.key.clone(), d)).collect();
+                for (key, column) in new {
+                    let mut d = by_key.remove(key).expect("edit targets an existing device");
+                    d.column = *column;
+                    doc.devices.push(d);
+                }
+                debug_assert!(by_key.is_empty(), "a layout names every device");
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::Columns { new, .. } => {
+                doc.columns = *new;
                 vec![SyncOp::ViewChanged]
             }
             Edit::Folded { key, new, .. } => {

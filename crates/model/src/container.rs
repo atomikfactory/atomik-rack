@@ -823,6 +823,7 @@ pub(crate) fn new_device(
             .then(crate::StepSeqDoc::default),
         inner: (desc.kind == DeviceKind::Container).then(Box::default),
         plugin: None,
+        column: 0,
     }
 }
 

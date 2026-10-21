@@ -180,6 +180,7 @@ impl RackView {
             input_channels: 2,
             assets: doc.assets.clone(),
             devices: container.devices.clone(),
+            columns: 1,
             cables: container.cables.clone(),
             song: atomik_model::empty_song(doc.tempo_bpm),
             console: Console::default(),

@@ -308,6 +308,7 @@ fn master_device(key: DeviceKey, name: String) -> RackDevice {
         steps: None,
         inner: None,
         plugin: None,
+        column: 0,
     }
 }
 

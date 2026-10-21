@@ -176,6 +176,11 @@ pub(crate) const DEVICE_FIELDS_V8: &[&str] = &[
 pub(crate) const DEVICE_FIELDS_V9: &[&str] = &[
     "id", "type", "params", "name", "folded", "color", "zones", "steps", "inner", "plugin",
 ];
+/// Project format v11 adds `column` (the rack column of a top-level device; omitted for 0).
+pub(crate) const DEVICE_FIELDS_V11: &[&str] = &[
+    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "inner",
+    "plugin",
+];
 
 /// How the device objects of a file are read.
 #[derive(Clone, Copy)]
@@ -283,6 +288,7 @@ pub(crate) fn load_rack(
         input_channels,
         assets: BTreeMap::new(),
         devices: Vec::new(),
+        columns: 1,
         cables: Vec::new(),
         song: crate::song::empty_song(tempo_bpm),
         console: crate::console::Console::default(),
@@ -415,6 +421,16 @@ pub(crate) fn load_device(
         }
         None => None,
     };
+    let column = match obj.get("column") {
+        Some(v) => {
+            let column_path = path.field("column");
+            if depth > 0 {
+                return Err(column_path.error("a device inside a container has no column"));
+            }
+            uint(v, &column_path, u64::from(crate::MAX_RACK_COLUMNS - 1))? as u16
+        }
+        None => 0,
+    };
     Ok(RackDevice {
         key: DeviceKey(id.to_owned()),
         type_id: type_id.to_owned(),
@@ -459,6 +475,7 @@ pub(crate) fn load_device(
             None => None,
         },
         plugin,
+        column,
     })
 }
 
@@ -621,6 +638,10 @@ pub(crate) fn write_device(
     );
     if let Some([r, g, b]) = d.color {
         let _ = write!(w, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
+    }
+    // Columns exist at the top level of a project only (never in a patch or a container).
+    if project && d.column != 0 && !path.contains('/') {
+        let _ = write!(w, ", \"column\": {}", d.column);
     }
     if !d.params.is_empty() {
         let _ = write!(w, ",\n{p}\"params\": {{");

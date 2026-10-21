@@ -57,6 +57,7 @@ pub fn device(k: &str, type_id: &str, name: &str) -> RackDevice {
         steps: None,
         inner: None,
         plugin: None,
+        column: 0,
     }
 }
 
@@ -86,6 +87,7 @@ pub fn reference_doc() -> RackDoc {
         input_channels: 0,
         assets: BTreeMap::new(),
         devices: vec![synth, delay, mixer],
+        columns: 1,
         cables,
         song: atomik_model::empty_song(120.0),
         console: atomik_model::Console::default(),
