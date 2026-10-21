@@ -41,6 +41,12 @@ fn record() {
     INSTALLED.store(true, Ordering::Relaxed);
     let _ = FORBID_DEPTH.try_with(|depth| {
         if depth.get() > 0 {
+            // TEMP-DIAG
+            let d = depth.get();
+            depth.set(0);
+            eprintln!("TEMP-DIAG alloc in guard:
+{}", std::backtrace::Backtrace::force_capture());
+            depth.set(d);
             let _ = VIOLATIONS.try_with(|v| v.set(v.get() + 1));
         }
     });
