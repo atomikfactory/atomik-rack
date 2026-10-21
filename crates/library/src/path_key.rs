@@ -16,7 +16,7 @@ fn has_drive(s: &str) -> bool {
 ///
 /// Separators become `/`, `.` components are removed and `..` components are resolved
 /// lexically (no disk access). On Windows the whole key is lower-cased (paths there are
-/// case-insensitive), so `C:\Samples\Kick.wav` and `c:/samples/kick.WAV` are the same key.
+/// case-insensitive), so `C:\Users\example\Kick.wav` and `c:/users/example/kick.WAV` are the same key.
 /// Drive prefixes (`C:/x`) and UNC prefixes (`//server/share/x`) are kept, a trailing separator
 /// is dropped, and `..` never climbs above the root (a relative path keeps leading `..`).
 /// Serialised as a plain string.
@@ -135,16 +135,22 @@ mod tests {
 
     #[test]
     fn windows_drive_prefix() {
-        assert_eq!(key(r"C:\Samples\Kick.wav", false), "C:/Samples/Kick.wav");
-        assert_eq!(key(r"C:\Samples\Kick.wav", true), "c:/samples/kick.wav");
+        assert_eq!(
+            key(r"C:\Users\example\Kick.wav", false),
+            "C:/Users/example/Kick.wav"
+        );
+        assert_eq!(
+            key(r"C:\Users\example\Kick.wav", true),
+            "c:/users/example/kick.wav"
+        );
         assert_eq!(key(r"C:\", true), "c:/");
-        assert_eq!(key(r"C:\a\..\..\b", false), "C:/b");
+        assert_eq!(key(r"C:\Windows\a\..\..\..\b", false), "C:/b");
         assert_eq!(key(r"C:rel\x", false), "C:rel/x");
     }
 
     #[test]
     fn verbatim_drive_prefix_is_removed() {
-        assert_eq!(key(r"\\?\C:\x\y", true), "c:/x/y");
+        assert_eq!(key(r"\\?\C:\Windows\y", true), "c:/windows/y");
     }
 
     #[test]
@@ -164,8 +170,8 @@ mod tests {
     #[test]
     fn mixed_spellings_are_one_key() {
         assert_eq!(
-            PathKey::with_case_folding(Path::new(r"C:\Samples\Kick.wav"), true),
-            PathKey::with_case_folding(Path::new("c:/samples/./x/../kick.WAV"), true)
+            PathKey::with_case_folding(Path::new(r"C:\Users\example\Kick.wav"), true),
+            PathKey::with_case_folding(Path::new("c:/users/example/./x/../kick.WAV"), true)
         );
     }
 

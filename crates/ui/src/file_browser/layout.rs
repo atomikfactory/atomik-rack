@@ -423,10 +423,10 @@ mod tests {
     #[test]
     fn windows_drive_segment_points_at_the_root() {
         let bar = Rect::new(0.0, 0.0, 600.0, PATH_H);
-        let pb = path_segments(Path::new(r"C:\Music\Kicks"), bar);
+        let pb = path_segments(Path::new(r"C:\Windows\Kicks"), bar);
         assert_eq!(pb.segments[0].label, "C:");
         assert_eq!(pb.segments[0].path, PathBuf::from(r"C:\"));
-        assert_eq!(pb.segments[1].path, PathBuf::from(r"C:\Music"));
+        assert_eq!(pb.segments[1].path, PathBuf::from(r"C:\Windows"));
     }
 
     #[test]

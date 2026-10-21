@@ -295,7 +295,7 @@ pub(crate) fn list_children(path: &Path) -> Vec<TreeChild> {
     out
 }
 
-/// Removes the verbatim prefix `canonicalize` adds on Windows: `\\?\C:\x` becomes `C:\x` and
+/// Removes the verbatim prefix `canonicalize` adds on Windows: `\\?\C:\Windows\x` becomes `C:\Windows\x` and
 /// `\\?\UNC\server\share` becomes `\\server\share`.
 pub(crate) fn strip_verbatim(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
@@ -708,15 +708,15 @@ mod tests {
     fn verbatim_prefixes_are_stripped() {
         let p = |s: &str| strip_verbatim(Path::new(s));
         assert_eq!(
-            p(r"\\?\C:\Music\Kick.wav"),
-            PathBuf::from(r"C:\Music\Kick.wav")
+            p(r"\\?\C:\Users\example\Music\Kick.wav"),
+            PathBuf::from(r"C:\Users\example\Music\Kick.wav")
         );
         assert_eq!(
             p(r"\\?\UNC\server\share\a.wav"),
             PathBuf::from(r"\\server\share\a.wav")
         );
         assert_eq!(p("/plain/a.wav"), PathBuf::from("/plain/a.wav"));
-        assert_eq!(p(r"C:\x"), PathBuf::from(r"C:\x"));
+        assert_eq!(p(r"C:\Windows\x"), PathBuf::from(r"C:\Windows\x"));
     }
 
     #[cfg(windows)]
