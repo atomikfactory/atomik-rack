@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Release archives for Windows (zip), macOS (universal `Atomik Rack.app`, ad-hoc signed, in a zip) and Linux (tar.gz), each smoke-tested before a draft release is created, with per-archive `.sha256` files and a `SHA256SUMS` file.
+
 ### Changed
 - Documentation, templates and contribution policy prepared for the first public release.
 
