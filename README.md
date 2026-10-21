@@ -34,6 +34,14 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **Offline bounce.** `atomik-render` renders patches and projects to WAV, bit-identical for any block size and worker count.
 - **Projects.** A project with audio is a bundle folder (`name/name.atomik` plus `Audio/`, files named by content hash); a project without audio is a single `.atomik` file. Saves are atomic.
 
+## Install
+
+Release builds are attached to each [GitHub release](https://github.com/atomikfactory/atomik-rack/releases): `atomik-rack-<version>-windows-x86_64.zip`, `atomik-rack-<version>-macos-universal.zip` (Apple Silicon and Intel) and `atomik-rack-<version>-linux-x86_64.tar.gz`, with a `SHA256SUMS` file to check them against. The builds are not code-signed, so each system warns the first time.
+
+- **Windows.** Unzip, run `atomik.exe`. If SmartScreen says "Windows protected your PC", choose **More info**, then **Run anyway**.
+- **macOS.** Unzip and move `Atomik Rack.app` to Applications. The app is only ad-hoc signed and not notarised: right-click it, choose **Open**, then **Open** again. Or remove the quarantine flag once: `xattr -dr com.apple.quarantine "Atomik Rack.app"`.
+- **Linux.** Extract the archive and run `./atomik`. It needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
+
 ## Building
 
 You need a Rust toolchain. [rust-toolchain.toml](rust-toolchain.toml) pins the version and `rustup` installs it automatically.
