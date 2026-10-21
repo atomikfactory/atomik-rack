@@ -1367,6 +1367,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.cancel_file_drag();
                 return Vec::new();
             }
+            // Escape ends a device dragged out of the browser, whichever pane has the focus.
+            if self.core.view().is_browser_dragging() && *pressed && *key == Key::Escape {
+                self.forward(Pane::Rack, event);
+                return Vec::new();
+            }
             if self.core.transport_bar().is_editing_tempo() {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();

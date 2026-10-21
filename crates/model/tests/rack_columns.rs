@@ -940,3 +940,67 @@ fn undoing_everything_restores_the_columns_and_redo_replays_them() {
         assert_eq!(&text(&d), want);
     }
 }
+
+// ---------------------------------------------------------------- plugins at a slot
+
+fn add_plugin_at(at: RackSlot, k: &str) -> Command {
+    use common::plugin::{notes_layout, notes_ref};
+    Command::Plugin(atomik_model::PluginCommand::AddAt {
+        slot: at,
+        plugin: notes_ref(),
+        layout: notes_layout(),
+        path_hint: None,
+        key: Some(key(k)),
+    })
+}
+
+#[test]
+fn a_plugin_added_at_a_slot_lands_in_its_column() {
+    let r = common::plugin::plugin_registry();
+    let mut d = rack(&r, 2, &[("a", 0), ("b", 0), ("c", 1), ("d", 1)]);
+    let ops = one_step(&mut d, &r, add_plugin_at(slot(1, 0), "n"));
+    assert!(ops.contains(&SyncOp::DeviceAdded(key("n"))));
+    assert_eq!(
+        layout(&d),
+        "a0 b0 n1 c1 d1",
+        "the top of column 1, not the end of 0"
+    );
+    valid(&d);
+    assert!(d.doc().device(&key("n")).unwrap().plugin.is_some());
+    // The middle of column 0 and the end of column 1.
+    d.apply(add_plugin_at(slot(0, 1), "m"), &r).unwrap();
+    d.apply(add_plugin_at(slot(1, usize::MAX), "o"), &r)
+        .unwrap();
+    assert_eq!(layout(&d), "a0 m0 b0 n1 c1 d1 o1");
+    valid(&d);
+    for _ in 0..3 {
+        d.undo(&r).unwrap();
+    }
+    assert_eq!(layout(&d), "a0 b0 c1 d1");
+}
+
+#[test]
+fn a_plugin_added_past_the_last_column_creates_it_in_one_undo_step() {
+    let r = common::plugin::plugin_registry();
+    let mut d = rack(&r, 2, &[("a", 0), ("c", 1)]);
+    let before = atomik_model::save_project(d.doc());
+    let ops = one_step(&mut d, &r, add_plugin_at(slot(2, 0), "n"));
+    assert!(ops.contains(&SyncOp::DeviceAdded(key("n"))));
+    assert!(ops.contains(&SyncOp::ViewChanged));
+    assert_eq!(d.doc().columns, 3);
+    assert_eq!(layout(&d), "a0 c1 n2");
+    valid(&d);
+    d.undo(&r).unwrap();
+    assert_eq!(d.doc().columns, 2);
+    assert_eq!(atomik_model::save_project(d.doc()), before, "one undo step");
+    d.redo(&r).unwrap();
+    assert_eq!(layout(&d), "a0 c1 n2");
+}
+
+#[test]
+fn a_plugin_slot_past_the_column_limit_is_refused() {
+    let r = common::plugin::plugin_registry();
+    let mut d = rack(&r, MAX_RACK_COLUMNS, &[("a", 0)]);
+    let e = rejected(&mut d, &r, add_plugin_at(slot(MAX_RACK_COLUMNS, 0), "n"));
+    assert!(matches!(e, ModelError::BadColumn(_)), "{e:?}");
+}

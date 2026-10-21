@@ -5,7 +5,7 @@
 use super::{Drag, MOVE_THRESHOLD, RACK_MARGIN, RackView, UiAction};
 use crate::keymap::CommandOutcome;
 use atomik_device_sdk::RACK_WIDTH;
-use atomik_model::{Command, DeviceKey, MAX_RACK_COLUMNS};
+use atomik_model::{Command, DeviceKey, MAX_RACK_COLUMNS, RackDoc, RackSlot};
 use vello::kurbo::{Point, Rect, Size, Vec2};
 use vello::peniko::Color;
 
@@ -173,6 +173,31 @@ impl RackView {
         }
     }
 
+    // ------------------------------------------------------------------ paste target
+
+    /// The slot of the empty rack at rack point `rp`, for a paste: the column under the point
+    /// (the last one past the end) and the place among its devices. `None` inside a container.
+    pub(super) fn slot_at(&self, rp: Point, doc: &RackDoc) -> Option<RackSlot> {
+        if !self.scope.is_empty() {
+            return None;
+        }
+        let none = vec![false; self.devices.len()];
+        let mut dp = self.drop_point(rp, &none);
+        if dp.new_column {
+            dp = self.drop_point(Point::new(column_left(self.columns - 1), rp.y), &none);
+        }
+        Some(RackSlot {
+            column: dp.column,
+            index: self.slot_index(doc, &dp, &[]),
+        })
+    }
+
+    /// The slot under the last right click on the empty rack, once: a paste from the rack's
+    /// menu lands there. Any other click or key clears it.
+    pub fn take_context_slot(&mut self) -> Option<RackSlot> {
+        self.context_slot.take()
+    }
+
     // ------------------------------------------------------------------ navigator seam
 
     /// How many columns the view shows (1 inside a container).
@@ -226,7 +251,7 @@ mod tests {
     use super::*;
     use crate::{Theme, UiEvent};
     use atomik_device_sdk::Registry;
-    use atomik_model::{RackDevice, RackDoc};
+    use atomik_model::RackDevice;
     use std::collections::BTreeMap;
 
     fn device(key: &str, column: u16) -> RackDevice {

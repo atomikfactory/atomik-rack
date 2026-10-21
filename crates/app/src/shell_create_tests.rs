@@ -647,3 +647,50 @@ fn the_frame_clock_scrolls_the_rack_while_a_device_is_dragged_to_an_edge() {
     });
     assert!(!s.core().view().is_auto_scrolling());
 }
+
+#[test]
+fn escape_during_a_device_browser_drag_reaches_the_rack_and_cancels_with_no_command() {
+    for focus in [Pane::Rack, Pane::Arrangement] {
+        let mut s = shell_for(Os::Windows);
+        s.core_mut().view_mut().set_browser_visible(true);
+        let before = saved(&s);
+        let view = s.core().view();
+        let i = view
+            .browser_rows(s.core().registry())
+            .iter()
+            .position(|t| *t == SYNTH)
+            .unwrap();
+        let row = view.browser_row_center(i).unwrap();
+        let from = Point::new(row.x, row.y + s.layout().rack.y0);
+        let to = Point::new(600.0, s.layout().rack.y0 + 300.0);
+        s.handle(&UiEvent::PointerDown {
+            pos: from,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        });
+        s.handle(&UiEvent::PointerMove {
+            pos: to,
+            modifiers: Modifiers::NONE,
+        });
+        // Whatever pane has the keyboard focus, Escape ends the drag.
+        s.set_focus(focus);
+        for pressed in [true, false] {
+            s.handle(&UiEvent::Key {
+                key: atomik_ui::Key::Escape,
+                modifiers: Modifiers::NONE,
+                pressed,
+            });
+        }
+        s.handle(&UiEvent::PointerUp {
+            pos: to,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        });
+        assert_eq!(saved(&s), before, "focus on {focus:?}: nothing was created");
+        assert!(
+            !s.core().document().can_undo(),
+            "focus on {focus:?}: no command was applied"
+        );
+    }
+}

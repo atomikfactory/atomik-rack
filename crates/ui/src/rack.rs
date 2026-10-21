@@ -25,7 +25,7 @@ use atomik_device_sdk::{
 };
 use atomik_model::{
     BOUNDARY_KEY, Cable, Command, ConsoleCommand, ContainerCommand, CreateOptions, CreateSource,
-    CreateTarget, DeviceKey, INTERFACE_KEY, PatternDoc, RackDevice, RackDoc, SocketRef,
+    CreateTarget, DeviceKey, INTERFACE_KEY, PatternDoc, RackDevice, RackDoc, RackSlot, SocketRef,
     WorkflowCommand,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -435,6 +435,8 @@ pub struct RackView {
     columns: u16,
     /// The column a right click on the empty rack was in (the target of Remove Column).
     column_target: u16,
+    /// The slot under the last right click on the empty rack, for a paste from its menu.
+    context_slot: Option<RackSlot>,
     /// The clock of the last auto-scroll tick, while one is running.
     tick_clock: Option<f64>,
     /// The rack navigator is switched on (see [`NAVIGATOR_WIDTH`]).
@@ -570,6 +572,7 @@ impl RackView {
             content_height: 0.0,
             columns: 1,
             column_target: 0,
+            context_slot: None,
             tick_clock: None,
             navigator: false,
             nav_hover: false,
@@ -662,6 +665,11 @@ impl RackView {
     /// Whether the console links are drawn as cables.
     pub fn show_console_links(&self) -> bool {
         self.show_links
+    }
+
+    /// Whether a device is being dragged out of the device browser (Escape cancels it).
+    pub fn is_browser_dragging(&self) -> bool {
+        matches!(self.drag, Drag::Browser { .. })
     }
 
     /// The tooltip of the locked Master Section.
@@ -1404,15 +1412,27 @@ impl RackView {
         }
     }
 
+    /// Whether the columns alone are wider than the rack area: the rack then scrolls sideways
+    /// from the left; otherwise it is centred.
+    fn is_wide(&self) -> bool {
+        self.content_width() * self.zoom + 2.0 * RACK_MARGIN > self.rack_area().width()
+    }
+
     fn origin(&self) -> Point {
         let area = self.rack_area();
         let rack_w = self.content_width() * self.zoom;
         let avail = area.width() - 2.0 * RACK_MARGIN;
-        let x = if rack_w <= avail {
-            // Centred; the new-column zone of a drag shows in the margin and never moves it.
-            area.x0 + RACK_MARGIN + (avail - rack_w) / 2.0
-        } else {
+        let x = if self.is_wide() {
             area.x0 + RACK_MARGIN - self.scroll.x
+        } else {
+            let centred = area.x0 + RACK_MARGIN + (avail - rack_w) / 2.0;
+            if self.zone_visible() {
+                // The new-column zone of a drag stays in view: a rack that fits moves left only
+                // as far as it takes, even if that cuts the margin on its left.
+                centred.min(area.x1 - RACK_MARGIN - self.extent_width() * self.zoom)
+            } else {
+                centred
+            }
         };
         Point::new(x, area.y0 + RACK_MARGIN - self.scroll.y)
     }
@@ -1420,9 +1440,8 @@ impl RackView {
     fn max_scroll(&self) -> Vec2 {
         let area = self.rack_area();
         // A rack that fits is centred and does not scroll sideways.
-        let wide = self.content_width() * self.zoom + 2.0 * RACK_MARGIN > area.width();
         Vec2::new(
-            if wide {
+            if self.is_wide() {
                 (self.extent_width() * self.zoom + 2.0 * RACK_MARGIN - area.width()).max(0.0)
             } else {
                 0.0
@@ -2384,6 +2403,7 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.toast = None;
+        self.context_slot = None;
         self.pointer = pos;
         self.repaint = true;
         if self.macro_press(pos, out) || self.plugin_menu_press(pos) {
@@ -2623,6 +2643,7 @@ impl RackView {
             (Hit::Rack, PointerButton::Primary) => self.clear_selection_by_click(),
             (Hit::Rack, PointerButton::Secondary) => {
                 self.column_target = self.column_at(rp.x);
+                self.context_slot = self.slot_at(rp, doc);
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::Rack,
                     at: pos,
@@ -2734,7 +2755,13 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.pointer = pos;
-        let drag = std::mem::replace(&mut self.drag, Drag::None);
+        // A device drop is worked out in the layout of the drag (which may show the new-column
+        // zone), so that drag ends after it.
+        let drag = if matches!(self.drag, Drag::Move { .. } | Drag::Browser { .. }) {
+            self.drag.clone()
+        } else {
+            std::mem::replace(&mut self.drag, Drag::None)
+        };
         self.repaint = true;
         match drag {
             Drag::None | Drag::Pan { .. } | Drag::Navigator { .. } => {}
@@ -2797,6 +2824,9 @@ impl RackView {
             } => self.browser_drop(&row, doc, modifiers, out),
             Drag::Browser { .. } => {}
         }
+        self.drag = Drag::None;
+        // A drag may have shown the new-column zone: the range is the columns again.
+        self.clamp_scroll();
         self.update_hover(pos);
     }
 
@@ -3028,6 +3058,7 @@ impl RackView {
         out: &mut Vec<UiAction>,
     ) {
         self.repaint = true;
+        self.context_slot = None;
         // Chords with the primary modifier are commands (undo, duplicate, ...): the shell
         // resolves them through the keymap and offers them to `command`.
         if modifiers.command() {
@@ -3041,6 +3072,7 @@ impl RackView {
         if matches!(self.drag, Drag::Browser { .. }) && matches!(key, Key::Escape) {
             self.drag = Drag::None;
             self.tick_clock = None;
+            self.clamp_scroll();
             return;
         }
         if self.browser.visible && self.browser.focused {

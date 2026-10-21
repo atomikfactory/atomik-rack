@@ -445,7 +445,7 @@ pub enum Command {
 /// | container removed, added back (undo), duplicated, or added with `AddDevice` | `DeviceRemoved(container)` or `DeviceAdded(container)` for the **whole inside** (the app expands it; no per-inner ops) |
 /// | `SetSplits` | `SplitsChanged`, plus `RoutingChanged` only when the list of targets changed |
 /// | `SetMacro`, `RemoveMacroTarget`, `RenameMacro` (also undo/redo, and the clean-up when a mapped device is removed) | `MacrosChanged` |
-/// | plugin added (`PluginCommand::Add`, also inside a container) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
+/// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
@@ -945,6 +945,29 @@ impl Document {
                         key,
                     },
                     registry,
+                )?;
+                rack_columns::place_new_device(doc, at, edit)
+            }
+            Command::Plugin(PluginCommand::AddAt {
+                slot,
+                plugin,
+                layout,
+                path_hint,
+                key,
+            }) => {
+                let at = doc.resolve_slot(slot)?;
+                let edit = plugin_cmd::plan(
+                    doc,
+                    registry,
+                    PluginCommand::Add {
+                        index: at.index,
+                        container: None,
+                        plugin,
+                        layout,
+                        path_hint,
+                        key,
+                        auto_split: false,
+                    },
                 )?;
                 rack_columns::place_new_device(doc, at, edit)
             }

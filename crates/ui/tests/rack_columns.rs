@@ -674,3 +674,96 @@ fn the_unit_is_still_a_rack_unit() {
     let r = v.device_rect(&key("interface")).unwrap();
     assert!((r.height() - f64::from(RACK_UNIT)).abs() < 1e-9);
 }
+
+// ---------------------------------------------------------------- plugins and the zone
+
+#[test]
+fn a_plugin_that_is_neither_instrument_nor_effect_drops_into_a_slot_and_the_new_column() {
+    use atomik_model::PluginCommand;
+    use atomik_ui::browser::BrowserRow;
+    let (doc, reg, mut v) = two_columns();
+    v.set_plugin_catalog(support::plugin::catalog());
+    open_browser(&mut v);
+    let i = v
+        .browser_list(&reg)
+        .iter()
+        .position(|r| *r == BrowserRow::Plugin(2))
+        .expect("the note effect");
+    let row = v.browser_row_center(i).unwrap();
+    // Into the new column: one command that adds the plugin at slot (2, 0), column included.
+    let zone = v.rack_to_view(Point::new(col_x(2) + 30.0, 80.0));
+    let a = drag(&mut v, &doc, &reg, row, zone);
+    assert!(
+        matches!(
+            commands(&a).as_slice(),
+            [Command::Plugin(PluginCommand::AddAt { slot, plugin, .. })]
+                if *slot == RackSlot { column: 2, index: 0 } && *plugin == support::plugin::arp_ref()
+        ),
+        "{a:?}"
+    );
+    // Into the top of column 1: the slot, not a flat index that would join column 0.
+    let mixer = v.device_rect(&key("mixer")).unwrap();
+    let to = in_column(&v, 1, mixer.y0 + 4.0);
+    let a = drag(&mut v, &doc, &reg, row, to);
+    assert!(
+        matches!(
+            commands(&a).as_slice(),
+            [Command::Plugin(PluginCommand::AddAt { slot, .. })]
+                if *slot == RackSlot { column: 1, index: 0 }
+        ),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn the_new_column_zone_is_on_screen_while_a_device_is_dragged_whatever_the_window() {
+    let (doc, reg) = (reference_doc(), registry());
+    for navigator in [false, true] {
+        for width in [820.0, 900.0, 1000.0, 1100.0, 1400.0, 1800.0] {
+            let mut v = RackView::new(atomik_ui::Theme::dark());
+            v.set_show_console_devices(false);
+            v.set_navigator_visible(navigator);
+            let size = Size::new(width + if navigator { 136.0 } else { 0.0 }, 1200.0);
+            let _ = v.handle(&UiEvent::Resize(size), &doc, &reg);
+            v.sync(&doc, &reg);
+            let area_right = v.navigator_rect().map_or(size.width, |r| r.x0);
+            let from = v.plate_center(&key("synth")).unwrap();
+            let _ = v.handle(&down(from), &doc, &reg);
+            let _ = v.handle(&mv(Point::new(from.x + 20.0, from.y + 20.0)), &doc, &reg);
+            // Drop point in the middle of the zone, shown fully inside the rack area.
+            let zone_l = v.rack_to_view(Point::new(col_x(1), 80.0));
+            let zone_r = v.rack_to_view(Point::new(col_x(1) + 200.0, 80.0));
+            assert!(
+                zone_l.x >= 0.0 && zone_r.x <= area_right + 1e-6,
+                "{width} wide, navigator {navigator}: zone {zone_l:?}..{zone_r:?} of {area_right}"
+            );
+            let to = Point::new((zone_l.x + zone_r.x) / 2.0, zone_l.y);
+            let _ = v.handle(&mv(to), &doc, &reg);
+            let a = v.handle(&up(to), &doc, &reg);
+            assert_eq!(
+                commands(&a),
+                vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+                    keys: vec![key("synth")],
+                    slot: RackSlot {
+                        column: 1,
+                        index: 0
+                    }
+                })],
+                "{width} wide, navigator {navigator}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_rack_that_fits_does_not_move_when_a_drag_starts_if_the_zone_fits_beside_it() {
+    let (doc, reg) = (reference_doc(), registry());
+    let mut v = view(&doc, &reg);
+    let _ = v.handle(&UiEvent::Resize(Size::new(1800.0, 1200.0)), &doc, &reg);
+    let from = v.plate_center(&key("synth")).unwrap();
+    let rest = v.rack_to_view(Point::ZERO);
+    let _ = v.handle(&down(from), &doc, &reg);
+    let _ = v.handle(&mv(Point::new(from.x + 20.0, from.y + 20.0)), &doc, &reg);
+    assert!((v.rack_to_view(Point::ZERO) - rest).hypot() < 1e-9);
+    let _ = v.handle(&esc(), &doc, &reg);
+}

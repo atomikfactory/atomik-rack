@@ -15,7 +15,7 @@ use super::*;
 use crate::clipboard::{Clipboard, ClipboardData, ClipboardKind};
 use atomik_model::{
     AssetMeta, ClipContent, ClipSnapshot, DeviceSnapshot, Note, NoteSnapshot, PointSnapshot,
-    WorkflowCommand,
+    RackSlot, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 
@@ -303,6 +303,26 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => {
                 let container = self.view.scope_path();
+                if container.is_none() {
+                    // At the top level a paste has a place in a column: the slot of the last
+                    // right click on the empty rack, else below the selected device in its
+                    // column, else the end of the rack.
+                    let below = self
+                        .view
+                        .primary()
+                        .and_then(|k| self.doc().slot_of(&k))
+                        .map(|s| RackSlot {
+                            column: s.column,
+                            index: s.index + 1,
+                        });
+                    if let Some(slot) = self.view.take_context_slot().or(below) {
+                        return self.apply_workflow(WorkflowCommand::PasteDevicesAt {
+                            snapshot,
+                            container: None,
+                            slot,
+                        });
+                    }
+                }
                 let at = {
                     let scope = self.doc().scope_devices(container.as_ref());
                     let primary = self.view.primary().map(|k| {

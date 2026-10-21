@@ -169,7 +169,7 @@ impl RackView {
                 column: dp.column,
                 index,
             };
-            self.add_row_slot_action(row, slot, doc, modifiers)
+            self.add_row_slot_action(row, slot, modifiers)
         } else {
             self.add_row_action_at(row, index, modifiers)
         };
@@ -186,7 +186,6 @@ impl RackView {
         &self,
         row: &BrowserRow,
         slot: RackSlot,
-        doc: &RackDoc,
         modifiers: Modifiers,
     ) -> Option<UiAction> {
         match row {
@@ -221,18 +220,13 @@ impl RackView {
                         slot,
                         modifiers,
                     ),
-                    // Another plugin kind has no slot command: it joins the column's flat
-                    // position.
-                    None => UiAction::Command(Command::Plugin(PluginCommand::Add {
-                        index: doc
-                            .resolve_slot(slot)
-                            .map_or(doc.devices.len(), |r| r.index),
-                        container: None,
+                    // Another plugin kind: added at the slot (a new column included).
+                    None => UiAction::Command(Command::Plugin(PluginCommand::AddAt {
+                        slot,
                         plugin: e.plugin.clone(),
                         layout: e.layout.clone(),
                         path_hint: e.path.clone(),
                         key: None,
-                        auto_split: false,
                     })),
                 })
             }
