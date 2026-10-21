@@ -60,6 +60,7 @@ use atomik_dsp::{
 };
 use std::sync::Arc;
 
+use crate::cv::{clean, db_gain};
 use crate::poly_synth::{derive_seed, soft_limit};
 
 /// Number of preallocated voices (the highest value of `voices`).
@@ -118,7 +119,10 @@ const P_LFO_CUTOFF: u32 = 23;
 const P_LFO_AMP: u32 = 24;
 const P_CV_PITCH: u32 = 25;
 const P_CV_CUTOFF: u32 = 26;
-const PARAM_COUNT: usize = 27;
+const P_CV_RESONANCE: u32 = 27;
+const P_CV_LEVEL: u32 = 28;
+const P_CV_PAN: u32 = 29;
+const PARAM_COUNT: usize = 30;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -366,13 +370,43 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::Octaves,
         false,
     ),
+    param(
+        P_CV_RESONANCE,
+        "cv.resonance_amount",
+        "CV to resonance",
+        (-1.0, 1.0, 0.5),
+        Lin,
+        Unit::Percent,
+        false,
+    ),
+    param(
+        P_CV_LEVEL,
+        "cv.level_amount",
+        "CV to level",
+        (-24.0, 24.0, 12.0),
+        Lin,
+        Unit::Db,
+        false,
+    ),
+    param(
+        P_CV_PAN,
+        "cv.pan_amount",
+        "CV to pan",
+        (-1.0, 1.0, 1.0),
+        Lin,
+        Unit::None,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
 const PITCH_CV_IN: SocketId = SocketId(1);
 const CUTOFF_CV_IN: SocketId = SocketId(2);
-const OUT_L: SocketId = SocketId(3);
-const OUT_R: SocketId = SocketId(4);
+const RESONANCE_CV_IN: SocketId = SocketId(3);
+const LEVEL_CV_IN: SocketId = SocketId(4);
+const PAN_CV_IN: SocketId = SocketId(5);
+const OUT_L: SocketId = SocketId(6);
+const OUT_R: SocketId = SocketId(7);
 
 const fn socket(
     id: SocketId,
@@ -390,7 +424,7 @@ const fn socket(
     }
 }
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 8] = [
     socket(
         NOTES_IN,
         "notes_in",
@@ -409,6 +443,27 @@ static SOCKETS: [SocketDescriptor; 5] = [
         CUTOFF_CV_IN,
         "cutoff_cv_in",
         "Cutoff CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        RESONANCE_CV_IN,
+        "resonance_cv_in",
+        "Resonance CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        LEVEL_CV_IN,
+        "level_cv_in",
+        "Level CV",
+        SocketKind::Cv,
+        Direction::Input,
+    ),
+    socket(
+        PAN_CV_IN,
+        "pan_cv_in",
+        "Pan CV",
         SocketKind::Cv,
         Direction::Input,
     ),
@@ -535,6 +590,23 @@ struct Shared {
     lfo_to_amp: f32,
     cv_pitch: f32,
     cv_cutoff: f32,
+    /// Normalised resonance (the base of the resonance CV).
+    resonance: f32,
+    cv_resonance: f32,
+    cv_pan: f32,
+    cv_level_db: f32,
+    /// Set per batch: the resonance / pan CV sockets are cabled.
+    cv_resonance_on: bool,
+    cv_pan_on: bool,
+}
+
+/// Per-sample modulation sources of one render segment (aligned with the output slices).
+struct Mods<'a> {
+    lfo: &'a [f32],
+    pitch: &'a [f32],
+    cutoff: &'a [f32],
+    resonance: &'a [f32],
+    pan: &'a [f32],
 }
 
 /// Which map a voice reads from.
@@ -606,6 +678,10 @@ struct Voice {
     g: f32,
     g_target: f32,
     g_step: f32,
+    /// Filter damping while the resonance CV is cabled (`k` ramps like `g`).
+    k: f32,
+    k_target: f32,
+    k_step: f32,
     filter_ready: bool,
     /// Samples left of the drain fade (0: not draining) and its length.
     fade_left: u32,
@@ -636,6 +712,9 @@ impl Voice {
             g: 0.0,
             g_target: 0.0,
             g_step: 0.0,
+            k: 1.0,
+            k_target: 1.0,
+            k_step: 0.0,
             filter_ready: false,
             fade_left: 0,
             fade_len: 1.0,
@@ -741,7 +820,8 @@ impl Voice {
     }
 
     /// Control-rate update: playback ratio and the filter coefficient target.
-    fn control(&mut self, lfo: f32, cv_pitch: f32, cv_cutoff: f32, p: &Shared) {
+    fn control(&mut self, m: &Mods<'_>, n: usize, p: &Shared) {
+        let (lfo, cv_pitch, cv_cutoff) = (m.lfo[n], m.pitch[n], m.cutoff[n]);
         let z = &self.zone;
         let semis = (i32::from(self.key) - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
         let exponent = (semis + p.tune_semi) / 12.0
@@ -771,38 +851,58 @@ impl Voice {
         self.g = if snap { g } else { self.g_target };
         self.g_target = g;
         self.g_step = (g - self.g) / CONTROL_INTERVAL as f32;
+        if p.cv_resonance_on {
+            let r = (p.resonance + p.cv_resonance * clean(m.resonance[n])).clamp(0.0, 1.0);
+            let k = 1.0 / Svf::resonance_to_q(r);
+            self.k = if snap { k } else { self.k_target };
+            self.k_target = k;
+            self.k_step = (k - self.k) / CONTROL_INTERVAL as f32;
+        } else {
+            self.k = p.k;
+            self.k_target = p.k;
+            self.k_step = 0.0;
+        }
         if snap || self.g_step == 0.0 {
+            let k = self.k_now(p);
             for f in &mut self.filters {
-                f.set_coefficients(self.g, p.k);
+                f.set_coefficients(self.g, k);
             }
         }
     }
 
+    /// The filter damping in use: the base value, or the ramped value under resonance CV.
+    #[inline]
+    fn k_now(&self, p: &Shared) -> f32 {
+        if p.cv_resonance_on { self.k } else { p.k }
+    }
+
     /// Adds this voice into `out_l`/`out_r`. `own` is the map the voice plays from, `current`
     /// the device's current map (where a pending note starts). The slices are aligned.
-    #[allow(clippy::too_many_arguments)]
     fn render(
         &mut self,
         own: &SampleMap,
         current: Option<&SampleMap>,
         out: [&mut [f32]; 2],
-        lfo: &[f32],
-        cv_pitch: &[f32],
-        cv_cutoff: &[f32],
+        m: &Mods<'_>,
         p: &Shared,
     ) {
+        let lfo = m.lfo;
         let [out_l, out_r] = out;
         let mut map = own;
         for n in 0..out_l.len() {
             if self.countdown == 0 {
-                self.control(lfo[n], cv_pitch[n], cv_cutoff[n], p);
+                self.control(m, n, p);
                 self.countdown = CONTROL_INTERVAL;
             }
             self.countdown -= 1;
-            if p.filter_on && self.g_step != 0.0 {
+            if p.filter_on && p.cv_resonance_on {
+                self.k += self.k_step;
+            }
+            if p.filter_on && (self.g_step != 0.0 || (p.cv_resonance_on && self.k_step != 0.0)) {
                 self.g += self.g_step;
+                let k = self.k_now(p);
                 for f in &mut self.filters {
-                    f.set_coefficients(self.g, p.k);
+                    f.set_coefficients(self.g, k);
                 }
             }
             let data = &map.buffer_of(&self.zone).data;
@@ -831,8 +931,19 @@ impl Voice {
             };
             let tail = tail_gain(&self.head, &self.zone, p.sample_rate);
             let g = amp * self.zone_gain * self.vel_gain * tremolo * fade * tail;
-            out_l[n] += yl * self.pan_l * g;
-            out_r[n] += yr * self.pan_r * g;
+            let (pan_l, pan_r) = if p.cv_pan_on {
+                // The zone pan plus the pan CV, through the same law as the zone pan.
+                let pan = self.zone.pan + p.cv_pan * clean(m.pan[n]);
+                if self.stereo {
+                    balance_gains(pan)
+                } else {
+                    pan_gains_mono(pan)
+                }
+            } else {
+                (self.pan_l, self.pan_r)
+            };
+            out_l[n] += yl * pan_l * g;
+            out_r[n] += yr * pan_r * g;
             self.head.advance(self.ratio);
             if self.head.finished() {
                 self.amp.reset();
@@ -916,6 +1027,12 @@ impl Sampler {
                 lfo_to_amp: 0.0,
                 cv_pitch: 12.0,
                 cv_cutoff: 2.0,
+                resonance: 0.2,
+                cv_resonance: 0.5,
+                cv_pan: 1.0,
+                cv_level_db: 12.0,
+                cv_resonance_on: false,
+                cv_pan_on: false,
             },
             voices: vec![Voice::new(); MAX_VOICES],
             voice_limit: 32,
@@ -969,7 +1086,10 @@ impl Sampler {
             P_FILTER_ON => s.filter_on = v >= 0.5,
             P_FILTER_MODE => s.filter_mode = FilterMode::from_index(choice(v)),
             P_CUTOFF => s.cutoff = v,
-            P_RESONANCE => s.k = 1.0 / Svf::resonance_to_q(v),
+            P_RESONANCE => {
+                s.k = 1.0 / Svf::resonance_to_q(v);
+                s.resonance = v;
+            }
             P_ENV_AMOUNT => s.env_amount = v,
             P_KEY_TRACK => s.key_track = v,
             P_FILTER_VEL => s.filter_velocity = v,
@@ -984,6 +1104,9 @@ impl Sampler {
             P_LFO_AMP => s.lfo_to_amp = v,
             P_CV_PITCH => s.cv_pitch = v,
             P_CV_CUTOFF => s.cv_cutoff = v,
+            P_CV_RESONANCE => s.cv_resonance = v,
+            P_CV_LEVEL => s.cv_level_db = v,
+            P_CV_PAN => s.cv_pan = v,
             _ => {}
         }
     }
@@ -1181,6 +1304,10 @@ impl Device for Sampler {
         }
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_cutoff = *ctx.input(CUTOFF_CV_IN);
+        let cv_res = *ctx.input(RESONANCE_CV_IN);
+        let cv_pan = *ctx.input(PAN_CV_IN);
+        self.shared.cv_resonance_on = ctx.is_connected(RESONANCE_CV_IN);
+        self.shared.cv_pan_on = ctx.is_connected(PAN_CV_IN);
         let mut mix = [[0.0f32; BATCH]; 2];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
@@ -1195,6 +1322,13 @@ impl Device for Sampler {
                 .get(next)
                 .map_or(BATCH, |e| (e.offset as usize).clamp(start + 1, BATCH));
             let p = self.shared;
+            let m = Mods {
+                lfo: &lfo[start..end],
+                pitch: &cv_pitch[start..end],
+                cutoff: &cv_cutoff[start..end],
+                resonance: &cv_res[start..end],
+                pan: &cv_pan[start..end],
+            };
             let Self {
                 voices,
                 current,
@@ -1215,17 +1349,20 @@ impl Device for Sampler {
                     own,
                     current.as_deref(),
                     [&mut mix_l[start..end], &mut mix_r[start..end]],
-                    &lfo[start..end],
-                    &cv_pitch[start..end],
-                    &cv_cutoff[start..end],
+                    &m,
                     &p,
                 );
             }
             start = end;
         }
+        let level_on = ctx.is_connected(LEVEL_CV_IN);
+        let cv_level = *ctx.input(LEVEL_CV_IN);
         let [mix_l, mix_r] = &mut mix;
-        for (l, r) in mix_l.iter_mut().zip(mix_r.iter_mut()) {
-            let m = self.master.next_value();
+        for (n, (l, r)) in mix_l.iter_mut().zip(mix_r.iter_mut()).enumerate() {
+            let mut m = self.master.next_value();
+            if level_on {
+                m *= db_gain(self.shared.cv_level_db, cv_level[n]);
+            }
             *l = soft_limit(*l * m);
             *r = soft_limit(*r * m);
         }

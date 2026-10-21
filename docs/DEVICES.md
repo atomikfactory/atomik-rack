@@ -541,6 +541,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch by `cv.pitch_amount` semitones. Reads 0 when unconnected. |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves (only with the filter on). |
+| `resonance_cv_in` | CV | in | Clamped to −1..+1. Adds `cv.resonance_amount` × CV to the normalised resonance (only with the filter on). |
+| `level_cv_in` | CV | in | Clamped to −1..+1. Scales the output by `cv.level_amount` × CV decibels. |
+| `pan_cv_in` | CV | in | Clamped to −1..+1. Adds `cv.pan_amount` × CV to the pan of every voice. |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output |
 
@@ -575,6 +578,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `lfo.to_amp` | 0 to 1 | 0 | percent | Linear | no |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
+| `cv.resonance_amount` | −1 to 1 | 0.5 | percent | Linear | no |
+| `cv.level_amount` | −24 to 24 | 12 | dB | Linear | no |
+| `cv.pan_amount` | −1 to 1 | 1 | none | Linear | no |
 
 ### Zones (the sample map)
 
@@ -591,6 +597,10 @@ A zone has a key range, a velocity range (1–127; a note velocity `v` maps to r
 - **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen (a start counter, one count per zone started, orders the voices, so stealing is deterministic). It fades out linearly over 2 ms, then the new note starts. A note-off for a note still waiting for its voice cancels it (gate zones).
 - **Level.** Voice gain = zone gain × amp envelope × (1 − `velocity.amp` × (1 − velocity)) × tremolo, where tremolo is 1 − `lfo.to_amp` × (1 − LFO)/2. A mono sample goes through a constant-power pan (−3 dB at the centre). A stereo sample is balanced by the pan: unity at the centre, the far side falls as cos(|pan|·π/2). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth (linear to ±2, below ±4 always).
 - **Filter.** With `filter.enabled` at 0 (the default) the signal is not filtered at all. When on, each voice filters its left and right channels with 12 dB state-variable filters. Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV + 4·`filter.velocity`·(velocity − 1)), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient interpolated in between.
+- **CV inputs (resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is clamped to −1..+1 and multiplied by the signed amount param.
+  - *Resonance:* per voice, the normalised resonance becomes clamp(`filter.resonance` + `cv.resonance_amount`·CV, 0, 1) at the 16-sample control rate, the damping ramped in between. Only audible with `filter.enabled` on.
+  - *Level:* the master gain is multiplied per sample by 10^(`cv.level_amount`·CV/20), before the soft limiter, for all voices. No extra smoothing.
+  - *Pan:* per voice and per sample, the pan is the zone pan + `cv.pan_amount`·CV (clamped to ±1 by the pan law), through the usual law (constant power for a mono sample, balance for a stereo one).
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps. There is no latency.
 - **Map swaps.** The device holds the current map and at most one *draining* map, and never frees a map itself: `swap_samples` hands one back to the caller, which drops it off the audio thread.
   - A voice whose zone index exists in the new map, with a buffer that is the same `Arc`, moves to the new zone (it takes the zone's parameters and keeps its position). Every other voice keeps playing from the old map with a 5 ms fade-out; the old map becomes the draining map.

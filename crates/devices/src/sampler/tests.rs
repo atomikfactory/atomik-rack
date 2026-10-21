@@ -208,8 +208,20 @@ fn descriptor_validates() {
             "lfo.to_amp",
             "cv.pitch_amount",
             "cv.cutoff_amount",
+            "cv.resonance_amount",
+            "cv.level_amount",
+            "cv.pan_amount",
         ],
-        &["notes_in", "pitch_cv_in", "cutoff_cv_in", "out_l", "out_r"],
+        &[
+            "notes_in",
+            "pitch_cv_in",
+            "cutoff_cv_in",
+            "resonance_cv_in",
+            "level_cv_in",
+            "pan_cv_in",
+            "out_l",
+            "out_r",
+        ],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.sampler");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
@@ -301,6 +313,209 @@ fn pitch_cv_shifts_by_cv_pitch_amount_semitones() {
     let want = ramp(4000);
     for n in SETTLED..150 {
         assert_eq!(ol[n].to_bits(), (want[2 * n] * FRAC_1_SQRT_2).to_bits());
+    }
+}
+
+// ---- CV inputs: resonance, level, pan -------------------------------------------
+
+/// Output after settling for a flat mono zone of `level` with an optional CV on `socket`.
+fn flat_with_cv(
+    m: &SampleMapRef,
+    setup: impl Fn(&mut DeviceHarness),
+    socket: &str,
+    cv: Option<f32>,
+) -> (f32, f32) {
+    let (mut h, _) = with_map(m);
+    setup(&mut h);
+    if let Some(cv) = cv {
+        *h.input_mut(socket) = [cv; BATCH];
+    }
+    h.push_note("notes_in", on(0, 60, 1.0));
+    let (l, r) = render(&mut h, 4);
+    (l[150], r[150])
+}
+
+#[test]
+fn level_cv_scales_gain_by_amount_in_db() {
+    let m = flat_map(0.1, 4000);
+    let at = |cv: Option<f32>, amount: f32| {
+        let (l, _) = flat_with_cv(
+            &m,
+            |h| h.set_param("cv.level_amount", amount),
+            "level_cv_in",
+            cv,
+        );
+        l
+    };
+    let base = at(None, 12.0);
+    assert!((base - 0.1 * FRAC_1_SQRT_2).abs() < 1e-6);
+    let up = at(Some(0.5), 12.0); // +6 dB
+    assert!((up / base - 10f32.powf(6.0 / 20.0)).abs() < 1e-4, "{up}");
+    let down = at(Some(-1.0), 12.0);
+    assert!((down / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+    assert_eq!(
+        at(Some(1.0), 0.0).to_bits(),
+        base.to_bits(),
+        "amount 0 cancels"
+    );
+    assert_eq!(
+        at(Some(7.0), 12.0).to_bits(),
+        at(Some(1.0), 12.0).to_bits(),
+        "clamped to +1"
+    );
+    assert!((at(Some(1.0), -12.0) / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+}
+
+#[test]
+fn pan_cv_adds_to_the_zone_pan_and_clamps() {
+    let m = flat_map(0.5, 4000);
+    let sides = |cv: Option<f32>, amount: f32| {
+        let (l, r) = flat_with_cv(
+            &m,
+            |h| h.set_param("cv.pan_amount", amount),
+            "pan_cv_in",
+            cv,
+        );
+        (l, r)
+    };
+    let (l0, r0) = sides(None, 1.0);
+    assert!((l0 - 0.5 * FRAC_1_SQRT_2).abs() < 1e-6 && l0.to_bits() == r0.to_bits());
+    let (l, r) = sides(Some(1.0), 1.0);
+    assert!(l.abs() < 1e-6 && (r - 0.5).abs() < 1e-6, "{l} {r}");
+    let (l, r) = sides(Some(-1.0), 1.0);
+    assert!(r.abs() < 1e-6 && (l - 0.5).abs() < 1e-6, "{l} {r}");
+    let (l, r) = sides(Some(0.0), 1.0);
+    assert!((l - l0).abs() < 1e-6 && (r - r0).abs() < 1e-6, "centre");
+    let (l, r) = sides(Some(1.0), 0.0);
+    assert!(
+        (l - l0).abs() < 1e-6 && (r - r0).abs() < 1e-6,
+        "amount 0 cancels"
+    );
+    assert_eq!(sides(Some(5.0), 1.0), sides(Some(1.0), 1.0), "clamped");
+    let (l, r) = sides(Some(1.0), -1.0);
+    assert!(
+        r.abs() < 1e-6 && (l - 0.5).abs() < 1e-6,
+        "negative amount mirrors"
+    );
+    // Zone pan 0.5 plus cv -0.5 lands at the centre.
+    let flat = map(
+        vec![buffer(vec![vec![0.5; 4000]])],
+        vec![{
+            let mut z = zone(0, 4000);
+            z.pan = 0.5;
+            z
+        }],
+    );
+    let (l, r) = flat_with_cv(
+        &flat,
+        |h| h.set_param("cv.pan_amount", 1.0),
+        "pan_cv_in",
+        Some(-0.5),
+    );
+    assert!((l - r).abs() < 1e-6, "{l} {r}");
+    // A stereo sample is balanced (unity at the centre, the near side stays at 1).
+    let st = map(
+        vec![buffer(vec![vec![0.5; 4000], vec![0.25; 4000]])],
+        vec![zone(0, 4000)],
+    );
+    let (l, r) = flat_with_cv(
+        &st,
+        |h| h.set_param("cv.pan_amount", 1.0),
+        "pan_cv_in",
+        Some(1.0),
+    );
+    assert!(l.abs() < 1e-6 && (r - 0.25).abs() < 1e-6, "{l} {r}");
+    let (l, r) = flat_with_cv(
+        &st,
+        |h| h.set_param("cv.pan_amount", 1.0),
+        "pan_cv_in",
+        Some(0.0),
+    );
+    assert!((l - 0.5).abs() < 1e-6 && (r - 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn resonance_cv_adds_to_filter_resonance_and_clamps() {
+    // A sine of 1200 Hz through a low-pass at 1200 Hz: the gain at the cutoff is Q.
+    let m = map(
+        vec![buffer(vec![sine(40_000, 40.0, 0.05)])],
+        vec![zone(0, 40_000)],
+    );
+    let level = |cv: Option<f32>, amount: f32| {
+        let (mut h, _) = with_map(&m);
+        h.set_param("filter.enabled", 1.0);
+        h.set_param("filter.cutoff", 1200.0);
+        h.set_param("filter.resonance", 0.0);
+        h.set_param("filter.env_amount", 0.0);
+        h.set_param("filter.key_track", 0.0);
+        h.set_param("cv.resonance_amount", amount);
+        if let Some(cv) = cv {
+            *h.input_mut("resonance_cv_in") = [cv; BATCH];
+        }
+        h.push_note("notes_in", on(0, 60, 1.0));
+        let (l, _) = render(&mut h, seconds(0.3));
+        rms(&l[6000..])
+    };
+    let base = level(None, 1.0);
+    assert!(level(Some(1.0), 1.0) > base * 5.0);
+    assert!(
+        (level(Some(1.0), 0.0) - base).abs() < base * 1e-4,
+        "amount 0"
+    );
+    assert!(
+        (level(Some(-1.0), 1.0) - base).abs() < base * 1e-4,
+        "floor at 0"
+    );
+    assert_eq!(
+        level(Some(4.0), 1.0).to_bits(),
+        level(Some(1.0), 1.0).to_bits(),
+        "clamped"
+    );
+}
+
+#[test]
+fn new_cv_inputs_unconnected_leave_output_bit_identical() {
+    let run = |amounts: Option<[f32; 3]>| {
+        let m = map(
+            vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+            vec![zone(0, 6000)],
+        );
+        let (mut h, _) = with_map(&m);
+        h.set_param("filter.enabled", 1.0);
+        h.set_param("filter.cutoff", 900.0);
+        h.set_param("filter.resonance", 0.6);
+        h.set_param("lfo.to_cutoff", 1.0);
+        if let Some(a) = amounts {
+            for (k, v) in ["cv.resonance_amount", "cv.level_amount", "cv.pan_amount"]
+                .into_iter()
+                .zip(a)
+            {
+                h.set_param(k, v);
+            }
+        }
+        h.push_note("notes_in", on(0, 60, 0.8));
+        h.push_note("notes_in", on(70, 64, 0.8));
+        let (l, r) = render(&mut h, 12);
+        (bits(&l), bits(&r))
+    };
+    assert_eq!(run(None), run(Some([-0.8, 20.0, -0.3])));
+}
+
+#[test]
+fn new_cv_inputs_are_allocation_free() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        vec![zone(0, 6000)],
+    );
+    let (mut h, _) = with_map(&m);
+    h.set_param("filter.enabled", 1.0);
+    for s in ["resonance_cv_in", "level_cv_in", "pan_cv_in"] {
+        *h.input_mut(s) = [0.6; BATCH];
+    }
+    h.push_note("notes_in", on(0, 60, 1.0));
+    h.push_note("notes_in", on(9, 67, 1.0));
+    for _ in 0..30 {
+        h.process();
     }
 }
 
