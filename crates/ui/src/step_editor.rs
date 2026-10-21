@@ -1242,12 +1242,7 @@ fn cell_has(notes: &[Note], key: u8, step: u16, s: i64) -> bool {
 /// `notes` plus one note at the start of `step` (length one step), sorted like the piano roll.
 fn with_step(notes: &[Note], key: u8, step: u16, s: i64, velocity: f32) -> Vec<Note> {
     let mut list = notes.to_vec();
-    list.push(Note {
-        tick: i64::from(step) * s,
-        length: s,
-        key,
-        velocity,
-    });
+    list.push(Note::new(i64::from(step) * s, s, key, velocity));
     seq_edit::normalize_notes(list, &BTreeSet::new()).0
 }
 

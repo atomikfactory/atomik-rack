@@ -501,6 +501,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::DeleteDevices { .. }
             | WorkflowCommand::MoveDevices { .. }
             | WorkflowCommand::RemoveClips { .. }
+            | WorkflowCommand::SetClipsMuted { .. }
             | WorkflowCommand::DisconnectDevice { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}

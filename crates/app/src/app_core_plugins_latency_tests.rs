@@ -49,12 +49,7 @@ fn notes_clip(length: i64, notes: Vec<Note>) -> Clip {
 }
 
 fn note(tick: i64, length: i64, key: u8) -> Note {
-    Note {
-        tick,
-        length,
-        key,
-        velocity: 0.8,
-    }
+    Note::new(tick, length, key, 0.8)
 }
 
 fn track(core: &mut AppCore<OfflineSink>, device: &DeviceKey, length: i64, notes: Vec<Note>) {

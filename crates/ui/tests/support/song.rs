@@ -13,12 +13,7 @@ pub const PPQ: i64 = 15_360;
 pub const BAR: i64 = 4 * PPQ;
 
 pub fn n(tick: i64, length: i64, key: u8, velocity: f32) -> Note {
-    Note {
-        tick,
-        length,
-        key,
-        velocity,
-    }
+    Note::new(tick, length, key, velocity)
 }
 
 pub fn notes_clip(id: u64, start: i64, length: i64, notes: Vec<Note>) -> Clip {

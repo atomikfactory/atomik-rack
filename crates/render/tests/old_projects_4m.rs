@@ -1,5 +1,5 @@
 //! Old projects open unchanged after the master section was added:
-//! the format is still version 9, every committed example project (all of them but the new
+//! the format is version 10, every committed example project (all of them but the new
 //! `master-demo` were written without a master section) loads and saves back byte for byte, a master appears
 //! only in a project that already had one, and the loader never reorders the rack or edits a
 //! param (the master lock is command level only).
@@ -38,15 +38,15 @@ fn all_projects() -> Vec<PathBuf> {
 }
 
 #[test]
-fn every_committed_project_is_format_9_and_saves_back_byte_for_byte() {
+fn every_committed_project_is_format_10_and_saves_back_byte_for_byte() {
     let registry = default_registry();
     let files = all_projects();
     assert!(files.len() >= 10, "the examples are there: {files:?}");
     for path in &files {
         let text = std::fs::read_to_string(path).unwrap();
         assert!(
-            text.contains("\"version\": 9"),
-            "{}: still format 9",
+            text.contains("\"version\": 10"),
+            "{}: still format 10",
             path.display()
         );
         let doc =
@@ -159,12 +159,7 @@ fn the_starter_bounces_silently_and_one_synth_sounds_on_outputs_one_and_two() {
                 loop_length: None,
                 muted: false,
                 grid: None,
-                content: ClipContent::Notes(vec![Note {
-                    tick: 0,
-                    length: 2 * PPQ,
-                    key: 60,
-                    velocity: 0.8,
-                }]),
+                content: ClipContent::Notes(vec![Note::new(0, 2 * PPQ, 60, 0.8)]),
             },
         }),
         &registry,

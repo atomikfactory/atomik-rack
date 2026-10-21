@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 9,
+//! { "format": "atomik-project", "version": 10,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -20,6 +20,8 @@
 //!                                                  "loop_length" (int or null), "muted",
 //!                                                  "grid"? (v5, note clips only, see below),
 //!                                                  "notes": [[tick, length, key, velocity]…]
+//!                                                      (v10: a muted note has a fifth element,
+//!                                                      `true`, see below)
 //!                                                  | "points": [[tick, value, "linear"|"step"]…]
 //!                                                  | "audio": { "asset", "offset" (frames),
 //!                                                      "gain_db", "fade_in", "fade_out" (frames),
@@ -73,6 +75,11 @@
 //! `p<id>` key the descriptor lacks is kept as a dead key (never a load error). A project file
 //! before version 9 has no `"plugin"` (unknown field).
 //!
+//! A muted note (v10) is written `[tick, length, key, velocity, true]`; an unmuted one stays a
+//! 4-tuple, so a file without muted notes differs from version 9 only in its version. A version 10
+//! reader also accepts an explicit `false` as the fifth element, which must be a boolean; files
+//! before version 10 take 4-tuples only (a fifth element is an error naming the version).
+//!
 //! A note clip's `"grid"` (v5) is written only when the clip has one, after `"notes"`:
 //! `{"resolution": "eighth" | "sixteenth" | "thirty_second", "steps": 16..=64, "swing": 0..=75}`,
 //! every field required. Audio and automation clips, and files before version 5, take no
@@ -88,7 +95,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. Saving always writes version 9.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. Saving always writes version 10.
 
 use crate::console::{
     CHANNEL_TYPE, Console, ConsoleChannel, FX_SLOTS, MASTER_TYPE, is_console_type,
@@ -123,8 +130,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// The project format version [`crate::save_project`] writes. [`crate::load_project`] reads
 /// it and versions 1 (no console section; migrated on load), 2 (no inputs, pool or audio) and
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
-/// plugin devices).
-pub const PROJECT_VERSION: u32 = 9;
+/// plugin devices) and 9 (no note mute).
+pub const PROJECT_VERSION: u32 = 10;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -188,6 +195,7 @@ const ROOT_FIELDS_V6: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V7: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V8: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V9: &[&str] = ROOT_FIELDS_V3;
+const ROOT_FIELDS_V10: &[&str] = ROOT_FIELDS_V3;
 const PATTERNS_FIELDS: &[&str] = &["patterns"];
 const PATTERN_FIELDS: &[&str] = &["name", "length", "resolution", "swing", "steps"];
 const STEP_FIELDS: &[&str] = &["on", "key", "velocity", "gate", "prob", "tie"];
@@ -339,6 +347,23 @@ fn tuple<'v>(
     }
 }
 
+/// A note's elements: `[tick, length, key, velocity]`, plus the mute flag from version 10 on.
+fn note_tuple<'v>(v: &'v Value, path: &JsonPath, version: u64) -> Result<&'v [Value], ModelError> {
+    let note_mute = version >= 10;
+    match v.as_array() {
+        Some(a) if a.len() == 4 || (note_mute && a.len() == 5) => Ok(a),
+        Some(a) if a.len() == 5 => Err(path.error(format!(
+            "a note with a mute flag needs project version 10 or later, but this file is version {version}"
+        ))),
+        _ if note_mute => Err(path.error(format!(
+            "expected a note [tick, length, key, velocity] or [tick, length, key, velocity, muted], found {v}"
+        ))),
+        _ => Err(path.error(format!(
+            "expected a note [tick, length, key, velocity], found {v}"
+        ))),
+    }
+}
+
 /// Loads a project, or a patch v1/v2 as a song-less project.
 pub(crate) fn load(json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
     load_with_warnings(json, registry).map(|(doc, _)| doc)
@@ -399,6 +424,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         7 => (ROOT_FIELDS_V7, ROOT_REQUIRED_V2),
         8 => (ROOT_FIELDS_V8, ROOT_REQUIRED_V2),
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
+        10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1063,7 +1089,15 @@ fn load_track(
         let mut clips = Vec::new();
         for (j, item) in array(&lane["clips"], &clips_path)?.iter().enumerate() {
             let cp = clips_path.index(j);
-            let clip = load_clip(item, &cp, clip_fields, &kind, (doc, desc), song, clip_first)?;
+            let clip = load_clip(
+                item,
+                &cp,
+                (clip_fields, version),
+                &kind,
+                (doc, desc),
+                song,
+                clip_first,
+            )?;
             clip_first.insert(clip.id.0, cp.field("id"));
             clips.push(clip);
         }
@@ -1085,7 +1119,7 @@ fn load_track(
 fn load_clip(
     v: &Value,
     path: &JsonPath,
-    fields: &[&str],
+    (fields, version): (&[&str], u64),
     kind: &LaneKind,
     (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
     song: &Song,
@@ -1155,12 +1189,18 @@ fn load_clip(
             let mut notes: Vec<Note> = Vec::with_capacity(items.len());
             for (i, item) in items.iter().enumerate() {
                 let p = content_path.index(i);
-                let n = tuple(item, &p, 4, "a note [tick, length, key, velocity]")?;
+                let n = note_tuple(item, &p, version)?;
                 let note = Note {
-                    tick: tick(&n[0], &p.index(0))?,
-                    length: self::length(&n[1], &p.index(1))?,
-                    key: uint(&n[2], &p.index(2), 127)? as u8,
-                    velocity: number(&n[3], &p.index(3))? as f32,
+                    muted: match n.get(4) {
+                        Some(m) => boolean(m, &p.index(4))?,
+                        None => false,
+                    },
+                    ..Note::new(
+                        tick(&n[0], &p.index(0))?,
+                        self::length(&n[1], &p.index(1))?,
+                        uint(&n[2], &p.index(2), 127)? as u8,
+                        number(&n[3], &p.index(3))? as f32,
+                    )
                 };
                 check_note(note.tick, note.length, note.key, note.velocity)
                     .map_err(|m| p.index(3).error(m))?;
@@ -1552,11 +1592,12 @@ fn write_song(w: &mut String, song: &Song) {
                             indent,
                             notes.iter().map(|n| {
                                 format!(
-                                    "[{}, {}, {}, {}]",
+                                    "[{}, {}, {}, {}{}]",
                                     n.tick,
                                     n.length,
                                     n.key,
-                                    f32_text(n.velocity)
+                                    f32_text(n.velocity),
+                                    if n.muted { ", true" } else { "" }
                                 )
                             }),
                         );

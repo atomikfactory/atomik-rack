@@ -333,12 +333,7 @@ impl Take {
             let end = (end + self.bar - 1).div_euclid(self.bar) * self.bar;
             let content = notes
                 .iter()
-                .map(|n| Note {
-                    tick: n.tick - start,
-                    length: n.length.max(1),
-                    key: n.key,
-                    velocity: n.velocity,
-                })
+                .map(|n| Note::new(n.tick - start, n.length.max(1), n.key, n.velocity))
                 .collect();
             out.push((
                 key,

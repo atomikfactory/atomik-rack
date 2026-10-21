@@ -111,12 +111,7 @@ fn click_doc(effect: (&str, &[(&str, f32)])) -> RackDoc {
     let length = bars * 4 * PPQ;
     for k in ["click-a", "click-b"] {
         let notes = (0..bars * 4)
-            .map(|b| Note {
-                tick: b * PPQ,
-                length: PPQ / 8,
-                key: 84,
-                velocity: 1.0,
-            })
+            .map(|b| Note::new(b * PPQ, PPQ / 8, 84, 1.0))
             .collect();
         apply(Command::Song(SongCommand::AddClip {
             device: key(k),

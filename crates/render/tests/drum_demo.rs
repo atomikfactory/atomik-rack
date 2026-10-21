@@ -300,11 +300,8 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
     let length = i64::from(STEPS) * STEP;
     let notes = pattern()
         .into_iter()
-        .map(|(pad, step, velocity)| Note {
-            tick: i64::from(step) * STEP,
-            length: STEP,
-            key: pad_key(pad),
-            velocity,
+        .map(|(pad, step, velocity)| {
+            Note::new(i64::from(step) * STEP, STEP, pad_key(pad), velocity)
         })
         .collect();
     let mut notes: Vec<Note> = notes;

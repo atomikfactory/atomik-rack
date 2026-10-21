@@ -150,12 +150,7 @@ impl Builder<'_> {
         }));
         let mut notes: Vec<Note> = notes
             .iter()
-            .map(|&(beat, beats, k)| Note {
-                tick: beat * PPQ,
-                length: beats * PPQ,
-                key: k,
-                velocity: 0.8,
-            })
+            .map(|&(beat, beats, k)| Note::new(beat * PPQ, beats * PPQ, k, 0.8))
             .collect();
         notes.sort_by_key(|n| (n.tick, n.key));
         self.apply(Command::Song(SongCommand::AddClip {

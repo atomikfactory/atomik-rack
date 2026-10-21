@@ -315,12 +315,7 @@ fn lead_with_a_clip<S: EngineSink>(c: &mut AppCore<S>) {
             content: ClipContent::Notes(
                 [(0, 60u8), (PPQ / 2, 64), (PPQ, 67)]
                     .into_iter()
-                    .map(|(tick, k)| Note {
-                        tick,
-                        length: PPQ / 2,
-                        key: k,
-                        velocity: 0.9,
-                    })
+                    .map(|(tick, k)| Note::new(tick, PPQ / 2, k, 0.9))
                     .collect(),
             ),
         },

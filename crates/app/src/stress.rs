@@ -234,11 +234,13 @@ pub fn stress_song_doc(registry: &Registry) -> RackDoc {
         let steps = [0u8, 3, 7, 10, 12, 10, 7, 3];
         let notes = (0..16)
             .filter(|n| (n + i) % 3 != 2)
-            .map(|n| Note {
-                tick: n as i64 * PPQ / 2,
-                length: PPQ / 2 - PPQ / 8,
-                key: root + steps[(n + i) % steps.len()],
-                velocity: 0.5 + 0.05 * ((n + i) % 8) as f32,
+            .map(|n| {
+                Note::new(
+                    n as i64 * PPQ / 2,
+                    PPQ / 2 - PPQ / 8,
+                    root + steps[(n + i) % steps.len()],
+                    0.5 + 0.05 * ((n + i) % 8) as f32,
+                )
             })
             .collect();
         song(
@@ -505,11 +507,13 @@ pub fn add_stress_samplers<S: EngineSink>(core: &mut AppCore<S>, dir: &Path) -> 
         .map_err(|e| format!("{key}: {e}"))?;
         // The chord: a stack of fourths and thirds from a root that differs per sampler.
         let root = 36 + 2 * i as u8;
-        let chord = (0..STRESS_CHORD_NOTES).map(|n| Note {
-            tick: 0,
-            length: bar,
-            key: root + 3 * n as u8 / 2 + n as u8,
-            velocity: 0.6 + 0.02 * (n % 8) as f32,
+        let chord = (0..STRESS_CHORD_NOTES).map(|n| {
+            Note::new(
+                0,
+                bar,
+                root + 3 * n as u8 / 2 + n as u8,
+                0.6 + 0.02 * (n % 8) as f32,
+            )
         });
         let length = STRESS_SONG_BARS * bar;
         core.apply_command(Command::Song(SongCommand::AddClip {
@@ -588,11 +592,13 @@ pub fn stress_drum_notes(pad: u8) -> Vec<Note> {
     let step = PPQ / 8;
     (0..STRESS_DRUM_STEPS)
         .filter(|s| s % every == 0)
-        .map(|s| Note {
-            tick: i64::from(s) * step,
-            length: step,
-            key: atomik_model::pad_key(pad),
-            velocity: 0.5 + 0.1 * f32::from((s + u16::from(pad)) % 5),
+        .map(|s| {
+            Note::new(
+                i64::from(s) * step,
+                step,
+                atomik_model::pad_key(pad),
+                0.5 + 0.1 * f32::from((s + u16::from(pad)) % 5),
+            )
         })
         .collect()
 }
@@ -793,12 +799,12 @@ pub fn add_stress_slicers<S: EngineSink>(core: &mut AppCore<S>, dir: &Path) -> R
         for (n, slice_key) in slices.iter().enumerate() {
             let every = 1 + n % 3;
             for s in (0..STRESS_DRUM_STEPS).filter(|s| usize::from(*s) % every == 0) {
-                notes.push(Note {
-                    tick: i64::from(s) * step,
-                    length: step,
-                    key: *slice_key,
-                    velocity: 0.5 + 0.1 * ((usize::from(s) + n) % 5) as f32,
-                });
+                notes.push(Note::new(
+                    i64::from(s) * step,
+                    step,
+                    *slice_key,
+                    0.5 + 0.1 * ((usize::from(s) + n) % 5) as f32,
+                ));
             }
         }
         notes.sort_by_key(|n| (n.tick, n.key));
@@ -1067,12 +1073,7 @@ pub fn add_stress_players<S: EngineSink>(core: &mut AppCore<S>) -> Result<(), St
         let root = 57 + 2 * n as u8;
         let notes: Vec<Note> = [0u8, 3, 7]
             .iter()
-            .map(|k| Note {
-                tick: 0,
-                length: STRESS_SONG_BARS * bar,
-                key: root + k,
-                velocity: 0.75,
-            })
+            .map(|k| Note::new(0, STRESS_SONG_BARS * bar, root + k, 0.75))
             .collect();
         apply(
             core,
@@ -1279,12 +1280,7 @@ pub fn add_stress_containers<S: EngineSink>(core: &mut AppCore<S>) -> Result<(),
         for b in 0..STRESS_SONG_BARS {
             let shift = [0u8, 5, 7, 3][(b % 4) as usize];
             for k in [0u8, 3, 7, 12] {
-                notes.push(Note {
-                    tick: b * bar,
-                    length: bar,
-                    key: root + shift + k,
-                    velocity: 0.7,
-                });
+                notes.push(Note::new(b * bar, bar, root + shift + k, 0.7));
             }
         }
         let clip = |content| Clip {
@@ -1484,12 +1480,7 @@ pub fn add_stress_character<S: EngineSink>(core: &mut AppCore<S>) -> Result<(), 
         for b in 0..STRESS_SONG_BARS {
             let shift = [0u8, 5, 7, 3][(b % 4) as usize];
             for k in [0u8, 3, 7, 12] {
-                notes.push(Note {
-                    tick: b * bar,
-                    length: bar,
-                    key: root + shift + k,
-                    velocity: 0.7,
-                });
+                notes.push(Note::new(b * bar, bar, root + shift + k, 0.7));
             }
         }
         let clip = |content| Clip {
@@ -1654,12 +1645,7 @@ fn add_dense_track<S: EngineSink>(
     let notes: Vec<Note> = (0..STRESS_SONG_BARS * 8)
         .flat_map(|i| {
             let degree = [0u8, 3, 5, 7][(i % 4) as usize];
-            [0u8, 4, 7].map(move |k| Note {
-                tick: i * step,
-                length: step,
-                key: root + degree + k,
-                velocity: 0.7,
-            })
+            [0u8, 4, 7].map(move |k| Note::new(i * step, step, root + degree + k, 0.7))
         })
         .collect();
     apply(

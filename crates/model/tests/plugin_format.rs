@@ -1,4 +1,4 @@
-//! Project format v9: the `plugin` object, canonical
+//! Project format v9 (plugin devices): the `plugin` object, canonical
 //! text, the committed golden, rejection with JSON paths, stand-ins for missing plugins, dead
 //! param keys, and the files of versions 1 to 8 still loading.
 
@@ -150,10 +150,10 @@ pub fn plugin_texts(text: &str) -> Vec<String> {
 // ---- the version -----------------------------------------------------------------------------
 
 #[test]
-fn the_format_is_version_9() {
-    assert_eq!(PROJECT_VERSION, 9);
+fn the_format_is_version_10() {
+    assert_eq!(PROJECT_VERSION, 10);
     let r = plugin_registry();
-    assert!(text(&r).contains("\"version\": 9"));
+    assert!(text(&r).contains("\"version\": 10"));
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn a_project_without_plugins_differs_from_v8_only_in_the_version_number() {
     let doc = load_project(&t, &r).unwrap();
     assert_eq!(
         save_project(&doc),
-        t.replacen("\"version\": 8", "\"version\": 9", 1)
+        t.replacen("\"version\": 8", "\"version\": 10", 1)
     );
     assert!(!save_project(&doc).contains("\"plugin\""));
 }
@@ -360,10 +360,16 @@ fn the_committed_golden_is_the_canonical_save() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugin-v9.atomik");
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some() {
-        std::fs::write(&path, &t).unwrap();
+        std::fs::write(&path, t.replacen("\"version\": 10", "\"version\": 9", 1)).unwrap();
     }
+    // The golden stays a version 9 file (it also proves that v9 still loads); it differs from
+    // the current save in the version number only.
     let file = fixture("plugin-v9.atomik");
-    assert_eq!(file, t, "regenerate with ATOMIK_UPDATE_GOLDEN=1");
+    assert_eq!(
+        file.replacen("\"version\": 9", "\"version\": 10", 1),
+        t,
+        "regenerate with ATOMIK_UPDATE_GOLDEN=1"
+    );
 }
 
 #[test]
@@ -371,13 +377,14 @@ fn the_golden_loads_with_the_plugins_installed_and_as_stand_ins_with_the_same_re
     let installed = plugin_registry();
     let bare = registry();
     let file = fixture("plugin-v9.atomik");
+    let current = file.replacen("\"version\": 9", "\"version\": 10", 1);
     let a = load_project(&file, &installed).unwrap();
     let b = load_project(&file, &bare).expect("a missing plugin loads as a stand-in");
     assert_eq!(a, b, "stand-in or installed: the same document");
-    assert_eq!(save_project(&a), file);
+    assert_eq!(save_project(&a), current);
     assert_eq!(
         save_project(&b),
-        file,
+        current,
         "an unedited stand-in saves unchanged"
     );
     assert_eq!(a, project(&installed).compacted());
@@ -429,7 +436,7 @@ fn a_stand_in_keeps_cables_state_lanes_macros_pins_and_params_across_load_and_sa
 // ---- versions 1 to 8 ---------------------------------------------------------------------------------------
 
 #[test]
-fn versions_one_to_eight_still_load_and_resave_as_v9() {
+fn versions_one_to_eight_still_load_and_resave_as_v10() {
     let r = registry();
     let cr = console_registry();
     for (name, reg, from) in [
@@ -442,13 +449,13 @@ fn versions_one_to_eight_still_load_and_resave_as_v9() {
         let t = fixture(name);
         let doc = load_project(&t, reg).unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = save_project(&doc);
-        assert!(again.contains("\"version\": 9"), "{name}");
+        assert!(again.contains("\"version\": 10"), "{name}");
         assert_eq!(load_project(&again, reg).unwrap(), doc, "{name}");
         assert_eq!(save_project(&load_project(&again, reg).unwrap()), again);
         if from >= 6 {
             assert_eq!(
                 again,
-                t.replacen(&format!("\"version\": {from}"), "\"version\": 9", 1),
+                t.replacen(&format!("\"version\": {from}"), "\"version\": 10", 1),
                 "{name}"
             );
         }
@@ -719,7 +726,11 @@ fn the_installed_descriptor_wins_over_the_saved_layout_for_validation() {
     let file = fixture("plugin-v9.atomik");
     let doc = load_project(&file, &updated).expect("an update that drops a param still loads");
     assert_eq!(doc.device(&key("lead")).unwrap().params["p10"], 0.25);
-    assert_eq!(save_project(&doc), file, "and saves back unchanged");
+    assert_eq!(
+        save_project(&doc),
+        file.replacen("\"version\": 9", "\"version\": 10", 1),
+        "and saves back unchanged (but for the version)"
+    );
 }
 
 #[test]

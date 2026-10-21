@@ -146,12 +146,7 @@ pub fn to_track_notes(zones: &[ZoneDoc], frames: u64, beats: u32) -> (Vec<Note>,
     for (i, z) in slices.iter().enumerate() {
         let end = ticks.get(i + 1).copied().unwrap_or(clip_len as i64);
         if end > ticks[i] {
-            notes.push(Note {
-                tick: ticks[i],
-                length: end - ticks[i],
-                key: z.key_lo,
-                velocity: 100.0 / 127.0,
-            });
+            notes.push(Note::new(ticks[i], end - ticks[i], z.key_lo, 100.0 / 127.0));
         }
     }
     notes.sort_by_key(|n| (n.tick, n.key));

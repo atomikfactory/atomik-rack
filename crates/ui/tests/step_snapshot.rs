@@ -55,29 +55,19 @@ fn record(doc: RackDoc, clip: Option<atomik_model::ClipId>) -> DisplayList {
 fn long_swung_doc() -> RackDoc {
     let mut notes = Vec::new();
     for k in (0..32).step_by(4) {
-        notes.push(Note {
-            tick: k * S32,
-            length: S32,
-            key: pad_key(1),
-            velocity: 120.0 / 127.0,
-        });
+        notes.push(Note::new(k * S32, S32, pad_key(1), 120.0 / 127.0));
     }
     for k in (2..32).step_by(4) {
-        notes.push(Note {
-            tick: k * S32,
-            length: S32,
-            key: pad_key(6),
-            velocity: 0.35,
-        });
+        notes.push(Note::new(k * S32, S32, pad_key(6), 0.35));
     }
     for k in 0..32 {
         if k % 2 == 1 {
-            notes.push(Note {
-                tick: k * S32,
-                length: S32,
-                key: pad_key(7),
-                velocity: 0.1 + 0.9 * (k as f32 / 31.0),
-            });
+            notes.push(Note::new(
+                k * S32,
+                S32,
+                pad_key(7),
+                0.1 + 0.9 * (k as f32 / 31.0),
+            ));
         }
     }
     notes.sort_by_key(|n| (n.tick, n.key));
@@ -89,24 +79,9 @@ fn long_swung_doc() -> RackDoc {
 fn off_grid_doc() -> RackDoc {
     let mut clip = beat_clip();
     if let ClipContent::Notes(n) = &mut clip.content {
-        n.push(Note {
-            tick: 0,
-            length: 3840,
-            key: 60,
-            velocity: 0.6,
-        });
-        n.push(Note {
-            tick: 20 * S16,
-            length: S16,
-            key: pad_key(1),
-            velocity: 0.6,
-        });
-        n.push(Note {
-            tick: 5 * S16 + 900,
-            length: 400,
-            key: pad_key(3),
-            velocity: 0.7,
-        });
+        n.push(Note::new(0, 3840, 60, 0.6));
+        n.push(Note::new(20 * S16, S16, pad_key(1), 0.6));
+        n.push(Note::new(5 * S16 + 900, 400, pad_key(3), 0.7));
         n.sort_by_key(|n| (n.tick, n.key));
     }
     drum_doc_with(Some(clip))
