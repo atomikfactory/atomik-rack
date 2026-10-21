@@ -13,6 +13,7 @@ editor.nudge_right | editor | Right
 editor.octave_down | editor | Shift+Down
 editor.octave_up | editor | Shift+Up
 editor.quantize | editor | Q, Shift+Q
+editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Down
 editor.transpose_up | editor | Up
 file.import_audio | global | Ctrl+I
@@ -37,6 +38,7 @@ files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
 sequencer.split_at_playhead | sequencer | Ctrl+E
+sequencer.toggle_mute | sequencer | M
 transport.go_start | rack | Enter, Shift+Enter
 transport.go_start | sequencer | Enter, Shift+Enter
 transport.loop | rack | L, Shift+L

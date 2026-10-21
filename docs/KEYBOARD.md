@@ -162,6 +162,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Follow Playhead | sequencer | `F` | `F` | `F` |
 | Follow Playhead | editor | `F` | `F` | `F` |
 | Join | sequencer | `Ctrl+J` | `Cmd+J` | `Ctrl+J` |
+| Mute Clips | sequencer | `M` | `M` | `M` |
 | Open Clip | sequencer | `Enter` | `Enter` | `Enter` |
 | Select Next Clip | sequencer | `Right` | `Right` | `Right` |
 | Select Next Track | sequencer | `Down` | `Down` | `Down` |
@@ -177,6 +178,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
+| Mute Notes | editor | `M` | `M` | `M` |
 | Nudge Left | editor | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
 | Nudge Right | editor | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
 | Quantize | editor | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
@@ -297,12 +299,14 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
+| Mute Clips | sequencer | `M` | `M` | `M` |
 | Split at Playhead | sequencer | `Ctrl+E` | `Cmd+E` | `Ctrl+E` |
 
 ### Editor
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
+| Mute Notes | editor | `M` | `M` | `M` |
 | Nudge Left | editor | `Left` | `Left` | `Left` |
 | Nudge Right | editor | `Right` | `Right` | `Right` |
 | Quantize | editor | `Q`, `Shift+Q` | `Q`, `Shift+Q` | `Q`, `Shift+Q` |
