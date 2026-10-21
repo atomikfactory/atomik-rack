@@ -30,6 +30,7 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **Container device.** A device that holds another rack: its own devices and cables, 8 macro knobs and key/velocity note splits. Containers are flattened for the engine, so they cost nothing special at run time.
 - **Plugin hosting.** CLAP and VST3 instruments and effects are rack devices like any built-in one (cabled, automated, macro-mapped, saved and bounced). Scanning runs out of process. VST2 is not supported.
 - **Arrangement and audio.** Note, automation and audio clips; a piano roll and step/slice/sample editors; import of WAV, AIFF, FLAC, MP3 and OGG; audio recording with latency compensation; large files stream from disk.
+- **File browser.** A docked panel (`F4`) to browse folders, search by name, `#tag` or favourites, preview audio files with one click and drag them onto the arrangement, sample editor or a sampler; tags and favourites are saved in `library.json` next to the settings.
 - **Workflow and keymap.** A data-driven keymap with a standard profile and a legacy profile, remappable in Settings (see [docs/KEYBOARD.md](docs/KEYBOARD.md)), tools (select, pencil, eraser, razor), a clipboard for clips, notes, devices and tracks, context menus, and a creation chain that wires new instruments and effects automatically.
 - **Offline bounce.** `atomik-render` renders patches and projects to WAV, bit-identical for any block size and worker count.
 - **Projects.** A project with audio is a bundle folder (`name/name.atomik` plus `Audio/`, files named by content hash); a project without audio is a single `.atomik` file. Saves are atomic.
@@ -148,6 +149,7 @@ Four rules are never traded away. Each one is enforced by tests or process, not 
           atomik-model       │         atomik-devices ── atomik-engine
                   │          │               │                │
           atomik-audio-file ◄┘      atomik-dsp ── atomik-device-sdk ── atomik-core
+      file browser data: atomik-library (used by audio-file, ui and app)
       plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
       atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)
 ```

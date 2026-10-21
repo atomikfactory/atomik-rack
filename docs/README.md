@@ -2,7 +2,7 @@
 
 | Document | What it covers |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The crates and their dependency rule, data flow (patch to WAV, project open and live sync, import, playback, streaming, recording, save and bounce), the engine, the threading model, plugin hosting, the keymap, and how each hard invariant (real-time safety, determinism, graph validity, originality) is enforced. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The crates and their dependency rule, data flow (patch to WAV, project open and live sync, import, playback, streaming, recording, save and bounce), the engine, the threading model, plugin hosting, the keymap, the file browser, and how each hard invariant (real-time safety, determinism, graph validity, originality) is enforced. |
 | [DEVICES.md](DEVICES.md) | Reference for every built-in device: sockets, parameters, ranges, behaviour and limits. |
 | [EXTENDING.md](EXTENDING.md) | How to write a new device with `atomik-device-sdk`: the contract, parameters, notes, testing with the harness, and a checklist. |
 | [TESTING.md](TESTING.md) | How to run the quality gates and the tests, the allocation guard, determinism tests, golden files and how to regenerate them, plugin tests, and the hardware and manual tests. |
