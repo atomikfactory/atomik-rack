@@ -2,6 +2,7 @@
 
 use super::{PAD_COUNT, Pad, Shared};
 use crate::sampler::{tail_gain, zone_region};
+use atomik_core::BATCH;
 use atomik_core::db_to_gain;
 use atomik_device_sdk::{LoopMode, SampleMap, TriggerMode, Zone, velocity_to_7bit};
 use atomik_dsp::{LoopKind, PlayRegion, Playhead, balance_gains, pan_gains_mono};
@@ -45,6 +46,34 @@ const IDLE_ZONE: Zone = Zone {
     trigger: TriggerMode::Gate,
     reverse: false,
 };
+
+/// Per-pad CV modulation of one batch: for a pad whose level CV socket is cabled, the linear
+/// gain (`10^(trim * range * cv / 20)`) of every sample.
+pub(super) struct PadCv {
+    pub level_on: [bool; PAD_COUNT],
+    pub level: [[f32; BATCH]; PAD_COUNT],
+}
+
+impl PadCv {
+    pub fn new() -> Self {
+        Self {
+            level_on: [false; PAD_COUNT],
+            level: [[1.0; BATCH]; PAD_COUNT],
+        }
+    }
+
+    /// The view of a render segment that starts at batch sample `start`.
+    pub fn at(&self, start: usize) -> CvView<'_> {
+        CvView { cv: self, start }
+    }
+}
+
+/// [`PadCv`] seen from the first sample of one render segment.
+#[derive(Clone, Copy)]
+pub(super) struct CvView<'a> {
+    cv: &'a PadCv,
+    start: usize,
+}
 
 /// Values that stay constant over one render segment.
 #[derive(Debug, Clone, Copy)]
@@ -227,6 +256,7 @@ impl Voice {
         out: [&mut [f32]; 2],
         pads: &[Pad; PAD_COUNT],
         sh: &Shared,
+        cv: &CvView<'_>,
     ) {
         let [out_l, out_r] = out;
         let mut map = own;
@@ -252,7 +282,12 @@ impl Voice {
                 1.0
             };
             let tail = tail_gain(&self.head, &self.zone, sh.sample_rate);
-            let g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
+            let mut g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
+            let pad = usize::from(self.pad);
+            let at = cv.start + n;
+            if cv.cv.level_on[pad] {
+                g *= cv.cv.level[pad][at];
+            }
             out_l[n] += xl * seg.pan_l * g;
             out_r[n] += xr * seg.pan_r * g;
             self.head.advance(seg.ratio);

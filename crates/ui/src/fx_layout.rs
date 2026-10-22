@@ -41,7 +41,7 @@ fn sections(kind: FxKind) -> Def {
             ("SPACE", &["algorithm", "predelay", "size", "decay"]),
             ("TONE", &["damping", "lowcut"]),
             ("BALANCE", &["early", "width", "modulation"]),
-            ("OUTPUT", &["mix", "freeze", "output"]),
+            ("OUTPUT", &["mix", "mix_cv_trim", "freeze", "output"]),
         ],
         FxKind::Compressor => &[
             (
@@ -66,19 +66,43 @@ fn sections(kind: FxKind) -> Def {
             ),
             (
                 "LOW SHELF",
-                &["band2.on", "band2.freq", "band2.gain", "band2.q"],
+                &[
+                    "band2.on",
+                    "band2.freq",
+                    "band2.gain",
+                    "band2.gain_cv_trim",
+                    "band2.q",
+                ],
             ),
             (
                 "PEAK 1",
-                &["band3.on", "band3.freq", "band3.gain", "band3.q"],
+                &[
+                    "band3.on",
+                    "band3.freq",
+                    "band3.gain",
+                    "band3.gain_cv_trim",
+                    "band3.q",
+                ],
             ),
             (
                 "PEAK 2",
-                &["band4.on", "band4.freq", "band4.gain", "band4.q"],
+                &[
+                    "band4.on",
+                    "band4.freq",
+                    "band4.gain",
+                    "band4.gain_cv_trim",
+                    "band4.q",
+                ],
             ),
             (
                 "HIGH SHELF",
-                &["band5.on", "band5.freq", "band5.gain", "band5.q"],
+                &[
+                    "band5.on",
+                    "band5.freq",
+                    "band5.gain",
+                    "band5.gain_cv_trim",
+                    "band5.q",
+                ],
             ),
             (
                 "HIGH CUT",
@@ -87,15 +111,15 @@ fn sections(kind: FxKind) -> Def {
             ("OUTPUT", &["output"]),
         ],
         FxKind::Distortion => &[
-            ("DRIVE", &["curve", "drive", "bias"]),
+            ("DRIVE", &["curve", "drive", "drive_cv_trim", "bias"]),
             ("TONE", &["tone"]),
             ("CRUSH", &["crush.bits", "crush.rate"]),
-            ("OUTPUT", &["output", "mix", "oversample"]),
+            ("OUTPUT", &["output", "mix", "mix_cv_trim", "oversample"]),
         ],
         FxKind::Modulation => &[
             ("RATE", &["mode", "rate", "sync", "spread"]),
             ("VOICE", &["depth", "feedback", "delay", "stages"]),
-            ("OUTPUT", &["mix", "output"]),
+            ("OUTPUT", &["mix", "mix_cv_trim", "output"]),
         ],
         // Laid out by `character_panel::character_layout`, not by these sections.
         FxKind::Character => &[],
@@ -383,7 +407,9 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "release" => "Release".to_string(),
         "early" => "Early/late".to_string(),
         "meter.reset" => "Reset".to_string(),
-        "transform_cv_trim" | "mix_cv_trim" => "CV trim".to_string(),
+        "transform_cv_trim" | "mix_cv_trim" | "drive_cv_trim" | "feedback_cv_trim"
+        | "band2.gain_cv_trim" | "band3.gain_cv_trim" | "band4.gain_cv_trim"
+        | "band5.gain_cv_trim" => "CV trim".to_string(),
         _ => {
             let label = crate::autolayout::control_label(p);
             match label.find(" (") {

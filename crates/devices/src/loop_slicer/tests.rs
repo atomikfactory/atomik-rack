@@ -178,8 +178,18 @@ fn descriptor_validates_with_the_contract_order() {
             "velocity.amp",
             "loop.beats",
             "cv.pitch_amount",
+            "filter.cutoff",
+            "filter.cutoff_cv_trim",
+            "master.level_cv_trim",
         ],
-        &["notes_in", "pitch_cv_in", "out_l", "out_r"],
+        &[
+            "notes_in",
+            "pitch_cv_in",
+            "cutoff_cv_in",
+            "level_cv_in",
+            "out_l",
+            "out_r",
+        ],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.loop-slicer");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
@@ -213,6 +223,166 @@ fn descriptor_validates_with_the_contract_order() {
 }
 
 // ---- slices ---------------------------------------------------------------------
+
+// ---- CV inputs: level and cutoff -----------------------------------------------------------
+
+/// Renders a held hit on key 24 of a one-slice map with an optional CV on `socket`.
+fn cv_run(
+    m: &SampleMapRef,
+    setup: impl Fn(&mut DeviceHarness),
+    socket: &str,
+    cv: Option<f32>,
+    batches: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let (mut h, _) = with_map(m);
+    setup(&mut h);
+    if let Some(cv) = cv {
+        *h.input_mut(socket) = [cv; BATCH];
+    }
+    h.push_note("notes_in", on(0, 24, 1.0));
+    render(&mut h, batches)
+}
+
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+}
+
+#[test]
+fn level_cv_scales_gain_by_amount_in_db() {
+    let m = flat_slices(0.1, 4000, &[24]);
+    let at = |cv: Option<f32>, amount: f32| {
+        let (l, r) = cv_run(
+            &m,
+            |h| h.set_param("master.level_cv_trim", amount / 24.0),
+            "level_cv_in",
+            cv,
+            3,
+        );
+        assert_eq!(l[150].to_bits(), r[150].to_bits());
+        l[150]
+    };
+    let base = at(None, 12.0);
+    assert!((base - 0.1).abs() < 1e-6);
+    let up = at(Some(0.5), 12.0); // +6 dB
+    assert!((up / base - 10f32.powf(6.0 / 20.0)).abs() < 1e-4, "{up}");
+    let down = at(Some(-1.0), 12.0);
+    assert!((down / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+    assert_eq!(
+        at(Some(1.0), 0.0).to_bits(),
+        base.to_bits(),
+        "amount 0 cancels"
+    );
+    assert_eq!(
+        at(Some(9.0), 12.0).to_bits(),
+        at(Some(1.0), 12.0).to_bits(),
+        "clamped to +1"
+    );
+    assert!((at(Some(1.0), -12.0) / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+}
+
+fn noise_slice() -> SampleMapRef {
+    map(
+        vec![buffer(vec![noise(40_000, 5), noise(40_000, 6)])],
+        vec![slice(24, 0, 40_000)],
+    )
+}
+
+#[test]
+fn cutoff_cv_moves_the_filter_cutoff_by_amount_octaves() {
+    let m = noise_slice();
+    let level = |cv: Option<f32>, amount: f32| {
+        let (l, _) = cv_run(
+            &m,
+            |h| {
+                h.set_param("filter.cutoff", 1000.0);
+                h.set_param("filter.cutoff_cv_trim", amount / 4.0);
+            },
+            "cutoff_cv_in",
+            cv,
+            500,
+        );
+        rms(&l[6000..30_000])
+    };
+    let (down, mid, up) = (
+        level(Some(-1.0), 2.0),
+        level(Some(0.0), 2.0),
+        level(Some(1.0), 2.0),
+    );
+    assert!(down < mid * 0.7 && mid < up * 0.7, "{down} {mid} {up}");
+    // Amount 0 leaves the filter at the param: the same bits as no cable at all.
+    let (a, _) = cv_run(
+        &m,
+        |h| {
+            h.set_param("filter.cutoff", 1000.0);
+            h.set_param("filter.cutoff_cv_trim", 0.0);
+        },
+        "cutoff_cv_in",
+        Some(1.0),
+        50,
+    );
+    let (b, _) = cv_run(&m, |h| h.set_param("filter.cutoff", 1000.0), "x", None, 50);
+    assert_eq!(bits(&a), bits(&b));
+    // Beyond +-1 the CV is clamped; a negative amount mirrors the sign of the CV.
+    assert_eq!(
+        level(Some(6.0), 2.0).to_bits(),
+        level(Some(1.0), 2.0).to_bits()
+    );
+    assert_eq!(
+        level(Some(1.0), -2.0).to_bits(),
+        level(Some(-1.0), 2.0).to_bits()
+    );
+}
+
+#[test]
+fn new_inputs_unconnected_leave_output_bit_identical() {
+    let m = four_slices(|_| {});
+    let run = |amounts: Option<[f32; 2]>| {
+        let (mut h, _) = with_map(&m);
+        if let Some(a) = amounts {
+            h.set_param("filter.cutoff_cv_trim", a[0]);
+            h.set_param("master.level_cv_trim", a[1]);
+        }
+        h.push_note("notes_in", on(0, 24, 1.0));
+        h.push_note("notes_in", on(30, 26, 0.7));
+        let (l, r) = render(&mut h, 20);
+        (bits(&l), bits(&r))
+    };
+    assert_eq!(run(None), run(Some([-0.7, 0.9])));
+    // `filter.cutoff` at its maximum is the open, bypassed filter.
+    let run_open = || {
+        let (mut h, _) = with_map(&m);
+        h.set_param("filter.cutoff", 20_000.0);
+        h.push_note("notes_in", on(0, 24, 1.0));
+        h.push_note("notes_in", on(30, 26, 0.7));
+        let (l, r) = render(&mut h, 20);
+        (bits(&l), bits(&r))
+    };
+    assert_eq!(run(None), run_open());
+}
+
+#[test]
+fn filter_cutoff_param_alone_darkens_the_sound() {
+    let m = noise_slice();
+    let level = |hz: f32| {
+        let (l, _) = cv_run(&m, |h| h.set_param("filter.cutoff", hz), "x", None, 500);
+        rms(&l[6000..30_000])
+    };
+    assert!(level(300.0) < level(20_000.0) * 0.5);
+}
+
+#[test]
+fn new_cv_inputs_are_allocation_free() {
+    let m = noise_slice();
+    let (mut h, _) = with_map(&m);
+    for s in ["cutoff_cv_in", "level_cv_in", "pitch_cv_in"] {
+        *h.input_mut(s) = [0.4; BATCH];
+    }
+    h.push_note("notes_in", on(0, 24, 1.0));
+    for i in 0..30 {
+        h.set_param("filter.cutoff", 500.0 + 100.0 * i as f32);
+        h.process();
+    }
+}
 
 #[test]
 fn every_slice_key_plays_its_slice_bit_exactly_after_the_attack() {

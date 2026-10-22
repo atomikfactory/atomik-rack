@@ -12,9 +12,14 @@
 //!   the target time, feedback and mix without a glide (no audio has passed yet).
 //! * Ping-pong: the input is summed to mono as `(L + R)/2` into the left line; the feedback path
 //!   crosses L→R and R→L. Off: two independent lines.
+//! * CV: `mix_cv_in` and `feedback_cv_in` are added to the knob in normalised (0..1) space, scaled
+//!   by `mix_cv_trim` / `feedback_cv_trim` (-1..+1, default +1; the CV is clamped to -1..+1),
+//!   then clamped to the parameter range (feedback: `0.95 * (fb/0.95 + trim * cv)`). They go
+//!   through the same 5 ms smoothers. Unconnected, the device is bit-identical to before.
 //! * Buffers hold 4 s at the prepared sample rate (allocated in `prepare`).
 //! * Denormals: the delay lines flush values below 1e-20 on write.
 
+use crate::cv_in::add_norm;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -55,8 +60,10 @@ const P_SYNC: u32 = 2;
 const P_FEEDBACK: u32 = 3;
 const P_MIX: u32 = 4;
 const P_PING_PONG: u32 = 5;
+const P_MIX_TRIM: u32 = 6;
+const P_FB_TRIM: u32 = 7;
 
-static PARAMS: [ParamDescriptor; 6] = [
+static PARAMS: [ParamDescriptor; 8] = [
     ParamDescriptor {
         id: ParamId(P_MODE),
         key: "time.mode",
@@ -126,6 +133,28 @@ static PARAMS: [ParamDescriptor; 6] = [
         unit: Unit::Toggle,
         discrete: true,
     },
+    ParamDescriptor {
+        id: ParamId(P_MIX_TRIM),
+        key: "mix_cv_trim",
+        name: "Mix CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_FB_TRIM),
+        key: "feedback_cv_trim",
+        name: "Feedback CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -133,8 +162,10 @@ const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
 const TIME_CV: SocketId = SocketId(4);
+const MIX_CV: SocketId = SocketId(5);
+const FB_CV: SocketId = SocketId(6);
 
-static SOCKETS: [SocketDescriptor; 5] = [
+static SOCKETS: [SocketDescriptor; 7] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -170,6 +201,20 @@ static SOCKETS: [SocketDescriptor; 5] = [
         kind: SocketKind::Cv,
         direction: Direction::Input,
     },
+    SocketDescriptor {
+        id: MIX_CV,
+        key: "mix_cv_in",
+        name: "Mix CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: FB_CV,
+        key: "feedback_cv_in",
+        name: "Feedback CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
 ];
 
 /// Static description of the stereo delay.
@@ -201,6 +246,12 @@ pub struct StereoDelay {
     ping_pong: bool,
     feedback: Smoother,
     mix: Smoother,
+    mix_base: f32,
+    fb_base: f32,
+    mix_trim: f32,
+    fb_trim: f32,
+    /// True while a CV input has overridden a smoother target.
+    cv_live: bool,
     /// Current delay in samples.
     delay: f32,
     /// Target of the current glide, in samples.
@@ -229,6 +280,11 @@ impl StereoDelay {
             ping_pong: false,
             feedback: Smoother::new(0.4, SMOOTH_MS, 48_000.0),
             mix: Smoother::new(0.3, SMOOTH_MS, 48_000.0),
+            mix_base: 0.3,
+            fb_base: 0.4,
+            mix_trim: 1.0,
+            fb_trim: 1.0,
+            cv_live: false,
             delay: 1.0,
             glide_target: 1.0,
             glide_rate: 0.0,
@@ -280,8 +336,16 @@ impl Device for StereoDelay {
             P_MODE => self.sync = plain >= 0.5,
             P_MS => self.time_ms = plain,
             P_SYNC => self.sync_index = (plain.max(0.0) as usize).min(SYNC_BEATS.len() - 1),
-            P_FEEDBACK => self.feedback.set_target(plain.clamp(0.0, 0.95)),
-            P_MIX => self.mix.set_target(plain.clamp(0.0, 1.0)),
+            P_FEEDBACK => {
+                self.fb_base = plain.clamp(0.0, 0.95);
+                self.feedback.set_target(self.fb_base);
+            }
+            P_MIX => {
+                self.mix_base = plain.clamp(0.0, 1.0);
+                self.mix.set_target(self.mix_base);
+            }
+            P_MIX_TRIM => self.mix_trim = plain.clamp(-1.0, 1.0),
+            P_FB_TRIM => self.fb_trim = plain.clamp(-1.0, 1.0),
             P_PING_PONG => self.ping_pong = plain >= 0.5,
             _ => {}
         }
@@ -300,8 +364,32 @@ impl Device for StereoDelay {
         let cv = *ctx.input(TIME_CV);
         let in_l = *ctx.input(IN_L);
         let in_r = *ctx.input(IN_R);
+        let mix_conn = ctx.is_connected(MIX_CV);
+        let fb_conn = ctx.is_connected(FB_CV);
+        let mix_cv = *ctx.input(MIX_CV);
+        let fb_cv = *ctx.input(FB_CV);
+        let (mix_trim, fb_trim) = (self.mix_trim, self.fb_trim);
+        let (mix_base, fb_base) = (self.mix_base, self.fb_base);
+        let mix_at = |n: usize| add_norm(mix_base, mix_trim, mix_cv[n]);
+        let fb_at = |n: usize| 0.95 * add_norm(fb_base / 0.95, fb_trim, fb_cv[n]);
+        if mix_conn || fb_conn {
+            self.cv_live = true;
+        } else if self.cv_live {
+            self.cv_live = false;
+            self.feedback.set_target(fb_base);
+            self.mix.set_target(mix_base);
+        }
         if self.fresh {
-            let (f, m) = (self.feedback.target(), self.mix.target());
+            let f = if fb_conn {
+                fb_at(0)
+            } else {
+                self.feedback.target()
+            };
+            let m = if mix_conn {
+                mix_at(0)
+            } else {
+                self.mix.target()
+            };
             self.feedback.set_immediate(f);
             self.mix.set_immediate(m);
             let first = if cv_connected {
@@ -323,6 +411,12 @@ impl Device for StereoDelay {
                 fixed_target
             };
             let d = self.next_delay(target);
+            if fb_conn {
+                self.feedback.set_target(fb_at(n));
+            }
+            if mix_conn {
+                self.mix.set_target(mix_at(n));
+            }
             let fb = self.feedback.next_value();
             let mix = self.mix.next_value();
             let wet_l = self.line_l.read(d);
@@ -399,8 +493,18 @@ mod tests {
                 "feedback",
                 "mix",
                 "ping_pong",
+                "mix_cv_trim",
+                "feedback_cv_trim",
             ],
-            &["in_l", "in_r", "out_l", "out_r", "time_cv_in"],
+            &[
+                "in_l",
+                "in_r",
+                "out_l",
+                "out_r",
+                "time_cv_in",
+                "mix_cv_in",
+                "feedback_cv_in",
+            ],
         );
         assert_eq!(DESCRIPTOR.type_id, "atomik.stereo-delay");
         assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
@@ -482,6 +586,55 @@ mod tests {
         }
     }
 
+    /// Left output of a 10 ms delay fed an impulse, with `cv` on `key` and `trim` on `trim_key`.
+    fn cv_run(key: &str, trim_key: &str, trim: f32, cv: f32, fb: f32, mix: f32) -> Vec<f32> {
+        let mut h = delay();
+        ms_mode(&mut h, 10.0, fb, mix);
+        h.set_param(trim_key, trim);
+        *h.input_mut(key) = [cv; BATCH];
+        h.render(10, &OUT);
+        impulse_response(&mut h, &["in_l"], 40).0
+    }
+
+    #[test]
+    fn process_mix_cv_adds_in_normalised_space_and_clamps() {
+        // mix 0.25 + 0.5 -> 0.75 wet: dry 0.25, echo 0.75 (smoother settled).
+        let l = cv_run("mix_cv_in", "mix_cv_trim", 1.0, 0.5, 0.0, 0.25);
+        assert!(
+            (l[0] - 0.25).abs() < 1e-4 && (l[480] - 0.75).abs() < 1e-4,
+            "{} {}",
+            l[0],
+            l[480]
+        );
+        // Clamped beyond +-1: cv 5 behaves as cv 1.
+        let a = cv_run("mix_cv_in", "mix_cv_trim", 1.0, 5.0, 0.0, 0.25);
+        let b = cv_run("mix_cv_in", "mix_cv_trim", 1.0, 1.0, 0.0, 0.25);
+        assert_eq!(a, b);
+        assert!((a[480] - 1.0).abs() < 1e-4);
+        // Amount 0 cancels the CV.
+        let z = cv_run("mix_cv_in", "mix_cv_trim", 0.0, 1.0, 0.0, 0.25);
+        assert!((z[0] - 0.75).abs() < 1e-4 && (z[480] - 0.25).abs() < 1e-4);
+        // Negative trim inverts: 0.25 - 1 -> clamped 0.
+        let n = cv_run("mix_cv_in", "mix_cv_trim", -1.0, 1.0, 0.0, 0.25);
+        assert!(n[480].abs() < 1e-4 && (n[0] - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn process_feedback_cv_adds_in_normalised_space_and_clamps() {
+        // fb 0.4 + full CV -> norm clamps to 1 -> fb 0.95.
+        let l = cv_run("feedback_cv_in", "feedback_cv_trim", 1.0, 1.0, 0.4, 1.0);
+        let ratio = l[960] / l[480];
+        assert!((ratio - 0.95).abs() < 1e-3, "echo ratio {ratio}");
+        let l5 = cv_run("feedback_cv_in", "feedback_cv_trim", 1.0, 5.0, 0.4, 1.0);
+        assert_eq!(l, l5);
+        // Amount 0: plain feedback 0.4.
+        let l0 = cv_run("feedback_cv_in", "feedback_cv_trim", 0.0, 1.0, 0.4, 1.0);
+        assert!((l0[960] / l0[480] - 0.4).abs() < 1e-3);
+        // Negative trim drives feedback to 0.
+        let ln = cv_run("feedback_cv_in", "feedback_cv_trim", -1.0, 1.0, 0.4, 1.0);
+        assert!(ln[960].abs() < 1e-4);
+    }
+
     #[test]
     fn process_ping_pong_alternates_sides() {
         let mut h = delay();
@@ -552,6 +705,8 @@ mod tests {
         *h.input_mut("in_l") = [0.5; BATCH];
         *h.input_mut("in_r") = [-0.5; BATCH];
         *h.input_mut("time_cv_in") = [1.0; BATCH];
+        *h.input_mut("mix_cv_in") = [0.7; BATCH];
+        *h.input_mut("feedback_cv_in") = [-0.7; BATCH];
         sweep_params_min_max(&mut h, &DESCRIPTOR);
     }
 
@@ -573,6 +728,8 @@ mod tests {
         *h.input_mut("in_r") = [-0.3; BATCH];
         for i in 0..400 {
             *h.input_mut("time_cv_in") = [((i % 7) as f32 - 3.0) / 3.0; BATCH];
+            *h.input_mut("mix_cv_in") = [((i % 5) as f32 - 2.0) / 2.0; BATCH];
+            *h.input_mut("feedback_cv_in") = [((i % 3) as f32 - 1.0) * 3.0; BATCH];
             h.set_param("ping_pong", (i / 50 % 2) as f32);
             h.set_param("time.mode", (i / 100 % 2) as f32);
             h.set_param("time.sync", (i % 12) as f32);

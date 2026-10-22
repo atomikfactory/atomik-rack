@@ -161,9 +161,10 @@ fn the_panel_shows_pad_labels_the_selected_pad_and_the_edit_button() {
     );
     assert_eq!(v.selected_pad(&key("drums")), Some(1));
     assert_eq!(v.selected_pad(&key("synth")), None);
-    // Three rack units, no 129-knob sprawl.
+    // Six rack units: the back holds the four sockets of each of the 16 pads (outputs and CV
+    // inputs); the front is still the compact pad panel, not a 161-knob sprawl.
     let r = v.device_rect(&key("drums")).unwrap();
-    assert!((r.height() - 3.0 * 76.0).abs() < 1e-9, "{r:?}");
+    assert!((r.height() - 6.0 * 76.0).abs() < 1e-9, "{r:?}");
 }
 
 #[test]

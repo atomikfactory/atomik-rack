@@ -22,8 +22,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 |---|---|---|---|
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. Reads 0 when unconnected. |
+| `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1 (see "CV inputs: the trim convention"). |
+| `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (result clamped to 0..1). |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels. |
+| `pan_cv_in` | CV | in | Balances the output by `pan_cv_trim` × CV (−1 = left, +1 = right). |
 | `out_l` | Audio | out | Left output |
-| `out_r` | Audio | out | Right output: currently identical to `out_l` (see below) |
+| `out_r` | Audio | out | Right output: identical to `out_l` unless `pan_cv_in` is cabled (see below) |
 | `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
 
 ### Params
@@ -61,6 +65,10 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
 | `voices` | 1 to 16 | 16 | none | Linear | yes |
 | `master.level` | −60 to 6 (−60 = silent) | −6 | dB | dB | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -74,7 +82,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 - **Output level.**
   - The output is the sum of voices × 0.5 × the master gain (smoothed over 5 ms).
   - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
-- **Mono output.** `out_l` **equals** `out_r`. There is no stereo spread in this version.
+- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo spread in this version.
+- **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target (a negative trim inverts the CV). All four act on the whole instrument, not per voice.
+  - *Pitch:* semitones (`pitch_cv_trim` × 24 × CV), added to every oscillator of every voice (key + offsets + LFO·`lfo.to_pitch` + CV term), read at the 16-sample control rate like the cutoff.
+  - *Resonance:* the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1); the filter damping ramps over each 16-sample control step.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
+  - *Pan:* per sample, the mono sum is balanced by `pan_cv_trim`·CV after the limiter: unity on both sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device instance, so renders are reproducible.
 
 ---
@@ -582,6 +595,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch by `cv.pitch_amount` semitones. Reads 0 when unconnected. |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves (only with the filter on). |
+| `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (only with the filter on). |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels. |
+| `pan_cv_in` | CV | in | Adds `pan_cv_trim` × CV to the pan of every voice. |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output |
 
@@ -616,6 +632,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `lfo.to_amp` | 0 to 1 | 0 | percent | Linear | no |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
+| `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Zones (the sample map)
 
@@ -632,6 +651,10 @@ A zone has a key range, a velocity range (1–127; a note velocity `v` maps to r
 - **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen (a start counter, one count per zone started, orders the voices, so stealing is deterministic). It fades out linearly over 2 ms, then the new note starts. A note-off for a note still waiting for its voice cancels it (gate zones).
 - **Level.** Voice gain = zone gain × amp envelope × (1 − `velocity.amp` × (1 − velocity)) × tremolo, where tremolo is 1 − `lfo.to_amp` × (1 − LFO)/2. A mono sample goes through a constant-power pan (−3 dB at the centre). A stereo sample is balanced by the pan: unity at the centre, the far side falls as cos(|pan|·π/2). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth (linear to ±2, below ±4 always).
 - **Filter.** With `filter.enabled` at 0 (the default) the signal is not filtered at all. When on, each voice filters its left and right channels with 12 dB state-variable filters. Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV + 4·`filter.velocity`·(velocity − 1)), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient interpolated in between.
+- **CV inputs (resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
+  - *Resonance:* per voice, the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1) at the 16-sample control rate, the damping ramped in between. Only audible with `filter.enabled` on.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter, for all voices. No extra smoothing.
+  - *Pan:* per voice and per sample, the pan is the zone pan + `pan_cv_trim`·CV (clamped to ±1 by the pan law), through the usual law (constant power for a mono sample, balance for a stereo one).
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps. There is no latency.
 - **Map swaps.** The device holds the current map and at most one *draining* map, and never frees a map itself: `swap_samples` hands one back to the caller, which drops it off the audio thread.
   - A voice whose zone index exists in the new map, with a buffer that is the same `Arc`, moves to the new zone (it takes the zone's parameters and keeps its position). Every other voice keeps playing from the old map with a 5 ms fade-out; the old map becomes the draining map.
@@ -652,10 +675,11 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `out_l`, `out_r` | Audio | out | Main mix of every pad whose individual output is not cabled |
 | `pad1_out_l`, `pad1_out_r` … `pad16_out_l`, `pad16_out_r` | Audio | out | Individual stereo output of pad *n* (sockets 3 to 34 in this order) |
+| `pad1_level_cv_in` … `pad16_level_cv_in` | CV | in | Level CV of pad *n* (sockets 35 to 50 in this order): `padN.level_cv_trim` × 24 × CV decibels. |
 
 ### Params
 
-`master.level` first, then eight params per pad *N* = 1 to 16 in this order (129 params; ids follow the order):
+`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then the 16 `padN.level_cv_trim` (145 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -668,6 +692,7 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `padN.mode` | 0–1: gate, one-shot | 1 (one-shot) | choice | Linear | yes |
 | `padN.choke` | 0 to 4 (0 = none) | 0 | none | Linear | yes |
 | `padN.velocity` | 0 to 1 | 0.7 | percent | Linear | no |
+| `padN.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -677,6 +702,7 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 - **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end fade is at `start`), exactly as in the sampler.
 - **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared playhead (zone start/end and loops as in the sampler).
 - **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity` × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample (−3 dB at the centre), balance for a stereo sample (unity at the centre).
+- **CV input (level, per pad).** Applied only while the pad's `padN_level_cv_in` is cabled; with all of them open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and multiplied by `padN.level_cv_trim` and 24 dB: the voice gain is multiplied per sample by 10^(24·trim·CV/20). It acts on every voice of that pad (and so on its individual output too) and on no other pad. No extra smoothing. The 16 trim knobs are on the back panel next to their jacks (the back is six rack units tall).
 - **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group 0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
 - **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level` and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither scaled nor limited (non-finite values become 0).
 - **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one draining map and hands one back per swap. A voice whose zone index exists in the new map with a pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A pending hit survives only if the new map has a zone of its pad at the same index that still matches its velocity.
@@ -694,6 +720,8 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 |---|---|---|---|
 | `notes_in` | Notes in | Notes | in |
 | `pitch_cv_in` | Pitch CV | CV | in |
+| `cutoff_cv_in` | Cutoff CV | CV | in |
+| `level_cv_in` | Level CV | CV | in |
 | `out_l` | Out L | Audio | out |
 | `out_r` | Out R | Audio | out |
 
@@ -710,6 +738,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 | `velocity.amp` | 0 to 1 | 0.5 | percent | Linear | no |
 | `loop.beats` | 1 to 64 | 4 | none | Linear | yes |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
+| `filter.cutoff` | 20 to 20 000 | 20 000 | Hz | Exp | no |
+| `filter.cutoff_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -720,6 +751,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 - **Reverse.** A reversed slice plays from `end − 1` down to `start` (see the sampler's Zones section).
 - **Pitch.** Ratio 2^((key − root + transpose + `tune.semi`)/12 + zone cents/1200 + CV·`cv.pitch_amount`/12), CV clamped to ±1 and updated every 16 samples. Slices normally have their key as root: unity ratio, so a slice is reproduced bit for bit once the attack is over.
 - **Level and pan.** Voice gain = envelope × zone gain × (1 − `velocity.amp` × (1 − velocity)). A mono loop goes through a constant-power pan by the zone pan (−3 dB at the centre), a stereo loop is balanced (unity at the centre). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth.
+- **Filter and CV inputs (cutoff, level).** The slicer had no filter; it now has one global 12 dB low-pass (Butterworth, Q = 1/√2) over the summed voices, placed before `master.level`. It is engaged only while `cutoff_cv_in` is cabled or `filter.cutoff` is below its maximum of 20 kHz; otherwise the signal is not touched, so a patch that does not use either is bit for bit what it was before. Each CV is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
+  - *Cutoff:* `filter.cutoff` × 2^(4·`filter.cutoff_cv_trim`·CV), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient ramped in between. It acts on all voices together, not per voice.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. No extra smoothing.
 - **`loop.beats`** is stored but unused by the audio; the app and the editor use it for grid slicing and for writing the loop as a note clip.
 - **Map swaps.** Exactly as the sampler and the drum machine; a pending hit survives only if the new map has a slice zone of its key at the same index that still matches its velocity.
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps.
@@ -888,6 +922,37 @@ Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main
 Try it with the test plugins: [../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and [../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both formats in one project).
 
 VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
+
+## CV inputs: the trim convention
+
+Added with the Mod Source work, one convention for every device (instruments, effects and console channels). Every input is a CV socket `<target>_cv_in` with a bipolar amount param `<target>_cv_trim` (−1..+1, default +1, shown as "CV trim" on the front panel next to its knob). The CV is clamped to −1..+1, scaled by the trim and added to the target as listed below, then the sum is clamped to the target's range. With the socket unconnected nothing changes: the output is bit-identical to a device without the input, and old patches and projects load unchanged (new params take their defaults). Where the device smooths per batch (reverb, modulation, distortion, EQ, console channel) the CV is its mean over the 64-sample batch and goes through the target's existing smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sources: [cv_in.rs](../crates/devices/src/cv_in.rs) and each device module.
+
+| Device | Socket | Trim param | Mapping |
+|---|---|---|---|
+| Stereo delay | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Stereo delay | `feedback_cv_in` | `feedback_cv_trim` | `0.95 · (feedback/0.95 + trim·cv)`, normalised, 0..0.95 |
+| Reverb | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Modulation | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `drive_cv_in` | `drive_cv_trim` | `48 dB · (drive/48 + trim·cv)`, normalised, 0..48 dB |
+| EQ | `band2_gain_cv_in` … `band5_gain_cv_in` (low shelf, peak 1, peak 2, high shelf) | `band2.gain_cv_trim` … `band5.gain_cv_trim` | `gain + trim·cv·24 dB`, −24..+24 dB (a band whose effective gain is exactly 0 dB is off, as before) |
+| Console channel | `fader_cv_in` | `fader_cv_trim` | fader gain × 10^(trim·cv·24/20): ±24 dB around the fader position |
+| Console channel | `pan_cv_in` | `pan_cv_trim` | `pan + trim·cv`, −1..+1 |
+| Console channel | `send1_level_cv_in` … `send8_level_cv_in` | `send1.level_cv_trim` … `send8.level_cv_trim` | `level + trim·cv·66 dB`, clamped to −60..+6 dB (−60 = off); a send that is switched off stays off |
+| Poly synth | `pitch_cv_in` | `pitch_cv_trim` | pitch of every voice + `trim·cv·24` semitones |
+| Poly synth | `resonance_cv_in` | `filter.resonance_cv_trim` | `resonance + trim·cv`, 0..1 |
+| Poly synth | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+| Poly synth | `pan_cv_in` | `pan_cv_trim` | balance `trim·cv`, −1..+1 |
+| Sampler | `resonance_cv_in` | `filter.resonance_cv_trim` | `resonance + trim·cv`, 0..1 (filter on) |
+| Sampler | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+| Sampler | `pan_cv_in` | `pan_cv_trim` | per voice: zone pan + `trim·cv` |
+| Drum machine | `padN_level_cv_in` (N = 1..16) | `padN.level_cv_trim` | pad gain × 10^(trim·cv·24/20) |
+| Loop slicer | `cutoff_cv_in` | `filter.cutoff_cv_trim` | `filter.cutoff` × 2^(trim·cv·4), global low-pass |
+| Loop slicer | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+
+The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear on the back of the channel's rack device like any other socket. The trims show in the console strip's MORE section. The console and auto-routing code only creates the audio cables of a channel, so the extra CV sockets do not affect it.
+
+---
 
 ## Console master: `atomik.master` (Mixer)
 

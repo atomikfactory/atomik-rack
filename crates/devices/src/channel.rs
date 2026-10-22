@@ -48,6 +48,13 @@
 //!   before the pan (sends keep the stereo image). `send{k}.level` is in dB with a
 //!   [`Taper::Decibel`] taper over −60..+6 dB (the minimum is −∞ / off); a send only sounds when
 //!   `send{k}.on`.
+//! * **CV inputs** (stage 1; each is the batch mean of the CV, clamped to −1..+1, times its
+//!   `*_cv_trim` (−1..+1, default +1), applied through the same 5 ms smoothers; unconnected, the
+//!   strip is bit-identical to before):
+//!   `fader_cv_in` adds `trim · cv · 24` dB to the fader gain; `pan_cv_in` adds `trim · cv` to
+//!   the pan position (clamped to −1..+1); `send{k}_level_cv_in` adds `trim · cv · 66` dB (the
+//!   span of the send range) to `send{k}.level`, clamped to −60..+6 dB (−60 is off). A send
+//!   whose `send{k}.on` is off stays silent.
 //! * **Mute / solo:** `mute` (ignored while `solo` is on, per the §8 contract) and
 //!   `internal.solo_silence` silence the main output *and every send, pre-fader included*. The
 //!   insert send and the gain-reduction CV are unaffected. `solo` has no other DSP effect.
@@ -62,6 +69,7 @@
 //! * **`gr_cv_out`:** `1 − g`, where `g` is the combined linear gain of gate × compressor
 //!   (0 = no reduction, 0.5 ≈ 6 dB, → 1 when fully closed).
 
+use crate::cv_in::batch_mean;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -253,7 +261,41 @@ const P_MUTE: usize = P_PAN + 3;
 const P_SOLO: usize = P_PAN + 4;
 const P_LATENCY: usize = P_PAN + 5;
 const P_SOLO_SILENCE: usize = P_PAN + 6;
-const PARAM_COUNT: usize = P_SOLO_SILENCE + 1;
+/// CV trims (appended after the contract params so every existing id is unchanged).
+const P_FADER_TRIM: usize = P_SOLO_SILENCE + 1;
+const P_PAN_TRIM: usize = P_SOLO_SILENCE + 2;
+/// First send-level CV trim (`send1.level_cv_trim`); one per send.
+const P_SEND_TRIM_FIRST: usize = P_SOLO_SILENCE + 3;
+const PARAM_COUNT: usize = P_SEND_TRIM_FIRST + SENDS;
+
+/// Full-scale swing of `fader_cv_in` in dB.
+const FADER_CV_DB: f32 = 24.0;
+/// Full-scale swing of a send-level CV in dB (the −60..+6 dB range).
+const SEND_CV_DB: f32 = 66.0;
+
+/// A bipolar CV amount, −1..+1, default +1.
+const fn cv_trim(id: usize, key: &'static str, name: &'static str) -> ParamDescriptor {
+    param(
+        id as u32,
+        key,
+        name,
+        -1.0,
+        1.0,
+        1.0,
+        Taper::Linear,
+        Unit::Percent,
+    )
+}
+
+macro_rules! send_trims {
+    ($($k:literal),*) => {
+        [$(cv_trim(
+            P_SEND_TRIM_FIRST + $k - 1,
+            concat!("send", $k, ".level_cv_trim"),
+            concat!("Send ", $k, " level CV trim"),
+        )),*]
+    };
+}
 
 static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     let head = [
@@ -358,6 +400,7 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
             0.0,
         ),
     ];
+    let cv = send_trims!(1, 2, 3, 4, 5, 6, 7, 8);
     let mut out = [tail[0]; PARAM_COUNT];
     let mut i = 0;
     while i < P_SEND_FIRST {
@@ -368,9 +411,16 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
         out[i] = sends[(i - P_SEND_FIRST) / 3][(i - P_SEND_FIRST) % 3];
         i += 1;
     }
-    while i < PARAM_COUNT {
+    while i <= P_SOLO_SILENCE {
         out[i] = tail[i - P_PAN];
         i += 1;
+    }
+    out[P_FADER_TRIM] = cv_trim(P_FADER_TRIM, "fader_cv_trim", "Fader CV trim");
+    out[P_PAN_TRIM] = cv_trim(P_PAN_TRIM, "pan_cv_trim", "Pan CV trim");
+    let mut k = 0;
+    while k < SENDS {
+        out[P_SEND_TRIM_FIRST + k] = cv[k];
+        k += 1;
     }
     out
 };
@@ -423,7 +473,25 @@ const S_SEND_FIRST: u16 = 7;
 const S_OUT_L: u16 = S_SEND_FIRST + 2 * SENDS as u16;
 const S_OUT_R: u16 = S_OUT_L + 1;
 const S_GR: u16 = S_OUT_L + 2;
-const SOCKET_COUNT: usize = S_GR as usize + 1;
+const S_FADER_CV: u16 = S_GR + 1;
+const S_PAN_CV: u16 = S_GR + 2;
+/// First send-level CV input (`send1_level_cv_in`); one per send.
+const S_SEND_CV_FIRST: u16 = S_GR + 3;
+const SOCKET_COUNT: usize = S_SEND_CV_FIRST as usize + SENDS;
+
+const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
+    socket(id, key, name, SocketKind::Cv, Direction::Input)
+}
+
+macro_rules! send_cv_sockets {
+    ($($k:literal),*) => {
+        [$(cv_in(
+            S_SEND_CV_FIRST + $k - 1,
+            concat!("send", $k, "_level_cv_in"),
+            concat!("Send ", $k, " level CV"),
+        )),*]
+    };
+}
 
 static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
     let head = [
@@ -456,6 +524,7 @@ static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
             Direction::Output,
         ),
     ];
+    let cv = send_cv_sockets!(1, 2, 3, 4, 5, 6, 7, 8);
     let mut out = [tail[0]; SOCKET_COUNT];
     let mut i = 0;
     while i < S_SEND_FIRST as usize {
@@ -467,9 +536,16 @@ static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
         out[i] = sends[k / 2][k % 2];
         i += 1;
     }
-    while i < SOCKET_COUNT {
+    while i <= S_GR as usize {
         out[i] = tail[i - S_OUT_L as usize];
         i += 1;
+    }
+    out[S_FADER_CV as usize] = cv_in(S_FADER_CV, "fader_cv_in", "Fader CV");
+    out[S_PAN_CV as usize] = cv_in(S_PAN_CV, "pan_cv_in", "Pan CV");
+    let mut k = 0;
+    while k < SENDS {
+        out[S_SEND_CV_FIRST as usize + k] = cv[k];
+        k += 1;
     }
     out
 };
@@ -638,6 +714,8 @@ pub struct Channel {
     audible: Smoother,
     send_pre: [Smoother; SENDS],
     send_post: [Smoother; SENDS],
+    /// CV targets are currently overriding the smoothers: fader, pan, sends 1..8.
+    cv_live: [bool; 2 + SENDS],
     /// Stage-0 → stage-1 hand-over: the signal at the insert point.
     mid: (Block, Block),
     /// Copy of `key_in` from stage 0 (stage 1 runs the dynamics with `route.insert_pre`).
@@ -703,6 +781,7 @@ impl Channel {
             audible: sm,
             send_pre: [sm; SENDS],
             send_post: [sm; SENDS],
+            cv_live: [false; 2 + SENDS],
             mid: ([0.0; BATCH], [0.0; BATCH]),
             key: [0.0; BATCH],
             key_active: false,
@@ -781,16 +860,7 @@ impl Channel {
                 }
             }
             _ if (P_SEND_FIRST..P_PAN).contains(&i) => {
-                let k = (i - P_SEND_FIRST) / 3;
-                let base = P_SEND_FIRST + 3 * k;
-                let g = if self.on(base) {
-                    send_gain(self.values[base + 1])
-                } else {
-                    0.0
-                };
-                let pre = self.on(base + 2);
-                self.send_pre[k].set_target(if pre { g } else { 0.0 });
-                self.send_post[k].set_target(if pre { 0.0 } else { g });
+                self.set_send_target((i - P_SEND_FIRST) / 3, 0.0);
             }
             P_PAN => {
                 let (l, r) = pan_constant_power(v);
@@ -815,6 +885,69 @@ impl Channel {
             }
             // Routing switches, key and insert bypass are read in `process`.
             _ => {}
+        }
+    }
+
+    /// Sets the pre/post targets of send `k` from its params, with `cv_db` added to the level.
+    fn set_send_target(&mut self, k: usize, cv_db: f32) {
+        let base = P_SEND_FIRST + 3 * k;
+        let g = if self.on(base) {
+            send_gain(self.values[base + 1] + cv_db)
+        } else {
+            0.0
+        };
+        let pre = self.on(base + 2);
+        self.send_pre[k].set_target(if pre { g } else { 0.0 });
+        self.send_post[k].set_target(if pre { 0.0 } else { g });
+    }
+
+    /// Applies the CV inputs (once per batch, stage 1) on top of the knob values. A CV that
+    /// is not connected leaves the knob targets alone (restored once when it is unplugged).
+    fn apply_cv(&mut self, ctx: &ProcessContext<'_>) {
+        let cv_of = |s: u16| {
+            ctx.is_connected(SocketId(s))
+                .then(|| batch_mean(ctx.input(SocketId(s))))
+        };
+        match cv_of(S_FADER_CV) {
+            Some(cv) => {
+                let db = self.values[P_FADER_TRIM] * cv * FADER_CV_DB;
+                let g = fader_gain(self.values[P_FADER]) * db_to_gain(db);
+                self.fader.set_target(g);
+                self.cv_live[0] = true;
+            }
+            None if self.cv_live[0] => {
+                self.cv_live[0] = false;
+                self.apply(P_FADER);
+            }
+            None => {}
+        }
+        match cv_of(S_PAN_CV) {
+            Some(cv) => {
+                let p = self.values[P_PAN] + self.values[P_PAN_TRIM] * cv;
+                let (l, r) = pan_constant_power(p);
+                self.pan_l.set_target(l);
+                self.pan_r.set_target(r);
+                self.cv_live[1] = true;
+            }
+            None if self.cv_live[1] => {
+                self.cv_live[1] = false;
+                self.apply(P_PAN);
+            }
+            None => {}
+        }
+        for k in 0..SENDS {
+            match cv_of(S_SEND_CV_FIRST + k as u16) {
+                Some(cv) => {
+                    let db = self.values[P_SEND_TRIM_FIRST + k] * cv * SEND_CV_DB;
+                    self.set_send_target(k, db);
+                    self.cv_live[2 + k] = true;
+                }
+                None if self.cv_live[2 + k] => {
+                    self.cv_live[2 + k] = false;
+                    self.apply(P_SEND_FIRST + 3 * k);
+                }
+                None => {}
+            }
         }
     }
 
@@ -988,6 +1121,7 @@ impl Channel {
     /// Stage 1: insert return → latency adjust (→ dynamics/EQ with `route.insert_pre`) →
     /// width → fader → pan → `out_*`, sends and `gr_cv_out`.
     fn stage1(&mut self, ctx: &mut ProcessContext<'_>) {
+        self.apply_cv(ctx);
         let (mut l, mut r) = self.mid;
         let (ret_l, ret_r, ret_on) = stereo_in(ctx, S_INSERT_RETURN_L, S_INSERT_RETURN_R);
         self.insert_return(&mut l, &mut r, ret_on.then_some((&ret_l, &ret_r)));

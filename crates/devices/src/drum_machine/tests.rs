@@ -193,13 +193,19 @@ fn descriptor_validates_with_the_contract_order() {
         sockets.push(format!("pad{n}_out_l"));
         sockets.push(format!("pad{n}_out_r"));
     }
+    for n in 1..=16 {
+        params.push(format!("pad{n}.level_cv_trim"));
+    }
+    for n in 1..=16 {
+        sockets.push(format!("pad{n}_level_cv_in"));
+    }
     let p: Vec<&str> = params.iter().map(String::as_str).collect();
     let s: Vec<&str> = sockets.iter().map(String::as_str).collect();
     assert_keys(&DESCRIPTOR, &p, &s);
     assert_eq!(DESCRIPTOR.type_id, "atomik.drum-machine");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(DESCRIPTOR.params.len(), 129);
-    assert_eq!(DESCRIPTOR.sockets.len(), 35);
+    assert_eq!(DESCRIPTOR.params.len(), 145);
+    assert_eq!(DESCRIPTOR.sockets.len(), 51);
     let d = |k: &str| {
         let d = DESCRIPTOR.param_by_key(k).unwrap();
         (d.min, d.max, d.default)
@@ -215,9 +221,16 @@ fn descriptor_validates_with_the_contract_order() {
         assert_eq!(d(&format!("pad{n}.choke")), (0.0, 4.0, 0.0));
         assert_eq!(d(&format!("pad{n}.velocity")), (0.0, 1.0, 0.7));
     }
-    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(1) {
+    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(1).take(34) {
         assert_eq!(sd.kind, SocketKind::Audio, "{i}");
         assert_eq!(sd.direction, Direction::Output);
+    }
+    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(35) {
+        assert_eq!(sd.kind, SocketKind::Cv, "{i}");
+        assert_eq!(sd.direction, Direction::Input);
+    }
+    for n in [1, 9, 16] {
+        assert_eq!(d(&format!("pad{n}.level_cv_trim")), (-1.0, 1.0, 1.0));
     }
     assert_eq!(factory().descriptor.type_id, "atomik.drum-machine");
     assert_eq!(pad_key(0), 36);
@@ -225,6 +238,128 @@ fn descriptor_validates_with_the_contract_order() {
 }
 
 // ---- pad playback ----------------------------------------------------------------
+
+// ---- CV inputs: level per pad ---------------------------------------------------
+
+/// Hits `pad` of `m` and returns the settled output sample `[left, right]` at frame 150.
+fn cv_hit(
+    m: &SampleMapRef,
+    pad: usize,
+    setup: impl Fn(&mut DeviceHarness),
+    socket: &str,
+    cv: Option<f32>,
+) -> [f32; 2] {
+    let (mut h, _) = with_map(m);
+    setup(&mut h);
+    if let Some(cv) = cv {
+        *h.input_mut(socket) = [cv; BATCH];
+    }
+    hit(&mut h, 0, pad, 1.0);
+    let (l, r) = render(&mut h, 3);
+    [l[150], r[150]]
+}
+
+#[test]
+fn level_cv_scales_the_pad_gain_by_amount_in_db() {
+    let m = flat_kit(&[3, 5], 0.1, 4000);
+    let at = |cv: Option<f32>, amount: f32| {
+        cv_hit(
+            &m,
+            3,
+            |h| h.set_param("pad3.level_cv_trim", amount / 24.0),
+            "pad3_level_cv_in",
+            cv,
+        )[0]
+    };
+    let base = at(None, 12.0);
+    assert!((base - 0.1).abs() < 1e-6);
+    let up = at(Some(0.5), 12.0); // +6 dB
+    assert!((up / base - 10f32.powf(6.0 / 20.0)).abs() < 1e-4, "{up}");
+    let down = at(Some(-1.0), 12.0);
+    assert!((down / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+    assert_eq!(at(Some(1.0), 0.0).to_bits(), base.to_bits(), "amount 0");
+    assert_eq!(
+        at(Some(8.0), 12.0).to_bits(),
+        at(Some(1.0), 12.0).to_bits(),
+        "clamped to +1"
+    );
+    assert!((at(Some(1.0), -12.0) / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+}
+
+#[test]
+fn level_cv_of_one_pad_leaves_the_other_pads_alone() {
+    let m = flat_kit(&[3, 5], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("pad3_level_cv_in") = [-1.0; BATCH];
+    hit(&mut h, 0, 3, 1.0);
+    hit(&mut h, 0, 5, 1.0);
+    let (l, _) = render(&mut h, 3);
+    // Pad 3 at -24 dB plus pad 5 untouched.
+    let want = 0.1 * 10f32.powf(-24.0 / 20.0) + 0.1;
+    assert!((l[150] - want).abs() < 1e-5, "{}", l[150]);
+    // Its own CV on pad 5 does not move pad 3.
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("pad5_level_cv_in") = [-1.0; BATCH];
+    hit(&mut h, 0, 3, 1.0);
+    let (l, _) = render(&mut h, 3);
+    assert!((l[150] - 0.1).abs() < 1e-6);
+}
+
+#[test]
+fn cv_applies_to_the_individual_pad_output_too() {
+    let m = flat_kit(&[3], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    connect_pad(&mut h, 3);
+    *h.input_mut("pad3_level_cv_in") = [0.5; BATCH];
+    hit(&mut h, 0, 3, 1.0);
+    let o = h.render(3, &["pad3_out_l", "pad3_out_r"]);
+    for ch in &o {
+        assert!(
+            (ch[150] - 0.1 * 10f32.powf(12.0 / 20.0)).abs() < 1e-4,
+            "{}",
+            ch[150]
+        );
+    }
+}
+
+#[test]
+fn new_cv_inputs_unconnected_leave_output_bit_identical() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        (1..=PAD_COUNT).map(|p| zone(0, 6000, key_of(p))).collect(),
+    );
+    let run = |amounts: bool| {
+        let (mut h, _) = with_map(&m);
+        if amounts {
+            for p in 1..=PAD_COUNT {
+                h.set_param(&format!("pad{p}.level_cv_trim"), -0.7);
+            }
+        }
+        for p in [1usize, 4, 9, 16] {
+            hit(&mut h, (p * 7) as u16, p, 0.9);
+        }
+        let (l, r) = render(&mut h, 20);
+        (bits(&l), bits(&r))
+    };
+    assert_eq!(run(false), run(true));
+}
+
+#[test]
+fn cv_inputs_are_allocation_free() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        (1..=PAD_COUNT).map(|p| zone(0, 6000, key_of(p))).collect(),
+    );
+    let (mut h, _) = with_map(&m);
+    for p in 1..=PAD_COUNT {
+        *h.input_mut(&format!("pad{p}_level_cv_in")) = [0.3; BATCH];
+        hit(&mut h, p as u16, p, 1.0);
+    }
+    connect_pad(&mut h, 2);
+    for _ in 0..30 {
+        h.process();
+    }
+}
 
 #[test]
 fn every_pad_reproduces_its_zone_bit_exactly_after_the_attack() {

@@ -461,7 +461,16 @@ fn hovering_a_cable_highlights_it() {
     let (doc, reg, mut v) = back_view();
     let c = cable(("synth", "lfo_cv_out"), ("delay", "time_cv_in"));
     let mid = v.cable_midpoint(&c).unwrap();
-    let _ = v.handle(&mv(mid), &doc, &reg);
+    // The midpoint can sit on a socket or control of a crowded panel (those win over a cable),
+    // so probe a few points around it.
+    'probe: for dy in [0.0, -12.0, 12.0, -24.0, 24.0, -36.0, 36.0, -48.0, 48.0] {
+        for dx in [0.0, -6.0, 6.0, -12.0, 12.0, -24.0, 24.0] {
+            let _ = v.handle(&mv(Point::new(mid.x + dx, mid.y + dy)), &doc, &reg);
+            if v.hovered_cable() == Some(&c) {
+                break 'probe;
+            }
+        }
+    }
     assert_eq!(v.hovered_cable(), Some(&c));
     assert_eq!(v.socket_highlight(&c.from), SocketHighlight::Hovered);
     assert_eq!(v.socket_highlight(&c.to), SocketHighlight::Hovered);

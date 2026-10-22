@@ -687,7 +687,11 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             for pc in info.spec.front.iter().filter(|pc| info.spec.on_back(pc)) {
                 let p = &desc.params[pc.param];
                 let value = info.device.map_or(p.default, |d| current_value(d, p));
-                let label = crate::fx_layout::fx_label(p);
+                let label = if info.spec.drum.is_some() {
+                    "Trim".to_string()
+                } else {
+                    crate::fx_layout::fx_label(p)
+                };
                 control_labelled(c, theme, pc, p, value, info.accent, &label);
             }
             if !info.driven.is_empty() {

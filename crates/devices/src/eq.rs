@@ -33,6 +33,11 @@
 //!   is skipped entirely (and its state reset), so a disabled band, and an EQ with every band off
 //!   at `output` 0 dB, copy the input bit for bit. Turning a band on or off fades and does not
 //!   click; the fade takes about 100 ms to finish (the weight snaps to exactly 0 within 5e-5).
+//! * **Gain CV.** Bands 2..5 (low shelf, both peaks, high shelf) have `band2_gain_cv_in` ..
+//!   `band5_gain_cv_in`. The CV (batch mean, clamped to -1..+1) times `bandN.gain_cv_trim`
+//!   (-1..+1, default +1) times 24 dB is added to `bandN.gain` and the sum clamped to -24..+24 dB,
+//!   once per batch; the section's own 10 ms gain smoother removes zipper noise. A band whose
+//!   effective gain is exactly 0 dB is off as before. Unconnected: bit-identical.
 //! * **Output gain** is smoothed per batch (BlockSmoother) and is exactly 1.0 at 0 dB.
 //!
 //! # Analyser (meter values)
@@ -53,6 +58,7 @@
 //! Non-finite input samples are treated as 0. The per-sample path uses only `+ - * /` (the
 //! biquad state is `f64`); coefficient design runs at control rate.
 
+use crate::cv_in::batch_mean;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -177,8 +183,26 @@ const fn slope(id: u32, key: &'static str, name: &'static str) -> ParamDescripto
 /// `on, freq, gain, q`.
 const BASE: [u32; NB] = [0, 4, 8, 12, 16, 20];
 const P_OUTPUT: u32 = 24;
+/// First gain-CV trim param (bands 2..5 in order).
+const P_GAIN_TRIM: u32 = 25;
+/// Range of a band gain in dB, the CV's full-scale swing.
+const GAIN_RANGE_DB: f32 = 24.0;
 
-static PARAMS: [ParamDescriptor; 25] = [
+const fn trim(id: u32, key: &'static str, name: &'static str) -> ParamDescriptor {
+    ParamDescriptor {
+        id: ParamId(id),
+        key,
+        name,
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    }
+}
+
+static PARAMS: [ParamDescriptor; 29] = [
     on(0, "band1.on", "Low cut on", 0.0),
     freq(1, "band1.freq", "Low cut freq", 20.0, 2_000.0, 80.0),
     q(2, "band1.q", "Low cut Q", 0.3, 4.0, FRAC_1_SQRT_2),
@@ -228,14 +252,20 @@ static PARAMS: [ParamDescriptor; 25] = [
         unit: Unit::Db,
         discrete: false,
     },
+    trim(25, "band2.gain_cv_trim", "Low shelf gain CV trim"),
+    trim(26, "band3.gain_cv_trim", "Peak 1 gain CV trim"),
+    trim(27, "band4.gain_cv_trim", "Peak 2 gain CV trim"),
+    trim(28, "band5.gain_cv_trim", "High shelf gain CV trim"),
 ];
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
+/// Gain CV inputs of bands 2..5, ids 4..=7.
+const GAIN_CV: [SocketId; 4] = [SocketId(4), SocketId(5), SocketId(6), SocketId(7)];
 
-static SOCKETS: [SocketDescriptor; 4] = [
+static SOCKETS: [SocketDescriptor; 8] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -263,6 +293,34 @@ static SOCKETS: [SocketDescriptor; 4] = [
         name: "Out R",
         kind: SocketKind::Audio,
         direction: Direction::Output,
+    },
+    SocketDescriptor {
+        id: GAIN_CV[0],
+        key: "band2_gain_cv_in",
+        name: "Low shelf gain CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: GAIN_CV[1],
+        key: "band3_gain_cv_in",
+        name: "Peak 1 gain CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: GAIN_CV[2],
+        key: "band4_gain_cv_in",
+        name: "Peak 2 gain CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: GAIN_CV[3],
+        key: "band5_gain_cv_in",
+        name: "High shelf gain CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
     },
 ];
 
@@ -351,6 +409,10 @@ struct Band {
     on: bool,
     freq: f32,
     gain: f32,
+    /// CV offset added to `gain`, in dB (0 unless a gain CV is connected).
+    cv_db: f32,
+    /// Gain CV amount (-1..+1).
+    cv_trim: f32,
     q: f32,
     slope: usize,
     /// The slope the sections are built for (differs from `slope` while a change is pending).
@@ -387,6 +449,8 @@ impl Band {
             on,
             freq,
             gain,
+            cv_db: 0.0,
+            cv_trim: 1.0,
             q,
             slope: 0,
             applied: 0,
@@ -403,7 +467,12 @@ impl Band {
 
     /// True when the band should currently be audible.
     fn wants_on(&self) -> bool {
-        self.on && (self.kind.is_cut() || self.gain != 0.0)
+        self.on && (self.kind.is_cut() || self.eff_gain() != 0.0)
+    }
+
+    /// Knob gain plus the CV offset, clamped to the parameter range.
+    fn eff_gain(&self) -> f32 {
+        (self.gain + self.cv_db).clamp(-GAIN_RANGE_DB, GAIN_RANGE_DB)
     }
 
     /// Pushes the raw params into the sections' smoothed targets.
@@ -429,7 +498,8 @@ impl Band {
         } else {
             self.secs[0].set_freq(self.freq);
             self.secs[0].set_q(self.q);
-            self.secs[0].set_gain_db(self.gain);
+            let g = self.eff_gain();
+            self.secs[0].set_gain_db(g);
         }
         self.stale = true;
     }
@@ -598,6 +668,10 @@ impl Device for Equalizer {
             self.output_db = v;
             return;
         }
+        if id.0 >= P_GAIN_TRIM {
+            self.bands[(id.0 - P_GAIN_TRIM) as usize + 1].cv_trim = v;
+            return;
+        }
         let Some(i) = BASE.iter().rposition(|b| *b <= id.0) else {
             return;
         };
@@ -626,6 +700,18 @@ impl Device for Equalizer {
         for n in 0..BATCH {
             l[n] = finite(l[n]);
             r[n] = finite(r[n]);
+        }
+        for (k, sock) in GAIN_CV.iter().enumerate() {
+            let band = &mut self.bands[k + 1];
+            let db = if ctx.is_connected(*sock) {
+                band.cv_trim * GAIN_RANGE_DB * batch_mean(ctx.input(*sock))
+            } else {
+                0.0
+            };
+            if db.to_bits() != band.cv_db.to_bits() {
+                band.cv_db = db;
+                band.apply();
+            }
         }
         for b in &mut self.bands {
             b.process(&mut l, &mut r);
