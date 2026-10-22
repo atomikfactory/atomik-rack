@@ -5,7 +5,7 @@ mod support;
 
 use atomik_device_sdk::{RACK_UNIT, RACK_WIDTH, Registry};
 use atomik_model::{Command, CreateOptions, CreateSource, RackDoc, RackSlot, WorkflowCommand};
-use atomik_ui::keymap::CommandOutcome;
+use atomik_ui::keymap::{CommandOutcome, Os, Roles};
 use atomik_ui::kurbo::{Point, Size, Vec2};
 use atomik_ui::{
     COLUMN_GAP, ContextTarget, DisplayList, Flip, Key, Modifiers, PointerButton, RackView,
@@ -21,6 +21,8 @@ fn two_columns() -> (RackDoc, Registry, RackView) {
     doc.columns = 2;
     doc.devices[2].column = 1;
     let mut v = RackView::new(atomik_ui::Theme::dark());
+    // Ctrl-click toggles the selection (the Windows table; macOS uses Command).
+    v.set_roles(Roles::defaults(Os::Windows));
     let _ = v.handle(&UiEvent::Resize(WIDE), &doc, &reg);
     v.sync(&doc, &reg);
     (doc, reg, v)

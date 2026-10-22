@@ -295,16 +295,20 @@ pub(crate) fn list_children(path: &Path) -> Vec<TreeChild> {
     out
 }
 
-/// Removes the verbatim prefix `canonicalize` adds on Windows: `\\?\C:\Windows\x` becomes `C:\Windows\x` and
-/// `\\?\UNC\server\share` becomes `\\server\share`.
-pub(crate) fn strip_verbatim(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(rest)
-    } else {
-        path.to_path_buf()
+/// `path` with its file name spelled as on disk, when that differs only by case.
+fn disk_spelling(path: &Path) -> PathBuf {
+    let on_disk = std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| p.file_name().map(ToOwned::to_owned));
+    match (on_disk, path.file_name()) {
+        (Some(disk), Some(given))
+            if disk != given
+                && disk.to_string_lossy().to_lowercase()
+                    == given.to_string_lossy().to_lowercase() =>
+        {
+            path.with_file_name(disk)
+        }
+        _ => path.to_path_buf(),
     }
 }
 
@@ -317,10 +321,9 @@ pub(crate) fn stat_files(paths: &[PathBuf]) -> Vec<FileRow> {
             if meta.is_dir() {
                 return None;
             }
-            // Library keys may be case-folded: take the spelling the disk has.
-            let path = std::fs::canonicalize(path)
-                .map(|p| strip_verbatim(&p))
-                .unwrap_or_else(|_| path.clone());
+            // Library keys may be case-folded: take the file name's spelling from the disk, but keep the
+            // folders as given so the row still finds its library entry behind a symlink or 8.3 name.
+            let path = disk_spelling(path);
             let kind = classify(&path, false)?;
             Some(FileRow {
                 name: path.file_name()?.to_string_lossy().into_owned(),
@@ -704,21 +707,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn verbatim_prefixes_are_stripped() {
-        let p = |s: &str| strip_verbatim(Path::new(s));
-        assert_eq!(
-            p(r"\\?\C:\Users\example\Music\Kick.wav"),
-            PathBuf::from(r"C:\Users\example\Music\Kick.wav")
-        );
-        assert_eq!(
-            p(r"\\?\UNC\server\share\a.wav"),
-            PathBuf::from(r"\\server\share\a.wav")
-        );
-        assert_eq!(p("/plain/a.wav"), PathBuf::from("/plain/a.wav"));
-        assert_eq!(p(r"C:\Windows\x"), PathBuf::from(r"C:\Windows\x"));
-    }
-
     #[cfg(windows)]
     #[test]
     fn stat_recovers_the_on_disk_spelling_from_a_lowercase_path() {
@@ -730,6 +718,19 @@ mod tests {
         assert_eq!(rows[0].name, "Kick 01.WAV");
         assert_eq!(rows[0].path.file_name().unwrap(), "Kick 01.WAV");
         assert!(!rows[0].path.to_string_lossy().starts_with(r"\\?\"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_keeps_the_given_folders_behind_a_symlink() {
+        let dir = tmp("link");
+        touch(&dir.join("real"), "a.wav");
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+        let given = dir.join("link").join("a.wav");
+        let rows = stat_files(std::slice::from_ref(&given));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, given);
         let _ = std::fs::remove_dir_all(dir);
     }
 
