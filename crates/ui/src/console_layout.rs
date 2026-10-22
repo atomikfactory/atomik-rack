@@ -4,7 +4,7 @@
 //! # Strip layout rules
 //! - A strip is [`STRIP_W`] wide; the height is the console's strip area.
 //! - **Sections**, top to bottom (order): Input, Filters, Dynamics, EQ, Inserts, Sends,
-//!   More (params this table does not know), then Pan/Width, Fader + meters, Mute/Solo and
+//!   CV trim (the fader, pan and send-level CV amounts), More (params this table does not know), then Pan/Width, Fader + meters, Mute/Solo and
 //!   the Name plate. Each section has a [`HEADER_H`] header with a fold chevron; a folded
 //!   section is just its header. The name plate cannot fold.
 //! - The first group (Input … More) is the **upper** part: it starts at y = 0 and scrolls
@@ -134,16 +134,19 @@ pub enum SectionId {
     Monitor,
     /// Master: output readouts above the master fader.
     Output,
+    /// Channel: the CV amounts of the fader, pan and send-level CV inputs.
+    Cv,
 }
 
 /// The sections of a channel strip, top to bottom.
-pub const STRIP_SECTIONS: [SectionId; 11] = [
+pub const STRIP_SECTIONS: [SectionId; 12] = [
     SectionId::Input,
     SectionId::Filters,
     SectionId::Dynamics,
     SectionId::Eq,
     SectionId::Inserts,
     SectionId::Sends,
+    SectionId::Cv,
     SectionId::More,
     SectionId::Pan,
     SectionId::Fader,
@@ -170,6 +173,7 @@ impl SectionId {
             SectionId::Bus => "MASTER BUS",
             SectionId::Monitor => "MONITOR",
             SectionId::Output => "OUTPUT",
+            SectionId::Cv => "CV TRIM",
         }
     }
 
@@ -457,6 +461,24 @@ const INSERTS: &[Row] = &[
     Row::Grid(&[k("latency.adjust", "LAT ADJ"), None, None]),
 ];
 const SENDS: &[Row] = &[Row::Sends];
+const CV: &[Row] = &[
+    Row::Grid(&[k("fader_cv_trim", "FADER"), k("pan_cv_trim", "PAN"), None]),
+    Row::Grid(&[
+        k("send1.level_cv_trim", "S1"),
+        k("send2.level_cv_trim", "S2"),
+        k("send3.level_cv_trim", "S3"),
+    ]),
+    Row::Grid(&[
+        k("send4.level_cv_trim", "S4"),
+        k("send5.level_cv_trim", "S5"),
+        k("send6.level_cv_trim", "S6"),
+    ]),
+    Row::Grid(&[
+        k("send7.level_cv_trim", "S7"),
+        k("send8.level_cv_trim", "S8"),
+        None,
+    ]),
+];
 const PAN: &[Row] = &[Row::Grid(&[k("pan", "PAN"), k("width", "WIDTH")])];
 const MUTE_SOLO: &[Row] = &[Row::Grid(&[b("mute", "M"), b("solo", "S")])];
 
@@ -505,6 +527,7 @@ fn strip_rows(id: SectionId) -> &'static [Row] {
         SectionId::Eq => EQ,
         SectionId::Inserts => INSERTS,
         SectionId::Sends => SENDS,
+        SectionId::Cv => CV,
         SectionId::Pan => PAN,
         SectionId::MuteSolo => MUTE_SOLO,
         SectionId::Bus => BUS,
