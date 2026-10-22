@@ -41,6 +41,18 @@ files.select_all | files | Cmd+A
 files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
+mixer.scroll_end | mixer | End, Shift+End
+mixer.scroll_home | mixer | Home, Shift+Home
+mixer.scroll_left | mixer | Left, Shift+Left
+mixer.scroll_right | mixer | Right, Shift+Right
+mixer.value_down | mixer | Down
+mixer.value_down_fine | mixer | Shift+Down
+mixer.value_page_down | mixer | PageDown
+mixer.value_page_down_fine | mixer | Shift+PageDown
+mixer.value_page_up | mixer | PageUp
+mixer.value_page_up_fine | mixer | Shift+PageUp
+mixer.value_up | mixer | Up
+mixer.value_up_fine | mixer | Shift+Up
 sequencer.split_at_playhead | sequencer | Cmd+E
 sequencer.toggle_mute | sequencer | M
 transport.go_start | rack | Enter, Shift+Enter
