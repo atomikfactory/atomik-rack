@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-one original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-two original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -983,6 +983,16 @@ The master section of the console. Source: [crates/devices/src/master.rs](../cra
 - **In a new project.** File, New starts with Audio I/O on top and this device, named "Master", right under it, locked: it cannot be deleted, cut, copied or moved, and nothing can be dragged above it (older projects open as they are). `main_l/r` are cabled to Audio I/O outputs 1 and 2. The channels' links to it are shown as "Output: Master" on the channel instead of as cables ("Show Console Links" in the View menu draws them).
 - **Panel.** Per send bus a level fader and the name of the effect on the slot; per return the effect's name (or `free`) and an EDIT button that selects the effect and scrolls the rack to it; the source is a pick list of the 18 entries; the key switch has a lamp that is lit while a cable ends at `key_in`.
 - **Use as Send Effect.** Creating an effect with the master selected (Ctrl+E) patches it into the first free send and return in one undo step (`fx_send{k}` to the effect to `return{k}`); the right-click entry "Use as Send Effect" does the same for an existing, unrouted stereo effect and is disabled for one that is already routed. With all eight slots used the effect is added unrouted and the status line says "All 8 send and return slots are in use".
+
+## Console output bus: `atomik.bus` (Mixer)
+
+A console strip that mixes other strips: the same strip as `atomik.channel`, fed by a stereo summing input. Source: [crates/devices/src/bus.rs](../crates/devices/src/bus.rs) (descriptor and factory) and [crates/devices/src/channel.rs](../crates/devices/src/channel.rs) (the one strip implementation both device types run). The console creates buses; you do not add one from the browser.
+
+- **Same strip, same keys.** Params, ids, defaults, internal params (`internal.solo_silence`, the CV trims), the 8 sends (`send{k}.on/level/pre`), insert loop, key input, `gr_cv_out`, CV inputs, stages and latency adjust are exactly the channel's, so settings copy across both types. The channel's tables are in the module docs of `channel.rs`.
+- **Input.** `in_l`/`in_r` are replaced by `bus_l`/`bus_r`, `Direction::SummingInput` like the master's: any number of strip outputs can be cabled in, and they are summed by the engine. A single connected side feeds both, as on a channel. With default params a bus fed a signal on `bus_l`/`bus_r` is bit-identical to a channel fed the same signal on `in_l`/`in_r` (tested).
+- **Outputs.** `out_l/r` (to the master's or another bus's `bus_l/r`), `send{k}_l/r` (to the master's `send_bus{k}_l/r`), `insert_send_l/r`, `gr_cv_out`. Sends are independent of the bus fader unless set pre/post as on a channel.
+- **Stages and latency.** The same two stages as the channel (`bus_l`, `bus_r`, `key_in` and `insert_send_*` in stage 0, everything else in stage 1). A negative `latency.adjust` is reported as latency exactly as on a channel, so delay compensation treats buses like channels.
+- **Browser.** Not listed in the device browser.
 
 ## Audio I/O: the `interface` pseudo-device
 
