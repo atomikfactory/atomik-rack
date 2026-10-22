@@ -340,6 +340,8 @@ pub enum Command {
     /// the clip length as one step) and, later,
     /// `Command::Song(SongCommand::AddTrack { .. })` and `Command::Song(SongCommand::AddClip { .. })`
     /// (a new pattern on a device without a track is one step) and, later,
+    /// `Command::Song(SongCommand::SetTrackFlags { .. })` (arming one track and disarming
+    /// another is one step) and, later,
     /// `Command::SetParam { .. }` and `Command::SetZones { .. }` (loading a loop into a slicer
     /// sets `loop.beats` and the slices as one step). The batch's last allocated
     /// clip id is [`Document::last_clip_id`] afterwards. A `merge` id inside a batched command
@@ -869,11 +871,12 @@ impl Document {
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
                                     | SongCommand::SetClipGrid { .. }
+                                    | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid and SetClipGeometry can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipGeometry and SetTrackFlags can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

@@ -454,6 +454,26 @@ fn a_new_master_is_wired_to_every_existing_channel() {
 // ---------------------------------------------------------------------------------------
 // RemoveChannel, MoveChannel.
 
+/// A channel strip shows its source device's name: renaming that device is the strip rename.
+#[test]
+fn renaming_a_channel_source_is_one_undo_step() {
+    let reg = console_registry();
+    let mut d = rack();
+    d.apply(add_channel("synth"), &reg).unwrap();
+    let before = d.doc().clone();
+    d.apply(
+        Command::Rename {
+            key: key("synth"),
+            name: "Lead".into(),
+        },
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().device(&key("synth")).unwrap().name, "Lead");
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
 #[test]
 fn remove_channel_removes_device_and_cables_and_keeps_the_master() {
     let reg = console_registry();
