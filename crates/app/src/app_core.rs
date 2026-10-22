@@ -174,6 +174,8 @@ pub struct AppCore<S: EngineSink> {
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
+    /// The console selection the last arming followed (see `follow_console_selection`).
+    console_selection: Vec<DeviceKey>,
     document: Document,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
@@ -328,6 +330,7 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             auto_armed: Vec::new(),
+            console_selection: Vec::new(),
             saved: doc.clone(),
             document: Document::new(doc),
             view,
@@ -598,6 +601,9 @@ impl<S: EngineSink> AppCore<S> {
         for action in &actions {
             self.handle_action(action.clone());
         }
+        if pane == Pane::Console {
+            self.follow_console_selection();
+        }
         self.after_view_change();
         actions
     }
@@ -728,6 +734,7 @@ impl<S: EngineSink> AppCore<S> {
         self.file = file;
         self.rejection = None;
         self.auto_armed.clear();
+        self.console_selection.clear();
         self.view.set_selected(None);
         self.close_piano_roll();
         self.close_sample_editor();
@@ -1915,6 +1922,9 @@ mod containers_tests;
 #[path = "app_core_clipboard_tests.rs"]
 mod clipboard_tests;
 
+#[cfg(test)]
+#[path = "app_core_console_select_tests.rs"]
+mod console_select_tests;
 #[cfg(test)]
 #[path = "app_core_create_tests.rs"]
 mod create_tests;
