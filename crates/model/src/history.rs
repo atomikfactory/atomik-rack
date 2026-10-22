@@ -1,7 +1,7 @@
 //! Reversible edits. Every applied command becomes one [`Edit`] holding everything needed to
 //! perform it again or invert it; undo performs the inverse.
 
-use crate::console::ConsoleChannel;
+use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, TempoEvent, Track};
@@ -124,6 +124,17 @@ pub(crate) enum Edit {
     },
     /// Move the console channel at `from` to `to`.
     ConsoleMove {
+        from: usize,
+        to: usize,
+    },
+    /// Insert (`old: None`), remove (`new: None`) or replace (a rename) a console bus at `index`.
+    ConsoleBus {
+        index: usize,
+        old: Option<ConsoleBus>,
+        new: Option<ConsoleBus>,
+    },
+    /// Move the console bus at `from` to `to`.
+    ConsoleBusMove {
         from: usize,
         to: usize,
     },
@@ -357,6 +368,12 @@ impl Edit {
                 new: old,
             },
             Edit::ConsoleMove { from, to } => Edit::ConsoleMove { from: to, to: from },
+            Edit::ConsoleBus { index, old, new } => Edit::ConsoleBus {
+                index,
+                old: new,
+                new: old,
+            },
+            Edit::ConsoleBusMove { from, to } => Edit::ConsoleBusMove { from: to, to: from },
             Edit::ConsoleMaster { old, new } => Edit::ConsoleMaster { old: new, new: old },
             Edit::ConsoleReturn { slot, old, new } => Edit::ConsoleReturn {
                 slot,
@@ -559,7 +576,10 @@ impl Edit {
                     value: new.unwrap_or(*default),
                 }];
                 // Solo silence derives from the channels' solo params.
-                if param == "solo" && doc.console.channel_index(key).is_some() {
+                if param == "solo"
+                    && (doc.console.channel_index(key).is_some()
+                        || doc.console.bus_index(key).is_some())
+                {
                     ops.push(SyncOp::ConsoleChanged);
                 }
                 ops
@@ -654,6 +674,22 @@ impl Edit {
             Edit::ConsoleMove { from, to } => {
                 let c = doc.console.channels.remove(*from);
                 doc.console.channels.insert(*to, c);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleBus { index, old, new } => {
+                let buses = &mut doc.console.buses;
+                if let Some(old) = old {
+                    let removed = buses.remove(*index);
+                    debug_assert_eq!(&removed, old);
+                }
+                if let Some(new) = new {
+                    buses.insert(*index, new.clone());
+                }
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleBusMove { from, to } => {
+                let b = doc.console.buses.remove(*from);
+                doc.console.buses.insert(*to, b);
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleMaster { new, .. } => {

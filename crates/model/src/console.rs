@@ -15,11 +15,24 @@
 //! master devices outside the console (e.g. from a patch file) are allowed: they are plain
 //! rack devices.
 //!
+//! **Buses.** A bus (`atomik.bus`, [`ConsoleBus`]) is a console strip with the channel's DSP and
+//! a summing input `bus_l`/`bus_r`; channels and other buses route to it with their `out_l`/`out_r`
+//! cables, and its own `out_l`/`out_r` go to the master, another bus or an Audio I/O stereo pair.
+//! Every bus is an existing `atomik.bus` device, listed once, with a unique non-empty trimmed
+//! name; buses exist only while there is a master. The routing is cables (hidden console links,
+//! see [`link_kind`]); the bus commands live in `console_bus.rs`.
+//!
 //! **Order:** the console order is the strip order in the console view. The engine sums a
 //! summing input's cables by source endpoint (device id, socket), not by console order, so
 //! moving a channel changes no audio (summing is deterministic either way).
 
-use crate::{Cable, DeviceKey, RackDoc, SocketRef};
+use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
+
+/// The key the next bus device gets (`bus`, `bus-2`, ...): what `CreateBus` and `RouteToNewBus`
+/// will create in `doc`, so a caller can name the new bus before it exists.
+pub fn new_bus_key(doc: &RackDoc) -> DeviceKey {
+    crate::rules::generate_key(doc, BUS_TYPE)
+}
 
 /// Number of FX sends/returns.
 pub const FX_SLOTS: usize = 8;
@@ -31,6 +44,10 @@ pub const INSERT_SLOTS: usize = 4;
 pub const CHANNEL_TYPE: &str = "atomik.channel";
 /// Type id of the master section device.
 pub const MASTER_TYPE: &str = "atomik.master";
+/// Type id of an output bus strip (created by the bus commands only).
+pub const BUS_TYPE: &str = "atomik.bus";
+/// Longest bus name, in characters.
+pub const MAX_BUS_NAME_CHARS: usize = 32;
 /// The channel param the app sets from [`crate::RackDoc::solo_silence`]; never stored.
 pub const SOLO_SILENCE_PARAM: &str = "internal.solo_silence";
 /// Params with this key prefix are set by the app, never by the user: they are not stored in
@@ -42,9 +59,9 @@ pub fn is_internal_param(param: &str) -> bool {
     param.starts_with(INTERNAL_PARAM_PREFIX)
 }
 
-/// True for the console device types (`atomik.channel`, `atomik.master`).
+/// True for the console device types (`atomik.channel`, `atomik.bus`, `atomik.master`).
 pub fn is_console_type(type_id: &str) -> bool {
-    type_id == CHANNEL_TYPE || type_id == MASTER_TYPE
+    type_id == CHANNEL_TYPE || type_id == MASTER_TYPE || type_id == BUS_TYPE
 }
 
 /// One console channel strip.
@@ -56,11 +73,23 @@ pub struct ConsoleChannel {
     pub source: Option<DeviceKey>,
 }
 
+/// One output bus strip.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsoleBus {
+    /// The `atomik.bus` device key.
+    pub bus: DeviceKey,
+    /// The bus name: trimmed, non-empty, at most [`MAX_BUS_NAME_CHARS`] characters, unique among
+    /// the buses (compared ignoring case). The bus device carries the same name.
+    pub name: String,
+}
+
 /// The console section of a document. The default is empty with compensation on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Console {
     /// Channel strips in console order (left to right; also the bus summing order).
     pub channels: Vec<ConsoleChannel>,
+    /// Output buses in console order (shown between the channels and the master).
+    pub buses: Vec<ConsoleBus>,
     /// The `atomik.master` device key (created with the first channel).
     pub master: Option<DeviceKey>,
     /// Effect device on each FX return slot (send k → effect → return k).
@@ -73,6 +102,7 @@ impl Default for Console {
     fn default() -> Self {
         Self {
             channels: Vec::new(),
+            buses: Vec::new(),
             master: None,
             returns: Default::default(),
             compensation: true,
@@ -84,6 +114,27 @@ impl Console {
     /// Index of channel device `channel` in console order.
     pub fn channel_index(&self, channel: &DeviceKey) -> Option<usize> {
         self.channels.iter().position(|c| &c.channel == channel)
+    }
+
+    /// Index of bus device `bus` in console order.
+    pub fn bus_index(&self, bus: &DeviceKey) -> Option<usize> {
+        self.buses.iter().position(|b| &b.bus == bus)
+    }
+
+    /// The bus called `name` (trimmed, ignoring case), if any.
+    pub fn bus_by_name(&self, name: &str) -> Option<&ConsoleBus> {
+        let wanted = name.trim().to_lowercase();
+        self.buses
+            .iter()
+            .find(|b| b.name.trim().to_lowercase() == wanted)
+    }
+
+    /// The first of `Bus 1`, `Bus 2`, … that no bus is called: the name the UI proposes.
+    pub fn default_bus_name(&self) -> String {
+        (1usize..)
+            .map(|n| format!("Bus {n}"))
+            .find(|n| self.bus_by_name(n).is_none())
+            .expect("a free name exists")
     }
 
     /// The first channel fed by `source`, if any (the one `AddChannel` made, in console order).
@@ -129,15 +180,23 @@ pub(crate) mod sockets {
     }
 }
 
-/// A console link: one of the cables `ConsoleCommand::AddChannel` makes between a channel and the
-/// master. The rack hides these by default and shows "Output: Master" on the
-/// channel instead.
+/// A console link: one of the cables the console commands make between a strip (channel or bus)
+/// and the master or a bus. The rack hides these by default and shows "Output: ..." on the strip
+/// instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
-    /// `out_l -> bus_l` or `out_r -> bus_r`.
+    /// Channel `out_l -> bus_l` or `out_r -> bus_r` of the master.
     ChannelOut,
-    /// `send{k}_{l,r} -> send_bus{k}_{l,r}`, `k` in 1..=8.
+    /// Channel `send{k}_{l,r} -> send_bus{k}_{l,r}` of the master, `k` in 1..=8.
     ChannelSend(u8),
+    /// Channel `out_l -> bus_l` or `out_r -> bus_r` of an output bus.
+    ChannelToBus,
+    /// Bus `out_l -> bus_l` or `out_r -> bus_r` of the master.
+    BusOut,
+    /// Bus `out_l -> bus_l` or `out_r -> bus_r` of another bus.
+    BusToBus,
+    /// Bus `send{k}_{l,r} -> send_bus{k}_{l,r}` of the master, `k` in 1..=8.
+    BusSend(u8),
 }
 
 /// The number in `text` when it is canonical decimal (no sign, no leading zero) and in `1..=8`.
@@ -146,24 +205,34 @@ fn send_number(text: &str) -> Option<usize> {
     ((1..=FX_SLOTS).contains(&n) && n.to_string() == text).then_some(n)
 }
 
-/// `Some` when `cable` is a console link, and which: its source is a console channel (listed in
-/// `console.channels` or any device of type [`CHANNEL_TYPE`]), its destination is the document's
-/// master, and the sockets are exactly `(out_l, bus_l)`, `(out_r, bus_r)` or
+/// `Some` when `cable` is a console link, and which: its source is a console strip (a channel,
+/// listed in `console.channels` or any device of type [`CHANNEL_TYPE`], or a bus, listed in
+/// `console.buses` or any device of type [`BUS_TYPE`]), its destination is the document's master
+/// or a bus, and the sockets are exactly `(out_l, bus_l)` or `(out_r, bus_r)` (to the master or
+/// a bus other than the source) or, to the master only,
 /// `(send{k}_{side}, send_bus{k}_{side})` for the same `k` in 1..=8 and the same side. Every
-/// other cable, including everything of a document without a master, is `None`: ordinary, and
-/// always drawn. Pure and deterministic.
+/// other cable, including a cable to an Audio I/O output and everything of a document without a
+/// master, is `None`: ordinary, and always drawn. Pure and deterministic.
 pub fn link_kind(doc: &RackDoc, cable: &Cable) -> Option<LinkKind> {
-    let master = doc.console.master.as_ref()?;
-    if &cable.to.device != master {
+    let from_channel = is_channel(doc, &cable.from.device);
+    if !from_channel && !is_bus(doc, &cable.from.device) {
         return None;
     }
-    if !is_channel(doc, &cable.from.device) {
+    let to_master = doc.console.master.as_ref() == Some(&cable.to.device);
+    if !to_master && (cable.to.device == cable.from.device || !is_bus(doc, &cable.to.device)) {
         return None;
     }
     let (from, to) = (cable.from.socket.as_str(), cable.to.socket.as_str());
-    match (from, to) {
-        ("out_l", "bus_l") | ("out_r", "bus_r") => return Some(LinkKind::ChannelOut),
-        _ => {}
+    if matches!((from, to), ("out_l", "bus_l") | ("out_r", "bus_r")) {
+        return Some(match (from_channel, to_master) {
+            (true, true) => LinkKind::ChannelOut,
+            (true, false) => LinkKind::ChannelToBus,
+            (false, true) => LinkKind::BusOut,
+            (false, false) => LinkKind::BusToBus,
+        });
+    }
+    if !to_master {
+        return None;
     }
     for side in ["l", "r"] {
         let number = from
@@ -171,8 +240,11 @@ pub fn link_kind(doc: &RackDoc, cable: &Cable) -> Option<LinkKind> {
             .and_then(|r| r.strip_suffix(&format!("_{side}")))
             .and_then(send_number);
         if let Some(k) = number {
-            return (to == sockets::master_send_bus(k, side))
-                .then_some(LinkKind::ChannelSend(k as u8));
+            return (to == sockets::master_send_bus(k, side)).then_some(if from_channel {
+                LinkKind::ChannelSend(k as u8)
+            } else {
+                LinkKind::BusSend(k as u8)
+            });
         }
     }
     None
@@ -184,41 +256,83 @@ fn is_channel(doc: &RackDoc, key: &DeviceKey) -> bool {
         || doc.device(key).is_some_and(|d| d.type_id == CHANNEL_TYPE)
 }
 
-/// Where a channel's output goes, for the "Output:" display.
+/// True for a console bus: listed in the console, or any device of type [`BUS_TYPE`].
+pub(crate) fn is_bus(doc: &RackDoc, key: &DeviceKey) -> bool {
+    doc.console.bus_index(key).is_some() || doc.device(key).is_some_and(|d| d.type_id == BUS_TYPE)
+}
+
+/// True for a console strip: a channel or a bus.
+pub(crate) fn is_strip(doc: &RackDoc, key: &DeviceKey) -> bool {
+    is_channel(doc, key) || is_bus(doc, key)
+}
+
+/// Where a strip's output goes, for the "Output:" display and `ConsoleCommand::SetOutput`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputDest {
     /// Every output cable is a console link to the master (the normal case).
     Master,
-    /// The output cables leave the master: their destinations, in cable order.
+    /// Every output cable is a console link to this output bus.
+    Bus(DeviceKey),
+    /// `out_l` and `out_r` go to the interface outputs `out_{2n-1}` and `out_{2n}`: the stereo
+    /// pair `n` (1-based: 1 is outputs 1+2, 2 is 3+4, ...). Not a console link (the cables are
+    /// drawn like any other), but a first-class destination: no warning.
+    AudioIo(u16),
+    /// The output cables go elsewhere: their destinations, in cable order.
     Direct(Vec<SocketRef>),
-    /// Some output cables go to the master and some elsewhere.
+    /// Some output cables are console links and some are not, or they go to different places.
     Mixed,
-    /// The channel has no output cable (or is no channel).
+    /// The strip has no output cable (or is no strip).
     None,
 }
 
-/// Reads the cables out of `out_l` and `out_r` of console channel `channel`: all of them console
-/// links is [`OutputDest::Master`], none is [`OutputDest::Direct`] with the destinations, both
-/// kinds is [`OutputDest::Mixed`], no cable (or an unknown or non-channel device) is
+/// The Audio I/O pair `n` when `outs` are exactly `out_l -> interface:out_{2n-1}` and
+/// `out_r -> interface:out_{2n}`.
+fn audio_io_pair(outs: &[&Cable]) -> Option<u16> {
+    if outs.len() != 2 {
+        return None;
+    }
+    let target = |socket: &str| -> Option<u16> {
+        let c = outs.iter().find(|c| c.from.socket == socket)?;
+        (c.to.device.0 == INTERFACE_KEY)
+            .then(|| c.to.socket.strip_prefix("out_")?.parse::<u16>().ok())?
+    };
+    let (l, r) = (target("out_l")?, target("out_r")?);
+    (l % 2 == 1 && r == l + 1).then_some(l.div_ceil(2))
+}
+
+/// Reads the cables out of `out_l` and `out_r` of console strip `strip` (a channel or a bus): all
+/// of them console links to the master is [`OutputDest::Master`], all of them links to one bus is
+/// [`OutputDest::Bus`], exactly `out_l`/`out_r` to one Audio I/O stereo pair is
+/// [`OutputDest::AudioIo`], other cables only is [`OutputDest::Direct`] with the destinations,
+/// any other mix is [`OutputDest::Mixed`], no cable (or an unknown or non-strip device) is
 /// [`OutputDest::None`]. The sends play no part. Pure and deterministic.
-pub fn output_dest(doc: &RackDoc, channel: &DeviceKey) -> OutputDest {
-    if !is_channel(doc, channel) {
+pub fn output_dest(doc: &RackDoc, strip: &DeviceKey) -> OutputDest {
+    if !is_strip(doc, strip) {
         return OutputDest::None;
     }
     let outs: Vec<&Cable> = doc
         .cables
         .iter()
-        .filter(|c| {
-            &c.from.device == channel && matches!(c.from.socket.as_str(), "out_l" | "out_r")
-        })
+        .filter(|c| &c.from.device == strip && matches!(c.from.socket.as_str(), "out_l" | "out_r"))
         .collect();
-    let links = outs.iter().filter(|c| link_kind(doc, c).is_some()).count();
+    let links: Vec<Option<LinkKind>> = outs.iter().map(|c| link_kind(doc, c)).collect();
+    let linked = links.iter().filter(|l| l.is_some()).count();
     if outs.is_empty() {
         OutputDest::None
-    } else if links == outs.len() {
-        OutputDest::Master
-    } else if links == 0 {
-        OutputDest::Direct(outs.iter().map(|c| c.to.clone()).collect())
+    } else if linked == outs.len() {
+        let to_master = |c: &&Cable| doc.console.master.as_ref() == Some(&c.to.device);
+        if outs.iter().all(to_master) {
+            OutputDest::Master
+        } else if outs.iter().all(|c| c.to.device == outs[0].to.device) && !to_master(&outs[0]) {
+            OutputDest::Bus(outs[0].to.device.clone())
+        } else {
+            OutputDest::Mixed
+        }
+    } else if linked == 0 {
+        match audio_io_pair(&outs) {
+            Some(n) => OutputDest::AudioIo(n),
+            None => OutputDest::Direct(outs.iter().map(|c| c.to.clone()).collect()),
+        }
     } else {
         OutputDest::Mixed
     }
@@ -327,4 +441,62 @@ pub enum ConsoleCommand {
     ClearSolos,
     /// Clear every channel mute.
     ClearMutes,
+    /// Create an output bus called `name` (see [`ConsoleBus::name`]; empty, too long or taken is
+    /// rejected), in one undo step: the `atomik.bus` device (key [`crate::console::new_bus_key`]
+    /// computed before the command; placed after the last bus, else at the end of the rack), its
+    /// sends cabled to the master like a channel's, its output routed to `dest` (Master, another
+    /// bus or a free Audio I/O pair, see [`ConsoleCommand::SetOutput`]), the console entry at
+    /// the end of the bus list. The master is created when missing, as the first channel does.
+    CreateBus {
+        /// The bus name.
+        name: String,
+        /// Where the bus plays: `Master`, `Bus(key)` or `AudioIo(pair)`.
+        dest: OutputDest,
+    },
+    /// Rename a bus (and its device). The name is trimmed; empty, over
+    /// [`MAX_BUS_NAME_CHARS`] or already taken by another bus (ignoring case) is rejected.
+    RenameBus {
+        /// Bus device key.
+        bus: DeviceKey,
+        /// The new name.
+        name: String,
+    },
+    /// Delete a bus: its feeders (channels and buses routed to it) move to the bus's own
+    /// destination (the master, another bus, or its Audio I/O pair when it has exactly one feeder
+    /// since a pair takes one cable; the master otherwise, also when the destination is
+    /// hand-cabled), then the bus device and its cables go. Its insert effects stay in the rack.
+    /// Deleting the bus device with `Command::RemoveDevice` or the workflow removal does the same.
+    DeleteBus {
+        /// Bus device key.
+        bus: DeviceKey,
+    },
+    /// Move a bus to console position `to` among the buses (final index after removal). Changes
+    /// no audio.
+    ReorderBus {
+        /// Bus device key.
+        bus: DeviceKey,
+        /// New position.
+        to: usize,
+    },
+    /// Route a strip (a console channel or a bus) to `dest`: `Master`, `Bus(key)` or
+    /// `AudioIo(pair)`, rewiring the strip's `out_l`/`out_r` cables (every cable leaving them is
+    /// replaced) in one undo step; the sends are untouched. Rejected: a strip that is not in the
+    /// console, a bus that is no bus, a bus destination that would make a cycle (the strip itself
+    /// or a bus that the strip feeds, directly or not), an Audio I/O pair beyond
+    /// `output_channels` or already fed by another cable (an interface output takes one cable),
+    /// and `Direct`, `Mixed` and `None`. A strip already routed there is a no-op step.
+    SetOutput {
+        /// Channel or bus device key.
+        strip: DeviceKey,
+        /// The destination.
+        dest: OutputDest,
+    },
+    /// Create a bus called `name` with its output on the master and route `strips` (channels and
+    /// buses) to it, in one undo step (Ctrl/Cmd+G). `strips` must be non-empty and valid.
+    RouteToNewBus {
+        /// Strips to route to the new bus.
+        strips: Vec<DeviceKey>,
+        /// The bus name.
+        name: String,
+    },
 }

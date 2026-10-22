@@ -103,7 +103,7 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 11);
+    assert_eq!(PROJECT_VERSION, 12);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn steps_are_written_only_on_devices_that_have_them() {
     let r = registry();
     let text = save_project(&project(&r));
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 11);
+    assert_eq!(v["version"], 12);
     let devices = v["devices"].as_array().unwrap();
     assert!(devices[0].get("steps").is_none());
     assert!(devices[2].get("steps").is_none());
@@ -197,7 +197,7 @@ fn the_committed_golden_is_the_canonical_save() {
     // canonical save of its document is the same text with the version number of today.
     let file = fixture("seq-v7.atomik");
     assert_eq!(
-        file.replacen("\"version\": 7,", "\"version\": 11,", 1),
+        file.replacen("\"version\": 7,", "\"version\": 12,", 1),
         text
     );
     assert_eq!(load_project(&file, &r).unwrap(), doc);
@@ -366,7 +366,7 @@ fn steps_are_unknown_before_version_7() {
             "v{version}: {e}"
         );
     }
-    let text = edited(&good, |v| v["version"] = json!(12));
+    let text = edited(&good, |v| v["version"] = json!(13));
     assert!(
         load_project(&text, &r)
             .unwrap_err()
@@ -384,10 +384,10 @@ fn version_6_files_load_unchanged_and_resave_as_version_7() {
         let doc = load_project(&v6, &r).unwrap();
         assert!(doc.devices.iter().all(|d| d.steps.is_none()), "{name}");
         let v7 = save_project(&doc);
-        assert!(v7.contains("\"version\": 11,"));
+        assert!(v7.contains("\"version\": 12,"));
         assert_eq!(
             v7,
-            v6.replace("\"version\": 6,", "\"version\": 11,"),
+            v6.replace("\"version\": 6,", "\"version\": 12,"),
             "{name}"
         );
         assert_eq!(load_project(&v7, &r).unwrap(), doc);
@@ -400,7 +400,7 @@ fn versions_3_to_6_load_a_rack_without_steps() {
     let doc = load_project(&fixture("demo-v6.atomik"), &r).unwrap();
     let text = save_project(&doc);
     for version in 3..=6 {
-        let old = text.replace("\"version\": 11", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 12", &format!("\"version\": {version}"));
         assert_eq!(load_project(&old, &r).unwrap(), doc, "v{version}");
     }
 }

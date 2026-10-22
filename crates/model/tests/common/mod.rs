@@ -24,6 +24,7 @@ pub const COMP: &str = "atomik.compressor";
 
 pub const CHANNEL: &str = "atomik.channel";
 pub const MASTER: &str = "atomik.master";
+pub const BUS: &str = "atomik.bus";
 
 /// The built-in devices except the console devices, whatever `register_all` holds: without
 /// `atomik.channel`, `AddDevice` creates no automatic channels (the original behaviour).
@@ -34,7 +35,7 @@ pub fn registry() -> Registry {
     // The real audio track device (once it exists) is replaced by the stub of `audio`.
     for t in all
         .type_ids()
-        .filter(|t| ![CHANNEL, MASTER, audio::AUDIO_TRACK].contains(t))
+        .filter(|t| ![CHANNEL, BUS, MASTER, audio::AUDIO_TRACK].contains(t))
     {
         let factory = *all.get(t).unwrap();
         if all.takes_samples(t) {

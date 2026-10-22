@@ -2,13 +2,14 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 10,
+//! { "format": "atomik-project", "version": 12,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
 //!       "plugin", v9, a plugin device's document, see below)
 //!   "input_channels": 0..=32,                                   (v3; optional, default 0)
 //!   "console": { "channels": [{ "channel": key, "source": key | null }…],
+//!                "buses"?: [{ "bus": key, "name": string }…]     (v12; written only when non-empty),
 //!                "master": key | null, "returns": [key | null × 8], "compensation": bool },
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
@@ -95,10 +96,11 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. Saving always writes version 10.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. Saving always writes version 12.
 
 use crate::console::{
-    CHANNEL_TYPE, Console, ConsoleChannel, FX_SLOTS, MASTER_TYPE, is_console_type,
+    BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
+    MAX_BUS_NAME_CHARS, is_console_type,
 };
 use crate::patch::{
     DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
@@ -130,8 +132,9 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// The project format version [`crate::save_project`] writes. [`crate::load_project`] reads
 /// it and versions 1 (no console section; migrated on load), 2 (no inputs, pool or audio) and
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
-/// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load).
-pub const PROJECT_VERSION: u32 = 11;
+/// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
+/// (no output buses).
+pub const PROJECT_VERSION: u32 = 12;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -196,7 +199,8 @@ const ROOT_FIELDS_V7: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V8: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V9: &[&str] = ROOT_FIELDS_V3;
 const ROOT_FIELDS_V10: &[&str] = ROOT_FIELDS_V3;
-const ROOT_FIELDS_V11: &[&str] = &[
+const ROOT_FIELDS_V11: &[&str] = ROOT_FIELDS_V12;
+const ROOT_FIELDS_V12: &[&str] = &[
     "format",
     "version",
     "sample_rate",
@@ -274,6 +278,8 @@ const AUDIO_FIELDS: &[&str] = &[
     "fade_curve",
 ];
 const CONSOLE_FIELDS: &[&str] = &["channels", "master", "returns", "compensation"];
+const CONSOLE_FIELDS_V12: &[&str] = &["channels", "buses", "master", "returns", "compensation"];
+const BUS_FIELDS: &[&str] = &["bus", "name"];
 const CHANNEL_FIELDS: &[&str] = &["channel", "source"];
 const SONG_FIELDS: &[&str] = &["tempo", "meter", "loop", "end", "next_clip_id", "tracks"];
 const TRACK_FIELDS: &[&str] = &["device", "muted", "solo", "armed", "lanes"];
@@ -441,6 +447,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
+        12 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -495,7 +502,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
     if version == 1 {
         return Ok(migrate_v1(doc, registry));
     }
-    doc.console = load_console(&obj["console"], &root.field("console"), &doc)?;
+    doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
     Ok(doc)
 }
 
@@ -853,8 +860,18 @@ fn load_assets(v: &Value, path: &JsonPath) -> Result<BTreeMap<String, AssetMeta>
 
 /// Reads and validates the console section against the loaded rack (the invariants
 /// are listed in [`crate::console`]).
-fn load_console(v: &Value, path: &JsonPath, doc: &RackDoc) -> Result<Console, ModelError> {
-    let obj = object(v, path, CONSOLE_FIELDS, CONSOLE_FIELDS)?;
+fn load_console(
+    v: &Value,
+    path: &JsonPath,
+    doc: &RackDoc,
+    version: u64,
+) -> Result<Console, ModelError> {
+    let fields = if version >= 12 {
+        CONSOLE_FIELDS_V12
+    } else {
+        CONSOLE_FIELDS
+    };
+    let obj = object(v, path, fields, CONSOLE_FIELDS)?;
     // `null`, or the key of an existing device.
     let device_ref = |v: &Value, p: &JsonPath| -> Result<Option<DeviceKey>, ModelError> {
         if v.is_null() {
@@ -909,6 +926,49 @@ fn load_console(v: &Value, path: &JsonPath, doc: &RackDoc) -> Result<Console, Mo
             m.0,
             type_of(m)
         )));
+    }
+
+    if let Some(buses) = obj.get("buses") {
+        let buses_path = path.field("buses");
+        for (i, item) in array(buses, &buses_path)?.iter().enumerate() {
+            let p = buses_path.index(i);
+            let b = object(item, &p, BUS_FIELDS, BUS_FIELDS)?;
+            let bus_path = p.field("bus");
+            let bus = device_ref(&b["bus"], &bus_path)?
+                .ok_or_else(|| bus_path.error("expected a device id, found null"))?;
+            if type_of(&bus) != BUS_TYPE {
+                return Err(bus_path.error(format!(
+                    "{:?} is a {}, not an {BUS_TYPE}",
+                    bus.0,
+                    type_of(&bus)
+                )));
+            }
+            if console.bus_index(&bus).is_some() {
+                return Err(bus_path.error(format!("{:?} is listed twice", bus.0)));
+            }
+            if console.master.is_none() {
+                return Err(bus_path.error("the console has no master, so it has no buses"));
+            }
+            let name_path = p.field("name");
+            let name = string(&b["name"], &name_path)?;
+            if name.trim() != name || name.is_empty() {
+                return Err(name_path.error(format!(
+                    "{name:?} is not a valid bus name: it must be non-empty with no space at either end"
+                )));
+            }
+            if name.chars().count() > MAX_BUS_NAME_CHARS {
+                return Err(name_path.error(format!(
+                    "a bus name has at most {MAX_BUS_NAME_CHARS} characters"
+                )));
+            }
+            if console.bus_by_name(name).is_some() {
+                return Err(name_path.error(format!("the bus name {name:?} is used twice")));
+            }
+            console.buses.push(ConsoleBus {
+                bus,
+                name: name.to_owned(),
+            });
+        }
     }
 
     let returns_path = path.field("returns");
@@ -1534,6 +1594,21 @@ fn write_console(w: &mut String, console: &Console) {
         }),
     );
     let _ = writeln!(w, ",");
+    if !console.buses.is_empty() {
+        let _ = write!(w, "    \"buses\": ");
+        list(
+            w,
+            "    ",
+            console.buses.iter().map(|b| {
+                format!(
+                    "{{\"bus\": {}, \"name\": {}}}",
+                    json_str(&b.bus.0),
+                    json_str(&b.name)
+                )
+            }),
+        );
+        let _ = writeln!(w, ",");
+    }
     let _ = writeln!(
         w,
         "    \"master\": {},",

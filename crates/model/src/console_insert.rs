@@ -101,12 +101,15 @@ fn path_cables(doc: &RackDoc, device: &DeviceKey, chain: &[DeviceKey]) -> Vec<Ca
     out
 }
 
-/// `channel` must be a console channel or the master with an insert loop.
+/// `channel` must be a console channel, a bus or the master with an insert loop.
 fn check_target(p: &Planner<'_>, channel: &DeviceKey) -> Result<(), ModelError> {
     let console = &p.doc().console;
-    if console.channel_index(channel).is_none() && console.master.as_ref() != Some(channel) {
+    if console.channel_index(channel).is_none()
+        && console.bus_index(channel).is_none()
+        && console.master.as_ref() != Some(channel)
+    {
         return Err(bad(format!(
-            "{channel} is not a console channel or the master"
+            "{channel} is not a console channel, bus or the master"
         )));
     }
     let desc = rules::descriptor(p.registry, &rules::device(p.doc(), channel)?.type_id)?;
@@ -269,6 +272,7 @@ fn validate_existing(
         .channels
         .iter()
         .map(|c| &c.channel)
+        .chain(doc.console.buses.iter().map(|b| &b.bus))
         .chain(doc.console.master.iter())
         .filter(|k| *k != channel);
     for other in others {
