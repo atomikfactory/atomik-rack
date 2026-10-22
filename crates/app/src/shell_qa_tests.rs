@@ -196,6 +196,27 @@ fn a_macro_name_in_the_container_editor_swallows_every_plain_key_in_both_profile
 }
 
 #[test]
+fn a_console_name_swallows_every_plain_key_in_both_profiles_on_every_os() {
+    assert_owner_swallows_plain_keys(
+        |s| {
+            s.core_mut()
+                .apply_command(Command::AddDevice {
+                    index: usize::MAX,
+                    type_id: "atomik.poly-synth".into(),
+                    key: Some(key("synth")),
+                })
+                .unwrap();
+            s.execute(AppCommand::ToggleConsole);
+            s.set_focus(Pane::Console);
+            let channel = s.core().doc().console.channels[0].channel.clone();
+            assert!(s.core_mut().console_mut().begin_rename(&channel));
+        },
+        |s| s.core().console().is_text_owner(),
+        "console rename",
+    );
+}
+
+#[test]
 fn a_tempo_being_typed_takes_every_key_before_the_router_in_both_profiles() {
     for os in Os::ALL {
         for profile in Profile::ALL {
