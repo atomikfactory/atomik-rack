@@ -43,6 +43,8 @@ use vello::kurbo::Rect;
 pub const CHANNEL_TYPE: &str = "atomik.channel";
 /// Type id of the console master section device.
 pub const MASTER_TYPE: &str = "atomik.master";
+/// Type id of a console output bus strip device (created by console commands only).
+pub const BUS_TYPE: &str = "atomik.bus";
 /// Prefix of params the UI never shows (set by the app, not saved, not undoable).
 pub const HIDDEN_PREFIX: &str = "internal.";
 
