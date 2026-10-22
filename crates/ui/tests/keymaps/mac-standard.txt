@@ -16,7 +16,11 @@ edit.redo | global | Cmd+Y, Cmd+Shift+Z
 edit.select_all | global | Cmd+A
 edit.undo | global | Cmd+Z
 editor.nudge_left | editor | Cmd+Left
+editor.nudge_left_beat | editor | Cmd+Shift+Left
+editor.nudge_left_tick | editor | Cmd+Opt+Left
 editor.nudge_right | editor | Cmd+Right
+editor.nudge_right_beat | editor | Cmd+Shift+Right
+editor.nudge_right_tick | editor | Cmd+Opt+Right
 editor.octave_down | editor | Cmd+Shift+Down
 editor.octave_up | editor | Cmd+Shift+Up
 editor.quantize | editor | Cmd+K

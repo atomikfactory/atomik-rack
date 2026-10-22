@@ -9,7 +9,11 @@ edit.select_all | sequencer | Cmd+A
 edit.select_all | editor | Cmd+A
 edit.undo | global | Cmd+Z
 editor.nudge_left | editor | Left
+editor.nudge_left_beat | editor | Shift+Left
+editor.nudge_left_tick | editor | Opt+Left
 editor.nudge_right | editor | Right
+editor.nudge_right_beat | editor | Shift+Right
+editor.nudge_right_tick | editor | Opt+Right
 editor.octave_down | editor | Shift+Down
 editor.octave_up | editor | Shift+Up
 editor.quantize | editor | Q, Shift+Q

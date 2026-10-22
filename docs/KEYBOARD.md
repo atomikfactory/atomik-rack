@@ -56,7 +56,11 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Split at Playhead | `Ctrl+E` (sequencer) | `Alt+X` (sequencer) |
 | Zoom to Selection | - | `Z` (sequencer, editor) |
 | Nudge Left | `Left` (editor) | `Ctrl+Left` (editor) |
+| Nudge Left by Beat | `Shift+Left` (editor) | `Ctrl+Shift+Left` (editor) |
+| Nudge Left by Tick | `Alt+Left` (editor) | `Ctrl+Alt+Left` (editor) |
 | Nudge Right | `Right` (editor) | `Ctrl+Right` (editor) |
+| Nudge Right by Beat | `Shift+Right` (editor) | `Ctrl+Shift+Right` (editor) |
+| Nudge Right by Tick | `Alt+Right` (editor) | `Ctrl+Alt+Right` (editor) |
 | Quantize | `Q`, `Shift+Q` (editor) | `Ctrl+K` (editor) |
 | Transpose Down | `Down` (editor) | `Ctrl+Down` (editor) |
 | Transpose Octave Down | `Shift+Down` (editor) | `Ctrl+Shift+Down` (editor) |
@@ -180,7 +184,11 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 |---|---|---|---|---|
 | Mute Notes | editor | `M` | `M` | `M` |
 | Nudge Left | editor | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
+| Nudge Left by Beat | editor | `Ctrl+Shift+Left` | `Cmd+Shift+Left` | `Ctrl+Shift+Left` |
+| Nudge Left by Tick | editor | `Ctrl+Alt+Left` | `Cmd+Opt+Left` | `Ctrl+Alt+Left` |
 | Nudge Right | editor | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
+| Nudge Right by Beat | editor | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
+| Nudge Right by Tick | editor | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
 | Quantize | editor | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
 | Transpose Down | editor | `Ctrl+Down` | `Cmd+Down` | `Ctrl+Down` |
 | Transpose Octave Down | editor | `Ctrl+Shift+Down` | `Cmd+Shift+Down` | `Ctrl+Shift+Down` |
@@ -308,7 +316,11 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 |---|---|---|---|---|
 | Mute Notes | editor | `M` | `M` | `M` |
 | Nudge Left | editor | `Left` | `Left` | `Left` |
+| Nudge Left by Beat | editor | `Shift+Left` | `Shift+Left` | `Shift+Left` |
+| Nudge Left by Tick | editor | `Alt+Left` | `Opt+Left` | `Alt+Left` |
 | Nudge Right | editor | `Right` | `Right` | `Right` |
+| Nudge Right by Beat | editor | `Shift+Right` | `Shift+Right` | `Shift+Right` |
+| Nudge Right by Tick | editor | `Alt+Right` | `Opt+Right` | `Alt+Right` |
 | Quantize | editor | `Q`, `Shift+Q` | `Q`, `Shift+Q` | `Q`, `Shift+Q` |
 | Transpose Down | editor | `Down` | `Down` | `Down` |
 | Transpose Octave Down | editor | `Shift+Down` | `Shift+Down` | `Shift+Down` |
