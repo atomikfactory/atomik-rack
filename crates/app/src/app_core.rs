@@ -224,6 +224,9 @@ pub struct AppCore<S: EngineSink> {
     io_meters: io_ops::IoMeters,
     /// The CV cables shown with an activity indicator on the back.
     cv_taps: io_ops::CvTaps,
+    /// How many meters the CV indicators may fill the bank up to (the engine's
+    /// [`atomik_engine::METER_CAPACITY`]; a field so a test can shrink it).
+    meter_capacity: usize,
     /// Project bundle, imported assets, peaks and background workers.
     audio: AudioState,
     /// Host inputs the running engine was built with (a change of the document's count
@@ -353,6 +356,7 @@ impl<S: EngineSink> AppCore<S> {
             pdc_limit: false,
             io_meters: io_ops::IoMeters::default(),
             cv_taps: io_ops::CvTaps::default(),
+            meter_capacity: atomik_engine::METER_CAPACITY,
             audio: AudioState::new(),
             engine_inputs: 0,
             pending_play: None,
@@ -1160,8 +1164,8 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         // The Audio I/O sockets' meters (read-only; they never touch a sample).
-        let io_meters = self.plan_io_meters(&mut topology, expanded, &meter_points);
-        let cv_taps = self.plan_cv_taps(&mut topology, expanded, &meter_points, &io_meters);
+        let mut io_meters = self.plan_io_meters(&mut topology, expanded, &meter_points);
+        let cv_taps = self.plan_cv_taps(&mut topology, expanded, &meter_points, &mut io_meters);
         self.sink.fill_latencies(&mut topology);
         let compiled = topology.compile();
         self.topology = topology;
@@ -1249,10 +1253,10 @@ impl<S: EngineSink> AppCore<S> {
     /// Feeds the console view this frame's meters, then the monotonic time in seconds (call
     /// once per frame while the console shows).
     pub fn update_console_meters(&mut self, now_seconds: f64) {
-        // The endpoints the Audio I/O feed already read this frame (a read resets the peak).
-        let mut shared = std::mem::take(&mut self.io_meters.shared);
+        // The endpoints read earlier this frame (a read resets the peak); the cache stays for
+        // the CV feed and is cleared by the next frame's read.
+        let shared = std::mem::take(&mut self.io_meters.shared);
         let readings = self.console_readings_with(&shared);
-        shared.clear();
         self.io_meters.shared = shared;
         self.console.set_meters(&readings);
         self.console.set_frame_time(now_seconds);

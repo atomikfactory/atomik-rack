@@ -662,3 +662,232 @@ fn a_removed_cv_cable_stops_being_metered_and_drawn() {
     c.feed_cv_activity(1.016);
     assert_eq!(c.view().cv_activity_step(&cable), 0);
 }
+
+fn cv_cable(from: &str, to: &str) -> Cable {
+    Cable {
+        from: sref(from, "lfo_cv_out"),
+        to: sref(to, "cutoff_cv_in"),
+    }
+}
+
+fn container_with_two_synths(c: &mut AppCore<RecordingSink>) {
+    let inner = |type_id: &str, k: &str| {
+        Command::Container(atomik_model::ContainerCommand::AddInner {
+            container: key("layer"),
+            index: usize::MAX,
+            type_id: type_id.into(),
+            key: Some(key(k)),
+            auto_split: false,
+        })
+    };
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.container".into(),
+        key: Some(key("layer")),
+    })
+    .unwrap();
+    c.apply_command(inner(SYNTH, "lead")).unwrap();
+    c.apply_command(inner(SYNTH, "pad")).unwrap();
+}
+
+fn spend(c: &mut AppCore<RecordingSink>, e: Endpoint, peak: f32) {
+    c.sink_mut()
+        .meters
+        .insert(e, MeterReading { peak, rms: peak });
+    c.sink_mut().spent_meters.lock().unwrap().clear();
+}
+
+#[test]
+fn a_cv_cable_inside_a_container_lights_in_the_containers_view_by_its_local_key() {
+    let mut c = starter(RecordingSink::new());
+    container_with_two_synths(&mut c);
+    let flat = Cable {
+        from: sref("layer/lead", "lfo_cv_out"),
+        to: sref("layer/pad", "cutoff_cv_in"),
+    };
+    c.apply_command(Command::Connect(flat.clone())).unwrap();
+    let view_cable = cv_cable("lead", "pad");
+    let src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    assert!(
+        c.topology().meters().any(|e| e == src),
+        "the source is metered"
+    );
+    spend(&mut c, src, 0.8);
+    // Shown from inside: the view's own (local) key lights.
+    c.view_mut().set_scope(&[key("layer")]);
+    c.feed_cv_activity(1.0);
+    assert!(c.view().cv_activity_step(&view_cable) > 0);
+    assert_eq!(
+        c.view().cv_activity_step(&flat),
+        0,
+        "the path key is not a view key"
+    );
+}
+
+#[test]
+fn a_cable_is_fed_only_to_the_scope_that_shows_it() {
+    let mut c = starter(RecordingSink::new());
+    container_with_two_synths(&mut c);
+    instrument(&mut c, "lead");
+    instrument(&mut c, "pad");
+    c.apply_command(Command::Connect(cv_cable("layer/lead", "layer/pad")))
+        .unwrap();
+    c.apply_command(Command::Connect(cv_cable("lead", "pad")))
+        .unwrap();
+    let inner_src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    let top_src = endpoint(&c, "lead", "lfo_cv_out");
+    spend(&mut c, inner_src, 1.0);
+    c.sink_mut().meters.insert(
+        top_src,
+        MeterReading {
+            peak: 0.0,
+            rms: 0.0,
+        },
+    );
+    // At the top level the inner cable (same local keys) must not light the top cable.
+    c.feed_cv_activity(1.0);
+    assert_eq!(c.view().cv_activity_step(&cv_cable("lead", "pad")), 0);
+    c.view_mut().set_scope(&[key("layer")]);
+    c.feed_cv_activity(1.016);
+    assert!(c.view().cv_activity_step(&cv_cable("lead", "pad")) > 0);
+}
+
+#[test]
+fn inner_cv_cables_follow_edits_inside_the_container() {
+    let mut c = starter(RecordingSink::new());
+    container_with_two_synths(&mut c);
+    let src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    assert!(!c.topology().meters().any(|e| e == src), "no cable, no tap");
+    let flat = Cable {
+        from: sref("layer/lead", "lfo_cv_out"),
+        to: sref("layer/pad", "cutoff_cv_in"),
+    };
+    c.apply_command(Command::Connect(flat.clone())).unwrap();
+    let src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    assert!(c.topology().meters().any(|e| e == src));
+    c.apply_command(Command::Disconnect {
+        to: flat.to.clone(),
+    })
+    .unwrap();
+    let src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    assert!(
+        !c.topology().meters().any(|e| e == src),
+        "the tap goes with the cable"
+    );
+    c.apply_command(Command::Connect(flat)).unwrap();
+    let src = endpoint(&c, "layer/lead", "lfo_cv_out");
+    assert!(c.topology().meters().any(|e| e == src), "and comes back");
+}
+
+#[test]
+fn one_cv_output_feeding_two_cables_lights_both() {
+    let mut c = starter(RecordingSink::new());
+    instrument(&mut c, "lead");
+    instrument(&mut c, "pad");
+    instrument(&mut c, "bass");
+    let (a, b) = (cv_cable("lead", "pad"), cv_cable("lead", "bass"));
+    c.apply_command(Command::Connect(a.clone())).unwrap();
+    c.apply_command(Command::Connect(b.clone())).unwrap();
+    let src = endpoint(&c, "lead", "lfo_cv_out");
+    spend(&mut c, src, 0.9);
+    c.feed_cv_activity(1.0);
+    assert!(c.view().cv_activity_step(&a) > 0);
+    assert!(c.view().cv_activity_step(&b) > 0);
+}
+
+#[test]
+fn a_cv_output_the_console_meters_lights_its_cable_and_the_console_reads_the_same() {
+    let mut c = starter(RecordingSink::new());
+    instrument(&mut c, "lead");
+    instrument(&mut c, "pad");
+    let channel = c
+        .doc()
+        .console
+        .channel_of(&key("lead"))
+        .unwrap()
+        .channel
+        .clone();
+    let cable = Cable {
+        from: SocketRef {
+            device: channel.clone(),
+            socket: "gr_cv_out".into(),
+        },
+        to: sref("pad", "cutoff_cv_in"),
+    };
+    c.apply_command(Command::Connect(cable.clone())).unwrap();
+    let gr = endpoint(&c, &channel.0, "gr_cv_out");
+    // The console alone: what it reads with nothing else around.
+    spend(&mut c, gr, 0.5);
+    let alone = c.console_meter_readings();
+    // The real meter bank resets on read: the frame reads once, both consumers share it.
+    c.sink_mut().spend_meters_on_read = true;
+    spend(&mut c, gr, 0.5);
+    c.frame();
+    c.update_console_meters(0.0);
+    c.feed_cv_activity(1.0);
+    let ballistics = |c: &AppCore<RecordingSink>| c.console().meter(&channel).cloned();
+    assert!(c.view().cv_activity_step(&cable) > 0, "the cable lights");
+    let mut reference = starter(RecordingSink::new());
+    instrument(&mut reference, "lead");
+    let ref_channel = reference
+        .doc()
+        .console
+        .channel_of(&key("lead"))
+        .unwrap()
+        .channel
+        .clone();
+    let ref_gr = endpoint(&reference, &ref_channel.0, "gr_cv_out");
+    reference.sink_mut().meters.insert(
+        ref_gr,
+        MeterReading {
+            peak: 0.5,
+            rms: 0.5,
+        },
+    );
+    reference.update_console_meters(0.0);
+    assert_eq!(
+        ballistics(&c),
+        reference.console().meter(&ref_channel).cloned()
+    );
+    let got = |r: &[(DeviceKey, atomik_ui::ChannelMeters)]| {
+        r.iter().find(|(k, _)| *k == channel).unwrap().1
+    };
+    assert!((got(&alone).gr - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn more_cv_taps_than_the_meter_bank_holds_degrade_to_unlit_cables() {
+    let mut c = starter(RecordingSink::new());
+    instrument(&mut c, "lead");
+    instrument(&mut c, "pad");
+    instrument(&mut c, "bass");
+    let metered = c.topology().meters().count();
+    // Room for exactly one more meter: the second CV source gets none.
+    c.meter_capacity = metered + 1;
+    let (a, b) = (cv_cable("lead", "pad"), cv_cable("bass", "pad"));
+    let b = Cable {
+        to: sref("pad", "resonance_cv_in"),
+        ..b
+    };
+    c.apply_command(Command::Connect(a.clone())).unwrap();
+    c.apply_command(Command::Connect(b.clone())).unwrap();
+    assert_eq!(c.topology().meters().count(), metered + 1, "capped");
+    let (sa, sb) = (
+        endpoint(&c, "lead", "lfo_cv_out"),
+        endpoint(&c, "bass", "lfo_cv_out"),
+    );
+    spend(&mut c, sa, 1.0);
+    c.sink_mut().meters.insert(
+        sb,
+        MeterReading {
+            peak: 1.0,
+            rms: 1.0,
+        },
+    );
+    c.feed_cv_activity(1.0);
+    let lit = |cable: &Cable| c.view().cv_activity_step(cable) > 0;
+    assert!(
+        lit(&a) != lit(&b),
+        "one cable got the last slot, the other shows nothing"
+    );
+}
