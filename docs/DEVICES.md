@@ -621,11 +621,13 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `out_l`, `out_r` | Audio | out | Main mix of every pad whose individual output is not cabled |
 | `pad1_out_l`, `pad1_out_r` … `pad16_out_l`, `pad16_out_r` | Audio | out | Individual stereo output of pad *n* (sockets 3 to 34 in this order) |
-| `pad1_level_cv_in` … `pad16_level_cv_in` | CV | in | Level CV of pad *n* (sockets 35 to 50 in this order): `padN.level_cv_trim` × 24 × CV decibels. |
+| `level_cv_in` | CV | in | Level of all pads: `master.level_cv_trim` × 24 × CV decibels (socket 35). |
+| `pitch_cv_in` | CV | in | Pitch of all pads: `pitch_cv_trim` × 24 × CV semitones (socket 36). |
+| `pad1_gate_cv_in`, `pad1_gate_cv_out` … `pad16_gate_cv_in`, `pad16_gate_cv_out` | CV | in, out | Gate in (triggers pad *n*) and gate out (high while pad *n* is triggered); sockets 37 to 68, in, out per pad in this order. |
 
 ### Params
 
-`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then the 16 `padN.level_cv_trim` (145 params; ids follow the order):
+`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then `master.level_cv_trim` and `pitch_cv_trim` (131 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -638,7 +640,8 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `padN.mode` | 0–1: gate, one-shot | 1 (one-shot) | choice | Linear | yes |
 | `padN.choke` | 0 to 4 (0 = none) | 0 | none | Linear | yes |
 | `padN.velocity` | 0 to 1 | 0.7 | percent | Linear | no |
-| `padN.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -648,7 +651,11 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 - **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end fade is at `start`), exactly as in the sampler.
 - **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared playhead (zone start/end and loops as in the sampler).
 - **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity` × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample (−3 dB at the centre), balance for a stereo sample (unity at the centre).
-- **CV input (level, per pad).** Applied only while the pad's `padN_level_cv_in` is cabled; with all of them open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and multiplied by `padN.level_cv_trim` and 24 dB: the voice gain is multiplied per sample by 10^(24·trim·CV/20). It acts on every voice of that pad (and so on its individual output too) and on no other pad. No extra smoothing. The 16 trim knobs are on the back panel next to their jacks (the back is six rack units tall).
+- **CV input (level, global).** Applied only while `level_cv_in` is cabled; with every new CV socket open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and multiplied by `master.level_cv_trim` and 24 dB: the gain of every voice is multiplied per sample by 10^(24·trim·CV/20). It acts on all pads and on their individual outputs, before the main mix's `master.level` and soft limiter. No extra smoothing; a negative trim inverts.
+- **CV input (pitch, global).** Applied only while `pitch_cv_in` is cabled. The batch mean of the CV (sanitised, clamped to −1..+1) times `pitch_cv_trim` and 24 semitones is the target offset; the playback ratio of every voice is multiplied by 2^(offset/12), and the offset glides linearly from the previous batch's target over the 64 samples of the batch (no zipper noise; the first batch after a (re)connect starts at its target). It acts on **voices that are already sounding** as well as on new hits (so a pitch envelope or LFO bends a ringing drum), on all pads, on top of `padN.tune` and `padN.fine`. A negative trim inverts.
+- **Gate in (per pad).** `padN_gate_cv_in` is read sample by sample. A rise through 0.5 (above 0.5 is high) triggers the pad exactly like a note-on on its key at that sample, with velocity `(gate − 0.5) × 2` clamped to 0..1 (so a plain 1.0 gate is full velocity, 0.75 is half velocity). The fall to 0.5 or below is the note-off: it only matters for a pad in *gate* mode (it starts the decay); a one-shot pad ignores it as it ignores a note-off. Each rise is a new hit (retriggering the pad). A gate that is high when the cable is pulled counts as the fall. Gate in and notes can be used together.
+- **Gate out (per pad).** `padN_gate_cv_out` is 0 while the pad is released and `0.5 + velocity/2` (0.504 at least, 1.0 at velocity 1) from every trigger of the pad, whether it came from a note, from the step sequencer or from its own gate in, until the matching note-off or the falling gate-in edge, sample accurate. The encoding is the inverse of gate in, so a gate out can be cabled straight to another pad's (or any device's) gate in and keeps the velocity, and the level is above 0.5 so every gate consumer sees it as high. The length is the note's length, also for a one-shot pad that ignores the note-off for its sound; the gate does not follow how long the sample rings. A hit with no zone for its velocity, or without a map, still raises the gate. All-notes-off and `reset` lower every gate; a source that never sends a note-off keeps the gate high until then. The step sequencer's own `gate_cv_out` is 1.0/0.0 with the velocity on a separate CV; the drum machine has no separate velocity CV, hence the combined encoding.
+- **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out R, gate in, gate out).
 - **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group 0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
 - **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level` and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither scaled nor limited (non-finite values become 0).
 - **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one draining map and hands one back per swap. A voice whose zone index exists in the new map with a pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A pending hit survives only if the new map has a zone of its pad at the same index that still matches its velocity.
@@ -892,7 +899,8 @@ Added with the Mod Source work, one convention for every device (instruments, ef
 | Sampler | `resonance_cv_in` | `filter.resonance_cv_trim` | `resonance + trim·cv`, 0..1 (filter on) |
 | Sampler | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
 | Sampler | `pan_cv_in` | `pan_cv_trim` | per voice: zone pan + `trim·cv` |
-| Drum machine | `padN_level_cv_in` (N = 1..16) | `padN.level_cv_trim` | pad gain × 10^(trim·cv·24/20) |
+| Drum machine | `level_cv_in` | `master.level_cv_trim` | gain of all pads × 10^(trim·cv·24/20) |
+| Drum machine | `pitch_cv_in` | `pitch_cv_trim` | pitch of all pads, also sounding voices, + `trim·cv·24` semitones (per batch, glided) |
 | Loop slicer | `cutoff_cv_in` | `filter.cutoff_cv_trim` | `filter.cutoff` × 2^(trim·cv·4), global low-pass |
 | Loop slicer | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
 

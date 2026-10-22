@@ -118,21 +118,21 @@ The engine zeroes every Audio/CV batch of the device before each `process` call 
 
 One convention for every dedicated CV input, with the shared helpers in [crates/devices/src/cv_in.rs](../crates/devices/src/cv_in.rs) (`clean`, `batch_mean`, `add_norm`, `db_gain`):
 
-- Socket `<target>_cv_in` and a bipolar trim param `<target>_cv_trim` (−1..+1, default +1, negative inverts; keys of dotted params keep the dot: `band3.gain_cv_trim`, `padN.level_cv_trim`). New params and sockets are appended or inserted by key, so existing keys never change and older patches and projects load as before.
+- Socket `<target>_cv_in` and a bipolar trim param `<target>_cv_trim` (−1..+1, default +1, negative inverts; keys of dotted params keep the dot: `band3.gain_cv_trim`, `master.level_cv_trim`). New params and sockets are appended or inserted by key, so existing keys never change and older patches and projects load as before.
 - The CV is sanitised (non-finite becomes 0), clamped to −1..+1, multiplied by the trim and by a **fixed range per target**, and added to the target in its own unit; the sum is clamped to the parameter range. The ranges:
 
 | Target | Range at trim +1, CV +1 | Used by |
 |---|---|---|
 | Normalised parameter (mix, feedback, drive, resonance) | +1 of 0..1 | delay, reverb, modulation, distortion mix/feedback/drive; poly synth and sampler resonance |
-| Level or gain in dB | ±24 dB | poly synth, sampler, loop slicer output level; each drum pad level; EQ band gain; channel fader |
+| Level or gain in dB | ±24 dB | poly synth, sampler, loop slicer output level; drum machine level; EQ band gain; channel fader |
 | Send level | ±66 dB | console channel sends |
 | Pan | ±1, added before the pan law | console channel pan; sampler pan (per voice); poly synth balance |
-| Pitch | ±24 semitones | poly synth |
+| Pitch | ±24 semitones | poly synth, drum machine |
 | Cutoff | ±4 octaves | loop slicer global low-pass |
 
 - Unconnected sockets are skipped with `is_connected`, so the output is bit-identical to the device without the input (the render goldens must not change); each device has a test that sets odd trims with no cable and compares bits.
 - Per-sample targets (level, pan) read the CV sample by sample with no extra smoothing, so a stepped CV gives a stepped gain; pitch, resonance and cutoff are read at the 16-sample control rate with the filter coefficient ramped in between. A device that smooths per batch uses the batch mean of the CV.
-- Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan, drum pad level).
+- Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level; drum machine level and pitch) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan).
 
 ## 4. Registering the device
 
