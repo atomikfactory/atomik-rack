@@ -475,9 +475,15 @@ pub(crate) fn fit_with(
 pub const DRUM_TYPE: &str = "atomik.drum-machine";
 /// Height of the drum panel in rack units.
 pub const DRUM_UNITS: u8 = 3;
-/// Packing index of the level-trim knob of pad `n` (`DRUM_TRIM_ITEM + n - 1`), above any socket.
+/// Packing index of the global CV trim knob `i` (`DRUM_TRIM_ITEM + i`: 0 level, 1 pitch), above
+/// any socket.
 const DRUM_TRIM_ITEM: usize = 10_000;
-/// Width of the trim knob cell on the drum back (narrower than a front knob so three pads fit a row).
+/// The global CV inputs of the drum machine and the trims that go with them, in back order.
+const DRUM_CV: [(&str, &str); 2] = [
+    ("level_cv_in", "master.level_cv_trim"),
+    ("pitch_cv_in", "pitch_cv_trim"),
+];
+/// Width of the trim knob cell on the drum back (narrower than a front knob).
 const DRUM_TRIM_W: f64 = 40.0;
 /// Size of one pad cell of the 4x4 pad grid (the pad itself is inset by 2 px).
 pub const DRUM_PAD_CELL: (f64, f64) = (54.0, 48.0);
@@ -503,9 +509,10 @@ pub struct DrumPanel {
     pub edit: Rect,
     /// The "TO CH" button: gives the selected pad its own console channel.
     pub to_channel: Rect,
-    /// The descriptor indices of the 16 `padN.level_cv_trim` knobs, which sit on the back face
-    /// next to their jacks (see [`PanelSpec::on_back`]); `usize::MAX` when missing.
-    pub back_params: [usize; 16],
+    /// The descriptor indices of the `master.level_cv_trim` and `pitch_cv_trim` knobs, which sit
+    /// on the back face next to their jacks (see [`PanelSpec::on_back`]); `usize::MAX` when
+    /// missing.
+    pub back_params: [usize; 2],
 }
 
 /// The cell rectangle of `pad` (1..=16) in the pad grid `pads`: pad 1 is bottom left, the
@@ -545,7 +552,7 @@ impl PanelSpec {
 fn pad_of_socket(key: &str) -> Option<u8> {
     let rest = key.strip_prefix("pad")?;
     let (n, tail) = rest.split_once('_')?;
-    (tail.starts_with("out") || tail.ends_with("_cv_in"))
+    (tail.starts_with("out") || tail.starts_with("gate_"))
         .then(|| n.parse().ok())
         .flatten()
 }
@@ -635,11 +642,33 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             DRUM_MASTER_X + DRUM_COL_W,
             top + ROW_H + 62.0,
         ),
-        back_params: std::array::from_fn(|i| {
-            index(&format!("pad{}.level_cv_trim", i + 1)).unwrap_or(usize::MAX)
-        }),
+        back_params: DRUM_CV.map(|(_, trim)| index(trim).unwrap_or(usize::MAX)),
     };
-    let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none());
+    let is_global_cv = |k: &str| DRUM_CV.iter().any(|(s, _)| *s == k);
+    let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none() && !is_global_cv(k));
+    // The global CV inputs, each next to its trim knob.
+    let cv_items: Vec<Item> = DRUM_CV
+        .iter()
+        .enumerate()
+        .flat_map(|(n, (socket, _))| {
+            let jack = desc.sockets.iter().position(|s| s.key == *socket);
+            let trim = (drum.back_params[n] != usize::MAX).then_some((
+                DRUM_TRIM_ITEM + n,
+                DRUM_TRIM_W,
+                Some(ROW_H),
+            ));
+            jack.map(|i| (i, SOCKET_CELL.0, Some(SOCKET_CELL.1)))
+                .into_iter()
+                .chain(trim)
+        })
+        .collect();
+    if !cv_items.is_empty() {
+        groups.push(Group {
+            label: "CV".to_string(),
+            items: cv_items,
+            min_w: 0.0,
+        });
+    }
     for pad in 1..=16u8 {
         let items: Vec<Item> = desc
             .sockets
@@ -647,15 +676,6 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             .enumerate()
             .filter(|(_, s)| pad_of_socket(s.key) == Some(pad))
             .map(|(i, _)| (i, SOCKET_CELL.0, Some(SOCKET_CELL.1)))
-            .chain(
-                (drum.back_params[usize::from(pad) - 1] != usize::MAX).then(|| {
-                    (
-                        DRUM_TRIM_ITEM + usize::from(pad) - 1,
-                        DRUM_TRIM_W,
-                        Some(ROW_H),
-                    )
-                }),
-            )
             .collect();
         if !items.is_empty() {
             groups.push(Group {
@@ -665,8 +685,8 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             });
         }
     }
-    // One row per section (a knob is as tall as a row): each pad is its jacks and its trim knob
-    // side by side.
+    // One row per section (a knob is as tall as a row): each pad is its four jacks side by side
+    // (out L, out R, gate in, gate out).
     let units = (DRUM_UNITS..=MAX_UNITS)
         .find(|&u| fit(&groups, u, ROW_H, 0.0).is_some())
         .unwrap_or(MAX_UNITS);
