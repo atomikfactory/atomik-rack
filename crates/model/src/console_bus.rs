@@ -284,6 +284,12 @@ pub(crate) fn create_bus(
         old,
         new: name.clone(),
     });
+    // Like a channel made by "Create instrument", the strip starts folded in the rack.
+    p.push(Edit::Folded {
+        key: bus.clone(),
+        old: false,
+        new: true,
+    });
     for k in sockets::sends() {
         for side in ["l", "r"] {
             p.connect(wire(

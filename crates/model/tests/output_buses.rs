@@ -1120,3 +1120,21 @@ fn every_available_option_is_accepted_by_set_output_and_every_other_is_refused()
         }
     }
 }
+
+#[test]
+fn a_new_bus_starts_folded_like_a_created_channel() {
+    let (mut d, r) = project();
+    d.apply(create("Drums", OutputDest::Master), &r).unwrap();
+    assert!(d.doc().device(&key("bus")).unwrap().folded);
+    d.apply(
+        con(ConsoleCommand::RouteToNewBus {
+            strips: vec![key("channel")],
+            name: "Vox".into(),
+        }),
+        &r,
+    )
+    .unwrap();
+    assert!(d.doc().device(&key("bus-2")).unwrap().folded);
+    d.undo(&r).unwrap();
+    assert!(d.doc().device(&key("bus-2")).is_none());
+}
