@@ -269,6 +269,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.route_to_new_bus",
+        "Route to New Output Bus",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.toggle_compensation",
         "Delay Compensation",
         G::Mixer,

@@ -1,5 +1,5 @@
-//! The console view: channel strips side by side, the master section on the
-//! right, a toolbar on top. It shares the lower pane with the arrangement.
+//! The console view: channel strips side by side, then the output bus strips (the same strip,
+//! drawn by the same code), the master section on the right, a toolbar on top. It shares the lower pane with the arrangement.
 //!
 //! Hosting follows [`crate::ArrangementView`]: `new`, `set_bounds`, `set_scale`, `sync`,
 //! `handle` → [`UiAction`]s, `paint`, `needs_repaint`, `set_focused`, `is_dragging`. The app
@@ -23,6 +23,14 @@
 //! (`ConsoleCommand::SetInsert`); middle-drag or wheel
 //! scrolls (Shift+wheel or wheel over the faders scrolls sideways).
 //!
+//! Output buses: every strip has an output selector above its name plate (a menu of the master,
+//! the buses that would not loop, the Audio I/O pairs with the unusable ones greyed, and "New
+//! bus..."; `ConsoleCommand::SetOutput` / `RouteToNewBus`). A bus name plate is edited by
+//! double-click (`RenameBus`; [`ConsoleView::is_text_owner`] while editing), has a right-click
+//! menu (Rename, Delete bus) and is reordered by drag among the buses (`ReorderBus`). A click on
+//! a plate selects the strip (Ctrl/Cmd toggles, Shift extends); see
+//! [`ConsoleView::selected_strips`].
+//!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
@@ -42,11 +50,13 @@ use crate::theme::{Theme, mix};
 use crate::widget::{self, ValueDrag};
 use atomik_core::{ParamDescriptor, Taper, Unit};
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Registry};
+use atomik_model::console::{MAX_BUS_NAME_CHARS, OutputAvail, output_options};
 use atomik_model::{
-    Command, ConsoleCommand, DeviceKey, FX_SLOTS, INSERT_SLOTS, InsertEffect, RackDevice, RackDoc,
-    insert_chain,
+    Command, ConsoleCommand, DeviceKey, FX_SLOTS, INSERT_SLOTS, INTERFACE_KEY, InsertEffect,
+    OutputDest, RackDevice, RackDoc, insert_chain, output_dest,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use vello::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Vec2};
 use vello::peniko::Color;
 
@@ -62,6 +72,7 @@ const MOVE_THRESHOLD: f64 = 4.0;
 const SCROLL_STEP: f64 = 48.0;
 const MENU_ROW: f64 = 20.0;
 const MENU_W: f64 = 200.0;
+const OUTPUT_MENU_W: f64 = 300.0;
 const MENU_ROWS: usize = 18;
 const LEFT_PAD: f64 = 4.0;
 const MASTER_GAP: f64 = 8.0;
@@ -166,13 +177,16 @@ pub fn fader_text(p: &ParamDescriptor, plain: f32) -> String {
     }
 }
 
-/// Whether `device` is part of the console (a channel strip or the master): referenced by the
+/// Whether `device` is part of the console (a channel strip, a bus strip or the master): referenced by the
 /// document's console section, or of a console device type. Unknown types count only when
 /// referenced; known types must be [`DeviceKind::Mixer`].
 pub fn is_console_device(doc: &RackDoc, registry: &Registry, device: &RackDevice) -> bool {
     let referenced = doc.console.master.as_ref() == Some(&device.key)
-        || doc.console.channels.iter().any(|c| c.channel == device.key);
-    let typed = device.type_id == cl::CHANNEL_TYPE || device.type_id == cl::MASTER_TYPE;
+        || doc.console.channels.iter().any(|c| c.channel == device.key)
+        || doc.console.bus_index(&device.key).is_some();
+    let typed = device.type_id == cl::CHANNEL_TYPE
+        || device.type_id == cl::MASTER_TYPE
+        || device.type_id == cl::BUS_TYPE;
     match registry.get(&device.type_id) {
         Some(f) => f.descriptor.kind == DeviceKind::Mixer && (referenced || typed),
         None => referenced,
@@ -191,6 +205,8 @@ enum Hit {
     Header(SectionId),
     Ctrl(Target, usize),
     Name(usize),
+    /// A strip's output selector.
+    OutputSel(usize),
     Picker(usize),
     /// An insert chain slot (name or "+ add").
     Insert(Target, usize),
@@ -209,6 +225,14 @@ enum MenuItem {
     NewEffect(String),
     /// One entry of a long choice param (the control-room source): its value.
     Choice(f32),
+    /// A destination of the menu's strip (output selector).
+    Output(OutputDest),
+    /// "New bus...": a new bus named after the menu's `new_bus_name`, the strip routed to it.
+    NewBus,
+    /// Edit this bus's name in place.
+    RenameBus(DeviceKey),
+    /// Delete this bus.
+    DeleteBus(DeviceKey),
     Disabled,
 }
 
@@ -220,19 +244,50 @@ struct Menu {
     insert: Option<(DeviceKey, usize)>,
     /// The device and param a pick list of a long choice sets.
     choice: Option<(DeviceKey, &'static str)>,
+    /// The strip an output selector menu belongs to.
+    strip: Option<DeviceKey>,
+    /// The name "New bus..." gives the bus.
+    new_bus_name: String,
+    /// The item that is the strip's current destination (marked with a dot).
+    current: Option<usize>,
+    /// Menu width.
+    width: f64,
+    /// The first item shown (long menus scroll with the wheel).
+    top: usize,
     origin: Point,
     hover: Option<usize>,
 }
 
 impl Menu {
+    /// A plain pick list.
+    fn plain(items: Vec<(String, MenuItem)>, origin: Point) -> Self {
+        Self {
+            items,
+            slot: None,
+            insert: None,
+            choice: None,
+            strip: None,
+            new_bus_name: String::new(),
+            current: None,
+            width: MENU_W,
+            top: 0,
+            origin,
+            hover: None,
+        }
+    }
+    /// Visible rows.
     fn rows(&self) -> usize {
-        self.items.len().min(MENU_ROWS)
+        self.items.len().saturating_sub(self.top).min(MENU_ROWS)
+    }
+    /// The item shown on visible row `i`.
+    fn item(&self, i: usize) -> Option<&(String, MenuItem)> {
+        (i < self.rows()).then(|| self.items.get(self.top + i))?
     }
     fn rect(&self) -> Rect {
         Rect::new(
             self.origin.x,
             self.origin.y,
-            self.origin.x + MENU_W,
+            self.origin.x + self.width,
             self.origin.y + self.rows() as f64 * MENU_ROW + 8.0,
         )
     }
@@ -242,7 +297,7 @@ impl Menu {
             Rect::new(
                 self.origin.x + 4.0,
                 y,
-                self.origin.x + MENU_W - 4.0,
+                self.origin.x + self.width - 4.0,
                 y + MENU_ROW,
             )
         })
@@ -294,6 +349,12 @@ struct StripView {
     silenced: bool,
     /// The insert chain (effect device, display name), in signal order.
     inserts: Vec<(DeviceKey, String)>,
+    /// The name plate caption ("CH 1", "BUS 1").
+    caption: String,
+    /// Where the output goes, as the selector reads it.
+    output: String,
+    /// Selected in the console (outlined name plate).
+    selected: bool,
     cache_id: u64,
     revision: u64,
     sig: Option<Sig>,
@@ -311,6 +372,9 @@ impl StripView {
             latency: None,
             silenced: false,
             inserts: Vec::new(),
+            caption: String::new(),
+            output: String::new(),
+            selected: false,
             cache_id,
             revision: 0,
             sig: None,
@@ -376,6 +440,37 @@ fn chain_sig(chain: &[(DeviceKey, String)]) -> Vec<String> {
     chain.iter().map(|(k, n)| format!("{k}={n}")).collect()
 }
 
+/// The name of Audio I/O pair `n` (1-based: 1 is outputs 1+2).
+fn pair_name(n: u16) -> String {
+    format!("Audio I/O {}+{}", 2 * n - 1, 2 * n)
+}
+
+/// What a strip's output selector reads.
+fn output_label(doc: &RackDoc, strip: &DeviceKey) -> String {
+    match output_dest(doc, strip) {
+        OutputDest::Master => "Master".into(),
+        OutputDest::Bus(b) => format!(
+            "Bus {}",
+            doc.console
+                .buses
+                .iter()
+                .find(|x| x.bus == b)
+                .map_or(b.0.as_str(), |x| x.name.as_str())
+        ),
+        OutputDest::AudioIo(n) => pair_name(n),
+        OutputDest::Direct(_) => "Custom".into(),
+        OutputDest::Mixed => "Mixed".into(),
+        OutputDest::None => "none".into(),
+    }
+}
+
+/// A bus name being edited.
+#[derive(Debug, Clone)]
+struct RenameState {
+    bus: DeviceKey,
+    text: String,
+}
+
 /// The console view. See the module documentation for hosting.
 #[derive(Debug)]
 pub struct ConsoleView {
@@ -386,7 +481,9 @@ pub struct ConsoleView {
     generation: u64,
     scroll: Vec2,
     master_scroll: f64,
+    /// The channel strips, then the bus strips (`n_channels` tells where they start).
     strips: Vec<StripView>,
+    n_channels: usize,
     master: Option<StripView>,
     return_names: Vec<String>,
     layouts: Vec<(&'static str, StripLayout)>,
@@ -406,6 +503,13 @@ pub struct ConsoleView {
     menu: Option<Menu>,
     drag: Drag,
     pointer: Point,
+    /// Selected strips (view state) and the last clicked one (the range anchor).
+    selection: BTreeSet<DeviceKey>,
+    anchor: Option<DeviceKey>,
+    /// A bus name being edited in place.
+    rename: Option<RenameState>,
+    /// The last rejected command, shown in the toolbar until the next click.
+    notice: Option<String>,
     focus: Option<(Target, usize)>,
     next_merge: u64,
     focused: bool,
@@ -424,6 +528,7 @@ impl ConsoleView {
             scroll: Vec2::ZERO,
             master_scroll: 0.0,
             strips: Vec::new(),
+            n_channels: 0,
             master: None,
             return_names: Vec::new(),
             layouts: Vec::new(),
@@ -443,6 +548,10 @@ impl ConsoleView {
             menu: None,
             drag: Drag::None,
             pointer: Point::ZERO,
+            selection: BTreeSet::new(),
+            anchor: None,
+            rename: None,
+            notice: None,
             focus: None,
             next_merge: MERGE_BASE,
             focused: false,
@@ -613,7 +722,7 @@ impl ConsoleView {
         self.repaint = true;
     }
 
-    /// Channel device keys, in console order.
+    /// Strip device keys: the channels in console order, then the buses in bus order.
     pub fn strip_keys(&self) -> Vec<DeviceKey> {
         self.strips.iter().map(|s| s.key.clone()).collect()
     }
@@ -634,6 +743,75 @@ impl ConsoleView {
             .iter()
             .find(|s| &s.key == channel)
             .is_some_and(|s| !s.on("solo"))
+    }
+
+    /// The selected strips (channels and buses), in strip order.
+    pub fn selected_strips(&self) -> Vec<DeviceKey> {
+        self.strips
+            .iter()
+            .filter(|s| self.selection.contains(&s.key))
+            .map(|s| s.key.clone())
+            .collect()
+    }
+
+    /// Replaces the selection (strips that are not shown are ignored). View state only.
+    pub fn set_selected_strips(&mut self, keys: &[DeviceKey]) {
+        let set: BTreeSet<DeviceKey> = keys
+            .iter()
+            .filter(|k| self.strips.iter().any(|s| &s.key == *k))
+            .cloned()
+            .collect();
+        if set != self.selection {
+            self.anchor = set.iter().next_back().cloned();
+            self.selection = set;
+            self.mark_selection();
+        }
+    }
+
+    /// True while a bus name is being edited: the keys are text and only chords with the
+    /// primary modifier, function keys and Esc may be commands.
+    pub fn is_text_owner(&self) -> bool {
+        self.rename.is_some()
+    }
+
+    /// Shows a rejected command's message in the toolbar until the next click (the host calls
+    /// it with the model's error, e.g. an invalid bus name).
+    pub fn notify_rejected(&mut self, message: impl Into<String>) {
+        self.notice = Some(message.into());
+        self.repaint = true;
+    }
+
+    /// The message shown in the toolbar, if any.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    /// The bus name being edited, if any.
+    pub fn rename_text(&self) -> Option<String> {
+        self.rename.as_ref().map(|r| r.text.clone())
+    }
+
+    /// What a strip's output selector reads ("Master", "Bus Drums", "Audio I/O 3+4", ...).
+    pub fn output_text(&self, strip: &DeviceKey) -> Option<String> {
+        self.strips
+            .iter()
+            .find(|s| &s.key == strip)
+            .map(|s| s.output.clone())
+    }
+
+    /// Centre of a strip's output selector.
+    pub fn output_center(&self, strip: &DeviceKey) -> Option<Point> {
+        let i = self.strips.iter().position(|s| &s.key == strip)?;
+        let r = self.layout_of(self.strips[i].desc)?.output?;
+        let p = (r + Vec2::new(self.strip_x(i), self.area_top())).center();
+        (self.hit(p) == Hit::OutputSel(i)).then_some(p)
+    }
+
+    fn mark_selection(&mut self) {
+        for s in &mut self.strips {
+            s.selected = self.selection.contains(&s.key);
+        }
+        self.repaint = true;
     }
 
     /// Whether a channel is silenced by another channel's solo.
@@ -672,8 +850,32 @@ impl ConsoleView {
         )
     }
 
+    /// The column slot of strip `i`: the "add channel" placeholder takes the slot between the
+    /// channels and the buses.
+    fn slot(&self, i: usize) -> usize {
+        if i < self.n_channels { i } else { i + 1 }
+    }
+
+    fn slot_x(&self, slot: usize) -> f64 {
+        self.bounds.x0 + LEFT_PAD + slot as f64 * (STRIP_W + STRIP_GAP) - self.scroll.x
+    }
+
     fn strip_x(&self, i: usize) -> f64 {
-        self.bounds.x0 + LEFT_PAD + i as f64 * (STRIP_W + STRIP_GAP) - self.scroll.x
+        self.slot_x(self.slot(i))
+    }
+
+    /// x just right of the last strip.
+    fn strips_end_x(&self) -> f64 {
+        self.slot_x(self.strips.len() + usize::from(self.strips.len() > self.n_channels))
+    }
+
+    /// The strips a strip can be reordered among: the channels, or the buses.
+    fn group(&self, strip: usize) -> Range<usize> {
+        if strip < self.n_channels {
+            0..self.n_channels
+        } else {
+            self.n_channels..self.strips.len()
+        }
     }
 
     fn content_width(&self) -> f64 {
@@ -682,7 +884,7 @@ impl ConsoleView {
 
     /// The "add channel" placeholder after the last strip.
     fn placeholder_rect(&self) -> Rect {
-        let x = self.strip_x(self.strips.len());
+        let x = self.slot_x(self.n_channels);
         let top = self.area_top();
         Rect::new(x + 10.0, top + 6.0, x + STRIP_W - 2.0, top + 6.0 + 90.0)
     }
@@ -934,6 +1136,14 @@ impl ConsoleView {
         self.menu.as_ref()?.row_rect(i).map(|r| r.center())
     }
 
+    /// Whether menu row `i` can be chosen (greyed rows cannot).
+    pub fn menu_enabled(&self, i: usize) -> bool {
+        self.menu
+            .as_ref()
+            .and_then(|m| m.item(i))
+            .is_some_and(|(_, item)| *item != MenuItem::Disabled)
+    }
+
     fn hit(&self, p: Point) -> Hit {
         if let Some(m) = &self.menu {
             if let Some(i) = (0..m.rows()).find(|i| m.row_rect(*i).is_some_and(|r| r.contains(p))) {
@@ -1021,6 +1231,9 @@ impl ConsoleView {
             if pinned && l.name.contains(lp) {
                 return Hit::Name(i);
             }
+            if pinned && l.output.is_some_and(|r| r.contains(lp)) {
+                return Hit::OutputSel(i);
+            }
             for sec in &l.sections {
                 if l.is_pinned(sec.id) == pinned
                     && sec.id != SectionId::Name
@@ -1073,14 +1286,21 @@ impl ConsoleView {
             desc.param_by_key(param)
                 .is_some_and(|p| widget::current_value(d, p) >= (p.min + p.max) / 2.0)
         };
-        let any_solo = console
-            .channels
-            .iter()
-            .any(|c| param_on(&c.channel, "solo"));
-        let any_mute = console
-            .channels
-            .iter()
-            .any(|c| param_on(&c.channel, "mute"));
+        let strip_keys = || {
+            console
+                .channels
+                .iter()
+                .map(|c| &c.channel)
+                .chain(console.buses.iter().map(|b| &b.bus))
+        };
+        let any_solo = strip_keys().any(|k| param_on(k, "solo"));
+        let any_mute = strip_keys().any(|k| param_on(k, "mute"));
+        // Who is silenced by a solo follows the routing (buses on a soloed path stay audible).
+        let silence: BTreeMap<DeviceKey, bool> = if any_solo {
+            doc.solo_silence(registry).into_iter().collect()
+        } else {
+            BTreeMap::new()
+        };
         if any_solo != self.any_solo || any_mute != self.any_mute {
             self.any_solo = any_solo;
             self.any_mute = any_mute;
@@ -1089,59 +1309,84 @@ impl ConsoleView {
         self.compensation = console.compensation;
         self.sample_rate = doc.sample_rate.max(1);
 
-        // Strip list, keeping existing views (and their caches) by key.
-        let same = self.strips.len() == console.channels.len()
-            && self
-                .strips
-                .iter()
-                .zip(&console.channels)
-                .all(|(s, c)| s.key == c.channel);
+        // Strip list (channels, then buses), keeping existing views (and their caches) by key.
+        let order: Vec<&DeviceKey> = strip_keys().collect();
+        let n_channels = console.channels.len();
+        let same = self.strips.len() == order.len()
+            && self.n_channels == n_channels
+            && self.strips.iter().zip(&order).all(|(s, k)| &s.key == *k);
         if !same {
             let mut old: Vec<StripView> = std::mem::take(&mut self.strips);
-            for c in &console.channels {
-                let view = match old.iter().position(|s| s.key == c.channel) {
+            for k in &order {
+                let view = match old.iter().position(|s| &s.key == *k) {
                     Some(i) => old.swap_remove(i),
                     None => {
-                        let id = self.cache_id(&c.channel);
-                        StripView::new(c.channel.clone(), id)
+                        let id = self.cache_id(k);
+                        StripView::new((*k).clone(), id)
                     }
                 };
                 self.strips.push(view);
             }
-            self.meters.retain(|k, _| {
-                console.channels.iter().any(|c| &c.channel == k)
-                    || console.master.as_ref() == Some(k)
-            });
+            self.n_channels = n_channels;
+            self.meters
+                .retain(|k, _| order.contains(&k) || console.master.as_ref() == Some(k));
+            self.selection.retain(|k| order.contains(&k));
+            if self.anchor.as_ref().is_some_and(|a| !order.contains(&a)) {
+                self.anchor = None;
+            }
+            if self
+                .rename
+                .as_ref()
+                .is_some_and(|r| console.bus_index(&r.bus).is_none())
+            {
+                self.rename = None;
+            }
             self.drag = Drag::None;
             self.focus = None;
             self.repaint = true;
         }
         let generation = self.generation;
-        for (i, (s, c)) in self.strips.iter_mut().zip(&console.channels).enumerate() {
-            let device = doc.device(&c.channel).cloned();
-            let source = c.source.as_ref().and_then(|k| doc.device(k));
-            // A second channel of one source (a drum pad's own channel) shows its own name.
-            let extra =
-                c.source.is_some() && console.channels[..i].iter().any(|o| o.source == c.source);
-            s.desc = desc_of(&c.channel);
-            s.name = source
-                .filter(|_| !extra)
-                .or(device.as_ref())
-                .map_or_else(|| c.channel.0.clone(), |d| d.name.clone());
-            s.accent = source
-                .or(device.as_ref())
-                .map_or(self.st.base.text_muted, |d| self.st.base.accent_for(d));
-            s.latency = self.latencies.get(&c.channel).copied();
+        for (i, s) in self.strips.iter_mut().enumerate() {
+            let key = s.key.clone();
+            let device = doc.device(&key).cloned();
+            s.desc = desc_of(&key);
+            if let Some(c) = console.channels.get(i) {
+                let source = c.source.as_ref().and_then(|k| doc.device(k));
+                // A second channel of one source (a drum pad's own channel) shows its own name.
+                let extra = c.source.is_some()
+                    && console.channels[..i].iter().any(|o| o.source == c.source);
+                s.name = source
+                    .filter(|_| !extra)
+                    .or(device.as_ref())
+                    .map_or_else(|| c.channel.0.clone(), |d| d.name.clone());
+                s.accent = source
+                    .or(device.as_ref())
+                    .map_or(self.st.base.text_muted, |d| self.st.base.accent_for(d));
+                s.caption = format!("CH {}", i + 1);
+            } else if let Some(b) = console.buses.get(i - n_channels) {
+                s.name = b.name.clone();
+                s.accent = self.st.base.cable_cv;
+                s.caption = format!("BUS {}", i - n_channels + 1);
+            }
+            s.output = output_label(doc, &key);
+            s.selected = self.selection.contains(&key);
+            s.latency = self.latencies.get(&key).copied();
             s.device = device;
-            s.silenced = any_solo && !s.on("solo");
-            s.inserts = chain_names(doc, registry, &c.channel);
+            s.silenced = silence.get(&key).copied().unwrap_or(false);
+            s.inserts = chain_names(doc, registry, &key);
+            let mut extra = vec![
+                s.caption.clone(),
+                s.output.clone(),
+                format!("{}", s.selected),
+            ];
+            extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
                 device: s.device.clone(),
                 name: s.name.clone(),
                 accent: s.accent,
                 latency: s.latency,
                 silenced: s.silenced,
-                extra: chain_sig(&s.inserts),
+                extra,
                 generation,
             };
             if s.sig.as_ref() != Some(&sig) {
@@ -1269,7 +1514,9 @@ impl ConsoleView {
                 clicks,
                 ..
             } => self.pointer_down(*pos, *button, *clicks, doc, registry, &mut out),
-            UiEvent::PointerUp { pos, .. } => self.pointer_up(*pos, &mut out),
+            UiEvent::PointerUp { pos, modifiers, .. } => {
+                self.pointer_up(*pos, *modifiers, &mut out)
+            }
             UiEvent::PointerLeave => {
                 if let Some(m) = &mut self.menu {
                     m.hover = None;
@@ -1342,6 +1589,7 @@ impl ConsoleView {
     ) {
         self.pointer = pos;
         self.repaint = true;
+        self.notice = None;
         let hit = self.hit(pos);
         if self.menu.is_some() {
             match hit {
@@ -1351,6 +1599,14 @@ impl ConsoleView {
             }
             self.menu = None;
             return;
+        }
+        // A click on the name being edited keeps editing; a click anywhere else commits it.
+        if let Some(r) = &self.rename {
+            let editing = self.strips.iter().position(|s| s.key == r.bus);
+            if editing.is_some() && hit == Hit::Name(editing.unwrap_or(0)) {
+                return;
+            }
+            self.finish_rename(true, out);
         }
         if button == PointerButton::Middle {
             self.drag = Drag::Pan { last: pos };
@@ -1365,11 +1621,18 @@ impl ConsoleView {
                 self.set_folded(id, !folded);
             }
             (Hit::Name(i), PointerButton::Primary) => {
+                if clicks >= 2 && i >= self.n_channels {
+                    self.begin_rename(i);
+                    return;
+                }
                 self.drag = Drag::Move {
                     strip: i,
                     start_x: pos.x,
                     x: pos.x,
                 };
+            }
+            (Hit::Name(i), PointerButton::Secondary) if i >= self.n_channels => {
+                self.open_bus_menu(i, pos);
             }
             (Hit::Name(i), PointerButton::Secondary) => {
                 out.push(UiAction::Command(Command::Console(
@@ -1378,6 +1641,7 @@ impl ConsoleView {
                     },
                 )));
             }
+            (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
                 self.insert_click(t, slot, pos, doc, registry, out)
             }
@@ -1464,12 +1728,10 @@ impl ConsoleView {
         }
         let origin = self.menu_origin(Point::new(pos.x, self.area_top()), items.len());
         self.menu = Some(Menu {
-            items,
             slot: None,
             insert: None,
             choice: None,
-            origin,
-            hover: None,
+            ..Menu::plain(items, origin)
         });
     }
 
@@ -1490,12 +1752,10 @@ impl ConsoleView {
         let at = Point::new(rect.x0, rect.y1);
         let origin = self.menu_origin(at, items.len());
         self.menu = Some(Menu {
-            items,
             slot: None,
             insert: None,
             choice: Some((key, p.key)),
-            origin,
-            hover: None,
+            ..Menu::plain(items, origin)
         });
     }
 
@@ -1513,12 +1773,10 @@ impl ConsoleView {
         );
         let origin = self.menu_origin(pos, items.len());
         self.menu = Some(Menu {
-            items,
             slot: Some(slot),
             insert: None,
             choice: None,
-            origin,
-            hover: None,
+            ..Menu::plain(items, origin)
         });
     }
 
@@ -1589,21 +1847,23 @@ impl ConsoleView {
         );
         let origin = self.menu_origin(pos, items.len());
         self.menu = Some(Menu {
-            items,
             slot: None,
             insert: Some((channel, slot)),
             choice: None,
-            origin,
-            hover: None,
+            ..Menu::plain(items, origin)
         });
     }
 
     fn choose_menu(&mut self, i: usize, out: &mut Vec<UiAction>) {
         let Some(m) = &self.menu else { return };
-        let Some((_, item)) = m.items.get(i) else {
+        let Some((_, item)) = m.item(i).cloned() else {
             return;
         };
-        if let (MenuItem::Choice(value), Some((key, param))) = (item, &m.choice) {
+        let (slot, insert, choice, strip) =
+            (m.slot, m.insert.clone(), m.choice.clone(), m.strip.clone());
+        let is_current = m.current == Some(m.top + i);
+        let new_bus_name = m.new_bus_name.clone();
+        if let (MenuItem::Choice(value), Some((key, param))) = (&item, &choice) {
             out.push(UiAction::Command(Command::SetParam {
                 key: key.clone(),
                 param: (*param).to_string(),
@@ -1612,17 +1872,40 @@ impl ConsoleView {
             }));
             return;
         }
-        let cmd = match (item, m.slot) {
-            (MenuItem::NewEffect(t), _) if m.insert.is_some() => {
-                let (channel, slot) = m.insert.clone().expect("checked");
+        let cmd = match (&item, slot) {
+            (MenuItem::Output(dest), _) => match &strip {
+                // Choosing the destination the strip already has changes nothing.
+                Some(strip) if !is_current => ConsoleCommand::SetOutput {
+                    strip: strip.clone(),
+                    dest: dest.clone(),
+                },
+                _ => return,
+            },
+            (MenuItem::NewBus, _) => match strip {
+                Some(strip) => ConsoleCommand::RouteToNewBus {
+                    strips: vec![strip],
+                    name: new_bus_name,
+                },
+                None => return,
+            },
+            (MenuItem::RenameBus(bus), _) => {
+                if let Some(i) = self.strips.iter().position(|s| &s.key == bus) {
+                    self.menu = None;
+                    self.begin_rename(i);
+                }
+                return;
+            }
+            (MenuItem::DeleteBus(bus), _) => ConsoleCommand::DeleteBus { bus: bus.clone() },
+            (MenuItem::NewEffect(t), _) if insert.is_some() => {
+                let (channel, slot) = insert.expect("checked");
                 ConsoleCommand::SetInsert {
                     channel,
                     slot,
                     effect: Some(InsertEffect::New { type_id: t.clone() }),
                 }
             }
-            (MenuItem::Effect(Some(e)), _) if m.insert.is_some() => {
-                let (channel, slot) = m.insert.clone().expect("checked");
+            (MenuItem::Effect(Some(e)), _) if insert.is_some() => {
+                let (channel, slot) = insert.expect("checked");
                 ConsoleCommand::SetInsert {
                     channel,
                     slot,
@@ -1637,6 +1920,187 @@ impl ConsoleView {
             _ => return,
         };
         out.push(UiAction::Command(Command::Console(cmd)));
+    }
+
+    /// The right-click menu of a bus name plate.
+    fn open_bus_menu(&mut self, i: usize, pos: Point) {
+        let key = self.strips[i].key.clone();
+        let items = vec![
+            ("Rename".to_string(), MenuItem::RenameBus(key.clone())),
+            ("Delete bus".to_string(), MenuItem::DeleteBus(key)),
+        ];
+        let origin = self.menu_origin(pos, items.len());
+        self.menu = Some(Menu::plain(items, origin));
+    }
+
+    /// The output selector of strip `i`: Master, each bus that would not loop, the Audio I/O
+    /// pairs (greyed with the reason when in use or beyond the project's outputs) and "New bus...".
+    fn open_output_menu(&mut self, i: usize, pos: Point, doc: &RackDoc) {
+        let Some(strip) = self.strips.get(i).map(|s| s.key.clone()) else {
+            return;
+        };
+        let now = output_dest(doc, &strip);
+        let name_of = |k: &DeviceKey| {
+            if doc.console.master.as_ref() == Some(k) {
+                return "the master".to_string();
+            }
+            self.strips
+                .iter()
+                .find(|s| &s.key == k)
+                .map(|s| s.name.clone())
+                .or_else(|| doc.device(k).map(|d| d.name.clone()))
+                .unwrap_or_else(|| k.0.clone())
+        };
+        let owner_of = |n: u16| {
+            [2 * n - 1, 2 * n].iter().find_map(|o| {
+                let socket = format!("out_{o}");
+                doc.cables
+                    .iter()
+                    .find(|c| c.to.device.0 == INTERFACE_KEY && c.to.socket == socket)
+                    .filter(|c| c.from.device != strip)
+                    .map(|c| name_of(&c.from.device))
+            })
+        };
+        let mut items: Vec<(String, MenuItem)> = Vec::new();
+        let mut hinted = false;
+        for o in output_options(doc, &strip) {
+            match (&o.dest, o.avail) {
+                (OutputDest::Master, _) => {
+                    items.push(("Master".into(), MenuItem::Output(OutputDest::Master)))
+                }
+                (OutputDest::Bus(_), OutputAvail::Loop) => {}
+                (OutputDest::Bus(b), _) => {
+                    let name = doc
+                        .console
+                        .buses
+                        .iter()
+                        .find(|x| &x.bus == b)
+                        .map_or(b.0.clone(), |x| x.name.clone());
+                    items.push((name, MenuItem::Output(o.dest.clone())));
+                }
+                (OutputDest::AudioIo(n), OutputAvail::Available) => {
+                    items.push((pair_name(*n), MenuItem::Output(o.dest.clone())))
+                }
+                (OutputDest::AudioIo(n), OutputAvail::InUse) => {
+                    let text = match owner_of(*n) {
+                        Some(who) if who == "the master" => format!("{} ({who})", pair_name(*n)),
+                        Some(who) => format!("{} (in use by {who})", pair_name(*n)),
+                        None => format!("{} (in use)", pair_name(*n)),
+                    };
+                    items.push((text, MenuItem::Disabled));
+                }
+                (OutputDest::AudioIo(n), OutputAvail::BeyondOutputs) if !hinted => {
+                    hinted = true;
+                    items.push((
+                        format!("{} and up: raise Outputs in Audio settings", pair_name(*n)),
+                        MenuItem::Disabled,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        items.push(("New bus...".into(), MenuItem::NewBus));
+        let current = items
+            .iter()
+            .position(|(_, it)| matches!(it, MenuItem::Output(d) if *d == now));
+        let origin = self.menu_origin(pos, items.len());
+        self.menu = Some(Menu {
+            strip: Some(strip),
+            new_bus_name: doc.console.default_bus_name(),
+            current,
+            width: OUTPUT_MENU_W,
+            ..Menu::plain(items, origin)
+        });
+    }
+
+    // ---------------------------------------------------------------- rename and selection
+
+    /// Starts editing the name of bus strip `i` in place.
+    fn begin_rename(&mut self, i: usize) {
+        let Some(s) = self.strips.get(i).filter(|_| i >= self.n_channels) else {
+            return;
+        };
+        self.rename = Some(RenameState {
+            bus: s.key.clone(),
+            text: s.name.clone(),
+        });
+        self.drag = Drag::None;
+        self.menu = None;
+        self.repaint = true;
+    }
+
+    /// Ends the rename: committing emits `RenameBus` when the name changed (the model checks
+    /// it; a refusal is shown by the host like any rejected command).
+    fn finish_rename(&mut self, commit: bool, out: &mut Vec<UiAction>) {
+        let Some(r) = self.rename.take() else { return };
+        self.repaint = true;
+        if !commit {
+            return;
+        }
+        let name = r.text.trim();
+        let current = self
+            .strips
+            .iter()
+            .find(|s| s.key == r.bus)
+            .map(|s| s.name.as_str());
+        if current.is_some_and(|c| c != name) {
+            out.push(UiAction::Command(Command::Console(
+                ConsoleCommand::RenameBus {
+                    bus: r.bus,
+                    name: name.to_string(),
+                },
+            )));
+        }
+    }
+
+    fn rename_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        match key {
+            Key::Enter => self.finish_rename(true, out),
+            Key::Escape => self.finish_rename(false, out),
+            _ if modifiers.command() => {}
+            Key::Backspace => {
+                if let Some(r) = &mut self.rename {
+                    r.text.pop();
+                }
+            }
+            Key::Space => self.rename_push(' '),
+            Key::Char(c) if !c.is_control() => self.rename_push(*c),
+            _ => {}
+        }
+        self.repaint = true;
+    }
+
+    fn rename_push(&mut self, c: char) {
+        if let Some(r) = &mut self.rename
+            && r.text.chars().count() < MAX_BUS_NAME_CHARS
+        {
+            r.text.push(c);
+        }
+    }
+
+    /// A click on a name plate: select the strip (Ctrl/Cmd toggles it, Shift selects the range
+    /// from the last click).
+    fn click_select(&mut self, strip: usize, modifiers: Modifiers) {
+        let Some(key) = self.strips.get(strip).map(|s| s.key.clone()) else {
+            return;
+        };
+        let anchor = self
+            .anchor
+            .as_ref()
+            .and_then(|a| self.strips.iter().position(|s| &s.key == a));
+        if let (true, Some(a)) = (modifiers.shift, anchor) {
+            let (lo, hi) = (a.min(strip), a.max(strip));
+            self.selection = self.strips[lo..=hi].iter().map(|s| s.key.clone()).collect();
+        } else if modifiers.command() {
+            if !self.selection.remove(&key) {
+                self.selection.insert(key.clone());
+            }
+            self.anchor = Some(key);
+        } else {
+            self.selection = BTreeSet::from([key.clone()]);
+            self.anchor = Some(key);
+        }
+        self.mark_selection();
     }
 
     fn ctrl_down(
@@ -1753,30 +2217,37 @@ impl ConsoleView {
         }
     }
 
-    fn pointer_up(&mut self, pos: Point, out: &mut Vec<UiAction>) {
+    fn pointer_up(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Value { .. } => out.push(UiAction::EndMerge),
             Drag::Move { strip, start_x, x } if (x - start_x).abs() > MOVE_THRESHOLD => {
+                // Channels move among the channels, buses among the buses.
                 let to = self.drop_index(strip, x);
-                if to != strip {
-                    out.push(UiAction::Command(Command::Console(
-                        ConsoleCommand::MoveChannel {
-                            channel: self.strips[strip].key.clone(),
-                            to,
-                        },
-                    )));
-                }
+                let command = if strip < self.n_channels {
+                    (to != strip).then(|| ConsoleCommand::MoveChannel {
+                        channel: self.strips[strip].key.clone(),
+                        to,
+                    })
+                } else {
+                    (to != strip - self.n_channels).then(|| ConsoleCommand::ReorderBus {
+                        bus: self.strips[strip].key.clone(),
+                        to,
+                    })
+                };
+                out.extend(command.map(|c| UiAction::Command(Command::Console(c))));
             }
+            Drag::Move { strip, .. } => self.click_select(strip, modifiers),
             _ => {}
         }
         self.repaint = true;
     }
 
-    /// The final index of strip `strip` dropped at window x `x`: the number of other strips
-    /// whose centre is left of `x`.
+    /// The final index of strip `strip` among its group (the channels, or the buses) when
+    /// dropped at window x `x`: the number of the group's other strips whose centre is left
+    /// of `x`.
     fn drop_index(&self, strip: usize, x: f64) -> usize {
-        (0..self.strips.len())
+        self.group(strip)
             .filter(|i| *i != strip && self.strip_x(*i) + STRIP_W / 2.0 < x)
             .count()
     }
@@ -1799,7 +2270,17 @@ impl ConsoleView {
     }
 
     fn wheel(&mut self, delta: Vec2, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
-        if self.menu.is_some() || !self.bounds.contains(pos) {
+        if let Some(m) = &mut self.menu {
+            // A long menu scrolls.
+            if m.items.len() > MENU_ROWS {
+                let max = m.items.len() - MENU_ROWS;
+                let top = m.top as i64 - delta.y.signum() as i64;
+                m.top = top.clamp(0, max as i64) as usize;
+                self.repaint = true;
+            }
+            return;
+        }
+        if !self.bounds.contains(pos) {
             return;
         }
         let hit = self.hit(pos);
@@ -1833,6 +2314,10 @@ impl ConsoleView {
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        if self.rename.is_some() {
+            self.rename_key(key, modifiers, out);
+            return;
+        }
         if let Some(a) = console_shortcut(key, modifiers) {
             out.push(a);
             return;
@@ -1964,7 +2449,7 @@ impl ConsoleView {
             }
             let mut upper = DisplayList::cached(s.cache_id, s.revision);
             let mut pinned = DisplayList::cached(s.cache_id + 1, s.revision);
-            record_strip(&mut upper, &mut pinned, &st, s, &layout, i);
+            record_strip(&mut upper, &mut pinned, &st, s, &layout);
             self.strips[i].lists = [Some(upper), Some(pinned)];
         }
         if let (Some(m), Some(l)) = (&self.master, &self.master_layout) {
@@ -2036,6 +2521,14 @@ impl ConsoleView {
                 continue;
             }
             strip_background(c, &self.st, Rect::new(x, sr.y0, x + STRIP_W, sr.y1));
+            if i >= self.n_channels {
+                // Buses sit on a faintly tinted strip.
+                sp::rect(
+                    c,
+                    Rect::new(x + 1.0, sr.y0, x + STRIP_W - 1.0, sr.y1),
+                    t.cable_cv.with_alpha(0.06),
+                );
+            }
             let Some(l) = self.layout_of(s.desc) else {
                 sp::label(c, &s.name, x + 6.0, sr.y0 + 20.0, 9.0, t.text, Align::Start);
                 sp::label(
@@ -2070,6 +2563,9 @@ impl ConsoleView {
             if let Some(r) = l.meter {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
             }
+            if let Some(r) = self.rename.as_ref().filter(|r| r.bus == s.key) {
+                rename_field(c, &self.st, l.name, &r.text);
+            }
             self.focus_ring(c, Target::Strip(i), true, l);
             c.pop_transform();
             c.pop_clip();
@@ -2079,7 +2575,7 @@ impl ConsoleView {
             && l.upper_height > pinned_top + 1e-9
         {
             // Just right of the last strip (or at the area edge when strips overflow).
-            let bar_x = (self.strip_x(self.strips.len()) - STRIP_GAP + 1.0).min(sr.x1 - 6.0);
+            let bar_x = (self.strips_end_x() - STRIP_GAP + 1.0).min(sr.x1 - 6.0);
             v_scrollbar(
                 c,
                 &self.st,
@@ -2093,7 +2589,7 @@ impl ConsoleView {
         // Shadow where the scrolling sections slide under the pinned ones.
         let (x0, x1) = (
             self.strip_x(0).max(sr.x0),
-            (self.strip_x(self.strips.len()) - STRIP_GAP).min(sr.x1),
+            (self.strips_end_x() - STRIP_GAP).min(sr.x1),
         );
         let y = top + pinned_top;
         if x1 > x0 && pinned_top > 8.0 {
@@ -2116,7 +2612,7 @@ impl ConsoleView {
                 t.dim.with_alpha(0.35),
             );
             let to = self.drop_index(*strip, *x);
-            let others: Vec<usize> = (0..self.strips.len()).filter(|i| i != strip).collect();
+            let others: Vec<usize> = self.group(*strip).filter(|i| i != strip).collect();
             let lx = match others.get(to) {
                 Some(&i) => self.strip_x(i) - STRIP_GAP / 2.0,
                 None => others
@@ -2288,10 +2784,10 @@ impl ConsoleView {
                 t.text_muted,
                 Align::Start,
             );
+            let mut free_x = r.x1 + 10.0 + paint::estimate_width(&text, 8.5) + 12.0;
             if self.pdc_warning {
-                let x = r.x1 + 10.0 + paint::estimate_width(&text, 8.5) + 12.0;
                 let w = 178.0;
-                let wr = Rect::new(x, r.y0, x + w, r.y1);
+                let wr = Rect::new(free_x, r.y0, free_x + w, r.y1);
                 c.fill_with(RoundedRect::from_rect(wr, 3.0), t.error_bg);
                 c.text(
                     &TextRun::new(
@@ -2303,6 +2799,24 @@ impl ConsoleView {
                     .align(Align::Center)
                     .weight(700),
                 );
+                free_x += w + 8.0;
+            }
+            // The last rejected command (an invalid bus name, a refused route).
+            if let Some(n) = &self.notice
+                && let Some(arrange) = self.toolbar_rect(ConsoleButton::Arrange)
+                && let Some(max) = self.toolbar_rect(ConsoleButton::Maximise)
+            {
+                let right = arrange.x0.min(max.x0) - 8.0;
+                if right - free_x > 40.0 {
+                    let wr = Rect::new(free_x, r.y0, right, r.y1);
+                    c.fill_with(RoundedRect::from_rect(wr, 3.0), t.error_bg);
+                    c.text(&TextRun::new(
+                        fit_label(n, wr.width() - 12.0, 8.0),
+                        pt(wr.x0 + 6.0, wr.center().y + 3.0),
+                        8.0,
+                        t.text,
+                    ));
+                }
             }
         }
     }
@@ -2800,7 +3314,6 @@ fn record_strip(
     st: &SeqTheme,
     s: &StripView,
     l: &StripLayout,
-    index: usize,
 ) {
     let t = &st.base;
     let soloed = s.on("solo");
@@ -2838,14 +3351,11 @@ fn record_strip(
     if let Some(r) = l.meter {
         meter_trough(pinned, st, r);
     }
+    if let Some(r) = l.output {
+        output_selector(pinned, st, r, &s.output);
+    }
     name_plate(
-        pinned,
-        st,
-        l.name,
-        &s.name,
-        &format!("CH {}", index + 1),
-        s.accent,
-        s.silenced,
+        pinned, st, l.name, &s.name, &s.caption, s.accent, s.silenced, s.selected,
     );
     // Latency by the name plate, only when there is some.
     if let (Some(r), Some(n)) = (l.latency, s.latency.filter(|n| *n > 0)) {
@@ -2891,6 +3401,50 @@ fn send_on(s: &StripView, level_key: &str) -> bool {
     s.on(&on)
 }
 
+/// A strip's output selector: the destination on a small display with a drop-down mark.
+fn output_selector(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, text: &str) {
+    let t = &st.base;
+    sp::lcd(c, st, r, None);
+    let col = if text == "none" { t.text_muted } else { t.text };
+    c.text(&TextRun::new(
+        fit_label(text, r.width() - 16.0, 7.0),
+        pt(r.x0 + 4.0, r.center().y + 2.5),
+        7.0,
+        col,
+    ));
+    let (cx, cy) = (r.x1 - 6.0, r.center().y);
+    let mut tri = BezPath::new();
+    tri.move_to(pt(cx - 3.0, cy - 1.5));
+    tri.line_to(pt(cx + 3.0, cy - 1.5));
+    tri.line_to(pt(cx, cy + 2.0));
+    tri.close_path();
+    c.fill_with(tri, t.text_muted);
+}
+
+/// The text field drawn over a bus name plate while its name is edited: the end of the text
+/// that fits, and a caret.
+fn rename_field(c: &mut dyn Canvas, st: &SeqTheme, plate: Rect, text: &str) {
+    let t = &st.base;
+    let r = plate.inset((-2.0, -2.0));
+    c.fill_with(RoundedRect::from_rect(r, 3.0), t.lcd);
+    c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.2, t.focus);
+    let room = r.width() - 12.0;
+    let mut shown: &str = text;
+    while paint::estimate_width(shown, 10.0) > room {
+        let mut chars = shown.chars();
+        chars.next();
+        shown = chars.as_str();
+    }
+    c.text(&TextRun::new(shown, pt(r.x0 + 5.0, r.y0 + 17.0), 10.0, t.text).weight(700));
+    let cx = r.x0 + 5.0 + paint::estimate_width(shown, 10.0);
+    c.stroke_with(
+        Line::new(pt(cx + 1.0, r.y0 + 7.0), pt(cx + 1.0, r.y0 + 20.0)),
+        1.2,
+        t.focus,
+    );
+}
+
+#[allow(clippy::too_many_arguments, reason = "a plate is drawn from its parts")]
 fn name_plate(
     c: &mut dyn Canvas,
     st: &SeqTheme,
@@ -2899,9 +3453,13 @@ fn name_plate(
     caption: &str,
     accent: Color,
     dim: bool,
+    selected: bool,
 ) {
     let t = &st.base;
     let r = r.inset((-2.0, -2.0));
+    if selected {
+        paint::outline(c, r.inset(1.5), 4.0, 1.6, t.highlight);
+    }
     c.fill_with(RoundedRect::from_rect(r, 3.0), t.plate);
     c.fill_with(RoundedRect::new(r.x0, r.y0, r.x1, r.y0 + 3.0, 1.5), accent);
     let col = if dim { t.text_muted } else { t.text };
@@ -3033,7 +3591,17 @@ fn record_master(
         true,
         6.8,
     );
-    name_plate(pinned, st, l.name, "MASTER", "MAIN OUT", t.highlight, false);
+    lcd_text(pinned, st, l.output_row, "MAIN 1+2", t.text_muted, 7.0);
+    name_plate(
+        pinned,
+        st,
+        l.name,
+        "MASTER",
+        "MAIN OUT",
+        t.highlight,
+        false,
+        false,
+    );
 }
 
 fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
@@ -3050,14 +3618,27 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
         t.bevel_dark,
     );
     for i in 0..m.rows() {
-        let Some(rr) = m.row_rect(i) else { continue };
-        let disabled = m.items[i].1 == MenuItem::Disabled;
+        let (Some(rr), Some((label, item))) = (m.row_rect(i), m.item(i)) else {
+            continue;
+        };
+        let disabled = *item == MenuItem::Disabled;
         if m.hover == Some(i) && !disabled {
             c.fill_with(RoundedRect::from_rect(rr, 3.0), t.browser_row);
         }
-        let text = fit_label(&m.items[i].0, MENU_W - 24.0, 10.0);
+        let text = fit_label(label, m.width - 24.0, 10.0);
         let col = if disabled { t.text_muted } else { t.text };
-        sp::label(c, &text, rr.x0 + 8.0, rr.y0 + 14.0, 10.0, col, Align::Start);
+        if m.current == Some(m.top + i) {
+            c.fill_with(Circle::new(pt(rr.x0 + 5.0, rr.y0 + 10.0), 2.0), t.highlight);
+        }
+        sp::label(
+            c,
+            &text,
+            rr.x0 + 11.0,
+            rr.y0 + 14.0,
+            10.0,
+            col,
+            Align::Start,
+        );
     }
 }
 

@@ -1712,7 +1712,7 @@
 {"fill":{"rrect":[85.50,94.00,94.50,100.00,1.20]},"brush":"#8f96a0ff"},
 {"stroke":{"path":"M87.40 94.00 L87.40 92.00 C87.40 88.80 92.60 88.80 92.60 92.00 L92.60 94.00 "},"width":1.30,"cap":"round","join":"round","brush":"#8f96a0ff"},
 {"fill":{"circle":[90.00,97.00,0.90]},"brush":"#17191cff"},
-{"text":"Output: Audio I/O 3+4","at":[26.00,1262.00],"size":6.00,"weight":400,"align":"start","color":"#e6b43cff"},
+{"text":"Output: Audio I/O 3+4","at":[26.00,1262.00],"size":6.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"pop_transform":true},
 {"pop_clip":true},
 {"pop_transform":true}

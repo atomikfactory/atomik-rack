@@ -44,6 +44,7 @@ files.select_all | files | Ctrl+A
 files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
+mixer.route_to_new_bus | global | Ctrl+G
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
 rack.select_next | rack | Down
