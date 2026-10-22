@@ -372,10 +372,12 @@ Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and 
 |---|---|---|---|
 | `notes_in` | Notes | in | Key sync of the LFOs and trigger of the envelope |
 | `gate_cv_in` | CV | in | Envelope gate: high above 0.5 (exactly 0.5 is low) |
-| `lfo1_rate_cv_in`, `lfo2_rate_cv_in` | CV | in | Clamped to −1..+1, times `lfoN_rate_cv`: octaves of rate change. No effect when unconnected. |
+| `lfo1_rate_cv_in`, `lfo2_rate_cv_in` | CV | in | Sanitised (non-finite is 0), clamped to −1..+1, times `lfoN_rate_cv_trim` and 4 octaves. No effect when unconnected. |
 | `lfo1_amount_cv_in`, `lfo2_amount_cv_in` | CV | in | Clamped to 0..1 and multiplies the amount. Unconnected means ×1; connected and 0 means silence. |
 | `lfo1_cv_out`, `lfo2_cv_out` | CV | out | −1..+1 (0..1 unipolar) |
 | `env_cv_out` | CV | out | 0..1 |
+
+The CV convention of the project (`<target>_cv_in` with a bipolar `<target>_cv_trim`, default +1) applies to the rate CV. Two inputs are documented exceptions with no trim: the amount CV (a multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
 
 ### Params
 
@@ -392,7 +394,7 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 | `lfoN_amount` | 0 to 1 | 1 | percent | Linear | no |
 | `lfoN_polarity` | 0–1: bipolar, unipolar | 0 | choice | Linear | yes |
 | `lfoN_key_sync` | 0 or 1 | 0 | toggle | Linear | yes |
-| `lfoN_rate_cv` | −4 to 4 | 0 | octaves | Linear | no |
+| `lfoN_rate_cv_trim` | −1 to 1 (negative inverts) | 1 | none | Linear | no |
 | `env_attack` | 1 to 10000 | 10 | ms | Exp | no |
 | `env_decay` | 1 to 10000 | 200 | ms | Exp | no |
 | `env_sustain` | 0 to 1 | 0.7 | percent | Linear | no |
@@ -404,8 +406,8 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 
 - **Shapes and morph.** Sine and triangle start at 0 and rise; saw up runs −1 to +1, saw down +1 to −1; pulse starts high. `morph` is 0 at the neutral setting of every shape. Sine and triangle: *skew*, the positive half-cycle takes `0.5 + 0.48 × morph` of the cycle. Saws: *curve*, `q = p (1−k)/(1−k p)` with `k = 0.95 × morph` (positive is slow-start). Pulse: width `0.5 + 0.45 × morph`. Sample & hold: *glide*, the first `max(morph, 0)` of each cycle slides linearly from the previous value to the new one. Smooth random: the curve between this cycle's value and the next (negative towards linear, positive towards smootherstep).
 - **Output.** `shape × amount × amount CV` (unipolar maps the shape to `(v + 1)/2` first), so the output never leaves −1..+1 (envelope 0..1).
-- **Rate.** Free: `lfoN_rate × 2^(rate CV × lfoN_rate_cv)`. Synced: one cycle lasts the division (bars follow the time signature), bent by the rate CV in the same way.
-- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a non-zero `lfoN_rate_cv`) the phase is integrated at the bent rate and re-aligned to the song at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its last phase. A free LFO ignores the transport.
+- **Rate.** Free: `lfoN_rate × 2^(4 × rate CV × lfoN_rate_cv_trim)`, the CV sanitised (non-finite is 0) and clamped to ±1 (up to 4 octaves). Synced: one cycle lasts the division (bars follow the time signature), bent by the rate CV in the same way.
+- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its last phase. A free LFO ignores the transport.
 - **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset; random shapes draw new values after each restart.
 - **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible for a seed, across locates and bounces.
 - **Envelope.** Curves of the poly synth's ADSR, computed without libm. The gate is high while a note is held or `gate_cv_in` is above 0.5. **Retrigger** (default): every note-on and every rising gate edge restarts the attack from the current level (no click). **Legato**: a trigger while the gate is already high does nothing. The release starts when the last note is off and the gate CV is low. Notes and gate edges act at their sample.

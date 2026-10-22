@@ -48,7 +48,16 @@ const COL_W: f64 = 62.0;
 
 /// The LFO params, in cell order (ten per row); `{}` is the LFO number.
 const LFO_KEYS: [&str; 10] = [
-    "shape", "morph", "rate", "sync", "div", "phase", "amount", "polarity", "key_sync", "rate_cv",
+    "shape",
+    "morph",
+    "rate",
+    "sync",
+    "div",
+    "phase",
+    "amount",
+    "polarity",
+    "key_sync",
+    "rate_cv_trim",
 ];
 /// The envelope params, in cell order.
 const ENV_KEYS: [&str; 6] = [
@@ -91,7 +100,7 @@ pub fn modsrc_label(key: &str) -> Option<String> {
             "amount" => "Amount",
             "polarity" => "Polarity",
             "key_sync" => "Key sync",
-            "rate_cv" => "Rate CV",
+            "rate_cv_trim" => "Rate CV",
             "attack" => "Attack",
             "decay" => "Decay",
             "sustain" => "Sustain",

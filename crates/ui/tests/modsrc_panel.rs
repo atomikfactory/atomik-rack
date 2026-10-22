@@ -199,7 +199,7 @@ fn the_panel_shows_its_sections_labels_and_the_back_sockets() {
 #[test]
 fn the_controls_are_on_the_panel() {
     let (_, v) = setup();
-    for k in ["lfo1_shape", "lfo2_rate_cv", "env_attack", "env_mode"] {
+    for k in ["lfo1_shape", "lfo2_rate_cv_trim", "env_attack", "env_mode"] {
         assert!(v.control_center(&key("mod"), k).is_some(), "{k}");
     }
 }

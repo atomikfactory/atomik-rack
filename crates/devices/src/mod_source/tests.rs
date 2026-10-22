@@ -36,8 +36,16 @@ fn descriptor_validates() {
     let mut params: Vec<String> = Vec::new();
     for n in ["lfo1", "lfo2"] {
         for k in [
-            "shape", "morph", "rate", "sync", "div", "phase", "amount", "polarity", "key_sync",
-            "rate_cv",
+            "shape",
+            "morph",
+            "rate",
+            "sync",
+            "div",
+            "phase",
+            "amount",
+            "polarity",
+            "key_sync",
+            "rate_cv_trim",
         ] {
             params.push(format!("{n}_{k}"));
         }
@@ -101,7 +109,7 @@ fn process_is_allocation_free() {
     hh.set_param("lfo1_shape", 6.0);
     hh.set_param("lfo2_shape", 5.0);
     hh.set_param("lfo1_key_sync", 1.0);
-    hh.set_param("lfo1_rate_cv", 2.0);
+    hh.set_param("lfo1_rate_cv_trim", 0.5);
     for i in 0..40 {
         if i % 7 == 0 {
             hh.push_note("notes_in", on(5, 60, 0.8));
@@ -301,10 +309,10 @@ fn amount_cv_multiplies_and_is_clamped() {
 #[test]
 fn rate_cv_bends_the_rate_in_octaves() {
     // Sample index of the first upward zero crossing after the start.
-    let period = |cv: f32, amount: f32| {
+    let period = |cv: f32, trim: f32| {
         let mut hh = h();
         hh.set_param("lfo1_rate", 10.0);
-        hh.set_param("lfo1_rate_cv", amount);
+        hh.set_param("lfo1_rate_cv_trim", trim);
         hh.input_mut("lfo1_rate_cv_in").fill(cv);
         let x = lfo1(&mut hh, 400);
         let mut crossings = Vec::new();
@@ -317,18 +325,47 @@ fn rate_cv_bends_the_rate_in_octaves() {
     };
     let base = period(0.0, 1.0);
     assert!(close(base, 4800.0, 2.0), "{base}");
-    assert!(close(period(1.0, 1.0), 2400.0, 2.0), "+1 octave");
-    assert!(close(period(-1.0, 1.0), 9600.0, 2.0), "-1 octave");
-    assert!(close(period(0.5, 2.0), 2400.0, 2.0), "amount 2 x cv 0.5");
-    assert!(close(period(5.0, 1.0), 2400.0, 2.0), "cv clamps to 1");
-    assert!(close(period(1.0, 0.0), 4800.0, 2.0), "amount 0 is off");
+    assert!(close(period(1.0, 0.25), 2400.0, 2.0), "+1 octave");
+    assert!(close(period(-1.0, 0.25), 9600.0, 2.0), "-1 octave");
+    assert!(
+        close(period(0.5, 0.5), 2400.0, 2.0),
+        "trim 0.5 x cv 0.5 x 4 octaves"
+    );
+    assert!(close(period(5.0, 0.25), 2400.0, 2.0), "cv clamps to 1");
+    assert!(close(period(1.0, 0.0), 4800.0, 2.0), "trim 0 is off");
+    assert!(
+        close(period(1.0, -0.25), 9600.0, 2.0),
+        "a negative trim inverts"
+    );
+    assert!(
+        close(period(1.0, 1.0), 300.0, 1.0),
+        "full CV and trim: 4 octaves"
+    );
+    // The default trim is +1: a connected CV acts at once.
+    let mut hh = h();
+    hh.set_param("lfo1_rate", 10.0);
+    hh.input_mut("lfo1_rate_cv_in").fill(0.25);
+    let x = lfo1(&mut hh, 400);
+    let up: Vec<usize> = (1..x.len())
+        .filter(|n| x[n - 1] < 0.0 && x[*n] >= 0.0)
+        .collect();
+    assert!(close((up[1] - up[0]) as f32, 2400.0, 2.0), "default trim");
+    // A non-finite CV reads as 0.
+    let mut hh = h();
+    hh.set_param("lfo1_rate", 10.0);
+    hh.input_mut("lfo1_rate_cv_in").fill(f32::NAN);
+    let y = lfo1(&mut hh, 400);
+    let up: Vec<usize> = (1..y.len())
+        .filter(|n| y[n - 1] < 0.0 && y[*n] >= 0.0)
+        .collect();
+    assert!(close((up[1] - up[0]) as f32, 4800.0, 2.0), "NaN CV");
 }
 
 #[test]
-fn unconnected_rate_cv_is_bit_identical_to_amount_zero() {
+fn unconnected_rate_cv_is_bit_identical_whatever_the_trim() {
     let mut a = h();
     a.set_param("lfo1_shape", 6.0);
-    a.set_param("lfo1_rate_cv", 3.0);
+    a.set_param("lfo1_rate_cv_trim", -0.7);
     let mut b = h();
     b.set_param("lfo1_shape", 6.0);
     assert_eq!(a.render(40, &OUTS), b.render(40, &OUTS));
@@ -365,7 +402,7 @@ fn sync_follows_a_locate() {
     // Also with the rate CV integrating: it re-aligns at the locate.
     let mut hh = h();
     hh.set_param("lfo1_sync", 1.0);
-    hh.set_param("lfo1_rate_cv", 1.0);
+    hh.set_param("lfo1_rate_cv_trim", 1.0);
     hh.input_mut("lfo1_rate_cv_in").fill(0.0);
     hh.render(5, &OUTS);
     hh.time_mut().tick = 2.25 * PPQ as f64;
@@ -379,7 +416,7 @@ fn sync_follows_the_loop_wrap_inside_a_batch() {
         let mut hh = h();
         hh.set_param("lfo1_sync", 1.0);
         if cv {
-            hh.set_param("lfo1_rate_cv", 1.0);
+            hh.set_param("lfo1_rate_cv_trim", 1.0);
             hh.input_mut("lfo1_rate_cv_in").fill(0.0);
         }
         hh.render(3, &OUTS);
@@ -770,7 +807,7 @@ fn determinism_run(sr: f64) -> u64 {
     let mut hh = DeviceHarness::with_options(Box::new(ModSource::new()), sr, 133.0, 42);
     hh.set_param("lfo1_shape", 6.0);
     hh.set_param("lfo1_rate", 7.3);
-    hh.set_param("lfo1_rate_cv", 1.5);
+    hh.set_param("lfo1_rate_cv_trim", 0.375);
     hh.set_param("lfo1_key_sync", 1.0);
     hh.set_param("lfo2_shape", 0.0);
     hh.set_param("lfo2_sync", 1.0);

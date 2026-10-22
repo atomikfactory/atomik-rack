@@ -14,8 +14,9 @@
 //! `amount` (`0..=1`) and a `polarity` (bipolar `v`, or unipolar `(v + 1) / 2`). The output is
 //! `shape * amount * amount_cv`, so it stays within `-1..=1` (`0..=1` unipolar).
 //!
-//! * **Rate.** Free: `rate` Hz (0.01 to 40, exponential) times `2^(rate_cv * rate_cv_amount)`,
-//!   where the connected CV is clamped to `-1..=1` and `rate_cv_amount` is `-4..=4` octaves.
+//! * **Rate.** Free: `rate` Hz (0.01 to 40, exponential) times `2^(4 * rate_cv * rate_cv_trim)`,
+//!   where the connected CV is sanitised and clamped to `-1..=1` and `rate_cv_trim` is `-1..=1` (default +1,
+//!   negative inverts), so the CV moves the rate by up to 4 octaves.
 //!   Synced (`sync` on): one cycle lasts the note `div` (1/64 to 8 bars, each straight, triplet or
 //!   dotted; bars follow the time signature) and the rate CV bends that in octaves the same way.
 //! * **Sync semantics.** While the transport **plays**, a synced LFO's phase is a pure function
@@ -91,6 +92,8 @@ const O_AMOUNT: u32 = 6;
 const O_POLARITY: u32 = 7;
 const O_KEY_SYNC: u32 = 8;
 const O_RATE_CV: u32 = 9;
+/// Octaves of rate change at full CV and full trim.
+const RATE_CV_OCTAVES: f32 = 4.0;
 
 const P_ENV_ATTACK: u32 = 20;
 const P_ENV_DECAY: u32 = 21;
@@ -274,11 +277,11 @@ macro_rules! lfo_params {
             ),
             param(
                 $base + O_RATE_CV,
-                concat!($key, "_rate_cv"),
-                concat!($name, " rate CV amount"),
-                (-4.0, 4.0, 0.0),
+                concat!($key, "_rate_cv_trim"),
+                concat!($name, " rate CV trim"),
+                (-1.0, 1.0, 1.0),
                 Taper::Linear,
-                Unit::Octaves,
+                Unit::None,
                 false,
             ),
         ]
@@ -528,7 +531,7 @@ impl Lfo {
             amount: 1.0,
             unipolar: false,
             key_sync: false,
-            rate_cv: 0.0,
+            rate_cv: 1.0,
             acc: 0.0,
             origin: 0.0,
             retrig: 0,
@@ -560,7 +563,7 @@ impl Lfo {
             O_AMOUNT => self.amount = v.clamp(0.0, 1.0),
             O_POLARITY => self.unipolar = v >= 0.5,
             O_KEY_SYNC => self.key_sync = v >= 0.5,
-            O_RATE_CV => self.rate_cv = v.clamp(-4.0, 4.0),
+            O_RATE_CV => self.rate_cv = v.clamp(-1.0, 1.0),
             _ => {}
         }
     }
@@ -604,7 +607,9 @@ impl Lfo {
                 _ => (t.tick + n as f64 * t.tpf, false),
             };
             let mul = match rate_cv {
-                Some(c) => f64::from(exp2_det(cv(c[n], -1.0, 1.0) * self.rate_cv)),
+                Some(c) => f64::from(exp2_det(
+                    cv(c[n], -1.0, 1.0) * self.rate_cv * RATE_CV_OCTAVES,
+                )),
                 None => 1.0,
             };
             let reset = self.key_sync && note_on[n];
