@@ -297,7 +297,7 @@ macro_rules! send_trims {
     };
 }
 
-static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
+pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     let head = [
         db(0, "input.gain", "Input gain", -24.0, 24.0, 0.0),
         toggle(1, "input.phase", "Phase invert", 0.0),
@@ -462,8 +462,8 @@ macro_rules! send_sockets {
     };
 }
 
-const S_IN_L: u16 = 0;
-const S_IN_R: u16 = 1;
+pub(crate) const S_IN_L: u16 = 0;
+pub(crate) const S_IN_R: u16 = 1;
 const S_KEY: u16 = 2;
 const S_INSERT_SEND_L: u16 = 3;
 const S_INSERT_SEND_R: u16 = 4;
@@ -477,7 +477,7 @@ const S_FADER_CV: u16 = S_GR + 1;
 const S_PAN_CV: u16 = S_GR + 2;
 /// First send-level CV input (`send1_level_cv_in`); one per send.
 const S_SEND_CV_FIRST: u16 = S_GR + 3;
-const SOCKET_COUNT: usize = S_SEND_CV_FIRST as usize + SENDS;
+pub(crate) const SOCKET_COUNT: usize = S_SEND_CV_FIRST as usize + SENDS;
 
 const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
     socket(id, key, name, SocketKind::Cv, Direction::Input)
@@ -493,7 +493,7 @@ macro_rules! send_cv_sockets {
     };
 }
 
-static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
+pub(crate) static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
     let head = [
         audio_in(S_IN_L, "in_l", "In L"),
         audio_in(S_IN_R, "in_r", "In R"),
@@ -552,7 +552,7 @@ static SOCKETS: [SocketDescriptor; SOCKET_COUNT] = {
 
 /// Processing stage of each socket: stage 0 ends at the insert send, stage 1 starts
 /// at the insert return.
-static STAGES: [u8; SOCKET_COUNT] = {
+pub(crate) static STAGES: [u8; SOCKET_COUNT] = {
     let mut st = [1u8; SOCKET_COUNT];
     st[S_IN_L as usize] = 0;
     st[S_IN_R as usize] = 0;
@@ -687,6 +687,9 @@ pub(crate) fn send_gain(db: f32) -> f32 {
 /// The channel strip device.
 #[derive(Debug, Clone)]
 pub struct Channel {
+    /// The descriptor this strip reports: the channel's, or the output bus's (same DSP and
+    /// params, a summing stereo input in place of `in_l`/`in_r`).
+    descriptor: &'static DeviceDescriptor,
     values: [f32; PARAM_COUNT],
     sample_rate: f32,
     /// Real delay from a positive `latency.adjust` (not reported).
@@ -743,6 +746,12 @@ impl Channel {
     /// A channel with default params (call `prepare` before processing). Allocates the
     /// latency-adjust delay lines.
     pub fn new() -> Self {
+        Self::with_descriptor(&DESCRIPTOR)
+    }
+
+    /// A strip reporting `descriptor`, which must share this module's param table, stages
+    /// and socket ids (the output bus does: sockets 0 and 1 are its summing input).
+    pub(crate) fn with_descriptor(descriptor: &'static DeviceDescriptor) -> Self {
         let sr = 48_000.0;
         let mut values = [0.0; PARAM_COUNT];
         for (v, p) in values.iter_mut().zip(PARAMS.iter()) {
@@ -751,6 +760,7 @@ impl Channel {
         let sm = smoother(0.0, sr);
         let band = |shape| SmoothedBiquad::new(shape, 1_000.0, 1.0, 0.0, sr);
         let mut c = Self {
+            descriptor,
             values,
             sample_rate: sr,
             latency: 0,
@@ -1195,7 +1205,7 @@ pub(crate) fn stereo_in(ctx: &ProcessContext<'_>, l: u16, r: u16) -> (Block, Blo
 
 impl Device for Channel {
     fn descriptor(&self) -> &'static DeviceDescriptor {
-        &DESCRIPTOR
+        self.descriptor
     }
 
     fn prepare(&mut self, info: &PrepareInfo) {
