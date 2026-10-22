@@ -195,6 +195,23 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Transpose Octave Up | editor | `Ctrl+Shift+Up` | `Cmd+Shift+Up` | `Ctrl+Shift+Up` |
 | Transpose Up | editor | `Ctrl+Up` | `Cmd+Up` | `Ctrl+Up` |
 
+### Mixer
+
+| Command | Where | Windows | macOS | Linux |
+|---|---|---|---|---|
+| Lower Focused Control | mixer | `Down` | `Down` | `Down` |
+| Lower Focused Control (Fine) | mixer | `Shift+Down` | `Shift+Down` | `Shift+Down` |
+| Lower Focused Control by Ten | mixer | `PageDown` | `PageDown` | `PageDown` |
+| Lower Focused Control by Ten (Fine) | mixer | `Shift+PageDown` | `Shift+PageDown` | `Shift+PageDown` |
+| Raise Focused Control | mixer | `Up` | `Up` | `Up` |
+| Raise Focused Control (Fine) | mixer | `Shift+Up` | `Shift+Up` | `Shift+Up` |
+| Raise Focused Control by Ten | mixer | `PageUp` | `PageUp` | `PageUp` |
+| Raise Focused Control by Ten (Fine) | mixer | `Shift+PageUp` | `Shift+PageUp` | `Shift+PageUp` |
+| Scroll Channels Left | mixer | `Left`, `Shift+Left` | `Left`, `Shift+Left` | `Left`, `Shift+Left` |
+| Scroll Channels Right | mixer | `Right`, `Shift+Right` | `Right`, `Shift+Right` | `Right`, `Shift+Right` |
+| Scroll to First Channel | mixer | `Home`, `Shift+Home` | `Home`, `Shift+Home` | `Home`, `Shift+Home` |
+| Scroll to Last Channel | mixer | `End`, `Shift+End` | `End`, `Shift+End` | `End`, `Shift+End` |
+
 ### Browser
 
 | Command | Where | Windows | macOS | Linux |
@@ -326,6 +343,23 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Transpose Octave Down | editor | `Shift+Down` | `Shift+Down` | `Shift+Down` |
 | Transpose Octave Up | editor | `Shift+Up` | `Shift+Up` | `Shift+Up` |
 | Transpose Up | editor | `Up` | `Up` | `Up` |
+
+### Mixer
+
+| Command | Where | Windows | macOS | Linux |
+|---|---|---|---|---|
+| Lower Focused Control | mixer | `Down` | `Down` | `Down` |
+| Lower Focused Control (Fine) | mixer | `Shift+Down` | `Shift+Down` | `Shift+Down` |
+| Lower Focused Control by Ten | mixer | `PageDown` | `PageDown` | `PageDown` |
+| Lower Focused Control by Ten (Fine) | mixer | `Shift+PageDown` | `Shift+PageDown` | `Shift+PageDown` |
+| Raise Focused Control | mixer | `Up` | `Up` | `Up` |
+| Raise Focused Control (Fine) | mixer | `Shift+Up` | `Shift+Up` | `Shift+Up` |
+| Raise Focused Control by Ten | mixer | `PageUp` | `PageUp` | `PageUp` |
+| Raise Focused Control by Ten (Fine) | mixer | `Shift+PageUp` | `Shift+PageUp` | `Shift+PageUp` |
+| Scroll Channels Left | mixer | `Left`, `Shift+Left` | `Left`, `Shift+Left` | `Left`, `Shift+Left` |
+| Scroll Channels Right | mixer | `Right`, `Shift+Right` | `Right`, `Shift+Right` | `Right`, `Shift+Right` |
+| Scroll to First Channel | mixer | `Home`, `Shift+Home` | `Home`, `Shift+Home` | `Home`, `Shift+Home` |
+| Scroll to Last Channel | mixer | `End`, `Shift+End` | `End`, `Shift+End` | `End`, `Shift+End` |
 
 ### Files
 
