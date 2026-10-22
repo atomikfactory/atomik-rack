@@ -190,10 +190,11 @@ impl<S: EngineSink> AppCore<S> {
         console_points: &[(DeviceKey, [Endpoint; 3])],
         io: &IoMeters,
     ) -> CvTaps {
-        let doc = self.document.doc();
         let mut taps = Vec::new();
+        // Path keys of container members hold a "/", a container's split a "~": both are skipped.
+        let top_level = |s: &SocketRef| !s.device.as_str().contains(['/', '~']);
         for cable in &expanded.cables {
-            if !doc.cables.contains(cable) {
+            if !top_level(&cable.from) || !top_level(&cable.to) {
                 continue;
             }
             let Some(from) = self.endpoint(topology, &cable.from) else {
