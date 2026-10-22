@@ -87,6 +87,21 @@ pub fn arp_only() -> RackDoc {
     doc
 }
 
+pub const MODSRC_TYPE: &str = "atomik.mod-source";
+
+/// Only a Mod Source `mod` (LFO 1 saw up, LFO 2 unipolar pulse at morph 0.6).
+pub fn modsrc_only() -> RackDoc {
+    let mut doc = reference_doc();
+    let mut m = device("mod", MODSRC_TYPE, "Mod Source");
+    m.params.insert("lfo1_shape".into(), 2.0);
+    m.params.insert("lfo2_shape".into(), 4.0);
+    m.params.insert("lfo2_morph".into(), 0.6);
+    m.params.insert("lfo2_polarity".into(), 1.0);
+    doc.devices = vec![m];
+    doc.cables.clear();
+    doc
+}
+
 pub fn editor(doc: &RackDoc, reg: &Registry) -> SeqEditorView {
     let mut v = SeqEditorView::new(Theme::dark());
     v.set_bounds(EDITOR_BOUNDS);

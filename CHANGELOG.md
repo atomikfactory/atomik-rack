@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
-- **Mod Source.** A new modulation device with two LFOs (seven shapes with morph, free or tempo-synced rate, key sync, rate and amount CV inputs) and an ADSR envelope triggered by notes or a gate CV, with CV outputs for the rest of the rack.
+- **Mod Source.** A new modulation device with two LFOs (seven shapes with morph, free or tempo-synced rate, key sync, rate and amount CV inputs) and an ADSR envelope triggered by notes or a gate CV, with CV outputs for the rest of the rack. Its panel has a shape display for each LFO and a live scrolling scope of both LFOs and the envelope.
 - **Multi-column rack.** The rack can have several columns side by side (saved in the project, project format 11; older files load as one column). Add Column and Remove Column are in the rack context menu; an empty column stays until it is removed, and removing a column moves its devices to the one on its left. Each column scrolls with the rack, which now also scrolls sideways to reach all of them.
 - **Dragging between columns.** A device, or a selected group, can be dragged to any place in any column; the drop line shows where it lands, and dropping to the right of the last column makes a new column. The whole move is one undo step. The rack scrolls by itself when you drag near its edges.
 - **Drag devices from the browser.** Drag a row of the device browser onto the rack to create the device exactly where you drop it, in any column; an effect is routed as if the device above the drop point were selected. Release over the browser, or press Esc, to cancel. A double-click still adds below the selection.

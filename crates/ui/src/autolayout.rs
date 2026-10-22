@@ -138,6 +138,8 @@ pub struct PanelSpec {
     pub seq: Option<crate::seq_panel::SeqPanel>,
     /// The arpeggiator panel of an `atomik.arpeggiator` (see [`crate::arp_panel`]).
     pub arp: Option<crate::arp_panel::ArpPanel>,
+    /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
+    pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
     /// The container panel of an `atomik.container` (see
     /// [`crate::container_panel`]).
     pub container: Option<crate::container_panel::ContainerPanel>,
@@ -278,6 +280,7 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         samples: samples.then(|| {
@@ -655,6 +658,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,
@@ -785,6 +789,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,
@@ -837,6 +842,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,

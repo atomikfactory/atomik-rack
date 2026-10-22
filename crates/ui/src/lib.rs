@@ -268,6 +268,7 @@ pub mod interface;
 pub mod io_panel;
 pub mod keymap;
 pub mod master_panel;
+pub mod modsrc_panel;
 pub mod paint;
 pub mod piano_roll;
 pub mod plugin_banner;

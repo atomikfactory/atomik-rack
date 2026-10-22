@@ -53,6 +53,15 @@ pub fn is_player(type_id: &str) -> bool {
     PLAYER_TYPE_IDS.contains(&type_id)
 }
 
+/// Type ids of the modulators (CV sources). They are `DeviceKind::Utility`; the browser lists them
+/// under a "Modulators" heading, and future CV sources join the list.
+pub const MODULATOR_TYPE_IDS: [&str; 1] = ["atomik.mod-source"];
+
+/// Whether `type_id` is a modulator (see [`MODULATOR_TYPE_IDS`]).
+pub fn is_modulator(type_id: &str) -> bool {
+    MODULATOR_TYPE_IDS.contains(&type_id)
+}
+
 /// Type ids of the internal devices: created by the model's container expansion, never shown in
 /// the browser or offered by an add menu, and refused when added by hand.
 pub const INTERNAL_TYPE_IDS: [&str; 1] = ["atomik.note-split"];
