@@ -1460,6 +1460,42 @@ pub fn cable<C: Canvas + ?Sized>(
     }
 }
 
+/// Number of brightness steps of a CV activity indicator (0 = off).
+pub const CV_ACTIVITY_STEPS: u8 = 8;
+
+fn activity_level(step: u8) -> f32 {
+    f32::from(step.min(CV_ACTIVITY_STEPS)) / f32::from(CV_ACTIVITY_STEPS)
+}
+
+/// A glow on a cable that carries CV signal: `step` is 1..=[`CV_ACTIVITY_STEPS`].
+pub fn cable_activity<C: Canvas + ?Sized>(c: &mut C, curve: CubicBez, color: Color, step: u8) {
+    let level = activity_level(step);
+    c.stroke(
+        &Geom::Cubic(curve),
+        &round_stroke(3.0 + 5.0 * f64::from(level)),
+        &solid(with_alpha(
+            mix(color, Color::WHITE, 0.5),
+            0.12 + 0.45 * level,
+        )),
+    );
+}
+
+/// A small lit disc behind a jack that carries CV signal: `step` is 1..=[`CV_ACTIVITY_STEPS`].
+pub fn jack_activity<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    center: Point,
+    kind: SocketKind,
+    step: u8,
+) {
+    let level = activity_level(step);
+    let color = mix(kind_color(theme, kind), Color::WHITE, 0.4);
+    c.fill_with(
+        Circle::new(center, JACK_R + 2.0 + 2.0 * f64::from(level)),
+        with_alpha(color, 0.15 + 0.5 * level),
+    );
+}
+
 /// Socket overlay ring states used while dragging or hovering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ring {
