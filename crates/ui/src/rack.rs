@@ -50,6 +50,14 @@ pub use crate::paint::Side as Flip;
 pub use columns::COLUMN_GAP;
 pub use console_links::OutputDisplay;
 
+/// Time constant of the fall of a CV activity indicator, seconds.
+pub const CV_DECAY_SECONDS: f32 = 0.18;
+
+/// The brightness step of a displayed CV level (0..=1).
+fn step_of(level: f32) -> u8 {
+    (level * f32::from(paint::CV_ACTIVITY_STEPS)).round() as u8
+}
+
 /// Smallest zoom.
 pub const MIN_ZOOM: f64 = 0.5;
 /// Largest zoom.
@@ -219,6 +227,8 @@ struct DeviceView {
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
     /// published meter values, rounded.
     meters: Vec<f32>,
+    /// Mod Source panel: the scope history fed from the published meter values.
+    scope: crate::modsrc_panel::Scope,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
@@ -417,6 +427,8 @@ pub struct RackView {
     pointer: Point,
     hover: Option<Hit>,
     hover_cable: Option<Cable>,
+    /// Displayed CV activity per cable, 0..=1 (decaying; see [`RackView::set_cv_activity`]).
+    cv_activity: BTreeMap<Cable, f32>,
     drag: Drag,
     next_merge: u64,
     /// The primary selected device (local key): the last clicked.
@@ -557,6 +569,7 @@ impl RackView {
             pointer: Point::ZERO,
             hover: None,
             hover_cable: None,
+            cv_activity: BTreeMap::new(),
             drag: Drag::None,
             next_merge: 1,
             selected: None,
@@ -874,6 +887,9 @@ impl RackView {
             (Some(d), _) if type_id == container_panel::CONTAINER_TYPE => {
                 container_panel::container_layout(d)
             }
+            (Some(d), _) if type_id == crate::modsrc_panel::MODSRC_TYPE => {
+                crate::modsrc_panel::modsrc_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }
@@ -894,6 +910,7 @@ impl RackView {
                 fx: None,
                 seq: None,
                 arp: None,
+                modsrc: None,
                 container: None,
                 plugin: None,
                 front: Vec::new(),
@@ -971,6 +988,7 @@ impl RackView {
             edit: 0,
             fx: None,
             meters: Vec::new(),
+            scope: crate::modsrc_panel::Scope::new(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],
@@ -1044,9 +1062,13 @@ impl RackView {
             };
             let driven = self.driven_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
-            let prev = old.remove(&d.key);
+            let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let anim = prev.as_ref().map_or(0, |p| p.anim);
+            let scope = prev
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.scope))
+                .unwrap_or_default();
             let cv = if fx == Some(FxKind::Character) {
                 cv_cabled_of(&d.key, &doc.cables)
             } else {
@@ -1093,6 +1115,7 @@ impl RackView {
                 edit,
                 fx,
                 meters,
+                scope,
                 master,
                 sc,
                 cv,
@@ -1141,6 +1164,7 @@ impl RackView {
                 edit: 0,
                 fx: None,
                 meters: Vec::new(),
+                scope: crate::modsrc_panel::Scope::new(),
                 master: Default::default(),
                 sc: None,
                 cv: [false; 2],
@@ -1693,6 +1717,51 @@ impl RackView {
     pub fn cable_midpoint(&self, cable: &Cable) -> Option<Point> {
         let c = self.cable_curve(cable)?;
         Some(self.rack_to_view(c.eval(0.5)))
+    }
+
+    /// Feeds the linear peak of the signal on each CV cable since the last call, once per frame
+    /// (`dt` seconds since the previous call). The view keeps a displayed level per cable that
+    /// rises at once and falls with a time constant of [`CV_DECAY_SECONDS`], so a pulse stays
+    /// visible and a steady modulation does not flicker. Cables missing from `peaks` are
+    /// forgotten. It repaints only when a cable's brightness step changed while the back is
+    /// showing.
+    pub fn set_cv_activity(&mut self, peaks: &[(Cable, f32)], dt: f32) {
+        let fall = if dt.is_finite() && dt > 0.0 {
+            (-dt / CV_DECAY_SECONDS).exp()
+        } else {
+            1.0
+        };
+        let steps = f32::from(paint::CV_ACTIVITY_STEPS);
+        let mut next = BTreeMap::new();
+        let mut changed = false;
+        for (cable, peak) in peaks {
+            let peak = if peak.is_finite() {
+                peak.abs().min(1.0)
+            } else {
+                0.0
+            };
+            // Square root: a small modulation (0.05) must still be visible.
+            let held = self.cv_activity.get(cable).copied().unwrap_or(0.0);
+            let level = peak.sqrt().max(held * fall);
+            let level = if level < 0.5 / steps { 0.0 } else { level };
+            changed |= step_of(held) != step_of(level);
+            next.insert(cable.clone(), level);
+        }
+        // A cable that left the feed while lit goes dark.
+        changed |= self
+            .cv_activity
+            .iter()
+            .any(|(c, l)| step_of(*l) != 0 && !next.contains_key(c));
+        self.cv_activity = next;
+        if changed && self.flip == Flip::Back {
+            self.repaint = true;
+        }
+    }
+
+    /// The brightness step (0 = off, up to [`paint::CV_ACTIVITY_STEPS`]) of a cable's CV
+    /// activity indicator.
+    pub fn cv_activity_step(&self, cable: &Cable) -> u8 {
+        self.cv_activity.get(cable).map_or(0, |l| step_of(*l))
     }
 
     fn cable_curve(&self, cable: &Cable) -> Option<vello::kurbo::CubicBez> {
@@ -3295,6 +3364,7 @@ impl RackView {
                     player: PlayerInfo {
                         edit: d.edit,
                         meters: &d.meters,
+                        scope: d.spec.modsrc.is_some().then_some(&d.scope),
                         rename: self
                             .rename
                             .as_ref()
@@ -3412,6 +3482,23 @@ impl RackView {
                     paint::socket_ring(c, theme, g.pos, ring);
                 }
             }
+            // CV activity: a lit disc on both jacks of every active CV cable (also while the
+            // cables themselves are hidden); the cable glows below.
+            for cable in self.cv_activity.keys() {
+                let step = self.cv_activity_step(cable);
+                if step == 0 {
+                    continue;
+                }
+                for end in [&cable.from, &cable.to] {
+                    if let Some(g) = self.sockets.get(end)
+                        && g.visible
+                        && g.pos.y >= top - 20.0
+                        && g.pos.y <= bottom + 20.0
+                    {
+                        paint::jack_activity(c, theme, g.pos, g.end.kind, step);
+                    }
+                }
+            }
             for cable in self.visible_cables(doc) {
                 let Some(curve) = self.cable_curve(&cable) else {
                     continue;
@@ -3428,6 +3515,10 @@ impl RackView {
                     CableLook::Normal
                 };
                 paint::cable(c, theme, curve, color, look, true);
+                let step = self.cv_activity_step(&cable);
+                if step > 0 {
+                    paint::cable_activity(c, curve, color, step);
+                }
             }
             if let Some(hc) = &self.hover_cable {
                 for end in [&hc.from, &hc.to] {

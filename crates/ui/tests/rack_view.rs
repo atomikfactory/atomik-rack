@@ -593,9 +593,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
     // Two more with the console devices shown (the default).
-    assert_eq!(v.browser_rows(&reg).len(), 18);
+    assert_eq!(v.browser_rows(&reg).len(), 19);
     v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 16); // arpeggiator, line mixer, poly synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, modulation, step sequencer, container, character
+    assert_eq!(v.browser_rows(&reg).len(), 17); // arpeggiator, line mixer, poly synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, mod source, modulation, step sequencer, container, character
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }
@@ -604,7 +604,7 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
-    assert_eq!(v.browser_rows(&reg).len(), 16); // as above (16 browsable devices, the container included)
+    assert_eq!(v.browser_rows(&reg).len(), 17); // as above (17 browsable devices, the container included)
     // Select the synth, then double-click the mixer row.
     let p = v.plate_center(&key("synth")).unwrap();
     let _ = v.handle(&down(p), &doc, &reg);
@@ -742,4 +742,110 @@ fn a_cable_can_be_dragged_from_a_host_input() {
             ("mixer", "ch2_in_l")
         ))]
     );
+}
+
+// ---------------------------------------------------------------- CV activity
+
+fn lfo_cable() -> atomik_model::Cable {
+    cable(("synth", "lfo_cv_out"), ("delay", "time_cv_in"))
+}
+
+fn paint_back(v: &mut RackView, doc: &RackDoc, reg: &atomik_device_sdk::Registry) -> DisplayList {
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, doc, reg);
+    dl
+}
+
+#[test]
+fn cv_activity_follows_the_peak_and_decays_when_the_cable_falls_silent() {
+    let (_doc, _reg, mut v) = back_view();
+    let c = lfo_cable();
+    assert_eq!(v.cv_activity_step(&c), 0);
+    v.set_cv_activity(&[(c.clone(), 1.0)], 0.016);
+    assert_eq!(v.cv_activity_step(&c), 8);
+    // A quiet but real modulation is still visible (square-root scale).
+    v.set_cv_activity(&[(c.clone(), 0.0)], 0.0);
+    v.set_cv_activity(&[(c.clone(), 0.04)], 0.016);
+    assert!(v.cv_activity_step(&c) >= 2);
+    // Silence: falls step by step, never below zero, and ends off.
+    v.set_cv_activity(&[(c.clone(), 1.0)], 0.016);
+    let mut last = v.cv_activity_step(&c);
+    for _ in 0..200 {
+        v.set_cv_activity(&[(c.clone(), 0.0)], 0.016);
+        let now = v.cv_activity_step(&c);
+        assert!(now <= last, "monotonic decay");
+        last = now;
+    }
+    assert_eq!(last, 0);
+    // A cable missing from the feed is forgotten.
+    v.set_cv_activity(&[(c.clone(), 1.0)], 0.016);
+    v.set_cv_activity(&[], 0.016);
+    assert_eq!(v.cv_activity_step(&c), 0);
+}
+
+#[test]
+fn cv_activity_ignores_non_finite_peaks() {
+    let (_doc, _reg, mut v) = back_view();
+    let c = lfo_cable();
+    v.set_cv_activity(&[(c.clone(), f32::NAN)], 0.016);
+    assert_eq!(v.cv_activity_step(&c), 0);
+    v.set_cv_activity(&[(c.clone(), f32::INFINITY)], f32::NAN);
+    assert_eq!(v.cv_activity_step(&c), 0);
+    v.set_cv_activity(&[(c.clone(), -2.0)], 0.016);
+    assert_eq!(
+        v.cv_activity_step(&c),
+        8,
+        "the magnitude counts, clamped to 1"
+    );
+}
+
+#[test]
+fn cv_activity_repaints_the_back_only_when_a_step_changes() {
+    let (doc, reg, mut v) = back_view();
+    let c = lfo_cable();
+    let _ = paint_back(&mut v, &doc, &reg);
+    assert!(!v.needs_repaint());
+    v.set_cv_activity(&[(c.clone(), 0.0)], 0.016);
+    assert!(
+        !v.needs_repaint(),
+        "silence on a silent cable changes nothing"
+    );
+    v.set_cv_activity(&[(c.clone(), 1.0)], 0.016);
+    assert!(v.needs_repaint());
+    let _ = paint_back(&mut v, &doc, &reg);
+    v.set_cv_activity(&[(c, 1.0)], 0.016);
+    assert!(!v.needs_repaint(), "a steady level does not repaint");
+    v.set_flip(Flip::Front);
+    let _ = paint_back(&mut v, &doc, &reg);
+    v.set_cv_activity(&[], 0.016);
+    assert!(
+        !v.needs_repaint(),
+        "the front never repaints for CV activity"
+    );
+}
+
+#[test]
+fn an_active_cv_cable_paints_an_indicator_and_a_silent_one_paints_nothing_extra() {
+    let (doc, reg, mut v) = back_view();
+    let c = lfo_cable();
+    let base = paint_back(&mut v, &doc, &reg);
+    v.set_cv_activity(&[(c.clone(), 0.0)], 0.016);
+    assert_eq!(paint_back(&mut v, &doc, &reg), base);
+    v.set_cv_activity(&[(c.clone(), 1.0)], 0.016);
+    let lit = paint_back(&mut v, &doc, &reg);
+    assert_ne!(lit, base);
+    assert!(lit.len() > base.len());
+    // Brighter paints differently from dimmer.
+    v.set_cv_activity(&[(c.clone(), 0.0)], 1.0);
+    v.set_cv_activity(&[(c, 0.1)], 0.016);
+    assert_ne!(paint_back(&mut v, &doc, &reg), lit);
+}
+
+#[test]
+fn the_jacks_of_an_active_cv_cable_light_up_even_when_cables_are_hidden() {
+    let (doc, reg, mut v) = back_view();
+    v.set_cable_visibility(CableVisibility::Hide);
+    let base = paint_back(&mut v, &doc, &reg);
+    v.set_cv_activity(&[(lfo_cable(), 1.0)], 0.016);
+    assert_ne!(paint_back(&mut v, &doc, &reg), base);
 }

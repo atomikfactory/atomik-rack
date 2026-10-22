@@ -572,6 +572,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 } else if info.spec.container.is_some() {
                     // The macro name sits in its own target below the knob (container panel).
                     control_labelled(c, theme, pc, p, value, info.accent, "");
+                } else if info.spec.modsrc.is_some() {
+                    let label = crate::modsrc_panel::modsrc_label(p.key)
+                        .unwrap_or_else(|| autolayout::control_label(p));
+                    control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.seq.is_some() || info.spec.arp.is_some() {
                     let label = crate::seq_panel::player_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
@@ -640,6 +644,17 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             if !info.driven.is_empty() {
                 driven_tags(c, theme, desc, info, false);
             }
+            if let (Some(panel), Some(device)) = (info.spec.modsrc, info.device) {
+                crate::modsrc_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
+                    device,
+                    desc,
+                    &info.player,
+                    info.accent,
+                );
+            }
             if let (Some(arp), Some(device)) = (info.spec.arp, info.device) {
                 crate::arp_panel::paint_panel(
                     c,
@@ -658,7 +673,12 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
             for ps in &info.spec.back {
                 let s = &desc.sockets[ps.socket];
-                jack(c, theme, ps, s.name, s.kind);
+                let name = if info.spec.modsrc.is_some() {
+                    crate::modsrc_panel::modsrc_socket_label(s.key).unwrap_or(s.name)
+                } else {
+                    s.name
+                };
+                jack(c, theme, ps, name, s.kind);
                 if s.direction == atomik_device_sdk::Direction::SummingInput {
                     summing_ring(c, theme, ps.center(), s.kind);
                 }
@@ -1458,6 +1478,42 @@ pub fn cable<C: Canvas + ?Sized>(
         c.stroke_with(Circle::new(p, 5.0), 2.0, color);
         c.fill_with(Circle::new(p, 2.2), mix(color, Color::WHITE, 0.3));
     }
+}
+
+/// Number of brightness steps of a CV activity indicator (0 = off).
+pub const CV_ACTIVITY_STEPS: u8 = 8;
+
+fn activity_level(step: u8) -> f32 {
+    f32::from(step.min(CV_ACTIVITY_STEPS)) / f32::from(CV_ACTIVITY_STEPS)
+}
+
+/// A glow on a cable that carries CV signal: `step` is 1..=[`CV_ACTIVITY_STEPS`].
+pub fn cable_activity<C: Canvas + ?Sized>(c: &mut C, curve: CubicBez, color: Color, step: u8) {
+    let level = activity_level(step);
+    c.stroke(
+        &Geom::Cubic(curve),
+        &round_stroke(3.0 + 5.0 * f64::from(level)),
+        &solid(with_alpha(
+            mix(color, Color::WHITE, 0.5),
+            0.12 + 0.45 * level,
+        )),
+    );
+}
+
+/// A small lit disc behind a jack that carries CV signal: `step` is 1..=[`CV_ACTIVITY_STEPS`].
+pub fn jack_activity<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    center: Point,
+    kind: SocketKind,
+    step: u8,
+) {
+    let level = activity_level(step);
+    let color = mix(kind_color(theme, kind), Color::WHITE, 0.4);
+    c.fill_with(
+        Circle::new(center, JACK_R + 2.0 + 2.0 * f64::from(level)),
+        with_alpha(color, 0.15 + 0.5 * level),
+    );
 }
 
 /// Socket overlay ring states used while dragging or hovering.

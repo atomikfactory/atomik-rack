@@ -129,7 +129,9 @@ One convention for every dedicated CV input, with the shared helpers in [crates/
 | Pan | ±1, added before the pan law | console channel pan; sampler pan (per voice); poly synth balance |
 | Pitch | ±24 semitones | poly synth, drum machine |
 | Cutoff | ±4 octaves | loop slicer global low-pass |
+| Rate | ±4 octaves | Mod Source LFO rate (`lfoN_rate_cv_trim`) |
 
+- Documented exceptions with no trim, both on the Mod Source: `lfoN_amount_cv_in` (a multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
 - Unconnected sockets are skipped with `is_connected`, so the output is bit-identical to the device without the input (the render goldens must not change); each device has a test that sets odd trims with no cable and compares bits.
 - Per-sample targets (level, pan) read the CV sample by sample with no extra smoothing, so a stepped CV gives a stepped gain; pitch, resonance and cutoff are read at the 16-sample control rate with the filter coefficient ramped in between. A device that smooths per batch uses the batch mean of the CV.
 - Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level; drum machine level and pitch) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan).

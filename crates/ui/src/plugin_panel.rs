@@ -239,6 +239,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: Some(panel),
         front,
