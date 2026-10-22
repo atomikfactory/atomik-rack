@@ -5,7 +5,7 @@
 
 use super::clipboard_ops::WorkflowPre;
 use super::*;
-use atomik_model::{WorkflowCommand, insert_chain};
+use atomik_model::{SongCommand, WorkflowCommand, insert_chain};
 
 impl<S: EngineSink> AppCore<S> {
     /// Fills in what only the app knows before a creation command runs: the tracks to disarm.
@@ -158,5 +158,58 @@ impl<S: EngineSink> AppCore<S> {
             }
             _ => None,
         }
+    }
+
+    /// A new console selection arms the song track of its primary strip (the last one clicked)
+    /// and disarms the tracks an earlier auto-arm armed, as creating an instrument does; the
+    /// tracks the user armed stay. The track's device is selected in the rack, which is what
+    /// the live keyboard plays while tracks are armed. A strip without a track (a bus, an FX
+    /// return, a channel with no song track) changes nothing. Unlike creation there is no
+    /// enclosing step, so arming and disarming are one batched undo step of their own.
+    pub(super) fn follow_console_selection(&mut self) {
+        let selection = self.console.selected_strips();
+        if selection == self.console_selection {
+            return;
+        }
+        self.console_selection = selection;
+        self.selection_changed = true;
+        let doc = self.document.doc();
+        let Some(device) = self
+            .console
+            .primary_strip()
+            .and_then(|strip| doc.console.channel_index(&strip))
+            .and_then(|i| doc.console.channels[i].source.clone())
+            .filter(|source| doc.song.track(source).is_some())
+        else {
+            return;
+        };
+        let flags = |device: &DeviceKey, armed: bool| {
+            doc.song.track(device).map(|t| {
+                Command::Song(SongCommand::SetTrackFlags {
+                    device: device.clone(),
+                    muted: t.muted,
+                    solo: t.solo,
+                    armed,
+                })
+            })
+        };
+        let mut batch: Vec<Command> = self
+            .auto_armed
+            .iter()
+            .filter(|k| **k != device && doc.song.track(k).is_some_and(|t| t.armed))
+            .filter_map(|k| flags(k, false))
+            .collect();
+        self.auto_armed.retain(|k| *k == device);
+        if doc.song.track(&device).is_some_and(|t| !t.armed) {
+            batch.extend(flags(&device, true));
+            self.auto_armed.push(device.clone());
+        }
+        if !batch.is_empty() {
+            // A rejection is already reported to the view.
+            let _ = self.apply_command(Command::Batch(batch));
+        }
+        self.view
+            .set_selection(std::slice::from_ref(&device), Some(&device));
+        self.after_view_change();
     }
 }

@@ -12,7 +12,11 @@ use support::cpu::CpuCanvas;
 use support::*;
 
 fn render(pane_h: f64, maximised: bool, file: &str) {
-    let (doc, reg) = (console_doc(), console_registry());
+    render_doc(console_doc(), pane_h, maximised, file);
+}
+
+fn render_doc(doc: atomik_model::RackDoc, pane_h: f64, maximised: bool, file: &str) {
+    let reg = console_registry();
     let scale = 1.5;
     let bounds = Rect::new(0.0, 0.0, 1100.0, pane_h);
     let mut v = console_view(&doc, &reg);
@@ -67,4 +71,10 @@ fn render(pane_h: f64, maximised: bool, file: &str) {
 fn console_preview_png() {
     render(760.0, true, "console_preview.png");
     render(380.0, false, "console_preview_short.png");
+}
+
+#[test]
+#[ignore = "writes preview images; run explicitly"]
+fn console_buses_preview_png() {
+    render_doc(bus_doc(), 760.0, true, "console_buses_preview.png");
 }

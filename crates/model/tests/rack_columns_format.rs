@@ -23,7 +23,7 @@ fn fixture(name: &str) -> String {
     .replace("\r\n", "\n")
 }
 
-const OLD_FIXTURES: [(&str, u32); 8] = [
+const OLD_FIXTURES: [(&str, u32); 9] = [
     ("demo-v1.atomik", 1),
     ("demo-v6.atomik", 6),
     ("seq-v7.atomik", 7),
@@ -31,6 +31,7 @@ const OLD_FIXTURES: [(&str, u32); 8] = [
     ("plugin-v9.atomik", 9),
     ("demo-v9.atomik", 9),
     ("demo-v10.atomik", 10),
+    ("demo-v11.atomik", 11),
     ("drum-demo-v6.atomik", 6),
 ];
 
@@ -72,14 +73,14 @@ fn edit(text: &str, f: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 11);
+    assert_eq!(PROJECT_VERSION, 12);
 }
 
 #[test]
 fn a_single_column_rack_writes_neither_field() {
     let r = registry();
     let text = save_project(three_devices(&r).doc());
-    assert!(text.contains("\"version\": 11"));
+    assert!(text.contains("\"version\": 12"));
     assert!(!text.contains("rack_columns"));
     assert!(!text.contains("\"column\""));
 }
@@ -127,7 +128,7 @@ fn every_older_version_loads_as_one_column_in_column_zero() {
         assert!(doc.devices.iter().all(|d| d.column == 0), "{name}");
         doc.check_columns().unwrap();
         let saved = save_project(&doc);
-        assert!(saved.contains("\"version\": 11"), "{name}");
+        assert!(saved.contains("\"version\": 12"), "{name}");
         assert!(
             !saved.contains("rack_columns") && !saved.contains("\"column\""),
             "{name}"
@@ -143,7 +144,7 @@ fn a_v10_file_resaves_as_v11_with_only_the_version_line_changed() {
     let doc = load_project(&file, &r).unwrap();
     assert_eq!(
         save_project(&doc),
-        file.replacen("\"version\": 10", "\"version\": 11", 1)
+        file.replacen("\"version\": 10", "\"version\": 12", 1)
     );
 }
 
@@ -152,7 +153,7 @@ fn the_new_fields_need_version_11() {
     let (d, r) = rack();
     let text = save_project(d.doc());
     for v in 3..=10 {
-        let old = text.replace("\"version\": 11", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 12", &format!("\"version\": {v}"));
         let e = load_project(&old, &r).unwrap_err().to_string();
         assert!(
             e.contains("rack_columns") || e.contains("column"),

@@ -151,9 +151,9 @@ pub fn plugin_texts(text: &str) -> Vec<String> {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 11);
+    assert_eq!(PROJECT_VERSION, 12);
     let r = plugin_registry();
-    assert!(text(&r).contains("\"version\": 11"));
+    assert!(text(&r).contains("\"version\": 12"));
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn a_project_without_plugins_differs_from_v8_only_in_the_version_number() {
     let doc = load_project(&t, &r).unwrap();
     assert_eq!(
         save_project(&doc),
-        t.replacen("\"version\": 8", "\"version\": 11", 1)
+        t.replacen("\"version\": 8", "\"version\": 12", 1)
     );
     assert!(!save_project(&doc).contains("\"plugin\""));
 }
@@ -360,13 +360,13 @@ fn the_committed_golden_is_the_canonical_save() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugin-v9.atomik");
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some() {
-        std::fs::write(&path, t.replacen("\"version\": 11", "\"version\": 9", 1)).unwrap();
+        std::fs::write(&path, t.replacen("\"version\": 12", "\"version\": 9", 1)).unwrap();
     }
     // The golden stays a version 9 file (it also proves that v9 still loads); it differs from
     // the current save in the version number only.
     let file = fixture("plugin-v9.atomik");
     assert_eq!(
-        file.replacen("\"version\": 9", "\"version\": 11", 1),
+        file.replacen("\"version\": 9", "\"version\": 12", 1),
         t,
         "regenerate with ATOMIK_UPDATE_GOLDEN=1"
     );
@@ -377,7 +377,7 @@ fn the_golden_loads_with_the_plugins_installed_and_as_stand_ins_with_the_same_re
     let installed = plugin_registry();
     let bare = registry();
     let file = fixture("plugin-v9.atomik");
-    let current = file.replacen("\"version\": 9", "\"version\": 11", 1);
+    let current = file.replacen("\"version\": 9", "\"version\": 12", 1);
     let a = load_project(&file, &installed).unwrap();
     let b = load_project(&file, &bare).expect("a missing plugin loads as a stand-in");
     assert_eq!(a, b, "stand-in or installed: the same document");
@@ -449,13 +449,13 @@ fn versions_one_to_eight_still_load_and_resave_as_v11() {
         let t = fixture(name);
         let doc = load_project(&t, reg).unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = save_project(&doc);
-        assert!(again.contains("\"version\": 11"), "{name}");
+        assert!(again.contains("\"version\": 12"), "{name}");
         assert_eq!(load_project(&again, reg).unwrap(), doc, "{name}");
         assert_eq!(save_project(&load_project(&again, reg).unwrap()), again);
         if from >= 6 {
             assert_eq!(
                 again,
-                t.replacen(&format!("\"version\": {from}"), "\"version\": 11", 1),
+                t.replacen(&format!("\"version\": {from}"), "\"version\": 12", 1),
                 "{name}"
             );
         }
@@ -728,7 +728,7 @@ fn the_installed_descriptor_wins_over_the_saved_layout_for_validation() {
     assert_eq!(doc.device(&key("lead")).unwrap().params["p10"], 0.25);
     assert_eq!(
         save_project(&doc),
-        file.replacen("\"version\": 9", "\"version\": 11", 1),
+        file.replacen("\"version\": 9", "\"version\": 12", 1),
         "and saves back unchanged (but for the version)"
     );
 }

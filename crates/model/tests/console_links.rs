@@ -274,7 +274,7 @@ fn a_channel_cabled_elsewhere_is_direct() {
 }
 
 #[test]
-fn a_channel_cabled_to_the_interface_is_direct() {
+fn a_channel_cabled_to_the_first_interface_pair_is_audio_io() {
     let (mut d, r) = one_channel();
     cut_to_master(&mut d, &r);
     // The master owns out 1 and 2; free them for the channel.
@@ -291,7 +291,7 @@ fn a_channel_cabled_to_the_interface_is_direct() {
     );
     assert_eq!(
         output_dest(d.doc(), &key("channel")),
-        OutputDest::Direct(vec![sref("interface:out_1"), sref("interface:out_2")])
+        OutputDest::AudioIo(1)
     );
 }
 

@@ -1160,7 +1160,7 @@ fn every_device_type_of_the_registry_duplicates_as_one_step_with_its_own_data() 
     let types: Vec<String> = r.type_ids().map(str::to_owned).collect();
     let mut tested = 0;
     for t in types {
-        if [CHANNEL, MASTER, SPLIT].contains(&t.as_str()) {
+        if [CHANNEL, BUS, MASTER, SPLIT].contains(&t.as_str()) {
             continue;
         }
         let mut d = Document::new(empty_doc());

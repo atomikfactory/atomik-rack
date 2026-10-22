@@ -96,6 +96,22 @@ pub fn assert_console_invariants(doc: &RackDoc) {
             assert!(!console.returns.contains(&Some(s.clone())));
         }
     }
+    let mut buses = Vec::new();
+    let mut names = Vec::new();
+    for b in &console.buses {
+        assert_eq!(type_of(&b.bus), BUS, "{}", b.bus);
+        assert!(!buses.contains(&b.bus), "{} listed twice", b.bus);
+        buses.push(b.bus.clone());
+        assert!(console.master.is_some(), "a bus needs the master");
+        let name = b.name.to_lowercase();
+        assert!(
+            !b.name.trim().is_empty() && b.name.trim() == b.name,
+            "{:?}",
+            b.name
+        );
+        assert!(!names.contains(&name), "{:?} used twice", b.name);
+        names.push(name);
+    }
     if let Some(m) = &console.master {
         assert_eq!(type_of(m), MASTER);
     } else {

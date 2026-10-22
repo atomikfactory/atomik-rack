@@ -1,6 +1,6 @@
 //! Atomik Rack built-in devices: [`poly_synth`], [`sampler`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`modulation`] and [`mastering`], and the
-//! console devices [`channel`] (`atomik.channel`) and [`master`] (`atomik.master`).
+//! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! Each module exposes a `pub static DESCRIPTOR`, a `pub fn factory()` and the device struct.
 //! All three are original designs.
@@ -9,6 +9,7 @@
 
 pub mod arpeggiator;
 pub mod audio_track;
+pub mod bus;
 pub mod channel;
 pub mod character;
 pub mod compressor;
@@ -92,6 +93,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(mod_source::factory())?;
     registry.register(modulation::factory())?;
     registry.register(note_split::factory())?;
+    registry.register(bus::factory())?;
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
     registry.register(master::factory())?;
@@ -107,9 +109,10 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 21] = [
+    const TYPE_IDS: [&str; 22] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
+        "atomik.bus",
         "atomik.channel",
         "atomik.character",
         "atomik.compressor",
@@ -132,7 +135,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all twenty-one devices.
+    // Name kept; it now covers all twenty-two devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();

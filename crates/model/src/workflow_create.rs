@@ -317,7 +317,8 @@ fn classify(doc: &RackDoc, target: &CreateTarget) -> Dest {
     let console = &doc.console;
     if console.master.as_ref() == Some(k) {
         Dest::Master
-    } else if console.channel_index(k).is_some() {
+    } else if console.channel_index(k).is_some() || console.bus_index(k).is_some() {
+        // A bus has the channel's insert loop: an effect goes to its first free slot too.
         Dest::Channel(k.clone())
     } else if let Some(c) = console.channel_of(k) {
         Dest::Channel(c.channel.clone())
@@ -501,6 +502,7 @@ pub(crate) fn assign_send(
         .channels
         .iter()
         .map(|c| &c.channel)
+        .chain(console.buses.iter().map(|b| &b.bus))
         .chain(console.master.iter())
         .any(|c| insert_chain(doc, registry, c).contains(effect));
     if in_chain {
@@ -729,6 +731,7 @@ fn route_loose_effect(p: &mut Planner<'_>, key: &DeviceKey, name: &str) -> Resul
             .channels
             .iter()
             .map(|c| &c.channel)
+            .chain(doc.console.buses.iter().map(|b| &b.bus))
             .chain(doc.console.master.iter())
             .any(|c| insert_chain(doc, registry, c).contains(k))
     };
@@ -743,7 +746,7 @@ fn route_loose_effect(p: &mut Planner<'_>, key: &DeviceKey, name: &str) -> Resul
         .collect();
     // The nearest channel (or instrument that has one).
     let channel = before.iter().find_map(|d| {
-        if doc.console.channel_index(d).is_some() {
+        if doc.console.channel_index(d).is_some() || doc.console.bus_index(d).is_some() {
             Some(d.clone())
         } else {
             doc.console.channel_of(d).map(|c| c.channel.clone())

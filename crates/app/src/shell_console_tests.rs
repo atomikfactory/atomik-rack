@@ -192,6 +192,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Console", Some("F5")),
             ("Maximise Console", Some("Shift+F5")),
             ("Add Channel\u{2026}", None),
+            ("Route to New Output Bus", Some("Ctrl+G")),
             ("Delay Compensation", None),
         ]
     );
@@ -497,4 +498,179 @@ fn file_new_in_the_shell_makes_the_starter_project_and_is_confirmed_when_dirty()
     );
     assert_eq!(s.core().doc().devices.len(), 1);
     assert_eq!(s.core().doc().devices[0].key, DeviceKey("master".into()));
+}
+
+#[test]
+fn ctrl_g_routes_the_selected_instruments_to_a_new_output_bus() {
+    use atomik_model::console::OutputDest;
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    add_synth(&mut s, "b");
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[DeviceKey("a".into())], Some(&DeviceKey("a".into())));
+    tap(&mut s, Key::Char('g'), Modifiers::CTRL);
+    let doc = s.core().doc();
+    assert_eq!(doc.console.buses.len(), 1);
+    let ch = doc
+        .console
+        .channel_of(&DeviceKey("a".into()))
+        .unwrap()
+        .channel
+        .clone();
+    assert_eq!(
+        atomik_model::console::output_dest(doc, &ch),
+        OutputDest::Bus(doc.console.buses[0].bus.clone())
+    );
+    let other = doc
+        .console
+        .channel_of(&DeviceKey("b".into()))
+        .unwrap()
+        .channel
+        .clone();
+    assert_eq!(
+        atomik_model::console::output_dest(doc, &other),
+        OutputDest::Master
+    );
+}
+
+#[test]
+fn route_to_new_bus_is_a_mixer_menu_item_with_the_shortcut() {
+    let s = shell();
+    let menus = s.menu_model();
+    let mixer = menus.iter().find(|m| m.title == "Mixer").unwrap();
+    let item = mixer
+        .items()
+        .find(|i| i.command == AppCommand::RouteToNewBus)
+        .expect("in the Mixer menu");
+    assert_eq!(item.label, "Route to New Output Bus");
+    assert_eq!(item.shortcut.as_deref(), Some("Ctrl+G"));
+    assert_eq!(
+        AppCommand::RouteToNewBus.command_id(),
+        Some(("mixer.route_to_new_bus", None))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.route_to_new_bus", None),
+        Some(AppCommand::RouteToNewBus)
+    );
+}
+
+#[test]
+fn the_console_is_a_text_context_while_a_bus_name_is_edited() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    s.core_mut()
+        .apply_command(Command::Console(ConsoleCommand::CreateBus {
+            name: "Drums".into(),
+            dest: atomik_model::console::OutputDest::Master,
+        }))
+        .unwrap();
+    tap(&mut s, Key::F(5), Modifiers::NONE);
+    let bus = DeviceKey("bus".into());
+    let p = s
+        .core()
+        .console()
+        .name_center(&bus)
+        .expect("bus strip shown");
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 2,
+    });
+    assert!(s.core().console().is_text_owner());
+    assert!(s.context_stack().is_text());
+    // Letters go to the name, not to a command; Enter commits through the core.
+    for ch in "xy".chars() {
+        tap(&mut s, Key::Char(ch), Modifiers::NONE);
+    }
+    assert_eq!(s.core().console().rename_text().as_deref(), Some("Drumsxy"));
+    tap(&mut s, Key::Enter, Modifiers::NONE);
+    assert_eq!(s.core().doc().console.buses[0].name, "Drumsxy");
+    assert!(!s.core().console().is_text_owner());
+}
+
+fn click_with(s: &mut Shell<NullBackend>, p: Point, modifiers: Modifiers, clicks: u8) {
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers,
+        clicks,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers,
+    });
+}
+
+/// A shell with the console shown and synths `a` and `b`; their channel keys.
+fn console_with_two_channels() -> (Shell<NullBackend>, DeviceKey, DeviceKey) {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    add_synth(&mut s, "b");
+    s.execute(AppCommand::ToggleConsole);
+    let doc = s.core().doc();
+    let ch = |k: &str| {
+        doc.console
+            .channel_of(&DeviceKey(k.into()))
+            .unwrap()
+            .channel
+            .clone()
+    };
+    let (a, b) = (ch("a"), ch("b"));
+    (s, a, b)
+}
+
+fn click_name(s: &mut Shell<NullBackend>, strip: &DeviceKey, modifiers: Modifiers, clicks: u8) {
+    let p = s.core().console().name_center(strip).expect("strip shown");
+    click_with(s, p, modifiers, clicks);
+}
+
+#[test]
+fn a_plain_click_on_one_strip_moves_the_focus_to_the_rack() {
+    let (mut s, a, _) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::NONE, 1);
+    assert_eq!(s.core().console().selected_strips(), [a]);
+    assert_eq!(s.focus(), Pane::Rack);
+    assert!(!s.core().console().focused());
+}
+
+#[test]
+fn a_multi_select_click_keeps_the_console_focus_and_ctrl_g_routes_every_strip() {
+    use atomik_model::console::OutputDest;
+    let (mut s, a, b) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::CTRL, 1);
+    assert_eq!(
+        s.focus(),
+        Pane::Console,
+        "a modifier click keeps the console"
+    );
+    click_name(&mut s, &b, Modifiers::CTRL, 1);
+    assert_eq!(s.core().console().selected_strips().len(), 2);
+    assert_eq!(s.focus(), Pane::Console);
+    tap(&mut s, Key::Char('g'), Modifiers::CTRL);
+    let doc = s.core().doc();
+    assert_eq!(doc.console.buses.len(), 1);
+    let bus = doc.console.buses[0].bus.clone();
+    for ch in [&a, &b] {
+        assert_eq!(
+            atomik_model::console::output_dest(doc, ch),
+            OutputDest::Bus(bus.clone())
+        );
+    }
+}
+
+#[test]
+fn shift_range_and_double_click_rename_keep_the_console_focus() {
+    let (mut s, a, b) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::SHIFT, 1);
+    click_name(&mut s, &b, Modifiers::SHIFT, 1);
+    assert_eq!(s.focus(), Pane::Console);
+    // Back to one plain click (rack focus), then a double-click edits the name in the console.
+    click_name(&mut s, &a, Modifiers::NONE, 1);
+    assert_eq!(s.focus(), Pane::Rack);
+    click_name(&mut s, &a, Modifiers::NONE, 2);
+    assert_eq!(s.focus(), Pane::Console);
+    assert!(s.core().console().is_text_owner());
 }

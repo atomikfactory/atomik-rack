@@ -327,3 +327,155 @@ fn device_meter_values_are_read_by_key_through_the_sink() {
     assert_eq!(c.device_meter_values(&key("nope"), &mut out), None);
     assert_eq!(c.device_meter_values(&key("b"), &mut out), None);
 }
+
+fn create_bus(c: &mut AppCore<RecordingSink>, name: &str) -> DeviceKey {
+    let bus = atomik_model::console::new_bus_key(c.doc());
+    c.apply_command(Command::Console(ConsoleCommand::CreateBus {
+        name: name.into(),
+        dest: atomik_model::console::OutputDest::Master,
+    }))
+    .expect("bus created");
+    bus
+}
+
+#[test]
+fn buses_are_metered_like_channels() {
+    let mut c = two_channels();
+    let bus = create_bus(&mut c, "Drums");
+    let reading = |peak, rms| MeterReading { peak, rms };
+    let (l, r, gr) = (
+        endpoint(&c, &bus, "out_l"),
+        endpoint(&c, &bus, "out_r"),
+        endpoint(&c, &bus, "gr_cv_out"),
+    );
+    let sink = c.sink_mut();
+    sink.meters.insert(l, reading(0.5, 0.25));
+    sink.meters.insert(r, reading(0.4, 0.2));
+    sink.meters.insert(gr, reading(0.75, 0.5));
+    let got = c.console_meter_readings();
+    assert_eq!(got.len(), 4, "two channels, the bus and the master");
+    let b = got.iter().find(|(k, _)| *k == bus).expect("bus reading").1;
+    assert_eq!((b.out_peak_l, b.out_peak_r), (0.5, 0.4));
+    assert!((b.gr - 0.25).abs() < 1e-6, "{b:?}");
+    c.update_console_meters(0.0);
+    c.update_console_meters(0.1);
+    assert!(
+        c.console().meter(&bus).is_some(),
+        "the console view meters the bus"
+    );
+}
+
+#[test]
+fn a_bus_has_a_latency_readout_like_a_channel() {
+    let mut c = two_channels();
+    let bus = create_bus(&mut c, "Drums");
+    assert!(
+        c.latency_readouts().iter().any(|(k, _)| *k == bus),
+        "{:?}",
+        c.latency_readouts()
+    );
+}
+
+fn dest_of(c: &AppCore<RecordingSink>, strip: &DeviceKey) -> atomik_model::console::OutputDest {
+    atomik_model::console::output_dest(c.doc(), strip)
+}
+
+#[test]
+fn the_selected_instruments_are_routed_to_a_new_bus_in_one_undo_step() {
+    use atomik_model::console::OutputDest;
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("b")));
+    let new_bus = atomik_model::console::new_bus_key(c.doc());
+    assert!(c.route_selection_to_new_bus(false));
+    assert_eq!(c.doc().console.buses.len(), 1);
+    assert_eq!(c.doc().console.buses[0].bus, new_bus);
+    assert_eq!(c.doc().console.buses[0].name, "Bus 1");
+    assert_eq!(dest_of(&c, &ka), OutputDest::Bus(new_bus.clone()));
+    assert_eq!(dest_of(&c, &kb), OutputDest::Bus(new_bus.clone()));
+    assert_eq!(dest_of(&c, &new_bus), OutputDest::Master);
+    assert_eq!(
+        c.console().selected_strips(),
+        std::slice::from_ref(&new_bus)
+    );
+    assert!(c.undo());
+    assert!(c.doc().console.buses.is_empty(), "one undo step");
+    assert_eq!(dest_of(&c, &ka), OutputDest::Master);
+    // A second route makes the next default name.
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.route_selection_to_new_bus(false));
+    assert!(c.route_selection_to_new_bus(false));
+    let names: Vec<&str> = c
+        .doc()
+        .console
+        .buses
+        .iter()
+        .map(|b| b.name.as_str())
+        .collect();
+    assert_eq!(names, ["Bus 1", "Bus 2"]);
+}
+
+#[test]
+fn the_console_selection_is_routed_when_the_console_has_the_focus() {
+    use atomik_model::console::OutputDest;
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&kb));
+    assert!(c.route_selection_to_new_bus(true));
+    let bus = c.doc().console.buses[0].bus.clone();
+    assert_eq!(dest_of(&c, &kb), OutputDest::Bus(bus));
+    assert_eq!(
+        dest_of(&c, &ka),
+        OutputDest::Master,
+        "the rack selection was not used"
+    );
+    // With nothing selected in the console, the rack selection is used.
+    let mut c = two_channels();
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.route_selection_to_new_bus(true));
+    assert!(matches!(
+        dest_of(&c, &channel_of(&c, "a")),
+        OutputDest::Bus(_)
+    ));
+}
+
+#[test]
+fn a_selected_bus_can_be_routed_to_a_new_bus_too() {
+    use atomik_model::console::OutputDest;
+    let mut c = two_channels();
+    let first = create_bus(&mut c, "Drums");
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&first));
+    assert!(c.route_selection_to_new_bus(true));
+    let second = c.doc().console.buses[1].bus.clone();
+    assert_eq!(dest_of(&c, &first), OutputDest::Bus(second));
+}
+
+#[test]
+fn routing_without_a_selection_says_what_to_select() {
+    let mut c = two_channels();
+    c.view_mut().set_selection(&[], None);
+    assert!(!c.route_selection_to_new_bus(false));
+    assert!(c.doc().console.buses.is_empty());
+    let msg = c.last_rejection().expect("a message");
+    assert!(msg.contains("Select") && msg.contains("channel"), "{msg}");
+}
+
+#[test]
+fn a_rejected_console_command_is_shown_in_the_console_too() {
+    let mut c = two_channels();
+    create_bus(&mut c, "Drums");
+    let second = create_bus(&mut c, "Synths");
+    assert!(
+        c.apply_command(Command::Console(ConsoleCommand::RenameBus {
+            bus: second,
+            name: "drums".into(),
+        }))
+        .is_err()
+    );
+    let notice = c.console().notice().expect("a console notice").to_string();
+    assert!(notice.contains("already called"), "{notice}");
+}

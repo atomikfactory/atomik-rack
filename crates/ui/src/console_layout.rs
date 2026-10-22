@@ -9,7 +9,9 @@
 //!   section is just its header. The name plate cannot fold.
 //! - The first group (Input … More) is the **upper** part: it starts at y = 0 and scrolls
 //!   vertically. Pan, Fader, Mute/Solo and Name are **pinned** to the bottom of the strip
-//!   (`pinned_top` … height) so the faders are always visible.
+//!   (`pinned_top` … height) so the faders are always visible. Just above the name plate sits
+//!   the **output selector** row ([`OUT_H`]; the master's reads its main outputs), so the
+//!   faders of the strips and the master line up.
 //! - **Short panes:** the upper part keeps at least [`UPPER_MIN_H`] of view. The fader body
 //!   shrinks first (down to [`FADER_MIN_H`]); when a pinned Pan would leave less than
 //!   [`FADER_COMFORT_H`] of fader, Pan becomes the last upper section and the fader readout
@@ -43,6 +45,8 @@ use vello::kurbo::Rect;
 pub const CHANNEL_TYPE: &str = "atomik.channel";
 /// Type id of the console master section device.
 pub const MASTER_TYPE: &str = "atomik.master";
+/// Type id of a console output bus strip device (created by console commands only).
+pub const BUS_TYPE: &str = "atomik.bus";
 /// Prefix of params the UI never shows (set by the app, not saved, not undoable).
 pub const HIDDEN_PREFIX: &str = "internal.";
 
@@ -74,8 +78,10 @@ pub const LCD_H: f64 = 18.0;
 pub const MS_ROW_H: f64 = 24.0;
 /// Name plate height.
 pub const NAME_H: f64 = 30.0;
+/// The output selector row above the name plate (the master shows its main outputs there).
+pub const OUT_H: f64 = 16.0;
 /// Smallest fader body.
-pub const FADER_MIN_H: f64 = 64.0;
+pub const FADER_MIN_H: f64 = 48.0;
 /// Largest fader body.
 pub const FADER_MAX_H: f64 = 260.0;
 /// Smallest visible height of the scrolling upper sections (kept down to a 300 px pane).
@@ -312,6 +318,8 @@ pub struct StripLayout {
     pub fader_lcd: Option<Rect>,
     /// Name plate.
     pub name: Rect,
+    /// The output selector row, just above the name plate (pinned).
+    pub output: Option<Rect>,
     /// Whether Pan is pinned (false in short panes, where it scrolls).
     pub pan_pinned: bool,
 }
@@ -363,6 +371,9 @@ pub struct MasterLayout {
     pub clear_mute: Rect,
     /// Name plate ("MASTER").
     pub name: Rect,
+    /// The row above the name plate, aligned with the strips' output selectors: it reads the
+    /// main outputs.
+    pub output_row: Rect,
     /// Height of the scrolling columns' content.
     pub upper_height: f64,
     /// Top of the pinned fader column part.
@@ -782,8 +793,14 @@ fn plan(height: f64, folds: Folds, has_ms: bool, has_pan: bool) -> Plan {
         0.0
     };
     let fader_folded = fold(SectionId::Fader);
-    let common =
-        NAME_H + SECTION_GAP + ms + HEADER_H + SECTION_GAP + if fader_folded { 0.0 } else { 4.0 };
+    let common = NAME_H
+        + SECTION_GAP
+        + OUT_H
+        + SECTION_GAP
+        + ms
+        + HEADER_H
+        + SECTION_GAP
+        + if fader_folded { 0.0 } else { 4.0 };
     let pan = if has_pan {
         HEADER_H
             + if fold(SectionId::Pan) {
@@ -925,7 +942,13 @@ pub fn strip_layout(desc: &DeviceDescriptor, folds: Folds, height: f64) -> Strip
 
     // Pinned part, from the bottom.
     let name = Rect::new(0.0, height - NAME_H, STRIP_W, height);
-    let mut bottom = name.y0 - SECTION_GAP;
+    let output = Rect::new(
+        inner.0,
+        name.y0 - SECTION_GAP - OUT_H,
+        inner.1,
+        name.y0 - SECTION_GAP,
+    );
+    let mut bottom = output.y0 - SECTION_GAP;
     let mut pinned: Vec<PlacedSection> = Vec::new();
     let (mut meter, mut fader_lcd) = (None, None);
 
@@ -1034,6 +1057,7 @@ pub fn strip_layout(desc: &DeviceDescriptor, folds: Folds, height: f64) -> Strip
         meter,
         fader_lcd,
         name,
+        output: Some(output),
         pan_pinned: plan.pan_pinned,
     }
 }
@@ -1084,9 +1108,15 @@ pub fn master_layout(desc: &DeviceDescriptor, height: f64) -> MasterLayout {
     let fx = bus.1 + COLUMN_GAP;
     let inner = (fx + PAD, fx + STRIP_W - PAD);
     let name = Rect::new(fx, height - NAME_H, fx + STRIP_W, height);
+    let output_row = Rect::new(
+        inner.0,
+        name.y0 - SECTION_GAP - OUT_H,
+        inner.1,
+        name.y0 - SECTION_GAP,
+    );
     let ms = section(
         SectionId::MuteSolo,
-        name.y0 - SECTION_GAP - HEADER_H - MS_ROW_H,
+        output_row.y0 - SECTION_GAP - HEADER_H - MS_ROW_H,
         (fx, fx + STRIP_W),
         MS_ROW_H,
         false,
@@ -1224,6 +1254,7 @@ pub fn master_layout(desc: &DeviceDescriptor, height: f64) -> MasterLayout {
         clear_solo,
         clear_mute,
         name,
+        output_row,
         upper_height,
         pinned_top,
         fader_x: fx,

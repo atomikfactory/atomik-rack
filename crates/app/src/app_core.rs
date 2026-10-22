@@ -11,7 +11,9 @@ use atomik_engine::{
     MAX_COMPENSATION_SECONDS, PdcReport, SongPosition, SongSnapshot, Topology, TransportCommand,
     TransportState, compile_song,
 };
-use atomik_model::console::{CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, is_console_type};
+use atomik_model::console::{
+    BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, is_console_type,
+};
 use atomik_model::{
     ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY, ModelError,
     RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, empty_doc, load_project, new_project_doc,
@@ -88,7 +90,7 @@ pub enum Pane {
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 32;
 
-/// Metered outputs of a console channel: main out left/right, then the gain-reduction CV.
+/// Metered outputs of a console channel or bus: main out left/right, then the gain-reduction CV.
 pub const CHANNEL_METER_SOCKETS: [&str; 3] = ["out_l", "out_r", "gr_cv_out"];
 /// Metered outputs of the master: main out left/right, then the bus compressor's GR CV.
 pub const MASTER_METER_SOCKETS: [&str; 3] = ["main_l", "main_r", "gr_cv_out"];
@@ -172,6 +174,12 @@ pub struct AppCore<S: EngineSink> {
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
+    /// The console selection the last arming followed (see `follow_console_selection`).
+    console_selection: Vec<DeviceKey>,
+    /// A plain click selected exactly one strip: the shell moves the focus to the rack.
+    rack_focus_request: bool,
+    /// `follow_console_selection` saw a new console selection (cleared by the pane event).
+    selection_changed: bool,
     document: Document,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
@@ -326,6 +334,9 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             auto_armed: Vec::new(),
+            console_selection: Vec::new(),
+            rack_focus_request: false,
+            selection_changed: false,
             saved: doc.clone(),
             document: Document::new(doc),
             view,
@@ -596,6 +607,18 @@ impl<S: EngineSink> AppCore<S> {
         for action in &actions {
             self.handle_action(action.clone());
         }
+        if pane == Pane::Console {
+            self.follow_console_selection();
+            // A plain click (no Shift/Ctrl) that left exactly one strip selected hands the keys
+            // to the rack; multi-selection keeps the console (Ctrl+G, scroll keys).
+            let plain = matches!(
+                event,
+                UiEvent::PointerUp { modifiers, .. } if !modifiers.shift && !modifiers.command()
+            );
+            self.rack_focus_request |=
+                plain && self.selection_changed && self.console.selected_strips().len() == 1;
+            self.selection_changed = false;
+        }
         self.after_view_change();
         actions
     }
@@ -726,6 +749,7 @@ impl<S: EngineSink> AppCore<S> {
         self.file = file;
         self.rejection = None;
         self.auto_armed.clear();
+        self.console_selection.clear();
         self.view.set_selected(None);
         self.close_piano_roll();
         self.close_sample_editor();
@@ -1065,20 +1089,23 @@ impl<S: EngineSink> AppCore<S> {
         self.engine_result(result);
     }
 
-    /// Pushes [`RackDoc::solo_silence`] into every console channel's
+    /// Pushes [`RackDoc::solo_silence`] into every console strip's (channel's or bus's)
     /// `internal.solo_silence` param, through the engine only (never a model command: the
     /// param is not stored, saved or undoable).
     fn push_solo_silence(&mut self) {
         let silence = self.doc().solo_silence(&self.registry);
-        let Some(pid) = self
-            .registry
-            .get(CHANNEL_TYPE)
-            .and_then(|f| f.descriptor.param_by_key(SOLO_SILENCE_PARAM))
-            .map(|p| p.id)
-        else {
-            return;
-        };
         for (key, silent) in silence {
+            let Some(type_id) = self.doc().device(&key).map(|d| d.type_id.clone()) else {
+                continue;
+            };
+            let Some(pid) = self
+                .registry
+                .get(&type_id)
+                .and_then(|f| f.descriptor.param_by_key(SOLO_SILENCE_PARAM))
+                .map(|p| p.id)
+            else {
+                continue;
+            };
             if let Some(id) = self.ids.get(&key).copied() {
                 let value = if silent { 1.0 } else { 0.0 };
                 let result = self.sink.set_param(id, pid, value);
@@ -1137,6 +1164,12 @@ impl<S: EngineSink> AppCore<S> {
             .channels
             .iter()
             .map(|c| (&c.channel, CHANNEL_TYPE, CHANNEL_METER_SOCKETS))
+            .chain(
+                console
+                    .buses
+                    .iter()
+                    .map(|b| (&b.bus, BUS_TYPE, CHANNEL_METER_SOCKETS)),
+            )
             .chain(
                 console
                     .master
@@ -1199,13 +1232,12 @@ impl<S: EngineSink> AppCore<S> {
                 .find(|(x, _)| *x == e)
                 .map(|(_, l)| *l)
         };
-        let channels: Vec<&DeviceKey> = self
-            .document
-            .doc()
-            .console
+        let console = &self.document.doc().console;
+        let channels: Vec<&DeviceKey> = console
             .channels
             .iter()
             .map(|c| &c.channel)
+            .chain(console.buses.iter().map(|b| &b.bus))
             .collect();
         self.readouts = self
             .meter_points
@@ -1267,6 +1299,12 @@ impl<S: EngineSink> AppCore<S> {
         &self.console
     }
 
+    /// Whether the last console click asks for the rack to take the focus (a plain click that
+    /// selected one strip); reading it clears it.
+    pub fn take_rack_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.rack_focus_request)
+    }
+
     /// The console view, mutably (bounds, scale, focus).
     pub fn console_mut(&mut self) -> &mut ConsoleView {
         &mut self.console
@@ -1299,7 +1337,60 @@ impl<S: EngineSink> AppCore<S> {
 
     fn reject(&mut self, message: String) {
         self.view.notify_rejected(message.clone());
+        // The console shows it too: it may be maximised over the rack.
+        self.console.notify_rejected(message.clone());
         self.rejection = Some(message);
+    }
+
+    // ------------------------------------------------------------------ output buses
+
+    /// The console strips "Route to new output bus" acts on. With the console focused it is the
+    /// console's selection (when it has one); otherwise the rack's selection, where a channel or
+    /// bus device stands for itself and an instrument for its channel.
+    pub fn strips_to_route(&self, console_focus: bool) -> Vec<DeviceKey> {
+        if console_focus {
+            let selected = self.console.selected_strips();
+            if !selected.is_empty() {
+                return selected;
+            }
+        }
+        let console = &self.doc().console;
+        let mut strips: Vec<DeviceKey> = Vec::new();
+        for key in self.view.selection() {
+            let strip =
+                if console.channel_index(&key).is_some() || console.bus_index(&key).is_some() {
+                    Some(key)
+                } else {
+                    console.channel_of(&key).map(|c| c.channel.clone())
+                };
+            if let Some(strip) = strip
+                && !strips.contains(&strip)
+            {
+                strips.push(strip);
+            }
+        }
+        strips
+    }
+
+    /// Ctrl/Cmd+G: creates a bus named `Bus n` and routes the selected channels (and buses) to
+    /// it, in one undo step; the new bus is then selected in the console. False, with a message,
+    /// when nothing is selected or the model refuses.
+    pub fn route_selection_to_new_bus(&mut self, console_focus: bool) -> bool {
+        let strips = self.strips_to_route(console_focus);
+        if strips.is_empty() {
+            self.reject("Select one or more channels to route to a new output bus".into());
+            return false;
+        }
+        let bus = atomik_model::console::new_bus_key(self.doc());
+        let name = self.doc().console.default_bus_name();
+        let command =
+            Command::Console(atomik_model::ConsoleCommand::RouteToNewBus { strips, name });
+        if self.apply_command(command).is_err() {
+            return false;
+        }
+        self.console.set_selected_strips(&[bus]);
+        self.after_view_change();
+        true
     }
 
     // ------------------------------------------------------------------ live notes
@@ -1852,6 +1943,9 @@ mod containers_tests;
 #[path = "app_core_clipboard_tests.rs"]
 mod clipboard_tests;
 
+#[cfg(test)]
+#[path = "app_core_console_select_tests.rs"]
+mod console_select_tests;
 #[cfg(test)]
 #[path = "app_core_create_tests.rs"]
 mod create_tests;

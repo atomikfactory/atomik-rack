@@ -228,6 +228,9 @@ impl Browser {
             })
             // Audio tracks are created as tracks (AddAudioTrack), never dropped into the rack.
             .filter(|d| d.type_id != AUDIO_TRACK_TYPE)
+            // Output buses are created by the console, never from the browser (even with the
+            // console toggle on).
+            .filter(|d| d.type_id != crate::console_layout::BUS_TYPE)
             // Internal devices are created by the container expansion, never by hand.
             .filter(|d| !is_internal(d.type_id))
             // A container may not nest deeper than the limit.
@@ -701,5 +704,23 @@ mod tests {
         browser.show_console = true;
         assert!(!listed(&browser).contains(&AUDIO_TRACK_TYPE));
         assert!(!listed(&browser).is_empty());
+    }
+
+    #[test]
+    fn the_output_bus_device_is_hidden_from_the_browser() {
+        let reg = registry();
+        assert!(
+            reg.get("atomik.bus").is_some(),
+            "registered, hidden by choice"
+        );
+        let mut browser = Browser::default();
+        let listed =
+            |b: &Browser| -> Vec<&str> { b.rows(&reg).iter().map(|d| d.type_id).collect() };
+        assert!(!listed(&browser).contains(&"atomik.bus"));
+        browser.show_console = true;
+        assert!(listed(&browser).contains(&"atomik.channel"));
+        assert!(!listed(&browser).contains(&"atomik.bus"));
+        browser.query = "bus".into();
+        assert!(!listed(&browser).contains(&"atomik.bus"));
     }
 }
