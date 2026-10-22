@@ -784,6 +784,9 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SliceEditor
             | Pane::SeqEditor
             | Pane::ContainerEditor => ContextStack::new(&[Context::Editor]),
+            Pane::Console if self.core.console().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Mixer])
+            }
             Pane::Console => ContextStack::new(&[Context::Mixer]),
             Pane::PluginParams if self.core.plugin_params().is_text_owner() => {
                 ContextStack::new(&[Context::Text])
@@ -2401,6 +2404,12 @@ impl<B: AudioBackend> Shell<B> {
                         },
                     );
                 }
+                Vec::new()
+            }
+            AppCommand::RouteToNewBus => {
+                // A refusal is already reported (rack and console).
+                let console_focus = self.live_pane(self.focus) == Pane::Console;
+                self.core.route_selection_to_new_bus(console_focus);
                 Vec::new()
             }
             AppCommand::ToggleCompensation => {
