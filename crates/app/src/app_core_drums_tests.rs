@@ -766,7 +766,7 @@ fn step_editor_edits_reach_the_document_and_the_engine_song() {
     assert!(notes(&c).is_empty());
     assert!(c.undo());
     assert_eq!(notes(&c).len(), 1);
-    // Ctrl+Z through the pane's keys undoes too.
+    // Undo is the registry's `edit.undo`, not a key of the pane: Ctrl+Z reaching the view does nothing.
     let undo = UiEvent::Key {
         key: Key::Char('z'),
         modifiers: Modifiers {
@@ -776,7 +776,7 @@ fn step_editor_edits_reach_the_document_and_the_engine_song() {
         pressed: true,
     };
     c.handle_pane_event(Pane::StepEditor, &undo);
-    assert!(notes(&c).is_empty());
+    assert_eq!(notes(&c).len(), 1);
 }
 
 #[test]

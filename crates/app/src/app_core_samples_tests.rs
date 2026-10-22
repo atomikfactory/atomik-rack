@@ -747,12 +747,9 @@ fn the_editor_pane_routes_its_events_and_edits_through_the_core() {
         .set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1000.0, 560.0));
     c.sink_mut().take();
     // Delete removes the selected zone: the view emits a SetZones, the core applies it.
-    let del = UiEvent::Key {
-        key: atomik_ui::Key::Delete,
-        modifiers: atomik_ui::Modifiers::NONE,
-        pressed: true,
-    };
-    let actions = c.handle_pane_event(Pane::SampleEditor, &del);
+    let actions = c
+        .pane_command(Pane::SampleEditor, "edit.delete", None)
+        .expect("the view takes edit.delete");
     assert!(
         actions
             .iter()
