@@ -835,6 +835,27 @@ Try it with the test plugins: [../examples/projects/plugin-demo](../examples/pro
 
 VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
 
+## CV inputs on the effects and the console channel
+
+Added with the Mod Source work. Every input is a CV socket `<target>_cv_in` with a bipolar amount param `<target>_cv_trim` (−1..+1, default +1, shown as "CV trim" on the front panel next to its knob). The CV is clamped to −1..+1, scaled by the trim and added to the target as listed below, then the sum is clamped to the target's range. With the socket unconnected nothing changes: the output is bit-identical to a device without the input, and old patches and projects load unchanged (new params take their defaults). Where the device smooths per batch (reverb, modulation, distortion, EQ, console channel) the CV is its mean over the 64-sample batch and goes through the target's existing smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sources: [cv_in.rs](../crates/devices/src/cv_in.rs) and each device module.
+
+| Device | Socket | Trim param | Mapping |
+|---|---|---|---|
+| Stereo delay | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Stereo delay | `feedback_cv_in` | `feedback_cv_trim` | `0.95 · (feedback/0.95 + trim·cv)`, normalised, 0..0.95 |
+| Reverb | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Modulation | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `drive_cv_in` | `drive_cv_trim` | `48 dB · (drive/48 + trim·cv)`, normalised, 0..48 dB |
+| EQ | `band2_gain_cv_in` … `band5_gain_cv_in` (low shelf, peak 1, peak 2, high shelf) | `band2.gain_cv_trim` … `band5.gain_cv_trim` | `gain + trim·cv·24 dB`, −24..+24 dB (a band whose effective gain is exactly 0 dB is off, as before) |
+| Console channel | `fader_cv_in` | `fader_cv_trim` | fader gain × 10^(trim·cv·24/20): ±24 dB around the fader position |
+| Console channel | `pan_cv_in` | `pan_cv_trim` | `pan + trim·cv`, −1..+1 |
+| Console channel | `send1_level_cv_in` … `send8_level_cv_in` | `send1.level_cv_trim` … `send8.level_cv_trim` | `level + trim·cv·66 dB`, clamped to −60..+6 dB (−60 = off); a send that is switched off stays off |
+
+The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear on the back of the channel's rack device like any other socket. The trims show in the console strip's MORE section. The console and auto-routing code only creates the audio cables of a channel, so the extra CV sockets do not affect it.
+
+---
+
 ## Console master: `atomik.master` (Mixer)
 
 The master section of the console. Source: [crates/devices/src/master.rs](../crates/devices/src/master.rs). The console creates it; you do not add it from the browser. Eight send buses and eight FX returns, a bus compressor with a key input, an insert loop, the fader, the main output and the control-room (`monitor_*`) output.
