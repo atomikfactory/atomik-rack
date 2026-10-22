@@ -83,7 +83,8 @@
 //!   A press captures the pointer for that pane (or the divider) until the release, so drags
 //!   that leave the pane keep working. When the pointer moves to another pane the previous
 //!   one gets a `PointerLeave`.
-//! - **Focus**: the last pane clicked receives the keys.
+//! - **Focus**: the last pane clicked receives the keys, except that a plain click selecting one
+//!   console strip hands them to the rack (Shift/Ctrl clicks and renames keep the console).
 //! - **Keys**: the key router (`atomik_ui::keymap`) first. The shell computes a
 //!   context stack from the focused pane and the text state ([`Shell::context_stack`]), the
 //!   router resolves the chord against the active keymap profile and gives the commands to try
@@ -1726,6 +1727,9 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
+            if pane == Pane::Console && self.core.take_rack_focus_request() {
+                self.set_focus(Pane::Rack);
+            }
             if pane == Pane::FileBrowser {
                 self.follow_browser_resize();
             }

@@ -176,6 +176,10 @@ pub struct AppCore<S: EngineSink> {
     auto_armed: Vec<DeviceKey>,
     /// The console selection the last arming followed (see `follow_console_selection`).
     console_selection: Vec<DeviceKey>,
+    /// A plain click selected exactly one strip: the shell moves the focus to the rack.
+    rack_focus_request: bool,
+    /// `follow_console_selection` saw a new console selection (cleared by the pane event).
+    selection_changed: bool,
     document: Document,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
@@ -331,6 +335,8 @@ impl<S: EngineSink> AppCore<S> {
             clipboard: Clipboard::new(),
             auto_armed: Vec::new(),
             console_selection: Vec::new(),
+            rack_focus_request: false,
+            selection_changed: false,
             saved: doc.clone(),
             document: Document::new(doc),
             view,
@@ -603,6 +609,15 @@ impl<S: EngineSink> AppCore<S> {
         }
         if pane == Pane::Console {
             self.follow_console_selection();
+            // A plain click (no Shift/Ctrl) that left exactly one strip selected hands the keys
+            // to the rack; multi-selection keeps the console (Ctrl+G, scroll keys).
+            let plain = matches!(
+                event,
+                UiEvent::PointerUp { modifiers, .. } if !modifiers.shift && !modifiers.command()
+            );
+            self.rack_focus_request |=
+                plain && self.selection_changed && self.console.selected_strips().len() == 1;
+            self.selection_changed = false;
         }
         self.after_view_change();
         actions
@@ -1282,6 +1297,12 @@ impl<S: EngineSink> AppCore<S> {
     /// The console view.
     pub fn console(&self) -> &ConsoleView {
         &self.console
+    }
+
+    /// Whether the last console click asks for the rack to take the focus (a plain click that
+    /// selected one strip); reading it clears it.
+    pub fn take_rack_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.rack_focus_request)
     }
 
     /// The console view, mutably (bounds, scale, focus).

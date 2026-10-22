@@ -172,6 +172,7 @@ impl<S: EngineSink> AppCore<S> {
             return;
         }
         self.console_selection = selection;
+        self.selection_changed = true;
         let doc = self.document.doc();
         let Some(device) = self
             .console

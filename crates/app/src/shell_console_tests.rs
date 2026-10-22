@@ -589,3 +589,88 @@ fn the_console_is_a_text_context_while_a_bus_name_is_edited() {
     assert_eq!(s.core().doc().console.buses[0].name, "Drumsxy");
     assert!(!s.core().console().is_text_owner());
 }
+
+fn click_with(s: &mut Shell<NullBackend>, p: Point, modifiers: Modifiers, clicks: u8) {
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers,
+        clicks,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers,
+    });
+}
+
+/// A shell with the console shown and synths `a` and `b`; their channel keys.
+fn console_with_two_channels() -> (Shell<NullBackend>, DeviceKey, DeviceKey) {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    add_synth(&mut s, "b");
+    s.execute(AppCommand::ToggleConsole);
+    let doc = s.core().doc();
+    let ch = |k: &str| {
+        doc.console
+            .channel_of(&DeviceKey(k.into()))
+            .unwrap()
+            .channel
+            .clone()
+    };
+    let (a, b) = (ch("a"), ch("b"));
+    (s, a, b)
+}
+
+fn click_name(s: &mut Shell<NullBackend>, strip: &DeviceKey, modifiers: Modifiers, clicks: u8) {
+    let p = s.core().console().name_center(strip).expect("strip shown");
+    click_with(s, p, modifiers, clicks);
+}
+
+#[test]
+fn a_plain_click_on_one_strip_moves_the_focus_to_the_rack() {
+    let (mut s, a, _) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::NONE, 1);
+    assert_eq!(s.core().console().selected_strips(), [a]);
+    assert_eq!(s.focus(), Pane::Rack);
+    assert!(!s.core().console().focused());
+}
+
+#[test]
+fn a_multi_select_click_keeps_the_console_focus_and_ctrl_g_routes_every_strip() {
+    use atomik_model::console::OutputDest;
+    let (mut s, a, b) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::CTRL, 1);
+    assert_eq!(
+        s.focus(),
+        Pane::Console,
+        "a modifier click keeps the console"
+    );
+    click_name(&mut s, &b, Modifiers::CTRL, 1);
+    assert_eq!(s.core().console().selected_strips().len(), 2);
+    assert_eq!(s.focus(), Pane::Console);
+    tap(&mut s, Key::Char('g'), Modifiers::CTRL);
+    let doc = s.core().doc();
+    assert_eq!(doc.console.buses.len(), 1);
+    let bus = doc.console.buses[0].bus.clone();
+    for ch in [&a, &b] {
+        assert_eq!(
+            atomik_model::console::output_dest(doc, ch),
+            OutputDest::Bus(bus.clone())
+        );
+    }
+}
+
+#[test]
+fn shift_range_and_double_click_rename_keep_the_console_focus() {
+    let (mut s, a, b) = console_with_two_channels();
+    click_name(&mut s, &a, Modifiers::SHIFT, 1);
+    click_name(&mut s, &b, Modifiers::SHIFT, 1);
+    assert_eq!(s.focus(), Pane::Console);
+    // Back to one plain click (rack focus), then a double-click edits the name in the console.
+    click_name(&mut s, &a, Modifiers::NONE, 1);
+    assert_eq!(s.focus(), Pane::Rack);
+    click_name(&mut s, &a, Modifiers::NONE, 2);
+    assert_eq!(s.focus(), Pane::Console);
+    assert!(s.core().console().is_text_owner());
+}
