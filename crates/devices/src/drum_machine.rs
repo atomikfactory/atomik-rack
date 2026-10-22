@@ -34,6 +34,15 @@
 //!   voice (and cancels every pending hit) of the *other* pads in group *g* over 2 ms. The
 //!   hit also retriggers its own pad: previous voices of pad *p* fade over 2 ms, the new voices
 //!   start at once. Group 0 chokes nothing and is never choked. Groups are read live.
+//! * **CV.** `level_cv_in` and `pitch_cv_in` (trims `master.level_cv_trim` and `pitch_cv_trim`;
+//!   fixed ranges 24 dB and 24 semitones) act on all pads and on their individual outputs. Pitch
+//!   acts on voices already sounding too: the batch mean of the CV sets a target semitone offset
+//!   and the playback ratio glides to it linearly over each batch. Per pad, `padN_gate_cv_in`
+//!   triggers the pad on a rise above 0.5 (velocity `(gate - 0.5) * 2`, so 1.0 is full velocity)
+//!   and releases it on the fall; `padN_gate_cv_out` is `0.5 + velocity / 2` from every trigger
+//!   (note or gate in) to its note-off (or the falling gate edge), else 0. A source that never
+//!   sends a note-off keeps the gate high until all-notes-off or reset. Unconnected sockets
+//!   change nothing.
 //! * **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes only to that
 //!   pair; other pads go to `out_l`/`out_r`. `master.level` and the soft limiter
 //!   (`poly_synth::soft_limit`) apply to the main mix only; individual outputs are unlimited and
@@ -54,11 +63,11 @@ use atomik_device_sdk::{
 use atomik_dsp::Smoother;
 use std::sync::Arc;
 
-use crate::cv_in::db_gain;
+use crate::cv_in::{batch_mean, clean, db_gain};
 use crate::poly_synth::soft_limit;
 
 mod voice;
-use voice::{PadCv, Pending, Slot, Voice};
+use voice::{Pending, Slot, Voice, VoiceCv};
 
 /// Number of pads.
 pub const PAD_COUNT: usize = 16;
@@ -80,13 +89,20 @@ pub(crate) fn is_pad_zone(zone: &Zone, key: u8) -> bool {
 }
 
 const PARAMS_PER_PAD: usize = 8;
-/// Params after the per-pad blocks: per pad `level_cv_trim`.
-const CV_PARAMS_PER_PAD: usize = 1;
-/// Fixed range of the level CV in dB (times `padN.level_cv_trim`).
-const CV_LEVEL_RANGE_DB: f32 = 24.0;
+/// Params after the per-pad blocks: `master.level_cv_trim`, then `pitch_cv_trim`.
 const CV_PARAM_BASE: usize = 1 + PAD_COUNT * PARAMS_PER_PAD;
-const PARAM_COUNT: usize = CV_PARAM_BASE + PAD_COUNT * CV_PARAMS_PER_PAD;
-const SOCKET_COUNT: usize = 3 + PAD_COUNT * 3;
+const P_LEVEL_CV_TRIM: u32 = CV_PARAM_BASE as u32;
+const P_PITCH_CV_TRIM: u32 = CV_PARAM_BASE as u32 + 1;
+const PARAM_COUNT: usize = CV_PARAM_BASE + 2;
+/// Fixed range of the level CV in dB (times `master.level_cv_trim`).
+const CV_LEVEL_RANGE_DB: f32 = 24.0;
+/// Fixed range of the pitch CV in semitones (times `pitch_cv_trim`).
+const CV_PITCH_RANGE_ST: f32 = 24.0;
+/// A gate above this level is high.
+const GATE_THRESHOLD: f32 = 0.5;
+/// Lowest gate-out level of a held pad (velocity 1/127), so a held gate is always above the threshold.
+const GATE_OUT_MIN: f32 = 0.5 + 0.5 / 127.0;
+const SOCKET_COUNT: usize = 3 + PAD_COUNT * 2 + 2 + PAD_COUNT * 2;
 
 const P_MASTER: u32 = 0;
 const K_LEVEL: u32 = 0;
@@ -209,17 +225,24 @@ macro_rules! pad_params {
                     false,
                 ),
             )*
-            $(
-                param(
-                    CV_PARAM_BASE as u32 + ($n - 1) * CV_PARAMS_PER_PAD as u32,
-                    concat!("pad", $n, ".level_cv_trim"),
-                    concat!("Pad ", $n, " level CV trim"),
-                    (-1.0, 1.0, 1.0),
-                    Taper::Linear,
-                    Unit::None,
-                    false,
-                ),
-            )*
+            param(
+                P_LEVEL_CV_TRIM,
+                "master.level_cv_trim",
+                "Level CV trim",
+                (-1.0, 1.0, 1.0),
+                Taper::Linear,
+                Unit::None,
+                false,
+            ),
+            param(
+                P_PITCH_CV_TRIM,
+                "pitch_cv_trim",
+                "Pitch CV trim",
+                (-1.0, 1.0, 1.0),
+                Taper::Linear,
+                Unit::None,
+                false,
+            ),
         ]
     };
 }
@@ -236,9 +259,15 @@ const fn pad_out(pad: usize) -> (SocketId, SocketId) {
     (SocketId(3 + 2 * pad as u16), SocketId(4 + 2 * pad as u16))
 }
 
-/// The level CV input socket of zero-based pad `pad`.
-const fn pad_cv_in(pad: usize) -> SocketId {
-    SocketId(3 + 2 * PAD_COUNT as u16 + pad as u16)
+const LEVEL_CV_IN: SocketId = SocketId(3 + 2 * PAD_COUNT as u16);
+const PITCH_CV_IN: SocketId = SocketId(4 + 2 * PAD_COUNT as u16);
+
+/// The gate input and gate output sockets of zero-based pad `pad`.
+const fn pad_gate(pad: usize) -> (SocketId, SocketId) {
+    (
+        SocketId(5 + 2 * PAD_COUNT as u16 + 2 * pad as u16),
+        SocketId(6 + 2 * PAD_COUNT as u16 + 2 * pad as u16),
+    )
 }
 
 const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
@@ -248,6 +277,16 @@ const fn cv_in(id: u16, key: &'static str, name: &'static str) -> SocketDescript
         name,
         kind: SocketKind::Cv,
         direction: Direction::Input,
+    }
+}
+
+const fn cv_out(id: u16, key: &'static str, name: &'static str) -> SocketDescriptor {
+    SocketDescriptor {
+        id: SocketId(id),
+        key,
+        name,
+        kind: SocketKind::Cv,
+        direction: Direction::Output,
     }
 }
 
@@ -285,11 +324,18 @@ macro_rules! pad_sockets {
                     concat!("Pad ", $n, " out R"),
                 ),
             )*
+            cv_in(3 + 2 * PAD_COUNT as u16, "level_cv_in", "Level CV"),
+            cv_in(4 + 2 * PAD_COUNT as u16, "pitch_cv_in", "Pitch CV"),
             $(
                 cv_in(
-                    3 + 2 * PAD_COUNT as u16 + ($n - 1),
-                    concat!("pad", $n, "_level_cv_in"),
-                    concat!("Pad ", $n, " level CV"),
+                    5 + 2 * PAD_COUNT as u16 + ($n - 1) * 2,
+                    concat!("pad", $n, "_gate_cv_in"),
+                    concat!("Pad ", $n, " gate in"),
+                ),
+                cv_out(
+                    6 + 2 * PAD_COUNT as u16 + ($n - 1) * 2,
+                    concat!("pad", $n, "_gate_cv_out"),
+                    concat!("Pad ", $n, " gate out"),
                 ),
             )*
         ]
@@ -341,8 +387,6 @@ pub(crate) struct Pad {
     pub gate: bool,
     pub choke: u8,
     pub velocity: f32,
-    /// `padN.level_cv_trim` times the fixed range: dB per unit CV.
-    pub cv_level_db: f32,
 }
 
 impl Pad {
@@ -357,7 +401,6 @@ impl Pad {
             gate: false,
             choke: 0,
             velocity: 0.7,
-            cv_level_db: CV_LEVEL_RANGE_DB,
         }
     }
 
@@ -411,6 +454,22 @@ fn scan_pads(map: Option<&SampleMap>) -> [PadZones; PAD_COUNT] {
     out
 }
 
+/// The gate-out level of a hit at `velocity`: `0.5 + velocity / 2`, never below one MIDI step
+/// above 0.5, so a held pad always reads as high.
+fn gate_level(velocity: f32) -> f32 {
+    let v = if velocity.is_nan() {
+        0.0
+    } else {
+        velocity.clamp(0.0, 1.0)
+    };
+    (GATE_THRESHOLD + 0.5 * v).max(GATE_OUT_MIN)
+}
+
+/// The velocity a gate-in level stands for: the inverse of [`gate_level`]; 1.0 is full velocity.
+fn gate_velocity(gate: f32) -> f32 {
+    ((gate - GATE_THRESHOLD) * 2.0).clamp(0.0, 1.0)
+}
+
 /// The drum machine device.
 #[derive(Debug)]
 pub struct DrumMachine {
@@ -419,6 +478,16 @@ pub struct DrumMachine {
     shared: Shared,
     master: Smoother,
     fresh: bool,
+    /// `master.level_cv_trim` times the fixed range: dB per unit CV.
+    cv_level_db: f32,
+    /// `pitch_cv_trim` times the fixed range: semitones per unit CV.
+    cv_pitch_st: f32,
+    /// Pitch CV target of the previous batch in semitones (`None` until a batch has used it).
+    pitch_prev: Option<f32>,
+    /// Gate-out level per pad: 0 while released, else the encoded velocity of the hit.
+    gate_out: [f32; PAD_COUNT],
+    /// Gate-in state per pad (above the threshold at the last sample looked at).
+    gate_high: [bool; PAD_COUNT],
     voices: Vec<Voice>,
     next_order: u64,
     zones: [PadZones; PAD_COUNT],
@@ -450,6 +519,11 @@ impl DrumMachine {
             },
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             fresh: true,
+            cv_level_db: CV_LEVEL_RANGE_DB,
+            cv_pitch_st: CV_PITCH_RANGE_ST,
+            pitch_prev: None,
+            gate_out: [0.0; PAD_COUNT],
+            gate_high: [false; PAD_COUNT],
             voices: vec![Voice::new(); VOICES],
             next_order: 0,
             zones: [PadZones::EMPTY; PAD_COUNT],
@@ -482,10 +556,16 @@ impl DrumMachine {
                 .set_target(PARAMS[P_MASTER as usize].db_param_gain(v));
             return;
         }
-        if id as usize >= CV_PARAM_BASE {
-            let j = id - CV_PARAM_BASE as u32;
-            self.pads[(j / CV_PARAMS_PER_PAD as u32) as usize].cv_level_db = v * CV_LEVEL_RANGE_DB;
-            return;
+        match id {
+            P_LEVEL_CV_TRIM => {
+                self.cv_level_db = v * CV_LEVEL_RANGE_DB;
+                return;
+            }
+            P_PITCH_CV_TRIM => {
+                self.cv_pitch_st = v * CV_PITCH_RANGE_ST;
+                return;
+            }
+            _ => {}
         }
         let (pad, k) = (
             ((id - 1) / PARAMS_PER_PAD as u32) as usize,
@@ -505,6 +585,19 @@ impl DrumMachine {
             K_VELOCITY => p.velocity = v,
             _ => {}
         }
+    }
+
+    /// A trigger of `pad` (zero-based): raises its gate out to the encoded velocity and plays
+    /// the hit.
+    fn trigger(&mut self, pad: u8, velocity: f32) {
+        self.gate_out[usize::from(pad)] = gate_level(velocity);
+        self.note_on(pad, velocity);
+    }
+
+    /// The end of a trigger of `pad`: lowers its gate out and releases a gate-mode pad.
+    fn release(&mut self, pad: u8) {
+        self.gate_out[usize::from(pad)] = 0.0;
+        self.note_off(pad);
     }
 
     /// A hit on `pad` (zero-based) at `velocity`.
@@ -593,15 +686,16 @@ impl DrumMachine {
         match kind {
             NoteKind::On { key, velocity } => {
                 if let Some(p) = pad_of(key) {
-                    self.note_on(p, velocity);
+                    self.trigger(p, velocity);
                 }
             }
             NoteKind::Off { key } => {
                 if let Some(p) = pad_of(key) {
-                    self.note_off(p);
+                    self.release(p);
                 }
             }
             NoteKind::AllOff => {
+                self.gate_out = [0.0; PAD_COUNT];
                 let fade = self.samples(FADE_MS);
                 for v in self.voices.iter_mut().filter(|v| v.active) {
                     v.pending = None;
@@ -657,6 +751,9 @@ impl Device for DrumMachine {
             v.kill();
         }
         self.next_order = 0;
+        self.gate_out = [0.0; PAD_COUNT];
+        self.gate_high = [false; PAD_COUNT];
+        self.pitch_prev = None;
         let m = self.master.target();
         self.master.set_immediate(m);
         self.fresh = true;
@@ -744,17 +841,42 @@ impl Device for DrumMachine {
             let (l, rr) = pad_out(p);
             *r = ctx.is_connected(l) || ctx.is_connected(rr);
         }
-        let mut cv = PadCv::new();
-        for p in 0..PAD_COUNT {
-            let lv = pad_cv_in(p);
-            if ctx.is_connected(lv) {
-                cv.level_on[p] = true;
-                let src = *ctx.input(lv);
-                for (g, c) in cv.level[p].iter_mut().zip(&src) {
-                    *g = db_gain(self.pads[p].cv_level_db, *c);
-                }
+        let mut cv = VoiceCv::new();
+        if ctx.is_connected(LEVEL_CV_IN) {
+            cv.level_on = true;
+            let src = *ctx.input(LEVEL_CV_IN);
+            for (g, c) in cv.level.iter_mut().zip(&src) {
+                *g = db_gain(self.cv_level_db, *c);
             }
         }
+        if ctx.is_connected(PITCH_CV_IN) {
+            // Per-batch control rate: the batch mean sets the target and the pitch glides there
+            // linearly (in semitones) over the batch, for every sounding voice.
+            cv.pitch_on = true;
+            let target = self.cv_pitch_st * batch_mean(ctx.input(PITCH_CV_IN));
+            let from = self.pitch_prev.unwrap_or(target);
+            for (n, r) in cv.pitch.iter_mut().enumerate() {
+                let st = from + (target - from) * ((n + 1) as f32 / BATCH as f32);
+                *r = f64::from((st / 12.0).exp2());
+            }
+            self.pitch_prev = Some(target);
+        } else {
+            self.pitch_prev = None;
+        }
+        let mut gate_in: [Option<&[f32; BATCH]>; PAD_COUNT] = [None; PAD_COUNT];
+        let mut gate_out_on = [false; PAD_COUNT];
+        for p in 0..PAD_COUNT {
+            let (gi, go) = pad_gate(p);
+            if ctx.is_connected(gi) {
+                gate_in[p] = Some(ctx.input(gi));
+            } else if self.gate_high[p] {
+                // Unplugged while high: counts as the falling edge.
+                self.gate_high[p] = false;
+                self.release(p as u8);
+            }
+            gate_out_on[p] = ctx.is_connected(go);
+        }
+        let mut gate_out = [[0.0f32; BATCH]; PAD_COUNT];
         let mut mix = [[0.0f32; BATCH]; 2];
         let mut pad_mix = [[[0.0f32; BATCH]; 2]; PAD_COUNT];
         let events = ctx.notes_in(NOTES_IN);
@@ -766,9 +888,35 @@ impl Device for DrumMachine {
                 self.handle(events[next].kind);
                 next += 1;
             }
-            let end = events
+            // Gate-in edges at this sample (after the notes), then the next one ends the segment.
+            for (p, g) in gate_in.iter().enumerate() {
+                let Some(g) = g else { continue };
+                let high = clean(g[start]) > GATE_THRESHOLD;
+                if high != self.gate_high[p] {
+                    self.gate_high[p] = high;
+                    if high {
+                        self.trigger(p as u8, gate_velocity(clean(g[start])));
+                    } else {
+                        self.release(p as u8);
+                    }
+                }
+            }
+            let mut end = events
                 .get(next)
                 .map_or(BATCH, |e| (e.offset as usize).clamp(start + 1, BATCH));
+            for (p, g) in gate_in.iter().enumerate() {
+                let Some(g) = g else { continue };
+                let high = self.gate_high[p];
+                if let Some(i) = (start + 1..end).find(|&i| (clean(g[i]) > GATE_THRESHOLD) != high)
+                {
+                    end = i;
+                }
+            }
+            for (p, on) in gate_out_on.iter().enumerate() {
+                if *on {
+                    gate_out[p][start..end].fill(self.gate_out[p]);
+                }
+            }
             let sh = self.shared;
             let Self {
                 voices,
@@ -810,6 +958,11 @@ impl Device for DrumMachine {
         }
         *ctx.output(OUT_L) = mix[0];
         *ctx.output(OUT_R) = mix[1];
+        for (p, on) in gate_out_on.iter().enumerate() {
+            if *on {
+                *ctx.output(pad_gate(p).1) = gate_out[p];
+            }
+        }
         for (p, on) in routed.iter().enumerate() {
             if !on {
                 continue;

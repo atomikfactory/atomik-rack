@@ -47,18 +47,23 @@ const IDLE_ZONE: Zone = Zone {
     reverse: false,
 };
 
-/// Per-pad CV modulation of one batch: for a pad whose level CV socket is cabled, the linear
-/// gain (`10^(trim * range * cv / 20)`) of every sample.
-pub(super) struct PadCv {
-    pub level_on: [bool; PAD_COUNT],
-    pub level: [[f32; BATCH]; PAD_COUNT],
+/// Global CV modulation of one batch: the linear level gain (`10^(trim * range * cv / 20)`)
+/// and the playback-ratio factor (`2^(semitones / 12)`) of every sample, each only when its
+/// socket is cabled.
+pub(super) struct VoiceCv {
+    pub level_on: bool,
+    pub level: [f32; BATCH],
+    pub pitch_on: bool,
+    pub pitch: [f64; BATCH],
 }
 
-impl PadCv {
+impl VoiceCv {
     pub fn new() -> Self {
         Self {
-            level_on: [false; PAD_COUNT],
-            level: [[1.0; BATCH]; PAD_COUNT],
+            level_on: false,
+            level: [1.0; BATCH],
+            pitch_on: false,
+            pitch: [1.0; BATCH],
         }
     }
 
@@ -68,10 +73,10 @@ impl PadCv {
     }
 }
 
-/// [`PadCv`] seen from the first sample of one render segment.
+/// [`VoiceCv`] seen from the first sample of one render segment.
 #[derive(Clone, Copy)]
 pub(super) struct CvView<'a> {
-    cv: &'a PadCv,
+    cv: &'a VoiceCv,
     start: usize,
 }
 
@@ -283,14 +288,17 @@ impl Voice {
             };
             let tail = tail_gain(&self.head, &self.zone, sh.sample_rate);
             let mut g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
-            let pad = usize::from(self.pad);
             let at = cv.start + n;
-            if cv.cv.level_on[pad] {
-                g *= cv.cv.level[pad][at];
+            if cv.cv.level_on {
+                g *= cv.cv.level[at];
             }
             out_l[n] += xl * seg.pan_l * g;
             out_r[n] += xr * seg.pan_r * g;
-            self.head.advance(seg.ratio);
+            self.head.advance(if cv.cv.pitch_on {
+                seg.ratio * cv.cv.pitch[at]
+            } else {
+                seg.ratio
+            });
             let mut ended = self.head.finished();
             if !(self.gate && self.held) {
                 self.decay *= pads[usize::from(self.pad)].decay_coef;
