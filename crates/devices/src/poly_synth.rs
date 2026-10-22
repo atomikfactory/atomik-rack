@@ -29,7 +29,7 @@ use atomik_dsp::{
     balance_gains, note_to_hz,
 };
 
-use crate::cv::{clean, db_gain};
+use crate::cv_in::{clean, db_gain};
 
 /// Number of preallocated voices.
 pub const MAX_VOICES: usize = 16;
@@ -382,35 +382,35 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
     ),
     param(
         P_CV_PITCH,
-        "cv.pitch_amount",
-        "CV to pitch",
-        (-24.0, 24.0, 12.0),
+        "pitch_cv_trim",
+        "Pitch CV trim",
+        (-1.0, 1.0, 1.0),
         Lin,
-        Unit::Semitones,
+        Unit::None,
         false,
     ),
     param(
         P_CV_RESONANCE,
-        "cv.resonance_amount",
-        "CV to resonance",
-        (-1.0, 1.0, 0.5),
+        "filter.resonance_cv_trim",
+        "Resonance CV trim",
+        (-1.0, 1.0, 1.0),
         Lin,
-        Unit::Percent,
+        Unit::None,
         false,
     ),
     param(
         P_CV_LEVEL,
-        "cv.level_amount",
-        "CV to level",
-        (-24.0, 24.0, 12.0),
+        "master.level_cv_trim",
+        "Level CV trim",
+        (-1.0, 1.0, 1.0),
         Lin,
-        Unit::Db,
+        Unit::None,
         false,
     ),
     param(
         P_CV_PAN,
-        "cv.pan_amount",
-        "CV to pan",
+        "pan_cv_trim",
+        "Pan CV trim",
         (-1.0, 1.0, 1.0),
         Lin,
         Unit::None,
@@ -531,6 +531,10 @@ pub fn factory() -> DeviceFactory {
 
 /// Samples between control-rate updates (pitch, cutoff) of a voice.
 const CONTROL_INTERVAL: u32 = 16;
+/// Fixed range of the pitch CV in semitones (times `pitch_cv_trim`).
+const CV_PITCH_RANGE: f32 = 24.0;
+/// Fixed range of the level CV in dB (times `master.level_cv_trim`).
+const CV_LEVEL_RANGE_DB: f32 = 24.0;
 /// Per-voice output gain before the master stage.
 const VOICE_GAIN: f32 = 0.5;
 /// Glide time for velocity changes on retrigger.
@@ -832,8 +836,8 @@ impl PolySynth {
                 lfo_to_cutoff: 0.0,
                 velocity_amount: 0.5,
                 cv_amount: 2.0,
-                cv_pitch_amount: 12.0,
-                cv_resonance_amount: 0.5,
+                cv_pitch_amount: CV_PITCH_RANGE,
+                cv_resonance_amount: 1.0,
                 cv_resonance_on: false,
             },
             voices: std::array::from_fn(|i| Voice::new(derive_seed(0, i as u64 + 1))),
@@ -841,7 +845,7 @@ impl PolySynth {
             next_order: 0,
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
-            cv_level_db: 12.0,
+            cv_level_db: CV_LEVEL_RANGE_DB,
             cv_pan_amount: 1.0,
             fresh: true,
             seed: 0,
@@ -903,9 +907,9 @@ impl PolySynth {
             P_LFO_CUTOFF => self.shared.lfo_to_cutoff = v,
             P_VEL_AMP => self.shared.velocity_amount = v,
             P_CV_AMOUNT => self.shared.cv_amount = v,
-            P_CV_PITCH => self.shared.cv_pitch_amount = v,
+            P_CV_PITCH => self.shared.cv_pitch_amount = v * CV_PITCH_RANGE,
             P_CV_RESONANCE => self.shared.cv_resonance_amount = v,
-            P_CV_LEVEL => self.cv_level_db = v,
+            P_CV_LEVEL => self.cv_level_db = v * CV_LEVEL_RANGE_DB,
             P_CV_PAN => self.cv_pan_amount = v,
             P_VOICES => {
                 self.voice_limit = (v.round().max(1.0) as usize).min(MAX_VOICES);
@@ -1198,10 +1202,10 @@ mod tests {
                 "cv.cutoff_amount",
                 "voices",
                 "master.level",
-                "cv.pitch_amount",
-                "cv.resonance_amount",
-                "cv.level_amount",
-                "cv.pan_amount",
+                "pitch_cv_trim",
+                "filter.resonance_cv_trim",
+                "master.level_cv_trim",
+                "pan_cv_trim",
             ],
             &[
                 "notes_in",
@@ -1429,7 +1433,7 @@ mod tests {
     #[test]
     fn process_pitch_cv_shifts_by_amount_semitones() {
         let freq = |cv: Option<f32>, amount: f32| {
-            let o = cv_render(pure_sine, "pitch_cv_in", "cv.pitch_amount", amount, cv);
+            let o = cv_render(pure_sine, "pitch_cv_in", "pitch_cv_trim", amount / 24.0, cv);
             dominant_frequency(&o[0][4_800..], SR)
         };
         let up = freq(Some(0.5), 12.0); // +6 semitones
@@ -1455,7 +1459,7 @@ mod tests {
                     h.set_param("master.level", -40.0);
                 },
                 "resonance_cv_in",
-                "cv.resonance_amount",
+                "filter.resonance_cv_trim",
                 amount,
                 cv,
             );
@@ -1484,8 +1488,8 @@ mod tests {
                     h.set_param("master.level", -24.0);
                 },
                 "level_cv_in",
-                "cv.level_amount",
-                amount,
+                "master.level_cv_trim",
+                amount / 24.0,
                 cv,
             );
             rms(&o[0][9_600..])
@@ -1507,7 +1511,7 @@ mod tests {
     #[test]
     fn process_pan_cv_balances_left_and_right() {
         let sides = |cv: Option<f32>, amount: f32| {
-            let o = cv_render(pure_sine, "pan_cv_in", "cv.pan_amount", amount, cv);
+            let o = cv_render(pure_sine, "pan_cv_in", "pan_cv_trim", amount, cv);
             (rms(&o[0][9_600..]), rms(&o[1][9_600..]))
         };
         let (l0, r0) = sides(None, 1.0);
@@ -1542,10 +1546,10 @@ mod tests {
             h.set_param("filter.env_amount", 0.6);
             if let Some(a) = amounts {
                 for (k, v) in [
-                    "cv.pitch_amount",
-                    "cv.resonance_amount",
-                    "cv.level_amount",
-                    "cv.pan_amount",
+                    "pitch_cv_trim",
+                    "filter.resonance_cv_trim",
+                    "master.level_cv_trim",
+                    "pan_cv_trim",
                 ]
                 .into_iter()
                 .zip(a)
@@ -1567,7 +1571,7 @@ mod tests {
     #[test]
     fn process_new_cv_inputs_at_zero_do_not_change_the_sound() {
         // Connected but silent CV: pitch, resonance and level add nothing.
-        let base = cv_render(pure_sine, "none", "cv.pitch_amount", 12.0, None);
+        let base = cv_render(pure_sine, "none", "pitch_cv_trim", 0.5, None);
         let (mut h, _) = synth();
         pure_sine(&mut h);
         for s in ["pitch_cv_in", "resonance_cv_in", "level_cv_in"] {

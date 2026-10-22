@@ -48,7 +48,7 @@ use atomik_device_sdk::{
 use atomik_dsp::{FilterMode, Smoother, Svf};
 use std::sync::Arc;
 
-use crate::cv::{clean, db_gain};
+use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::soft_limit;
 
 mod voice;
@@ -81,6 +81,10 @@ const FILTER_CONTROL_INTERVAL: usize = 16;
 const MAX_CUTOFF_RATIO: f32 = 0.45;
 /// Damping `1/Q` of the 12 dB low-pass (Butterworth, Q = 1/sqrt 2).
 const FILTER_K: f32 = std::f32::consts::SQRT_2;
+/// Fixed range of the cutoff CV in octaves (times `filter.cutoff_cv_trim`).
+const CV_CUTOFF_RANGE_OCT: f32 = 4.0;
+/// Fixed range of the level CV in dB (times `master.level_cv_trim`).
+const CV_LEVEL_RANGE_DB: f32 = 24.0;
 
 const P_MASTER: u32 = 0;
 const P_VOICES: u32 = 1;
@@ -213,20 +217,20 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
     ),
     param(
         P_CV_CUTOFF,
-        "cv.cutoff_amount",
-        "CV to cutoff",
-        (-4.0, 4.0, 2.0),
+        "filter.cutoff_cv_trim",
+        "Cutoff CV trim",
+        (-1.0, 1.0, 1.0),
         Taper::Linear,
-        Unit::Octaves,
+        Unit::None,
         false,
     ),
     param(
         P_CV_LEVEL,
-        "cv.level_amount",
-        "CV to level",
-        (-24.0, 24.0, 12.0),
+        "master.level_cv_trim",
+        "Level CV trim",
+        (-1.0, 1.0, 1.0),
         Taper::Linear,
-        Unit::Db,
+        Unit::None,
         false,
     ),
 ];
@@ -397,8 +401,8 @@ impl LoopSlicer {
                 tune_semi: 0.0,
                 cv_pitch: 12.0,
                 filter_cutoff: FILTER_OPEN_HZ,
-                cv_cutoff: 2.0,
-                cv_level_db: 12.0,
+                cv_cutoff: CV_CUTOFF_RANGE_OCT,
+                cv_level_db: CV_LEVEL_RANGE_DB,
             },
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             fresh: true,
@@ -460,8 +464,8 @@ impl LoopSlicer {
             P_VEL_AMP => self.shared.velocity_amount = v,
             P_CV_PITCH => self.shared.cv_pitch = v,
             P_FILTER_CUTOFF => self.shared.filter_cutoff = v,
-            P_CV_CUTOFF => self.shared.cv_cutoff = v,
-            P_CV_LEVEL => self.shared.cv_level_db = v,
+            P_CV_CUTOFF => self.shared.cv_cutoff = v * CV_CUTOFF_RANGE_OCT,
+            P_CV_LEVEL => self.shared.cv_level_db = v * CV_LEVEL_RANGE_DB,
             _ => {}
         }
     }

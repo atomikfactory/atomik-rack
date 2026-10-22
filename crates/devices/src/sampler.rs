@@ -60,7 +60,7 @@ use atomik_dsp::{
 };
 use std::sync::Arc;
 
-use crate::cv::{clean, db_gain};
+use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::{derive_seed, soft_limit};
 
 /// Number of preallocated voices (the highest value of `voices`).
@@ -372,26 +372,26 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
     ),
     param(
         P_CV_RESONANCE,
-        "cv.resonance_amount",
-        "CV to resonance",
-        (-1.0, 1.0, 0.5),
+        "filter.resonance_cv_trim",
+        "Resonance CV trim",
+        (-1.0, 1.0, 1.0),
         Lin,
-        Unit::Percent,
+        Unit::None,
         false,
     ),
     param(
         P_CV_LEVEL,
-        "cv.level_amount",
-        "CV to level",
-        (-24.0, 24.0, 12.0),
+        "master.level_cv_trim",
+        "Level CV trim",
+        (-1.0, 1.0, 1.0),
         Lin,
-        Unit::Db,
+        Unit::None,
         false,
     ),
     param(
         P_CV_PAN,
-        "cv.pan_amount",
-        "CV to pan",
+        "pan_cv_trim",
+        "Pan CV trim",
         (-1.0, 1.0, 1.0),
         Lin,
         Unit::None,
@@ -504,6 +504,8 @@ pub fn factory() -> DeviceFactory {
 
 /// Samples between control-rate updates (pitch, cutoff) of a voice.
 const CONTROL_INTERVAL: u32 = 16;
+/// Fixed range of the level CV in dB (times `master.level_cv_trim`).
+const CV_LEVEL_RANGE_DB: f32 = 24.0;
 /// Master gain smoothing time.
 const MASTER_SMOOTH_MS: f32 = 5.0;
 /// Fade-out of a voice whose map is draining.
@@ -1028,9 +1030,9 @@ impl Sampler {
                 cv_pitch: 12.0,
                 cv_cutoff: 2.0,
                 resonance: 0.2,
-                cv_resonance: 0.5,
+                cv_resonance: 1.0,
                 cv_pan: 1.0,
-                cv_level_db: 12.0,
+                cv_level_db: CV_LEVEL_RANGE_DB,
                 cv_resonance_on: false,
                 cv_pan_on: false,
             },
@@ -1105,7 +1107,7 @@ impl Sampler {
             P_CV_PITCH => s.cv_pitch = v,
             P_CV_CUTOFF => s.cv_cutoff = v,
             P_CV_RESONANCE => s.cv_resonance = v,
-            P_CV_LEVEL => s.cv_level_db = v,
+            P_CV_LEVEL => s.cv_level_db = v * CV_LEVEL_RANGE_DB,
             P_CV_PAN => s.cv_pan = v,
             _ => {}
         }

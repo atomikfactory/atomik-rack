@@ -208,9 +208,9 @@ fn descriptor_validates() {
             "lfo.to_amp",
             "cv.pitch_amount",
             "cv.cutoff_amount",
-            "cv.resonance_amount",
-            "cv.level_amount",
-            "cv.pan_amount",
+            "filter.resonance_cv_trim",
+            "master.level_cv_trim",
+            "pan_cv_trim",
         ],
         &[
             "notes_in",
@@ -341,7 +341,7 @@ fn level_cv_scales_gain_by_amount_in_db() {
     let at = |cv: Option<f32>, amount: f32| {
         let (l, _) = flat_with_cv(
             &m,
-            |h| h.set_param("cv.level_amount", amount),
+            |h| h.set_param("master.level_cv_trim", amount / 24.0),
             "level_cv_in",
             cv,
         );
@@ -370,12 +370,7 @@ fn level_cv_scales_gain_by_amount_in_db() {
 fn pan_cv_adds_to_the_zone_pan_and_clamps() {
     let m = flat_map(0.5, 4000);
     let sides = |cv: Option<f32>, amount: f32| {
-        let (l, r) = flat_with_cv(
-            &m,
-            |h| h.set_param("cv.pan_amount", amount),
-            "pan_cv_in",
-            cv,
-        );
+        let (l, r) = flat_with_cv(&m, |h| h.set_param("pan_cv_trim", amount), "pan_cv_in", cv);
         (l, r)
     };
     let (l0, r0) = sides(None, 1.0);
@@ -408,7 +403,7 @@ fn pan_cv_adds_to_the_zone_pan_and_clamps() {
     );
     let (l, r) = flat_with_cv(
         &flat,
-        |h| h.set_param("cv.pan_amount", 1.0),
+        |h| h.set_param("pan_cv_trim", 1.0),
         "pan_cv_in",
         Some(-0.5),
     );
@@ -420,14 +415,14 @@ fn pan_cv_adds_to_the_zone_pan_and_clamps() {
     );
     let (l, r) = flat_with_cv(
         &st,
-        |h| h.set_param("cv.pan_amount", 1.0),
+        |h| h.set_param("pan_cv_trim", 1.0),
         "pan_cv_in",
         Some(1.0),
     );
     assert!(l.abs() < 1e-6 && (r - 0.25).abs() < 1e-6, "{l} {r}");
     let (l, r) = flat_with_cv(
         &st,
-        |h| h.set_param("cv.pan_amount", 1.0),
+        |h| h.set_param("pan_cv_trim", 1.0),
         "pan_cv_in",
         Some(0.0),
     );
@@ -448,7 +443,7 @@ fn resonance_cv_adds_to_filter_resonance_and_clamps() {
         h.set_param("filter.resonance", 0.0);
         h.set_param("filter.env_amount", 0.0);
         h.set_param("filter.key_track", 0.0);
-        h.set_param("cv.resonance_amount", amount);
+        h.set_param("filter.resonance_cv_trim", amount);
         if let Some(cv) = cv {
             *h.input_mut("resonance_cv_in") = [cv; BATCH];
         }
@@ -486,9 +481,13 @@ fn new_cv_inputs_unconnected_leave_output_bit_identical() {
         h.set_param("filter.resonance", 0.6);
         h.set_param("lfo.to_cutoff", 1.0);
         if let Some(a) = amounts {
-            for (k, v) in ["cv.resonance_amount", "cv.level_amount", "cv.pan_amount"]
-                .into_iter()
-                .zip(a)
+            for (k, v) in [
+                "filter.resonance_cv_trim",
+                "master.level_cv_trim",
+                "pan_cv_trim",
+            ]
+            .into_iter()
+            .zip(a)
             {
                 h.set_param(k, v);
             }

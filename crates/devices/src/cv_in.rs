@@ -5,7 +5,7 @@
 //! (-1..+1), then added to the parameter in its normalised 0..1 space (or applied in dB / pan
 //! units for level and pan targets) and clamped to the parameter range.
 
-use atomik_core::BATCH;
+use atomik_core::{BATCH, db_to_gain};
 
 /// CV sample sanitised and clamped to -1..+1.
 #[inline]
@@ -25,6 +25,12 @@ pub fn batch_mean(b: &[f32; BATCH]) -> f32 {
         s += clean(x);
     }
     s / BATCH as f32
+}
+
+/// Linear gain of a level CV: `10^(db * cv / 20)`, where `db` is the trim times the fixed range.
+#[inline]
+pub fn db_gain(db: f32, cv: f32) -> f32 {
+    db_to_gain(db * clean(cv))
 }
 
 /// `base + trim * cv` in normalised space, clamped to 0..1.
@@ -54,5 +60,7 @@ mod tests {
         assert_eq!(add_norm(0.5, 1.0, 3.0), 1.0);
         assert_eq!(add_norm(0.5, -1.0, 3.0), 0.0);
         assert_eq!(add_norm(0.5, 0.0, 1.0), 0.5);
+        assert!((db_gain(24.0, 0.5) - 10f32.powf(0.6)).abs() < 1e-4);
+        assert_eq!(db_gain(24.0, f32::NAN), 1.0);
     }
 }

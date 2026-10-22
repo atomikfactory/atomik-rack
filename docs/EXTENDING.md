@@ -112,24 +112,27 @@ The engine zeroes every Audio/CV batch of the device before each `process` call 
   - gain-like amounts use `cv.clamp(0, 1)` (the mixer's level CV).
 - If a CV input should do nothing when unconnected, check `ctx.is_connected` rather than treating 0 as a value. The mixer does this, because an unconnected level CV must mean "gain × 1", not "gain × 0".
 - A CV output should stay within −1..+1. The synth's `lfo_cv_out` does.
-
-#### CV inputs on instruments: amount and unit convention (poly synth, sampler, drum machine, loop slicer)
-
-The instruments' `<target>_cv_in` sockets (`pitch_cv_in`, `resonance_cv_in`, `level_cv_in`, `pan_cv_in`, `cutoff_cv_in`; per pad `padN_level_cv_in`, `padN_pan_cv_in`) all follow one rule, with the shared helpers in [crates/devices/src/cv.rs](../crates/devices/src/cv.rs):
-
-- Each input has one **signed** amount param, `cv.<target>_amount` (drum machine: `padN.cv_<target>_amount`), whose range is bipolar and whose default is a useful, non-zero depth. The CV sample is clamped to −1..+1 (NaN counts as 0), multiplied by the amount and **added in the target's own unit**: pitch in semitones (amount ±24), level in decibels (amount ±24 dB, applied as a gain 10^(amount·cv/20)), cutoff in octaves, pan in pan units (amount ±1, added to the pan before the pan law), resonance in normalised units (amount ±1, added, then clamped to 0..1). A negative amount inverts the CV; amount 0 switches the input off.
-- The value is applied **only while the socket is connected** (`is_connected`). An open socket takes a different code path (or none), so the output is bit for bit what it was before the input existed. The device tests prove it: amounts at odd values with no cable give identical bits.
-- CV is read **per sample** where the target is per sample (level, pan); pitch, resonance and cutoff are read at the 16-sample control rate and the filter coefficient is ramped in between. There is no extra smoothing: a stepped CV gives a stepped gain.
-- Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan, drum pad level and pan).
 - Audio is nominally ±1.0. Keep outputs finite. The synth adds a soft limiter so its output is always bounded.
 
-#### CV inputs with an amount (effects, console channel)
+#### CV inputs with a trim (instruments, effects, console channel)
 
-For an effect or channel parameter that gets a dedicated CV input (`crates/devices/src/cv_in.rs`):
+One convention for every dedicated CV input, with the shared helpers in [crates/devices/src/cv_in.rs](../crates/devices/src/cv_in.rs) (`clean`, `batch_mean`, `add_norm`, `db_gain`):
 
-- Socket `<target>_cv_in`, bipolar amount param `<target>_cv_trim` (−1..+1, default +1; keys of dotted params keep the dot: `band3.gain_cv_trim`). New params and sockets are appended so existing ids and keys never change.
-- The CV is clamped to −1..+1 and scaled by the trim. Mix, feedback and drive add it in the parameter's normalised 0..1 space; level and gain targets add `trim · cv · range` in dB (EQ gain 24 dB, channel fader 24 dB, send level 66 dB); pan adds it directly. The sum is clamped to the parameter range.
-- Unconnected sockets are skipped with `is_connected`, so the output is bit-identical to the device without the input (the render goldens must not change). A device that smooths per batch uses the batch mean of the CV; a per-sample smoother may use the CV sample by sample.
+- Socket `<target>_cv_in` and a bipolar trim param `<target>_cv_trim` (−1..+1, default +1, negative inverts; keys of dotted params keep the dot: `band3.gain_cv_trim`, `padN.level_cv_trim`). New params and sockets are appended or inserted by key, so existing keys never change and older patches and projects load as before.
+- The CV is sanitised (non-finite becomes 0), clamped to −1..+1, multiplied by the trim and by a **fixed range per target**, and added to the target in its own unit; the sum is clamped to the parameter range. The ranges:
+
+| Target | Range at trim +1, CV +1 | Used by |
+|---|---|---|
+| Normalised parameter (mix, feedback, drive, resonance) | +1 of 0..1 | delay, reverb, modulation, distortion mix/feedback/drive; poly synth and sampler resonance |
+| Level or gain in dB | ±24 dB | poly synth, sampler, loop slicer output level; each drum pad level; EQ band gain; channel fader |
+| Send level | ±66 dB | console channel sends |
+| Pan | ±1, added before the pan law | console channel pan; sampler pan (per voice); poly synth balance |
+| Pitch | ±24 semitones | poly synth |
+| Cutoff | ±4 octaves | loop slicer global low-pass |
+
+- Unconnected sockets are skipped with `is_connected`, so the output is bit-identical to the device without the input (the render goldens must not change); each device has a test that sets odd trims with no cable and compares bits.
+- Per-sample targets (level, pan) read the CV sample by sample with no extra smoothing, so a stepped CV gives a stepped gain; pitch, resonance and cutoff are read at the 16-sample control rate with the filter coefficient ramped in between. A device that smooths per batch uses the batch mean of the CV.
+- Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan, drum pad level).
 
 ## 4. Registering the device
 

@@ -47,22 +47,18 @@ const IDLE_ZONE: Zone = Zone {
     reverse: false,
 };
 
-/// Per-pad CV modulation of one batch: for a pad whose CV socket is cabled, the linear level gain
-/// (`10^(amount * cv / 20)`) and the pan offset (`amount * cv`) of every sample.
+/// Per-pad CV modulation of one batch: for a pad whose level CV socket is cabled, the linear
+/// gain (`10^(trim * range * cv / 20)`) of every sample.
 pub(super) struct PadCv {
     pub level_on: [bool; PAD_COUNT],
-    pub pan_on: [bool; PAD_COUNT],
     pub level: [[f32; BATCH]; PAD_COUNT],
-    pub pan: [[f32; BATCH]; PAD_COUNT],
 }
 
 impl PadCv {
     pub fn new() -> Self {
         Self {
             level_on: [false; PAD_COUNT],
-            pan_on: [false; PAD_COUNT],
             level: [[1.0; BATCH]; PAD_COUNT],
-            pan: [[0.0; BATCH]; PAD_COUNT],
         }
     }
 
@@ -86,8 +82,6 @@ struct Segment {
     level: f32,
     pan_l: f32,
     pan_r: f32,
-    /// The pad pan plus the zone pan (the base the pan CV is added to).
-    pan: f32,
 }
 
 /// One preallocated voice.
@@ -250,7 +244,6 @@ impl Voice {
             level: p.level,
             pan_l,
             pan_r,
-            pan,
         }
     }
 
@@ -295,19 +288,8 @@ impl Voice {
             if cv.cv.level_on[pad] {
                 g *= cv.cv.level[pad][at];
             }
-            let (pan_l, pan_r) = if cv.cv.pan_on[pad] {
-                // The pad and zone pan plus the pan CV, through the law of the pad.
-                let pan = seg.pan + cv.cv.pan[pad][at];
-                if self.stereo {
-                    balance_gains(pan)
-                } else {
-                    pan_gains_mono(pan)
-                }
-            } else {
-                (seg.pan_l, seg.pan_r)
-            };
-            out_l[n] += xl * pan_l * g;
-            out_r[n] += xr * pan_r * g;
+            out_l[n] += xl * seg.pan_l * g;
+            out_r[n] += xr * seg.pan_r * g;
             self.head.advance(seg.ratio);
             let mut ended = self.head.finished();
             if !(self.gate && self.held) {

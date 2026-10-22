@@ -179,8 +179,8 @@ fn descriptor_validates_with_the_contract_order() {
             "loop.beats",
             "cv.pitch_amount",
             "filter.cutoff",
-            "cv.cutoff_amount",
-            "cv.level_amount",
+            "filter.cutoff_cv_trim",
+            "master.level_cv_trim",
         ],
         &[
             "notes_in",
@@ -253,7 +253,7 @@ fn level_cv_scales_gain_by_amount_in_db() {
     let at = |cv: Option<f32>, amount: f32| {
         let (l, r) = cv_run(
             &m,
-            |h| h.set_param("cv.level_amount", amount),
+            |h| h.set_param("master.level_cv_trim", amount / 24.0),
             "level_cv_in",
             cv,
             3,
@@ -295,7 +295,7 @@ fn cutoff_cv_moves_the_filter_cutoff_by_amount_octaves() {
             &m,
             |h| {
                 h.set_param("filter.cutoff", 1000.0);
-                h.set_param("cv.cutoff_amount", amount);
+                h.set_param("filter.cutoff_cv_trim", amount / 4.0);
             },
             "cutoff_cv_in",
             cv,
@@ -314,7 +314,7 @@ fn cutoff_cv_moves_the_filter_cutoff_by_amount_octaves() {
         &m,
         |h| {
             h.set_param("filter.cutoff", 1000.0);
-            h.set_param("cv.cutoff_amount", 0.0);
+            h.set_param("filter.cutoff_cv_trim", 0.0);
         },
         "cutoff_cv_in",
         Some(1.0),
@@ -339,15 +339,15 @@ fn new_inputs_unconnected_leave_output_bit_identical() {
     let run = |amounts: Option<[f32; 2]>| {
         let (mut h, _) = with_map(&m);
         if let Some(a) = amounts {
-            h.set_param("cv.cutoff_amount", a[0]);
-            h.set_param("cv.level_amount", a[1]);
+            h.set_param("filter.cutoff_cv_trim", a[0]);
+            h.set_param("master.level_cv_trim", a[1]);
         }
         h.push_note("notes_in", on(0, 24, 1.0));
         h.push_note("notes_in", on(30, 26, 0.7));
         let (l, r) = render(&mut h, 20);
         (bits(&l), bits(&r))
     };
-    assert_eq!(run(None), run(Some([-3.0, 20.0])));
+    assert_eq!(run(None), run(Some([-0.7, 0.9])));
     // `filter.cutoff` at its maximum is the open, bypassed filter.
     let run_open = || {
         let (mut h, _) = with_map(&m);

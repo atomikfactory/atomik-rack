@@ -161,6 +161,7 @@ impl PanelSpec {
         self.fx
             .and_then(|f| f.character)
             .is_some_and(|g| g.back_params.contains(&pc.param))
+            || self.drum.is_some_and(|d| d.back_params.contains(&pc.param))
     }
 
     /// Height in logical units.
@@ -474,6 +475,10 @@ pub(crate) fn fit_with(
 pub const DRUM_TYPE: &str = "atomik.drum-machine";
 /// Height of the drum panel in rack units.
 pub const DRUM_UNITS: u8 = 3;
+/// Packing index of the level-trim knob of pad `n` (`DRUM_TRIM_ITEM + n - 1`), above any socket.
+const DRUM_TRIM_ITEM: usize = 10_000;
+/// Width of the trim knob cell on the drum back (narrower than a front knob so three pads fit a row).
+const DRUM_TRIM_W: f64 = 40.0;
 /// Size of one pad cell of the 4x4 pad grid (the pad itself is inset by 2 px).
 pub const DRUM_PAD_CELL: (f64, f64) = (54.0, 48.0);
 /// Width of one knob column of the selected pad's section.
@@ -498,6 +503,9 @@ pub struct DrumPanel {
     pub edit: Rect,
     /// The "TO CH" button: gives the selected pad its own console channel.
     pub to_channel: Rect,
+    /// The descriptor indices of the 16 `padN.level_cv_trim` knobs, which sit on the back face
+    /// next to their jacks (see [`PanelSpec::on_back`]); `usize::MAX` when missing.
+    pub back_params: [usize; 16],
 }
 
 /// The cell rectangle of `pad` (1..=16) in the pad grid `pads`: pad 1 is bottom left, the
@@ -520,7 +528,7 @@ impl PanelSpec {
     /// The descriptor index of the param a front control stands for. On a drum panel the
     /// controls are laid out on `pad1.*`; they stand for the same param of the selected `pad`.
     pub fn param_index(&self, desc: &DeviceDescriptor, pc: &PlacedControl, pad: u8) -> usize {
-        if self.drum.is_none() {
+        if self.drum.is_none() || self.on_back(pc) {
             return pc.param;
         }
         desc.params[pc.param]
@@ -627,6 +635,9 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             DRUM_MASTER_X + DRUM_COL_W,
             top + ROW_H + 62.0,
         ),
+        back_params: std::array::from_fn(|i| {
+            index(&format!("pad{}.level_cv_trim", i + 1)).unwrap_or(usize::MAX)
+        }),
     };
     let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none());
     for pad in 1..=16u8 {
@@ -636,6 +647,15 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             .enumerate()
             .filter(|(_, s)| pad_of_socket(s.key) == Some(pad))
             .map(|(i, _)| (i, SOCKET_CELL.0, Some(SOCKET_CELL.1)))
+            .chain(
+                (drum.back_params[usize::from(pad) - 1] != usize::MAX).then(|| {
+                    (
+                        DRUM_TRIM_ITEM + usize::from(pad) - 1,
+                        DRUM_TRIM_W,
+                        Some(ROW_H),
+                    )
+                }),
+            )
             .collect();
         if !items.is_empty() {
             groups.push(Group {
@@ -645,10 +665,25 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             });
         }
     }
+    // One row per section (a knob is as tall as a row): each pad is its jacks and its trim knob
+    // side by side.
     let units = (DRUM_UNITS..=MAX_UNITS)
-        .find(|&u| fit(&groups, u, SOCKET_CELL.1, 0.0).is_some())
+        .find(|&u| fit(&groups, u, ROW_H, 0.0).is_some())
         .unwrap_or(MAX_UNITS);
-    let (back_cells, back_sections) = fit(&groups, units, SOCKET_CELL.1, 0.0).unwrap_or_default();
+    let (back_cells, back_sections) = fit(&groups, units, ROW_H, 0.0).unwrap_or_default();
+    for (item, rect) in &back_cells {
+        if *item >= DRUM_TRIM_ITEM {
+            front.push(PlacedControl {
+                param: drum.back_params[item - DRUM_TRIM_ITEM],
+                kind: ControlKind::Knob,
+                rect: *rect,
+            });
+        }
+    }
+    let back_cells: Vec<_> = back_cells
+        .into_iter()
+        .filter(|(item, _)| *item < DRUM_TRIM_ITEM)
+        .collect();
     PanelSpec {
         height_units: units,
         samples: None,
@@ -693,8 +728,8 @@ pub const SLICER_PARAMS: [&str; 12] = [
     "loop.beats",
     "cv.pitch_amount",
     "filter.cutoff",
-    "cv.cutoff_amount",
-    "cv.level_amount",
+    "filter.cutoff_cv_trim",
+    "master.level_cv_trim",
 ];
 
 /// Geometry of the slicer panel's extras (front, panel coordinates).
