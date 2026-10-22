@@ -17,19 +17,19 @@
 //!
 //! Interactions: drag knobs vertically, send bars and faders along their travel (Shift =
 //! fine), double-click resets to the default, wheel steps; click a section header to fold
-//! that section on every strip; drag a strip's name plate to reorder, right-click it to
-//! remove the channel; click an FX return's name to pick its effect; click an INSERTS slot to
-//! select its effect in the rack, its x to remove it, the first empty slot to add one
-//! (`ConsoleCommand::SetInsert`); middle-drag or wheel
-//! scrolls (Shift+wheel or wheel over the faders scrolls sideways).
+//! that section on every strip; drag a strip's name plate to reorder; click an FX
+//! return's name to pick its effect; click an INSERTS slot to select its effect in the rack, its
+//! x to remove it, the first empty slot to add one (`ConsoleCommand::SetInsert`); middle-drag or
+//! wheel scrolls (Shift+wheel or wheel over the faders scrolls sideways).
 //!
 //! Output buses: every strip has an output selector above its name plate (a menu of the master,
 //! the buses that would not loop, the Audio I/O pairs with the unusable ones greyed, and "New
-//! bus..."; `ConsoleCommand::SetOutput` / `RouteToNewBus`). A bus name plate is edited by
-//! double-click (`RenameBus`; [`ConsoleView::is_text_owner`] while editing), has a right-click
-//! menu (Rename, Delete bus) and is reordered by drag among the buses (`ReorderBus`). A click on
-//! a plate selects the strip (Ctrl/Cmd toggles, Shift extends); see
-//! [`ConsoleView::selected_strips`].
+//! bus..."; `ConsoleCommand::SetOutput` / `RouteToNewBus`). Any name plate is edited by
+//! double-click (a bus: `RenameBus`; a channel: `Command::Rename` of the device it shows;
+//! [`ConsoleView::is_text_owner`] while editing; Enter commits, Esc or an empty name cancels);
+//! a bus plate has a right-click menu (Rename, Delete bus) and is reordered by drag among the
+//! buses (`ReorderBus`). A click on a plate selects the strip (Ctrl/Cmd toggles, Shift
+//! extends); see [`ConsoleView::selected_strips`]. Right-clicking a channel plate does nothing.
 //!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
@@ -344,6 +344,8 @@ struct StripView {
     device: Option<RackDevice>,
     desc: Option<&'static DeviceDescriptor>,
     name: String,
+    /// The device whose name `name` is (what a strip rename renames).
+    name_device: DeviceKey,
     accent: Color,
     latency: Option<u32>,
     silenced: bool,
@@ -364,6 +366,7 @@ struct StripView {
 impl StripView {
     fn new(key: DeviceKey, cache_id: u64) -> Self {
         Self {
+            name_device: key.clone(),
             key,
             device: None,
             desc: None,
@@ -464,10 +467,15 @@ fn output_label(doc: &RackDoc, strip: &DeviceKey) -> String {
     }
 }
 
-/// A bus name being edited.
+/// A strip name being edited.
 #[derive(Debug, Clone)]
 struct RenameState {
-    bus: DeviceKey,
+    /// The strip whose name plate shows the field.
+    strip: DeviceKey,
+    /// What the commit renames: the bus itself, or the device a channel strip shows the name of.
+    target: DeviceKey,
+    /// A bus (`RenameBus`) rather than a channel (`Rename` of the device).
+    bus: bool,
     text: String,
 }
 
@@ -506,7 +514,7 @@ pub struct ConsoleView {
     /// Selected strips (view state) and the last clicked one (the range anchor).
     selection: BTreeSet<DeviceKey>,
     anchor: Option<DeviceKey>,
-    /// A bus name being edited in place.
+    /// A strip name being edited in place.
     rename: Option<RenameState>,
     /// The last rejected command, shown in the toolbar until the next click.
     notice: Option<String>,
@@ -754,6 +762,11 @@ impl ConsoleView {
             .collect()
     }
 
+    /// The strip last clicked into the selection, while it is still selected.
+    pub fn primary_strip(&self) -> Option<DeviceKey> {
+        self.anchor.clone().filter(|a| self.selection.contains(a))
+    }
+
     /// Replaces the selection (strips that are not shown are ignored). View state only.
     pub fn set_selected_strips(&mut self, keys: &[DeviceKey]) {
         let set: BTreeSet<DeviceKey> = keys
@@ -768,7 +781,7 @@ impl ConsoleView {
         }
     }
 
-    /// True while a bus name is being edited: the keys are text and only chords with the
+    /// True while a strip name is being edited: the keys are text and only chords with the
     /// primary modifier, function keys and Esc may be commands.
     pub fn is_text_owner(&self) -> bool {
         self.rename.is_some()
@@ -786,7 +799,7 @@ impl ConsoleView {
         self.notice.as_deref()
     }
 
-    /// The bus name being edited, if any.
+    /// The strip name being edited, if any.
     pub fn rename_text(&self) -> Option<String> {
         self.rename.as_ref().map(|r| r.text.clone())
     }
@@ -1337,7 +1350,7 @@ impl ConsoleView {
             if self
                 .rename
                 .as_ref()
-                .is_some_and(|r| console.bus_index(&r.bus).is_none())
+                .is_some_and(|r| !order.contains(&&r.strip))
             {
                 self.rename = None;
             }
@@ -1355,16 +1368,16 @@ impl ConsoleView {
                 // A second channel of one source (a drum pad's own channel) shows its own name.
                 let extra = c.source.is_some()
                     && console.channels[..i].iter().any(|o| o.source == c.source);
-                s.name = source
-                    .filter(|_| !extra)
-                    .or(device.as_ref())
-                    .map_or_else(|| c.channel.0.clone(), |d| d.name.clone());
+                let shown = source.filter(|_| !extra).or(device.as_ref());
+                s.name = shown.map_or_else(|| c.channel.0.clone(), |d| d.name.clone());
+                s.name_device = shown.map_or_else(|| key.clone(), |d| d.key.clone());
                 s.accent = source
                     .or(device.as_ref())
                     .map_or(self.st.base.text_muted, |d| self.st.base.accent_for(d));
                 s.caption = format!("CH {}", i + 1);
             } else if let Some(b) = console.buses.get(i - n_channels) {
                 s.name = b.name.clone();
+                s.name_device = key.clone();
                 s.accent = self.st.base.cable_cv;
                 s.caption = format!("BUS {}", i - n_channels + 1);
             }
@@ -1602,7 +1615,7 @@ impl ConsoleView {
         }
         // A click on the name being edited keeps editing; a click anywhere else commits it.
         if let Some(r) = &self.rename {
-            let editing = self.strips.iter().position(|s| s.key == r.bus);
+            let editing = self.strips.iter().position(|s| s.key == r.strip);
             if editing.is_some() && hit == Hit::Name(editing.unwrap_or(0)) {
                 return;
             }
@@ -1621,7 +1634,7 @@ impl ConsoleView {
                 self.set_folded(id, !folded);
             }
             (Hit::Name(i), PointerButton::Primary) => {
-                if clicks >= 2 && i >= self.n_channels {
+                if clicks >= 2 {
                     self.begin_rename(i);
                     return;
                 }
@@ -1633,13 +1646,6 @@ impl ConsoleView {
             }
             (Hit::Name(i), PointerButton::Secondary) if i >= self.n_channels => {
                 self.open_bus_menu(i, pos);
-            }
-            (Hit::Name(i), PointerButton::Secondary) => {
-                out.push(UiAction::Command(Command::Console(
-                    ConsoleCommand::RemoveChannel {
-                        channel: self.strips[i].key.clone(),
-                    },
-                )));
             }
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
@@ -2015,13 +2021,15 @@ impl ConsoleView {
 
     // ---------------------------------------------------------------- rename and selection
 
-    /// Starts editing the name of bus strip `i` in place.
+    /// Starts editing the name of strip `i` in place.
     fn begin_rename(&mut self, i: usize) {
-        let Some(s) = self.strips.get(i).filter(|_| i >= self.n_channels) else {
+        let Some(s) = self.strips.get(i) else {
             return;
         };
         self.rename = Some(RenameState {
-            bus: s.key.clone(),
+            strip: s.key.clone(),
+            target: s.name_device.clone(),
+            bus: i >= self.n_channels,
             text: s.name.clone(),
         });
         self.drag = Drag::None;
@@ -2029,8 +2037,9 @@ impl ConsoleView {
         self.repaint = true;
     }
 
-    /// Ends the rename: committing emits `RenameBus` when the name changed (the model checks
-    /// it; a refusal is shown by the host like any rejected command).
+    /// Ends the rename: committing emits `RenameBus` (a bus) or `Rename` of the device the
+    /// strip shows the name of (a channel) when the name changed; an empty name cancels. The
+    /// model checks it; a refusal is shown by the host like any rejected command.
     fn finish_rename(&mut self, commit: bool, out: &mut Vec<UiAction>) {
         let Some(r) = self.rename.take() else { return };
         self.repaint = true;
@@ -2041,16 +2050,23 @@ impl ConsoleView {
         let current = self
             .strips
             .iter()
-            .find(|s| s.key == r.bus)
+            .find(|s| s.key == r.strip)
             .map(|s| s.name.as_str());
-        if current.is_some_and(|c| c != name) {
-            out.push(UiAction::Command(Command::Console(
-                ConsoleCommand::RenameBus {
-                    bus: r.bus,
-                    name: name.to_string(),
-                },
-            )));
+        if name.is_empty() || current.is_none_or(|c| c == name) {
+            return;
         }
+        let name = name.to_string();
+        out.push(UiAction::Command(if r.bus {
+            Command::Console(ConsoleCommand::RenameBus {
+                bus: r.target,
+                name,
+            })
+        } else {
+            Command::Rename {
+                key: r.target,
+                name,
+            }
+        }));
     }
 
     fn rename_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
@@ -2563,7 +2579,7 @@ impl ConsoleView {
             if let Some(r) = l.meter {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
             }
-            if let Some(r) = self.rename.as_ref().filter(|r| r.bus == s.key) {
+            if let Some(r) = self.rename.as_ref().filter(|r| r.strip == s.key) {
                 rename_field(c, &self.st, l.name, &r.text);
             }
             self.focus_ring(c, Target::Strip(i), true, l);

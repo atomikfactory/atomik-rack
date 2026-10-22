@@ -476,11 +476,57 @@ fn a_rename_is_capped_at_the_bus_name_length_and_clicking_elsewhere_commits_it()
 }
 
 #[test]
-fn double_clicking_a_channel_name_renames_nothing() {
+fn double_clicking_a_channel_name_renames_the_device_the_strip_shows() {
     let (doc, reg, mut v) = setup();
     let p = name_at(&v, "ch-bass");
     v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    v.handle(&up(p), &doc, &reg);
+    assert!(v.is_text_owner());
+    assert_eq!(v.rename_text().as_deref(), Some("Bass"));
+    for _ in 0..4 {
+        v.handle(&key_event(Key::Backspace), &doc, &reg);
+    }
+    type_text(&mut v, &doc, &reg, "Sub");
+    let a = v.handle(&key_event(Key::Enter), &doc, &reg);
+    assert!(console_cmds(&a).is_empty());
+    assert_eq!(
+        commands(&a),
+        [Command::Rename {
+            key: key("bass"),
+            name: "Sub".into()
+        }]
+    );
     assert!(!v.is_text_owner());
+}
+
+#[test]
+fn an_empty_or_escaped_channel_rename_emits_nothing() {
+    let (doc, reg, mut v) = setup();
+    let p = name_at(&v, "ch-bass");
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    for _ in 0..4 {
+        v.handle(&key_event(Key::Backspace), &doc, &reg);
+    }
+    let a = v.handle(&key_event(Key::Enter), &doc, &reg);
+    assert!(a.is_empty(), "empty name cancels: {a:?}");
+    assert!(!v.is_text_owner());
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    type_text(&mut v, &doc, &reg, "x");
+    let a = v.handle(&key_event(Key::Escape), &doc, &reg);
+    assert!(a.is_empty());
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn an_empty_bus_rename_cancels_too() {
+    let (doc, reg, mut v) = setup();
+    let p = name_at(&v, "bus");
+    v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    for _ in 0..5 {
+        v.handle(&key_event(Key::Backspace), &doc, &reg);
+    }
+    let a = v.handle(&key_event(Key::Enter), &doc, &reg);
+    assert!(a.is_empty(), "{a:?}");
 }
 
 // ---------------------------------------------------------------- context menu and delete
@@ -509,16 +555,12 @@ fn the_bus_context_menu_offers_rename_and_delete() {
 }
 
 #[test]
-fn a_channel_name_still_removes_the_channel_on_right_click() {
+fn right_click_on_a_channel_name_does_nothing() {
     let (doc, reg, mut v) = setup();
     let p = name_at(&v, "ch-lead");
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
-    assert_eq!(
-        console_cmds(&a),
-        [ConsoleCommand::RemoveChannel {
-            channel: key("ch-lead")
-        }]
-    );
+    assert!(a.is_empty(), "{a:?}");
+    assert!(v.menu_items().is_empty());
 }
 
 // ---------------------------------------------------------------- reordering
@@ -598,6 +640,18 @@ fn a_click_on_a_name_plate_selects_the_strip_and_command_click_toggles() {
     assert_eq!(v.selected_strips(), [key("ch-bass"), key("bus")]);
     click_name_with(&mut v, &doc, &reg, "bus", Modifiers::CTRL);
     assert_eq!(v.selected_strips(), [key("ch-bass")]);
+}
+
+#[test]
+fn the_primary_strip_is_the_last_clicked_one_while_it_stays_selected() {
+    let (doc, reg, mut v) = setup();
+    assert_eq!(v.primary_strip(), None);
+    click_name(&mut v, &doc, &reg, "ch-lead");
+    assert_eq!(v.primary_strip(), Some(key("ch-lead")));
+    click_name_with(&mut v, &doc, &reg, "ch-bass", Modifiers::CTRL);
+    assert_eq!(v.primary_strip(), Some(key("ch-bass")));
+    click_name_with(&mut v, &doc, &reg, "ch-bass", Modifiers::CTRL);
+    assert_eq!(v.primary_strip(), None, "toggled off");
 }
 
 #[test]

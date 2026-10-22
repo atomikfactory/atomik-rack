@@ -371,16 +371,11 @@ fn add_channel_lists_instruments_without_a_channel() {
 }
 
 #[test]
-fn right_click_on_a_name_removes_the_channel() {
+fn right_click_on_a_name_does_not_remove_the_channel() {
     let (doc, reg, mut v) = setup();
     let p = v.name_center(&key("ch-lead")).unwrap();
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
-    assert_eq!(
-        console_cmds(&a),
-        [ConsoleCommand::RemoveChannel {
-            channel: key("ch-lead")
-        }]
-    );
+    assert!(a.is_empty(), "{a:?}");
 }
 
 #[test]
