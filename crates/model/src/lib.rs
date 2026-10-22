@@ -40,7 +40,7 @@ pub use container::{
     BOUNDARY_KEY, CONTAINER_TYPE, ContainerCommand, ContainerDoc, FORBIDDEN_INSIDE, MACRO_COUNT,
     MAX_CONTAINER_DEPTH, MAX_CONTAINER_TARGETS, MAX_INNER_DEVICES, MAX_MACRO_NAME_CHARS,
     MAX_MACRO_TARGETS, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, MacroTarget, NoteSplit, SPLIT_TYPE,
-    boundary_sockets, split_path,
+    boundary_sockets, scoped_cable, split_path,
 };
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
 pub use plugin::{

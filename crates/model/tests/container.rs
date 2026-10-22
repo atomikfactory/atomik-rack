@@ -799,3 +799,40 @@ fn returns_inserts_and_song_lanes_refuse_inner_keys_but_take_a_container() {
         "{e}"
     );
 }
+
+#[test]
+fn a_flat_cable_maps_back_to_the_view_cable_of_its_scope() {
+    use atomik_model::{Cable, SocketRef, scoped_cable};
+    let cable = |a: &str, b: &str| Cable {
+        from: SocketRef {
+            device: DeviceKey(a.into()),
+            socket: "o".into(),
+        },
+        to: SocketRef {
+            device: DeviceKey(b.into()),
+            socket: "i".into(),
+        },
+    };
+    let scope = |s: &str| Some(DeviceKey(s.into()));
+    assert_eq!(
+        scoped_cable(&cable("a", "b")),
+        Some((None, cable("a", "b"))),
+        "top level"
+    );
+    assert_eq!(
+        scoped_cable(&cable("layer/x", "layer/y")),
+        Some((scope("layer"), cable("x", "y")))
+    );
+    assert_eq!(
+        scoped_cable(&cable("a/b/x", "a/b/y")),
+        Some((scope("a/b"), cable("x", "y"))),
+        "nested"
+    );
+    assert_eq!(scoped_cable(&cable("x", "layer/y")), None, "across scopes");
+    assert_eq!(
+        scoped_cable(&cable("a/x", "b/y")),
+        None,
+        "across containers"
+    );
+    assert_eq!(scoped_cable(&cable("layer/~split", "layer/y")), None);
+}
