@@ -154,6 +154,19 @@ mod tests {
     }
 
     #[test]
+    fn modulator_type_ids_are_pinned() {
+        assert_eq!(super::MODULATOR_TYPE_IDS, ["atomik.mod-source"]);
+        assert!(super::is_modulator("atomik.mod-source"));
+        assert!(!super::is_modulator("atomik.modulation"));
+        let mut r = Registry::new();
+        register_all(&mut r).unwrap();
+        for id in super::MODULATOR_TYPE_IDS {
+            let d = r.get(id).unwrap().descriptor;
+            assert_eq!(d.kind, atomik_device_sdk::DeviceKind::Utility);
+        }
+    }
+
+    #[test]
     fn internal_type_ids_are_pinned() {
         assert_eq!(super::INTERNAL_TYPE_IDS, ["atomik.note-split"]);
         assert!(super::is_internal("atomik.note-split"));
