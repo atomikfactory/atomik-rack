@@ -2536,6 +2536,9 @@ impl<B: AudioBackend> Shell<B> {
         if self.console_shown() {
             self.core.update_console_meters(now_seconds);
         }
+        if self.core.view().flip() == atomik_ui::Flip::Back {
+            self.core.feed_cv_activity(now_seconds);
+        }
     }
 
     fn apply_settings(&mut self, settings: AudioSettings) {

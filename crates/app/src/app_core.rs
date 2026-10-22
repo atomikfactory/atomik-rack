@@ -222,6 +222,8 @@ pub struct AppCore<S: EngineSink> {
     pdc_limit: bool,
     /// The Audio I/O panel's metered endpoints.
     io_meters: io_ops::IoMeters,
+    /// The CV cables shown with an activity indicator on the back.
+    cv_taps: io_ops::CvTaps,
     /// Project bundle, imported assets, peaks and background workers.
     audio: AudioState,
     /// Host inputs the running engine was built with (a change of the document's count
@@ -350,6 +352,7 @@ impl<S: EngineSink> AppCore<S> {
             readouts: Vec::new(),
             pdc_limit: false,
             io_meters: io_ops::IoMeters::default(),
+            cv_taps: io_ops::CvTaps::default(),
             audio: AudioState::new(),
             engine_inputs: 0,
             pending_play: None,
@@ -1158,11 +1161,13 @@ impl<S: EngineSink> AppCore<S> {
         }
         // The Audio I/O sockets' meters (read-only; they never touch a sample).
         let io_meters = self.plan_io_meters(&mut topology, expanded, &meter_points);
+        let cv_taps = self.plan_cv_taps(&mut topology, expanded, &meter_points, &io_meters);
         self.sink.fill_latencies(&mut topology);
         let compiled = topology.compile();
         self.topology = topology;
         self.meter_points = meter_points;
         self.io_meters = io_meters;
+        self.cv_taps = cv_taps;
         self.latency_epoch = epoch;
         for p in problems {
             self.reject(format!("engine routing: {p}"));

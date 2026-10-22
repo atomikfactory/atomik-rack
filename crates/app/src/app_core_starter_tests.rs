@@ -595,3 +595,70 @@ fn the_master_demo_opens_as_it_is_and_plays_through_audio_io_outputs_one_and_two
     );
     assert_eq!(c.doc().console.returns[0], Some(key("hall")));
 }
+
+// ------------------------------------------------------------------ CV activity
+
+fn cv_pair(c: &mut AppCore<RecordingSink>) -> Cable {
+    instrument(c, "lead");
+    instrument(c, "pad");
+    let cable = Cable {
+        from: sref("lead", "lfo_cv_out"),
+        to: sref("pad", "cutoff_cv_in"),
+    };
+    c.apply_command(Command::Connect(cable.clone())).unwrap();
+    cable
+}
+
+#[test]
+fn a_cv_cable_is_metered_at_its_source_and_its_peak_reaches_the_view() {
+    let mut c = starter(RecordingSink::new());
+    let cable = cv_pair(&mut c);
+    let src = endpoint(&c, "lead", "lfo_cv_out");
+    assert!(
+        c.topology().meters().any(|e| e == src),
+        "the source is metered"
+    );
+    let audio = endpoint(&c, "lead", "out_l");
+    assert!(
+        !c.topology().meters().any(|e| e == audio),
+        "audio cables are not metered by the CV feed"
+    );
+    c.sink_mut().meters.insert(
+        src,
+        MeterReading {
+            peak: 0.5,
+            rms: 0.3,
+        },
+    );
+    c.feed_cv_activity(1.0);
+    assert!(c.view().cv_activity_step(&cable) > 0);
+    // Silence decays to dark over the following frames.
+    c.sink_mut().meters.clear();
+    for i in 0..400 {
+        c.feed_cv_activity(1.0 + f64::from(i) * 0.016);
+    }
+    assert_eq!(c.view().cv_activity_step(&cable), 0);
+}
+
+#[test]
+fn a_removed_cv_cable_stops_being_metered_and_drawn() {
+    let mut c = starter(RecordingSink::new());
+    let cable = cv_pair(&mut c);
+    let src = endpoint(&c, "lead", "lfo_cv_out");
+    c.sink_mut().meters.insert(
+        src,
+        MeterReading {
+            peak: 1.0,
+            rms: 1.0,
+        },
+    );
+    c.feed_cv_activity(1.0);
+    assert_eq!(c.view().cv_activity_step(&cable), 8);
+    c.apply_command(Command::Disconnect {
+        to: cable.to.clone(),
+    })
+    .unwrap();
+    assert!(!c.topology().meters().any(|e| e == src));
+    c.feed_cv_activity(1.016);
+    assert_eq!(c.view().cv_activity_step(&cable), 0);
+}
