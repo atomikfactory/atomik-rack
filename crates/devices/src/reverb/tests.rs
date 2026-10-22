@@ -122,8 +122,9 @@ fn descriptor_validates() {
             "mix",
             "freeze",
             "output",
+            "mix_cv_trim",
         ],
-        &["in_l", "in_r", "out_l", "out_r"],
+        &["in_l", "in_r", "out_l", "out_r", "mix_cv_in"],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.reverb");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
@@ -641,5 +642,71 @@ fn wet_level_is_comparable_to_the_input_level() {
             println!("alg {alg} decay {decay}: wet/dry {gain:+.2} dB");
             assert!(gain.abs() < 8.0, "alg {alg} decay {decay}: {gain} dB");
         }
+    }
+}
+
+fn max_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f32::max)
+}
+
+/// Left output for white noise with `mix` and `trim` set and an optional constant mix CV.
+fn mix_cv_run(mix: f32, trim: f32, cv: Option<f32>) -> Vec<f32> {
+    let mut h = reverb();
+    h.set_param("mix", mix);
+    h.set_param("mix_cv_trim", trim);
+    if let Some(c) = cv {
+        *h.input_mut("mix_cv_in") = [c; BATCH];
+    }
+    run_mono(&mut h, &noise(1, 4096, 0.3)).0
+}
+
+#[test]
+fn mix_cv_adds_to_mix_scaled_by_trim_and_clamps() {
+    // 0.2 + 0.5 behaves as a mix knob of 0.7.
+    let a = mix_cv_run(0.2, 1.0, Some(0.5));
+    assert!(max_diff(&a, &mix_cv_run(0.7, 1.0, None)) < 1e-4);
+    assert!(
+        max_diff(&a, &mix_cv_run(0.2, 1.0, None)) > 1e-3,
+        "CV has an effect"
+    );
+    // Half trim: 0.2 + 0.5 * 0.5.
+    let h = mix_cv_run(0.2, 0.5, Some(0.5));
+    assert!(max_diff(&h, &mix_cv_run(0.45, 1.0, None)) < 1e-4);
+    // Beyond +-1 is clamped; the sum clamps to 0..1.
+    assert_eq!(
+        mix_cv_run(0.2, 1.0, Some(5.0)),
+        mix_cv_run(0.2, 1.0, Some(1.0))
+    );
+    assert!(
+        max_diff(
+            &mix_cv_run(0.5, 1.0, Some(5.0)),
+            &mix_cv_run(1.0, 1.0, None)
+        ) < 1e-4
+    );
+    // Negative trim inverts and clamps at 0 (dry).
+    assert!(
+        max_diff(
+            &mix_cv_run(0.5, -1.0, Some(1.0)),
+            &mix_cv_run(0.0, 1.0, None)
+        ) < 1e-4
+    );
+}
+
+#[test]
+fn mix_cv_trim_zero_cancels_the_input_bit_exactly() {
+    assert_eq!(mix_cv_run(0.3, 0.0, Some(1.0)), mix_cv_run(0.3, 1.0, None));
+}
+
+#[test]
+fn mix_cv_is_allocation_free_and_finite() {
+    let mut h = reverb();
+    for i in 0..300 {
+        *h.input_mut("mix_cv_in") = [((i % 9) as f32 - 4.0) * 0.7; BATCH];
+        *h.input_mut("in_l") = [0.2; BATCH];
+        h.process();
+        assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
 }

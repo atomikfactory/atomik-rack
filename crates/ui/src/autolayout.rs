@@ -138,6 +138,8 @@ pub struct PanelSpec {
     pub seq: Option<crate::seq_panel::SeqPanel>,
     /// The arpeggiator panel of an `atomik.arpeggiator` (see [`crate::arp_panel`]).
     pub arp: Option<crate::arp_panel::ArpPanel>,
+    /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
+    pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
     /// The container panel of an `atomik.container` (see
     /// [`crate::container_panel`]).
     pub container: Option<crate::container_panel::ContainerPanel>,
@@ -161,6 +163,7 @@ impl PanelSpec {
         self.fx
             .and_then(|f| f.character)
             .is_some_and(|g| g.back_params.contains(&pc.param))
+            || self.drum.is_some_and(|d| d.back_params.contains(&pc.param))
     }
 
     /// Height in logical units.
@@ -278,6 +281,7 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         samples: samples.then(|| {
@@ -474,6 +478,16 @@ pub(crate) fn fit_with(
 pub const DRUM_TYPE: &str = "atomik.drum-machine";
 /// Height of the drum panel in rack units.
 pub const DRUM_UNITS: u8 = 3;
+/// Packing index of the global CV trim knob `i` (`DRUM_TRIM_ITEM + i`: 0 level, 1 pitch), above
+/// any socket.
+const DRUM_TRIM_ITEM: usize = 10_000;
+/// The global CV inputs of the drum machine and the trims that go with them, in back order.
+const DRUM_CV: [(&str, &str); 2] = [
+    ("level_cv_in", "master.level_cv_trim"),
+    ("pitch_cv_in", "pitch_cv_trim"),
+];
+/// Width of the trim knob cell on the drum back (narrower than a front knob).
+const DRUM_TRIM_W: f64 = 40.0;
 /// Size of one pad cell of the 4x4 pad grid (the pad itself is inset by 2 px).
 pub const DRUM_PAD_CELL: (f64, f64) = (54.0, 48.0);
 /// Width of one knob column of the selected pad's section.
@@ -498,6 +512,10 @@ pub struct DrumPanel {
     pub edit: Rect,
     /// The "TO CH" button: gives the selected pad its own console channel.
     pub to_channel: Rect,
+    /// The descriptor indices of the `master.level_cv_trim` and `pitch_cv_trim` knobs, which sit
+    /// on the back face next to their jacks (see [`PanelSpec::on_back`]); `usize::MAX` when
+    /// missing.
+    pub back_params: [usize; 2],
 }
 
 /// The cell rectangle of `pad` (1..=16) in the pad grid `pads`: pad 1 is bottom left, the
@@ -520,7 +538,7 @@ impl PanelSpec {
     /// The descriptor index of the param a front control stands for. On a drum panel the
     /// controls are laid out on `pad1.*`; they stand for the same param of the selected `pad`.
     pub fn param_index(&self, desc: &DeviceDescriptor, pc: &PlacedControl, pad: u8) -> usize {
-        if self.drum.is_none() {
+        if self.drum.is_none() || self.on_back(pc) {
             return pc.param;
         }
         desc.params[pc.param]
@@ -537,7 +555,9 @@ impl PanelSpec {
 fn pad_of_socket(key: &str) -> Option<u8> {
     let rest = key.strip_prefix("pad")?;
     let (n, tail) = rest.split_once('_')?;
-    tail.starts_with("out").then(|| n.parse().ok()).flatten()
+    (tail.starts_with("out") || tail.starts_with("gate_"))
+        .then(|| n.parse().ok())
+        .flatten()
 }
 
 /// The panel of `atomik.drum-machine`: a 4x4 pad grid, the eight knobs of the selected pad
@@ -625,8 +645,33 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             DRUM_MASTER_X + DRUM_COL_W,
             top + ROW_H + 62.0,
         ),
+        back_params: DRUM_CV.map(|(_, trim)| index(trim).unwrap_or(usize::MAX)),
     };
-    let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none());
+    let is_global_cv = |k: &str| DRUM_CV.iter().any(|(s, _)| *s == k);
+    let mut groups = back_groups_filtered(desc, |k| pad_of_socket(k).is_none() && !is_global_cv(k));
+    // The global CV inputs, each next to its trim knob.
+    let cv_items: Vec<Item> = DRUM_CV
+        .iter()
+        .enumerate()
+        .flat_map(|(n, (socket, _))| {
+            let jack = desc.sockets.iter().position(|s| s.key == *socket);
+            let trim = (drum.back_params[n] != usize::MAX).then_some((
+                DRUM_TRIM_ITEM + n,
+                DRUM_TRIM_W,
+                Some(ROW_H),
+            ));
+            jack.map(|i| (i, SOCKET_CELL.0, Some(SOCKET_CELL.1)))
+                .into_iter()
+                .chain(trim)
+        })
+        .collect();
+    if !cv_items.is_empty() {
+        groups.push(Group {
+            label: "CV".to_string(),
+            items: cv_items,
+            min_w: 0.0,
+        });
+    }
     for pad in 1..=16u8 {
         let items: Vec<Item> = desc
             .sockets
@@ -643,10 +688,25 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
             });
         }
     }
+    // One row per section (a knob is as tall as a row): each pad is its four jacks side by side
+    // (out L, out R, gate in, gate out).
     let units = (DRUM_UNITS..=MAX_UNITS)
-        .find(|&u| fit(&groups, u, SOCKET_CELL.1, 0.0).is_some())
+        .find(|&u| fit(&groups, u, ROW_H, 0.0).is_some())
         .unwrap_or(MAX_UNITS);
-    let (back_cells, back_sections) = fit(&groups, units, SOCKET_CELL.1, 0.0).unwrap_or_default();
+    let (back_cells, back_sections) = fit(&groups, units, ROW_H, 0.0).unwrap_or_default();
+    for (item, rect) in &back_cells {
+        if *item >= DRUM_TRIM_ITEM {
+            front.push(PlacedControl {
+                param: drum.back_params[item - DRUM_TRIM_ITEM],
+                kind: ControlKind::Knob,
+                rect: *rect,
+            });
+        }
+    }
+    let back_cells: Vec<_> = back_cells
+        .into_iter()
+        .filter(|(item, _)| *item < DRUM_TRIM_ITEM)
+        .collect();
     PanelSpec {
         height_units: units,
         samples: None,
@@ -655,6 +715,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,
@@ -680,7 +741,7 @@ pub const SLICER_STRIP_W: f64 = 222.0;
 /// Width of one knob column of the slicer panel.
 const SLICER_COL_W: f64 = 64.0;
 /// The slicer's device params in front layout order (six per row, two rows).
-pub const SLICER_PARAMS: [&str; 9] = [
+pub const SLICER_PARAMS: [&str; 12] = [
     "master.level",
     "voices",
     "tune.semi",
@@ -690,6 +751,9 @@ pub const SLICER_PARAMS: [&str; 9] = [
     "velocity.amp",
     "loop.beats",
     "cv.pitch_amount",
+    "filter.cutoff",
+    "filter.cutoff_cv_trim",
+    "master.level_cv_trim",
 ];
 
 /// Geometry of the slicer panel's extras (front, panel coordinates).
@@ -785,6 +849,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,
@@ -837,6 +902,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         fx: None,
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,

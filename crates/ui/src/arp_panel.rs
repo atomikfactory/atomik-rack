@@ -137,6 +137,7 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: Some(panel),
+        modsrc: None,
         container: None,
         plugin: None,
         front,

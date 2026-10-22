@@ -194,6 +194,31 @@ pub fn split_path(key: &DeviceKey) -> (Option<DeviceKey>, DeviceKey) {
     }
 }
 
+/// The scope and the view form of an expanded (flat) cable: `a/x:o -> a/y:i` is the cable
+/// `x:o -> y:i` of the container `a`'s inside; a top-level cable keeps its keys and has no
+/// scope. `None` for a cable that has no counterpart in one scope's view: ends in different
+/// scopes (the flat cable of a splice) or on a container's `~split`.
+pub fn scoped_cable(cable: &crate::Cable) -> Option<(Option<DeviceKey>, crate::Cable)> {
+    if cable.from.device.0.contains('~') || cable.to.device.0.contains('~') {
+        return None;
+    }
+    let (scope, from) = split_path(&cable.from.device);
+    let (to_scope, to) = split_path(&cable.to.device);
+    (scope == to_scope).then(|| {
+        let end = |device, at: &crate::SocketRef| crate::SocketRef {
+            device,
+            socket: at.socket.clone(),
+        };
+        (
+            scope,
+            crate::Cable {
+                from: end(from, &cable.from),
+                to: end(to, &cable.to),
+            },
+        )
+    })
+}
+
 /// `path` extended by the local key `local` (`a`, `b` is `a/b`).
 pub(crate) fn join(parent: Option<&DeviceKey>, local: &DeviceKey) -> DeviceKey {
     match parent {

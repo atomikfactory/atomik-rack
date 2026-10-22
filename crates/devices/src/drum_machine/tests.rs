@@ -193,13 +193,21 @@ fn descriptor_validates_with_the_contract_order() {
         sockets.push(format!("pad{n}_out_l"));
         sockets.push(format!("pad{n}_out_r"));
     }
+    params.push("master.level_cv_trim".to_string());
+    params.push("pitch_cv_trim".to_string());
+    sockets.push("level_cv_in".to_string());
+    sockets.push("pitch_cv_in".to_string());
+    for n in 1..=16 {
+        sockets.push(format!("pad{n}_gate_cv_in"));
+        sockets.push(format!("pad{n}_gate_cv_out"));
+    }
     let p: Vec<&str> = params.iter().map(String::as_str).collect();
     let s: Vec<&str> = sockets.iter().map(String::as_str).collect();
     assert_keys(&DESCRIPTOR, &p, &s);
     assert_eq!(DESCRIPTOR.type_id, "atomik.drum-machine");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(DESCRIPTOR.params.len(), 129);
-    assert_eq!(DESCRIPTOR.sockets.len(), 35);
+    assert_eq!(DESCRIPTOR.params.len(), 131);
+    assert_eq!(DESCRIPTOR.sockets.len(), 69);
     let d = |k: &str| {
         let d = DESCRIPTOR.param_by_key(k).unwrap();
         (d.min, d.max, d.default)
@@ -215,16 +223,403 @@ fn descriptor_validates_with_the_contract_order() {
         assert_eq!(d(&format!("pad{n}.choke")), (0.0, 4.0, 0.0));
         assert_eq!(d(&format!("pad{n}.velocity")), (0.0, 1.0, 0.7));
     }
-    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(1) {
+    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(1).take(34) {
         assert_eq!(sd.kind, SocketKind::Audio, "{i}");
         assert_eq!(sd.direction, Direction::Output);
     }
+    for (i, sd) in DESCRIPTOR.sockets.iter().enumerate().skip(35) {
+        assert_eq!(sd.kind, SocketKind::Cv, "{i}");
+        let input = i < 37 || (i - 37) % 2 == 0;
+        assert_eq!(
+            sd.direction,
+            if input {
+                Direction::Input
+            } else {
+                Direction::Output
+            },
+            "{i}"
+        );
+    }
+    assert_eq!(d("master.level_cv_trim"), (-1.0, 1.0, 1.0));
+    assert_eq!(d("pitch_cv_trim"), (-1.0, 1.0, 1.0));
     assert_eq!(factory().descriptor.type_id, "atomik.drum-machine");
     assert_eq!(pad_key(0), 36);
     assert_eq!(pad_key(15), 51);
 }
 
 // ---- pad playback ----------------------------------------------------------------
+
+// ---- CV inputs: global level and pitch, per-pad gates ---------------------------------
+
+/// Hits `pad` of `m` and returns the settled output sample `[left, right]` at frame 150.
+fn cv_hit(
+    m: &SampleMapRef,
+    pad: usize,
+    setup: impl Fn(&mut DeviceHarness),
+    socket: &str,
+    cv: Option<f32>,
+) -> [f32; 2] {
+    let (mut h, _) = with_map(m);
+    setup(&mut h);
+    if let Some(cv) = cv {
+        *h.input_mut(socket) = [cv; BATCH];
+    }
+    hit(&mut h, 0, pad, 1.0);
+    let (l, r) = render(&mut h, 3);
+    [l[150], r[150]]
+}
+
+#[test]
+fn level_cv_scales_every_pad_by_amount_in_db() {
+    let m = flat_kit(&[3, 5], 0.1, 4000);
+    let at = |cv: Option<f32>, amount: f32| {
+        cv_hit(
+            &m,
+            3,
+            |h| h.set_param("master.level_cv_trim", amount / 24.0),
+            "level_cv_in",
+            cv,
+        )[0]
+    };
+    let base = at(None, 12.0);
+    assert!((base - 0.1).abs() < 1e-6);
+    let up = at(Some(0.5), 12.0); // +6 dB
+    assert!((up / base - 10f32.powf(6.0 / 20.0)).abs() < 1e-4, "{up}");
+    let down = at(Some(-1.0), 12.0);
+    assert!((down / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4);
+    assert_eq!(at(Some(1.0), 0.0).to_bits(), base.to_bits(), "trim 0");
+    assert_eq!(
+        at(Some(8.0), 12.0).to_bits(),
+        at(Some(1.0), 12.0).to_bits(),
+        "clamped to +1"
+    );
+    assert!(
+        (at(Some(1.0), -12.0) / base - 10f32.powf(-12.0 / 20.0)).abs() < 1e-4,
+        "a negative trim inverts"
+    );
+    assert_eq!(
+        at(Some(f32::NAN), 12.0).to_bits(),
+        base.to_bits(),
+        "NaN is 0"
+    );
+    // Default trim +1 is the full 24 dB.
+    let full = cv_hit(&m, 3, |_| {}, "level_cv_in", Some(1.0))[0];
+    assert!((full / base - 10f32.powf(24.0 / 20.0)).abs() < 1e-3);
+    // Both pads move together.
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("level_cv_in") = [-0.5; BATCH];
+    hit(&mut h, 0, 3, 1.0);
+    hit(&mut h, 0, 5, 1.0);
+    let (l, _) = render(&mut h, 3);
+    assert!(
+        (l[150] - 0.2 * 10f32.powf(-12.0 / 20.0)).abs() < 1e-5,
+        "{}",
+        l[150]
+    );
+}
+
+#[test]
+fn level_cv_applies_to_the_individual_pad_output_too() {
+    let m = flat_kit(&[3], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    connect_pad(&mut h, 3);
+    *h.input_mut("level_cv_in") = [0.5; BATCH];
+    hit(&mut h, 0, 3, 1.0);
+    let o = h.render(3, &["pad3_out_l", "pad3_out_r"]);
+    for ch in &o {
+        assert!(
+            (ch[150] - 0.1 * 10f32.powf(12.0 / 20.0)).abs() < 1e-4,
+            "{}",
+            ch[150]
+        );
+    }
+}
+
+#[test]
+fn pitch_cv_transposes_by_trim_times_24_semitones() {
+    let m = map(vec![buffer(vec![ramp(4000)])], vec![zone(0, 4000, 36)]);
+    let want = ramp(4000);
+    // +0.5 CV at trim 1 is +12 semitones: every second frame, exactly like `pad1.tune` 12.
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("pitch_cv_in") = [0.5; BATCH];
+    hit(&mut h, 0, 1, 1.0);
+    let (ol, _) = render(&mut h, 4);
+    for n in SETTLED..200 {
+        assert_eq!(
+            ol[n].to_bits(),
+            (want[2 * n] * FRAC_1_SQRT_2).to_bits(),
+            "{n}"
+        );
+    }
+    // Trim -0.5 with CV +1 is -12 semitones (half speed): a negative trim inverts.
+    let (mut h, _) = with_map(&m);
+    h.set_param("pitch_cv_trim", -0.5);
+    *h.input_mut("pitch_cv_in") = [1.0; BATCH];
+    hit(&mut h, 0, 1, 1.0);
+    let (ol, _) = render(&mut h, 4);
+    for (n, v) in ol.iter().enumerate().take(200).skip(SETTLED) {
+        let w = (n as f32 / 2.0) / 4096.0 * FRAC_1_SQRT_2;
+        assert!((v - w).abs() < 2e-5, "{n}: {v} vs {w}");
+    }
+    // Trim 0: the cabled CV does nothing.
+    let (mut h, _) = with_map(&m);
+    h.set_param("pitch_cv_trim", 0.0);
+    *h.input_mut("pitch_cv_in") = [1.0; BATCH];
+    hit(&mut h, 0, 1, 1.0);
+    let (ol, _) = render(&mut h, 4);
+    for n in SETTLED..200 {
+        assert_eq!(ol[n].to_bits(), (want[n] * FRAC_1_SQRT_2).to_bits());
+    }
+}
+
+#[test]
+fn pitch_cv_bends_voices_that_are_already_sounding_without_a_jump() {
+    let data: Vec<f32> = (0..16000)
+        .map(|i| 0.5 * (std::f64::consts::TAU * i as f64 / 40.0).sin() as f32)
+        .collect();
+    let m = map(vec![buffer(vec![data])], vec![zone(0, 16000, 36)]);
+    let (mut h, _) = with_map(&m);
+    hit(&mut h, 0, 1, 1.0);
+    let (a, _) = render(&mut h, 20);
+    let f0 = dominant_frequency(&a[100..1200], SR);
+    assert!((f0 - SR / 40.0).abs() < 0.02 * SR / 40.0, "{f0}");
+    *h.input_mut("pitch_cv_in") = [0.5; BATCH];
+    let (b, _) = render(&mut h, 20);
+    let f1 = dominant_frequency(&b[BATCH..], SR);
+    assert!(
+        (f1 - 2.0 * SR / 40.0).abs() < 0.02 * 2.0 * SR / 40.0,
+        "{f1}"
+    );
+    // The change glides over the first batch: no jump at the boundary.
+    let last = a[a.len() - 1];
+    assert!((b[0] - last).abs() < 0.2, "{} {}", b[0], last);
+}
+
+#[test]
+fn new_cv_inputs_unconnected_leave_output_bit_identical() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        (1..=PAD_COUNT).map(|p| zone(0, 6000, key_of(p))).collect(),
+    );
+    let run = |trims: bool| {
+        let (mut h, _) = with_map(&m);
+        if trims {
+            h.set_param("master.level_cv_trim", -0.7);
+            h.set_param("pitch_cv_trim", -0.3);
+        }
+        for p in [1usize, 4, 9, 16] {
+            hit(&mut h, (p * 7) as u16, p, 0.9);
+        }
+        let (l, r) = render(&mut h, 20);
+        (bits(&l), bits(&r))
+    };
+    assert_eq!(run(false), run(true));
+    // A CV that is cabled but at 0 changes nothing either (level 10^0, pitch 2^0).
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("level_cv_in") = [0.0; BATCH];
+    *h.input_mut("pitch_cv_in") = [0.0; BATCH];
+    for p in [1usize, 4, 9, 16] {
+        hit(&mut h, (p * 7) as u16, p, 0.9);
+    }
+    let (l, r) = render(&mut h, 20);
+    assert_eq!((bits(&l), bits(&r)), run(false));
+}
+
+fn gate_out(h: &DeviceHarness, pad: usize) -> Vec<f32> {
+    h.output(&format!("pad{pad}_gate_cv_out")).to_vec()
+}
+
+/// A gate batch that is `level` from sample `rise` up to `fall`, else low.
+fn gate_pulse(rise: usize, fall: usize, level: f32) -> [f32; BATCH] {
+    std::array::from_fn(|i| {
+        if (rise..fall).contains(&i) {
+            level
+        } else {
+            0.0
+        }
+    })
+}
+
+#[test]
+fn gate_in_triggers_the_right_pad_at_the_right_sample_with_velocity_from_the_level() {
+    let m = flat_kit(&[3, 5], 0.1, 4000);
+    for (level, vel) in [(1.0f32, 1.0f32), (0.75, 0.5), (0.9, 0.8)] {
+        let (mut h, probe) = with_map(&m);
+        h.set_param("pad3.velocity", 1.0);
+        *h.input_mut("pad3_gate_cv_in") = gate_pulse(10, BATCH, level);
+        let (l1, _) = render(&mut h, 1);
+        // Inputs persist: keep the gate high so it is one rise.
+        *h.input_mut("pad3_gate_cv_in") = [level; BATCH];
+        let (l2, _) = render(&mut h, 2);
+        let l: Vec<f32> = l1.into_iter().chain(l2).collect();
+        assert_eq!(probe.keys(), vec![key_of(3)], "level {level}");
+        assert!(l[..10].iter().all(|v| *v == 0.0), "sample accurate");
+        let want = 0.1 * vel;
+        assert!(
+            (l[10 + SETTLED] - want).abs() < 1e-5,
+            "level {level}: {} vs {want}",
+            l[10 + SETTLED]
+        );
+    }
+}
+
+#[test]
+fn gate_in_matches_the_same_note_hit_and_retriggers_on_each_rise() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        vec![zone(0, 6000, key_of(2))],
+    );
+    let (mut a, _) = with_map(&m);
+    hit(&mut a, 7, 2, 1.0);
+    let (al, ar) = render(&mut a, 6);
+    let (mut b, _) = with_map(&m);
+    *b.input_mut("pad2_gate_cv_in") = gate_pulse(7, BATCH, 1.0);
+    let (mut bl, mut br) = render(&mut b, 1);
+    *b.input_mut("pad2_gate_cv_in") = [1.0; BATCH];
+    let (l2, r2) = render(&mut b, 5);
+    bl.extend(l2);
+    br.extend(r2);
+    // Same hit; the gate stays high so there is no note-off, like a held note.
+    assert_eq!((bits(&al), bits(&ar)), (bits(&bl), bits(&br)));
+    // Two pulses in one batch are two hits (the second retriggers the pad).
+    let (mut c, probe) = with_map(&m);
+    let mut g = gate_pulse(4, 20, 1.0);
+    g[40..50].fill(1.0);
+    *c.input_mut("pad2_gate_cv_in") = g;
+    let (cl, _) = render(&mut c, 1);
+    assert!(cl[..4].iter().all(|v| *v == 0.0));
+    assert!(cl[4 + SETTLED] != 0.0);
+    assert!(probe.active() >= 2, "the retrigger fades the first voice");
+}
+
+#[test]
+fn gate_in_falling_edge_releases_a_gate_mode_pad_only() {
+    let m = flat_kit(&[1], 0.5, 20000);
+    let run = |mode: f32, fall: bool| {
+        let (mut h, _) = with_map(&m);
+        h.set_param("pad1.mode", mode);
+        h.set_param("pad1.decay", 50.0);
+        *h.input_mut("pad1_gate_cv_in") = [1.0; BATCH];
+        let (l, _) = render(&mut h, 40);
+        let held = l[l.len() - 1];
+        if fall {
+            *h.input_mut("pad1_gate_cv_in") = [0.0; BATCH];
+        }
+        let (l, _) = render(&mut h, 60);
+        (held, l[l.len() - 1])
+    };
+    // Gate mode: held at full level while the gate is high, decays after the fall.
+    let (held, end) = run(0.0, true);
+    assert!((held - 0.5).abs() < 1e-5, "{held}");
+    assert!(end.abs() < 1e-3, "{end}");
+    let (_, still) = run(0.0, false);
+    assert!((still - 0.5).abs() < 1e-5, "no fall, no release: {still}");
+    // One-shot: decays from the hit and the fall changes nothing.
+    let (held, _) = run(1.0, true);
+    assert!(held < 0.45, "{held}");
+    assert_eq!(run(1.0, true).1.to_bits(), run(1.0, false).1.to_bits());
+}
+
+#[test]
+fn gate_out_follows_note_on_and_off_with_the_velocity_level() {
+    let m = flat_kit(&[3, 5], 0.1, 4000);
+    let (mut h, _) = with_map(&m);
+    h.set_connected("pad3_gate_cv_out", true);
+    h.set_connected("pad5_gate_cv_out", true);
+    h.push_note("notes_in", on(20, key_of(3), 0.5));
+    h.push_note("notes_in", off(50, key_of(3)));
+    h.process();
+    let g = gate_out(&h, 3);
+    assert!(g[..20].iter().all(|v| *v == 0.0));
+    assert!(g[20..50].iter().all(|v| *v == 0.75));
+    assert!(g[50..].iter().all(|v| *v == 0.0));
+    assert!(gate_out(&h, 5).iter().all(|v| *v == 0.0));
+    // A held note spans batches; a full-velocity hit reads 1.0.
+    h.push_note("notes_in", on(60, key_of(5), 1.0));
+    h.process();
+    assert!(gate_out(&h, 5)[60..].iter().all(|v| *v == 1.0));
+    h.process();
+    assert!(gate_out(&h, 5).iter().all(|v| *v == 1.0));
+    h.push_note("notes_in", off(3, key_of(5)));
+    h.process();
+    let g = gate_out(&h, 5);
+    assert!(g[..3].iter().all(|v| *v == 1.0) && g[3..].iter().all(|v| *v == 0.0));
+    // The gate is the note's length, also for a one-shot pad that ignores the note-off.
+    let (mut h, _) = with_map(&m);
+    h.set_param("pad3.mode", 1.0);
+    h.set_connected("pad3_gate_cv_out", true);
+    h.push_note("notes_in", on(5, key_of(3), 1.0));
+    h.push_note("notes_in", off(9, key_of(3)));
+    h.process();
+    let g = gate_out(&h, 3);
+    assert!(g[5..9].iter().all(|v| *v == 1.0) && g[9..].iter().all(|v| *v == 0.0));
+    // All-notes-off clears it.
+    h.push_note("notes_in", on(0, key_of(3), 1.0));
+    h.push_note("notes_in", all_off(30));
+    h.process();
+    let g = gate_out(&h, 3);
+    assert!(g[..30].iter().all(|v| *v == 1.0) && g[30..].iter().all(|v| *v == 0.0));
+}
+
+#[test]
+fn gate_out_follows_gate_in_and_works_without_a_map() {
+    let (mut h, _) = drum();
+    h.set_connected("pad7_gate_cv_out", true);
+    *h.input_mut("pad7_gate_cv_in") = gate_pulse(8, 40, 0.75);
+    h.process();
+    let g = gate_out(&h, 7);
+    assert!(g[..8].iter().all(|v| *v == 0.0));
+    assert!(g[8..40].iter().all(|v| *v == 0.75));
+    assert!(g[40..].iter().all(|v| *v == 0.0));
+    // A velocity-0 hit still reads high (above the 0.5 threshold).
+    let (mut h, _) = drum();
+    h.set_connected("pad1_gate_cv_out", true);
+    h.push_note("notes_in", on(0, 36, 0.0));
+    h.process();
+    assert!(gate_out(&h, 1).iter().all(|v| *v > 0.5));
+}
+
+#[test]
+fn gate_out_chains_into_gate_in_with_the_same_velocity() {
+    let m = flat_kit(&[1, 2], 0.1, 4000);
+    let (mut src, _) = with_map(&m);
+    src.set_connected("pad1_gate_cv_out", true);
+    src.push_note("notes_in", on(10, 36, 0.6));
+    src.process();
+    let (mut dst, _) = with_map(&m);
+    dst.set_param("pad2.velocity", 1.0);
+    let g = gate_out(&src, 1);
+    dst.input_mut("pad2_gate_cv_in").copy_from_slice(&g);
+    let (l, _) = render(&mut dst, 3);
+    assert!(
+        (l[10 + SETTLED] - 0.1 * 0.6).abs() < 0.1 * 0.01,
+        "{}",
+        l[10 + SETTLED]
+    );
+}
+
+#[test]
+fn cv_inputs_are_allocation_free() {
+    let m = map(
+        vec![buffer(vec![noise(6000, 3), noise(6000, 4)])],
+        (1..=PAD_COUNT).map(|p| zone(0, 6000, key_of(p))).collect(),
+    );
+    let (mut h, _) = with_map(&m);
+    *h.input_mut("level_cv_in") = [0.3; BATCH];
+    *h.input_mut("pitch_cv_in") = [-0.2; BATCH];
+    for p in 1..=PAD_COUNT {
+        *h.input_mut(&format!("pad{p}_gate_cv_in")) = gate_pulse(p, 50 + p, 0.9);
+        h.set_connected(&format!("pad{p}_gate_cv_out"), true);
+        hit(&mut h, p as u16, p, 1.0);
+    }
+    connect_pad(&mut h, 2);
+    h.process();
+    assert_no_alloc(|| {
+        for _ in 0..30 {
+            h.process();
+        }
+    });
+}
 
 #[test]
 fn every_pad_reproduces_its_zone_bit_exactly_after_the_attack() {

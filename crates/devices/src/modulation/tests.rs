@@ -27,11 +27,11 @@ fn step(
     l: &[f32; BATCH],
     r: &[f32; BATCH],
 ) -> ([f32; BATCH], [f32; BATCH]) {
-    let mut signals = vec![[0.0f32; BATCH]; 4];
+    let mut signals = vec![[0.0f32; BATCH]; 5];
     signals[0] = *l;
     signals[1] = *r;
-    let mut notes: Vec<NoteBuffer> = (0..4).map(|_| NoteBuffer::with_capacity(0)).collect();
-    let connected = [true; 4];
+    let mut notes: Vec<NoteBuffer> = (0..5).map(|_| NoteBuffer::with_capacity(0)).collect();
+    let connected = [true, true, true, true, false];
     let time = TimeInfo::at(
         frame,
         SampleRate::new(sr).unwrap(),
@@ -62,10 +62,19 @@ fn descriptor_validates() {
     assert_keys(
         &DESCRIPTOR,
         &[
-            "mode", "rate", "sync", "depth", "feedback", "delay", "stages", "spread", "mix",
+            "mode",
+            "rate",
+            "sync",
+            "depth",
+            "feedback",
+            "delay",
+            "stages",
+            "spread",
+            "mix",
             "output",
+            "mix_cv_trim",
         ],
-        &["in_l", "in_r", "out_l", "out_r"],
+        &["in_l", "in_r", "out_l", "out_r", "mix_cv_in"],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.modulation");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
@@ -416,5 +425,67 @@ fn phaser_has_unit_magnitude_without_modulation() {
     for hz in [100.0, 1_000.0, 5_000.0] {
         let g = crate::test_support::sine_gain_db(&mut h, &IN, "out_l", hz, 0.5, 0.2);
         assert!(g.abs() < 0.01, "{hz} Hz: {g} dB");
+    }
+}
+
+fn max_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f32::max)
+}
+
+/// Left output for a 440 Hz sine with `mix` and `trim` set and an optional constant mix CV.
+fn mix_cv_run(mix: f32, trim: f32, cv: Option<f32>) -> Vec<f32> {
+    let mut h = harness(Box::new(Modulation::new()));
+    h.set_param("mix", mix);
+    h.set_param("mix_cv_trim", trim);
+    if let Some(c) = cv {
+        *h.input_mut("mix_cv_in") = [c; BATCH];
+    }
+    run_signal(&mut h, &IN, crate::test_support::sine(440.0, 0.3), 40, &OUT)[0].clone()
+}
+
+#[test]
+fn mix_cv_adds_to_mix_scaled_by_trim_and_clamps() {
+    let a = mix_cv_run(0.2, 1.0, Some(0.5));
+    assert!(max_diff(&a, &mix_cv_run(0.7, 1.0, None)) < 1e-4);
+    assert!(
+        max_diff(&a, &mix_cv_run(0.2, 1.0, None)) > 1e-3,
+        "CV has an effect"
+    );
+    let h = mix_cv_run(0.2, 0.5, Some(0.5));
+    assert!(max_diff(&h, &mix_cv_run(0.45, 1.0, None)) < 1e-4);
+    assert_eq!(
+        mix_cv_run(0.2, 1.0, Some(5.0)),
+        mix_cv_run(0.2, 1.0, Some(1.0))
+    );
+    assert!(
+        max_diff(
+            &mix_cv_run(0.5, 1.0, Some(5.0)),
+            &mix_cv_run(1.0, 1.0, None)
+        ) < 1e-4
+    );
+    assert!(
+        max_diff(
+            &mix_cv_run(0.5, -1.0, Some(1.0)),
+            &mix_cv_run(0.0, 1.0, None)
+        ) < 1e-4
+    );
+}
+
+#[test]
+fn mix_cv_trim_zero_cancels_the_input_bit_exactly() {
+    assert_eq!(mix_cv_run(0.3, 0.0, Some(1.0)), mix_cv_run(0.3, 1.0, None));
+}
+
+#[test]
+fn mix_cv_is_allocation_free_and_finite() {
+    let mut h = harness(Box::new(Modulation::new()));
+    for i in 0..300 {
+        *h.input_mut("mix_cv_in") = [((i % 9) as f32 - 4.0) * 0.7; BATCH];
+        *h.input_mut("in_l") = [0.2; BATCH];
+        h.process();
+        assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
 }

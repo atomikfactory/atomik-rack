@@ -97,6 +97,10 @@ fn descriptor_keys_match_contract_exactly() {
     ] {
         params.push(p.into());
     }
+    params.extend(["fader_cv_trim".into(), "pan_cv_trim".into()]);
+    for k in 1..=8 {
+        params.push(format!("send{k}.level_cv_trim"));
+    }
     let mut sockets: Vec<String> = [
         "in_l",
         "in_r",
@@ -116,6 +120,10 @@ fn descriptor_keys_match_contract_exactly() {
     for s in ["out_l", "out_r", "gr_cv_out"] {
         sockets.push(s.into());
     }
+    sockets.extend(["fader_cv_in".into(), "pan_cv_in".into()]);
+    for k in 1..=8 {
+        sockets.push(format!("send{k}_level_cv_in"));
+    }
     let p: Vec<&str> = params.iter().map(String::as_str).collect();
     let s: Vec<&str> = sockets.iter().map(String::as_str).collect();
     crate::test_support::assert_keys(&DESCRIPTOR, &p, &s);
@@ -126,15 +134,17 @@ fn descriptor_keys_match_contract_exactly() {
 #[test]
 fn descriptor_socket_kinds_and_directions() {
     for s in DESCRIPTOR.sockets {
-        let input =
-            s.key.starts_with("in_") || s.key == "key_in" || s.key.starts_with("insert_return");
+        let input = s.key.starts_with("in_")
+            || s.key == "key_in"
+            || s.key.starts_with("insert_return")
+            || s.key.ends_with("_cv_in");
         let want = if input {
             Direction::Input
         } else {
             Direction::Output
         };
         assert_eq!(s.direction, want, "{}", s.key);
-        let kind = if s.key == "gr_cv_out" {
+        let kind = if s.key == "gr_cv_out" || s.key.ends_with("_cv_in") {
             SocketKind::Cv
         } else {
             SocketKind::Audio
@@ -773,6 +783,10 @@ fn stage_table_matches_plan_section_9() {
     for s in ["out_l", "out_r", "gr_cv_out"] {
         stage1.push(s.into());
     }
+    stage1.extend(["fader_cv_in".into(), "pan_cv_in".into()]);
+    for k in 1..=8 {
+        stage1.push(format!("send{k}_level_cv_in"));
+    }
     crate::test_support::assert_stages(
         &DESCRIPTOR,
         &[
@@ -1007,4 +1021,125 @@ fn connected_insert_return_is_used_from_the_first_sample() {
         h.output("out_l")[0] > 0.45,
         "crossfades after the first batch"
     );
+}
+
+/// Settled `out_l`/`out_r` for a DC input of 1.0 on `in_l` with the given setup.
+fn cv_out(setup: impl Fn(&mut DeviceHarness)) -> Vec<f32> {
+    let mut h = channel();
+    dc(&mut h, "in_l", 1.0);
+    setup(&mut h);
+    settled(&mut h, &OUT)
+}
+
+#[test]
+fn fader_cv_adds_trim_times_24_db_and_clamps() {
+    let base = K;
+    let g = |db: f32| base * 10f32.powf(db / 20.0);
+    let with = |trim: f32, cv: f32| {
+        cv_out(|h| {
+            h.set_param("fader_cv_trim", trim);
+            dc(h, "fader_cv_in", cv);
+        })
+    };
+    assert!(
+        approx(with(1.0, 0.25)[0], g(6.0), 1e-3),
+        "{:?}",
+        with(1.0, 0.25)
+    );
+    assert!(approx(with(1.0, -0.25)[0], g(-6.0), 1e-3));
+    assert!(approx(with(0.5, 0.5)[0], g(6.0), 1e-3), "trim scales");
+    assert!(approx(with(-1.0, 0.25)[0], g(-6.0), 1e-3), "trim inverts");
+    // Clamped beyond +-1.
+    assert!(approx(with(1.0, 5.0)[0], g(24.0), 1e-2));
+    assert!(approx(with(1.0, -5.0)[0], g(-24.0), 1e-3));
+    // Amount 0 cancels; the CV rides on the knob, and a closed fader stays closed.
+    assert!(approx(with(0.0, 1.0)[0], base, 1e-5));
+    let low = cv_out(|h| {
+        h.set_param("fader", 0.0);
+        dc(h, "fader_cv_in", 1.0);
+    });
+    assert!(low[0].abs() < 1e-9);
+}
+
+#[test]
+fn pan_cv_adds_to_the_pan_position_and_clamps() {
+    let knob = |pan: f32| cv_out(move |h| h.set_param("pan", pan));
+    let with = |pan: f32, trim: f32, cv: f32| {
+        cv_out(move |h| {
+            h.set_param("pan", pan);
+            h.set_param("pan_cv_trim", trim);
+            dc(h, "pan_cv_in", cv);
+        })
+    };
+    for (a, b) in with(0.0, 1.0, 0.5).iter().zip(knob(0.5)) {
+        assert!(approx(*a, b, 1e-4));
+    }
+    for (a, b) in with(-0.25, 0.5, 1.0).iter().zip(knob(0.25)) {
+        assert!(approx(*a, b, 1e-4), "trim scales and adds to the knob");
+    }
+    // Beyond +-1 clamps to hard right / left.
+    let r = with(0.0, 1.0, 5.0);
+    assert!(r[0].abs() < 1e-3 && approx(r[1], 1.0, 1e-3), "{r:?}");
+    let l = with(0.0, 1.0, -5.0);
+    assert!(approx(l[0], 1.0, 1e-3) && l[1].abs() < 1e-3, "{l:?}");
+    // Amount 0 cancels.
+    for (a, b) in with(0.3, 0.0, 1.0).iter().zip(knob(0.3)) {
+        assert!(approx(*a, b, 1e-6));
+    }
+}
+
+#[test]
+fn send_level_cv_adds_trim_times_66_db_and_clamps_per_send() {
+    for k in [1usize, 5, 8] {
+        let run = |level: f32, trim: f32, cv: f32, on: bool| {
+            let mut h = channel();
+            dc(&mut h, "in_l", 1.0);
+            h.set_param(&format!("send{k}.on"), if on { 1.0 } else { 0.0 });
+            h.set_param(&format!("send{k}.level"), level);
+            h.set_param(&format!("send{k}.level_cv_trim"), trim);
+            dc(&mut h, &format!("send{k}_level_cv_in"), cv);
+            settled(&mut h, &[&format!("send{k}_l")])[0]
+        };
+        let lin = |db: f32| 10f32.powf(db / 20.0);
+        // -20 dB + 0.25 * 66 = -3.5 dB.
+        assert!(
+            approx(run(-20.0, 1.0, 0.25, true), lin(-3.5), 1e-3),
+            "send {k}"
+        );
+        // Half trim: 0.5 * 0.5 * 66 = +16.5 dB.
+        assert!(approx(run(-20.0, 0.5, 0.5, true), lin(-3.5), 1e-3));
+        // Clamped: cv 5 behaves as cv 1, and the level clamps at +6 dB / off at -60.
+        assert!(approx(run(-20.0, 1.0, 5.0, true), lin(6.0), 1e-3));
+        assert!(run(-20.0, 1.0, -5.0, true).abs() < 1e-9);
+        // Amount 0 cancels; an off send stays off.
+        assert!(approx(run(-20.0, 0.0, 1.0, true), lin(-20.0), 1e-4));
+        assert!(run(-20.0, 1.0, 1.0, false).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn cv_inputs_are_allocation_free_and_finite() {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.3);
+    h.set_param("send2.on", 1.0);
+    for i in 0..300usize {
+        let v = ((i % 9) as f32 - 4.0) * 0.7;
+        dc(&mut h, "fader_cv_in", v);
+        dc(&mut h, "pan_cv_in", -v);
+        dc(&mut h, "send2_level_cv_in", v);
+        h.process();
+        for o in ["out_l", "out_r", "send2_l"] {
+            assert!(h.output(o).iter().all(|x| x.is_finite()));
+        }
+    }
+    // Unplugging restores the knob values (send, fader, pan).
+    for k in ["fader_cv_in", "pan_cv_in", "send2_level_cv_in"] {
+        h.set_connected(k, false);
+    }
+    let o = settled(&mut h, &["out_l", "out_r", "send2_l"]);
+    assert!(
+        approx(o[0], 0.3 * K, 1e-5) && approx(o[1], 0.3 * K, 1e-5),
+        "{o:?}"
+    );
+    assert!(approx(o[2], 0.3, 1e-5), "{o:?}");
 }

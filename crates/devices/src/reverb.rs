@@ -39,6 +39,9 @@
 //!   jumping; algorithm switches glide the same way and fade the tap gains.
 //! * **Freeze.** The freeze control fades over 25 ms: feedback gains go to 1, the damping
 //!   lowpass is bypassed and the input is muted, so the tail's energy circulates unchanged.
+//! * **Mix CV.** `mix_cv_in` (batch mean, clamped to -1..+1) times `mix_cv_trim` (-1..+1, default
+//!   +1) is added to `mix`, then clamped to 0..1, before the control smoother. Unconnected, the
+//!   device is bit-identical to before.
 //! * **Mix and latency.** `out = dry * (1 - mix) + wet * mix * output`. The dry path has no
 //!   delay, and at `mix == 0` the input is copied bit-exactly. Latency is 0; the pre-delay only
 //!   delays the wet signal.
@@ -49,6 +52,7 @@
 //! * **Meter values** (`has_meter_values`): `[output peak L, output peak R, tail RMS]`, linear,
 //!   of the last batch.
 
+use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -77,8 +81,9 @@ const P_MODULATION: u32 = 8;
 const P_MIX: u32 = 9;
 const P_FREEZE: u32 = 10;
 const P_OUTPUT: u32 = 11;
+const P_MIX_TRIM: u32 = 12;
 
-static PARAMS: [ParamDescriptor; 12] = [
+static PARAMS: [ParamDescriptor; 13] = [
     ParamDescriptor {
         id: ParamId(P_ALGORITHM),
         key: "algorithm",
@@ -211,14 +216,26 @@ static PARAMS: [ParamDescriptor; 12] = [
         unit: Unit::Db,
         discrete: false,
     },
+    ParamDescriptor {
+        id: ParamId(P_MIX_TRIM),
+        key: "mix_cv_trim",
+        name: "Mix CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
 ];
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
+const MIX_CV: SocketId = SocketId(4);
 
-static SOCKETS: [SocketDescriptor; 4] = [
+static SOCKETS: [SocketDescriptor; 5] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -246,6 +263,13 @@ static SOCKETS: [SocketDescriptor; 4] = [
         name: "Out R",
         kind: SocketKind::Audio,
         direction: Direction::Output,
+    },
+    SocketDescriptor {
+        id: MIX_CV,
+        key: "mix_cv_in",
+        name: "Mix CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
     },
 ];
 
@@ -434,6 +458,7 @@ pub struct Reverb {
     width: f32,
     modulation: f32,
     mix: f32,
+    mix_trim: f32,
     freeze: bool,
     output_db: f32,
     // State.
@@ -477,6 +502,7 @@ impl Reverb {
             width: 1.0,
             modulation: 0.5,
             mix: 0.3,
+            mix_trim: 1.0,
             freeze: false,
             output_db: 0.0,
             fresh: true,
@@ -637,6 +663,7 @@ impl Device for Reverb {
             P_WIDTH => self.width = v.clamp(0.0, 1.0),
             P_MODULATION => self.modulation = v.clamp(0.0, 1.0),
             P_MIX => self.mix = v.clamp(0.0, 1.0),
+            P_MIX_TRIM => self.mix_trim = v.clamp(-1.0, 1.0),
             P_FREEZE => self.freeze = v >= 0.5,
             P_OUTPUT => self.output_db = v.clamp(-24.0, 12.0),
             _ => {}
@@ -649,7 +676,10 @@ impl Device for Reverb {
         let in_r = *ctx.input(IN_R);
 
         // Control rate: advance every smoothed control one batch and make its ramp.
-        let target = self.targets();
+        let mut target = self.targets();
+        if ctx.is_connected(MIX_CV) {
+            target[C_MIX] = add_norm(self.mix, self.mix_trim, batch_mean(ctx.input(MIX_CV)));
+        }
         if self.fresh {
             for (c, t) in self.ctl.iter_mut().zip(&target) {
                 c.set_immediate(*t);

@@ -263,6 +263,7 @@ pub fn seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: Some(panel),
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,
@@ -425,6 +426,8 @@ pub struct PlayerInfo<'a> {
     pub edit: usize,
     /// The published meter values (quantised, see [`crate::RackView::set_device_meter_values`]).
     pub meters: &'a [f32],
+    /// The Mod Source scope history (Mod Source panel).
+    pub scope: Option<&'a crate::modsrc_panel::Scope>,
     /// The pattern name being edited, if any.
     pub rename: Option<&'a str>,
 }

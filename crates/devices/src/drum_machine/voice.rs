@@ -2,6 +2,7 @@
 
 use super::{PAD_COUNT, Pad, Shared};
 use crate::sampler::{tail_gain, zone_region};
+use atomik_core::BATCH;
 use atomik_core::db_to_gain;
 use atomik_device_sdk::{LoopMode, SampleMap, TriggerMode, Zone, velocity_to_7bit};
 use atomik_dsp::{LoopKind, PlayRegion, Playhead, balance_gains, pan_gains_mono};
@@ -45,6 +46,39 @@ const IDLE_ZONE: Zone = Zone {
     trigger: TriggerMode::Gate,
     reverse: false,
 };
+
+/// Global CV modulation of one batch: the linear level gain (`10^(trim * range * cv / 20)`)
+/// and the playback-ratio factor (`2^(semitones / 12)`) of every sample, each only when its
+/// socket is cabled.
+pub(super) struct VoiceCv {
+    pub level_on: bool,
+    pub level: [f32; BATCH],
+    pub pitch_on: bool,
+    pub pitch: [f64; BATCH],
+}
+
+impl VoiceCv {
+    pub fn new() -> Self {
+        Self {
+            level_on: false,
+            level: [1.0; BATCH],
+            pitch_on: false,
+            pitch: [1.0; BATCH],
+        }
+    }
+
+    /// The view of a render segment that starts at batch sample `start`.
+    pub fn at(&self, start: usize) -> CvView<'_> {
+        CvView { cv: self, start }
+    }
+}
+
+/// [`VoiceCv`] seen from the first sample of one render segment.
+#[derive(Clone, Copy)]
+pub(super) struct CvView<'a> {
+    cv: &'a VoiceCv,
+    start: usize,
+}
 
 /// Values that stay constant over one render segment.
 #[derive(Debug, Clone, Copy)]
@@ -227,6 +261,7 @@ impl Voice {
         out: [&mut [f32]; 2],
         pads: &[Pad; PAD_COUNT],
         sh: &Shared,
+        cv: &CvView<'_>,
     ) {
         let [out_l, out_r] = out;
         let mut map = own;
@@ -252,10 +287,18 @@ impl Voice {
                 1.0
             };
             let tail = tail_gain(&self.head, &self.zone, sh.sample_rate);
-            let g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
+            let mut g = env * seg.level * self.zone_gain * self.vel_gain * fade * tail;
+            let at = cv.start + n;
+            if cv.cv.level_on {
+                g *= cv.cv.level[at];
+            }
             out_l[n] += xl * seg.pan_l * g;
             out_r[n] += xr * seg.pan_r * g;
-            self.head.advance(seg.ratio);
+            self.head.advance(if cv.cv.pitch_on {
+                seg.ratio * cv.cv.pitch[at]
+            } else {
+                seg.ratio
+            });
             let mut ended = self.head.finished();
             if !(self.gate && self.held) {
                 self.decay *= pads[usize::from(self.pad)].decay_coef;

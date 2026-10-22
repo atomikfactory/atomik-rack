@@ -34,12 +34,16 @@
 //!
 //! # Mix, output and smoothing
 //!
+//! `mix_cv_in` (batch mean, clamped to -1..+1) times `mix_cv_trim` (-1..+1, default +1) is added
+//! to `mix` and clamped to 0..1 before the smoother; unconnected, nothing changes.
+//!
 //! `out = (dry * (1 - mix) + wet * mix) * output`. `mix`, `output`, `depth`, `feedback` and the
 //! delay time are smoothed per batch (20 ms, linear ramps). Switching `mode` clears the delay
 //! lines and allpass states. Latency 0. The feedback signal is clamped to +-8 (a hard bound that
 //! only matters if an interpolator overshoots at the maximum feedback), and all state is flushed
 //! below 1e-20, so the output is finite and bounded for any parameters.
 
+use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -60,6 +64,7 @@ const P_STAGES: u32 = 6;
 const P_SPREAD: u32 = 7;
 const P_MIX: u32 = 8;
 const P_OUTPUT: u32 = 9;
+const P_MIX_TRIM: u32 = 10;
 
 /// Longest base delay in ms.
 pub const MAX_DELAY_MS: f32 = 30.0;
@@ -78,7 +83,7 @@ const PHASER_OCTAVES: f32 = 3.0;
 /// Feedback clamp.
 const FB_LIMIT: f32 = 8.0;
 
-static PARAMS: [ParamDescriptor; 10] = [
+static PARAMS: [ParamDescriptor; 11] = [
     ParamDescriptor {
         id: ParamId(P_MODE),
         key: "mode",
@@ -191,14 +196,26 @@ static PARAMS: [ParamDescriptor; 10] = [
         unit: Unit::Db,
         discrete: false,
     },
+    ParamDescriptor {
+        id: ParamId(P_MIX_TRIM),
+        key: "mix_cv_trim",
+        name: "Mix CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
 ];
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
+const MIX_CV: SocketId = SocketId(4);
 
-static SOCKETS: [SocketDescriptor; 4] = [
+static SOCKETS: [SocketDescriptor; 5] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -226,6 +243,13 @@ static SOCKETS: [SocketDescriptor; 4] = [
         name: "Out R",
         kind: SocketKind::Audio,
         direction: Direction::Output,
+    },
+    SocketDescriptor {
+        id: MIX_CV,
+        key: "mix_cv_in",
+        name: "Mix CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
     },
 ];
 
@@ -304,6 +328,7 @@ pub struct Modulation {
     stages: usize,
     spread: f32,
     mix: f32,
+    mix_trim: f32,
     output_db: f32,
     // State.
     fresh: bool,
@@ -339,6 +364,7 @@ impl Modulation {
             stages: 4,
             spread: 90.0,
             mix: 0.5,
+            mix_trim: 1.0,
             output_db: 0.0,
             fresh: true,
             phase: 0.0,
@@ -418,6 +444,7 @@ impl Device for Modulation {
             P_STAGES => self.stages = even_stages(v),
             P_SPREAD => self.spread = v.clamp(0.0, 180.0),
             P_MIX => self.mix = v.clamp(0.0, 1.0),
+            P_MIX_TRIM => self.mix_trim = v.clamp(-1.0, 1.0),
             P_OUTPUT => self.output_db = v.clamp(-24.0, 12.0),
             _ => {}
         }
@@ -431,18 +458,23 @@ impl Device for Modulation {
         let sr64 = f64::from(sr);
 
         let out_target = exp2_det(self.output_db * LOG2_10_20);
+        let mix_t = if ctx.is_connected(MIX_CV) {
+            add_norm(self.mix, self.mix_trim, batch_mean(ctx.input(MIX_CV)))
+        } else {
+            self.mix
+        };
         if self.fresh {
             self.depth_sm.set_immediate(self.depth);
             self.fb_sm.set_immediate(self.feedback);
             self.delay_sm.set_immediate(self.delay_ms);
-            self.mix_sm.set_immediate(self.mix);
+            self.mix_sm.set_immediate(mix_t);
             self.out_sm.set_immediate(out_target);
             self.fresh = false;
         }
         let depth = self.depth_sm.advance(self.depth, BATCH);
         let fb = self.fb_sm.advance(self.feedback, BATCH);
         let delay = self.delay_sm.advance(self.delay_ms, BATCH);
-        let mix = self.mix_sm.advance(self.mix, BATCH);
+        let mix = self.mix_sm.advance(mix_t, BATCH);
         let out_g = self.out_sm.advance(out_target, BATCH);
 
         // LFO timing for this batch.

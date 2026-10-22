@@ -13,6 +13,7 @@ pub mod channel;
 pub mod character;
 pub mod compressor;
 pub mod container;
+mod cv_in;
 pub mod distortion;
 pub mod drum_machine;
 pub mod eq;
@@ -20,6 +21,7 @@ pub mod line_mixer;
 pub mod loop_slicer;
 pub mod master;
 pub mod mastering;
+pub mod mod_source;
 pub mod modulation;
 mod note_clock;
 pub mod note_split;
@@ -52,6 +54,15 @@ pub fn is_player(type_id: &str) -> bool {
     PLAYER_TYPE_IDS.contains(&type_id)
 }
 
+/// Type ids of the modulators (CV sources). They are `DeviceKind::Utility`; the browser lists them
+/// under a "Modulators" heading, and future CV sources join the list.
+pub const MODULATOR_TYPE_IDS: [&str; 1] = ["atomik.mod-source"];
+
+/// Whether `type_id` is a modulator (see [`MODULATOR_TYPE_IDS`]).
+pub fn is_modulator(type_id: &str) -> bool {
+    MODULATOR_TYPE_IDS.contains(&type_id)
+}
+
 /// Type ids of the internal devices: created by the model's container expansion, never shown in
 /// the browser or offered by an add menu, and refused when added by hand.
 pub const INTERNAL_TYPE_IDS: [&str; 1] = ["atomik.note-split"];
@@ -78,6 +89,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(distortion::factory())?;
     registry.register(eq::factory())?;
     registry.register(mastering::factory())?;
+    registry.register(mod_source::factory())?;
     registry.register(modulation::factory())?;
     registry.register(note_split::factory())?;
     registry.register(channel::factory())?;
@@ -95,7 +107,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 20] = [
+    const TYPE_IDS: [&str; 21] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.channel",
@@ -109,6 +121,7 @@ mod tests {
         "atomik.loop-slicer",
         "atomik.master",
         "atomik.mastering",
+        "atomik.mod-source",
         "atomik.modulation",
         "atomik.note-split",
         "atomik.poly-synth",
@@ -119,7 +132,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all twenty devices.
+    // Name kept; it now covers all twenty-one devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
@@ -138,6 +151,19 @@ mod tests {
                 id == "atomik.step-sequencer",
                 "{id}"
             );
+        }
+    }
+
+    #[test]
+    fn modulator_type_ids_are_pinned() {
+        assert_eq!(super::MODULATOR_TYPE_IDS, ["atomik.mod-source"]);
+        assert!(super::is_modulator("atomik.mod-source"));
+        assert!(!super::is_modulator("atomik.modulation"));
+        let mut r = Registry::new();
+        register_all(&mut r).unwrap();
+        for id in super::MODULATOR_TYPE_IDS {
+            let d = r.get(id).unwrap().descriptor;
+            assert_eq!(d.kind, atomik_device_sdk::DeviceKind::Utility);
         }
     }
 

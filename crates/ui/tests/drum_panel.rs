@@ -1,6 +1,6 @@
 //! The drum machine's rack panel: the 4x4 pad grid, the knobs of the selected
 //! pad, master level, the Edit button, drops onto pads and the background, the back panel with
-//! 35 reachable sockets, and display-list goldens of both faces. Other devices' panels are
+//! 69 reachable sockets, and display-list goldens of both faces. Other devices' panels are
 //! covered by their own goldens (they must not change).
 //! Regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test drum_panel`.
 
@@ -161,9 +161,10 @@ fn the_panel_shows_pad_labels_the_selected_pad_and_the_edit_button() {
     );
     assert_eq!(v.selected_pad(&key("drums")), Some(1));
     assert_eq!(v.selected_pad(&key("synth")), None);
-    // Three rack units, no 129-knob sprawl.
+    // Seven rack units: the back holds the four sockets of each of the 16 pads (outputs and gate
+    // jacks); the front is still the compact pad panel, not a 161-knob sprawl.
     let r = v.device_rect(&key("drums")).unwrap();
-    assert!((r.height() - 3.0 * 76.0).abs() < 1e-9, "{r:?}");
+    assert!((r.height() - 7.0 * 76.0).abs() < 1e-9, "{r:?}");
 }
 
 #[test]
@@ -396,7 +397,7 @@ fn the_selected_pad_is_not_lost_when_the_document_changes() {
 // ------------------------------------------------------------------ back
 
 #[test]
-fn all_35_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
+fn all_69_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
     let (doc, mut v) = rack();
     v.set_flip(Flip::Back);
     let d = key("drums");
@@ -405,7 +406,13 @@ fn all_35_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
         names.push(format!("pad{n}_out_l"));
         names.push(format!("pad{n}_out_r"));
     }
-    assert_eq!(names.len(), 35);
+    names.push("level_cv_in".into());
+    names.push("pitch_cv_in".into());
+    for n in 1..=16 {
+        names.push(format!("pad{n}_gate_cv_in"));
+        names.push(format!("pad{n}_gate_cv_out"));
+    }
+    assert_eq!(names.len(), 69);
     let panel = v.device_rect(&d).unwrap();
     let mut centres = Vec::new();
     for n in &names {
@@ -422,9 +429,14 @@ fn all_35_sockets_are_reachable_on_the_back_and_stay_inside_the_panel() {
         }
     }
     let t = texts_of(&mut v, &doc);
-    for s in ["PAD 1", "PAD 8", "PAD 9", "PAD 16"] {
+    for s in ["PAD 1", "PAD 8", "PAD 9", "PAD 16", "CV"] {
         assert!(t.iter().any(|x| x == s), "missing {s:?}: {t:?}");
     }
+    // The two global CV trims sit on the back next to their jacks; the 16 old per-pad ones are gone.
+    for trim in ["master.level_cv_trim", "pitch_cv_trim"] {
+        assert!(v.control_center(&d, trim).is_some(), "{trim}");
+    }
+    assert!(v.control_center(&d, "pad1.level_cv_trim").is_none());
 }
 
 #[test]

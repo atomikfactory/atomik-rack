@@ -267,6 +267,11 @@ pub struct RecordingSink {
     pub epoch: u64,
     /// What [`EngineSink::read_meter`] returns per endpoint (not reset on read).
     pub meters: BTreeMap<Endpoint, MeterReading>,
+    /// When set, a read spends the endpoint's reading (a second read of it finds nothing until
+    /// the test inserts one again), like the real meter bank, whose reads reset the peak.
+    pub spend_meters_on_read: bool,
+    /// The endpoints already spent by [`Self::spend_meters_on_read`].
+    pub spent_meters: std::sync::Mutex<std::collections::BTreeSet<Endpoint>>,
     /// What [`EngineSink::read_device_meter_values`] returns per device: the values and the
     /// publish sequence.
     pub device_values: BTreeMap<DeviceInstanceId, (Vec<f32>, u64)>,
@@ -408,7 +413,14 @@ impl EngineSink for RecordingSink {
     }
 
     fn read_meter(&self, endpoint: Endpoint) -> Option<MeterReading> {
-        self.meters.get(&endpoint).copied()
+        let reading = self.meters.get(&endpoint).copied()?;
+        if self.spend_meters_on_read
+            && let Ok(mut spent) = self.spent_meters.lock()
+            && !spent.insert(endpoint)
+        {
+            return None;
+        }
+        Some(reading)
     }
 
     fn read_device_meter_values(

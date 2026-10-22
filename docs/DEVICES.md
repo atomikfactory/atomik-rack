@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty original devices: the poly synth, line mixer and stereo delay, the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-one original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -22,8 +22,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 |---|---|---|---|
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. Reads 0 when unconnected. |
+| `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1 (see "CV inputs: the trim convention"). |
+| `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (result clamped to 0..1). |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels. |
+| `pan_cv_in` | CV | in | Balances the output by `pan_cv_trim` × CV (−1 = left, +1 = right). |
 | `out_l` | Audio | out | Left output |
-| `out_r` | Audio | out | Right output: currently identical to `out_l` (see below) |
+| `out_r` | Audio | out | Right output: identical to `out_l` unless `pan_cv_in` is cabled (see below) |
 | `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
 
 ### Params
@@ -61,6 +65,10 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
 | `voices` | 1 to 16 | 16 | none | Linear | yes |
 | `master.level` | −60 to 6 (−60 = silent) | −6 | dB | dB | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -74,7 +82,12 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 - **Output level.**
   - The output is the sum of voices × 0.5 × the master gain (smoothed over 5 ms).
   - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
-- **Mono output.** `out_l` **equals** `out_r`. There is no stereo spread in this version.
+- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo spread in this version.
+- **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target (a negative trim inverts the CV). All four act on the whole instrument, not per voice.
+  - *Pitch:* semitones (`pitch_cv_trim` × 24 × CV), added to every oscillator of every voice (key + offsets + LFO·`lfo.to_pitch` + CV term), read at the 16-sample control rate like the cutoff.
+  - *Resonance:* the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1); the filter damping ramps over each 16-sample control step.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
+  - *Pan:* per sample, the mono sum is balanced by `pan_cv_trim`·CV after the limiter: unity on both sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device instance, so renders are reproducible.
 
 ---
@@ -362,6 +375,60 @@ Chorus, flanger and phaser with tempo sync. Source: [crates/devices/src/modulati
 
 ---
 
+## Mod Source: `atomik.mod-source` (Utility)
+
+Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and has only CV sockets besides the notes input, so adding it to a rack creates no cables. Source: [crates/devices/src/mod_source.rs](../crates/devices/src/mod_source.rs), shapes and envelope in [crates/dsp/src/mod_source.rs](../crates/dsp/src/mod_source.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Key sync of the LFOs and trigger of the envelope |
+| `gate_cv_in` | CV | in | Envelope gate: high above 0.5 (exactly 0.5 is low) |
+| `lfo1_rate_cv_in`, `lfo2_rate_cv_in` | CV | in | Sanitised (non-finite is 0), clamped to −1..+1, times `lfoN_rate_cv_trim` and 4 octaves. No effect when unconnected. |
+| `lfo1_amount_cv_in`, `lfo2_amount_cv_in` | CV | in | Clamped to 0..1 and multiplies the amount. Unconnected means ×1; connected and 0 means silence. |
+| `lfo1_cv_out`, `lfo2_cv_out` | CV | out | −1..+1 (0..1 unipolar) |
+| `env_cv_out` | CV | out | 0..1 |
+
+The CV convention of the project (`<target>_cv_in` with a bipolar `<target>_cv_trim`, default +1) applies to the rate CV. Two inputs are documented exceptions with no trim: the amount CV (a multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
+
+### Params
+
+Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 0.5 Hz triangle, the table shows LFO 1).
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `lfoN_shape` | 0–6: sine, triangle, saw up, saw down, pulse, sample & hold, smooth random | 0 (LFO 2: 1) | choice | Linear | yes |
+| `lfoN_morph` | −1 to 1 (0 is neutral) | 0 | none | Linear | no |
+| `lfoN_rate` | 0.01 to 40 (free rate) | 1 (LFO 2: 0.5) | Hz | Exp | no |
+| `lfoN_sync` | 0 (free) or 1 (tempo-synced) | 0 | toggle | Linear | yes |
+| `lfoN_div` | 0–29: 1/64 to 8 bars, each as triplet, straight and dotted | 13 (1/4) | choice | Linear | yes |
+| `lfoN_phase` | 0 to 1 (cycles) | 0 | none | Linear | no |
+| `lfoN_amount` | 0 to 1 | 1 | percent | Linear | no |
+| `lfoN_polarity` | 0–1: bipolar, unipolar | 0 | choice | Linear | yes |
+| `lfoN_key_sync` | 0 or 1 | 0 | toggle | Linear | yes |
+| `lfoN_rate_cv_trim` | −1 to 1 (negative inverts) | 1 | none | Linear | no |
+| `env_attack` | 1 to 10000 | 10 | ms | Exp | no |
+| `env_decay` | 1 to 10000 | 200 | ms | Exp | no |
+| `env_sustain` | 0 to 1 | 0.7 | percent | Linear | no |
+| `env_release` | 1 to 10000 | 300 | ms | Exp | no |
+| `env_amount` | 0 to 1 | 1 | percent | Linear | no |
+| `env_mode` | 0–1: retrigger, legato | 0 | choice | Linear | yes |
+
+### Behaviour (as built)
+
+- **Shapes and morph.** Sine and triangle start at 0 and rise; saw up runs −1 to +1, saw down +1 to −1; pulse starts high. `morph` is 0 at the neutral setting of every shape. Sine and triangle: *skew*, the positive half-cycle takes `0.5 + 0.48 × morph` of the cycle. Saws: *curve*, `q = p (1−k)/(1−k p)` with `k = 0.95 × morph` (positive is slow-start). Pulse: width `0.5 + 0.45 × morph`. Sample & hold: *glide*, the first `max(morph, 0)` of each cycle slides linearly from the previous value to the new one. Smooth random: the curve between this cycle's value and the next (negative towards linear, positive towards smootherstep).
+- **Output.** `shape × amount × amount CV` (unipolar maps the shape to `(v + 1)/2` first), so the output never leaves −1..+1 (envelope 0..1).
+- **Rate.** Free: `lfoN_rate × 2^(4 × rate CV × lfoN_rate_cv_trim)`, the CV sanitised (non-finite is 0) and clamped to ±1 (up to 4 octaves). Synced: one cycle lasts the division (bars follow the time signature), bent by the rate CV in the same way.
+- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its last phase. A free LFO ignores the transport.
+- **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset; random shapes draw new values after each restart.
+- **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible for a seed, across locates and bounces.
+- **Envelope.** Curves of the poly synth's ADSR, computed without libm. The gate is high while a note is held or `gate_cv_in` is above 0.5. **Retrigger** (default): every note-on and every rising gate edge restarts the attack from the current level (no click). **Legato**: a trigger while the gate is already high does nothing. The release starts when the last note is off and the gate CV is low. Notes and gate edges act at their sample.
+- **Meter values (32 floats, for the front panel scope).** `0..3` latest lfo1, lfo2, env; `3..5` LFO phases (0..1); `5` envelope stage (0 idle, 1 attack, 2 decay, 3 sustain, 4 release); `6` push counter modulo 4096; `7..15`, `15..23`, `23..31` the last 8 history points of lfo1, lfo2, env, oldest first, one point every 2.5 ms; `31` the spacing in ms.
+- **Determinism.** No libm call in the output path (deterministic sine, `exp2`, integer hashes): bit-identical on every platform. The example [mod-source-demo.json](../examples/patches/mod-source-demo.json) drives the poly synth's cutoff from a tempo-synced saw.
+
+---
+
 ## Mastering: `atomik.mastering` (Effect)
 
 Multiband compressor, stereo width, true-peak limiter and a BS.1770 loudness meter in one device. Source: [crates/devices/src/mastering.rs](../crates/devices/src/mastering.rs), with `mastering/limiter.rs` and `mastering/loudness.rs`.
@@ -528,6 +595,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch by `cv.pitch_amount` semitones. Reads 0 when unconnected. |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves (only with the filter on). |
+| `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (only with the filter on). |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels. |
+| `pan_cv_in` | CV | in | Adds `pan_cv_trim` × CV to the pan of every voice. |
 | `out_l` | Audio | out | Left output |
 | `out_r` | Audio | out | Right output |
 
@@ -562,6 +632,9 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `lfo.to_amp` | 0 to 1 | 0 | percent | Linear | no |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
 | `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
+| `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Zones (the sample map)
 
@@ -578,6 +651,10 @@ A zone has a key range, a velocity range (1–127; a note velocity `v` maps to r
 - **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen (a start counter, one count per zone started, orders the voices, so stealing is deterministic). It fades out linearly over 2 ms, then the new note starts. A note-off for a note still waiting for its voice cancels it (gate zones).
 - **Level.** Voice gain = zone gain × amp envelope × (1 − `velocity.amp` × (1 − velocity)) × tremolo, where tremolo is 1 − `lfo.to_amp` × (1 − LFO)/2. A mono sample goes through a constant-power pan (−3 dB at the centre). A stereo sample is balanced by the pan: unity at the centre, the far side falls as cos(|pan|·π/2). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth (linear to ±2, below ±4 always).
 - **Filter.** With `filter.enabled` at 0 (the default) the signal is not filtered at all. When on, each voice filters its left and right channels with 12 dB state-variable filters. Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV + 4·`filter.velocity`·(velocity − 1)), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient interpolated in between.
+- **CV inputs (resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
+  - *Resonance:* per voice, the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1) at the 16-sample control rate, the damping ramped in between. Only audible with `filter.enabled` on.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter, for all voices. No extra smoothing.
+  - *Pan:* per voice and per sample, the pan is the zone pan + `pan_cv_trim`·CV (clamped to ±1 by the pan law), through the usual law (constant power for a mono sample, balance for a stereo one).
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps. There is no latency.
 - **Map swaps.** The device holds the current map and at most one *draining* map, and never frees a map itself: `swap_samples` hands one back to the caller, which drops it off the audio thread.
   - A voice whose zone index exists in the new map, with a buffer that is the same `Arc`, moves to the new zone (it takes the zone's parameters and keeps its position). Every other voice keeps playing from the old map with a 5 ms fade-out; the old map becomes the draining map.
@@ -598,10 +675,13 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `notes_in` | Notes | in | Note on, note off and all-notes-off |
 | `out_l`, `out_r` | Audio | out | Main mix of every pad whose individual output is not cabled |
 | `pad1_out_l`, `pad1_out_r` … `pad16_out_l`, `pad16_out_r` | Audio | out | Individual stereo output of pad *n* (sockets 3 to 34 in this order) |
+| `level_cv_in` | CV | in | Level of all pads: `master.level_cv_trim` × 24 × CV decibels (socket 35). |
+| `pitch_cv_in` | CV | in | Pitch of all pads: `pitch_cv_trim` × 24 × CV semitones (socket 36). |
+| `pad1_gate_cv_in`, `pad1_gate_cv_out` … `pad16_gate_cv_in`, `pad16_gate_cv_out` | CV | in, out | Gate in (triggers pad *n*) and gate out (high while pad *n* is triggered); sockets 37 to 68, in, out per pad in this order. |
 
 ### Params
 
-`master.level` first, then eight params per pad *N* = 1 to 16 in this order (129 params; ids follow the order):
+`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then `master.level_cv_trim` and `pitch_cv_trim` (131 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -614,6 +694,8 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 | `padN.mode` | 0–1: gate, one-shot | 1 (one-shot) | choice | Linear | yes |
 | `padN.choke` | 0 to 4 (0 = none) | 0 | none | Linear | yes |
 | `padN.velocity` | 0 to 1 | 0.7 | percent | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -623,6 +705,11 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 - **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end fade is at `start`), exactly as in the sampler.
 - **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared playhead (zone start/end and loops as in the sampler).
 - **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity` × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample (−3 dB at the centre), balance for a stereo sample (unity at the centre).
+- **CV input (level, global).** Applied only while `level_cv_in` is cabled; with every new CV socket open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and multiplied by `master.level_cv_trim` and 24 dB: the gain of every voice is multiplied per sample by 10^(24·trim·CV/20). It acts on all pads and on their individual outputs, before the main mix's `master.level` and soft limiter. No extra smoothing; a negative trim inverts.
+- **CV input (pitch, global).** Applied only while `pitch_cv_in` is cabled. The batch mean of the CV (sanitised, clamped to −1..+1) times `pitch_cv_trim` and 24 semitones is the target offset; the playback ratio of every voice is multiplied by 2^(offset/12), and the offset glides linearly from the previous batch's target over the 64 samples of the batch (no zipper noise; the first batch after a (re)connect starts at its target). It acts on **voices that are already sounding** as well as on new hits (so a pitch envelope or LFO bends a ringing drum), on all pads, on top of `padN.tune` and `padN.fine`. A negative trim inverts.
+- **Gate in (per pad).** `padN_gate_cv_in` is read sample by sample. A rise through 0.5 (above 0.5 is high) triggers the pad exactly like a note-on on its key at that sample, with velocity `(gate − 0.5) × 2` clamped to 0..1 (so a plain 1.0 gate is full velocity, 0.75 is half velocity). The fall to 0.5 or below is the note-off: it only matters for a pad in *gate* mode (it starts the decay); a one-shot pad ignores it as it ignores a note-off. Each rise is a new hit (retriggering the pad). A gate that is high when the cable is pulled counts as the fall. Gate in and notes can be used together.
+- **Gate out (per pad).** `padN_gate_cv_out` is 0 while the pad is released and `0.5 + velocity/2` (0.504 at least, 1.0 at velocity 1) from every trigger of the pad, whether it came from a note, from the step sequencer or from its own gate in, until the matching note-off or the falling gate-in edge, sample accurate. The encoding is the inverse of gate in, so a gate out can be cabled straight to another pad's (or any device's) gate in and keeps the velocity, and the level is above 0.5 so every gate consumer sees it as high. The length is the note's length, also for a one-shot pad that ignores the note-off for its sound; the gate does not follow how long the sample rings. A hit with no zone for its velocity, or without a map, still raises the gate. All-notes-off and `reset` lower every gate; a source that never sends a note-off keeps the gate high until then. The step sequencer's own `gate_cv_out` is 1.0/0.0 with the velocity on a separate CV; the drum machine has no separate velocity CV, hence the combined encoding.
+- **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out R, gate in, gate out).
 - **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group 0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
 - **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level` and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither scaled nor limited (non-finite values become 0).
 - **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one draining map and hands one back per swap. A voice whose zone index exists in the new map with a pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A pending hit survives only if the new map has a zone of its pad at the same index that still matches its velocity.
@@ -640,6 +727,8 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 |---|---|---|---|
 | `notes_in` | Notes in | Notes | in |
 | `pitch_cv_in` | Pitch CV | CV | in |
+| `cutoff_cv_in` | Cutoff CV | CV | in |
+| `level_cv_in` | Level CV | CV | in |
 | `out_l` | Out L | Audio | out |
 | `out_r` | Out R | Audio | out |
 
@@ -656,6 +745,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 | `velocity.amp` | 0 to 1 | 0.5 | percent | Linear | no |
 | `loop.beats` | 1 to 64 | 4 | none | Linear | yes |
 | `cv.pitch_amount` | 0 to 24 | 12 | semitones | Linear | no |
+| `filter.cutoff` | 20 to 20 000 | 20 000 | Hz | Exp | no |
+| `filter.cutoff_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 
 ### Behaviour (as built)
 
@@ -666,6 +758,9 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 - **Reverse.** A reversed slice plays from `end − 1` down to `start` (see the sampler's Zones section).
 - **Pitch.** Ratio 2^((key − root + transpose + `tune.semi`)/12 + zone cents/1200 + CV·`cv.pitch_amount`/12), CV clamped to ±1 and updated every 16 samples. Slices normally have their key as root: unity ratio, so a slice is reproduced bit for bit once the attack is over.
 - **Level and pan.** Voice gain = envelope × zone gain × (1 − `velocity.amp` × (1 − velocity)). A mono loop goes through a constant-power pan by the zone pan (−3 dB at the centre), a stereo loop is balanced (unity at the centre). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth.
+- **Filter and CV inputs (cutoff, level).** The slicer had no filter; it now has one global 12 dB low-pass (Butterworth, Q = 1/√2) over the summed voices, placed before `master.level`. It is engaged only while `cutoff_cv_in` is cabled or `filter.cutoff` is below its maximum of 20 kHz; otherwise the signal is not touched, so a patch that does not use either is bit for bit what it was before. Each CV is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
+  - *Cutoff:* `filter.cutoff` × 2^(4·`filter.cutoff_cv_trim`·CV), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient ramped in between. It acts on all voices together, not per voice.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. No extra smoothing.
 - **`loop.beats`** is stored but unused by the audio; the app and the editor use it for grid slicing and for writing the loop as a note clip.
 - **Map swaps.** Exactly as the sampler and the drum machine; a pending hit survives only if the new map has a slice zone of its key at the same index that still matches its velocity.
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps.
@@ -834,6 +929,48 @@ Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main
 Try it with the test plugins: [../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and [../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both formats in one project).
 
 VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
+
+## CV inputs: the trim convention
+
+Added with the Mod Source work, one convention for every device (instruments, effects and console channels). Every input is a CV socket `<target>_cv_in` with a bipolar amount param `<target>_cv_trim` (−1..+1, default +1, shown as "CV trim" on the front panel next to its knob). The CV is clamped to −1..+1, scaled by the trim and added to the target as listed below, then the sum is clamped to the target's range. With the socket unconnected nothing changes: the output is bit-identical to a device without the input, and old patches and projects load unchanged (new params take their defaults). Where the device smooths per batch (reverb, modulation, distortion, EQ, console channel) the CV is its mean over the 64-sample batch and goes through the target's existing smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sources: [cv_in.rs](../crates/devices/src/cv_in.rs) and each device module.
+
+| Device | Socket | Trim param | Mapping |
+|---|---|---|---|
+| Stereo delay | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Stereo delay | `feedback_cv_in` | `feedback_cv_trim` | `0.95 · (feedback/0.95 + trim·cv)`, normalised, 0..0.95 |
+| Reverb | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Modulation | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `mix_cv_in` | `mix_cv_trim` | `mix + trim·cv`, 0..1 |
+| Distortion | `drive_cv_in` | `drive_cv_trim` | `48 dB · (drive/48 + trim·cv)`, normalised, 0..48 dB |
+| EQ | `band2_gain_cv_in` … `band5_gain_cv_in` (low shelf, peak 1, peak 2, high shelf) | `band2.gain_cv_trim` … `band5.gain_cv_trim` | `gain + trim·cv·24 dB`, −24..+24 dB (a band whose effective gain is exactly 0 dB is off, as before) |
+| Console channel | `fader_cv_in` | `fader_cv_trim` | fader gain × 10^(trim·cv·24/20): ±24 dB around the fader position |
+| Console channel | `pan_cv_in` | `pan_cv_trim` | `pan + trim·cv`, −1..+1 |
+| Console channel | `send1_level_cv_in` … `send8_level_cv_in` | `send1.level_cv_trim` … `send8.level_cv_trim` | `level + trim·cv·66 dB`, clamped to −60..+6 dB (−60 = off); a send that is switched off stays off |
+| Poly synth | `pitch_cv_in` | `pitch_cv_trim` | pitch of every voice + `trim·cv·24` semitones |
+| Poly synth | `resonance_cv_in` | `filter.resonance_cv_trim` | `resonance + trim·cv`, 0..1 |
+| Poly synth | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+| Poly synth | `pan_cv_in` | `pan_cv_trim` | balance `trim·cv`, −1..+1 |
+| Sampler | `resonance_cv_in` | `filter.resonance_cv_trim` | `resonance + trim·cv`, 0..1 (filter on) |
+| Sampler | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+| Sampler | `pan_cv_in` | `pan_cv_trim` | per voice: zone pan + `trim·cv` |
+| Drum machine | `level_cv_in` | `master.level_cv_trim` | gain of all pads × 10^(trim·cv·24/20) |
+| Drum machine | `pitch_cv_in` | `pitch_cv_trim` | pitch of all pads, also sounding voices, + `trim·cv·24` semitones (per batch, glided) |
+| Loop slicer | `cutoff_cv_in` | `filter.cutoff_cv_trim` | `filter.cutoff` × 2^(trim·cv·4), global low-pass |
+| Loop slicer | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
+
+The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear on the back of the channel's rack device like any other socket. The trims show in the console strip's MORE section. The console and auto-routing code only creates the audio cables of a channel, so the extra CV sockets do not affect it.
+
+## CV activity indicators
+
+On the back of the rack, every CV cable shows whether it carries signal and roughly how much. The cable glows and a lit disc appears behind both of its jacks (also when the cables are hidden), brighter for a stronger signal; a silent cable shows nothing extra.
+
+- **Engine.** Nothing new runs on the audio thread. The app registers the source endpoint of each CV cable as a read-only meter (`Topology::add_meter`, the same lock-free bank that serves the console and Audio I/O meters: an atomic peak per 64-frame batch, no locks, no allocation, no change to a sample). The output is bit-identical with and without the meters (`crates/engine/tests/cv_activity.rs`).
+- **View.** `AppCore::feed_cv_activity` reads the peaks once per frame while the back shows and hands them to `RackView::set_cv_activity`, which keeps a displayed level per cable: it rises at once, falls with a 180 ms time constant (so a pulse stays visible and a steady modulation does not flicker), and uses a square-root scale so a small modulation (peak 0.05) is still visible. The level is drawn in 8 brightness steps and the view repaints only when a step changes.
+- **Containers.** Inside a container the back shows the container's own cables, and they glow too. The expansion names an inner device by its path (`layer/lead`), the view by its local key (`lead`); `atomik_model::scoped_cable` maps a flat cable back to the view's scope and form, and the feed hands the view only the cables of the scope it shows. A CV cable never crosses a container boundary (the boundary carries audio only).
+- **Shared readings.** A meter read resets the peak, so an endpoint two consumers want is read once per frame, in `AppCore::frame`, into a small cache. The console strips (including a compressor's `gr_cv_out` on a channel or the master) and the Audio I/O panel take their values from it, and so does the CV feed; the console meters read exactly what they read without the indicators. Two cables from one output share one meter.
+- **Capacity.** The engine publishes at most 512 meters (`METER_CAPACITY`). The console and Audio I/O meters are registered first and keep their slots; the CV indicators use only the free ones, in cable order. Past that the remaining cables show no activity (no error, no panic).
+
+---
 
 ## Console master: `atomik.master` (Mixer)
 

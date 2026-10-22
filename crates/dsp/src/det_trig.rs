@@ -5,7 +5,7 @@
 
 /// `sin(2 pi p)` for any finite `p` in cycles (non-finite gives 0).
 #[inline]
-pub(crate) fn sin_cycles(p: f64) -> f64 {
+pub fn sin_cycles(p: f64) -> f64 {
     if !p.is_finite() {
         return 0.0;
     }

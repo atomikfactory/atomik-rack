@@ -596,3 +596,81 @@ fn an_effect_dropped_at_a_slot_is_selected_and_routed_from_the_device_above() {
     assert_ne!(fx, synth);
     assert_eq!(c.doc().device(&fx).unwrap().type_id, DELAY);
 }
+
+const MOD_SOURCE: &str = "atomik.mod-source";
+
+#[test]
+fn a_mod_source_created_over_a_selected_instrument_is_added_without_cables_and_selected() {
+    let mut c = core();
+    instrument(&mut c, SYNTH).unwrap();
+    let synth = c.view().selected().unwrap().clone();
+    let cables = c.doc().cables.clone();
+    let channels = c.doc().console.channels.len();
+    effect(&mut c, MOD_SOURCE, CreateTarget::Selected(synth.clone()));
+    let created = c.view().selected().unwrap().clone();
+    assert_ne!(created, synth, "the new device is selected");
+    assert_eq!(c.doc().device(&created).unwrap().type_id, MOD_SOURCE);
+    assert_eq!(c.doc().cables, cables, "no cable was made");
+    assert_eq!(
+        c.doc().console.channels.len(),
+        channels,
+        "no channel either"
+    );
+    assert!(c.doc().console.channel_of(&created).is_none());
+    let channel = c.doc().console.channel_of(&synth).unwrap().channel.clone();
+    assert!(
+        atomik_model::insert_chain(c.doc(), &c.registry, &channel).is_empty(),
+        "it is not an insert of the instrument channel"
+    );
+    // One undo step takes it away.
+    assert!(c.undo());
+    assert!(c.doc().device(&created).is_none());
+}
+
+#[test]
+fn a_mod_source_created_with_nothing_selected_is_added_alone() {
+    let mut c = core();
+    effect(&mut c, MOD_SOURCE, CreateTarget::Nothing);
+    assert_eq!(c.doc().devices.len(), 1);
+    assert!(c.doc().cables.is_empty());
+    assert_eq!(c.view().selected(), Some(&c.doc().devices[0].key));
+}
+
+#[test]
+fn a_mod_source_dropped_at_a_slot_is_placed_there_without_cables_and_selected() {
+    let mut c = core();
+    instrument(&mut c, SYNTH).unwrap();
+    let synth = c.view().selected().unwrap().clone();
+    let cables = c.doc().cables.clone();
+    let at = c.doc().slot_of(&synth).unwrap();
+    // To the right of the last column: a new column.
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateEffectAt {
+        slot: RackSlot {
+            column: at.column + 1,
+            index: 0,
+        },
+        source: CreateSource::Type(MOD_SOURCE.into()),
+        key: None,
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    let created = c.view().selected().unwrap().clone();
+    assert_eq!(c.doc().device(&created).unwrap().type_id, MOD_SOURCE);
+    assert_eq!(c.doc().device(&created).unwrap().column, at.column + 1);
+    assert_eq!(c.doc().cables, cables, "no cable was made");
+    assert!(c.doc().console.channel_of(&created).is_none());
+    // And dropped below the instrument in its own column.
+    c.apply_command(Command::Workflow(WorkflowCommand::CreateEffectAt {
+        slot: RackSlot {
+            column: at.column,
+            index: at.index + 1,
+        },
+        source: CreateSource::Type(MOD_SOURCE.into()),
+        key: None,
+        options: CreateOptions::default(),
+    }))
+    .unwrap();
+    let second = c.view().selected().unwrap().clone();
+    assert_ne!(second, created);
+    assert_eq!(c.doc().cables, cables, "still no cable");
+}

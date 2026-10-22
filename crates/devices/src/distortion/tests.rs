@@ -40,8 +40,10 @@ fn descriptor_validates() {
             "crush.bits",
             "crush.rate",
             "oversample",
+            "drive_cv_trim",
+            "mix_cv_trim",
         ],
-        &["in_l", "in_r", "out_l", "out_r"],
+        &["in_l", "in_r", "out_l", "out_r", "drive_cv_in", "mix_cv_in"],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.distortion");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
@@ -552,5 +554,104 @@ proptest! {
                 }
             }
         }
+    }
+}
+
+fn max_diff(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y).abs())
+        .fold(0.0, f32::max)
+}
+
+/// Left output for a 440 Hz sine with the given params and optional constant CVs
+/// (`drive_cv_in`, `mix_cv_in`).
+fn cv_run(params: &[(&str, f32)], drive_cv: Option<f32>, mix_cv: Option<f32>) -> Vec<f32> {
+    let mut h = dist();
+    for (k, v) in params {
+        h.set_param(k, *v);
+    }
+    if let Some(c) = drive_cv {
+        *h.input_mut("drive_cv_in") = [c; BATCH];
+    }
+    if let Some(c) = mix_cv {
+        *h.input_mut("mix_cv_in") = [c; BATCH];
+    }
+    run_signal(&mut h, &IN, sine(440.0, 0.3), 40, &["out_l"])[0].clone()
+}
+
+#[test]
+fn mix_cv_adds_to_mix_scaled_by_trim_and_clamps() {
+    let p = |m: f32, t: f32| [("mix", m), ("mix_cv_trim", t)];
+    let a = cv_run(&p(0.2, 1.0), None, Some(0.5));
+    assert!(max_diff(&a, &cv_run(&p(0.7, 1.0), None, None)) < 1e-4);
+    assert!(
+        max_diff(&a, &cv_run(&p(0.2, 1.0), None, None)) > 1e-3,
+        "CV has an effect"
+    );
+    let h = cv_run(&p(0.2, 0.5), None, Some(0.5));
+    assert!(max_diff(&h, &cv_run(&p(0.45, 1.0), None, None)) < 1e-4);
+    assert_eq!(
+        cv_run(&p(0.2, 1.0), None, Some(5.0)),
+        cv_run(&p(0.2, 1.0), None, Some(1.0))
+    );
+    assert!(
+        max_diff(
+            &cv_run(&p(0.5, -1.0), None, Some(1.0)),
+            &cv_run(&p(0.0, 1.0), None, None)
+        ) < 1e-4
+    );
+    assert_eq!(
+        cv_run(&p(0.3, 0.0), None, Some(1.0)),
+        cv_run(&p(0.3, 1.0), None, None)
+    );
+}
+
+#[test]
+fn drive_cv_adds_in_normalised_space_over_0_to_48_db_and_clamps() {
+    let p = |d: f32, t: f32| [("drive", d), ("drive_cv_trim", t)];
+    // 12 dB = 0.25 normalised; + 0.25 -> 0.5 -> 24 dB.
+    let a = cv_run(&p(12.0, 1.0), Some(0.25), None);
+    assert!(max_diff(&a, &cv_run(&p(24.0, 1.0), None, None)) < 1e-3);
+    assert!(
+        max_diff(&a, &cv_run(&p(12.0, 1.0), None, None)) > 1e-2,
+        "CV has an effect"
+    );
+    // Half trim: 0.25 + 0.5 * 0.5 = 0.5 -> 24 dB.
+    let h = cv_run(&p(12.0, 0.5), Some(0.5), None);
+    assert!(max_diff(&h, &cv_run(&p(24.0, 1.0), None, None)) < 1e-3);
+    // Clamped: cv 5 == cv 1, and the sum clamps at 48 dB / 0 dB.
+    assert_eq!(
+        cv_run(&p(12.0, 1.0), Some(5.0), None),
+        cv_run(&p(12.0, 1.0), Some(1.0), None)
+    );
+    assert!(
+        max_diff(
+            &cv_run(&p(12.0, 1.0), Some(1.0), None),
+            &cv_run(&p(48.0, 1.0), None, None)
+        ) < 1e-3
+    );
+    assert!(
+        max_diff(
+            &cv_run(&p(12.0, -1.0), Some(1.0), None),
+            &cv_run(&p(0.0, 1.0), None, None)
+        ) < 1e-3
+    );
+    // Amount 0 cancels.
+    assert_eq!(
+        cv_run(&p(12.0, 0.0), Some(1.0), None),
+        cv_run(&p(12.0, 1.0), None, None)
+    );
+}
+
+#[test]
+fn cv_inputs_are_allocation_free_and_finite() {
+    let mut h = dist();
+    for i in 0..300 {
+        *h.input_mut("drive_cv_in") = [((i % 9) as f32 - 4.0) * 0.7; BATCH];
+        *h.input_mut("mix_cv_in") = [((i % 7) as f32 - 3.0) * 0.7; BATCH];
+        *h.input_mut("in_l") = [0.2; BATCH];
+        h.process();
+        assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
 }

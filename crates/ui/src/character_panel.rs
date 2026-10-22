@@ -215,6 +215,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
         }),
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,

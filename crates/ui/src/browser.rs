@@ -17,6 +17,16 @@ const ROW_H: f64 = 36.0;
 /// depend on the devices crate; a test pins the two lists together).
 pub const PLAYER_TYPE_IDS: [&str; 2] = ["atomik.arpeggiator", "atomik.step-sequencer"];
 
+/// Type ids of the modulators (CV sources): the browser lists them together as the "Modulators"
+/// group, after the other devices and before the players. Mirrors
+/// `atomik_devices::MODULATOR_TYPE_IDS` (a test pins the two lists together).
+pub const MODULATOR_TYPE_IDS: [&str; 1] = ["atomik.mod-source"];
+
+/// Whether `type_id` is a modulator (see [`MODULATOR_TYPE_IDS`]).
+pub fn is_modulator(type_id: &str) -> bool {
+    MODULATOR_TYPE_IDS.contains(&type_id)
+}
+
 /// Type ids of the internal devices (created by the container expansion, never offered by the
 /// browser or an add menu). Mirrors `atomik_devices::INTERNAL_TYPE_IDS` (a test pins the two).
 pub const INTERNAL_TYPE_IDS: [&str; 1] = ["atomik.note-split"];
@@ -166,8 +176,12 @@ fn matches(desc: &DeviceDescriptor, query: &str) -> bool {
         || kind_label(desc).to_lowercase().contains(&q)
 }
 
-/// The group label of a row: the kind, or `PLAYER` for the note players.
+/// The group label of a row: the kind, `PLAYER` for the note players or `MODULATOR` for the CV
+/// sources.
 fn kind_label(desc: &DeviceDescriptor) -> &'static str {
+    if is_modulator(desc.type_id) {
+        return "MODULATOR";
+    }
     if is_player(desc.type_id) {
         return "PLAYER";
     }
@@ -184,12 +198,14 @@ fn kind_label(desc: &DeviceDescriptor) -> &'static str {
     }
 }
 
-/// The sort group of a row: devices, then the players, then the containers.
+/// The sort group of a row: devices, the modulators, the players, then the containers.
 fn group_of(type_id: &str) -> u8 {
     if type_id == CONTAINER_TYPE {
+        3
+    } else if is_player(type_id) {
         2
     } else {
-        u8::from(is_player(type_id))
+        u8::from(is_modulator(type_id))
     }
 }
 
@@ -565,6 +581,8 @@ mod tests {
     fn the_player_list_matches_the_devices_crate() {
         assert_eq!(PLAYER_TYPE_IDS, atomik_devices::PLAYER_TYPE_IDS);
         assert_eq!(INTERNAL_TYPE_IDS, atomik_devices::INTERNAL_TYPE_IDS);
+        assert_eq!(MODULATOR_TYPE_IDS, atomik_devices::MODULATOR_TYPE_IDS);
+        assert!(is_modulator("atomik.mod-source") && !is_modulator("atomik.modulation"));
         assert!(is_player("atomik.arpeggiator") && !is_player("atomik.poly-synth"));
     }
 
@@ -584,9 +602,47 @@ mod tests {
         assert_eq!(all.len() - first, PLAYER_TYPE_IDS.len());
         // Within each group the registry order is kept.
         assert!(all[first..].windows(2).all(|w| w[0] < w[1]));
-        assert!(all[..first].windows(2).all(|w| w[0] < w[1]));
+        let before: Vec<&str> = all[..first]
+            .iter()
+            .copied()
+            .filter(|t| !is_modulator(t))
+            .collect();
+        assert!(before.windows(2).all(|w| w[0] < w[1]));
         browser.query = "player".into();
         assert_eq!(ids(&browser), PLAYER_TYPE_IDS.to_vec());
+    }
+
+    #[test]
+    fn modulators_are_a_group_after_the_devices_and_before_the_players() {
+        let reg = registry();
+        let mut browser = Browser::default();
+        let ids = |b: &Browser| -> Vec<&str> { b.rows(&reg).iter().map(|d| d.type_id).collect() };
+        let all = ids(&browser);
+        let m = all
+            .iter()
+            .position(|t| is_modulator(t))
+            .expect("modulators");
+        let p = all.iter().position(|t| is_player(t)).expect("players");
+        assert!(all[..m].iter().all(|t| !is_modulator(t) && !is_player(t)));
+        assert!(m < p, "modulators come before the players: {all:?}");
+        assert_eq!(p - m, MODULATOR_TYPE_IDS.len());
+        browser.query = "modulator".into();
+        assert_eq!(ids(&browser), MODULATOR_TYPE_IDS.to_vec());
+        // The Create Effect browser lists them too (they are utilities), and the instrument
+        // browser does not.
+        browser.query.clear();
+        browser.create = Some(CreateKind::Effect);
+        assert!(ids(&browser).contains(&"atomik.mod-source"));
+        browser.create = Some(CreateKind::Instrument);
+        assert!(!ids(&browser).contains(&"atomik.mod-source"));
+        assert_eq!(
+            kind_label(reg.get("atomik.mod-source").unwrap().descriptor),
+            "MODULATOR"
+        );
+        assert_eq!(
+            kind_label(reg.get("atomik.modulation").unwrap().descriptor),
+            "EFFECT"
+        );
     }
 
     #[test]
