@@ -77,8 +77,21 @@ fn descriptor_validates() {
             "band6.q",
             "highcut.slope",
             "output",
+            "band2.gain_cv_trim",
+            "band3.gain_cv_trim",
+            "band4.gain_cv_trim",
+            "band5.gain_cv_trim",
         ],
-        &["in_l", "in_r", "out_l", "out_r"],
+        &[
+            "in_l",
+            "in_r",
+            "out_l",
+            "out_r",
+            "band2_gain_cv_in",
+            "band3_gain_cv_in",
+            "band4_gain_cv_in",
+            "band5_gain_cv_in",
+        ],
     );
     assert_eq!(DESCRIPTOR.type_id, "atomik.eq");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Effect);
@@ -595,5 +608,63 @@ proptest! {
         let mut m = [0.0f32; 32];
         h.device().meter_values(&mut m);
         prop_assert!(m.iter().all(|v| v.is_finite()));
+    }
+}
+
+/// Gain in dB at 1 kHz with peak 1 at `gain` dB / `trim` and `cv` on `band3_gain_cv_in`.
+fn peak_cv_gain(gain: f32, trim: f32, cv: Option<f32>) -> f64 {
+    let mut h = eq();
+    set(
+        &mut h,
+        &[
+            ("band3.freq", 1_000.0),
+            ("band3.gain", gain),
+            ("band3.gain_cv_trim", trim),
+        ],
+    );
+    if let Some(c) = cv {
+        *h.input_mut("band3_gain_cv_in") = [c; BATCH];
+    }
+    gain_at(&mut h, 1_000.0)
+}
+
+#[test]
+fn gain_cv_adds_cv_times_trim_times_24_db_and_clamps() {
+    // cv 0.25 * 24 dB = +6 dB on a flat band.
+    assert!((peak_cv_gain(0.0, 1.0, Some(0.25)) - 6.0).abs() < 0.1);
+    // Adds to the knob: 6 dB - 6 dB = flat.
+    assert!(peak_cv_gain(6.0, 1.0, Some(-0.25)).abs() < 0.1);
+    // Half trim: 0.5 * 0.5 * 24 = 6 dB; negative trim inverts.
+    assert!((peak_cv_gain(0.0, 0.5, Some(0.5)) - 6.0).abs() < 0.1);
+    assert!((peak_cv_gain(0.0, -1.0, Some(0.25)) + 6.0).abs() < 0.1);
+    // CV beyond +-1 clamps to +-24 dB; knob + CV clamps to the +-24 dB range.
+    assert!((peak_cv_gain(0.0, 1.0, Some(5.0)) - 24.0).abs() < 0.2);
+    assert!((peak_cv_gain(12.0, 1.0, Some(1.0)) - 24.0).abs() < 0.2);
+    assert!((peak_cv_gain(0.0, 1.0, Some(-5.0)) + 24.0).abs() < 0.2);
+    // Amount 0 cancels the CV.
+    assert!(peak_cv_gain(0.0, 0.0, Some(1.0)).abs() < 1e-3);
+}
+
+#[test]
+fn gain_cv_works_on_every_gain_band_and_ignores_the_cut_bands() {
+    for (band, hz) in [(2, 100.0), (3, 500.0), (4, 2_500.0), (5, 12_000.0)] {
+        let mut h = eq();
+        *h.input_mut(&format!("band{band}_gain_cv_in")) = [0.25; BATCH];
+        let g = gain_at(&mut h, hz);
+        assert!(g > 3.0, "band {band} moved by {g} dB");
+    }
+}
+
+#[test]
+fn gain_cv_is_allocation_free_and_finite() {
+    let mut h = eq();
+    for i in 0..300 {
+        for b in 2..=5 {
+            *h.input_mut(&format!("band{b}_gain_cv_in")) =
+                [((i + b) % 9) as f32 * 0.7 - 2.8; BATCH];
+        }
+        *h.input_mut("in_l") = [0.2; BATCH];
+        h.process();
+        assert!(h.output("out_l").iter().all(|v| v.is_finite()));
     }
 }

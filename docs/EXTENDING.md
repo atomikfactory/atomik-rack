@@ -123,6 +123,14 @@ The instruments' `<target>_cv_in` sockets (`pitch_cv_in`, `resonance_cv_in`, `le
 - Instrument-wide targets (synth pitch, resonance, level, pan; sampler level; slicer cutoff and level) act on all voices alike; per-voice-state targets stay per voice (sampler resonance and pan, drum pad level and pan).
 - Audio is nominally ±1.0. Keep outputs finite. The synth adds a soft limiter so its output is always bounded.
 
+#### CV inputs with an amount (effects, console channel)
+
+For an effect or channel parameter that gets a dedicated CV input (`crates/devices/src/cv_in.rs`):
+
+- Socket `<target>_cv_in`, bipolar amount param `<target>_cv_trim` (−1..+1, default +1; keys of dotted params keep the dot: `band3.gain_cv_trim`). New params and sockets are appended so existing ids and keys never change.
+- The CV is clamped to −1..+1 and scaled by the trim. Mix, feedback and drive add it in the parameter's normalised 0..1 space; level and gain targets add `trim · cv · range` in dB (EQ gain 24 dB, channel fader 24 dB, send level 66 dB); pan adds it directly. The sum is clamped to the parameter range.
+- Unconnected sockets are skipped with `is_connected`, so the output is bit-identical to the device without the input (the render goldens must not change). A device that smooths per batch uses the batch mean of the CV; a per-sample smoother may use the CV sample by sample.
+
 ## 4. Registering the device
 
 Add one line to `register_all` in [crates/devices/src/lib.rs](../crates/devices/src/lib.rs), which registers each module's `factory()`. Registration validates the descriptor and rejects a duplicate `type_id`. The renderer's `default_registry()` ([crates/render/src/lib.rs](../crates/render/src/lib.rs)) calls `register_all`, so the new `type_id` becomes usable in patch files at once.

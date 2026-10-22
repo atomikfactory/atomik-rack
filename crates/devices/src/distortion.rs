@@ -43,12 +43,16 @@
 //!   (a short transient). The dry path is delayed by exactly the same latency, so **`mix = 0` is
 //!   the input delayed by the latency, bit for bit** (the input itself when oversampling is off).
 //!   The latency does not depend on the curve.
+//! * **CV:** `drive_cv_in` and `mix_cv_in` (batch mean, clamped to -1..+1) times `drive_cv_trim` /
+//!   `mix_cv_trim` (-1..+1, default +1) are added to the knob in normalised 0..1 space (drive over
+//!   its 0..48 dB range), clamped, then smoothed like the knob. Unconnected: bit-identical.
 //! * **Smoothing:** drive, bias, output and mix are smoothed per batch (BlockSmoother, 20 ms) and
 //!   ramped linearly across the batch; curve, bits, rate and oversample are discrete.
 //! * **Meter values:** `[input peak L/R max, output peak L/R max]`, linear, last batch.
 //! * **Safety:** non-finite input samples are treated as 0; the curves are bounded by 1 so the
 //!   output stays bounded for any drive.
 
+use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -69,8 +73,13 @@ const P_MIX: u32 = 5;
 const P_BITS: u32 = 6;
 const P_RATE: u32 = 7;
 const P_OVERSAMPLE: u32 = 8;
+const P_DRIVE_TRIM: u32 = 9;
+const P_MIX_TRIM: u32 = 10;
 
-static PARAMS: [ParamDescriptor; 9] = [
+/// Range of the drive knob in dB (its CV is applied in normalised space over it).
+const DRIVE_MAX_DB: f32 = 48.0;
+
+static PARAMS: [ParamDescriptor; 11] = [
     ParamDescriptor {
         id: ParamId(P_CURVE),
         key: "curve",
@@ -170,14 +179,38 @@ static PARAMS: [ParamDescriptor; 9] = [
         unit: Unit::Choice(&["off", "2x", "4x"]),
         discrete: true,
     },
+    ParamDescriptor {
+        id: ParamId(P_DRIVE_TRIM),
+        key: "drive_cv_trim",
+        name: "Drive CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_MIX_TRIM),
+        key: "mix_cv_trim",
+        name: "Mix CV trim",
+        min: -1.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Percent,
+        discrete: false,
+    },
 ];
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
 const OUT_L: SocketId = SocketId(2);
 const OUT_R: SocketId = SocketId(3);
+const DRIVE_CV: SocketId = SocketId(4);
+const MIX_CV: SocketId = SocketId(5);
 
-static SOCKETS: [SocketDescriptor; 4] = [
+static SOCKETS: [SocketDescriptor; 6] = [
     SocketDescriptor {
         id: IN_L,
         key: "in_l",
@@ -205,6 +238,20 @@ static SOCKETS: [SocketDescriptor; 4] = [
         name: "Out R",
         kind: SocketKind::Audio,
         direction: Direction::Output,
+    },
+    SocketDescriptor {
+        id: DRIVE_CV,
+        key: "drive_cv_in",
+        name: "Drive CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
+    },
+    SocketDescriptor {
+        id: MIX_CV,
+        key: "mix_cv_in",
+        name: "Mix CV",
+        kind: SocketKind::Cv,
+        direction: Direction::Input,
     },
 ];
 
@@ -331,6 +378,8 @@ pub struct Distortion {
     tone: f32,
     output_db: f32,
     mix: f32,
+    drive_trim: f32,
+    mix_trim: f32,
     bits: f32,
     rate: f32,
     factor: OversampleFactor,
@@ -364,6 +413,8 @@ impl Distortion {
             tone: 0.0,
             output_db: 0.0,
             mix: 1.0,
+            drive_trim: 1.0,
+            mix_trim: 1.0,
             bits: 8.0,
             rate: 96_000.0,
             factor: OversampleFactor::X4,
@@ -453,6 +504,8 @@ impl Device for Distortion {
             }
             P_OUTPUT => self.output_db = v,
             P_MIX => self.mix = v,
+            P_DRIVE_TRIM => self.drive_trim = v,
+            P_MIX_TRIM => self.mix_trim = v,
             P_BITS => self.bits = v.round().clamp(1.0, 16.0),
             P_RATE => self.rate = v,
             P_OVERSAMPLE => {
@@ -474,19 +527,34 @@ impl Device for Distortion {
         let input = [*ctx.input(IN_L), *ctx.input(IN_R)];
         let sr = self.sample_rate;
 
-        let drive_t = exp2_det(self.drive_db * LOG2_10_20);
+        let drive_db = if ctx.is_connected(DRIVE_CV) {
+            DRIVE_MAX_DB
+                * add_norm(
+                    self.drive_db / DRIVE_MAX_DB,
+                    self.drive_trim,
+                    batch_mean(ctx.input(DRIVE_CV)),
+                )
+        } else {
+            self.drive_db
+        };
+        let mix_v = if ctx.is_connected(MIX_CV) {
+            add_norm(self.mix, self.mix_trim, batch_mean(ctx.input(MIX_CV)))
+        } else {
+            self.mix
+        };
+        let drive_t = exp2_det(drive_db * LOG2_10_20);
         let out_t = exp2_det(self.output_db * LOG2_10_20);
         if self.fresh {
             self.drive_sm.set_immediate(drive_t);
             self.bias_sm.set_immediate(self.bias);
             self.out_sm.set_immediate(out_t);
-            self.mix_sm.set_immediate(self.mix);
+            self.mix_sm.set_immediate(mix_v);
             self.fresh = false;
         }
         let drive = self.drive_sm.advance(drive_t, BATCH);
         let bias = self.bias_sm.advance(self.bias, BATCH);
         let out_g = self.out_sm.advance(out_t, BATCH);
-        let mix = self.mix_sm.advance(self.mix, BATCH);
+        let mix = self.mix_sm.advance(mix_v, BATCH);
 
         let curve = self.curve;
         let crush = curve == Curve::Crush;

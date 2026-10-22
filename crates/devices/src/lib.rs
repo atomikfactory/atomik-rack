@@ -14,6 +14,7 @@ pub mod character;
 pub mod compressor;
 pub mod container;
 mod cv;
+mod cv_in;
 pub mod distortion;
 pub mod drum_machine;
 pub mod eq;
