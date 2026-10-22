@@ -1920,6 +1920,7 @@ pub fn console_doc() -> RackDoc {
             chan("ch-lead", Some("lead")),
             chan("ch-keys", Some("keys")),
         ],
+        buses: Vec::new(),
         master: Some(key("master")),
         returns,
         compensation: true,

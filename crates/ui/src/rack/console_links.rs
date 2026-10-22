@@ -106,6 +106,37 @@ pub fn channel_display(
             warn: false,
             tooltip: None,
         },
+        OutputDest::Bus(bus) => {
+            let name = doc
+                .console
+                .buses
+                .iter()
+                .find(|b| b.bus == bus)
+                .map_or(bus.0.as_str(), |b| b.name.as_str());
+            OutputDisplay {
+                text: format!("Output: Bus {name}"),
+                warn: false,
+                tooltip: None,
+            }
+        }
+        // Interim: an Audio I/O pair still reads like a direct cable (warning colour) until the
+        // console UI shows it as a first-class destination.
+        OutputDest::AudioIo(n) => {
+            let interface = DeviceKey("interface".into());
+            let to: Vec<SocketRef> = [2 * n - 1, 2 * n]
+                .iter()
+                .map(|o| SocketRef {
+                    device: interface.clone(),
+                    socket: format!("out_{o}"),
+                })
+                .collect();
+            let text = destinations_text(doc, registry, &to);
+            OutputDisplay {
+                tooltip: Some(format!("Leaves the master: cabled to {text}")),
+                text: format!("Output: {text}"),
+                warn: true,
+            }
+        }
         OutputDest::None => OutputDisplay {
             text: "Output: none".into(),
             warn: false,

@@ -1065,20 +1065,23 @@ impl<S: EngineSink> AppCore<S> {
         self.engine_result(result);
     }
 
-    /// Pushes [`RackDoc::solo_silence`] into every console channel's
+    /// Pushes [`RackDoc::solo_silence`] into every console strip's (channel's or bus's)
     /// `internal.solo_silence` param, through the engine only (never a model command: the
     /// param is not stored, saved or undoable).
     fn push_solo_silence(&mut self) {
         let silence = self.doc().solo_silence(&self.registry);
-        let Some(pid) = self
-            .registry
-            .get(CHANNEL_TYPE)
-            .and_then(|f| f.descriptor.param_by_key(SOLO_SILENCE_PARAM))
-            .map(|p| p.id)
-        else {
-            return;
-        };
         for (key, silent) in silence {
+            let Some(type_id) = self.doc().device(&key).map(|d| d.type_id.clone()) else {
+                continue;
+            };
+            let Some(pid) = self
+                .registry
+                .get(&type_id)
+                .and_then(|f| f.descriptor.param_by_key(SOLO_SILENCE_PARAM))
+                .map(|p| p.id)
+            else {
+                continue;
+            };
             if let Some(id) = self.ids.get(&key).copied() {
                 let value = if silent { 1.0 } else { 0.0 };
                 let result = self.sink.set_param(id, pid, value);
