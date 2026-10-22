@@ -898,6 +898,14 @@ Added with the Mod Source work, one convention for every device (instruments, ef
 
 The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear on the back of the channel's rack device like any other socket. The trims show in the console strip's MORE section. The console and auto-routing code only creates the audio cables of a channel, so the extra CV sockets do not affect it.
 
+## CV activity indicators
+
+On the back of the rack, every CV cable shows whether it carries signal and roughly how much. The cable glows and a lit disc appears behind both of its jacks (also when the cables are hidden), brighter for a stronger signal; a silent cable shows nothing extra.
+
+- **Engine.** Nothing new runs on the audio thread. The app registers the source endpoint of each CV cable as a read-only meter (`Topology::add_meter`, the same lock-free bank that serves the console and Audio I/O meters: an atomic peak per 64-frame batch, no locks, no allocation, no change to a sample). The output is bit-identical with and without the meters (`crates/engine/tests/cv_activity.rs`).
+- **View.** `AppCore::feed_cv_activity` reads the peaks once per frame while the back shows and hands them to `RackView::set_cv_activity`, which keeps a displayed level per cable: it rises at once, falls with a 180 ms time constant (so a pulse stays visible and a steady modulation does not flicker), and uses a square-root scale so a small modulation (peak 0.05) is still visible. The level is drawn in 8 brightness steps and the view repaints only when a step changes.
+- **Limits.** Only the cables of the top-level rack are indicated, not those inside containers. A CV output that the console already meters (the compressor's `gr_cv_out` on a channel or the master) is read by the console, so a cable from it shows no activity. The engine publishes at most 512 meters (`METER_CAPACITY`) in total; sources beyond that show nothing.
+
 ---
 
 ## Console master: `atomik.master` (Mixer)
