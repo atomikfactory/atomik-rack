@@ -35,6 +35,7 @@ mod fdn;
 pub mod leveller;
 mod lfo;
 mod mod_delay;
+pub mod mod_source;
 pub mod modal;
 pub mod noise;
 pub mod onset;
@@ -68,6 +69,7 @@ pub use comb::Comb;
 pub use crossover::Crossover;
 pub use delay::DelayLine;
 pub use det_math::{exp2_det, exp2_det_f64, flush_denormal, hadamard8, log2_det};
+pub use det_trig::sin_cycles;
 pub use dynamics::{
     Compressor, Detector, EXPANDER_RATIO, GATE_DETECTOR_MS, Gate, KNEE_DB, RMS_WINDOW_MS,
     static_gain_reduction_db, static_gain_reduction_knee_db,

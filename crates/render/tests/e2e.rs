@@ -289,3 +289,28 @@ fn realtime_factor_release() {
     println!("{stdout}");
     assert!(rtf >= 50.0, "real-time factor {rtf} < 50");
 }
+
+#[test]
+fn cli_mod_source_demo_is_block_independent_and_modulated() {
+    let dir = TempDir::new("mod-source");
+    let render_with = |name: &str, block: &str| {
+        let out = dir.path(name);
+        let output = render(&example("mod-source-demo.json"), &out, &["--block", block]);
+        assert_success(&output);
+        assert!(
+            output.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read(&out).expect("wav")
+    };
+    let a = render_with("m1.wav", "1");
+    let b = render_with("m4096.wav", "4096");
+    assert!(
+        a == b,
+        "HI-2: the Mod Source patch depends on the block size"
+    );
+    let wav = atomik_render::wav::read_wav_file(&dir.path("m1.wav")).expect("valid wav");
+    assert!(wav.channels.iter().flatten().any(|x| x.abs() > 1e-3));
+    assert!(wav.channels.iter().flatten().all(|x| x.is_finite()));
+}
