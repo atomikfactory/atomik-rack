@@ -26,6 +26,7 @@
 //! summing input's cables by source endpoint (device id, socket), not by console order, so
 //! moving a channel changes no audio (summing is deterministic either way).
 
+pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
 use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
 
 /// The key the next bus device gets (`bus`, `bus-2`, ...): what `CreateBus` and `RouteToNewBus`

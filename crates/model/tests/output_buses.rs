@@ -6,7 +6,8 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::console::{
-    BUS_TYPE, LinkKind, MAX_BUS_NAME_CHARS, OutputDest, link_kind, new_bus_key, output_dest,
+    BUS_TYPE, LinkKind, MAX_BUS_NAME_CHARS, OutputAvail, OutputDest, link_kind, new_bus_key,
+    output_dest, output_options,
 };
 use atomik_model::{
     Command, ConsoleBus, ConsoleCommand, Document, FX_SLOTS, InsertEffect, RackDoc,
@@ -1027,4 +1028,95 @@ fn the_bus_stub_registers_the_contract_keys() {
     };
     assert_eq!(keys(ch), keys(b));
     assert!(b.socket_by_key("bus_l").is_some() && b.socket_by_key("in_l").is_none());
+}
+
+// ---- generic AddDevice of a bus, and the selector's option list ------------------------------------
+
+#[test]
+fn a_bus_device_cannot_be_added_from_outside_the_console_commands() {
+    let (mut d, r) = project();
+    let msg = refused(&mut d, &r, add(usize::MAX, BUS_TYPE, None));
+    assert!(msg.contains("CreateBus"), "{msg}");
+    assert!(d.doc().console.buses.is_empty());
+    // The console command still makes one.
+    d.apply(create("Drums", OutputDest::Master), &r).unwrap();
+    assert_eq!(d.doc().console.buses.len(), 1);
+}
+
+fn options(d: &Document, strip: &str) -> Vec<(OutputDest, OutputAvail)> {
+    output_options(d.doc(), &key(strip))
+        .into_iter()
+        .map(|o| (o.dest, o.avail))
+        .collect()
+}
+
+#[test]
+fn output_options_list_master_buses_and_every_pair_with_their_availability() {
+    let (mut d, r) = project();
+    d.apply(create("Drums", OutputDest::Master), &r).unwrap();
+    d.apply(create("Vox", OutputDest::Master), &r).unwrap();
+    d.apply(set_output("bus-2", bus("bus")), &r).unwrap();
+    d.apply(set_output("channel", OutputDest::AudioIo(3)), &r)
+        .unwrap();
+    let o = options(&d, "channel-2");
+    assert_eq!(o[0], (OutputDest::Master, OutputAvail::Available));
+    assert_eq!(o[1], (bus("bus"), OutputAvail::Available));
+    assert_eq!(o[2], (bus("bus-2"), OutputAvail::Available));
+    // 8 outputs: pair 1 is the master's, 2 is free, 3 belongs to `channel`, 4 is free, 5+ do not exist.
+    let pair = |n: u16| {
+        o.iter()
+            .find(|(d, _)| *d == OutputDest::AudioIo(n))
+            .unwrap()
+            .1
+    };
+    assert_eq!(pair(1), OutputAvail::InUse);
+    assert_eq!(pair(2), OutputAvail::Available);
+    assert_eq!(pair(3), OutputAvail::InUse);
+    assert_eq!(pair(4), OutputAvail::Available);
+    assert_eq!(pair(5), OutputAvail::BeyondOutputs);
+    assert_eq!(pair(16), OutputAvail::BeyondOutputs);
+    assert_eq!(o.len(), 3 + 16);
+    // The strip's own pair stays selectable.
+    let own = options(&d, "channel");
+    assert_eq!(
+        own.iter()
+            .find(|(d, _)| *d == OutputDest::AudioIo(3))
+            .unwrap()
+            .1,
+        OutputAvail::Available
+    );
+}
+
+#[test]
+fn output_options_mark_loops_and_leave_out_the_strip_itself() {
+    let (mut d, r) = project();
+    d.apply(create("A", OutputDest::Master), &r).unwrap();
+    d.apply(create("B", bus("bus")), &r).unwrap();
+    // bus-2 plays into bus: bus cannot go to bus-2 (loop) nor to itself.
+    let o = options(&d, "bus");
+    assert!(!o.iter().any(|(d, _)| *d == bus("bus")), "no self entry");
+    assert_eq!(
+        o.iter().find(|(d, _)| *d == bus("bus-2")).unwrap().1,
+        OutputAvail::Loop
+    );
+}
+
+#[test]
+fn every_available_option_is_accepted_by_set_output_and_every_other_is_refused() {
+    let (mut d, r) = project();
+    d.apply(create("A", OutputDest::Master), &r).unwrap();
+    d.apply(create("B", bus("bus")), &r).unwrap();
+    d.apply(set_output("channel", OutputDest::AudioIo(2)), &r)
+        .unwrap();
+    for strip in ["channel", "channel-2", "bus", "bus-2"] {
+        for (dest, avail) in options(&d, strip) {
+            let mut scratch = d.clone();
+            let res = scratch.apply(set_output(strip, dest.clone()), &r);
+            assert_eq!(
+                res.is_ok(),
+                avail == OutputAvail::Available,
+                "{strip} -> {dest:?} is {avail:?} but SetOutput said {res:?}"
+            );
+        }
+    }
 }

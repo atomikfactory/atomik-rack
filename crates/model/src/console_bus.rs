@@ -168,6 +168,66 @@ fn check_dest(doc: &RackDoc, strip: &DeviceKey, dest: &OutputDest) -> Result<(),
     Ok(())
 }
 
+/// Why a destination is or is not offered to a strip's output selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputAvail {
+    /// `SetOutput` accepts it.
+    Available,
+    /// A bus that plays into the strip (routing there would make a loop).
+    Loop,
+    /// An Audio I/O pair already fed by another source (pair 1 belongs to the master).
+    InUse,
+    /// An Audio I/O pair beyond the project's `output_channels`.
+    BeyondOutputs,
+}
+
+/// One entry of a strip's output selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputOption {
+    /// The destination (`Master`, `Bus` or `AudioIo`).
+    pub dest: OutputDest,
+    /// Whether `SetOutput` takes it, or why not.
+    pub avail: OutputAvail,
+}
+
+/// Every destination `strip` could be routed to, in selector order: the master (when there is
+/// one), each bus in console order except the strip itself, then all Audio I/O pairs up to the
+/// format maximum. [`OutputAvail::Available`] holds exactly when `SetOutput` would accept the
+/// destination, so a UI can grey out the rest with the reason. Pure.
+pub fn output_options(doc: &RackDoc, strip: &DeviceKey) -> Vec<OutputOption> {
+    let mut out = Vec::new();
+    if doc.console.master.is_some() {
+        out.push(OutputOption {
+            dest: OutputDest::Master,
+            avail: OutputAvail::Available,
+        });
+    }
+    for b in &doc.console.buses {
+        if &b.bus == strip {
+            continue;
+        }
+        let avail = if reaches(doc, &b.bus, strip) {
+            OutputAvail::Loop
+        } else {
+            OutputAvail::Available
+        };
+        out.push(OutputOption {
+            dest: OutputDest::Bus(b.bus.clone()),
+            avail,
+        });
+    }
+    for n in 1..=crate::MAX_OUTPUT_CHANNELS / 2 {
+        let dest = OutputDest::AudioIo(n);
+        let avail = match check_dest(doc, strip, &dest) {
+            Ok(()) => OutputAvail::Available,
+            Err(ModelError::OutOfRange(_)) => OutputAvail::BeyondOutputs,
+            Err(_) => OutputAvail::InUse,
+        };
+        out.push(OutputOption { dest, avail });
+    }
+    out
+}
+
 /// Plans `SetOutput { strip, dest }`.
 pub(crate) fn set_output(
     p: &mut Planner<'_>,

@@ -890,6 +890,11 @@ impl Document {
             } => {
                 let desc = rules::descriptor(registry, &type_id)?;
                 plugin_cmd::refuse_generic_add(&type_id)?;
+                if type_id == console::BUS_TYPE {
+                    return Err(console_cmd::bad(
+                        "an output bus is created with ConsoleCommand::CreateBus",
+                    ));
+                }
                 if type_id == SPLIT_TYPE {
                     return Err(ModelError::NotAllowedInContainer(format!(
                         "{} is internal; the container expansion creates it",
