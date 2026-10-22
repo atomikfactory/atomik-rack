@@ -340,7 +340,7 @@ fn buses_nest_and_a_loop_is_refused() {
     ] {
         let e = refused(&mut d, &r, set_output(strip, bus(to)));
         assert!(
-            e.contains("loop") || e.contains("itself"),
+            e.contains("would make a loop") || e.contains("itself"),
             "{strip}->{to}: {e}"
         );
     }
