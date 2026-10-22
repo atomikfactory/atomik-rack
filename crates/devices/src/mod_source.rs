@@ -60,6 +60,7 @@
 //! Everything in the output path is deterministic (`+ - * /`, [`atomik_dsp::sin_cycles`],
 //! [`atomik_dsp::exp2_det`], integer hashes): the streams are bit-identical on every platform.
 
+use crate::cv_in;
 use crate::note_clock::JumpTracker;
 use atomik_core::{BATCH, Batch, NoteKind, PPQ, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -608,7 +609,7 @@ impl Lfo {
             };
             let mul = match rate_cv {
                 Some(c) => f64::from(exp2_det(
-                    cv(c[n], -1.0, 1.0) * self.rate_cv * RATE_CV_OCTAVES,
+                    cv_in::clean(c[n]) * self.rate_cv * RATE_CV_OCTAVES,
                 )),
                 None => 1.0,
             };
