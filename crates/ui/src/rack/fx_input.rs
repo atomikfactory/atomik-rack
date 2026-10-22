@@ -38,6 +38,10 @@ impl RackView {
             self.player_meter_feed(i, values);
             return;
         }
+        if self.devices[i].spec.modsrc.is_some() {
+            self.modsrc_meter_feed(i, values);
+            return;
+        }
         if self.devices[i].spec.plugin.is_some() {
             self.plugin_meter_feed(i, values);
             return;
@@ -62,6 +66,29 @@ impl RackView {
         if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
             self.repaint = true;
         }
+    }
+
+    /// Folds a Mod Source meter frame into the scope ring buffer (no allocation after the
+    /// first feed) and repaints the visible panel when a point or the live marker moved.
+    fn modsrc_meter_feed(&mut self, i: usize, values: &[f32]) {
+        if !self.devices[i].scope.feed(values) {
+            return;
+        }
+        self.devices[i].revision += 1;
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, 0.0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        let d = &self.devices[i];
+        if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
+            self.repaint = true;
+        }
+    }
+
+    /// The scope history of a Mod Source panel (`None` for other devices).
+    pub fn modsrc_scope(&self, key: &DeviceKey) -> Option<&crate::modsrc_panel::Scope> {
+        let d = &self.devices[self.device_index(key)?];
+        d.spec.modsrc.is_some().then_some(&d.scope)
     }
 
     /// The display meter values of an effect panel (dB; empty before the first feed).

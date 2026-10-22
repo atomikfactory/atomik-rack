@@ -678,3 +678,35 @@ fn picking_an_insert_in_the_console_selects_it_in_the_rack() {
     c.handle_action(atomik_ui::UiAction::Select(fx.clone()));
     assert_eq!(c.view().selected(), Some(&fx));
 }
+
+// ------------------------------------------------------------------ Mod Source scope
+
+#[test]
+fn the_mod_source_scope_is_fed_from_published_values() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.mod-source", "mod");
+    let id = c.device_id(&key("mod")).unwrap();
+    let mut v = vec![0.0f32; 32];
+    v[6] = 8.0;
+    v[31] = 2.5;
+    c.sink_mut().device_values.insert(id, (v, 1));
+    c.frame();
+    let scope = c.view().modsrc_scope(&key("mod")).expect("scope");
+    assert_eq!(scope.len(), 8);
+}
+
+#[test]
+fn a_real_engine_feeds_the_mod_source_scope_while_it_plays() {
+    let mut c = AppCore::new(OfflineSink::new());
+    add(&mut c, "atomik.mod-source", "mod");
+    set(&mut c, &key("mod"), "lfo1_rate", 5.0);
+    c.transport_action(atomik_ui::TransportAction::Play);
+    c.sink_mut().render(48_000 / 2);
+    c.frame();
+    let scope = c.view().modsrc_scope(&key("mod")).expect("scope");
+    assert!(!scope.is_empty(), "the engine's values reached the scope");
+    let moving = (0..scope.len())
+        .filter_map(|a| scope.point(0, a))
+        .any(|v| v.abs() > 0.1);
+    assert!(moving, "LFO 1 swings");
+}

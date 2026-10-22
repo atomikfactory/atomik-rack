@@ -1,0 +1,29 @@
+{
+  "format": "atomik-patch",
+  "version": 1,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 1,
+  "length_beats": 8,
+  "output_channels": 2,
+  "devices": [
+    { "id": "synth", "type": "atomik.poly-synth", "params": { "filter.cutoff": 600, "filter.resonance": 0.4, "cv.cutoff_amount": 3 } },
+    {
+      "id": "mod",
+      "type": "atomik.mod-source",
+      "params": {
+        "lfo1_shape": 2, "lfo1_sync": 1, "lfo1_div": 10, "lfo1_polarity": 1,
+        "env_attack": 5, "env_decay": 300, "env_sustain": 0.2, "env_release": 200
+      }
+    }
+  ],
+  "cables": [
+    { "from": "mod:lfo1_cv_out", "to": "synth:cutoff_cv_in" },
+    { "from": "synth:out_l", "to": "interface:out_1" },
+    { "from": "synth:out_r", "to": "interface:out_2" }
+  ],
+  "notes": [
+    { "device": "synth", "socket": "notes_in", "at_beats": 0, "length_beats": 4, "key": 45, "velocity": 0.8 },
+    { "device": "synth", "socket": "notes_in", "at_beats": 4, "length_beats": 4, "key": 48, "velocity": 0.8 }
+  ]
+}

@@ -227,6 +227,8 @@ struct DeviceView {
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
     /// published meter values, rounded.
     meters: Vec<f32>,
+    /// Mod Source panel: the scope history fed from the published meter values.
+    scope: crate::modsrc_panel::Scope,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
@@ -885,6 +887,9 @@ impl RackView {
             (Some(d), _) if type_id == container_panel::CONTAINER_TYPE => {
                 container_panel::container_layout(d)
             }
+            (Some(d), _) if type_id == crate::modsrc_panel::MODSRC_TYPE => {
+                crate::modsrc_panel::modsrc_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }
@@ -905,6 +910,7 @@ impl RackView {
                 fx: None,
                 seq: None,
                 arp: None,
+                modsrc: None,
                 container: None,
                 plugin: None,
                 front: Vec::new(),
@@ -982,6 +988,7 @@ impl RackView {
             edit: 0,
             fx: None,
             meters: Vec::new(),
+            scope: crate::modsrc_panel::Scope::new(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],
@@ -1055,9 +1062,13 @@ impl RackView {
             };
             let driven = self.driven_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
-            let prev = old.remove(&d.key);
+            let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let anim = prev.as_ref().map_or(0, |p| p.anim);
+            let scope = prev
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.scope))
+                .unwrap_or_default();
             let cv = if fx == Some(FxKind::Character) {
                 cv_cabled_of(&d.key, &doc.cables)
             } else {
@@ -1104,6 +1115,7 @@ impl RackView {
                 edit,
                 fx,
                 meters,
+                scope,
                 master,
                 sc,
                 cv,
@@ -1152,6 +1164,7 @@ impl RackView {
                 edit: 0,
                 fx: None,
                 meters: Vec::new(),
+                scope: crate::modsrc_panel::Scope::new(),
                 master: Default::default(),
                 sc: None,
                 cv: [false; 2],
@@ -3351,6 +3364,7 @@ impl RackView {
                     player: PlayerInfo {
                         edit: d.edit,
                         meters: &d.meters,
+                        scope: d.spec.modsrc.is_some().then_some(&d.scope),
                         rename: self
                             .rename
                             .as_ref()

@@ -268,6 +268,7 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
         fx: Some(fx),
         seq: None,
         arp: None,
+        modsrc: None,
         container: None,
         plugin: None,
         front,

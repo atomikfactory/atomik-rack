@@ -150,6 +150,7 @@ pub(super) fn metered_keys(expanded: &ExpandedRack) -> Vec<DeviceKey> {
         .filter(|d| {
             atomik_ui::fx::FxKind::of(&d.type_id).is_some_and(|k| k.meter_count() > 0)
                 || atomik_devices::is_player(&d.type_id)
+                || atomik_devices::is_modulator(&d.type_id)
         })
         .map(|d| d.key.clone())
         .collect()

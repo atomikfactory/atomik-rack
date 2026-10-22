@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty original devices: the poly synth, line mixer and stereo delay, the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-one original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -372,6 +372,60 @@ Chorus, flanger and phaser with tempo sync. Source: [crates/devices/src/modulati
 - **LFO.** The parabolic sine-like wave of `atomik_dsp::ParabolicLfo` (`4u(1 − |u|)`), no libm. The right channel runs `spread/360` cycles ahead.
 - **Tempo sync (documented choice).** With `sync` not off and the transport **playing**, the LFO phase is `frac(frame / (beats × sr × 60 / bpm))` computed in `f64` from the absolute frame of each sample, so it depends only on the frame index and the tempo, never on the batch layout; the period is exact (the phase matches the closed form to 1e-9 for all seven divisions at 44.1, 48 and 96 kHz, and a device started at a later frame matches one that ran from 0 bit for bit). A tempo change moves the phase. With the transport **stopped** the LFO free-runs at the synced rate from its last phase (the frame is ignored). With `sync` off it free-runs at `rate`.
 - **Safety and latency.** Latency 0. `mix` 0 is the input bit for bit. `mix`, `output`, `depth`, `feedback` and the delay time are smoothed per batch (20 ms); a `mode` change clears the lines. The feedback signal is clamped to ±8 and state is flushed below 1e-20: at feedback ±0.95, depth 1, 12 stages and 30 s of full-scale noise the output stays finite and below 25 (all three modes), and the feedback tails decay to silence after the input stops. Delay times never leave the allocated line (at most 1.9 × `delay` for the flanger, 1.905 × `delay` for the chorus; the line holds 57.2 ms plus margin).
+
+---
+
+## Mod Source: `atomik.mod-source` (Utility)
+
+Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and has only CV sockets besides the notes input, so adding it to a rack creates no cables. Source: [crates/devices/src/mod_source.rs](../crates/devices/src/mod_source.rs), shapes and envelope in [crates/dsp/src/mod_source.rs](../crates/dsp/src/mod_source.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Key sync of the LFOs and trigger of the envelope |
+| `gate_cv_in` | CV | in | Envelope gate: high above 0.5 (exactly 0.5 is low) |
+| `lfo1_rate_cv_in`, `lfo2_rate_cv_in` | CV | in | Sanitised (non-finite is 0), clamped to −1..+1, times `lfoN_rate_cv_trim` and 4 octaves. No effect when unconnected. |
+| `lfo1_amount_cv_in`, `lfo2_amount_cv_in` | CV | in | Clamped to 0..1 and multiplies the amount. Unconnected means ×1; connected and 0 means silence. |
+| `lfo1_cv_out`, `lfo2_cv_out` | CV | out | −1..+1 (0..1 unipolar) |
+| `env_cv_out` | CV | out | 0..1 |
+
+The CV convention of the project (`<target>_cv_in` with a bipolar `<target>_cv_trim`, default +1) applies to the rate CV. Two inputs are documented exceptions with no trim: the amount CV (a multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
+
+### Params
+
+Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 0.5 Hz triangle, the table shows LFO 1).
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `lfoN_shape` | 0–6: sine, triangle, saw up, saw down, pulse, sample & hold, smooth random | 0 (LFO 2: 1) | choice | Linear | yes |
+| `lfoN_morph` | −1 to 1 (0 is neutral) | 0 | none | Linear | no |
+| `lfoN_rate` | 0.01 to 40 (free rate) | 1 (LFO 2: 0.5) | Hz | Exp | no |
+| `lfoN_sync` | 0 (free) or 1 (tempo-synced) | 0 | toggle | Linear | yes |
+| `lfoN_div` | 0–29: 1/64 to 8 bars, each as triplet, straight and dotted | 13 (1/4) | choice | Linear | yes |
+| `lfoN_phase` | 0 to 1 (cycles) | 0 | none | Linear | no |
+| `lfoN_amount` | 0 to 1 | 1 | percent | Linear | no |
+| `lfoN_polarity` | 0–1: bipolar, unipolar | 0 | choice | Linear | yes |
+| `lfoN_key_sync` | 0 or 1 | 0 | toggle | Linear | yes |
+| `lfoN_rate_cv_trim` | −1 to 1 (negative inverts) | 1 | none | Linear | no |
+| `env_attack` | 1 to 10000 | 10 | ms | Exp | no |
+| `env_decay` | 1 to 10000 | 200 | ms | Exp | no |
+| `env_sustain` | 0 to 1 | 0.7 | percent | Linear | no |
+| `env_release` | 1 to 10000 | 300 | ms | Exp | no |
+| `env_amount` | 0 to 1 | 1 | percent | Linear | no |
+| `env_mode` | 0–1: retrigger, legato | 0 | choice | Linear | yes |
+
+### Behaviour (as built)
+
+- **Shapes and morph.** Sine and triangle start at 0 and rise; saw up runs −1 to +1, saw down +1 to −1; pulse starts high. `morph` is 0 at the neutral setting of every shape. Sine and triangle: *skew*, the positive half-cycle takes `0.5 + 0.48 × morph` of the cycle. Saws: *curve*, `q = p (1−k)/(1−k p)` with `k = 0.95 × morph` (positive is slow-start). Pulse: width `0.5 + 0.45 × morph`. Sample & hold: *glide*, the first `max(morph, 0)` of each cycle slides linearly from the previous value to the new one. Smooth random: the curve between this cycle's value and the next (negative towards linear, positive towards smootherstep).
+- **Output.** `shape × amount × amount CV` (unipolar maps the shape to `(v + 1)/2` first), so the output never leaves −1..+1 (envelope 0..1).
+- **Rate.** Free: `lfoN_rate × 2^(4 × rate CV × lfoN_rate_cv_trim)`, the CV sanitised (non-finite is 0) and clamped to ±1 (up to 4 octaves). Synced: one cycle lasts the division (bars follow the time signature), bent by the rate CV in the same way.
+- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its last phase. A free LFO ignores the transport.
+- **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset; random shapes draw new values after each restart.
+- **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible for a seed, across locates and bounces.
+- **Envelope.** Curves of the poly synth's ADSR, computed without libm. The gate is high while a note is held or `gate_cv_in` is above 0.5. **Retrigger** (default): every note-on and every rising gate edge restarts the attack from the current level (no click). **Legato**: a trigger while the gate is already high does nothing. The release starts when the last note is off and the gate CV is low. Notes and gate edges act at their sample.
+- **Meter values (32 floats, for the front panel scope).** `0..3` latest lfo1, lfo2, env; `3..5` LFO phases (0..1); `5` envelope stage (0 idle, 1 attack, 2 decay, 3 sustain, 4 release); `6` push counter modulo 4096; `7..15`, `15..23`, `23..31` the last 8 history points of lfo1, lfo2, env, oldest first, one point every 2.5 ms; `31` the spacing in ms.
+- **Determinism.** No libm call in the output path (deterministic sine, `exp2`, integer hashes): bit-identical on every platform. The example [mod-source-demo.json](../examples/patches/mod-source-demo.json) drives the poly synth's cutoff from a tempo-synced saw.
 
 ---
 
