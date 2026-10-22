@@ -297,12 +297,94 @@ const COMMANDS: &[CommandDef] = &[
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.scroll_end",
+        "Scroll to Last Channel",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.scroll_home",
+        "Scroll to First Channel",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.scroll_left",
+        "Scroll Channels Left",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.scroll_right",
+        "Scroll Channels Right",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
         "mixer.toggle_compensation",
         "Delay Compensation",
         G::Mixer,
         C::Global,
     )
     .menu(),
+    cmd(
+        "mixer.value_down",
+        "Lower Focused Control",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_down_fine",
+        "Lower Focused Control (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_down",
+        "Lower Focused Control by Ten",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_down_fine",
+        "Lower Focused Control by Ten (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_up",
+        "Raise Focused Control by Ten",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_up_fine",
+        "Raise Focused Control by Ten (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_up",
+        "Raise Focused Control",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_up_fine",
+        "Raise Focused Control (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),

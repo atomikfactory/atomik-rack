@@ -23,6 +23,10 @@
 //! (`ConsoleCommand::SetInsert`); middle-drag or wheel
 //! scrolls (Shift+wheel or wheel over the faders scrolls sideways).
 //!
+//! Keys: the arrows, Page Up / Down, Home and End are the `mixer.*` registry commands
+//! ([`ConsoleView::command`]); `handle` reads only Escape and F5 itself. While a strip name is
+//! typed ([`ConsoleView::begin_rename`]) the view is a text owner ([`ConsoleView::is_text_owner`]).
+//!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
@@ -36,6 +40,7 @@ use crate::console_layout::{
 use crate::console_meter::{ChannelMeters, GR_MAX_DB, MeterBallistics, meter_norm};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::keymap::CommandOutcome;
 use crate::paint::{self, fit_label};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
@@ -289,6 +294,8 @@ struct StripView {
     device: Option<RackDevice>,
     desc: Option<&'static DeviceDescriptor>,
     name: String,
+    /// The device whose name the strip shows (the source instrument, else the channel).
+    name_key: DeviceKey,
     accent: Color,
     latency: Option<u32>,
     silenced: bool,
@@ -303,6 +310,7 @@ struct StripView {
 impl StripView {
     fn new(key: DeviceKey, cache_id: u64) -> Self {
         Self {
+            name_key: key.clone(),
             key,
             device: None,
             desc: None,
@@ -376,6 +384,14 @@ fn chain_sig(chain: &[(DeviceKey, String)]) -> Vec<String> {
     chain.iter().map(|(k, n)| format!("{k}={n}")).collect()
 }
 
+/// A strip name being typed: the device it renames, the text and the name it started from.
+#[derive(Debug)]
+struct NameEdit {
+    device: DeviceKey,
+    text: String,
+    original: String,
+}
+
 /// The console view. See the module documentation for hosting.
 #[derive(Debug)]
 pub struct ConsoleView {
@@ -407,6 +423,8 @@ pub struct ConsoleView {
     drag: Drag,
     pointer: Point,
     focus: Option<(Target, usize)>,
+    /// The strip name being typed (the text owner), if any.
+    rename: Option<NameEdit>,
     next_merge: u64,
     focused: bool,
     repaint: bool,
@@ -444,6 +462,7 @@ impl ConsoleView {
             drag: Drag::None,
             pointer: Point::ZERO,
             focus: None,
+            rename: None,
             next_merge: MERGE_BASE,
             focused: false,
             repaint: true,
@@ -477,6 +496,71 @@ impl ConsoleView {
         if focused != self.focused {
             self.focused = focused;
             self.repaint = true;
+        }
+        if !focused {
+            self.cancel_rename();
+        }
+    }
+
+    // ------------------------------------------------------------------ text owner
+
+    /// Whether the view owns the keyboard as a text field: a strip name is being typed. The
+    /// shell then reports the `Text` context over `Mixer`, so plain keys reach
+    /// [`Self::handle`] instead of commands. The console has no gesture that starts an edit
+    /// yet; the owner is the plumbing for one ([`Self::begin_rename`]).
+    pub fn is_text_owner(&self) -> bool {
+        self.rename.is_some()
+    }
+
+    /// The name being typed, if an edit is open.
+    pub fn rename_text(&self) -> Option<&str> {
+        self.rename.as_ref().map(|r| r.text.as_str())
+    }
+
+    /// Starts typing the name of the strip of channel `channel` (the name shown is the one of
+    /// its source instrument, else of the channel device). False when there is no such strip.
+    pub fn begin_rename(&mut self, channel: &DeviceKey) -> bool {
+        let Some(s) = self.strips.iter().find(|s| &s.key == channel) else {
+            return false;
+        };
+        self.rename = Some(NameEdit {
+            device: s.name_key.clone(),
+            text: s.name.clone(),
+            original: s.name.clone(),
+        });
+        self.menu = None;
+        self.repaint = true;
+        true
+    }
+
+    /// Ends an open edit without renaming.
+    pub fn cancel_rename(&mut self) {
+        if self.rename.take().is_some() {
+            self.repaint = true;
+        }
+    }
+
+    fn rename_key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        // A command chord no binding took is not text.
+        if modifiers.command() {
+            return;
+        }
+        let Some(mut edit) = self.rename.take() else {
+            return;
+        };
+        self.repaint = true;
+        match crate::seq_panel::rename_key(&mut edit.text, key) {
+            crate::seq_panel::RenameKey::Editing => self.rename = Some(edit),
+            crate::seq_panel::RenameKey::Cancel => {}
+            crate::seq_panel::RenameKey::Commit => {
+                let name = edit.text.trim();
+                if !name.is_empty() && name != edit.original {
+                    out.push(UiAction::Command(Command::Rename {
+                        key: edit.device,
+                        name: name.to_string(),
+                    }));
+                }
+            }
         }
     }
 
@@ -1114,6 +1198,7 @@ impl ConsoleView {
             });
             self.drag = Drag::None;
             self.focus = None;
+            self.rename = None;
             self.repaint = true;
         }
         let generation = self.generation;
@@ -1128,6 +1213,9 @@ impl ConsoleView {
                 .filter(|_| !extra)
                 .or(device.as_ref())
                 .map_or_else(|| c.channel.0.clone(), |d| d.name.clone());
+            s.name_key = source
+                .filter(|_| !extra)
+                .map_or_else(|| c.channel.clone(), |d| d.key.clone());
             s.accent = source
                 .or(device.as_ref())
                 .map_or(self.st.base.text_muted, |d| self.st.base.accent_for(d));
@@ -1342,6 +1430,7 @@ impl ConsoleView {
     ) {
         self.pointer = pos;
         self.repaint = true;
+        self.rename = None;
         let hit = self.hit(pos);
         if self.menu.is_some() {
             match hit {
@@ -1831,64 +1920,78 @@ impl ConsoleView {
         self.repaint = true;
     }
 
+    /// Runs a registry command of the `Mixer` context (what the arrow keys, Page Up / Down,
+    /// Home and End did when the view read them itself): `mixer.value_*` step the focused
+    /// control (`_fine` is the Shift form, a page is ten notches), `mixer.scroll_*` move the
+    /// strips sideways. Anything else is declined.
+    pub fn command(
+        &mut self,
+        id: &str,
+        _arg: Option<&str>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> CommandOutcome {
+        self.sync(doc, registry);
+        let (notches, fine) = match id {
+            "mixer.value_up" => (1.0, false),
+            "mixer.value_down" => (-1.0, false),
+            "mixer.value_page_up" => (10.0, false),
+            "mixer.value_page_down" => (-10.0, false),
+            "mixer.value_up_fine" => (1.0, true),
+            "mixer.value_down_fine" => (-1.0, true),
+            "mixer.value_page_up_fine" => (10.0, true),
+            "mixer.value_page_down_fine" => (-10.0, true),
+            "mixer.scroll_left" => return self.scrolled(self.scroll.x - STRIP_W - STRIP_GAP),
+            "mixer.scroll_right" => return self.scrolled(self.scroll.x + STRIP_W + STRIP_GAP),
+            "mixer.scroll_home" => return self.scrolled(0.0),
+            "mixer.scroll_end" => return self.scrolled(f64::MAX),
+            _ => return CommandOutcome::Declined,
+        };
+        self.repaint = true;
+        let action = self.focus.and_then(|(t, c)| self.step(t, c, notches, fine));
+        CommandOutcome::Handled(action.into_iter().collect())
+    }
+
+    fn scrolled(&mut self, x: f64) -> CommandOutcome {
+        self.set_scroll_x(x);
+        CommandOutcome::Handled(Vec::new())
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        if self.rename.is_some() {
+            self.rename_key(key, modifiers, out);
+            return;
+        }
         if let Some(a) = console_shortcut(key, modifiers) {
             out.push(a);
             return;
         }
-        if modifiers.command() {
-            match key {
-                Key::Char(c) if c.eq_ignore_ascii_case(&'z') => out.push(if modifiers.shift {
-                    UiAction::Redo
-                } else {
-                    UiAction::Undo
-                }),
-                Key::Char(c) if c.eq_ignore_ascii_case(&'y') => out.push(UiAction::Redo),
-                _ => {}
-            }
+        // Command chords (undo, redo) and the arrows are registry commands the shell
+        // resolves; what no command took is not a key of the view. Escape stays here.
+        if modifiers.command() || *key != Key::Escape {
             return;
         }
-        match key {
-            Key::Escape => {
-                if self.menu.take().is_some() {
-                    return;
+        if self.menu.take().is_some() {
+            return;
+        }
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Value {
+                target,
+                ctrl,
+                merge,
+                start,
+                value,
+                ..
+            } => {
+                if start.to_bits() != value.to_bits()
+                    && let Some((pc, _, _)) = self.ctrl_of(target, ctrl)
+                {
+                    out.extend(self.set_param(target, pc.param, start, Some(merge)));
                 }
-                match std::mem::replace(&mut self.drag, Drag::None) {
-                    Drag::Value {
-                        target,
-                        ctrl,
-                        merge,
-                        start,
-                        value,
-                        ..
-                    } => {
-                        if start.to_bits() != value.to_bits()
-                            && let Some((pc, _, _)) = self.ctrl_of(target, ctrl)
-                        {
-                            out.extend(self.set_param(target, pc.param, start, Some(merge)));
-                        }
-                        out.push(UiAction::EndMerge);
-                    }
-                    Drag::None => self.focus = None,
-                    _ => {}
-                }
+                out.push(UiAction::EndMerge);
             }
-            Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
-                if let Some((t, c)) = self.focus {
-                    let n = match key {
-                        Key::Up => 1.0,
-                        Key::Down => -1.0,
-                        Key::PageUp => 10.0,
-                        _ => -10.0,
-                    };
-                    out.extend(self.step(t, c, n, modifiers.shift));
-                }
-            }
-            Key::Left => self.set_scroll_x(self.scroll.x - STRIP_W - STRIP_GAP),
-            Key::Right => self.set_scroll_x(self.scroll.x + STRIP_W + STRIP_GAP),
-            Key::Home => self.set_scroll_x(0.0),
-            Key::End => self.set_scroll_x(f64::MAX),
+            Drag::None => self.focus = None,
             _ => {}
         }
     }

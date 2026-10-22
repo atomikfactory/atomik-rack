@@ -6,6 +6,7 @@ mod support;
 
 use atomik_model::{Command, ConsoleCommand, RackDoc};
 use atomik_ui::console_layout::SectionId;
+use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::widget::KNOB_PIXELS_PER_RANGE;
 use atomik_ui::{
@@ -536,7 +537,8 @@ fn pane_buttons_and_f5_emit_pane_actions() {
     );
     assert_eq!(
         v.handle(&key_event(Key::Char('z'), Modifiers::CTRL), &doc, &reg),
-        [UiAction::Undo]
+        [],
+        "undo is the registry command, not a key of the view"
     );
 }
 
@@ -751,4 +753,243 @@ fn the_master_output_section_shows_live_peaks() {
     for t in ["OUTPUT", "L -6.0", "R -12.0", "GR 6.0 dB"] {
         assert!(texts.contains(&t), "missing {t:?}: {texts:?}");
     }
+}
+
+// ---------------------------------------------------------------- keys as commands
+
+fn run(
+    v: &mut ConsoleView,
+    doc: &RackDoc,
+    reg: &atomik_device_sdk::Registry,
+    id: &str,
+) -> Vec<UiAction> {
+    match v.command(id, None, doc, reg) {
+        CommandOutcome::Handled(a) => a,
+        other => panic!("{id}: {other:?}"),
+    }
+}
+
+fn focus_fader(v: &mut ConsoleView, doc: &RackDoc, reg: &atomik_device_sdk::Registry) {
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    click(v, doc, reg, p);
+}
+
+#[test]
+fn the_value_commands_step_the_focused_control_like_the_arrows_did() {
+    let (doc, reg, mut v) = setup();
+    focus_fader(&mut v, &doc, &reg);
+    let mut get = |id: &str| set_params(&run(&mut v, &doc, &reg, id));
+    let up = get("mixer.value_up");
+    let down = get("mixer.value_down");
+    let fine = get("mixer.value_up_fine");
+    let page = get("mixer.value_page_up");
+    let page_down = get("mixer.value_page_down");
+    let page_fine = get("mixer.value_page_up_fine");
+    let down_fine = get("mixer.value_down_fine");
+    let page_down_fine = get("mixer.value_page_down_fine");
+    for s in [
+        &up,
+        &down,
+        &fine,
+        &page,
+        &page_down,
+        &page_fine,
+        &down_fine,
+        &page_down_fine,
+    ] {
+        assert_eq!(s.len(), 1);
+        assert_eq!((s[0].0.as_str(), s[0].1.as_str()), ("ch-bass", "fader"));
+    }
+    let at = 0.62;
+    assert!(up[0].2 > at && down[0].2 < at);
+    assert!(fine[0].2 > at && fine[0].2 < up[0].2, "fine is smaller");
+    assert!(
+        page[0].2 > up[0].2 && page_down[0].2 < down[0].2,
+        "a page is ten notches"
+    );
+    assert!(page_fine[0].2 > fine[0].2 && page_fine[0].2 < page[0].2);
+    assert!(down_fine[0].2 < at && down_fine[0].2 > down[0].2);
+    assert!(page_down_fine[0].2 < down_fine[0].2 && page_down_fine[0].2 > page_down[0].2);
+}
+
+#[test]
+fn a_value_command_without_a_focused_control_is_taken_and_does_nothing() {
+    let (doc, reg, mut v) = setup();
+    assert!(run(&mut v, &doc, &reg, "mixer.value_up").is_empty());
+}
+
+#[test]
+fn the_scroll_commands_move_the_strips_like_the_arrows_did() {
+    let (doc, reg, mut v) = setup();
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    v.sync(&doc, &reg);
+    assert!(run(&mut v, &doc, &reg, "mixer.scroll_right").is_empty());
+    let one = v.scroll_x();
+    assert!(one > 0.0);
+    run(&mut v, &doc, &reg, "mixer.scroll_end");
+    let end = v.scroll_x();
+    assert!(end >= one);
+    run(&mut v, &doc, &reg, "mixer.scroll_left");
+    assert!(v.scroll_x() < end);
+    run(&mut v, &doc, &reg, "mixer.scroll_home");
+    assert_eq!(v.scroll_x(), 0.0);
+}
+
+#[test]
+fn raw_arrows_do_nothing_in_the_view_any_more() {
+    let (doc, reg, mut v) = setup();
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    v.sync(&doc, &reg);
+    focus_fader(&mut v, &doc, &reg);
+    for k in [
+        Key::Up,
+        Key::Down,
+        Key::PageUp,
+        Key::PageDown,
+        Key::Left,
+        Key::Right,
+        Key::Home,
+        Key::End,
+    ] {
+        for m in [Modifiers::NONE, Modifiers::SHIFT] {
+            assert!(
+                v.handle(&key_event(k.clone(), m), &doc, &reg).is_empty(),
+                "{k:?}"
+            );
+        }
+    }
+    assert_eq!(v.scroll_x(), 0.0);
+}
+
+#[test]
+fn the_view_declines_commands_that_are_not_its_own() {
+    let (doc, reg, mut v) = setup();
+    for id in [
+        "edit.delete",
+        "transport.play_stop",
+        "mixer.add_channel",
+        "mixer.nope",
+    ] {
+        assert!(
+            matches!(v.command(id, None, &doc, &reg), CommandOutcome::Declined),
+            "{id}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------- text owner
+
+fn typed(
+    v: &mut ConsoleView,
+    doc: &RackDoc,
+    reg: &atomik_device_sdk::Registry,
+    k: Key,
+) -> Vec<UiAction> {
+    v.handle(&key_event(k, Modifiers::NONE), doc, reg)
+}
+
+#[test]
+fn the_console_owns_the_keyboard_only_while_a_name_is_edited() {
+    let (doc, reg, mut v) = setup();
+    assert!(!v.is_text_owner());
+    assert!(
+        !v.begin_rename(&key("no-such-channel")),
+        "nothing to rename"
+    );
+    assert!(!v.is_text_owner());
+    assert!(v.begin_rename(&key("ch-lead")));
+    assert!(v.is_text_owner());
+    assert!(v.rename_text().is_some());
+    // Enter with the name unchanged commits nothing and ends the edit.
+    assert!(typed(&mut v, &doc, &reg, Key::Enter).is_empty());
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn typing_edits_the_name_and_enter_renames_the_device_the_strip_shows() {
+    let (doc, reg, mut v) = setup();
+    assert!(v.begin_rename(&key("ch-lead")));
+    let start = v.rename_text().unwrap().chars().count();
+    for _ in 0..start {
+        typed(&mut v, &doc, &reg, Key::Backspace);
+    }
+    for k in [Key::Char('A'), Key::Char('b'), Key::Space, Key::Char('1')] {
+        assert!(
+            typed(&mut v, &doc, &reg, k).is_empty(),
+            "typing emits nothing"
+        );
+    }
+    assert_eq!(v.rename_text(), Some("Ab 1"));
+    for k in [Key::Delete, Key::Up, Key::Left, Key::Home] {
+        assert!(typed(&mut v, &doc, &reg, k).is_empty());
+    }
+    assert_eq!(
+        v.rename_text(),
+        Some("Ab 1"),
+        "navigation keys are not text"
+    );
+    let out = typed(&mut v, &doc, &reg, Key::Enter);
+    assert_eq!(
+        commands(&out),
+        [Command::Rename {
+            // The strip shows the name of its source instrument.
+            key: key("lead"),
+            name: "Ab 1".to_string()
+        }]
+    );
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn escape_cancels_the_edit_and_leaves_the_name_alone() {
+    let (doc, reg, mut v) = setup();
+    assert!(v.begin_rename(&key("ch-lead")));
+    typed(&mut v, &doc, &reg, Key::Char('x'));
+    assert!(typed(&mut v, &doc, &reg, Key::Escape).is_empty());
+    assert!(!v.is_text_owner());
+    assert_eq!(v.rename_text(), None);
+}
+
+#[test]
+fn an_empty_name_is_not_committed() {
+    let (doc, reg, mut v) = setup();
+    assert!(v.begin_rename(&key("ch-lead")));
+    while v.rename_text().is_some_and(|t| !t.is_empty()) {
+        typed(&mut v, &doc, &reg, Key::Backspace);
+    }
+    assert!(typed(&mut v, &doc, &reg, Key::Enter).is_empty());
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn a_command_chord_is_never_typed_into_the_name() {
+    let (doc, reg, mut v) = setup();
+    assert!(v.begin_rename(&key("ch-lead")));
+    let before = v.rename_text().unwrap().to_string();
+    for c in ['z', 'y', 'a', 's'] {
+        assert!(
+            v.handle(&key_event(Key::Char(c), Modifiers::CTRL), &doc, &reg)
+                .is_empty()
+        );
+    }
+    assert_eq!(v.rename_text(), Some(before.as_str()));
+    assert!(v.is_text_owner());
+}
+
+#[test]
+fn a_pointer_press_or_losing_the_focus_ends_the_edit_without_renaming() {
+    let (doc, reg, mut v) = setup();
+    assert!(v.begin_rename(&key("ch-lead")));
+    typed(&mut v, &doc, &reg, Key::Char('q'));
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    let a = v.handle(&down(p), &doc, &reg);
+    assert!(
+        commands(&a)
+            .iter()
+            .all(|c| !matches!(c, Command::Rename { .. }))
+    );
+    assert!(!v.is_text_owner());
+    assert!(v.begin_rename(&key("ch-lead")));
+    v.set_focused(false);
+    assert!(!v.is_text_owner());
 }
