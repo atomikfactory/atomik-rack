@@ -8,6 +8,7 @@ mod support;
 
 use atomik_device_sdk::{LoopMode, Registry, TriggerMode};
 use atomik_model::{Command, Document, RackDoc, ZoneDoc};
+use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::zone_edit::{Field, Marker, note_name};
 use atomik_ui::{DisplayList, Key, Modifiers, PointerButton, SampleEditorView, UiAction, UiEvent};
@@ -538,7 +539,7 @@ fn key_and_velocity_fields_never_cross_and_the_crossfade_is_limited() {
 fn delete_removes_the_selected_zone() {
     let (mut d, reg, mut v) = setup(layered_zones());
     select(&mut v, &d, &reg, 1);
-    let a = v.handle(&press(Key::Delete, Modifiers::NONE), d.doc(), &reg);
+    let a = delete(&mut v, &d, &reg);
     let lists = zone_lists(&a);
     assert_eq!(lists.len(), 1);
     assert_eq!(lists[0].1, None);
@@ -554,23 +555,77 @@ fn delete_removes_the_selected_zone() {
     // Backspace until the list is empty: no selection left and nothing more to delete.
     for _ in 0..3 {
         resync(&mut v, &d, &reg);
-        let a = v.handle(&press(Key::Backspace, Modifiers::NONE), d.doc(), &reg);
+        let a = delete(&mut v, &d, &reg);
         apply_zones(&mut d, &reg, &a);
     }
     resync(&mut v, &d, &reg);
     assert!(d.doc().devices[0].zones.is_empty());
     assert_eq!(v.selected_zone(), None);
-    let a = v.handle(&press(Key::Delete, Modifiers::NONE), d.doc(), &reg);
-    assert!(a.is_empty());
+    let out = v.command("edit.delete", None, d.doc(), &reg);
+    assert_eq!(out, CommandOutcome::Declined, "nothing selected: declined");
+}
+
+/// Runs `edit.delete` on the view (the registry command the shell offers for Delete).
+fn delete(v: &mut SampleEditorView, d: &Document, reg: &Registry) -> Vec<UiAction> {
+    match v.command("edit.delete", None, d.doc(), reg) {
+        CommandOutcome::Handled(a) => a,
+        other => panic!("edit.delete was {other:?}"),
+    }
 }
 
 #[test]
-fn undo_and_redo_shortcuts() {
+fn the_view_no_longer_reads_delete_or_undo_keys_itself() {
+    // Delete is a registry command (rebindable); the raw keys do nothing in the view.
     let (d, reg, mut v) = setup(layered_zones());
-    let z = press(Key::Char('z'), Modifiers::CTRL);
-    assert_eq!(v.handle(&z, d.doc(), &reg), vec![UiAction::Undo]);
-    let y = press(Key::Char('y'), Modifiers::CTRL);
-    assert_eq!(v.handle(&y, d.doc(), &reg), vec![UiAction::Redo]);
+    select(&mut v, &d, &reg, 1);
+    for key in [Key::Delete, Key::Backspace] {
+        let a = v.handle(&press(key, Modifiers::NONE), d.doc(), &reg);
+        assert!(a.is_empty(), "{a:?}");
+    }
+    assert_eq!(v.selected_zone(), Some(1));
+    // Undo and redo are the global `edit.undo` / `edit.redo`, not the view's keys.
+    let shift_ctrl = Modifiers {
+        shift: true,
+        ..Modifiers::CTRL
+    };
+    for (c, m) in [
+        ('z', Modifiers::CTRL),
+        ('y', Modifiers::CTRL),
+        ('z', shift_ctrl),
+    ] {
+        assert!(v.handle(&press(Key::Char(c), m), d.doc(), &reg).is_empty());
+    }
+}
+
+#[test]
+fn only_edit_delete_is_the_views_command_and_it_declines_mid_gesture() {
+    let (d, reg, mut v) = setup(layered_zones());
+    select(&mut v, &d, &reg, 1);
+    for id in [
+        "edit.copy",
+        "edit.select_all",
+        "edit.duplicate",
+        "view.zoom_in",
+        "sequencer.follow",
+        "editor.quantize",
+        "transport.play_stop",
+    ] {
+        assert_eq!(
+            v.command(id, None, d.doc(), &reg),
+            CommandOutcome::Declined,
+            "{id}"
+        );
+    }
+    // A drag in progress: the command waits (Esc cancels the drag first).
+    let p = v.zone_rect(1).unwrap().center();
+    let _ = v.handle(&down(p), d.doc(), &reg);
+    let _ = v.handle(&mv(p + Vec2::new(5.0 * ppk(&v), 0.0)), d.doc(), &reg);
+    assert!(v.is_dragging());
+    assert_eq!(
+        v.command("edit.delete", None, d.doc(), &reg),
+        CommandOutcome::Declined
+    );
+    let _ = v.handle(&up(p), d.doc(), &reg);
 }
 
 #[test]

@@ -62,6 +62,7 @@ use crate::action::{SliceMode, UiAction};
 use crate::autolayout::SLICER_TYPE;
 use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::keymap::CommandOutcome;
 use crate::sample_editor::{FIELD_HEIGHT, FIELD_WIDTH, TOP_BAR_HEIGHT};
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -1320,47 +1321,52 @@ impl SliceEditorView {
         self.clamp_scrolls();
     }
 
+    /// Runs a registry command the shell offers to this view. `edit.delete` merges the
+    /// selected slice into the previous one (the first slice has no marker to remove); when
+    /// nothing can be removed, or while a drag is in progress, it is declined so the next
+    /// binding runs. Every other command is declined.
+    pub fn command(
+        &mut self,
+        id: &str,
+        _arg: Option<&str>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> CommandOutcome {
+        self.sync(doc, registry);
+        if id != "edit.delete" || !matches!(self.drag, Drag::None) {
+            return CommandOutcome::Declined;
+        }
+        let Some(s) = self.selected.filter(|s| *s >= 1 && self.editable()) else {
+            return CommandOutcome::Declined;
+        };
+        let mut markers = self.markers();
+        if s >= markers.len() {
+            return CommandOutcome::Declined;
+        }
+        markers.remove(s);
+        let Some(list) = self.zones_for(&markers, &self.zones) else {
+            return CommandOutcome::Declined;
+        };
+        self.selected = Some(s - 1);
+        self.repaint = true;
+        CommandOutcome::Handled(self.set_zones(list, None).into_iter().collect())
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
+        // what no command took is not a key of the view.
         if modifiers.command() {
-            if let Key::Char(c) = key {
-                match c.to_ascii_lowercase() {
-                    'z' => out.push(if modifiers.shift {
-                        UiAction::Redo
-                    } else {
-                        UiAction::Undo
-                    }),
-                    'y' => out.push(UiAction::Redo),
-                    _ => {}
-                }
-            }
             return;
         }
-        match key {
-            Key::Escape => {
-                if !matches!(self.drag, Drag::None) {
-                    self.cancel_drag(out);
-                } else if self.selected.is_some() {
-                    self.selected = None;
-                } else {
-                    out.push(UiAction::CloseSliceEditor);
-                }
+        if *key == Key::Escape {
+            if !matches!(self.drag, Drag::None) {
+                self.cancel_drag(out);
+            } else if self.selected.is_some() {
+                self.selected = None;
+            } else {
+                out.push(UiAction::CloseSliceEditor);
             }
-            Key::Delete | Key::Backspace => {
-                if let Some(s) = self.selected
-                    && s >= 1
-                    && self.editable()
-                    && matches!(self.drag, Drag::None)
-                {
-                    let mut markers = self.markers();
-                    markers.remove(s);
-                    if let Some(list) = self.zones_for(&markers, &self.zones) {
-                        self.selected = Some(s - 1);
-                        out.extend(self.set_zones(list, None));
-                    }
-                }
-            }
-            _ => {}
         }
     }
 

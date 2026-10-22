@@ -56,6 +56,7 @@
 use crate::action::UiAction;
 use crate::canvas::Canvas;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::keymap::CommandOutcome;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
 use crate::zone_edit::{self, Edges, Field, Marker};
@@ -1254,44 +1255,47 @@ impl SampleEditorView {
         self.clamp_scrolls();
     }
 
+    /// Runs a registry command the shell offers to this view. `edit.delete` removes the
+    /// selected zone (the next one takes the selection); with no selection, or while a drag
+    /// is in progress, it is declined so the next binding runs. Every other command is
+    /// declined: the editor has no clipboard, no keyboard zoom and no tools.
+    pub fn command(
+        &mut self,
+        id: &str,
+        _arg: Option<&str>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> CommandOutcome {
+        self.sync(doc, registry);
+        if id != "edit.delete" || self.device.is_none() || !matches!(self.drag, Drag::None) {
+            return CommandOutcome::Declined;
+        }
+        let Some(i) = self.selected.filter(|i| *i < self.zones.len()) else {
+            return CommandOutcome::Declined;
+        };
+        let mut zones = self.zones.clone();
+        zones.remove(i);
+        self.selected = (!zones.is_empty()).then(|| i.min(zones.len() - 1));
+        self.reset_wave();
+        self.repaint = true;
+        CommandOutcome::Handled(self.set_zones(zones, None).into_iter().collect())
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
+        // what no command took is not a key of the view.
         if modifiers.command() {
-            if let Key::Char(c) = key {
-                match c.to_ascii_lowercase() {
-                    'z' => out.push(if modifiers.shift {
-                        UiAction::Redo
-                    } else {
-                        UiAction::Undo
-                    }),
-                    'y' => out.push(UiAction::Redo),
-                    _ => {}
-                }
-            }
             return;
         }
-        match key {
-            Key::Escape => {
-                if !matches!(self.drag, Drag::None) {
-                    self.cancel_drag(out);
-                } else if self.selected.is_some() {
-                    self.selected = None;
-                } else {
-                    out.push(UiAction::CloseSampleEditor);
-                }
+        if *key == Key::Escape {
+            if !matches!(self.drag, Drag::None) {
+                self.cancel_drag(out);
+            } else if self.selected.is_some() {
+                self.selected = None;
+            } else {
+                out.push(UiAction::CloseSampleEditor);
             }
-            Key::Delete | Key::Backspace => {
-                if let Some(i) = self.selected
-                    && matches!(self.drag, Drag::None)
-                {
-                    let mut zones = self.zones.clone();
-                    zones.remove(i);
-                    self.selected = (!zones.is_empty()).then(|| i.min(zones.len() - 1));
-                    self.reset_wave();
-                    out.extend(self.set_zones(zones, None));
-                }
-            }
-            _ => {}
         }
     }
 
