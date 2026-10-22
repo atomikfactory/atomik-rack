@@ -1248,6 +1248,11 @@ impl PianoRollView {
             "editor.octave_down" => self.move_selection(0, -12),
             "editor.nudge_left" => self.move_selection(-step, 0),
             "editor.nudge_right" => self.move_selection(step, 0),
+            // One beat of the meter (the Beat snap step) or one tick, whatever the snap.
+            "editor.nudge_left_beat" => self.move_selection(-self.meter.beat_ticks(), 0),
+            "editor.nudge_right_beat" => self.move_selection(self.meter.beat_ticks(), 0),
+            "editor.nudge_left_tick" => self.move_selection(-1, 0),
+            "editor.nudge_right_tick" => self.move_selection(1, 0),
             "sequencer.snap_toggle" => {
                 self.snap = self.vp.toggle_snap(self.snap);
                 CommandOutcome::Handled(Vec::new())

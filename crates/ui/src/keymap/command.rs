@@ -208,7 +208,35 @@ const COMMANDS: &[CommandDef] = &[
         .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
     cmd("editor.nudge_left", "Nudge Left", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.nudge_left_beat",
+        "Nudge Left by Beat",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.nudge_left_tick",
+        "Nudge Left by Tick",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd("editor.nudge_right", "Nudge Right", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.nudge_right_beat",
+        "Nudge Right by Beat",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.nudge_right_tick",
+        "Nudge Right by Tick",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd(
         "editor.octave_down",
         "Transpose Octave Down",

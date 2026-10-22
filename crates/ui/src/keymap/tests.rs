@@ -141,6 +141,10 @@ fn legacy_golden_table_of_todays_keys() {
         ("Up", &[Context::Editor], "editor.transpose_up"),
         ("Shift+Down", &[Context::Editor], "editor.octave_down"),
         ("Left", &[Context::Editor], "editor.nudge_left"),
+        ("Shift+Left", &[Context::Editor], "editor.nudge_left_beat"),
+        ("Shift+Right", &[Context::Editor], "editor.nudge_right_beat"),
+        ("Alt+Left", &[Context::Editor], "editor.nudge_left_tick"),
+        ("Alt+Right", &[Context::Editor], "editor.nudge_right_tick"),
         ("Delete", &[Context::Rack], "edit.delete"),
         ("Backspace", &[Context::Sequencer], "edit.delete"),
     ];
@@ -274,6 +278,30 @@ fn reference_default_table_of_the_plan() {
         ("Cmd+Up", &[Context::Editor], "editor.transpose_up", None),
         ("Cmd+Shift+Up", &[Context::Editor], "editor.octave_up", None),
         ("Cmd+Left", &[Context::Editor], "editor.nudge_left", None),
+        (
+            "Cmd+Shift+Left",
+            &[Context::Editor],
+            "editor.nudge_left_beat",
+            None,
+        ),
+        (
+            "Cmd+Shift+Right",
+            &[Context::Editor],
+            "editor.nudge_right_beat",
+            None,
+        ),
+        (
+            "Cmd+Alt+Left",
+            &[Context::Editor],
+            "editor.nudge_left_tick",
+            None,
+        ),
+        (
+            "Cmd+Alt+Right",
+            &[Context::Editor],
+            "editor.nudge_right_tick",
+            None,
+        ),
         ("Down", &[Context::Rack], "rack.select_next", None),
         ("Shift+Up", &[Context::Rack], "rack.extend_prev", None),
         ("Cmd+0", &[Context::Rack], "view.zoom_reset", None),
@@ -844,12 +872,16 @@ fn every_legacy_key_is_unchanged_in_standard_or_a_listed_move() {
 /// import on Cmd+I, and the Shift variants the legacy `shortcut()` accepted by accident
 /// (Shift is a real modifier now: Shift+Return stops, Shift+Space is not play).
 const MOVED: &[&str] = &[
+    "Editor Alt+Left editor.nudge_left_tick",
+    "Editor Alt+Right editor.nudge_right_tick",
     "Editor Down editor.transpose_down",
     "Editor Left editor.nudge_left",
     "Editor Q editor.quantize",
     "Editor Right editor.nudge_right",
     "Editor Shift+Down editor.octave_down",
+    "Editor Shift+Left editor.nudge_left_beat",
     "Editor Shift+Q editor.quantize",
+    "Editor Shift+Right editor.nudge_right_beat",
     "Editor Shift+Up editor.octave_up",
     "Editor Up editor.transpose_up",
     "Global Cmd+I file.import_audio",
