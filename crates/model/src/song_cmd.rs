@@ -395,6 +395,27 @@ pub(crate) fn check_markers(mut markers: Vec<Marker>) -> Result<Vec<Marker>, Mod
     Ok(markers)
 }
 
+/// Validates track heights (each within the limits) and drops the entries of devices that
+/// have no track in `song`.
+pub(crate) fn check_track_heights(
+    song: &crate::song::Song,
+    heights: std::collections::BTreeMap<DeviceKey, u16>,
+) -> Result<std::collections::BTreeMap<DeviceKey, u16>, ModelError> {
+    use crate::song::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
+    for (key, h) in &heights {
+        if !(MIN_TRACK_HEIGHT..=MAX_TRACK_HEIGHT).contains(h) {
+            return Err(range(format!(
+                "track {:?}: height {h} is outside {MIN_TRACK_HEIGHT}..={MAX_TRACK_HEIGHT}",
+                key.0
+            )));
+        }
+    }
+    Ok(heights
+        .into_iter()
+        .filter(|(key, _)| song.tracks.iter().any(|t| &t.device == key))
+        .collect())
+}
+
 /// Validates a range list and returns it sorted by `(start, id)`.
 pub(crate) fn check_ranges(mut ranges: Vec<RangeMarker>) -> Result<Vec<RangeMarker>, ModelError> {
     for (i, r) in ranges.iter().enumerate() {
@@ -822,6 +843,13 @@ pub(crate) fn plan(
             Edit::Ranges {
                 old: song.ranges.clone(),
                 new: ranges,
+            }
+        }
+        SongCommand::SetTrackHeights(heights) | SongCommand::DragTrackHeights { heights, .. } => {
+            let heights = check_track_heights(song, heights)?;
+            Edit::TrackHeights {
+                old: song.track_heights.clone(),
+                new: heights,
             }
         }
         SongCommand::SetLoop { range: r, enabled } => {

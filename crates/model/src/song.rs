@@ -8,6 +8,7 @@
 use crate::DeviceKey;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
+use std::collections::BTreeMap;
 
 /// Stable, unique id of a clip within a song (never reused while the song lives).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -283,6 +284,10 @@ pub struct Song {
     pub markers: Vec<Marker>,
     /// Named ranges (sections), sorted by `(start, id)`; they may overlap.
     pub ranges: Vec<RangeMarker>,
+    /// Height of a track's first lane in the arrangement, in pixels at vertical zoom 1 (view
+    /// state saved with the project): `MIN_TRACK_HEIGHT..=MAX_TRACK_HEIGHT`. A track without an
+    /// entry has `DEFAULT_TRACK_HEIGHT`. Entries of devices without a track are dropped.
+    pub track_heights: BTreeMap<DeviceKey, u16>,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -313,6 +318,13 @@ pub struct RangeMarker {
     /// Optional colour.
     pub color: Option<[u8; 3]>,
 }
+
+/// Shortest track height, in pixels.
+pub const MIN_TRACK_HEIGHT: u16 = 24;
+/// Tallest track height, in pixels.
+pub const MAX_TRACK_HEIGHT: u16 = 400;
+/// Height of a track without an entry in [`Song::track_heights`].
+pub const DEFAULT_TRACK_HEIGHT: u16 = 60;
 
 /// Longest marker or range name, in characters.
 pub const MAX_MARKER_NAME: usize = 64;
@@ -456,6 +468,18 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: u64,
     },
+    /// Replace the track heights (see [`Song::track_heights`]): every height within
+    /// `MIN_TRACK_HEIGHT..=MAX_TRACK_HEIGHT`; entries of devices without a track are dropped.
+    /// Reports [`crate::SyncOp::ViewChanged`] only.
+    SetTrackHeights(BTreeMap<DeviceKey, u16>),
+    /// [`SongCommand::SetTrackHeights`] for a drag: commands with the same `merge` id are one
+    /// undo step.
+    DragTrackHeights {
+        /// New heights.
+        heights: BTreeMap<DeviceKey, u16>,
+        /// Drag-merge group.
+        merge: u64,
+    },
     /// Set the loop range and enable flag.
     SetLoop {
         /// Range `[start, end)`, start < end.
@@ -546,6 +570,7 @@ pub fn empty_song(bpm: f64) -> Song {
         next_clip_id: 1,
         markers: Vec::new(),
         ranges: Vec::new(),
+        track_heights: BTreeMap::new(),
     }
 }
 

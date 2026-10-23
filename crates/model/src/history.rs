@@ -119,6 +119,11 @@ pub(crate) enum Edit {
         old: Vec<RangeMarker>,
         new: Vec<RangeMarker>,
     },
+    /// The track heights.
+    TrackHeights {
+        old: BTreeMap<DeviceKey, u16>,
+        new: BTreeMap<DeviceKey, u16>,
+    },
     Loop {
         old: ((i64, i64), bool),
         new: ((i64, i64), bool),
@@ -373,6 +378,7 @@ impl Edit {
             Edit::MeterMap { old, new } => Edit::MeterMap { old: new, new: old },
             Edit::Markers { old, new } => Edit::Markers { old: new, new: old },
             Edit::Ranges { old, new } => Edit::Ranges { old: new, new: old },
+            Edit::TrackHeights { old, new } => Edit::TrackHeights { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
             Edit::ConsoleChannel { index, old, new } => Edit::ConsoleChannel {
@@ -671,6 +677,10 @@ impl Edit {
             }
             Edit::Ranges { new, .. } => {
                 doc.song.ranges.clone_from(new);
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::TrackHeights { new, .. } => {
+                doc.song.track_heights.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Loop { new, .. } => {
