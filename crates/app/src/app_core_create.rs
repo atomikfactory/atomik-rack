@@ -183,6 +183,44 @@ impl<S: EngineSink> AppCore<S> {
         else {
             return;
         };
+        self.arm_track_device(&device);
+    }
+
+    /// A track header clicked (or stepped to) in the arrangement is a channel strip clicked in
+    /// the console: the strip is selected there and the track armed and selected in the rack
+    /// through the same path, and a plain click hands the keys to the rack.
+    pub(super) fn follow_arrangement_track(&mut self, event: &UiEvent) {
+        let Some(device) = self.arrangement.selected_track().cloned() else {
+            self.arranged_track = None;
+            return;
+        };
+        if self.arranged_track.as_ref() != Some(&device) {
+            self.arranged_track = Some(device.clone());
+            self.arrangement_track_changed = true;
+            let channel = self
+                .document
+                .doc()
+                .console
+                .channel_of(&device)
+                .map(|c| c.channel.clone());
+            if let Some(channel) = channel {
+                self.console.set_selected_strips(&[channel]);
+                self.console_selection = self.console.selected_strips();
+            }
+            self.arm_track_device(&device);
+        }
+        if let UiEvent::PointerUp { modifiers, .. } = event {
+            self.rack_focus_request |= std::mem::take(&mut self.arrangement_track_changed)
+                && !modifiers.shift
+                && !modifiers.command();
+        }
+    }
+
+    /// Arms the song track of `device` and disarms the tracks an earlier auto-arm armed, then
+    /// selects the device in the rack (what the live keyboard plays). One batched undo step.
+    fn arm_track_device(&mut self, device: &DeviceKey) {
+        let device = device.clone();
+        let doc = self.document.doc();
         let flags = |device: &DeviceKey, armed: bool| {
             doc.song.track(device).map(|t| {
                 Command::Song(SongCommand::SetTrackFlags {

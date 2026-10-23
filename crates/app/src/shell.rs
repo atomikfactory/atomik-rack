@@ -1892,7 +1892,9 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
-            if pane == Pane::Console && self.core.take_rack_focus_request() {
+            if matches!(pane, Pane::Console | Pane::Arrangement)
+                && self.core.take_rack_focus_request()
+            {
                 self.set_focus(Pane::Rack);
             }
             if pane == Pane::FileBrowser {

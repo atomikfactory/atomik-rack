@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Drag clips onto other lanes.** Dragging clips vertically onto another track moves them there (the time follows the horizontal drag), and Ctrl+drag drops copies instead (the clips stay put and the copies are selected). Each clip lands on the lane of its own kind: a note clip on the note lane, an audio clip on an audio track's lane, an automation clip on the lane of the same parameter; a target track without that lane (a note clip onto an audio track) ignores the drop and changes nothing. A group keeps its relative tracks and offsets, and the whole gesture, including the horizontal moves, is one undo step (a drag of several clips used to leave one step per clip and per move). A ghost shows where the drop lands. New `WorkflowCommand::MoveClips`; no project format change, since a clip belongs to its lane in the file.
 
 ### Fixed
+- **Track header click acts like a console strip.** Clicking a track header in the arrangement (or stepping with Up and Down) now selects its strip in the console, auto-arms the track as a channel selection does (disarming the tracks an earlier auto-arm armed), selects the device in the rack so the live keyboard plays it, and a plain click hands the keys to the rack.
 
 - **Device search.** Typing in the device browser's search kept the scroll of the full list, so the few matches (Serum for "ser") sat above the visible panel; the list now returns to the top on every edit.
 

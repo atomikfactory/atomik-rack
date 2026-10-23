@@ -174,6 +174,10 @@ pub struct AppCore<S: EngineSink> {
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
+    /// The arrangement's selected track the last arming followed (see `follow_arrangement_track`).
+    arranged_track: Option<DeviceKey>,
+    /// A new arrangement track selection awaits its pointer release to hand the keys to the rack.
+    arrangement_track_changed: bool,
     /// The console selection the last arming followed (see `follow_console_selection`).
     console_selection: Vec<DeviceKey>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
@@ -334,6 +338,8 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             auto_armed: Vec::new(),
+            arranged_track: None,
+            arrangement_track_changed: false,
             console_selection: Vec::new(),
             rack_focus_request: false,
             selection_changed: false,
@@ -609,6 +615,9 @@ impl<S: EngineSink> AppCore<S> {
         for action in &actions {
             self.handle_action(action.clone());
         }
+        if pane == Pane::Arrangement {
+            self.follow_arrangement_track(event);
+        }
         if pane == Pane::Console {
             self.follow_console_selection();
             // A plain click (no Shift/Ctrl) that left exactly one strip selected hands the keys
@@ -753,6 +762,7 @@ impl<S: EngineSink> AppCore<S> {
         self.file = file;
         self.rejection = None;
         self.auto_armed.clear();
+        self.arranged_track = None;
         self.console_selection.clear();
         self.view.set_selected(None);
         self.close_piano_roll();
