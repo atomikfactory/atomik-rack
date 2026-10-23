@@ -229,6 +229,13 @@ fn snap_toggle_remembers_the_value_and_set_snap_takes_an_argument() {
         ("beat", Snap::Beat),
         ("eighth", Snap::Eighth),
         ("sixteenth", Snap::Sixteenth),
+        ("thirtysecond", Snap::ThirtySecond),
+        ("sixtyfourth", Snap::SixtyFourth),
+        ("quarter_triplet", Snap::QuarterTriplet),
+        ("eighth_triplet", Snap::EighthTriplet),
+        ("sixteenth_triplet", Snap::SixteenthTriplet),
+        ("thirtysecond_triplet", Snap::ThirtySecondTriplet),
+        ("grid", Snap::Grid),
         ("off", Snap::Off),
     ] {
         assert!(

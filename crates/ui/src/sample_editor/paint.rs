@@ -6,14 +6,12 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
 use crate::theme::mix;
+use crate::wave_paint::{MAX_COLUMNS, WaveChannel, WaveDetail, paint_channel};
 use crate::zone_edit::{self, Field, Marker};
 use atomik_device_sdk::{LoopMode, TriggerMode};
 use atomik_model::ZoneDoc;
 use vello::kurbo::{Affine, BezPath, Rect};
 use vello::peniko::Color;
-
-/// Columns drawn for the waveform at most (a wider view repeats columns).
-const MAX_COLUMNS: usize = 4096;
 
 fn is_black(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
@@ -435,44 +433,28 @@ fn waveform(v: &SampleEditorView, c: &mut dyn Canvas) {
     let g = v.geo();
     let tint = zone_tint(v, i, z);
     if let Some(peaks) = v.peaks.get(&z.asset) {
-        let level = peaks.level_for(g.fpp.max(1.0));
+        let samples = v.samples.get(&z.asset).map(|s| &s[..]);
+        let detail = WaveDetail::pick(peaks, samples, g.fpp);
         let wave = st.audio_wave(tint, false);
-        let bands = audio::channel_bands(w.y0 + 4.0, w.y1 - 4.0, level.channels.len());
+        let bands = audio::channel_bands(w.y0 + 4.0, w.y1 - 4.0, detail.channels());
         let columns = (w.width().max(0.0) as usize).min(MAX_COLUMNS);
+        let source = |x: f64| g.wave_scroll + (x - w.x0) * g.fpp;
+        let frame_x = |f: f64| w.x0 + (f - g.wave_scroll) / g.fpp;
         for (ch, (cy, half)) in bands.into_iter().enumerate() {
-            let col = |k: usize| {
-                let from = g.wave_scroll + k as f64 * g.fpp;
-                audio::column_peak(level, ch, from, from + g.fpp, meta.frames)
+            let channel = WaveChannel {
+                detail,
+                ch,
+                cy,
+                half,
+                gain: 1.0,
+                color: wave,
+                x_start: w.x0,
+                columns,
+                line_x: (w.x0, w.x1),
+                limit: meta.frames,
+                frames_per_pixel: g.fpp,
             };
-            let n = (0..columns).take_while(|k| col(*k).is_some()).count();
-            if n == 0 {
-                continue;
-            }
-            sp::line(
-                c,
-                w.x0,
-                cy.round() + 0.5,
-                w.x1,
-                cy.round() + 0.5,
-                wave.with_alpha(0.22),
-            );
-            let y = |x: f32| cy - f64::from(x).clamp(-1.0, 1.0) * half;
-            let mut path = BezPath::new();
-            for k in 0..n {
-                let (_, hi) = col(k).unwrap_or((0.0, 0.0));
-                let p = pt(w.x0 + k as f64 + 0.5, y(hi));
-                if k == 0 {
-                    path.move_to(p);
-                } else {
-                    path.line_to(p);
-                }
-            }
-            for k in (0..n).rev() {
-                let (lo, _) = col(k).unwrap_or((0.0, 0.0));
-                path.line_to(pt(w.x0 + k as f64 + 0.5, y(lo)));
-            }
-            path.close_path();
-            c.fill_with(path, wave);
+            paint_channel(c, &channel, &source, &frame_x);
         }
     } else {
         sp::label(

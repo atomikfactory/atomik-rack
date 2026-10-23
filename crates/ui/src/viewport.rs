@@ -153,11 +153,17 @@ impl ViewportState {
     }
 
     /// The grid step of a gesture: the snap step unless the disable-snap role is held.
-    pub fn step(&self, snap: Snap, meter: Meter, modifiers: Modifiers) -> Option<i64> {
+    pub fn step(
+        &self,
+        snap: Snap,
+        meter: Meter,
+        px_per_tick: f64,
+        modifiers: Modifiers,
+    ) -> Option<i64> {
         if self.snap_disabled(modifiers) {
             None
         } else {
-            snap.step(meter)
+            snap.step_zoomed(meter, px_per_tick)
         }
     }
 

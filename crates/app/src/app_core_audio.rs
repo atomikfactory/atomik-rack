@@ -277,6 +277,15 @@ impl<S: EngineSink> AppCore<S> {
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         self.slice_editor
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
+        // Assets in RAM share their samples with the views: below the finest peak level the
+        // waveform reads them. Streamed assets have none and keep the finest peak level.
+        if let SongAsset::Memory { data, .. } = &loaded.asset {
+            self.arrangement.set_samples(&loaded.hash, Arc::clone(data));
+            self.sample_editor
+                .set_samples(&loaded.hash, Arc::clone(data));
+            self.slice_editor
+                .set_samples(&loaded.hash, Arc::clone(data));
+        }
         self.audio
             .peaks
             .insert(loaded.hash.clone(), Arc::clone(&loaded.peaks));

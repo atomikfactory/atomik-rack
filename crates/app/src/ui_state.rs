@@ -12,11 +12,14 @@
 //!   "show_console_devices": true, "show_console_links": false, "show_tempo_lane": false,
 //!   "show_marker_strip": true, "show_marker_list": false,
 //!   "show_rack_navigator": true,
+//!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "console_notice_seen": false }
 //! ```
 
 use crate::record::InputQuantize;
 use atomik_ui::FileBrowserView;
+use atomik_ui::arrangement::clamp_track_zoom;
+use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -56,6 +59,11 @@ pub struct UiState {
     /// The rack navigator (the overview strip at the right of the rack) shows. An absent key in
     /// the file means shown.
     pub show_rack_navigator: bool,
+    /// The arrangement's vertical zoom (1 is the default track height; see
+    /// `atomik_ui::arrangement::clamp_track_zoom`). An absent key means 1.
+    pub track_zoom: f64,
+    /// The piano roll's key row height in pixels (`6..=48`). An absent key means 12.
+    pub piano_roll_key_height: f64,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -84,6 +92,8 @@ impl Default for UiState {
             show_marker_strip: true,
             show_marker_list: false,
             show_rack_navigator: true,
+            track_zoom: 1.0,
+            piano_roll_key_height: KEY_HEIGHT,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,
@@ -134,10 +144,19 @@ impl UiState {
         } else {
             DEFAULT_TREE_FRACTION
         };
+        let track_zoom = clamp_track_zoom(self.track_zoom);
+        let piano_roll_key_height = if self.piano_roll_key_height.is_finite() {
+            self.piano_roll_key_height
+                .clamp(MIN_KEY_HEIGHT, MAX_KEY_HEIGHT)
+        } else {
+            KEY_HEIGHT
+        };
         Self {
             rack_split,
             file_browser_width,
             file_browser_tree_fraction,
+            track_zoom,
+            piano_roll_key_height,
             ..self
         }
     }
@@ -180,6 +199,8 @@ mod tests {
             show_marker_list: true,
             show_rack_navigator: false,
             console_notice_seen: true,
+            track_zoom: 1.75,
+            piano_roll_key_height: 30.0,
             file_browser_visible: true,
             ..UiState::default()
         };
@@ -202,6 +223,27 @@ mod tests {
         assert!(!old.show_marker_list, "an older file has no marker list");
         assert!(!old.show_song);
         assert!(old.show_rack_navigator, "an older file shows the navigator");
+        assert!(
+            (old.track_zoom - 1.0).abs() < 1e-12
+                && (old.piano_roll_key_height - 12.0).abs() < 1e-12,
+            "an older file has the default zooms"
+        );
+        std::fs::write(&path, r#"{"track_zoom": 99, "piano_roll_key_height": 1}"#).unwrap();
+        let wild = UiState::load(&path);
+        assert!(
+            (wild.track_zoom - 4.0).abs() < 1e-12
+                && (wild.piano_roll_key_height - 6.0).abs() < 1e-12
+        );
+        std::fs::write(
+            &path,
+            r#"{"track_zoom": null, "piano_roll_key_height": "x"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            UiState::load(&path),
+            UiState::default(),
+            "unusable values: the defaults"
+        );
         std::fs::write(&path, r#"{"show_console_devices": false}"#).unwrap();
         assert!(!UiState::load(&path).show_console_devices);
         std::fs::write(&path, r#"{"show_rack_navigator": false}"#).unwrap();

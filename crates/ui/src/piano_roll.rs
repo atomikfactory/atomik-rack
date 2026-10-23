@@ -34,8 +34,14 @@ pub const ROLL_RULER_HEIGHT: f64 = 20.0;
 pub const KEYBOARD_WIDTH: f64 = 56.0;
 /// Height of the velocity lane.
 pub const VELOCITY_HEIGHT: f64 = 76.0;
-/// Height of one key row.
+/// Height of one key row at the default zoom.
 pub const KEY_HEIGHT: f64 = 12.0;
+/// Shortest key row of the key zoom, in pixels.
+pub const MIN_KEY_HEIGHT: f64 = 6.0;
+/// Tallest key row of the key zoom, in pixels.
+pub const MAX_KEY_HEIGHT: f64 = 48.0;
+/// Zoom factor of one step of the key zoom commands and of a wheel notch.
+pub const KEY_ZOOM_STEP: f64 = 1.25;
 const VEL_PAD: f64 = 8.0;
 const EDGE_PX: f64 = 5.0;
 const DRAG_THRESHOLD: f64 = 3.0;
@@ -129,6 +135,8 @@ pub struct PianoRollView {
     scale: f64,
     axis: TimeAxis,
     scroll_y: f64,
+    /// Height of one key row (the key zoom).
+    key_h: f64,
     snap: Snap,
     vp: ViewportState,
     strength: f32,
@@ -162,6 +170,7 @@ impl PianoRollView {
             scale: 1.0,
             axis: TimeAxis::new(KEYBOARD_WIDTH, 200.0),
             scroll_y: 0.0,
+            key_h: KEY_HEIGHT,
             snap: Snap::default(),
             vp: ViewportState::new(),
             strength: 1.0,
@@ -366,14 +375,48 @@ impl PianoRollView {
         self.axis.x_to_tick(x)
     }
 
+    /// Height of one key row in pixels (the key zoom, [`KEY_HEIGHT`] by default).
+    pub fn key_height(&self) -> f64 {
+        self.key_h
+    }
+
+    /// Sets the key row height (clamped to [`MIN_KEY_HEIGHT`]`..=`[`MAX_KEY_HEIGHT`], 12 for
+    /// anything that is not a number), keeping the key at the middle of the grid where it is.
+    pub fn set_key_height(&mut self, height: f64) {
+        let mid = {
+            let g = self.grid_rect();
+            (g.y0 + g.y1) / 2.0
+        };
+        self.zoom_keys_to(height, mid);
+    }
+
+    /// Sets the key row height keeping the key under `anchor_y` under it.
+    fn zoom_keys_to(&mut self, height: f64, anchor_y: f64) {
+        let h = if height.is_finite() {
+            height.clamp(MIN_KEY_HEIGHT, MAX_KEY_HEIGHT)
+        } else {
+            KEY_HEIGHT
+        };
+        if (h - self.key_h).abs() <= f64::EPSILON {
+            return;
+        }
+        let y0 = self.grid_rect().y0;
+        // The (fractional) key row under the anchor, counted from the top of the keyboard.
+        let row = (anchor_y - y0 + self.scroll_y) / self.key_h;
+        self.key_h = h;
+        self.scroll_y = row * h - (anchor_y - y0);
+        self.clamp_scroll();
+        self.repaint = true;
+    }
+
     /// Vertical centre of a key row.
     pub fn key_center_y(&self, key: u8) -> f64 {
-        self.key_top(key) + KEY_HEIGHT / 2.0
+        self.key_top(key) + self.key_h / 2.0
     }
 
     /// The key at a logical y (clamped to 0..=127).
     pub fn key_at(&self, y: f64) -> u8 {
-        let k = 127.0 - ((y - self.grid_rect().y0 + self.scroll_y) / KEY_HEIGHT).floor();
+        let k = 127.0 - ((y - self.grid_rect().y0 + self.scroll_y) / self.key_h).floor();
         k.clamp(0.0, 127.0) as u8
     }
 
@@ -494,7 +537,7 @@ impl PianoRollView {
             (f64::from(lo) + f64::from(hi)) / 2.0
         };
         let g = self.grid_rect();
-        self.scroll_y = (127.0 - mid) * KEY_HEIGHT + KEY_HEIGHT / 2.0 - g.height() / 2.0;
+        self.scroll_y = (127.0 - mid) * self.key_h + self.key_h / 2.0 - g.height() / 2.0;
         self.clamp_scroll();
     }
 
@@ -533,7 +576,7 @@ impl PianoRollView {
     }
 
     fn key_top(&self, key: u8) -> f64 {
-        self.grid_rect().y0 + (127.0 - f64::from(key)) * KEY_HEIGHT - self.scroll_y
+        self.grid_rect().y0 + (127.0 - f64::from(key)) * self.key_h - self.scroll_y
     }
 
     fn rect_of(&self, n: &Note) -> Rect {
@@ -542,12 +585,12 @@ impl PianoRollView {
             self.axis.tick_to_x(n.tick),
             y,
             self.axis.tick_to_x(n.tick + n.length),
-            y + KEY_HEIGHT,
+            y + self.key_h,
         )
     }
 
     fn clamp_scroll(&mut self) {
-        let max = (128.0 * KEY_HEIGHT - self.grid_rect().height()).max(0.0);
+        let max = (128.0 * self.key_h - self.grid_rect().height()).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max);
     }
 
@@ -567,7 +610,8 @@ impl PianoRollView {
     }
 
     fn step(&self, modifiers: Modifiers) -> Option<i64> {
-        self.vp.step(self.snap, self.meter, modifiers)
+        self.vp
+            .step(self.snap, self.meter, self.axis.px_per_tick, modifiers)
     }
 
     fn content_to_song(&self, tick: i64) -> i64 {
@@ -701,7 +745,10 @@ impl PianoRollView {
                 pos,
                 modifiers,
             } => {
-                if modifiers.command() {
+                if modifiers.alt && !modifiers.command() {
+                    // Alt + wheel: the key zoom, the key under the pointer stays under it.
+                    self.zoom_keys_to(self.key_h * KEY_ZOOM_STEP.powf(delta.y), pos.y);
+                } else if modifiers.command() {
                     self.axis
                         .zoom_at(ZOOM_STEP.powf(delta.y), pos.x.max(self.axis.x0));
                     self.vp.set_zoomed_to_selection(false);
@@ -1131,7 +1178,10 @@ impl PianoRollView {
         } else {
             self.selection.items().clone()
         };
-        let step = self.snap.step(self.meter).or(Some(OFF_LENGTH));
+        let step = self
+            .snap
+            .step_zoomed(self.meter, self.axis.px_per_tick)
+            .or(Some(OFF_LENGTH));
         let q = seq_edit::quantize_notes(&notes, &sel, step, self.strength);
         let (list, new) = seq_edit::normalize_notes(q, &sel);
         if list != notes {
@@ -1284,6 +1334,19 @@ impl PianoRollView {
                 self.vp.set_zoomed_to_selection(false);
                 CommandOutcome::Handled(Vec::new())
             }
+            "editor.zoom_keys_in" | "editor.zoom_keys_out" => {
+                let factor = if id == "editor.zoom_keys_in" {
+                    KEY_ZOOM_STEP
+                } else {
+                    1.0 / KEY_ZOOM_STEP
+                };
+                self.set_key_height(self.key_h * factor);
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.zoom_keys_reset" => {
+                self.set_key_height(KEY_HEIGHT);
+                CommandOutcome::Handled(Vec::new())
+            }
             "sequencer.zoom_selection" => {
                 self.zoom_selection();
                 CommandOutcome::Handled(Vec::new())
@@ -1425,7 +1488,7 @@ impl PianoRollView {
         let k_lo = self.key_at(g.y1 - 0.01);
         for k in k_lo..=k_hi {
             let y = self.key_top(k);
-            let row = Rect::new(g.x0, y, g.x1, y + KEY_HEIGHT);
+            let row = Rect::new(g.x0, y, g.x1, y + self.key_h);
             if is_black(k) {
                 sp::rect(c, row, st.row_black);
             }
@@ -1545,7 +1608,7 @@ impl PianoRollView {
         let k_lo = self.key_at(g.y1 - 0.01);
         for k in k_lo..=k_hi {
             let y = self.key_top(k);
-            let row = Rect::new(kb.x0, y, kb.x1, y + KEY_HEIGHT);
+            let row = Rect::new(kb.x0, y, kb.x1, y + self.key_h);
             if is_black(k) {
                 let split = row.center().y.round() + 0.5;
                 sp::line(
@@ -1583,6 +1646,14 @@ impl PianoRollView {
                     );
                 }
             }
+            // Labels follow the key zoom: smaller type on short keys, and from 16 px every
+            // white key is named, not only the Cs.
+            let size = if self.key_h < 10.0 {
+                (self.key_h - 2.0).max(5.0)
+            } else {
+                8.0
+            };
+            let base = if self.key_h < 10.0 { 1.0 } else { 3.0 };
             if k % 12 == 0 {
                 sp::line(c, kb.x0, row.y1 - 0.5, kb.x1, row.y1 - 0.5, t.knob_bottom);
                 let name = format!("C{}", i32::from(k) / 12 - 1);
@@ -1590,9 +1661,19 @@ impl PianoRollView {
                     c,
                     &name,
                     kb.x1 - 4.0,
-                    row.y1 - 3.0,
-                    8.0,
+                    row.y1 - base,
+                    size as f32,
                     t.plate,
+                    Align::End,
+                );
+            } else if self.key_h >= 16.0 && !is_black(k) {
+                sp::label(
+                    c,
+                    &crate::zone_edit::note_name(k),
+                    kb.x1 - 4.0,
+                    row.y1 - base,
+                    size as f32,
+                    t.plate.with_alpha(0.7),
                     Align::End,
                 );
             }

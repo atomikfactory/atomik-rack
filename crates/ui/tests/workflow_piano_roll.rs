@@ -486,3 +486,36 @@ fn toggle_note_mute_unmutes_a_muted_selection_and_is_quiet_without_one() {
     let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
     assert_eq!(out, CommandOutcome::Handled(vec![]));
 }
+
+#[test]
+fn quantize_takes_the_triplet_and_fine_snaps() {
+    let (doc, reg) = (off_grid_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    for (arg, want) in [
+        ("eighth_triplet", vec![0, PPQ, 30_720]),
+        ("sixteenth_triplet", vec![0, PPQ, 30_720]),
+        ("thirtysecond", vec![0, PPQ, 32_640]),
+    ] {
+        assert!(
+            v.command("sequencer.set_snap", Some(arg), &doc, &reg)
+                .is_taken()
+        );
+        v.set_selected_notes(&[]);
+        let a = v.command("editor.quantize", None, &doc, &reg);
+        let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
+        assert_eq!(ticks, want, "{arg}");
+    }
+}
+
+#[test]
+fn quantize_to_the_grid_snap_uses_the_visible_grid() {
+    let (doc, reg) = (off_grid_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.command("sequencer.set_snap", Some("grid"), &doc, &reg);
+    let a = v.command("editor.quantize", None, &doc, &reg);
+    let step = Snap::Grid
+        .step_zoomed(Default::default(), v.px_per_tick())
+        .unwrap();
+    let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
+    assert!(ticks.iter().all(|t| t % step == 0), "{ticks:?} on {step}");
+}

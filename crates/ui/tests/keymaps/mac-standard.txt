@@ -27,6 +27,9 @@ editor.quantize | editor | Cmd+K
 editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Cmd+Down
 editor.transpose_up | editor | Cmd+Up
+editor.zoom_keys_in | editor | Shift+H
+editor.zoom_keys_out | editor | Shift+G
+editor.zoom_keys_reset | editor | Shift+Z
 file.import_audio | global | Cmd+Opt+I
 file.new | global | Cmd+N
 file.open | global | Cmd+O
@@ -79,6 +82,9 @@ sequencer.split_at_playhead | sequencer | Opt+X
 sequencer.toggle_mute | sequencer | M
 sequencer.zoom_selection | sequencer | Z
 sequencer.zoom_selection | editor | Z
+sequencer.zoom_tracks_in | sequencer | Shift+H
+sequencer.zoom_tracks_out | sequencer | Shift+G
+sequencer.zoom_tracks_reset | sequencer | Shift+Z
 tool.eraser | sequencer | E
 tool.eraser | editor | E
 tool.pencil | sequencer | W

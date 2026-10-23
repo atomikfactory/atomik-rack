@@ -45,6 +45,34 @@ impl<'a> Reader<'a> {
 /// Frames per bucket of the pyramid levels, finest first.
 pub const PEAK_LEVELS: [u32; 4] = [256, 1024, 4096, 16384];
 
+/// Frames per bucket of the finest pyramid level: below this many frames per pixel a view reads
+/// the samples themselves (see [`raw_min_max`]) when it has them.
+pub const FINEST_PEAK_FRAMES: u32 = PEAK_LEVELS[0];
+
+/// Min and max of the samples of one channel over the frames `[from, to)` (fractional frames
+/// round outwards, so a range inside one frame still reads that frame): the exact answer a peak
+/// bucket would give at any resolution. Frames before 0 and after the end are not read.
+///
+/// The cost is the number of frames in the range: callers ask for one pixel column at a time,
+/// a range of at most [`FINEST_PEAK_FRAMES`] frames. NaN samples are ignored. `None` when the
+/// range holds no frame (empty, outside the channel, not a number or all NaN).
+pub fn raw_min_max(samples: &[f32], from: f64, to: f64) -> Option<(f32, f32)> {
+    let end = to.min(samples.len() as f64);
+    if to.is_nan() || from.is_nan() || end <= 0.0 || from >= end {
+        return None;
+    }
+    let first = from.max(0.0).floor() as usize;
+    let last = (end.ceil() as usize).max(first + 1).min(samples.len());
+    let (lo, hi) = samples
+        .get(first..last)?
+        .iter()
+        .filter(|v| !v.is_nan())
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+            (lo.min(*v), hi.max(*v))
+        });
+    (lo <= hi).then_some((lo, hi))
+}
+
 /// Min/max per bucket for every channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peaks {
@@ -355,6 +383,46 @@ mod tests {
         assert_eq!(py.level_for(4096.0).frames_per_bucket, 4096);
         assert_eq!(py.level_for(1e9).frames_per_bucket, 16384);
         assert_eq!(py.level_for(f64::NAN).frames_per_bucket, 256);
+    }
+
+    #[test]
+    fn raw_min_max_matches_a_peak_bucket_over_the_same_frames() {
+        let d = ramp(2000);
+        let peaks = compute_peaks(&d, 7).unwrap();
+        for ch in 0..2 {
+            for (b, want) in peaks.channels[ch].iter().enumerate() {
+                let from = (b * 7) as f64;
+                assert_eq!(
+                    raw_min_max(&d.channels[ch], from, from + 7.0),
+                    Some(*want),
+                    "bucket {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn raw_min_max_rounds_outwards_and_clips_to_the_samples() {
+        let s = [0.1, 0.9, -0.5, 0.2, 0.3];
+        assert_eq!(
+            raw_min_max(&s, 1.2, 1.4),
+            Some((0.9, 0.9)),
+            "inside a frame"
+        );
+        assert_eq!(raw_min_max(&s, 1.9, 2.1), Some((-0.5, 0.9)), "two frames");
+        assert_eq!(raw_min_max(&s, -10.0, 1.0), Some((0.1, 0.1)), "before 0");
+        assert_eq!(raw_min_max(&s, 3.5, 99.0), Some((0.2, 0.3)), "past the end");
+        assert_eq!(raw_min_max(&s, 5.0, 9.0), None);
+        assert_eq!(raw_min_max(&s, -4.0, -1.0), None);
+        assert_eq!(raw_min_max(&s, 2.0, 2.0), None, "empty range");
+        assert_eq!(raw_min_max(&s, f64::NAN, 2.0), None);
+        assert_eq!(raw_min_max(&s, 0.0, f64::NAN), None);
+        assert_eq!(raw_min_max(&[], 0.0, 1.0), None);
+        assert_eq!(
+            raw_min_max(&[f32::NAN, 0.5, f32::NAN], 0.0, 3.0),
+            Some((0.5, 0.5))
+        );
+        assert_eq!(raw_min_max(&[f32::NAN], 0.0, 1.0), None, "all NaN");
     }
 
     #[test]

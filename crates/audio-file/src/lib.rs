@@ -19,7 +19,7 @@ pub use data::AudioData;
 pub use decode::{decode_bytes, decode_file};
 pub use error::{AudioFileError, Result};
 pub use hash::content_hash;
-pub use peaks::{PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks};
+pub use peaks::{FINEST_PEAK_FRAMES, PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks, raw_min_max};
 pub use resample::resample;
 pub use stream_decode::{StreamDecoder, probe_file};
 pub use wav::{WavStreamReader, read_wav_f32, write_wav_f32};
