@@ -94,7 +94,8 @@
 //! - **Routing.** Send a pointer event to the view whose bounds contain it, except while a
 //!   view `is_dragging()`: keep sending it every pointer event until the button is released.
 //!   Send key events to the focused view (the last one clicked; call `set_focused`). While
-//!   [`TransportBar::is_editing_tempo`] is true, send keys to the transport bar.
+//!   [`TransportBar::is_editing_tempo`] or [`TransportBar::is_editing_meter`] is true, send
+//!   keys to the transport bar.
 //! - **Actions.** `Command` / `EndMerge` / `Undo` / `Redo` as for the rack.
 //!   [`UiAction::OpenPianoRoll`]: call [`PianoRollView::open`] and show it in place of the
 //!   arrangement; [`UiAction::ClosePianoRoll`]: show the arrangement again.

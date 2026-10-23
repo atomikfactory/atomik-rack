@@ -273,6 +273,28 @@ fn while_the_tempo_is_typed_every_key_goes_to_the_transport_bar() {
 }
 
 #[test]
+fn a_signature_typed_in_the_transport_bar_is_one_undo_step() {
+    let mut s = shell();
+    let meter = s.core().transport_bar().meter_center();
+    s.handle(&down_n(meter, 1));
+    s.handle(&up(meter));
+    s.handle(&down_n(meter, 2));
+    s.handle(&up(meter));
+    assert!(s.core().transport_bar().is_editing_meter());
+    for c in ['7', '/', '8'] {
+        tap(&mut s, Key::Char(c));
+    }
+    tap(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space does not play while typing");
+    tap(&mut s, Key::Enter);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m.len(), m[0].num, m[0].den), (1, 7, 8));
+    s.execute(AppCommand::Undo);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m.len(), m[0].num, m[0].den), (1, 4, 4));
+}
+
+#[test]
 fn the_piano_roll_opens_in_place_of_the_arrangement() {
     let mut s = shell();
     demo(&mut s);

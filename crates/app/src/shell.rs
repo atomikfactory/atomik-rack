@@ -1520,7 +1520,9 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Rack, event);
                 return Vec::new();
             }
-            if self.core.transport_bar().is_editing_tempo() {
+            if self.core.transport_bar().is_editing_tempo()
+                || self.core.transport_bar().is_editing_meter()
+            {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
