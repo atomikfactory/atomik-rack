@@ -64,7 +64,7 @@ fn v3_header_pool_lane_and_clip_schema() {
     let doc = audio_doc(&reg);
     let text = save_project(&doc);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 12);
+    assert_eq!(v["version"], 13);
     assert_eq!(v["input_channels"], 2);
     let h1 = hash(1);
     assert_eq!(
@@ -163,7 +163,7 @@ fn v2_projects_load_with_no_inputs_and_an_empty_pool() {
     assert_eq!(loaded.input_channels, 0);
     assert!(loaded.assets.is_empty());
     // And saves as v3.
-    assert!(save_project(&loaded).contains("\"version\": 12,"));
+    assert!(save_project(&loaded).contains("\"version\": 13,"));
     // A v2 file that already says "input_channels" or "assets" is malformed.
     assert_rejects(
         &edited(&v3, |v| v["version"] = json!(2)),
@@ -183,7 +183,7 @@ fn v1_projects_migrate_to_v3_with_no_inputs_and_an_empty_pool() {
     assert_eq!(doc.input_channels, 0);
     assert!(doc.assets.is_empty());
     let again = save_project(&doc);
-    assert!(again.contains("\"version\": 12,"));
+    assert!(again.contains("\"version\": 13,"));
     assert_eq!(load_project(&again, &reg).unwrap(), doc);
 }
 

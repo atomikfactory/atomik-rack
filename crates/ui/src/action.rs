@@ -54,6 +54,9 @@ pub enum UiAction {
     /// The user asked for the device browser (double-click on empty rack space). The view
     /// has already shown it; the app may update menu state.
     OpenBrowser,
+    /// Type a tempo for tempo event `i` (the context menu of the tempo lane): the app starts the
+    /// transport bar's tempo entry for that event ([`crate::TransportBar::begin_tempo_edit`]).
+    EditTempoPoint(usize),
     /// Open this note clip in the piano roll (double-click in the arrangement): call
     /// [`crate::PianoRollView::open`] and show the piano roll in place of the arrangement.
     OpenPianoRoll(ClipId),
@@ -306,6 +309,14 @@ pub enum ContextTarget {
     Lane,
     /// The grid of the piano roll (notes are selected there).
     Notes,
+    /// A point of the tempo lane.
+    TempoPoint,
+    /// The tempo lane away from its points.
+    TempoLane,
+    /// The ruler away from a meter change.
+    RulerMeter,
+    /// A meter change in the ruler.
+    MeterChange,
 }
 
 /// How [`UiAction::SliceLoop`] finds the slice markers.

@@ -223,10 +223,7 @@ fn the_waveform_stops_at_the_asset_end_and_the_rest_is_empty() {
 fn the_asset_end_follows_the_tempo_map() {
     let (mut doc, reg) = (audio_doc(), registry());
     // Half speed from bar 3 on: clip 11 starts at bar 5, 2.5 s are now 2.5 beats.
-    doc.song.tempo.push(TempoEvent {
-        tick: 2 * BAR,
-        bpm: 60.0,
-    });
+    doc.song.tempo.push(TempoEvent::step(2 * BAR, 60.0));
     let mut v = with_peaks_for_b(&doc, &reg);
     let dl = paint(&mut v, &doc);
     let outside = SeqTheme::from_theme(&Theme::dark()).outside;

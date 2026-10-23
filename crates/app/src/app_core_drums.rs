@@ -36,7 +36,6 @@ use atomik_model::{
     StepResolution, ZoneDoc, auto_map, fill_empty_pads, pad_of_key, with_pad_files,
 };
 use atomik_ui::StepEditorView;
-use atomik_ui::timeline::snap_round;
 
 /// The drum machine's device type.
 pub(super) const DRUM_MACHINE: &str = "atomik.drum-machine";
@@ -166,8 +165,7 @@ impl<S: EngineSink> AppCore<S> {
             return self.reject(format!("{device} is not a drum machine"));
         }
         let song = &self.doc().song;
-        let bar = song.bar_ticks().max(1);
-        let start = snap_round(self.position, Some(bar)).max(0);
+        let start = song.nearest_bar_line(self.position).max(0);
         let has_track = song.track(&device).is_some();
         let step = NEW_GRID.resolution.ticks();
         let clip = Clip {

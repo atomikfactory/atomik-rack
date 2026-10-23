@@ -237,7 +237,7 @@ fn save_writes_project_header_and_song() {
     let doc = demo(&reg);
     let v: Value = serde_json::from_str(&save_project(&doc)).unwrap();
     assert_eq!(v["format"], "atomik-project");
-    assert_eq!(v["version"], 12);
+    assert_eq!(v["version"], 13);
     assert_eq!(v["input_channels"], 0);
     assert_eq!(v["assets"], json!({}));
     assert_eq!(v["tempo_bpm"], 120);
@@ -245,7 +245,7 @@ fn save_writes_project_header_and_song() {
     assert_eq!(v["devices"][2]["folded"], true);
     assert_eq!(v["song"]["next_clip_id"], 4);
     assert_eq!(v["song"]["tempo"], json!([{"tick": 0, "bpm": 120}]));
-    assert_eq!(v["song"]["meter"], json!([4, 4]));
+    assert_eq!(v["song"]["meter"], json!([{"bar": 1, "num": 4, "den": 4}]));
     assert_eq!(
         v["song"]["loop"],
         json!({"start": 0, "end": 8 * BAR, "enabled": true})
@@ -302,14 +302,8 @@ fn ac_s6_save_load_is_bit_exact_for_awkward_floats() {
     let mut d = Document::new(demo(&reg));
     d.apply(
         sc(SongCommand::SetTempoMap(vec![
-            atomik_model::TempoEvent {
-                tick: 0,
-                bpm: 188.110_848_031_224_26,
-            },
-            atomik_model::TempoEvent {
-                tick: 3,
-                bpm: 20.000_000_000_000_004,
-            },
+            atomik_model::TempoEvent::step(0, 188.110_848_031_224_26),
+            atomik_model::TempoEvent::step(3, 20.000_000_000_000_004),
         ])),
         &reg,
     )
@@ -367,7 +361,7 @@ fn load_rejects_bad_projects_with_paths() {
             "atomik-project",
         ),
         (
-            Box::new(|v| v["version"] = json!(13)),
+            Box::new(|v| v["version"] = json!(14)),
             "version".into(),
             "unsupported version",
         ),
@@ -823,6 +817,16 @@ fn load_rejects_bad_consoles_with_paths() {
     assert_rejects(&v1, "console", "unknown field");
 }
 
+fn fixture(name: &str) -> String {
+    std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name),
+    )
+    .unwrap()
+    .replace("\r\n", "\n")
+}
+
 fn fixture_v1() -> String {
     std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/demo-v1.atomik"),
@@ -914,7 +918,7 @@ fn ac_x6_v1_projects_migrate_losslessly() {
     assert_console_invariants(&doc);
     // Saved as version 6, it reads back identically.
     let v3 = save_project(&doc);
-    assert!(v3.contains("\"version\": 12,"));
+    assert!(v3.contains("\"version\": 13,"));
     assert_eq!(load_project(&v3, &reg).unwrap(), doc);
 }
 
@@ -926,4 +930,177 @@ fn patches_load_without_a_console_even_with_console_devices() {
         assert_eq!(doc.console, empty_doc().console, "{name}");
         assert_eq!(doc.devices.len(), 4);
     }
+}
+
+// ---- version 13: tempo ramps and the meter map ------------------------------------------
+
+fn with_maps(reg: &Registry) -> RackDoc {
+    let mut d = Document::new(demo(reg));
+    d.apply(
+        sc(SongCommand::SetTempoMap(vec![
+            atomik_model::TempoEvent {
+                tick: 0,
+                bpm: 120.0,
+                ramp: true,
+            },
+            atomik_model::TempoEvent::step(2 * BAR, 90.5),
+            atomik_model::TempoEvent {
+                tick: 5 * BAR + 17,
+                bpm: 60.0,
+                ramp: true,
+            },
+            atomik_model::TempoEvent::step(9 * BAR, 175.0),
+        ])),
+        reg,
+    )
+    .unwrap();
+    d.apply(
+        sc(SongCommand::SetMeterMap(vec![
+            atomik_model::MeterEvent {
+                bar: 1,
+                num: 4,
+                den: 4,
+            },
+            atomik_model::MeterEvent {
+                bar: 3,
+                num: 7,
+                den: 8,
+            },
+            atomik_model::MeterEvent {
+                bar: 9,
+                num: 3,
+                den: 4,
+            },
+        ])),
+        reg,
+    )
+    .unwrap();
+    d.doc().clone()
+}
+
+#[test]
+fn tempo_ramps_and_meter_changes_round_trip_canonically() {
+    let reg = console_registry();
+    let doc = with_maps(&reg);
+    let text = save_project(&doc);
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["version"], 13);
+    assert_eq!(
+        v["song"]["tempo"],
+        json!([
+            {"tick": 0, "bpm": 120, "ramp": true},
+            {"tick": 2 * BAR, "bpm": 90.5},
+            {"tick": 5 * BAR + 17, "bpm": 60, "ramp": true},
+            {"tick": 9 * BAR, "bpm": 175}
+        ])
+    );
+    assert_eq!(
+        v["song"]["meter"],
+        json!([
+            {"bar": 1, "num": 4, "den": 4},
+            {"bar": 3, "num": 7, "den": 8},
+            {"bar": 9, "num": 3, "den": 4}
+        ])
+    );
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(loaded, doc);
+    assert_eq!(save_project(&loaded), text);
+}
+
+#[test]
+fn a_project_without_ramps_writes_no_ramp_field() {
+    let reg = console_registry();
+    let text = save_project(&demo(&reg));
+    assert!(!text.contains("ramp"));
+}
+
+#[test]
+fn a_version_12_project_loads_unchanged_and_resaves_as_13() {
+    let reg = console_registry();
+    let file = fixture("demo-v12.atomik");
+    assert!(file.contains("\"version\": 12,") && file.contains("\"meter\": [4, 4],"));
+    let doc = load_project(&file, &reg).unwrap();
+    assert_eq!(doc.song.meter(), (4, 4));
+    assert_eq!(doc.song.meter.len(), 1);
+    assert!(doc.song.tempo.iter().all(|e| !e.ramp));
+    assert_eq!(save_project(&doc), as_current(&file, 12));
+}
+
+#[test]
+fn older_files_keep_their_single_meter_pair() {
+    let reg = console_registry();
+    let file =
+        as_old(&save_project(&demo(&reg)), 12).replace("\"meter\": [4, 4],", "\"meter\": [7, 8],");
+    assert!(file.contains("\"meter\": [7, 8],"));
+    let doc = load_project(&file, &reg).unwrap();
+    assert_eq!(
+        doc.song.meter,
+        vec![atomik_model::MeterEvent {
+            bar: 1,
+            num: 7,
+            den: 8
+        }]
+    );
+}
+
+#[test]
+fn ramp_and_meter_errors_name_their_json_path() {
+    let reg = console_registry();
+    let good = save_project(&with_maps(&reg));
+    let cases: Vec<(Edit, &str, &str)> = vec![
+        (
+            Box::new(|v| v["song"]["tempo"][3]["ramp"] = json!(true)),
+            "song.tempo[3].ramp",
+            "cannot ramp",
+        ),
+        (
+            Box::new(|v| v["song"]["tempo"][1]["ramp"] = json!(1)),
+            "song.tempo[1].ramp",
+            "boolean",
+        ),
+        (
+            Box::new(|v| v["song"]["meter"][0]["bar"] = json!(2)),
+            "song.meter[0].bar",
+            "bar 1",
+        ),
+        (
+            Box::new(|v| v["song"]["meter"][2]["bar"] = json!(3)),
+            "song.meter[2].bar",
+            "strictly",
+        ),
+        (
+            Box::new(|v| v["song"]["meter"][1]["den"] = json!(3)),
+            "song.meter[1].den",
+            "beat unit",
+        ),
+        (
+            Box::new(|v| v["song"]["meter"][1]["num"] = json!(33)),
+            "song.meter[1].num",
+            "beats per bar",
+        ),
+        (
+            Box::new(|v| {
+                v["song"]["meter"][1].as_object_mut().unwrap().remove("den");
+            }),
+            "song.meter[1].den",
+            "missing",
+        ),
+        (
+            Box::new(|v| v["song"]["meter"] = json!([])),
+            "song.meter",
+            "at least one",
+        ),
+    ];
+    for (edit, path, needle) in cases {
+        assert_rejects(&edited(&good, edit), path, needle);
+    }
+}
+
+#[test]
+fn ramps_are_unknown_before_version_13() {
+    let reg = console_registry();
+    let text = edited(&save_project(&with_maps(&reg)), |v| {
+        v["version"] = json!(12)
+    });
+    assert_rejects(&text, "song.tempo[0].ramp", "unknown field");
 }

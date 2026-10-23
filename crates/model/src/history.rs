@@ -4,7 +4,7 @@
 use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::plugin_cmd::RelinkData;
-use crate::song::{Clip, ClipContent, Lane, TempoEvent, Track};
+use crate::song::{Clip, ClipContent, Lane, MeterEvent, TempoEvent, Track};
 use crate::steps::StepSeqDoc;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
 use std::collections::{BTreeMap, BTreeSet};
@@ -104,9 +104,10 @@ pub(crate) enum Edit {
         old: Vec<TempoEvent>,
         new: Vec<TempoEvent>,
     },
-    Meter {
-        old: (u8, u8),
-        new: (u8, u8),
+    /// The whole meter map.
+    MeterMap {
+        old: Vec<MeterEvent>,
+        new: Vec<MeterEvent>,
     },
     Loop {
         old: ((i64, i64), bool),
@@ -359,7 +360,7 @@ impl Edit {
             },
             Edit::NextClipId { old, new } => Edit::NextClipId { old: new, new: old },
             Edit::TempoMap { old, new } => Edit::TempoMap { old: new, new: old },
-            Edit::Meter { old, new } => Edit::Meter { old: new, new: old },
+            Edit::MeterMap { old, new } => Edit::MeterMap { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
             Edit::ConsoleChannel { index, old, new } => Edit::ConsoleChannel {
@@ -648,8 +649,8 @@ impl Edit {
                 doc.tempo_bpm = new[0].bpm;
                 vec![SyncOp::TempoChanged(new[0].bpm), SyncOp::SongChanged]
             }
-            Edit::Meter { new, .. } => {
-                (doc.song.beats_per_bar, doc.song.beat_unit) = *new;
+            Edit::MeterMap { new, .. } => {
+                doc.song.meter.clone_from(new);
                 vec![SyncOp::SongChanged]
             }
             Edit::Loop { new, .. } => {

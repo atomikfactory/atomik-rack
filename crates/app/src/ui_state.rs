@@ -9,7 +9,7 @@
 //! ```json
 //! { "rack_split": 0.5, "show_song": true, "input_quantize": "1/16",
 //!   "show_console": false, "console_maximised": false,
-//!   "show_console_devices": true, "show_console_links": false,
+//!   "show_console_devices": true, "show_console_links": false, "show_tempo_lane": false,
 //!   "show_rack_navigator": true,
 //!   "console_notice_seen": false }
 //! ```
@@ -45,6 +45,8 @@ pub struct UiState {
     pub show_console_devices: bool,
     /// The channel to master links are drawn as cables in the rack.
     pub show_console_links: bool,
+    /// The arrangement shows the tempo lane.
+    pub show_tempo_lane: bool,
     /// The rack navigator (the overview strip at the right of the rack) shows. An absent key in
     /// the file means shown.
     pub show_rack_navigator: bool,
@@ -72,6 +74,7 @@ impl Default for UiState {
             console_maximised: false,
             show_console_devices: true,
             show_console_links: false,
+            show_tempo_lane: false,
             show_rack_navigator: true,
             console_notice_seen: false,
             file_browser_visible: false,
@@ -164,6 +167,7 @@ mod tests {
             console_maximised: true,
             show_console_devices: false,
             show_console_links: true,
+            show_tempo_lane: true,
             show_rack_navigator: false,
             console_notice_seen: true,
             file_browser_visible: true,
@@ -180,6 +184,7 @@ mod tests {
         std::fs::write(&path, r#"{"rack_split": 0.4, "show_song": false}"#).unwrap();
         let old = UiState::load(&path);
         assert!(old.show_console_devices && !old.show_console_links);
+        assert!(!old.show_tempo_lane, "an older file has no tempo lane");
         assert!(!old.show_song);
         assert!(old.show_rack_navigator, "an older file shows the navigator");
         std::fs::write(&path, r#"{"show_console_devices": false}"#).unwrap();

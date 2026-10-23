@@ -444,8 +444,9 @@ fn song_transport_audition_and_recording_calls_are_accepted_live_and_idle() {
         tempo: vec![SongTempo {
             tick: atomik_core::Ticks(0),
             tempo: Tempo::new(120.0).unwrap(),
+            ramp: false,
         }],
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio: Vec::new(),
         assets: Vec::new(),
     };

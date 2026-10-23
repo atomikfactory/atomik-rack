@@ -30,6 +30,36 @@ pub struct MenuEnable {
     pub assign_send: bool,
     /// Rack: how many columns the rack has (Remove Column needs two, Add Column room).
     pub columns: u16,
+    /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
+    pub tempo_can_ramp: bool,
+    /// Tempo point: it ramps to the next point (the item is checked).
+    pub tempo_ramped: bool,
+    /// Tempo point: it can be deleted (it is not the first).
+    pub tempo_can_delete: bool,
+    /// Meter change: it can be deleted (it is not the first).
+    pub meter_can_delete: bool,
+}
+
+/// The meters of the ruler menus: the command argument, the label of the insert item and the
+/// label of the item that changes an existing meter.
+const METERS: [(&str, &str, &str); 7] = [
+    ("2/4", "Insert 2/4 Here", "Change to 2/4"),
+    ("3/4", "Insert 3/4 Here", "Change to 3/4"),
+    ("4/4", "Insert 4/4 Here", "Change to 4/4"),
+    ("5/4", "Insert 5/4 Here", "Change to 5/4"),
+    ("6/8", "Insert 6/8 Here", "Change to 6/8"),
+    ("7/8", "Insert 7/8 Here", "Change to 7/8"),
+    ("12/8", "Insert 12/8 Here", "Change to 12/8"),
+];
+
+fn meter_item(command: &'static str, arg: &'static str, label: &'static str) -> Spec {
+    Spec::Item {
+        command,
+        arg: Some(arg),
+        label: Some(label),
+        enabled: true,
+        checked: None,
+    }
 }
 
 fn item(command: &'static str, on: bool) -> Spec {
@@ -103,6 +133,34 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             Spec::Separator,
             item("edit.select_all", true),
         ],
+        ContextTarget::TempoPoint => vec![
+            Spec::Item {
+                command: "sequencer.tempo_toggle_ramp",
+                arg: None,
+                label: None,
+                enabled: e.tempo_can_ramp,
+                checked: Some(e.tempo_ramped),
+            },
+            item("sequencer.tempo_set_value", true),
+            Spec::Separator,
+            item("sequencer.tempo_delete_point", e.tempo_can_delete),
+        ],
+        ContextTarget::TempoLane => vec![item("sequencer.tempo_add_point", true)],
+        ContextTarget::RulerMeter => METERS
+            .iter()
+            .map(|(arg, insert, _)| meter_item("sequencer.meter_insert", arg, insert))
+            .collect(),
+        ContextTarget::MeterChange => {
+            let mut v: Vec<Spec> = METERS
+                .iter()
+                .map(|(arg, _, set)| meter_item("sequencer.meter_set", arg, set))
+                .collect();
+            v.extend([
+                Spec::Separator,
+                item("sequencer.meter_delete", e.meter_can_delete),
+            ]);
+            v
+        }
         ContextTarget::Notes => {
             let mut v = edit(None);
             v.extend([

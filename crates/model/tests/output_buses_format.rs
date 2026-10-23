@@ -67,9 +67,9 @@ fn error(text: &str, r: &Registry) -> String {
 
 #[test]
 fn the_format_is_version_12() {
-    assert_eq!(PROJECT_VERSION, 12);
+    assert_eq!(PROJECT_VERSION, 13);
     let (d, _) = project();
-    assert!(save_project(d.doc()).contains("\"version\": 12,"));
+    assert!(save_project(d.doc()).contains("\"version\": 13,"));
 }
 
 #[test]
@@ -138,16 +138,13 @@ fn a_v11_file_loads_without_buses_and_resaves_with_only_the_version_line_changed
     let doc = load_project(&file, &r).unwrap();
     assert!(doc.console.buses.is_empty());
     assert!(!doc.console.channels.is_empty());
-    assert_eq!(
-        save_project(&doc),
-        file.replacen("\"version\": 11", "\"version\": 12", 1)
-    );
+    assert_eq!(save_project(&doc), as_current(&file, 11));
 }
 
 #[test]
 fn the_current_example_projects_load_without_buses() {
     let r = plugin_console_registry();
-    let file = fixture("demo-v11.atomik").replacen("\"version\": 11", "\"version\": 12", 1);
+    let file = as_current(&fixture("demo-v11.atomik"), 11);
     assert!(load_project(&file, &r).unwrap().console.buses.is_empty());
 }
 
@@ -156,7 +153,7 @@ fn buses_need_version_12() {
     let (d, r) = project();
     let text = save_project(d.doc());
     for v in 3..=11 {
-        let old = text.replace("\"version\": 12", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 13", &format!("\"version\": {v}"));
         let e = error(&old, &r);
         assert!(e.contains("console") && e.contains("buses"), "v{v}: {e}");
     }

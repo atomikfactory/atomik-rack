@@ -2,10 +2,17 @@
 //! mapping with zoom and scroll, meter maths, snap, bar/beat labels, ruler grid lines and the
 //! bars.beats.ticks / mm:ss.mmm readouts.
 //!
+//! The song's meter changes along the timeline: [`Bars`] holds the meter map (the maths is
+//! `atomik_core::MeterMap`) and every function that needs bar lines, beat lines or a snap grid
+//! takes it. A [`Meter`] is one time signature (the piano roll shows the meter in effect at
+//! its clip).
+//!
 //! Everything here is deterministic integer or `f64` arithmetic with no time source.
 
 use crate::event::Modifiers;
-use atomik_model::{Song, TempoEvent};
+use atomik_core::{MeterMap, MeterSegment, MeterTable, Tempo, TempoPoint, TempoTable};
+use atomik_model::{MeterEvent, Song, TempoEvent};
+use std::sync::Arc;
 
 /// Ticks per quarter note (re-exported from `atomik_core`).
 pub const PPQ: i64 = atomik_core::PPQ;
@@ -29,12 +36,18 @@ impl Default for Meter {
 }
 
 impl Meter {
-    /// The song's meter.
+    /// The song's meter at bar 1.
     pub fn of(song: &Song) -> Self {
+        let (beats_per_bar, beat_unit) = song.meter();
         Self {
-            beats_per_bar: song.beats_per_bar,
-            beat_unit: song.beat_unit,
+            beats_per_bar,
+            beat_unit,
         }
+    }
+
+    /// The song's meter in effect at `tick`.
+    pub fn at(song: &Song, tick: i64) -> Self {
+        Bars::of(song).meter_at(tick)
     }
 
     /// Ticks per beat (`PPQ · 4 / beat_unit`).
@@ -47,51 +60,173 @@ impl Meter {
         self.beat_ticks() * i64::from(self.beats_per_bar.max(1))
     }
 
+    /// `"3/4"`.
+    pub fn label(self) -> String {
+        format!("{}/{}", self.beats_per_bar, self.beat_unit)
+    }
+}
+
+/// The song's meter map for the time views: bar lines, beat lines and bar numbers along the
+/// timeline. Cheap to clone and compare.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bars {
+    segments: Arc<[MeterSegment]>,
+}
+
+impl Default for Bars {
+    fn default() -> Self {
+        Self::single(Meter::default())
+    }
+}
+
+impl Bars {
+    /// The song's meter map (4/4 when the song's map is invalid).
+    pub fn of(song: &Song) -> Self {
+        Self {
+            segments: song.meter_table().segments().into(),
+        }
+    }
+
+    /// One meter from bar 1.
+    pub fn single(meter: Meter) -> Self {
+        Self {
+            segments: MeterTable::constant(meter.beats_per_bar, meter.beat_unit)
+                .segments()
+                .into(),
+        }
+    }
+
+    /// The maths view.
+    pub fn map(&self) -> MeterMap<'_> {
+        MeterMap(&self.segments)
+    }
+
+    /// The segments: one per meter event.
+    pub fn segments(&self) -> &[MeterSegment] {
+        &self.segments
+    }
+
+    /// The signature in effect at `tick` (the first one before 0).
+    pub fn meter_at(&self, tick: i64) -> Meter {
+        let (beats_per_bar, beat_unit) = self.map().meter_at(tick);
+        Meter {
+            beats_per_bar,
+            beat_unit,
+        }
+    }
+
+    /// Ticks per bar of the bar holding `tick`.
+    pub fn bar_ticks_at(&self, tick: i64) -> i64 {
+        self.meter_at(tick).bar_ticks()
+    }
+
+    /// Ticks per beat at `tick`.
+    pub fn beat_ticks_at(&self, tick: i64) -> i64 {
+        self.meter_at(tick).beat_ticks()
+    }
+
+    /// The bar holding `tick` (1-based). Before tick 0 the first meter continues backwards, so
+    /// the bars count down through 0, -1...
+    pub fn bar_of(&self, tick: i64) -> i64 {
+        if tick < 0 {
+            tick.div_euclid(self.bar_ticks_at(0)) + 1
+        } else {
+            i64::from(self.map().bar_at(tick))
+        }
+    }
+
+    /// The tick where `bar` starts (see [`Self::bar_of`]).
+    pub fn bar_start(&self, bar: i64) -> i64 {
+        if bar < 1 {
+            (bar - 1) * self.bar_ticks_at(0)
+        } else {
+            self.map().bar_start(u32::try_from(bar).unwrap_or(u32::MAX))
+        }
+    }
+
     /// `(bar, beat, tick)` of a song tick: bar and beat are 1-based, `tick` is the remainder
-    /// inside the beat. Negative ticks floor towards earlier bars.
-    pub fn bbt(self, tick: i64) -> (i64, i64, i64) {
-        let bar = tick.div_euclid(self.bar_ticks());
-        let in_bar = tick.rem_euclid(self.bar_ticks());
-        let beat = in_bar / self.beat_ticks();
-        (bar + 1, beat + 1, in_bar % self.beat_ticks())
+    /// inside the beat.
+    pub fn bbt(&self, tick: i64) -> (i64, i64, i64) {
+        let bar = self.bar_of(tick);
+        let in_bar = tick - self.bar_start(bar);
+        let beat_ticks = self.beat_ticks_at(tick.max(0));
+        (bar, in_bar / beat_ticks + 1, in_bar % beat_ticks)
+    }
+
+    /// The first bar line strictly after `tick`.
+    pub fn next_bar_line(&self, tick: i64) -> i64 {
+        self.bar_start(self.bar_of(tick) + 1)
+    }
+
+    /// The last bar line strictly before `tick` (a bar line at or before tick 0 is the first
+    /// bar line, tick 0).
+    pub fn prev_bar_line(&self, tick: i64) -> i64 {
+        let bar = self.bar_of(tick);
+        let start = self.bar_start(bar);
+        if start < tick {
+            start.max(0)
+        } else {
+            self.bar_start(bar - 1).max(0)
+        }
+    }
+
+    /// The meter map of `events` (4/4 when it does not compile).
+    pub fn from_events(events: &[MeterEvent]) -> Self {
+        MeterTable::new(events).map_or_else(
+            |_| Self::default(),
+            |t| Self {
+                segments: t.segments().into(),
+            },
+        )
+    }
+
+    /// The nearest bar line to `tick` (halves round up).
+    pub fn nearest_bar_line(&self, tick: i64) -> i64 {
+        let start = self.bar_start(self.bar_of(tick));
+        let next = self.next_bar_line(tick);
+        if tick - start < next - tick {
+            start
+        } else {
+            next
+        }
     }
 }
 
 /// `"bar.beat.ticks"` with the tick remainder zero-padded to five digits, e.g. `"3.2.07680"`.
-pub fn format_bbt(tick: i64, meter: Meter) -> String {
-    let (bar, beat, t) = meter.bbt(tick);
+pub fn format_bbt(tick: i64, bars: &Bars) -> String {
+    let (bar, beat, t) = bars.bbt(tick);
     format!("{bar}.{beat}.{t:05}")
 }
 
 /// A ruler label: `"5"` on a bar line, `"5.3"` on a beat line, `"5.3.01920"` elsewhere.
-pub fn bar_beat_label(tick: i64, meter: Meter) -> String {
-    let (bar, beat, t) = meter.bbt(tick);
+pub fn bar_beat_label(tick: i64, bars: &Bars) -> String {
+    let (bar, beat, t) = bars.bbt(tick);
     if beat == 1 && t == 0 {
         format!("{bar}")
     } else if t == 0 {
         format!("{bar}.{beat}")
     } else {
-        format_bbt(tick, meter)
+        format_bbt(tick, bars)
     }
 }
 
-/// Seconds at a song tick through a step tempo map (events sorted by tick; an empty map
-/// means 120 BPM). Negative ticks give 0.
+/// Seconds at a song tick through a tempo map (steps and ramps; events sorted by tick, the
+/// first at 0; an empty or invalid map means 120 BPM). Negative ticks give 0.
 pub fn tick_to_seconds(tick: i64, tempo: &[TempoEvent]) -> f64 {
-    let tick = tick.max(0);
-    let mut secs = 0.0;
-    let mut pos = 0_i64;
-    let mut bpm = tempo.first().map_or(120.0, |e| e.bpm);
-    for e in tempo.iter().skip(1) {
-        if e.tick >= tick {
-            break;
-        }
-        let at = e.tick.max(pos);
-        secs += (at - pos) as f64 / PPQ as f64 * 60.0 / bpm;
-        pos = at;
-        bpm = e.bpm;
-    }
-    secs + (tick - pos) as f64 / PPQ as f64 * 60.0 / bpm
+    let points: Vec<TempoPoint> = tempo
+        .iter()
+        .map(|e| TempoPoint {
+            tick: e.tick,
+            bpm: e.bpm,
+            ramp: e.ramp,
+        })
+        .collect();
+    let table = TempoTable::new(&points).unwrap_or_else(|_| {
+        TempoTable::constant(
+            Tempo::new(120.0).unwrap_or_else(|_| unreachable!("120 BPM is a valid tempo")),
+        )
+    });
+    table.map().seconds(tick.max(0) as f64)
 }
 
 /// `"mm:ss.mmm"` (minutes keep growing past 59), e.g. `"01:04.250"`. Negative gives zero.
@@ -100,7 +235,6 @@ pub fn format_time(seconds: f64) -> String {
     let (min, rest) = (ms_total / 60_000, ms_total % 60_000);
     format!("{min:02}:{:02}.{:03}", rest / 1000, rest % 1000)
 }
-
 /// Snap resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Snap {
@@ -170,28 +304,139 @@ impl Snap {
     }
 }
 
-/// Rounds to the nearest multiple of `step` (halves round up); identity when `None`.
-pub fn snap_round(tick: i64, step: Option<i64>) -> i64 {
-    match step {
-        Some(s) if s > 0 => (tick + s / 2).div_euclid(s) * s,
-        _ => tick,
+/// A snap grid: the resolution over the song's meter map. Bar and beat lines move with meter
+/// changes, so the grid restarts at every bar line (a step never crosses one).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnapGrid {
+    snap: Snap,
+    bars: Bars,
+}
+
+impl SnapGrid {
+    /// The grid of `snap` over `bars`.
+    pub fn new(snap: Snap, bars: Bars) -> Self {
+        Self { snap, bars }
+    }
+
+    /// No snapping.
+    pub fn off() -> Self {
+        Self::new(Snap::Off, Bars::default())
+    }
+
+    /// The step of the bar holding `tick`, `None` when off.
+    pub fn step_at(&self, tick: i64) -> Option<i64> {
+        match self.snap {
+            Snap::Off => None,
+            Snap::Bar => Some(self.bars.bar_ticks_at(tick)),
+            Snap::Beat => Some(self.bars.beat_ticks_at(tick)),
+            Snap::Eighth => Some(PPQ / 2),
+            Snap::Sixteenth => Some(PPQ / 4),
+        }
+    }
+
+    /// The grid points around `tick`: `(floor, ceil)` within the bar that holds it (the next
+    /// bar line caps the last step). `None` when snapping is off. Before tick 0 the grid is
+    /// uniform.
+    fn cell(&self, tick: i64) -> Option<(i64, i64)> {
+        let step = self.step_at(tick.max(0))?;
+        if tick < 0 {
+            let lo = tick.div_euclid(step) * step;
+            return Some((lo, lo + step));
+        }
+        let start = self.bars.bar_start(self.bars.bar_of(tick));
+        let next = self.bars.next_bar_line(tick);
+        let lo = start + (tick - start) / step * step;
+        Some((lo, (lo + step).min(next)))
     }
 }
 
-/// Rounds down to a multiple of `step`; identity when `None`.
-pub fn snap_floor(tick: i64, step: Option<i64>) -> i64 {
-    match step {
-        Some(s) if s > 0 => tick.div_euclid(s) * s,
-        _ => tick,
+/// Rounding to a grid: a uniform step (`Option<i64>`, `None` = off) or a [`SnapGrid`].
+pub trait Quant {
+    /// The nearest grid point (halves round up).
+    fn round_to(&self, tick: i64) -> i64;
+    /// The grid point at or before `tick`.
+    fn floor_to(&self, tick: i64) -> i64;
+    /// The grid point at or after `tick`.
+    fn ceil_to(&self, tick: i64) -> i64;
+    /// A representative step (the first bar's): the least length of an item, `None` when off.
+    fn unit(&self) -> Option<i64>;
+}
+
+impl Quant for Option<i64> {
+    fn round_to(&self, tick: i64) -> i64 {
+        match *self {
+            Some(s) if s > 0 => (tick + s / 2).div_euclid(s) * s,
+            _ => tick,
+        }
+    }
+    fn floor_to(&self, tick: i64) -> i64 {
+        match *self {
+            Some(s) if s > 0 => tick.div_euclid(s) * s,
+            _ => tick,
+        }
+    }
+    fn ceil_to(&self, tick: i64) -> i64 {
+        match *self {
+            Some(s) if s > 0 => -(-tick).div_euclid(s) * s,
+            _ => tick,
+        }
+    }
+    fn unit(&self) -> Option<i64> {
+        *self
     }
 }
 
-/// Rounds up to a multiple of `step`; identity when `None`.
-pub fn snap_ceil(tick: i64, step: Option<i64>) -> i64 {
-    match step {
-        Some(s) if s > 0 => -(-tick).div_euclid(s) * s,
-        _ => tick,
+impl Quant for SnapGrid {
+    fn round_to(&self, tick: i64) -> i64 {
+        match self.cell(tick) {
+            Some((lo, hi)) if tick - lo < hi - tick => lo,
+            Some((_, hi)) => hi,
+            None => tick,
+        }
     }
+    fn floor_to(&self, tick: i64) -> i64 {
+        self.cell(tick).map_or(tick, |(lo, _)| lo)
+    }
+    fn ceil_to(&self, tick: i64) -> i64 {
+        match self.cell(tick) {
+            Some((lo, _)) if lo == tick => tick,
+            Some((_, hi)) => hi,
+            None => tick,
+        }
+    }
+    fn unit(&self) -> Option<i64> {
+        self.step_at(0)
+    }
+}
+
+impl<T: Quant + ?Sized> Quant for &T {
+    fn round_to(&self, tick: i64) -> i64 {
+        (**self).round_to(tick)
+    }
+    fn floor_to(&self, tick: i64) -> i64 {
+        (**self).floor_to(tick)
+    }
+    fn ceil_to(&self, tick: i64) -> i64 {
+        (**self).ceil_to(tick)
+    }
+    fn unit(&self) -> Option<i64> {
+        (**self).unit()
+    }
+}
+
+/// Rounds to the nearest grid point (halves round up); identity when off.
+pub fn snap_round(tick: i64, grid: impl Quant) -> i64 {
+    grid.round_to(tick)
+}
+
+/// Rounds down to a grid point; identity when off.
+pub fn snap_floor(tick: i64, grid: impl Quant) -> i64 {
+    grid.floor_to(tick)
+}
+
+/// Rounds up to a grid point; identity when off.
+pub fn snap_ceil(tick: i64, grid: impl Quant) -> i64 {
+    grid.ceil_to(tick)
 }
 
 /// A horizontal time axis: `x = x0 + (tick − scroll) · px_per_tick`.
@@ -321,22 +566,50 @@ pub fn grid_step(px_per_tick: f64, meter: Meter, min_px: f64) -> i64 {
 }
 
 /// Grid lines covering `[t0, t1]` with lines at least `min_px` apart, each classified as a
-/// bar, beat or subdivision line.
-pub fn grid_lines(t0: i64, t1: i64, px_per_tick: f64, meter: Meter, min_px: f64) -> Vec<GridLine> {
-    let step = grid_step(px_per_tick, meter, min_px);
-    let (bar, beat) = (meter.bar_ticks(), meter.beat_ticks());
+/// bar, beat or subdivision line. Every meter segment has its own grid, anchored at its bar
+/// line (bar lines at far zoom are the bars `1, 1 + n, ...` of the song).
+pub fn grid_lines(t0: i64, t1: i64, px_per_tick: f64, bars: &Bars, min_px: f64) -> Vec<GridLine> {
     let mut out = Vec::new();
-    let mut t = snap_ceil(t0.max(0), Some(step));
-    while t <= t1 {
-        let level = if t % bar == 0 {
-            GridLevel::Bar
-        } else if t % beat == 0 {
-            GridLevel::Beat
-        } else {
-            GridLevel::Sub
+    let segs = bars.segments();
+    for (i, seg) in segs.iter().enumerate() {
+        let end = segs.get(i + 1).map_or(i64::MAX, |n| n.tick);
+        let (a, b) = (t0.max(seg.tick).max(0), t1.min(end - 1));
+        if a > b {
+            continue;
+        }
+        let meter = Meter {
+            beats_per_bar: seg.num,
+            beat_unit: seg.den,
         };
-        out.push(GridLine { tick: t, level });
-        t += step;
+        let step = grid_step(px_per_tick, meter, min_px);
+        let (bar, beat) = (meter.bar_ticks(), meter.beat_ticks());
+        if step >= bar {
+            let n = u32::try_from(step / bar).unwrap_or(u32::MAX);
+            let mut k = (a - seg.tick + bar - 1) / bar;
+            while !(u64::from(seg.bar) + k as u64 - 1).is_multiple_of(u64::from(n)) {
+                k += 1;
+            }
+            while seg.tick + k * bar <= b {
+                out.push(GridLine {
+                    tick: seg.tick + k * bar,
+                    level: GridLevel::Bar,
+                });
+                k += i64::from(n);
+            }
+        } else {
+            let mut t = seg.tick + (a - seg.tick + step - 1) / step * step;
+            while t <= b {
+                let level = if (t - seg.tick) % bar == 0 {
+                    GridLevel::Bar
+                } else if (t - seg.tick) % beat == 0 {
+                    GridLevel::Beat
+                } else {
+                    GridLevel::Sub
+                };
+                out.push(GridLine { tick: t, level });
+                t += step;
+            }
+        }
     }
     out
 }
@@ -348,6 +621,37 @@ pub fn label_every_bars(px_per_tick: f64, meter: Meter, min_px: f64) -> i64 {
         n *= 2;
     }
     n
+}
+
+/// `(tick, bar)` of the bar lines in `[t0, t1]` that carry a ruler label: every `n`th bar of
+/// the song (`1, 1 + n, ...`, see [`label_every_bars`]) and the first bar of every meter
+/// segment, so a change of meter is always numbered.
+pub fn bar_labels(t0: i64, t1: i64, px_per_tick: f64, bars: &Bars, min_px: f64) -> Vec<(i64, i64)> {
+    let mut out = Vec::new();
+    let segs = bars.segments();
+    for (i, seg) in segs.iter().enumerate() {
+        let end = segs.get(i + 1).map_or(i64::MAX, |n| n.tick);
+        let (a, b) = (t0.max(seg.tick).max(0), t1.min(end - 1));
+        if a > b {
+            continue;
+        }
+        let meter = Meter {
+            beats_per_bar: seg.num,
+            beat_unit: seg.den,
+        };
+        let every = label_every_bars(px_per_tick, meter, min_px);
+        let bar_ticks = meter.bar_ticks();
+        let mut k = (a - seg.tick) / bar_ticks;
+        while seg.tick + k * bar_ticks <= b {
+            let tick = seg.tick + k * bar_ticks;
+            let bar = i64::from(seg.bar) + k;
+            if tick >= a && (k == 0 || (bar - 1) % every == 0) {
+                out.push((tick, bar));
+            }
+            k += 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -363,6 +667,16 @@ mod tests {
         }
     }
 
+    fn bars(events: &[(u32, u8, u8)]) -> Bars {
+        let events: Vec<atomik_model::MeterEvent> = events
+            .iter()
+            .map(|&(bar, num, den)| atomik_model::MeterEvent { bar, num, den })
+            .collect();
+        Bars {
+            segments: MeterTable::new(&events).unwrap().segments().into(),
+        }
+    }
+
     #[test]
     fn meter_ticks() {
         assert_eq!(m(4, 4).beat_ticks(), PPQ);
@@ -375,22 +689,26 @@ mod tests {
 
     #[test]
     fn bbt_and_labels_are_meter_aware() {
-        assert_eq!(m(4, 4).bbt(0), (1, 1, 0));
-        assert_eq!(m(4, 4).bbt(BAR + PPQ + 120), (2, 2, 120));
-        assert_eq!(m(3, 4).bbt(3 * PPQ), (2, 1, 0));
-        assert_eq!(m(6, 8).bbt(5 * PPQ / 2), (1, 6, 0));
-        assert_eq!(m(4, 4).bbt(-1), (0, 4, PPQ - 1));
-        assert_eq!(format_bbt(2 * BAR + PPQ + PPQ / 2, m(4, 4)), "3.2.07680");
-        assert_eq!(format_bbt(0, m(4, 4)), "1.1.00000");
-        assert_eq!(bar_beat_label(4 * BAR, m(4, 4)), "5");
-        assert_eq!(bar_beat_label(4 * BAR + 2 * PPQ, m(4, 4)), "5.3");
-        assert_eq!(bar_beat_label(3 * PPQ, m(3, 4)), "2");
-        assert_eq!(bar_beat_label(PPQ / 4, m(4, 4)), "1.1.03840");
+        let b = |x: Meter| Bars::single(x);
+        assert_eq!(b(m(4, 4)).bbt(0), (1, 1, 0));
+        assert_eq!(b(m(4, 4)).bbt(BAR + PPQ + 120), (2, 2, 120));
+        assert_eq!(b(m(3, 4)).bbt(3 * PPQ), (2, 1, 0));
+        assert_eq!(b(m(6, 8)).bbt(5 * PPQ / 2), (1, 6, 0));
+        assert_eq!(b(m(4, 4)).bbt(-1), (0, 4, PPQ - 1));
+        assert_eq!(
+            format_bbt(2 * BAR + PPQ + PPQ / 2, &b(m(4, 4))),
+            "3.2.07680"
+        );
+        assert_eq!(format_bbt(0, &b(m(4, 4))), "1.1.00000");
+        assert_eq!(bar_beat_label(4 * BAR, &b(m(4, 4))), "5");
+        assert_eq!(bar_beat_label(4 * BAR + 2 * PPQ, &b(m(4, 4))), "5.3");
+        assert_eq!(bar_beat_label(3 * PPQ, &b(m(3, 4))), "2");
+        assert_eq!(bar_beat_label(PPQ / 4, &b(m(4, 4))), "1.1.03840");
     }
 
     #[test]
     fn seconds_through_a_step_tempo_map() {
-        let t = |tick, bpm| TempoEvent { tick, bpm };
+        let t = |tick, bpm| TempoEvent::step(tick, bpm);
         let map = [t(0, 120.0)];
         assert!((tick_to_seconds(PPQ, &map) - 0.5).abs() < 1e-12);
         assert!((tick_to_seconds(BAR, &map) - 2.0).abs() < 1e-12);
@@ -504,17 +822,153 @@ mod tests {
         assert_eq!(grid_step(ppt, mt, 20.0), PPQ);
         assert_eq!(grid_step(ppt, mt, 50.0), BAR);
         assert_eq!(grid_step(ppt, mt, 150.0), 2 * BAR);
-        let lines = grid_lines(0, BAR, ppt, mt, 20.0);
+        let lines = grid_lines(0, BAR, ppt, &Bars::single(mt), 20.0);
         assert_eq!(lines.len(), 5);
         assert_eq!(lines[0].level, GridLevel::Bar);
         assert_eq!(lines[1].level, GridLevel::Beat);
         assert_eq!(lines[4].tick, BAR);
-        let fine = grid_lines(0, PPQ, 480.0 / PPQ as f64, mt, 8.0);
+        let fine = grid_lines(0, PPQ, 480.0 / PPQ as f64, &Bars::single(mt), 8.0);
         assert_eq!(fine[1].level, GridLevel::Sub);
         assert_eq!(fine[1].tick, PPQ / 4);
         // 6/8: beats are eighths, so no separate eighth subdivision.
         assert_eq!(grid_step(1.0, m(6, 8), 1.0), PPQ / 4);
         assert_eq!(label_every_bars(ppt, mt, 40.0), 1);
         assert_eq!(label_every_bars(ppt / 4.0, mt, 40.0), 2);
+    }
+
+    #[test]
+    fn seconds_through_a_tempo_ramp() {
+        // 60 -> 180 BPM over two bars: ln(3) * 60 / PPQ * L / 120 seconds, then 180 BPM.
+        let map = [
+            TempoEvent {
+                tick: 0,
+                bpm: 60.0,
+                ramp: true,
+            },
+            TempoEvent::step(2 * BAR, 180.0),
+        ];
+        let ramp = 60.0 / PPQ as f64 * (2 * BAR) as f64 / 120.0 * 3.0f64.ln();
+        assert!((tick_to_seconds(2 * BAR, &map) - ramp).abs() < 1e-9);
+        assert!((tick_to_seconds(2 * BAR + PPQ, &map) - ramp - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bars_convert_through_meter_changes() {
+        // 4/4 bars 1-2, 3/4 bars 3-4, 6/8 from bar 5.
+        let b = bars(&[(1, 4, 4), (3, 3, 4), (5, 6, 8)]);
+        let b34 = 3 * PPQ;
+        assert_eq!(b.bar_start(1), 0);
+        assert_eq!(b.bar_start(3), 2 * BAR);
+        assert_eq!(b.bar_start(5), 2 * BAR + 2 * b34);
+        assert_eq!(b.bar_start(0), -BAR);
+        assert_eq!(b.bar_of(2 * BAR - 1), 2);
+        assert_eq!(b.bar_of(2 * BAR), 3);
+        assert_eq!(b.bar_of(-1), 0);
+        assert_eq!(b.meter_at(2 * BAR), m(3, 4));
+        assert_eq!(b.meter_at(-4), m(4, 4));
+        assert_eq!(b.bbt(2 * BAR + PPQ + 5), (3, 2, 5));
+        assert_eq!(b.bbt(b.bar_start(5) + 5 * PPQ / 2), (5, 6, 0));
+        assert_eq!(b.next_bar_line(2 * BAR), 2 * BAR + b34);
+        assert_eq!(b.prev_bar_line(2 * BAR), BAR);
+        assert_eq!(b.prev_bar_line(2 * BAR + 1), 2 * BAR);
+        assert_eq!(b.prev_bar_line(0), 0);
+        assert_eq!(b.nearest_bar_line(2 * BAR + b34 / 2 - 1), 2 * BAR);
+        assert_eq!(b.nearest_bar_line(2 * BAR + b34 / 2), 2 * BAR + b34);
+        assert_eq!(bar_beat_label(2 * BAR, &b), "3");
+        assert_eq!(bar_beat_label(2 * BAR + PPQ, &b), "3.2");
+        assert_eq!(Bars::of(&atomik_model::empty_song(120.0)), Bars::default());
+    }
+
+    #[test]
+    fn the_snap_grid_follows_the_meter_map() {
+        // 7/8 (3.5 beats) then 4/4: the beat grid of the 4/4 bars starts at the bar line.
+        let b = bars(&[(1, 7, 8), (2, 4, 4)]);
+        let seven8 = 7 * PPQ / 2;
+        let beat = SnapGrid::new(Snap::Beat, b.clone());
+        assert_eq!(beat.step_at(0), Some(PPQ / 2));
+        assert_eq!(beat.step_at(seven8), Some(PPQ));
+        assert_eq!(beat.round_to(seven8 + PPQ + 10), seven8 + PPQ);
+        assert_eq!(beat.floor_to(seven8 + PPQ - 1), seven8);
+        assert_eq!(beat.ceil_to(seven8 + 1), seven8 + PPQ);
+        assert_eq!(beat.ceil_to(seven8), seven8);
+        let bar = SnapGrid::new(Snap::Bar, b.clone());
+        assert_eq!(bar.round_to(seven8 / 2 - 1), 0);
+        assert_eq!(bar.round_to(seven8 / 2), seven8);
+        assert_eq!(bar.round_to(seven8 + 2 * PPQ), seven8 + BAR);
+        assert_eq!(bar.floor_to(seven8 + BAR - 1), seven8);
+        assert_eq!(bar.ceil_to(seven8 + 1), seven8 + BAR);
+        // A step never crosses a bar line: the last half note step of a 7/8 bar is cut.
+        let eighth = SnapGrid::new(Snap::Eighth, b);
+        assert_eq!(eighth.round_to(seven8 - 10), seven8);
+        assert_eq!(eighth.ceil_to(seven8 - PPQ / 4), seven8);
+        assert_eq!(eighth.floor_to(seven8 - 1), seven8 - PPQ / 2);
+        // Off and uniform steps behave as the plain functions.
+        let off = SnapGrid::off();
+        assert_eq!(off.round_to(1234), 1234);
+        assert_eq!(off.unit(), None);
+        assert_eq!(snap_round(-PPQ / 2 - 1, Some(PPQ)), -PPQ);
+        assert_eq!(snap_ceil(PPQ + 1, Some(PPQ)), 2 * PPQ);
+        let sixteenth = SnapGrid::new(Snap::Sixteenth, Bars::default());
+        for t in [-9_000, -1, 0, 1, 1_919, 1_920, 3_840, 40_001] {
+            assert_eq!(
+                sixteenth.round_to(t),
+                snap_round(t, Some(PPQ / 4)),
+                "round {t}"
+            );
+            assert_eq!(
+                sixteenth.floor_to(t),
+                snap_floor(t, Some(PPQ / 4)),
+                "floor {t}"
+            );
+            assert_eq!(
+                sixteenth.ceil_to(t),
+                snap_ceil(t, Some(PPQ / 4)),
+                "ceil {t}"
+            );
+        }
+        assert_eq!(sixteenth.unit(), Some(PPQ / 4));
+    }
+
+    #[test]
+    fn grid_lines_restart_at_every_meter_change() {
+        let b = bars(&[(1, 4, 4), (2, 3, 4)]);
+        let ppt = 96.0 / BAR as f64;
+        let lines = grid_lines(0, BAR + 3 * PPQ, ppt, &b, 20.0);
+        let ticks: Vec<(i64, GridLevel)> = lines.iter().map(|g| (g.tick, g.level)).collect();
+        // 24 px beats: bar 1 in 4/4, bar 2 in 3/4.
+        assert_eq!(
+            ticks,
+            vec![
+                (0, GridLevel::Bar),
+                (PPQ, GridLevel::Beat),
+                (2 * PPQ, GridLevel::Beat),
+                (3 * PPQ, GridLevel::Beat),
+                (BAR, GridLevel::Bar),
+                (BAR + PPQ, GridLevel::Beat),
+                (BAR + 2 * PPQ, GridLevel::Beat),
+                (BAR + 3 * PPQ, GridLevel::Bar),
+            ]
+        );
+        // Far zoom: multi-bar lines are the bars 1, 1 + n, ... of the song.
+        let far = bars(&[(1, 4, 4), (4, 3, 4)]);
+        let lines = grid_lines(0, 12 * BAR, 96.0 / BAR as f64 / 8.0, &far, 20.0);
+        assert!(lines.iter().all(|g| g.level == GridLevel::Bar));
+        let bars_hit: Vec<i64> = lines.iter().map(|g| Bars::bar_of(&far, g.tick)).collect();
+        assert_eq!(bars_hit, vec![1, 3, 5, 9, 13]);
+    }
+
+    #[test]
+    fn labels_number_every_change_of_meter() {
+        let b = bars(&[(1, 4, 4), (4, 3, 4)]);
+        let ppt = 96.0 / BAR as f64;
+        let labels = bar_labels(0, 8 * BAR, ppt, &b, 34.0);
+        assert_eq!(labels.first(), Some(&(0, 1)));
+        assert_eq!(labels.iter().filter(|l| l.1 == 4).count(), 1);
+        assert_eq!(labels.iter().find(|l| l.1 == 4).unwrap().0, 3 * BAR);
+        assert_eq!(labels.len(), 10, "bars 1-3 in 4/4, then 4-10 in 3/4");
+        // Zoomed out, every second bar is labelled, plus the first bar of a segment.
+        let labels = bar_labels(0, 8 * BAR, ppt / 4.0, &b, 34.0);
+        let nums: Vec<i64> = labels.iter().map(|l| l.1).collect();
+        assert_eq!(nums, vec![1, 3, 4, 5, 7, 9]);
     }
 }

@@ -5,46 +5,54 @@
 //! inputs of these functions.
 
 use atomik_audio_file::Peaks;
+use atomik_core::{Tempo, TempoPoint, TempoTable};
 use atomik_model::{Cable, Command, DeviceKey, INTERFACE_KEY, SocketRef, TempoEvent};
 
-/// The song tempo map for fractional tick / frame conversions. Positions are fixed in time:
-/// a tick maps to `seconds * sample_rate` frames and back through the tempo events.
-/// Integer conversions give the same frames as [`atomik_model::Song::frame_at`].
-#[derive(Debug, Clone, Default, PartialEq)]
+/// The song tempo map (steps and ramps) for fractional tick / frame conversions, the maths of
+/// [`atomik_core::TempoMap`]. Positions are fixed in time: a tick maps to `seconds * sample_rate`
+/// frames and back through the tempo events. Integer conversions give the same frames as
+/// [`atomik_model::Song::frame_at`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct TempoMap {
-    /// `(tick, seconds at tick, bpm)` per tempo event.
-    segments: Vec<(i64, f64, f64)>,
+    table: TempoTable,
+}
+
+impl Default for TempoMap {
+    fn default() -> Self {
+        Self::new(&[TempoEvent::step(0, 120.0)])
+    }
 }
 
 impl TempoMap {
-    /// Builds the map from the song's tempo events (sorted by tick, first at tick 0).
+    /// Builds the map from the song's tempo events (sorted by tick, first at tick 0); a map the
+    /// core cannot compile reads as constant at the first tempo, or at 120 BPM.
     pub fn new(tempo: &[TempoEvent]) -> Self {
-        let mut segments: Vec<(i64, f64, f64)> = Vec::with_capacity(tempo.len());
-        for e in tempo {
-            let seconds = segments.last().map_or(0.0, |&(t, s, bpm)| {
-                s + ((e.tick - t) as f64 * 60.0) / (bpm * atomik_core::PPQ as f64)
-            });
-            segments.push((e.tick, seconds, e.bpm));
-        }
-        Self { segments }
+        let points: Vec<TempoPoint> = tempo
+            .iter()
+            .map(|e| TempoPoint {
+                tick: e.tick,
+                bpm: e.bpm,
+                ramp: e.ramp,
+            })
+            .collect();
+        let table = TempoTable::new(&points).unwrap_or_else(|_| {
+            let bpm = tempo.first().map_or(120.0, |e| e.bpm);
+            let tempo = Tempo::new(bpm)
+                .or_else(|_| Tempo::new(120.0))
+                .unwrap_or_else(|_| unreachable!("120 BPM is a valid tempo"));
+            TempoTable::constant(tempo)
+        });
+        Self { table }
     }
 
     /// Seconds at a (fractional) tick. Negative ticks give 0.
     pub fn seconds_at_tick(&self, tick: f64) -> f64 {
-        let k = self.segments.partition_point(|s| s.0 as f64 <= tick);
-        let Some(&(t0, s0, bpm)) = self.segments.get(k.saturating_sub(1)) else {
-            return 0.0;
-        };
-        (s0 + ((tick - t0 as f64) * 60.0) / (bpm * atomik_core::PPQ as f64)).max(0.0)
+        self.table.map().seconds(tick).max(0.0)
     }
 
     /// The (fractional) tick at a time in seconds; negative times give 0.
     pub fn tick_at_seconds(&self, seconds: f64) -> f64 {
-        let k = self.segments.partition_point(|s| s.1 <= seconds);
-        let Some(&(t0, s0, bpm)) = self.segments.get(k.saturating_sub(1)) else {
-            return 0.0;
-        };
-        (t0 as f64 + (seconds - s0) * bpm * atomik_core::PPQ as f64 / 60.0).max(0.0)
+        self.table.map().tick(seconds, 1.0).max(0.0)
     }
 
     /// Frames at a (fractional) tick.
@@ -353,7 +361,7 @@ mod tests {
     fn map(events: &[(i64, f64)]) -> TempoMap {
         let ev: Vec<TempoEvent> = events
             .iter()
-            .map(|&(tick, bpm)| TempoEvent { tick, bpm })
+            .map(|&(tick, bpm)| TempoEvent::step(tick, bpm))
             .collect();
         TempoMap::new(&ev)
     }

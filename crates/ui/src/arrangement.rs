@@ -25,20 +25,26 @@ use crate::keymap::{CommandOutcome, Roles};
 use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::tempo_lane::{self as lane, TEMPO_LANE_HEIGHT};
 use crate::theme::{Theme, mix};
-use crate::timeline::{Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
+use crate::timeline::{Bars, PPQ, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{Tool, ViewportState};
 use atomik_audio_file::PeakPyramid;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     AssetMeta, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Command, Curve,
-    DeviceKey, FadeCurve, LaneKind, RackDoc, Song, SongCommand, WorkflowCommand,
+    DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, Song, SongCommand, TempoEvent,
+    WorkflowCommand,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
+
+mod tempo;
+
+pub use tempo::TempoMenu;
 
 /// Width of the track list.
 pub const TRACK_LIST_WIDTH: f64 = 208.0;
@@ -172,6 +178,12 @@ enum Hit {
     Corner,
     RulerLabel,
     LoopBand,
+    /// A point of the tempo lane.
+    TempoPoint(usize),
+    /// The tempo lane away from its points.
+    TempoLane,
+    /// The meter tag of change `i` in the ruler.
+    MeterTag(usize),
     Button(usize, TrackButton),
     Header(usize),
     AddTrack(DeviceKey),
@@ -297,6 +309,28 @@ enum Drag {
         moved: bool,
         modifiers: Modifiers,
     },
+    /// Moving a point of the tempo lane.
+    TempoPoint {
+        start: Point,
+        index: usize,
+        original: Vec<TempoEvent>,
+        /// The BPM scale at the press (it stays put while the point moves).
+        range: (f64, f64),
+        merge: u64,
+        moved: bool,
+        emitted: bool,
+        last: Vec<TempoEvent>,
+    },
+    /// Moving a meter change to another bar.
+    Meter {
+        start: Point,
+        index: usize,
+        original: Vec<MeterEvent>,
+        merge: u64,
+        moved: bool,
+        emitted: bool,
+        last: Vec<MeterEvent>,
+    },
     Pan {
         last: Point,
     },
@@ -361,6 +395,19 @@ pub struct ArrangementView {
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
     assets: BTreeMap<String, AssetMeta>,
     tempo: TempoMap,
+    /// The meter map: bar lines, beat lines, bar numbers and the snap grid.
+    bars: Bars,
+    /// Whether the tempo lane is shown between the ruler and the lanes.
+    tempo_lane: bool,
+    /// The selected tempo point and meter change.
+    tempo_sel: Option<usize>,
+    meter_sel: Option<usize>,
+    /// Where the last context menu of the tempo lane or ruler opened: the tick, the bar and the
+    /// tempo point or meter change it was on.
+    ctx_tick: i64,
+    ctx_bar: u32,
+    ctx_tempo: Option<usize>,
+    ctx_meter: Option<usize>,
     input_channels: u16,
     audio_headers: Vec<AudioHeader>,
     drop_hover: Option<DropHover>,
@@ -416,6 +463,14 @@ impl ArrangementView {
             peaks: BTreeMap::new(),
             assets: BTreeMap::new(),
             tempo: TempoMap::default(),
+            bars: Bars::default(),
+            tempo_lane: false,
+            tempo_sel: None,
+            meter_sel: None,
+            ctx_tick: 0,
+            ctx_bar: 1,
+            ctx_tempo: None,
+            ctx_meter: None,
             input_channels: 0,
             audio_headers: Vec::new(),
             drop_hover: None,
@@ -874,6 +929,7 @@ impl ArrangementView {
         self.audio_headers = headers;
         self.song = doc.song.clone();
         self.tempo = TempoMap::new(&self.song.tempo);
+        self.bars = Bars::of(&self.song);
         self.assets.clone_from(&doc.assets);
         self.input_channels = doc.input_channels;
         self.device_sig = sig;
@@ -966,17 +1022,46 @@ impl ArrangementView {
         {
             self.menu = None;
         }
+        let (tempos, meters) = (song.tempo.len(), song.meter.len());
+        self.tempo_sel = self.tempo_sel.filter(|i| *i < tempos);
+        self.meter_sel = self.meter_sel.filter(|i| *i < meters);
         self.clamp_scroll();
     }
 
     // ------------------------------------------------------------------ geometry (private)
 
-    fn meter(&self) -> Meter {
-        Meter::of(&self.song)
+    /// The bottom of the ruler (the tempo lane, when shown, sits below it).
+    fn ruler_bottom(&self) -> f64 {
+        self.bounds.y0 + RULER_HEIGHT
     }
 
     fn lanes_top(&self) -> f64 {
-        self.bounds.y0 + RULER_HEIGHT
+        self.ruler_bottom()
+            + if self.tempo_lane {
+                TEMPO_LANE_HEIGHT
+            } else {
+                0.0
+            }
+    }
+
+    /// The tempo lane over the timeline (empty height when hidden).
+    fn tempo_rect(&self) -> Rect {
+        Rect::new(
+            self.axis.x0,
+            self.ruler_bottom(),
+            self.bounds.x1.max(self.axis.x0),
+            self.lanes_top(),
+        )
+    }
+
+    /// The snap grid of a gesture: the resolution over the meter map, or none while the
+    /// disable-snap role is held.
+    fn grid(&self, modifiers: Modifiers) -> SnapGrid {
+        if self.vp.snap_disabled(modifiers) {
+            SnapGrid::off()
+        } else {
+            SnapGrid::new(self.snap, self.bars.clone())
+        }
     }
 
     fn timeline_rect(&self) -> Rect {
@@ -993,7 +1078,7 @@ impl ArrangementView {
             self.axis.x0,
             self.bounds.y0,
             self.bounds.x1.max(self.axis.x0),
-            self.lanes_top(),
+            self.ruler_bottom(),
         )
     }
 
@@ -1015,7 +1100,7 @@ impl ArrangementView {
             .max()
             .unwrap_or(0) as f64;
         let view = self.hscroll_rect().width() / self.axis.px_per_tick;
-        (end + 4.0 * self.meter().bar_ticks() as f64)
+        (end + 4.0 * self.bars.bar_ticks_at(end as i64) as f64)
             .max(self.axis.scroll + view)
             .max(1.0)
     }
@@ -1056,7 +1141,7 @@ impl ArrangementView {
     }
 
     fn clamp_scroll(&mut self) {
-        let visible = (self.bounds.height() - RULER_HEIGHT).max(0.0);
+        let visible = (self.bounds.y1 - self.lanes_top()).max(0.0);
         let max = (self.content_height - visible).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max);
     }
@@ -1154,7 +1239,7 @@ impl ArrangementView {
         if self.hscroll_rect().contains(pos) {
             return Hit::HScroll;
         }
-        if pos.y < self.lanes_top() {
+        if pos.y < self.ruler_bottom() {
             if pos.x < tl.x0 {
                 if let Some(t) = Tool::ALL
                     .into_iter()
@@ -1168,11 +1253,37 @@ impl ArrangementView {
                     Hit::Corner
                 };
             }
-            return if pos.y < self.bounds.y0 + LABEL_BAND {
-                Hit::RulerLabel
-            } else {
-                Hit::LoopBand
-            };
+            if pos.y < self.bounds.y0 + LABEL_BAND {
+                if let Some(i) = (0..self.song.meter.len())
+                    .find(|i| self.meter_tag_rect(*i).is_some_and(|r| r.contains(pos)))
+                {
+                    return Hit::MeterTag(i);
+                }
+                return Hit::RulerLabel;
+            }
+            return Hit::LoopBand;
+        }
+        if pos.y < self.lanes_top() {
+            // The tempo lane (only when it is shown).
+            if pos.x < tl.x0 {
+                return Hit::Empty;
+            }
+            let lane_rect = self.tempo_rect();
+            let range = lane::bpm_range(&self.song.tempo);
+            let nearest = self
+                .song
+                .tempo
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    (
+                        i,
+                        lane::point_pos(e, lane_rect, &self.axis, range).distance(pos),
+                    )
+                })
+                .filter(|(_, d)| *d <= lane::POINT_HIT)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            return nearest.map_or(Hit::TempoLane, |(i, _)| Hit::TempoPoint(i));
         }
         let Some(row) = self.row_at(pos.y) else {
             return Hit::Empty;
@@ -1354,8 +1465,8 @@ impl ArrangementView {
         }
     }
 
-    fn step(&self, modifiers: Modifiers) -> Option<i64> {
-        self.vp.step(self.snap, self.meter(), modifiers)
+    fn step(&self, modifiers: Modifiers) -> SnapGrid {
+        self.grid(modifiers)
     }
 
     #[allow(clippy::too_many_arguments, reason = "event fields are passed through")]
@@ -1415,7 +1526,23 @@ impl ArrangementView {
         }
         let primary = button == PointerButton::Primary;
         let tool = self.vp.effective_tool(modifiers);
+        if !matches!(hit, Hit::TempoPoint(_) | Hit::MeterTag(_)) {
+            self.tempo_sel = None;
+            self.meter_sel = None;
+        }
         match hit {
+            Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
+            Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
+            Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
+            Hit::RulerLabel if button == PointerButton::Secondary => {
+                self.ctx_bar =
+                    u32::try_from(self.bars.bar_of(self.axis.x_to_tick(pos.x)).max(1)).unwrap_or(1);
+                self.ctx_meter = None;
+                out.push(UiAction::ContextMenu {
+                    target: ContextTarget::RulerMeter,
+                    at: pos,
+                });
+            }
             Hit::Snap => self.snap = self.snap.cycle(primary),
             Hit::Tool(t) if primary => self.set_tool(t),
             Hit::RulerLabel if primary && tool == Tool::Razor => {
@@ -1476,7 +1603,7 @@ impl ArrangementView {
                 if clicks >= 2 {
                     // A double-click on an empty lane creates a one-bar clip.
                     let start = snap_floor(t, self.step(modifiers)).max(0);
-                    let length = self.meter().bar_ticks();
+                    let length = self.bars.bar_ticks_at(start);
                     out.push(new_clip_cmd(device, lane, lane > 0, start, length));
                     return;
                 }
@@ -1946,12 +2073,20 @@ impl ArrangementView {
             self.repaint = true;
             return;
         }
+        if matches!(self.drag, Drag::TempoPoint { .. } | Drag::Meter { .. }) {
+            self.tempo_drag_move(pos, modifiers, out);
+            return;
+        }
         let step = self.step(modifiers);
-        let min = seq_edit::min_length(step, MIN_TICKS);
+        let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
         let (tempo, assets) = (&self.tempo, &self.assets);
         match &mut self.drag {
-            Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } => {}
+            Drag::None
+            | Drag::Pan { .. }
+            | Drag::HScroll { .. }
+            | Drag::TempoPoint { .. }
+            | Drag::Meter { .. } => {}
             Drag::Move {
                 start,
                 grabbed_start,
@@ -2169,6 +2304,8 @@ impl ArrangementView {
             }
             Drag::Resize { emitted, .. }
             | Drag::Point { emitted, .. }
+            | Drag::TempoPoint { emitted, .. }
+            | Drag::Meter { emitted, .. }
             | Drag::Audio { emitted, .. } => {
                 if emitted {
                     out.push(UiAction::EndMerge);
@@ -2191,7 +2328,7 @@ impl ArrangementView {
                     if pencil {
                         // The pencil draws with a plain click: a one-bar clip.
                         let start = snap_floor(t0, self.step(modifiers)).max(0);
-                        let length = self.meter().bar_ticks();
+                        let length = self.bars.bar_ticks_at(start);
                         out.push(new_clip_cmd(device, lane, automation, start, length));
                     }
                     return;
@@ -2271,6 +2408,8 @@ impl ArrangementView {
                     self.selection.clear();
                     self.selected_track = None;
                     self.point_sel = None;
+                    self.tempo_sel = None;
+                    self.meter_sel = None;
                 }
             }
             Key::Home => {
@@ -2307,12 +2446,17 @@ impl ArrangementView {
             self.set_tool(tool);
             return CommandOutcome::Handled(Vec::new());
         }
+        if let Some(outcome) = self.tempo_command(id, arg) {
+            return outcome;
+        }
         match id {
             "edit.select_all" => {
                 let all: Vec<ClipId> = self.song_clips().map(|c| c.id).collect();
                 self.selection.set(all);
                 self.selected_track = None;
                 self.point_sel = None;
+                self.tempo_sel = None;
+                self.meter_sel = None;
                 CommandOutcome::Handled(Vec::new())
             }
             "edit.duplicate" => {
@@ -2479,7 +2623,7 @@ impl ArrangementView {
                     .map(|c| c.start + c.length)
                     .max()
                     .unwrap_or(0)
-                    .max(self.meter().bar_ticks());
+                    .max(self.bars.bar_ticks_at(0));
                 self.axis.fit_span(0, end, x1);
                 self.vp.set_zoomed_to_selection(false);
             }
@@ -2566,6 +2710,9 @@ impl ArrangementView {
     }
 
     fn cancel_drag(&mut self, out: &mut Vec<UiAction>) {
+        if matches!(self.drag, Drag::TempoPoint { .. } | Drag::Meter { .. }) {
+            return self.cancel_tempo_drag(out);
+        }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Move {
                 originals,
@@ -2635,6 +2782,7 @@ impl ArrangementView {
         sp::rect(canvas, b, self.st.background);
         let tl = self.timeline_rect();
         self.paint_lanes(canvas, doc, tl);
+        self.paint_tempo_lane(canvas);
         self.paint_ruler(canvas);
         self.paint_track_list(canvas, doc);
         self.paint_corner(canvas);
@@ -2671,7 +2819,6 @@ impl ArrangementView {
 
     fn paint_lanes(&self, c: &mut dyn Canvas, doc: &RackDoc, tl: Rect) {
         let st = &self.st;
-        let meter = self.meter();
         c.push_clip(&tl.into());
         for (row, rr) in self.visible_rows() {
             let lr = Rect::new(tl.x0, rr.y0, tl.x1, rr.y1);
@@ -2685,7 +2832,7 @@ impl ArrangementView {
                         st.lane_alt
                     };
                     sp::rect(c, lr, bg);
-                    sp::grid(c, st, &self.axis, lr, meter);
+                    sp::grid(c, st, &self.axis, lr, &self.bars);
                 }
                 RowKind::AddTrack(_) | RowKind::AddAudio => sp::rect(c, lr, st.background),
             }
@@ -2698,7 +2845,7 @@ impl ArrangementView {
             tl.y1,
         );
         if below.height() > 0.0 {
-            sp::grid(c, st, &self.axis, below, meter);
+            sp::grid(c, st, &self.axis, below, &self.bars);
         }
         if self.song.loop_enabled {
             let (a, z) = self.song.loop_range;
@@ -3258,7 +3405,8 @@ impl ArrangementView {
         c.push_clip(&rr.into());
         sp::rect(c, rr, st.ruler);
         let labels = Rect::new(rr.x0, rr.y0, rr.x1, rr.y0 + LABEL_BAND);
-        sp::ruler_labels(c, st, &self.axis, labels, self.meter());
+        sp::ruler_labels(c, st, &self.axis, labels, &self.bars);
+        self.paint_meter_tags(c);
         let band = Rect::new(rr.x0, rr.y0 + LABEL_BAND, rr.x1, rr.y1);
         sp::rect(c, band, mix(st.ruler, st.background, 0.5));
         let (a, z, on) = match &self.drag {
@@ -3518,7 +3666,7 @@ impl ArrangementView {
         let st = &self.st;
         let t = &st.base;
         let b = self.bounds;
-        let r = Rect::new(b.x0, b.y0, self.axis.x0, self.lanes_top());
+        let r = Rect::new(b.x0, b.y0, self.axis.x0, self.ruler_bottom());
         sp::rect(c, r, st.header);
         c.text(
             &TextRun::new("SNAP", pt(r.x0 + 12.0, r.y0 + 21.0), 8.0, t.text_muted)

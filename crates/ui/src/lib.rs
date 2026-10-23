@@ -286,6 +286,7 @@ pub mod seq_panel;
 pub mod sidechain;
 pub mod slice_editor;
 pub mod step_editor;
+pub mod tempo_lane;
 pub mod text;
 pub mod theme;
 pub mod timeline;

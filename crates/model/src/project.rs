@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 12,
+//! { "format": "atomik-project", "version": 13,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -13,7 +13,8 @@
 //!                "master": key | null, "returns": [key | null × 8], "compensation": bool },
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
-//!   "song": { "tempo": [{"tick", "bpm"}…], "meter": [beats_per_bar, beat_unit],
+//!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
+//!             "meter": [{"bar", "num", "den"}…] (v13; before it one [beats_per_bar, beat_unit]),
 //!             "loop": {"start", "end", "enabled"}, "end", "next_clip_id",
 //!             "tracks": [{ "device", "muted", "solo", "armed",
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio", "param"?,
@@ -96,7 +97,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. Saving always writes version 12.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. Saving always writes version 13.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -109,12 +110,12 @@ use crate::patch::{
 };
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AudioClipContent, AutomationPoint, Clip, ClipContent,
-    ClipId, Curve, FadeCurve, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_LOOP_REPEATS, Note, Song,
-    StepGrid, StepResolution, TempoEvent, Track,
+    ClipId, Curve, FadeCurve, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_LOOP_REPEATS, MeterEvent, Note,
+    Song, StepGrid, StepResolution, TempoEvent, Track,
 };
 use crate::song_cmd::{
-    check_end, check_loop, check_meter, check_note, has_notes_input, is_audio_track_type,
-    length_ok, tick_ok,
+    check_end, check_loop, check_meter, check_meter_map, check_note, has_notes_input,
+    is_audio_track_type, length_ok, tick_ok,
 };
 use crate::steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
@@ -133,8 +134,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// it and versions 1 (no console section; migrated on load), 2 (no inputs, pool or audio) and
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
-/// (no output buses).
-pub const PROJECT_VERSION: u32 = 12;
+/// (no output buses) and 12 (no tempo ramps or meter changes).
+pub const PROJECT_VERSION: u32 = 13;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -447,7 +448,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12 | 13 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1008,6 +1009,53 @@ fn load_console(
     Ok(console)
 }
 
+/// The song's meter: `[beats_per_bar, beat_unit]` (one meter for the whole song, what files
+/// before version 13 write) or a list of `{"bar", "num", "den"}` changes (version 13). The reader
+/// takes either shape in any version.
+fn load_meter(v: &Value, path: &JsonPath) -> Result<Vec<MeterEvent>, ModelError> {
+    if v.as_array()
+        .is_some_and(|a| a.first().is_some_and(Value::is_number))
+    {
+        let meter = tuple(v, path, 2, "[beats_per_bar, beat_unit]")?;
+        let num = uint(&meter[0], &path.index(0), 255)? as u8;
+        let den = uint(&meter[1], &path.index(1), 255)? as u8;
+        check_meter(num, 4).map_err(|m| path.index(0).error(m))?;
+        check_meter(1, den).map_err(|m| path.index(1).error(m))?;
+        return Ok(vec![MeterEvent { bar: 1, num, den }]);
+    }
+    let mut meter: Vec<MeterEvent> = Vec::new();
+    for (i, item) in array(v, path)?.iter().enumerate() {
+        let p = path.index(i);
+        let fields = &["bar", "num", "den"];
+        let e = object(item, &p, fields, fields)?;
+        let bar = uint(&e["bar"], &p.field("bar"), u64::from(u32::MAX))? as u32;
+        let num = uint(&e["num"], &p.field("num"), 255)? as u8;
+        let den = uint(&e["den"], &p.field("den"), 255)? as u8;
+        check_meter(num, 4).map_err(|m| p.field("num").error(m))?;
+        check_meter(1, den).map_err(|m| p.field("den").error(m))?;
+        match meter.last() {
+            None if bar != 1 => {
+                return Err(p
+                    .field("bar")
+                    .error(format!("the first meter event must be at bar 1, not {bar}")));
+            }
+            Some(prev) if bar <= prev.bar => {
+                return Err(p.field("bar").error(format!(
+                    "bars must increase strictly ({bar} after {})",
+                    prev.bar
+                )));
+            }
+            _ => {}
+        }
+        meter.push(MeterEvent { bar, num, den });
+    }
+    if meter.is_empty() {
+        return Err(path.error("the meter map needs at least one event"));
+    }
+    check_meter_map(&meter).map_err(|m| path.error(m))?;
+    Ok(meter)
+}
+
 fn load_song(
     v: &Value,
     path: &JsonPath,
@@ -1020,7 +1068,12 @@ fn load_song(
     let mut tempo = Vec::new();
     for (i, item) in array(&obj["tempo"], &tempo_path)?.iter().enumerate() {
         let p = tempo_path.index(i);
-        let e = object(item, &p, &["tick", "bpm"], &["tick", "bpm"])?;
+        let (allowed, required): (&[&str], &[&str]) = if version >= 13 {
+            (&["tick", "bpm", "ramp"], &["tick", "bpm"])
+        } else {
+            (&["tick", "bpm"], &["tick", "bpm"])
+        };
+        let e = object(item, &p, allowed, required)?;
         let tick_path = p.field("tick");
         let t = tick(&e["tick"], &tick_path)?;
         if i == 0 && t != 0 {
@@ -1041,18 +1094,23 @@ fn load_song(
         if i == 0 && bpm.to_bits() != doc.tempo_bpm.to_bits() {
             return Err(bpm_path.error(format!("{bpm} must equal tempo_bpm ({})", doc.tempo_bpm)));
         }
-        tempo.push(TempoEvent { tick: t, bpm });
+        let ramp = flag(e, &p, "ramp")?;
+        tempo.push(TempoEvent { tick: t, bpm, ramp });
     }
     if tempo.is_empty() {
         return Err(tempo_path.error("the tempo map needs at least one event"));
     }
+    if let Some(last) = tempo.last().filter(|e| e.ramp) {
+        return Err(tempo_path
+            .index(tempo.len() - 1)
+            .field("ramp")
+            .error(format!(
+                "the last tempo event (tick {}) cannot ramp: there is no next event",
+                last.tick
+            )));
+    }
 
-    let meter_path = path.field("meter");
-    let meter = tuple(&obj["meter"], &meter_path, 2, "[beats_per_bar, beat_unit]")?;
-    let beats_per_bar = uint(&meter[0], &meter_path.index(0), 255)? as u8;
-    let beat_unit = uint(&meter[1], &meter_path.index(1), 255)? as u8;
-    check_meter(beats_per_bar, 4).map_err(|m| meter_path.index(0).error(m))?;
-    check_meter(1, beat_unit).map_err(|m| meter_path.index(1).error(m))?;
+    let meter = load_meter(&obj["meter"], &path.field("meter"))?;
 
     let loop_path = path.field("loop");
     let lp = object(
@@ -1080,8 +1138,7 @@ fn load_song(
     let mut song = Song {
         tracks: Vec::new(),
         tempo,
-        beats_per_bar,
-        beat_unit,
+        meter,
         loop_range,
         loop_enabled,
         end,
@@ -1647,16 +1704,28 @@ fn write_song(w: &mut String, song: &Song) {
     list(
         w,
         "    ",
-        song.tempo
-            .iter()
-            .map(|e| format!("{{\"tick\": {}, \"bpm\": {}}}", e.tick, f64_text(e.bpm))),
+        song.tempo.iter().map(|e| {
+            let ramp = if e.ramp { ", \"ramp\": true" } else { "" };
+            format!(
+                "{{\"tick\": {}, \"bpm\": {}{ramp}}}",
+                e.tick,
+                f64_text(e.bpm)
+            )
+        }),
     );
     let _ = writeln!(w, ",");
-    let _ = writeln!(
+    let _ = write!(w, "    \"meter\": ");
+    list(
         w,
-        "    \"meter\": [{}, {}],",
-        song.beats_per_bar, song.beat_unit
+        "    ",
+        song.meter.iter().map(|e| {
+            format!(
+                "{{\"bar\": {}, \"num\": {}, \"den\": {}}}",
+                e.bar, e.num, e.den
+            )
+        }),
     );
+    let _ = writeln!(w, ",");
     let _ = writeln!(
         w,
         "    \"loop\": {{\"start\": {}, \"end\": {}, \"enabled\": {}}},",

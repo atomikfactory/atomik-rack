@@ -285,11 +285,8 @@ fn tempo_changes_stretch_the_clip_in_frames_but_not_its_audio() {
     let (reg, mut d) = setup();
     d.apply(
         sc(SongCommand::SetTempoMap(vec![
-            TempoEvent { tick: 0, bpm: 60.0 },
-            TempoEvent {
-                tick: PPQ,
-                bpm: 120.0,
-            },
+            TempoEvent::step(0, 60.0),
+            TempoEvent::step(PPQ, 120.0),
         ])),
         &reg,
     )

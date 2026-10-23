@@ -19,8 +19,9 @@ fn snapshot(bpm: f64) -> SongSnapshot {
         tempo: vec![SongTempo {
             tick: Ticks(0),
             tempo: Tempo::new(bpm).unwrap(),
+            ramp: false,
         }],
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio: Vec::new(),
         assets: Vec::new(),
     })
@@ -67,7 +68,11 @@ fn off(key: u8, frame: u64) -> RecordedNote {
 }
 
 fn take(loop_range: Option<(i64, i64)>) -> Take {
-    Take::new([(DEV, DeviceKey("bass".into()))], loop_range, BAR)
+    Take::new(
+        [(DEV, DeviceKey("bass".into()))],
+        loop_range,
+        atomik_core::MeterTable::constant(4, 4),
+    )
 }
 
 fn feed(t: &mut Take, snap: &SongSnapshot, st: &TransportState, events: &[RecordedNote]) {

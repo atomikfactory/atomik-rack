@@ -6,6 +6,8 @@
 //! Public types are a stable contract: changes need review.
 
 use crate::DeviceKey;
+pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
+use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
 
 /// Stable, unique id of a clip within a song (never reused while the song lives).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -236,13 +238,27 @@ pub struct Track {
     pub lanes: Vec<Lane>,
 }
 
-/// A tempo change at a tick (step change).
+/// A tempo change at a tick: a step to `bpm`, or with `ramp` a linear ramp (in BPM, over ticks)
+/// to the next event's BPM. `ramp` on the last event has no meaning and is rejected.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TempoEvent {
     /// Tick where the tempo takes effect.
     pub tick: i64,
     /// Tempo in BPM (20..=999).
     pub bpm: f64,
+    /// The tempo ramps linearly to the next event's BPM instead of holding.
+    pub ramp: bool,
+}
+
+impl TempoEvent {
+    /// A step to `bpm` at `tick`.
+    pub const fn step(tick: i64, bpm: f64) -> Self {
+        Self {
+            tick,
+            bpm,
+            ramp: false,
+        }
+    }
 }
 
 /// The song: tracks, tempo map, meter, loop.
@@ -252,10 +268,8 @@ pub struct Song {
     pub tracks: Vec<Track>,
     /// Tempo changes, sorted by tick; the first is at tick 0 and mirrors `RackDoc::tempo_bpm`.
     pub tempo: Vec<TempoEvent>,
-    /// Time signature numerator (beats per bar).
-    pub beats_per_bar: u8,
-    /// Time signature denominator (beat unit: 2, 4, 8, 16).
-    pub beat_unit: u8,
+    /// Meter changes, sorted by bar; the first is at bar 1. Changes happen on bar lines.
+    pub meter: Vec<MeterEvent>,
     /// Loop range `[start, end)` in ticks.
     pub loop_range: (i64, i64),
     /// Loop enabled.
@@ -358,12 +372,30 @@ pub enum SongCommand {
     },
     /// Replace the tempo map (first event must be at tick 0).
     SetTempoMap(Vec<TempoEvent>),
-    /// Set the time signature.
+    /// [`SongCommand::SetTempoMap`] for a drag: commands with the same `merge` id are one undo
+    /// step.
+    DragTempoMap {
+        /// New map.
+        map: Vec<TempoEvent>,
+        /// Drag-merge group.
+        merge: u64,
+    },
+    /// Set the time signature at bar 1; later meter changes stay at their bars.
     SetMeter {
         /// Beats per bar (1..=32).
         beats_per_bar: u8,
         /// Beat unit (2, 4, 8 or 16).
         beat_unit: u8,
+    },
+    /// Replace the meter map (first event must be at bar 1, bars strictly increasing).
+    SetMeterMap(Vec<MeterEvent>),
+    /// [`SongCommand::SetMeterMap`] for a drag: commands with the same `merge` id are one undo
+    /// step.
+    DragMeterMap {
+        /// New map.
+        map: Vec<MeterEvent>,
+        /// Drag-merge group.
+        merge: u64,
     },
     /// Set the loop range and enable flag.
     SetLoop {
@@ -443,9 +475,12 @@ pub fn empty_song(bpm: f64) -> Song {
     let bar = atomik_core::PPQ * 4;
     Song {
         tracks: Vec::new(),
-        tempo: vec![TempoEvent { tick: 0, bpm }],
-        beats_per_bar: 4,
-        beat_unit: 4,
+        tempo: vec![TempoEvent::step(0, bpm)],
+        meter: vec![MeterEvent {
+            bar: 1,
+            num: 4,
+            den: 4,
+        }],
         loop_range: (0, 4 * bar),
         loop_enabled: false,
         end: 16 * bar,
@@ -477,12 +512,6 @@ pub const MAX_TICK: i64 = 1 << 40;
 /// flattening stays bounded.
 pub const MAX_LOOP_REPEATS: i64 = 4096;
 
-/// Accepted beat units (time signature denominators).
-pub const BEAT_UNITS: [u8; 4] = [2, 4, 8, 16];
-
-/// Largest accepted beats per bar.
-pub const MAX_BEATS_PER_BAR: u8 = 32;
-
 impl Song {
     /// The track of `device`, if any.
     pub fn track(&self, device: &DeviceKey) -> Option<&Track> {
@@ -499,51 +528,69 @@ impl Song {
         })
     }
 
+    /// The tempo map compiled for tick <-> time maths (see [`atomik_core::TempoMap`]). A map
+    /// that fails to compile (a document the model never produces) reads as constant at its
+    /// first event's tempo, or at 120 BPM.
+    pub fn tempo_table(&self) -> TempoTable {
+        let points: Vec<TempoPoint> = self
+            .tempo
+            .iter()
+            .map(|e| TempoPoint {
+                tick: e.tick,
+                bpm: e.bpm,
+                ramp: e.ramp,
+            })
+            .collect();
+        TempoTable::new(&points).unwrap_or_else(|_| {
+            let bpm = self.tempo.first().map_or(120.0, |e| e.bpm);
+            let tempo = Tempo::new(bpm)
+                .or_else(|_| Tempo::new(120.0))
+                .unwrap_or_else(|_| unreachable!("120 BPM is a valid tempo"));
+            TempoTable::constant(tempo)
+        })
+    }
+
+    /// The meter map compiled for bar <-> tick maths (see [`atomik_core::MeterMap`]); an
+    /// invalid map reads as 4/4.
+    pub fn meter_table(&self) -> MeterTable {
+        MeterTable::new(&self.meter).unwrap_or_else(|_| MeterTable::constant(4, 4))
+    }
+
     /// The song frame of a tick: `round(seconds(tick) * sample_rate)` with the tempo map
-    /// (ties up, 0 for negative ticks), computed as the engine's `song_frame` does (each
-    /// segment's start time accumulated once from integer tick spans, then one division), so
-    /// the model and the engine agree on every frame position.
+    /// (ties up, 0 for negative ticks), from [`atomik_core::TempoMap`] exactly as the engine's
+    /// `song_frame` computes it, so the model and the engine agree on every frame position.
     pub fn frame_at(&self, tick: i64, sample_rate: u32) -> u64 {
-        TempoFrames::new(&self.tempo).frame_at(tick, sample_rate)
+        self.tempo_table()
+            .map()
+            .song_frame(tick, f64::from(sample_rate))
     }
 
-    /// The time signature as `(beats_per_bar, beat_unit)`.
+    /// The time signature at bar 1 as `(beats_per_bar, beat_unit)`.
     pub fn meter(&self) -> (u8, u8) {
-        (self.beats_per_bar, self.beat_unit)
+        self.meter.first().map_or((4, 4), |e| (e.num, e.den))
     }
 
-    /// Ticks per bar under the song's meter.
+    /// Ticks per bar under the meter at bar 1.
     pub fn bar_ticks(&self) -> i64 {
         bar_ticks(self.meter())
     }
-}
 
-/// A tempo map with each segment's start time, for tick to frame maths.
-pub(crate) struct TempoFrames {
-    /// `(tick, seconds at tick, bpm)`.
-    segments: Vec<(i64, f64, f64)>,
-}
-
-impl TempoFrames {
-    pub(crate) fn new(tempo: &[TempoEvent]) -> Self {
-        let mut segments: Vec<(i64, f64, f64)> = Vec::with_capacity(tempo.len());
-        for e in tempo {
-            let seconds = segments.last().map_or(0.0, |&(t, s, bpm)| {
-                s + ((e.tick - t) as f64 * 60.0) / (bpm * atomik_core::PPQ as f64)
-            });
-            segments.push((e.tick, seconds, e.bpm));
+    /// The bar line nearest to `tick` (halves round up; 0 for a negative tick).
+    pub fn nearest_bar_line(&self, tick: i64) -> i64 {
+        let table = self.meter_table();
+        let meter = table.map();
+        let start = meter.bar_start(meter.bar_at(tick));
+        let next = meter.next_bar_line(tick);
+        if tick - start < next - tick {
+            start
+        } else {
+            next
         }
-        Self { segments }
     }
 
-    pub(crate) fn frame_at(&self, tick: i64, sample_rate: u32) -> u64 {
-        let k = self.segments.partition_point(|s| s.0 <= tick);
-        let Some(&(t0, s0, bpm)) = self.segments.get(k.saturating_sub(1)) else {
-            return 0;
-        };
-        let seconds = s0 + ((tick as f64 - t0 as f64) * 60.0) / (bpm * atomik_core::PPQ as f64);
-        let f = (seconds * f64::from(sample_rate)).round();
-        if f > 0.0 { f as u64 } else { 0 }
+    /// Ticks per bar of the bar that holds `tick`.
+    pub fn bar_ticks_at(&self, tick: i64) -> i64 {
+        self.meter_table().map().bar_ticks_at(tick)
     }
 }
 

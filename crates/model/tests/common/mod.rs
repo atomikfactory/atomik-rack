@@ -212,3 +212,54 @@ pub fn container_doc(reg: &Registry) -> Document {
     );
     d
 }
+
+/// The text of an older project file as today's canonical save writes it: the version number
+/// `from` becomes the current one and the single `"meter": [n, d]` pair becomes the version 13
+/// list of changes. (The rest of a file only differs when the format changed.)
+pub fn as_current(file: &str, from: u32) -> String {
+    let version = |n: u32| format!("\"version\": {n}");
+    let file = file.replacen(&version(from), &version(atomik_model::PROJECT_VERSION), 1);
+    let Some(start) = file.find("\"meter\": [") else {
+        return file;
+    };
+    let rest = &file[start + "\"meter\": [".len()..];
+    let end = rest.find("],").expect("a meter line ends with `],`");
+    let pair: Vec<&str> = rest[..end].split(", ").collect();
+    if pair.len() != 2 || pair[0].starts_with('{') {
+        return file;
+    }
+    let list = format!(
+        "\"meter\": [\n      {{\"bar\": 1, \"num\": {}, \"den\": {}}}\n    ],",
+        pair[0], pair[1]
+    );
+    format!("{}{}{}", &file[..start], list, &rest[end + "],".len()..])
+}
+
+/// The inverse of [`as_current`] for a single-meter file: today's save as the version `to` file
+/// (for regenerating the frozen fixtures).
+pub fn as_old(text: &str, to: u32) -> String {
+    let version = |n: u32| format!("\"version\": {n}");
+    let text = text.replacen(&version(atomik_model::PROJECT_VERSION), &version(to), 1);
+    let Some(start) = text.find("\"meter\": [\n") else {
+        return text;
+    };
+    let rest = &text[start..];
+    let end = rest.find("],").expect("a meter list ends with `],`");
+    let inner = &rest[..end];
+    let num = inner
+        .split("\"num\": ")
+        .nth(1)
+        .and_then(|s| s.split(',').next());
+    let den = inner
+        .split("\"den\": ")
+        .nth(1)
+        .and_then(|s| s.split('}').next());
+    let (Some(num), Some(den)) = (num, den) else {
+        return text;
+    };
+    format!(
+        "{}\"meter\": [{num}, {den}],{}",
+        &text[..start],
+        &rest[end + "],".len()..]
+    )
+}

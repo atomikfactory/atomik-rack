@@ -16,7 +16,7 @@ use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
-use crate::timeline::{Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
+use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{Tool, ViewportState};
 use atomik_device_sdk::Registry;
 use atomik_model::{
@@ -138,6 +138,8 @@ pub struct PianoRollView {
     title: String,
     accent: Color,
     meter: Meter,
+    /// The grid and ruler of the clip: [`Self::meter`] from bar 1 (content ticks).
+    bars: Bars,
     fit_pending: bool,
     selection: Selection<usize>,
     drag: Drag,
@@ -169,6 +171,7 @@ impl PianoRollView {
             title: String::new(),
             accent,
             meter: Meter::default(),
+            bars: Bars::default(),
             fit_pending: false,
             selection: Selection::new(),
             drag: Drag::None,
@@ -440,11 +443,13 @@ impl PianoRollView {
             Some((t, c)) => (Some(c.clone()), Some(t.device.clone())),
             None => (None, None),
         };
-        let meter = Meter::of(&doc.song);
+        // The clip grid counts content ticks from the clip start: the meter in effect there.
+        let meter = Meter::at(&doc.song, clip.as_ref().map_or(0, |c| c.start));
         if clip != self.clip || device != self.device || meter != self.meter {
             self.clip = clip;
             self.device = device;
             self.meter = meter;
+            self.bars = Bars::single(meter);
             let n = self.notes().len();
             self.selection.retain(|i| *i < n);
             self.repaint = true;
@@ -1431,7 +1436,7 @@ impl PianoRollView {
             };
             sp::line(c, g.x0, row.y1 - 0.5, g.x1, row.y1 - 0.5, col);
         }
-        sp::grid(c, st, &self.axis, g, self.meter);
+        sp::grid(c, st, &self.axis, g, &self.bars);
         let (a, z) = self.region();
         let xa = self.axis.tick_to_x(a);
         let xz = self.axis.tick_to_x(z);
@@ -1500,7 +1505,7 @@ impl PianoRollView {
         let r = Rect::new(g.x0, g.y0 - ROLL_RULER_HEIGHT, g.x1, g.y0);
         c.push_clip(&r.into());
         sp::rect(c, r, st.ruler);
-        sp::ruler_labels(c, st, &self.axis, r, self.meter);
+        sp::ruler_labels(c, st, &self.axis, r, &self.bars);
         let (a, z) = self.region();
         let band = Rect::new(
             self.axis.tick_to_x(a),

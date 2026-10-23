@@ -84,6 +84,9 @@ pub enum AppCommand {
     /// View > Show Console Links: draw the channel to master cables on the back of
     /// the rack (a channel otherwise shows "Output: Master").
     ToggleConsoleLinks,
+    /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
+    /// arrangement (saved with the view state).
+    ToggleTempoLane,
     /// Mixer ▸ Console (F5): swap the arrangement and the console in the lower pane.
     ToggleConsole,
     /// Mixer ▸ Maximise Console (Shift+F5): the console over the rack, or back.
@@ -171,6 +174,7 @@ impl AppCommand {
             }
             AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
+            AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleConsole => ("view.toggle_console", None),
             AppCommand::MaximiseConsole => ("view.maximise_console", None),
             AppCommand::AddChannel => ("mixer.add_channel", None),
@@ -243,6 +247,7 @@ impl AppCommand {
             }
             ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
+            ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_console", None) => AppCommand::ToggleConsole,
             ("view.maximise_console", None) => AppCommand::MaximiseConsole,
             ("mixer.add_channel", None) => AppCommand::AddChannel,
@@ -327,6 +332,8 @@ pub struct MenuState {
     pub console_devices: bool,
     /// The console links are drawn as cables.
     pub console_links: bool,
+    /// The arrangement shows the tempo lane.
+    pub tempo_lane: bool,
     /// The rack navigator is on.
     pub rack_navigator: bool,
     /// The rack is shown.
@@ -495,6 +502,8 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ToggleConsoleLinks,
                     state.console_links,
                 ),
+                MenuEntry::Separator,
+                check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
             ],
         },
         Menu {
@@ -605,6 +614,7 @@ mod tests {
             compensation: true,
             console_devices: false,
             console_links: false,
+            tempo_lane: false,
             rack_navigator: true,
             rack: true,
             sequencer_only: false,
@@ -645,6 +655,7 @@ mod tests {
             AppCommand::ToggleSliceEditor,
             AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
+            AppCommand::ToggleTempoLane,
             AppCommand::ToggleConsole,
             AppCommand::MaximiseConsole,
             AppCommand::AddChannel,
@@ -1016,6 +1027,7 @@ mod tests {
                 "Slice Editor",
                 "Show Console Devices in Rack",
                 "Show Console Links",
+                "Tempo Lane",
             ]
         );
         assert_eq!(
@@ -1071,6 +1083,7 @@ mod tests {
                 compensation: false,
                 console_devices: true,
                 console_links: false,
+                tempo_lane: false,
                 rack_navigator: true,
                 rack: true,
                 sequencer_only: false,

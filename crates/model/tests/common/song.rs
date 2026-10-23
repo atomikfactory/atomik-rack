@@ -323,7 +323,7 @@ pub fn resolve_song(
         SongOp::TempoMap(events) => {
             let mut ev: Vec<TempoEvent> = events
                 .iter()
-                .map(|&(tick, bpm)| TempoEvent { tick, bpm })
+                .map(|&(tick, bpm)| TempoEvent::step(tick, bpm))
                 .collect();
             ev.sort_by_key(|e| e.tick);
             sc(SongCommand::SetTempoMap(ev))

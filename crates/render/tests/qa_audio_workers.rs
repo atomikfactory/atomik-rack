@@ -110,14 +110,8 @@ fn project(dir: &std::path::Path) -> (RackDoc, Bundle) {
     }
     apply(Command::Song(SongCommand::SetSongEnd(6 * PPQ)));
     apply(Command::Song(SongCommand::SetTempoMap(vec![
-        TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        },
-        TempoEvent {
-            tick: 3 * PPQ,
-            bpm: 90.0,
-        },
+        TempoEvent::step(0, 120.0),
+        TempoEvent::step(3 * PPQ, 90.0),
     ])));
     let clips: [ClipRow; 5] = [
         (

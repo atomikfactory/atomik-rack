@@ -51,7 +51,7 @@ pub fn audio_input(audio: Vec<SongAudioTrack>, assets: Vec<SongAsset>) -> SongIn
     SongInput {
         tracks: Vec::new(),
         tempo: tempo(&[(0, 120.0)]),
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio,
         assets,
     }

@@ -2,7 +2,7 @@
 //! repeats), hit testing of spans and points, drag maths, rubber-band selection, the
 //! selection model, note normalization, quantize, and automation values.
 
-use crate::timeline::{snap_ceil, snap_floor, snap_round};
+use crate::timeline::{Quant, snap_ceil, snap_floor, snap_round};
 use atomik_core::ParamDescriptor;
 use atomik_model::{AutomationPoint, Clip, Curve, Note};
 use std::collections::BTreeSet;
@@ -112,28 +112,28 @@ pub fn rubber_band(a: Point, b: Point, items: &[Rect]) -> BTreeSet<usize> {
 
 /// New start for a body drag: the original start plus the pointer delta, rounded to the
 /// grid and never before 0.
-pub fn drag_start(orig_start: i64, delta: i64, step: Option<i64>) -> i64 {
+pub fn drag_start(orig_start: i64, delta: i64, step: impl Quant) -> i64 {
     snap_round(orig_start + delta, step).max(0)
 }
 
 /// New length for a right-edge drag: the original end plus the delta, rounded to the grid,
 /// and at least `min_len`.
-pub fn drag_length(start: i64, orig_end: i64, delta: i64, step: Option<i64>, min_len: i64) -> i64 {
+pub fn drag_length(start: i64, orig_end: i64, delta: i64, step: impl Quant, min_len: i64) -> i64 {
     (snap_round(orig_end + delta, step) - start).max(min_len)
 }
 
 /// A drawn span from a press at `t0` to the pointer at `t1` (either order): the start
 /// floors to the grid, the end ceils, and the span is at least one step (or `min_len`).
-pub fn draw_span(t0: i64, t1: i64, step: Option<i64>, min_len: i64) -> (i64, i64) {
+pub fn draw_span(t0: i64, t1: i64, step: impl Quant, min_len: i64) -> (i64, i64) {
     let (a, b) = (t0.min(t1).max(0), t0.max(t1).max(0));
-    let start = snap_floor(a, step);
-    let end = snap_ceil(b, step);
-    (start, (end - start).max(min_length(step, min_len)))
+    let start = snap_floor(a, &step);
+    let end = snap_ceil(b, &step);
+    (start, (end - start).max(min_length(&step, min_len)))
 }
 
 /// Minimum length of a clip or note for a snap step: the step, or `fallback` when off.
-pub fn min_length(step: Option<i64>, fallback: i64) -> i64 {
-    step.unwrap_or(fallback).max(1)
+pub fn min_length(step: impl Quant, fallback: i64) -> i64 {
+    step.unit().unwrap_or(fallback).max(1)
 }
 
 // ---------------------------------------------------------------- selection

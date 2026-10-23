@@ -1,6 +1,6 @@
 {
   "format": "atomik-project",
-  "version": 12,
+  "version": 13,
   "sample_rate": 48000,
   "tempo_bpm": 120,
   "seed": 0,
@@ -27,7 +27,9 @@
     "tempo": [
       {"tick": 0, "bpm": 120}
     ],
-    "meter": [4, 4],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
     "loop": {"start": 0, "end": 245760, "enabled": false},
     "end": 983040,
     "next_clip_id": 1,

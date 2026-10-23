@@ -425,6 +425,10 @@ impl<B: AudioBackend> Shell<B> {
             view.set_show_console_links(shell.ui.show_console_links);
             view.set_navigator_visible(shell.ui.show_rack_navigator);
         }
+        shell
+            .core
+            .arrangement_mut()
+            .set_tempo_lane(shell.ui.show_tempo_lane);
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
@@ -828,6 +832,7 @@ impl<B: AudioBackend> Shell<B> {
             compensation: self.core.doc().console.compensation,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
+            tempo_lane: self.core.arrangement().tempo_lane_visible(),
             rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
             sequencer_only: self.in_sequencer_only(),
@@ -1822,6 +1827,10 @@ impl<B: AudioBackend> Shell<B> {
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
             columns: doc.columns,
+            tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
+            tempo_ramped: core.arrangement().tempo_menu().ramped,
+            tempo_can_delete: core.arrangement().tempo_menu().can_delete,
+            meter_can_delete: core.arrangement().meter_change_deletable(),
         }
     }
 
@@ -2345,6 +2354,13 @@ impl<B: AudioBackend> Shell<B> {
                 self.save_ui_state();
                 Vec::new()
             }
+            AppCommand::ToggleTempoLane => {
+                let show = !self.core.arrangement().tempo_lane_visible();
+                self.core.arrangement_mut().set_tempo_lane(show);
+                self.ui.show_tempo_lane = show;
+                self.save_ui_state();
+                Vec::new()
+            }
             AppCommand::ToggleRackNavigator => {
                 let view = self.core.view_mut();
                 let show = !view.navigator_visible();
@@ -2853,3 +2869,7 @@ mod shell_browser_tests;
 #[cfg(test)]
 #[path = "shell_editor_keys_tests.rs"]
 mod editor_keys_tests;
+
+#[cfg(test)]
+#[path = "shell_tempo_tests.rs"]
+mod tempo_tests;

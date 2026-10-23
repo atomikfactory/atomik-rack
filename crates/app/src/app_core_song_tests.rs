@@ -154,8 +154,9 @@ fn start_up_submits_the_song_and_the_transport_setup_after_the_rack() {
             tempo: vec![atomik_engine::SongTempo {
                 tick: Ticks(0),
                 tempo: Tempo::new(120.0).unwrap(),
+                ramp: false,
             }],
-            beats_per_bar: 4,
+            meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
             audio: Vec::new(),
             assets: Vec::new(),
         }
@@ -265,14 +266,8 @@ fn tempo_changes_recompile_the_song_and_resend_the_loop() {
     let calls = apply(
         &mut c,
         song(SongCommand::SetTempoMap(vec![
-            TempoEvent {
-                tick: 0,
-                bpm: 100.0,
-            },
-            TempoEvent {
-                tick: BAR,
-                bpm: 140.0,
-            },
+            TempoEvent::step(0, 100.0),
+            TempoEvent::step(BAR, 140.0),
         ])),
     );
     assert_eq!(kinds(&calls), ["tempo", "song", "transport"]);

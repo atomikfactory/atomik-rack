@@ -5,7 +5,7 @@
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::theme::{Theme, mix};
-use crate::timeline::{GridLevel, Meter, TimeAxis, grid_lines, label_every_bars};
+use crate::timeline::{Bars, GridLevel, TimeAxis, bar_labels, grid_lines};
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{Direction, Registry, SocketKind};
 use atomik_model::{DeviceKey, RackDoc};
@@ -260,11 +260,11 @@ pub fn grid<C: Canvas + ?Sized>(
     st: &SeqTheme,
     axis: &TimeAxis,
     area: Rect,
-    meter: Meter,
+    bars: &Bars,
 ) {
     let t0 = axis.x_to_tick(area.x0) - 1;
     let t1 = axis.x_to_tick(area.x1) + 1;
-    for g in grid_lines(t0, t1, axis.px_per_tick, meter, 7.0) {
+    for g in grid_lines(t0, t1, axis.px_per_tick, bars, 7.0) {
         let x = axis.tick_to_x(g.tick).round() + 0.5;
         let col = match g.level {
             GridLevel::Bar => st.grid_bar,
@@ -282,13 +282,26 @@ pub fn ruler_labels<C: Canvas + ?Sized>(
     st: &SeqTheme,
     axis: &TimeAxis,
     strip: Rect,
-    meter: Meter,
+    bars: &Bars,
 ) {
     let t = &st.base;
     let t0 = axis.x_to_tick(strip.x0) - 1;
     let t1 = axis.x_to_tick(strip.x1) + 1;
-    let every = label_every_bars(axis.px_per_tick, meter, 34.0);
-    for g in grid_lines(t0, t1, axis.px_per_tick, meter, 7.0) {
+    let labels = bar_labels(t0, t1, axis.px_per_tick, bars, 34.0);
+    let paint_label = |c: &mut C, tick: i64, bar: i64| {
+        let x = axis.tick_to_x(tick).round() + 0.5;
+        label(
+            c,
+            &format!("{bar}"),
+            x + 3.0,
+            strip.y0 + 11.0,
+            9.0,
+            t.text,
+            Align::Start,
+        );
+    };
+    let lines = grid_lines(t0, t1, axis.px_per_tick, bars, 7.0);
+    for g in &lines {
         let x = axis.tick_to_x(g.tick).round() + 0.5;
         let (h, col) = match g.level {
             GridLevel::Bar => (strip.height() * 0.55, t.text_muted),
@@ -296,19 +309,15 @@ pub fn ruler_labels<C: Canvas + ?Sized>(
             GridLevel::Sub => (strip.height() * 0.14, mix(t.text_muted, t.plate, 0.6)),
         };
         line(c, x, strip.y1 - h, x, strip.y1, col);
-        if g.level == GridLevel::Bar {
-            let bar = g.tick / meter.bar_ticks();
-            if bar % every == 0 {
-                label(
-                    c,
-                    &format!("{}", bar + 1),
-                    x + 3.0,
-                    strip.y0 + 11.0,
-                    9.0,
-                    t.text,
-                    Align::Start,
-                );
-            }
+        // A bar line carries its number right after its tick.
+        if let Ok(k) = labels.binary_search_by_key(&g.tick, |l| l.0) {
+            paint_label(c, labels[k].0, labels[k].1);
+        }
+    }
+    // The first bar of a meter segment is numbered even where the zoom draws no line for it.
+    for &(tick, bar) in &labels {
+        if !lines.iter().any(|g| g.tick == tick) {
+            paint_label(c, tick, bar);
         }
     }
 }

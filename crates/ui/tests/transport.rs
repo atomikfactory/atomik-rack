@@ -33,16 +33,7 @@ fn buttons_emit_transport_actions() {
 #[test]
 fn position_readouts_follow_the_tempo_map_and_meter() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tempo = vec![
-        TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        },
-        TempoEvent {
-            tick: BAR,
-            bpm: 60.0,
-        },
-    ];
+    doc.song.tempo = vec![TempoEvent::step(0, 120.0), TempoEvent::step(BAR, 60.0)];
     let mut v = transport_bar(&doc, &reg);
     v.set_state(TransportState {
         position: BAR + PPQ + PPQ / 2,
@@ -52,13 +43,14 @@ fn position_readouts_follow_the_tempo_map_and_meter() {
         v.position_text(),
         ("2.2.07680".to_string(), "00:03.500".to_string())
     );
-    doc.song.beats_per_bar = 3;
+    doc.song.meter[0].num = 3;
     v.sync(&doc, &reg);
     assert_eq!(v.position_text().0, "2.3.07680");
     let mut dl = DisplayList::new();
     v.paint(&mut dl, &doc, &reg);
     let texts = dl.texts();
-    for t in ["2.3.07680", "120.00", "3/4"] {
+    // The tempo shown is the one at the playhead (the second event: 60 BPM).
+    for t in ["2.3.07680", "60.00", "3/4"] {
         assert!(texts.contains(&t), "{t} in {texts:?}");
     }
 }
@@ -76,10 +68,7 @@ fn tempo_maps(actions: &[UiAction]) -> Vec<Vec<TempoEvent>> {
 #[test]
 fn double_click_types_a_tempo_and_keeps_later_events() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tempo.push(TempoEvent {
-        tick: 8 * BAR,
-        bpm: 90.0,
-    });
+    doc.song.tempo.push(TempoEvent::step(8 * BAR, 90.0));
     let mut v = transport_bar(&doc, &reg);
     let t = v.tempo_center();
     let a = run(
@@ -103,11 +92,8 @@ fn double_click_types_a_tempo_and_keeps_later_events() {
     assert_eq!(
         tempo_maps(&a),
         vec![vec![
-            TempoEvent { tick: 0, bpm: 98.5 },
-            TempoEvent {
-                tick: 8 * BAR,
-                bpm: 90.0
-            }
+            TempoEvent::step(0, 98.5),
+            TempoEvent::step(8 * BAR, 90.0)
         ]]
     );
     assert!(!v.is_editing_tempo());

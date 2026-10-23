@@ -616,8 +616,9 @@ impl StepEditorView {
                     .map(|m| m.original_name.clone());
             }
         }
-        let beat_ticks = (PPQ * 4 / i64::from(doc.song.beat_unit.max(1))).max(1);
-        let bar_ticks = beat_ticks * i64::from(doc.song.beats_per_bar.max(1));
+        // The clip grid counts content ticks from the clip start: the meter in effect there.
+        let meter = crate::timeline::Meter::at(&doc.song, clip.as_ref().map_or(0, |c| c.start));
+        let (beat_ticks, bar_ticks) = (meter.beat_ticks(), meter.bar_ticks());
         let accent = self.st.base.accent_for(d);
         if self.present != present
             || self.clip != clip

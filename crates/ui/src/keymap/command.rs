@@ -144,6 +144,8 @@ pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `sequencer.set_snap`.
 pub const SNAP_ARGS: &[&str] = &["off", "bar", "beat", "eighth", "sixteenth"];
+/// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
+pub const METER_ARGS: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"];
 
 use Context as C;
 use Group as G;
@@ -422,6 +424,29 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("sequencer.join", "Join", G::Sequencer, C::Sequencer),
     cmd(
+        "sequencer.meter_delete",
+        "Delete Meter Change",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.meter_insert",
+        "Insert Meter Change",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(METER_ARGS)
+    .decline(),
+    cmd(
+        "sequencer.meter_set",
+        "Set Meter",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(METER_ARGS)
+    .decline(),
+    cmd(
         "sequencer.open_clip",
         "Open Clip",
         G::Sequencer,
@@ -469,6 +494,34 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.tempo_add_point",
+        "Add Tempo Point",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.tempo_delete_point",
+        "Delete Tempo Point",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.tempo_set_value",
+        "Set Tempo...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.tempo_toggle_ramp",
+        "Ramp to Next",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
     cmd(
         "sequencer.toggle_mute",
         "Mute Clips",
@@ -640,6 +693,7 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("view.toggle_song", "Arrangement", G::View, C::Global).menu(),
     cmd("view.toggle_step_editor", "Step Editor", G::View, C::Global).menu(),
+    cmd("view.toggle_tempo_lane", "Tempo Lane", G::View, C::Global).menu(),
     cmd("view.zoom_in", "Zoom In", G::View, C::Global)
         .rep()
         .menu(),

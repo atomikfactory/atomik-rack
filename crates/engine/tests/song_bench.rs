@@ -53,7 +53,7 @@ fn e3_2_song(devices: &[atomik_engine::DeviceInstanceId]) -> SongInput {
     SongInput {
         tracks,
         tempo: tempo(&map),
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio: Vec::new(),
         assets: Vec::new(),
     }
