@@ -51,12 +51,15 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Follow Playhead | - | `F` (sequencer, editor) |
 | Join | - | `Ctrl+J` (sequencer) |
 | Open Clip | - | `Enter` (sequencer) |
+| Reset Track Heights | - | `Shift+Z` (sequencer) |
 | Select Next Clip | - | `Right` (sequencer) |
 | Select Next Track | - | `Down` (sequencer) |
 | Select Previous Clip | - | `Left` (sequencer) |
 | Select Previous Track | - | `Up` (sequencer) |
+| Shorter Tracks | - | `Shift+G` (sequencer) |
 | Snap On/Off | - | `S` (sequencer, editor) |
 | Split at Playhead | `Ctrl+E` (sequencer) | `Alt+X` (sequencer) |
+| Taller Tracks | - | `Shift+H` (sequencer) |
 | Zoom to Selection | - | `Z` (sequencer, editor) |
 | Nudge Left | `Left` (editor) | `Ctrl+Left` (editor) |
 | Nudge Left by Beat | `Shift+Left` (editor) | `Ctrl+Shift+Left` (editor) |
@@ -65,6 +68,9 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Nudge Right by Beat | `Shift+Right` (editor) | `Ctrl+Shift+Right` (editor) |
 | Nudge Right by Tick | `Alt+Right` (editor) | `Ctrl+Alt+Right` (editor) |
 | Quantize | `Q`, `Shift+Q` (editor) | `Ctrl+K` (editor) |
+| Reset Key Height | - | `Shift+Z` (editor) |
+| Shorter Keys | - | `Shift+G` (editor) |
+| Taller Keys | - | `Shift+H` (editor) |
 | Transpose Down | `Down` (editor) | `Ctrl+Down` (editor) |
 | Transpose Octave Down | `Shift+Down` (editor) | `Ctrl+Shift+Down` (editor) |
 | Transpose Octave Up | `Shift+Up` (editor) | `Ctrl+Shift+Up` (editor) |
@@ -175,13 +181,16 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Join | sequencer | `Ctrl+J` | `Cmd+J` | `Ctrl+J` |
 | Mute Clips | sequencer | `M` | `M` | `M` |
 | Open Clip | sequencer | `Enter` | `Enter` | `Enter` |
+| Reset Track Heights | sequencer | `Shift+Z` | `Shift+Z` | `Shift+Z` |
 | Select Next Clip | sequencer | `Right` | `Right` | `Right` |
 | Select Next Track | sequencer | `Down` | `Down` | `Down` |
 | Select Previous Clip | sequencer | `Left` | `Left` | `Left` |
 | Select Previous Track | sequencer | `Up` | `Up` | `Up` |
+| Shorter Tracks | sequencer | `Shift+G` | `Shift+G` | `Shift+G` |
 | Snap On/Off | sequencer | `S` | `S` | `S` |
 | Snap On/Off | editor | `S` | `S` | `S` |
 | Split at Playhead | sequencer | `Alt+X` | `Opt+X` | `Alt+X` |
+| Taller Tracks | sequencer | `Shift+H` | `Shift+H` | `Shift+H` |
 | Zoom to Selection | sequencer | `Z` | `Z` | `Z` |
 | Zoom to Selection | editor | `Z` | `Z` | `Z` |
 
@@ -197,6 +206,9 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Nudge Right by Beat | editor | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
 | Nudge Right by Tick | editor | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
 | Quantize | editor | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
+| Reset Key Height | editor | `Shift+Z` | `Shift+Z` | `Shift+Z` |
+| Shorter Keys | editor | `Shift+G` | `Shift+G` | `Shift+G` |
+| Taller Keys | editor | `Shift+H` | `Shift+H` | `Shift+H` |
 | Transpose Down | editor | `Ctrl+Down` | `Cmd+Down` | `Ctrl+Down` |
 | Transpose Octave Down | editor | `Ctrl+Shift+Down` | `Cmd+Shift+Down` | `Ctrl+Shift+Down` |
 | Transpose Octave Up | editor | `Ctrl+Shift+Up` | `Cmd+Shift+Up` | `Ctrl+Shift+Up` |
@@ -389,4 +401,4 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Stop Preview | files | `Esc` | `Esc` | `Esc` |
 | Toggle Favourite | files | `F` | `F` | `F` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Export Patch, Stress Rack, Stress Song, Add Channel, Route to New Output Bus, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Add Marker Here, Marker Colour, Delete Marker, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Zoom to Selection, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Add Marker, Add Range Marker from Loop, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Next Marker, Play, Previous Marker, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Marker List, Marker Strip, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Taller Keys, Shorter Keys, Reset Key Height, Export Patch, Stress Rack, Stress Song, Add Channel, Route to New Output Bus, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Add Marker Here, Marker Colour, Delete Marker, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Zoom to Selection, Taller Tracks, Shorter Tracks, Reset Track Heights, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Add Marker, Add Range Marker from Loop, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Next Marker, Play, Previous Marker, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Marker List, Marker Strip, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.

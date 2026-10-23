@@ -284,6 +284,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("editor.transpose_up", "Transpose Up", G::Editor, C::Editor).rep(),
+    cmd("editor.zoom_keys_in", "Taller Keys", G::Editor, C::Editor).rep(),
+    cmd("editor.zoom_keys_out", "Shorter Keys", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.zoom_keys_reset",
+        "Reset Key Height",
+        G::Editor,
+        C::Editor,
+    ),
     cmd("file.export_patch", "Export Patch", G::Global, C::Global).menu(),
     cmd("file.import_audio", "Import Audio", G::Global, C::Global).menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
@@ -597,6 +605,26 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.zoom_selection",
         "Zoom to Selection",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
+        "sequencer.zoom_tracks_in",
+        "Taller Tracks",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
+        "sequencer.zoom_tracks_out",
+        "Shorter Tracks",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep(),
+    cmd(
+        "sequencer.zoom_tracks_reset",
+        "Reset Track Heights",
         G::Sequencer,
         C::Sequencer,
     ),

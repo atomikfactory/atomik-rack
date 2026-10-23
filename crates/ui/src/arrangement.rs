@@ -44,9 +44,14 @@ use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
+mod heights;
 mod markers;
 mod tempo;
 
+pub use heights::{
+    COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
+    clamp_track_zoom, scaled_height,
+};
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
 pub use tempo::TempoMenu;
 
@@ -178,6 +183,8 @@ enum Hit {
     Snap,
     Tool(Tool),
     Corner,
+    /// The bottom edge of the header of track `i` (drag to resize the track).
+    TrackEdge(usize),
     RulerLabel,
     LoopBand,
     /// A point of the tempo lane.
@@ -266,6 +273,8 @@ impl Menu {
 #[derive(Debug, Clone)]
 enum Drag {
     None,
+    /// The bottom edge of a track header is dragged (`HeightUi::drag` has the state).
+    Height,
     Move {
         start: Point,
         grabbed_start: i64,
@@ -424,6 +433,8 @@ pub struct ArrangementView {
     ctx_meter: Option<usize>,
     /// The marker strip, the marker list and their state.
     mk: markers::MarkerUi,
+    /// Vertical zoom and the track height drag.
+    th: heights::HeightUi,
     /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
     /// docked at the right edge.
     outer: Rect,
@@ -492,6 +503,7 @@ impl ArrangementView {
             ctx_tempo: None,
             ctx_meter: None,
             mk: markers::MarkerUi::default(),
+            th: heights::HeightUi::default(),
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
             audio_headers: Vec::new(),
@@ -800,8 +812,8 @@ impl ArrangementView {
         if !self.header_buttons(track).contains(&button) {
             return None;
         }
-        let row = self.row_of(track, 0)?;
-        Some(self.button_rect(self.row_rect(row), button).center())
+        let rr = self.row_rect(self.row_of(track, 0)?);
+        button_shown(rr, button).then(|| self.button_rect(rr, button).center())
     }
 
     /// Centre of the "+ track" row of a device that can have a track but has none.
@@ -1014,13 +1026,15 @@ impl ArrangementView {
                     .collect()
             })
             .collect();
+        let lane_h = self.lane_row_height();
         for (ti, t) in self.song.tracks.iter().enumerate() {
+            let h = self.track_row_height(&t.device);
             rows.push(Row {
                 kind: RowKind::Lane { track: ti, lane: 0 },
                 y,
-                h: TRACK_HEIGHT,
+                h,
             });
-            y += TRACK_HEIGHT;
+            y += h;
             if !self.collapsed.contains(&t.device) {
                 for li in 1..t.lanes.len() {
                     rows.push(Row {
@@ -1029,9 +1043,9 @@ impl ArrangementView {
                             lane: li,
                         },
                         y,
-                        h: LANE_HEIGHT,
+                        h: lane_h,
                     });
-                    y += LANE_HEIGHT;
+                    y += lane_h;
                 }
             }
         }
@@ -1241,8 +1255,22 @@ impl ArrangementView {
         )
     }
 
+    /// A header control's rectangle in the header row `row`. A row shorter than
+    /// [`COMPACT_BELOW`] has one line: the chevron, the name and the three buttons, centred
+    /// vertically; taller rows keep the two lines, the buttons on the second.
     fn button_rect(&self, row: Rect, button: TrackButton) -> Rect {
         let (x, y) = (self.bounds.x0, row.y0);
+        if row.height() < COMPACT_BELOW {
+            let cy = y + row.height() / 2.0;
+            let (top, bottom) = (cy - 8.0, cy + 8.0);
+            return match button {
+                TrackButton::Expand => Rect::new(x + 10.0, cy - 7.0, x + 24.0, cy + 7.0),
+                TrackButton::Mute => Rect::new(x + 112.0, top, x + 132.0, bottom),
+                TrackButton::Solo => Rect::new(x + 136.0, top, x + 156.0, bottom),
+                TrackButton::Arm => Rect::new(x + 160.0, top, x + 180.0, bottom),
+                TrackButton::AddLane | TrackButton::Input | TrackButton::Monitor => Rect::ZERO,
+            };
+        }
         match button {
             TrackButton::Expand => Rect::new(x + 10.0, y + 9.0, x + 24.0, y + 23.0),
             TrackButton::Mute => Rect::new(x + 30.0, y + 33.0, x + 50.0, y + 49.0),
@@ -1385,9 +1413,12 @@ impl ArrangementView {
             RowKind::Lane { track, lane } => {
                 let (track, lane) = (*track, *lane);
                 if pos.x < tl.x0 {
+                    if lane == 0 && pos.y >= rr.y1 - heights::EDGE_GRAB {
+                        return Hit::TrackEdge(track);
+                    }
                     if lane == 0 {
                         for &b in self.header_buttons(track) {
-                            if self.button_rect(rr, b).contains(pos) {
+                            if button_shown(rr, b) && self.button_rect(rr, b).contains(pos) {
                                 return Hit::Button(track, b);
                             }
                         }
@@ -1633,6 +1664,7 @@ impl ArrangementView {
                     at: pos,
                 });
             }
+            Hit::TrackEdge(track) if primary => self.height_down(track, pos, clicks, out),
             Hit::Snap => self.snap = self.snap.cycle(primary),
             Hit::Tool(t) if primary => self.set_tool(t),
             Hit::RulerLabel if primary && tool == Tool::Razor => {
@@ -2167,6 +2199,10 @@ impl ArrangementView {
             self.tempo_drag_move(pos, modifiers, out);
             return;
         }
+        if matches!(self.drag, Drag::Height) {
+            self.height_move(pos, out);
+            return;
+        }
         if matches!(self.drag, Drag::Mark) {
             let actions = self.marker_drag_move(pos, modifiers);
             out.extend(actions);
@@ -2181,6 +2217,7 @@ impl ArrangementView {
             | Drag::Pan { .. }
             | Drag::HScroll { .. }
             | Drag::TempoPoint { .. }
+            | Drag::Height
             | Drag::Meter { .. }
             | Drag::Mark => {}
             Drag::Move {
@@ -2386,6 +2423,7 @@ impl ArrangementView {
         match drag {
             Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } => {}
             Drag::Mark => self.marker_drag_up(out),
+            Drag::Height => self.height_up(out),
             Drag::Move {
                 emitted,
                 moved,
@@ -2471,6 +2509,11 @@ impl ArrangementView {
             } else {
                 (m.scroll + 1).min(max)
             };
+            return;
+        }
+        if modifiers.alt && !modifiers.command() {
+            // Alt + wheel: the vertical zoom, the row under the pointer stays under it.
+            self.zoom_tracks_at(TRACK_ZOOM_STEP.powf(dy), pos.y);
             return;
         }
         if modifiers.command() {
@@ -2701,6 +2744,21 @@ impl ArrangementView {
                 self.vp.set_zoomed_to_selection(false);
                 CommandOutcome::Handled(Vec::new())
             }
+            "sequencer.zoom_tracks_in" | "sequencer.zoom_tracks_out" => {
+                let factor = if id == "sequencer.zoom_tracks_in" {
+                    TRACK_ZOOM_STEP
+                } else {
+                    1.0 / TRACK_ZOOM_STEP
+                };
+                let anchor = (self.lanes_top() + self.bounds.y1) / 2.0;
+                self.zoom_tracks_at(factor, anchor);
+                CommandOutcome::Handled(Vec::new())
+            }
+            "sequencer.zoom_tracks_reset" => {
+                let mut out = Vec::new();
+                self.reset_track_heights(&mut out);
+                CommandOutcome::Handled(out)
+            }
             "sequencer.zoom_selection" => {
                 self.zoom_selection();
                 CommandOutcome::Handled(Vec::new())
@@ -2820,6 +2878,9 @@ impl ArrangementView {
     fn cancel_drag(&mut self, out: &mut Vec<UiAction>) {
         if matches!(self.drag, Drag::TempoPoint { .. } | Drag::Meter { .. }) {
             return self.cancel_tempo_drag(out);
+        }
+        if matches!(self.drag, Drag::Height) {
+            return self.height_cancel(out);
         }
         if matches!(self.drag, Drag::Mark) {
             self.drag = Drag::None;
@@ -3039,7 +3100,7 @@ impl ArrangementView {
             }
             ImportTarget::NewTracks => {
                 let y = self.lanes_top() + self.content_height - self.scroll_y;
-                let h = TRACK_HEIGHT * hover.count.max(1) as f64;
+                let h = self.default_row_height() * hover.count.max(1) as f64;
                 (Rect::new(tl.x0, y, tl.x1, y + h), st.selection)
             }
         };
@@ -3656,6 +3717,13 @@ impl ArrangementView {
                 }
             }
             sp::line(c, hr.x0, hr.y1 - 0.5, hr.x1, hr.y1 - 0.5, st.separator);
+            if let RowKind::Lane { track, lane: 0 } = row.kind {
+                let active =
+                    matches!(self.drag, Drag::Height) && self.th.drag_track() == Some(track);
+                if active || self.hover == Some(Hit::TrackEdge(track)) {
+                    sp::line(c, hr.x0, hr.y1 - 1.5, hr.x1, hr.y1 - 1.5, st.selection);
+                }
+            }
         }
         c.pop_clip();
     }
@@ -3696,12 +3764,22 @@ impl ArrangementView {
         }
         chev.close_path();
         c.fill_with(chev, col);
+        let compact = hr.height() < COMPACT_BELOW;
         let name = fit_label(
             &sp::track_name(doc, &tr.device),
-            TRACK_LIST_WIDTH - 44.0,
+            if compact {
+                76.0
+            } else {
+                TRACK_LIST_WIDTH - 44.0
+            },
             11.5,
         );
-        c.text(&TextRun::new(name, pt(hr.x0 + 30.0, hr.y0 + 21.0), 11.5, t.text).weight(600));
+        let name_y = if compact {
+            hr.y0 + hr.height() / 2.0 + 4.0
+        } else {
+            hr.y0 + 21.0
+        };
+        c.text(&TextRun::new(name, pt(hr.x0 + 30.0, name_y), 11.5, t.text).weight(600));
         let hovered = |b| self.hover == Some(Hit::Button(track, b));
         for (b, label, on, lit) in [
             (TrackButton::Mute, "M", tr.muted, st.mute),
@@ -3716,6 +3794,9 @@ impl ArrangementView {
                 on.then_some(lit),
                 hovered(b),
             );
+        }
+        if compact {
+            return;
         }
         if tr.is_audio() {
             let header = self.audio_header(&tr.device);
@@ -3915,7 +3996,24 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
 
 /// The y range `(top, bottom)` for values inside an automation clip rectangle.
 fn value_range(r: Rect) -> (f64, f64) {
-    (r.y0 + CLIP_HEADER + 4.0, r.y1 - 4.0)
+    let (top, bottom) = (r.y0 + CLIP_HEADER + 4.0, r.y1 - 4.0);
+    if bottom - top >= 4.0 {
+        (top, bottom)
+    } else {
+        // A clip too short for the margins: a small range in the middle of the body.
+        let mid = (r.y0 + CLIP_HEADER + r.y1) / 2.0;
+        (mid - 2.0, mid + 2.0)
+    }
+}
+
+/// Whether a header control has room in the header row `row` (a short row drops the second
+/// line of controls: the automation, input and monitor buttons).
+fn button_shown(row: Rect, button: TrackButton) -> bool {
+    row.height() >= COMPACT_BELOW
+        || matches!(
+            button,
+            TrackButton::Expand | TrackButton::Mute | TrackButton::Solo | TrackButton::Arm
+        )
 }
 
 /// The polyline of an automation window: content ticks `[c0, c0 + len)`, mapped with `x`
