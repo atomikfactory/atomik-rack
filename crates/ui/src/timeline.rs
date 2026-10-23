@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn seconds_through_a_step_tempo_map() {
-        let t = |tick, bpm| TempoEvent { tick, bpm };
+        let t = |tick, bpm| TempoEvent::step(tick, bpm);
         let map = [t(0, 120.0)];
         assert!((tick_to_seconds(PPQ, &map) - 0.5).abs() < 1e-12);
         assert!((tick_to_seconds(BAR, &map) - 2.0).abs() < 1e-12);

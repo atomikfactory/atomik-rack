@@ -401,14 +401,8 @@ mod tests {
     fn the_length_follows_the_tempo_map_across_a_tempo_change() {
         let mut song = song_at(120.0);
         song.tempo = vec![
-            TempoEvent {
-                tick: 0,
-                bpm: 120.0,
-            },
-            TempoEvent {
-                tick: 4 * PPQ,
-                bpm: 60.0,
-            },
+            TempoEvent::step(0, 120.0),
+            TempoEvent::step(4 * PPQ, 60.0),
         ];
         // From beat 3: one beat at 120 BPM (24 000 frames), then 72 000 frames at 60 BPM
         // (1.5 beats), so 2 s of audio is 2.5 beats.

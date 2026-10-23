@@ -216,14 +216,8 @@ fn audio_keeps_its_length_when_the_tempo_changes_but_the_clip_start_follows_the_
     let mut d = Document::new(doc);
     d.apply(
         Command::Song(SongCommand::SetTempoMap(vec![
-            TempoEvent {
-                tick: 0,
-                bpm: 120.0,
-            },
-            TempoEvent {
-                tick: 4 * PPQ,
-                bpm: 60.0,
-            },
+            TempoEvent::step(0, 120.0),
+            TempoEvent::step(4 * PPQ, 60.0),
         ])),
         &default_registry(),
     )

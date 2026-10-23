@@ -5,12 +5,13 @@ use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR, MAX_LOOP_REPEATS,
-    MAX_TICK, SongCommand, TempoEvent, Track,
+    MAX_TICK, MeterEvent, SongCommand, TempoEvent, Track,
 };
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, TEMPO_MAX,
     TEMPO_MIN, rules,
 };
+use atomik_core::compile_meter;
 use atomik_device_sdk::{DeviceDescriptor, Direction, Registry, SocketKind};
 use std::collections::BTreeMap;
 
@@ -332,6 +333,22 @@ pub(crate) fn check_tempo_map(map: &[TempoEvent]) -> Result<(), String> {
                 e.bpm
             ));
         }
+        if e.ramp && i + 1 == map.len() {
+            return Err(format!(
+                "tempo event {i}: the last event cannot ramp (there is no next event)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Checks a meter map: first at bar 1, bars strictly increasing, signatures supported.
+pub(crate) fn check_meter_map(map: &[MeterEvent]) -> Result<(), String> {
+    let segments = compile_meter(map).map_err(|e| e.to_string())?;
+    if segments.last().is_some_and(|s| s.tick > MAX_TICK) {
+        return Err(format!(
+            "meter changes must lie within 0..={MAX_TICK} ticks"
+        ));
     }
     Ok(())
 }
@@ -701,7 +718,7 @@ pub(crate) fn plan(
                 }),
             }
         }
-        SongCommand::SetTempoMap(map) => {
+        SongCommand::SetTempoMap(map) | SongCommand::DragTempoMap { map, .. } => {
             check_tempo_map(&map).map_err(range)?;
             Edit::TempoMap {
                 old: song.tempo.clone(),
@@ -713,9 +730,20 @@ pub(crate) fn plan(
             beat_unit,
         } => {
             check_meter(beats_per_bar, beat_unit).map_err(range)?;
-            Edit::Meter {
-                old: song.meter(),
-                new: (beats_per_bar, beat_unit),
+            let mut new = song.meter.clone();
+            if let Some(first) = new.first_mut() {
+                (first.num, first.den) = (beats_per_bar, beat_unit);
+            }
+            Edit::MeterMap {
+                old: song.meter.clone(),
+                new,
+            }
+        }
+        SongCommand::SetMeterMap(map) | SongCommand::DragMeterMap { map, .. } => {
+            check_meter_map(&map).map_err(range)?;
+            Edit::MeterMap {
+                old: song.meter.clone(),
+                new: map,
             }
         }
         SongCommand::SetLoop { range: r, enabled } => {

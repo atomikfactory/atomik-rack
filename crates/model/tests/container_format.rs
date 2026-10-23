@@ -141,7 +141,7 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 12);
+    assert_eq!(PROJECT_VERSION, 13);
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn inner_is_written_inside_the_container_after_steps() {
     let r = registry();
     let t = text(&r);
     let v: Value = serde_json::from_str(&t).unwrap();
-    assert_eq!(v["version"], 12);
+    assert_eq!(v["version"], 13);
     let devices = v["devices"].as_array().unwrap();
     assert!(
         devices[0].get("inner").is_none(),
@@ -226,7 +226,7 @@ fn a_document_without_containers_has_no_inner_anywhere() {
     );
     let t = save_project(d.doc());
     assert!(!t.contains("inner"));
-    assert!(t.contains("\"version\": 12"));
+    assert!(t.contains("\"version\": 13"));
     assert_eq!(load_project(&t, &r).unwrap(), *d.doc());
 }
 
@@ -238,12 +238,12 @@ fn the_committed_golden_is_the_canonical_save() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/container-v8.atomik");
     if std::env::var_os("ATOMIK_UPDATE_GOLDEN").is_some() {
-        std::fs::write(&path, t.replacen("\"version\": 12", "\"version\": 8", 1)).unwrap();
+        std::fs::write(&path, as_old(&t, 8)).unwrap();
     }
     // The golden is the v8 file: it differs from the current save in the version number only.
     let file = fixture("container-v8.atomik");
     assert_eq!(
-        file.replacen("\"version\": 8", "\"version\": 12", 1),
+        as_current(&file, 8),
         t,
         "regenerate with ATOMIK_UPDATE_GOLDEN=1"
     );
@@ -263,16 +263,12 @@ fn versions_one_to_seven_still_load_and_resave_as_v11() {
         let t = fixture(name);
         let doc = load_project(&t, reg).unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = save_project(&doc);
-        assert!(again.contains("\"version\": 12"), "{name}");
+        assert!(again.contains("\"version\": 13"), "{name}");
         assert_eq!(load_project(&again, reg).unwrap(), doc, "{name}");
         assert_eq!(save_project(&load_project(&again, reg).unwrap()), again);
         if from >= 6 {
             // Only the version number differs.
-            assert_eq!(
-                again,
-                t.replacen(&format!("\"version\": {from}"), "\"version\": 12", 1),
-                "{name}"
-            );
+            assert_eq!(again, as_current(&t, from), "{name}");
         }
     }
 }

@@ -265,14 +265,8 @@ fn tempo_changes_recompile_the_song_and_resend_the_loop() {
     let calls = apply(
         &mut c,
         song(SongCommand::SetTempoMap(vec![
-            TempoEvent {
-                tick: 0,
-                bpm: 100.0,
-            },
-            TempoEvent {
-                tick: BAR,
-                bpm: 140.0,
-            },
+            TempoEvent::step(0, 100.0),
+            TempoEvent::step(BAR, 140.0),
         ])),
     );
     assert_eq!(kinds(&calls), ["tempo", "song", "transport"]);

@@ -5,8 +5,8 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    ClipContent, ClipId, Command, Curve, Document, Lane, LaneKind, ModelError, SongCommand, SyncOp,
-    TempoEvent, empty_song,
+    ClipContent, ClipId, Command, Curve, Document, Lane, LaneKind, MeterEvent, ModelError,
+    SongCommand, SyncOp, TempoEvent, empty_song,
 };
 use common::song::*;
 use common::*;
@@ -695,13 +695,7 @@ fn set_tempo_map_updates_rack_tempo() {
     let reg = registry();
     let mut d = with_track(&reg);
     let before = d.doc().clone();
-    let map = vec![
-        TempoEvent { tick: 0, bpm: 90.5 },
-        TempoEvent {
-            tick: BAR,
-            bpm: 140.0,
-        },
-    ];
+    let map = vec![TempoEvent::step(0, 90.5), TempoEvent::step(BAR, 140.0)];
     let ops = d
         .apply(sc(SongCommand::SetTempoMap(map.clone())), &reg)
         .unwrap();
@@ -712,7 +706,7 @@ fn set_tempo_map_updates_rack_tempo() {
     let ops = d.undo(&reg).unwrap();
     assert_eq!(ops, [SyncOp::TempoChanged(120.0), SyncOp::SongChanged]);
     assert_eq!(d.doc(), &before);
-    let ev = |tick, bpm| TempoEvent { tick, bpm };
+    let ev = |tick, bpm| TempoEvent::step(tick, bpm);
     for bad in [
         vec![],
         vec![ev(5, 120.0)],
@@ -738,7 +732,7 @@ fn set_meter_loop_and_end() {
         })
     };
     assert_eq!(d.apply(meter(7, 8), &reg).unwrap(), changed());
-    assert_eq!((d.doc().song.beats_per_bar, d.doc().song.beat_unit), (7, 8));
+    assert_eq!(d.doc().song.meter(), (7, 8));
     for (b, u) in [(0, 4), (33, 4), (4, 3), (4, 0), (4, 32)] {
         rejects(&mut d, meter(b, u), &reg);
     }
@@ -800,4 +794,208 @@ fn remove_device_removes_its_track_and_undo_restores_both() {
     let ops = d.redo(&reg).unwrap();
     assert_eq!(ops[0], SyncOp::SongChanged);
     assert!(d.doc().song.track(&key("synth")).is_none());
+}
+
+// ---- tempo ramps and the meter map ----------------------------------------------------
+
+fn ramp(tick: i64, bpm: f64) -> TempoEvent {
+    TempoEvent {
+        tick,
+        bpm,
+        ramp: true,
+    }
+}
+
+fn mev(bar: u32, num: u8, den: u8) -> MeterEvent {
+    MeterEvent { bar, num, den }
+}
+
+#[test]
+fn a_tempo_ramp_is_stored_and_undone_like_a_step() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    let before = d.doc().clone();
+    let map = vec![ramp(0, 60.0), TempoEvent::step(2 * BAR, 180.0)];
+    let ops = d
+        .apply(sc(SongCommand::SetTempoMap(map.clone())), &reg)
+        .unwrap();
+    assert_eq!(ops, [SyncOp::TempoChanged(60.0), SyncOp::SongChanged]);
+    assert_eq!(d.doc().song.tempo, map);
+    assert_tempo_invariant(d.doc());
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+    d.redo(&reg).unwrap();
+    assert_eq!(d.doc().song.tempo, map);
+}
+
+#[test]
+fn a_ramp_on_the_last_event_is_rejected() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    for bad in [
+        vec![ramp(0, 100.0)],
+        vec![TempoEvent::step(0, 100.0), ramp(BAR, 120.0)],
+    ] {
+        let e = rejects(&mut d, sc(SongCommand::SetTempoMap(bad)), &reg);
+        assert!(e.to_string().contains("cannot ramp"), "{e}");
+    }
+}
+
+#[test]
+fn set_tempo_keeps_the_first_events_ramp() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    let map = vec![ramp(0, 100.0), TempoEvent::step(BAR, 160.0)];
+    d.apply(sc(SongCommand::SetTempoMap(map)), &reg).unwrap();
+    d.apply(Command::SetTempo(110.0), &reg).unwrap();
+    assert_eq!(d.doc().song.tempo[0], ramp(0, 110.0));
+    assert_tempo_invariant(d.doc());
+}
+
+#[test]
+fn dragging_the_tempo_map_is_one_undo_step() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(
+        sc(SongCommand::SetTempoMap(vec![
+            TempoEvent::step(0, 120.0),
+            TempoEvent::step(BAR, 140.0),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    let before = d.doc().clone();
+    for bpm in [141.0, 150.0, 160.0] {
+        d.apply(
+            sc(SongCommand::DragTempoMap {
+                map: vec![TempoEvent::step(0, 120.0), TempoEvent::step(BAR, bpm)],
+                merge: 7,
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(d.doc().song.tempo[1].bpm, 160.0);
+    d.apply(
+        sc(SongCommand::DragTempoMap {
+            map: vec![TempoEvent::step(0, 120.0), TempoEvent::step(BAR, 170.0)],
+            merge: 8,
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.undo(&reg).unwrap();
+    assert_eq!(
+        d.doc().song.tempo[1].bpm,
+        160.0,
+        "another drag is another step"
+    );
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+    // A rejected drag step changes nothing.
+    rejects(
+        &mut d,
+        sc(SongCommand::DragTempoMap {
+            map: vec![TempoEvent::step(5, 120.0)],
+            merge: 9,
+        }),
+        &reg,
+    );
+}
+
+#[test]
+fn the_meter_map_is_set_validated_and_undone() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    let before = d.doc().clone();
+    let map = vec![mev(1, 4, 4), mev(3, 3, 4), mev(7, 6, 8)];
+    assert_eq!(
+        d.apply(sc(SongCommand::SetMeterMap(map.clone())), &reg)
+            .unwrap(),
+        changed()
+    );
+    assert_eq!(d.doc().song.meter, map);
+    assert_eq!(d.doc().song.meter(), (4, 4));
+    assert_eq!(d.doc().song.bar_ticks_at(2 * BAR), 3 * PPQ);
+    for bad in [
+        vec![],
+        vec![mev(2, 4, 4)],
+        vec![mev(1, 4, 4), mev(1, 3, 4)],
+        vec![mev(1, 4, 4), mev(5, 3, 4), mev(4, 2, 4)],
+        vec![mev(1, 0, 4)],
+        vec![mev(1, 4, 3)],
+        vec![mev(1, 33, 4)],
+        vec![mev(1, 4, 4), mev(u32::MAX, 4, 4)],
+    ] {
+        rejects(&mut d, sc(SongCommand::SetMeterMap(bad)), &reg);
+    }
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn set_meter_changes_bar_one_and_keeps_later_changes() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(
+        sc(SongCommand::SetMeterMap(vec![mev(1, 4, 4), mev(5, 3, 4)])),
+        &reg,
+    )
+    .unwrap();
+    d.apply(
+        sc(SongCommand::SetMeter {
+            beats_per_bar: 7,
+            beat_unit: 8,
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().song.meter, vec![mev(1, 7, 8), mev(5, 3, 4)]);
+}
+
+#[test]
+fn dragging_a_meter_change_is_one_undo_step() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(
+        sc(SongCommand::SetMeterMap(vec![mev(1, 4, 4), mev(3, 3, 4)])),
+        &reg,
+    )
+    .unwrap();
+    let before = d.doc().clone();
+    for bar in [4, 5, 6] {
+        d.apply(
+            sc(SongCommand::DragMeterMap {
+                map: vec![mev(1, 4, 4), mev(bar, 3, 4)],
+                merge: 1,
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(d.doc().song.meter[1].bar, 6);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn frame_at_follows_a_tempo_ramp() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(
+        sc(SongCommand::SetTempoMap(vec![
+            ramp(0, 60.0),
+            TempoEvent::step(2 * BAR, 180.0),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    let song = &d.doc().song;
+    // The ramp takes 2 * 4 / avg seconds; the closed form is 60 / PPQ * L / (b1 - b0) * ln(b1 / b0).
+    let secs = 60.0 / PPQ as f64 * (2 * BAR) as f64 / 120.0 * (180.0f64 / 60.0).ln();
+    let frames = song.frame_at(2 * BAR, 48_000);
+    assert!((frames as f64 - secs * 48_000.0).abs() <= 0.5, "{frames}");
+    // After the ramp the tempo holds at 180.
+    let one_beat = song.frame_at(2 * BAR + PPQ, 48_000) - frames;
+    assert_eq!(one_beat, 16_000);
 }

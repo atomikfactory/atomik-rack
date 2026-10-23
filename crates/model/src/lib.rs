@@ -82,8 +82,8 @@ use history::Edit;
 use rack_columns::Placement;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve,
-    Lane, LaneKind, Note, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track,
-    empty_song,
+    Lane, LaneKind, MeterEvent, Note, Song, SongCommand, StepGrid, StepResolution, TempoEvent,
+    Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -442,7 +442,8 @@ pub enum Command {
 /// | `SetInputChannels` | `RoutingChanged` |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits) |
 /// | `RegisterAsset` | none (not an undo step) |
-/// | tempo map (`SongCommand::SetTempoMap`, also sets `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
+/// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
+/// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
 /// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
 /// | `SetZones` (also undo/redo) | `ZonesChanged` |
@@ -636,6 +637,10 @@ enum MergeKey {
     Param(u64, DeviceKey, String),
     /// `SetClipGeometry` / `SetClipContent` on one clip.
     Clip(u64, ClipId),
+    /// `DragTempoMap`.
+    TempoMap(u64),
+    /// `DragMeterMap`.
+    MeterMap(u64),
     /// `SetZones` on one device.
     Zones(u64, DeviceKey),
     /// `SetPattern` on one pattern of one device.
@@ -709,6 +714,12 @@ impl Document {
                     ..
                 },
             ) => Some(MergeKey::Clip(*m, *id)),
+            Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
+                Some(MergeKey::TempoMap(*merge))
+            }
+            Command::Song(SongCommand::DragMeterMap { merge, .. }) => {
+                Some(MergeKey::MeterMap(*merge))
+            }
             Command::SetZones {
                 device,
                 merge: Some(m),
@@ -760,6 +771,12 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Macro { new, .. }), Edit::Macro { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::TempoMap { new, .. }), Edit::TempoMap { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::MeterMap { new, .. }), Edit::MeterMap { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             _ => self.undo.push(edit),

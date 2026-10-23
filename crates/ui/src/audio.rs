@@ -353,7 +353,7 @@ mod tests {
     fn map(events: &[(i64, f64)]) -> TempoMap {
         let ev: Vec<TempoEvent> = events
             .iter()
-            .map(|&(tick, bpm)| TempoEvent { tick, bpm })
+            .map(|&(tick, bpm)| TempoEvent::step(tick, bpm))
             .collect();
         TempoMap::new(&ev)
     }

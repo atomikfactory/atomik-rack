@@ -690,11 +690,8 @@ fn split_uses_the_tempo_map_and_the_document_sample_rate() {
     // 60 BPM for the first beat, then 120 BPM: beat 1 = 48000 frames, beat 2 = 24000.
     d.apply(
         sc(SongCommand::SetTempoMap(vec![
-            TempoEvent { tick: 0, bpm: 60.0 },
-            TempoEvent {
-                tick: PPQ,
-                bpm: 120.0,
-            },
+            TempoEvent::step(0, 60.0),
+            TempoEvent::step(PPQ, 120.0),
         ])),
         &reg,
     )

@@ -34,8 +34,7 @@
 //!   frames with the tempo map, one [`AudioRegion`] per span.
 
 use super::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind, Song,
-    TempoFrames, Track,
+    AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind, Song, Track,
 };
 use std::collections::BTreeMap;
 
@@ -281,7 +280,9 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
         return Vec::new();
     };
     let by_id: BTreeMap<ClipId, &Clip> = lane.clips.iter().map(|c| (c.id, c)).collect();
-    let map = TempoFrames::new(&song.tempo);
+    let table = song.tempo_table();
+    let map = table.map();
+    let sr = f64::from(sample_rate);
     let mut out = Vec::new();
     for (id, a, b) in audible_spans(lane) {
         let clip = by_id[&id];
@@ -289,10 +290,10 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             continue;
         };
         let (clip_start, clip_end) = (
-            map.frame_at(clip.start, sample_rate),
-            map.frame_at(clip.end(), sample_rate),
+            map.song_frame(clip.start, sr),
+            map.song_frame(clip.end(), sr),
         );
-        let (start, end) = (map.frame_at(a, sample_rate), map.frame_at(b, sample_rate));
+        let (start, end) = (map.song_frame(a, sr), map.song_frame(b, sr));
         if end <= start {
             continue;
         }

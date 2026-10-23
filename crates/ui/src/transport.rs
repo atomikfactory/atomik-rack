@@ -101,10 +101,7 @@ impl TransportBar {
             bounds: Rect::new(0.0, 0.0, 800.0, TRANSPORT_HEIGHT),
             scale: 1.0,
             state: TransportState::default(),
-            tempo: vec![TempoEvent {
-                tick: 0,
-                bpm: 120.0,
-            }],
+            tempo: vec![TempoEvent::step(0, 120.0)],
             meter: Meter::default(),
             loop_enabled: false,
             editing: None,

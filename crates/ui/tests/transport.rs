@@ -34,14 +34,8 @@ fn buttons_emit_transport_actions() {
 fn position_readouts_follow_the_tempo_map_and_meter() {
     let (mut doc, reg) = (song_doc(), registry());
     doc.song.tempo = vec![
-        TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        },
-        TempoEvent {
-            tick: BAR,
-            bpm: 60.0,
-        },
+        TempoEvent::step(0, 120.0),
+        TempoEvent::step(BAR, 60.0),
     ];
     let mut v = transport_bar(&doc, &reg);
     v.set_state(TransportState {
@@ -76,10 +70,7 @@ fn tempo_maps(actions: &[UiAction]) -> Vec<Vec<TempoEvent>> {
 #[test]
 fn double_click_types_a_tempo_and_keeps_later_events() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tempo.push(TempoEvent {
-        tick: 8 * BAR,
-        bpm: 90.0,
-    });
+    doc.song.tempo.push(TempoEvent::step(8 * BAR, 90.0));
     let mut v = transport_bar(&doc, &reg);
     let t = v.tempo_center();
     let a = run(
@@ -103,11 +94,8 @@ fn double_click_types_a_tempo_and_keeps_later_events() {
     assert_eq!(
         tempo_maps(&a),
         vec![vec![
-            TempoEvent { tick: 0, bpm: 98.5 },
-            TempoEvent {
-                tick: 8 * BAR,
-                bpm: 90.0
-            }
+            TempoEvent::step(0, 98.5),
+            TempoEvent::step(8 * BAR, 90.0)
         ]]
     );
     assert!(!v.is_editing_tempo());
