@@ -441,7 +441,7 @@ pub fn lock_icon<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, center: Point) {
 }
 
 /// The output display of a channel or the master on its name plate: the
-/// label in the normal text colour, the warning colour when the output leaves the master and
+/// label in the normal text colour, the warning colour when the output was cabled by hand somewhere odd and
 /// the muted colour for "Output: none". A folded strip shows it to the right of its plate.
 pub fn output_display<C: Canvas + ?Sized>(
     c: &mut C,

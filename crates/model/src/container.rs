@@ -13,7 +13,7 @@
 //! the types, path resolution, and the validation that every command and the project loader
 //! share ([`RackDoc::check_containers`]).
 
-use crate::console::{self, CHANNEL_TYPE, MASTER_TYPE};
+use crate::console::{self, BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE};
 use crate::song::AUDIO_TRACK_TYPE;
 use crate::{Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, rules};
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Direction, Registry, SocketKind};
@@ -43,7 +43,7 @@ pub const CONTAINER_TYPE: &str = "atomik.container";
 pub const SPLIT_TYPE: &str = "atomik.note-split";
 /// Device types that cannot live inside a container (console devices and audio tracks; the
 /// interface is not a device in the list at all).
-pub const FORBIDDEN_INSIDE: [&str; 3] = [CHANNEL_TYPE, MASTER_TYPE, AUDIO_TRACK_TYPE];
+pub const FORBIDDEN_INSIDE: [&str; 4] = [CHANNEL_TYPE, BUS_TYPE, MASTER_TYPE, AUDIO_TRACK_TYPE];
 
 /// A container's inside.
 #[derive(Debug, Clone, PartialEq, Default)]

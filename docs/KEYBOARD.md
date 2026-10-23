@@ -66,6 +66,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Transpose Octave Down | `Shift+Down` (editor) | `Ctrl+Shift+Down` (editor) |
 | Transpose Octave Up | `Shift+Up` (editor) | `Ctrl+Shift+Up` (editor) |
 | Transpose Up | `Up` (editor) | `Ctrl+Up` (editor) |
+| Route to New Output Bus | - | `Ctrl+G` |
 | Browser Down | - | `Down` (browser) |
 | Browser Up | - | `Up` (browser) |
 | Cancel Browser Search | - | `Esc` (browser) |
@@ -207,6 +208,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Raise Focused Control (Fine) | mixer | `Shift+Up` | `Shift+Up` | `Shift+Up` |
 | Raise Focused Control by Ten | mixer | `PageUp` | `PageUp` | `PageUp` |
 | Raise Focused Control by Ten (Fine) | mixer | `Shift+PageUp` | `Shift+PageUp` | `Shift+PageUp` |
+| Route to New Output Bus | global | `Ctrl+G` | `Cmd+G` | `Ctrl+G` |
 | Scroll Channels Left | mixer | `Left`, `Shift+Left` | `Left`, `Shift+Left` | `Left`, `Shift+Left` |
 | Scroll Channels Right | mixer | `Right`, `Shift+Right` | `Right`, `Shift+Right` | `Right`, `Shift+Right` |
 | Scroll to First Channel | mixer | `Home`, `Shift+Home` | `Home`, `Shift+Home` | `Home`, `Shift+Home` |
@@ -381,4 +383,4 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Stop Preview | files | `Esc` | `Esc` | `Esc` |
 | Toggle Favourite | files | `F` | `F` | `F` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Export Patch, Stress Rack, Stress Song, Add Channel, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Zoom to Selection, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Play, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Export Patch, Stress Rack, Stress Song, Add Channel, Route to New Output Bus, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Zoom to Selection, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Play, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor.

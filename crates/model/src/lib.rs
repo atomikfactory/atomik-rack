@@ -6,6 +6,7 @@
 //!
 //! Public signatures are a stable contract: changes need review.
 
+mod console_bus;
 mod console_cmd;
 mod console_insert;
 mod container;
@@ -72,7 +73,9 @@ pub use zones::{
 };
 
 use atomik_device_sdk::Registry;
-pub use console::{Console, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect};
+pub use console::{
+    Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
+};
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;
 use history::Edit;
@@ -337,6 +340,8 @@ pub enum Command {
     /// the clip length as one step) and, later,
     /// `Command::Song(SongCommand::AddTrack { .. })` and `Command::Song(SongCommand::AddClip { .. })`
     /// (a new pattern on a device without a track is one step) and, later,
+    /// `Command::Song(SongCommand::SetTrackFlags { .. })` (arming one track and disarming
+    /// another is one step) and, later,
     /// `Command::SetParam { .. }` and `Command::SetZones { .. }` (loading a loop into a slicer
     /// sets `loop.beats` and the slices as one step). The batch's last allocated
     /// clip id is [`Document::last_clip_id`] afterwards. A `merge` id inside a batched command
@@ -866,11 +871,12 @@ impl Document {
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
                                     | SongCommand::SetClipGrid { .. }
+                                    | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid and SetClipGeometry can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipGeometry and SetTrackFlags can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
@@ -887,6 +893,11 @@ impl Document {
             } => {
                 let desc = rules::descriptor(registry, &type_id)?;
                 plugin_cmd::refuse_generic_add(&type_id)?;
+                if type_id == console::BUS_TYPE {
+                    return Err(console_cmd::bad(
+                        "an output bus is created with ConsoleCommand::CreateBus",
+                    ));
+                }
                 if type_id == SPLIT_TYPE {
                     return Err(ModelError::NotAllowedInContainer(format!(
                         "{} is internal; the container expansion creates it",
@@ -978,6 +989,12 @@ impl Document {
                 new: folded,
                 key,
             },
+            Command::Rename { key, name } if doc.console.bus_index(&key).is_some() => {
+                // A bus carries its name in the console too.
+                let mut p = console_cmd::Planner::new(doc, registry);
+                console_bus::rename_bus(&mut p, &key, &name)?;
+                p.finish()
+            }
             Command::Rename { key, name } => Edit::Name {
                 old: rules::resolve(doc, &key)?.name.clone(),
                 new: name,
@@ -1125,22 +1142,14 @@ impl RackDoc {
         Some(device.params.get(param).copied().unwrap_or(desc.default))
     }
 
-    /// The derived `internal.solo_silence` state of every console channel, in console order
-    /// (additive solo-in-place): when any channel is soloed (`solo` ≥ 0.5), every
-    /// channel that is not soloed is silenced. Returns are not channels, so they are
+    /// The derived `internal.solo_silence` state of every console strip: the channels in
+    /// console order, then the buses (additive solo-in-place): when any strip is soloed
+    /// (`solo` >= 0.5), every strip that is not audible is silenced. A soloed strip is audible,
+    /// so is every bus on its path to the master or an Audio I/O pair (transitively), and so is
+    /// every strip that feeds a soloed bus (transitively). Returns are not strips, so they are
     /// solo-safe. Mute plays no part. The app pushes these values to the engine.
     pub fn solo_silence(&self, registry: &Registry) -> Vec<(DeviceKey, bool)> {
-        let soloed: Vec<(DeviceKey, bool)> = self
-            .console
-            .channels
-            .iter()
-            .map(|c| {
-                let solo = self.param_value(&c.channel, "solo", registry);
-                (c.channel.clone(), solo.is_some_and(|v| v >= 0.5))
-            })
-            .collect();
-        let any = soloed.iter().any(|(_, s)| *s);
-        soloed.into_iter().map(|(k, s)| (k, any && !s)).collect()
+        console_bus::solo_silence(self, registry)
     }
 
     /// True if `device` has a track that is an audio track and the device is an

@@ -116,7 +116,23 @@ fn the_channel_display_reads_master_direct_mixed_and_none() {
     let v = view(&doc, &reg);
     let shown = v.output_display(&key("channel")).unwrap();
     assert_eq!(shown.text, "Output: Audio I/O 3+4");
-    assert!(shown.warn);
+    assert!(
+        !shown.warn,
+        "an Audio I/O pair is a first-class destination"
+    );
+    assert_eq!(shown.tooltip, None);
+
+    // Hand-cabled to something that is not a stereo pair: still the warning.
+    let mut hand = doc.clone();
+    hand.cables
+        .retain(|c| !(c.from.device == key("channel") && c.from.socket.starts_with("out_")));
+    hand.cables
+        .push(cable(("channel", "out_l"), ("interface", "out_2")));
+    hand.cables
+        .push(cable(("channel", "out_r"), ("interface", "out_3")));
+    let v = view(&hand, &reg);
+    let shown = v.output_display(&key("channel")).unwrap();
+    assert!(shown.warn, "{shown:?}");
     assert!(
         shown
             .tooltip
@@ -265,10 +281,11 @@ fn a_channel_that_leaves_the_master_explains_itself_in_a_tooltip() {
     doc.output_channels = 4;
     doc.cables
         .retain(|c| !(c.from.device == key("channel") && c.from.socket.starts_with("out_")));
+    // Not a stereo pair (outputs 2 and 3): cabled by hand.
     doc.cables
-        .push(cable(("channel", "out_l"), ("interface", "out_3")));
+        .push(cable(("channel", "out_l"), ("interface", "out_2")));
     doc.cables
-        .push(cable(("channel", "out_r"), ("interface", "out_4")));
+        .push(cable(("channel", "out_r"), ("interface", "out_3")));
     let mut v = view(&doc, &reg);
     let at = v.plate_center(&key("channel")).unwrap();
     let _ = v.handle(&mv(at), &doc, &reg);
@@ -277,4 +294,177 @@ fn a_channel_that_leaves_the_master_explains_itself_in_a_tooltip() {
     let other = v.plate_center(&key("channel-2")).unwrap();
     let _ = v.handle(&mv(other), &doc, &reg);
     assert_eq!(v.tooltip(), None, "a channel on the master has none");
+}
+
+#[test]
+fn a_channel_on_an_audio_io_pair_has_no_tooltip() {
+    let reg = registry();
+    let d = two_instruments(&reg);
+    let mut doc = d.doc().clone();
+    doc.output_channels = 4;
+    doc.cables
+        .retain(|c| !(c.from.device == key("channel") && c.from.socket.starts_with("out_")));
+    doc.cables
+        .push(cable(("channel", "out_l"), ("interface", "out_3")));
+    doc.cables
+        .push(cable(("channel", "out_r"), ("interface", "out_4")));
+    let mut v = view(&doc, &reg);
+    let at = v.plate_center(&key("channel")).unwrap();
+    let _ = v.handle(&mv(at), &doc, &reg);
+    assert_eq!(v.tooltip(), None);
+}
+
+// ---- output buses ------------------------------------------------------------------------------
+
+fn with_bus(reg: &atomik_device_sdk::Registry) -> atomik_model::Document {
+    use atomik_model::console::OutputDest;
+    use atomik_model::{Command, ConsoleCommand};
+    let mut doc = two_instruments(reg).doc().clone();
+    doc.output_channels = 4;
+    let mut d = atomik_model::Document::new(doc);
+    run(
+        &mut d,
+        reg,
+        [
+            Command::Console(ConsoleCommand::CreateBus {
+                name: "Drums".into(),
+                dest: OutputDest::Master,
+            }),
+            Command::Console(ConsoleCommand::SetOutput {
+                strip: key("channel"),
+                dest: OutputDest::Bus(key("bus")),
+            }),
+        ],
+    );
+    d
+}
+
+#[test]
+fn a_channel_routed_to_a_bus_reads_the_bus_name_and_the_bus_reads_its_own_output() {
+    use atomik_model::console::OutputDest;
+    use atomik_model::{Command, ConsoleCommand};
+    let reg = registry();
+    let mut d = with_bus(&reg);
+    let v = view(d.doc(), &reg);
+    let shown = v.output_display(&key("channel")).unwrap();
+    assert_eq!(shown.text, "Output: Bus Drums");
+    assert!(!shown.warn);
+    assert_eq!(shown.tooltip, None);
+    let bus = v
+        .output_display(&key("bus"))
+        .expect("a bus has a display too");
+    assert_eq!(bus.text, "Output: Master");
+    assert!(!bus.warn);
+    // The bus on an Audio I/O pair: first-class, no warning.
+    run(
+        &mut d,
+        &reg,
+        [Command::Console(ConsoleCommand::SetOutput {
+            strip: key("bus"),
+            dest: OutputDest::AudioIo(2),
+        })],
+    );
+    let v = view(d.doc(), &reg);
+    let bus = v.output_display(&key("bus")).unwrap();
+    assert_eq!(bus.text, "Output: Audio I/O 3+4");
+    assert!(!bus.warn);
+    assert_eq!(bus.tooltip, None);
+}
+
+#[test]
+fn renaming_a_bus_updates_the_displays_that_name_it() {
+    use atomik_model::{Command, ConsoleCommand};
+    let reg = registry();
+    let mut d = with_bus(&reg);
+    let mut v = view(d.doc(), &reg);
+    run(
+        &mut d,
+        &reg,
+        [Command::Console(ConsoleCommand::RenameBus {
+            bus: key("bus"),
+            name: "Kick".into(),
+        })],
+    );
+    v.sync(d.doc(), &reg);
+    assert_eq!(
+        v.output_display(&key("channel")).unwrap().text,
+        "Output: Bus Kick"
+    );
+}
+
+#[test]
+fn bus_cables_are_console_links_hidden_by_default() {
+    let reg = registry();
+    let d = with_bus(&reg);
+    let doc = d.doc();
+    let v = back_view(doc, &reg);
+    let shown = v.visible_cables(doc);
+    for hidden in [
+        cable(("channel", "out_l"), ("bus", "bus_l")),
+        cable(("channel", "out_r"), ("bus", "bus_r")),
+        cable(("bus", "out_l"), ("master", "bus_l")),
+        cable(("bus", "send1_l"), ("master", "send_bus1_l")),
+    ] {
+        assert!(doc.cables.contains(&hidden), "{hidden:?} exists");
+        assert!(!shown.contains(&hidden), "{hidden:?} is hidden");
+    }
+    let mut v = back_view(doc, &reg);
+    v.set_show_console_links(true);
+    assert_eq!(v.visible_cables(doc).len(), doc.cables.len());
+}
+
+#[test]
+fn a_bus_device_is_a_console_device_in_the_rack() {
+    let reg = registry();
+    let d = with_bus(&reg);
+    let doc = d.doc();
+    let mut v = view(doc, &reg);
+    let names: Vec<String> = v.panel_revisions().into_iter().map(|(k, _)| k.0).collect();
+    assert!(names.contains(&"bus".to_string()), "{names:?}");
+    v.set_show_console_devices(false);
+    v.sync(doc, &reg);
+    let names: Vec<String> = v.panel_revisions().into_iter().map(|(k, _)| k.0).collect();
+    assert!(
+        !names.contains(&"bus".to_string()),
+        "hidden with the console devices: {names:?}"
+    );
+    assert!(
+        atomik_ui::is_console_device(doc, &reg, doc.device(&key("bus")).unwrap()),
+        "the console view and the rack agree"
+    );
+}
+
+/// Writes `target/preview/rack_bus_preview.png`: the rack with a bus (front and back).
+/// Run: `cargo test -p atomik-ui --test console_links_view -- --ignored`.
+#[test]
+#[ignore = "writes a preview image; run explicitly"]
+fn rack_bus_preview_png() {
+    use atomik_ui::kurbo::{Affine, Size};
+    use atomik_ui::{Canvas, RackView, TextEngine, Theme, UiEvent};
+    let reg = registry();
+    let d = with_bus(&reg);
+    let doc = d.doc();
+    let scale = 1.5;
+    let size = Size::new(900.0, 900.0);
+    let mut text = TextEngine::new();
+    let mut canvas = support::cpu::CpuCanvas::new(
+        (size.width * 2.0 * scale) as u16,
+        (size.height * scale) as u16,
+        &mut text,
+    );
+    for (i, flip) in [Flip::Front, Flip::Back].into_iter().enumerate() {
+        let mut v = RackView::new(Theme::dark());
+        let _ = v.handle(&UiEvent::Resize(size), doc, &reg);
+        let _ = v.handle(&UiEvent::ScaleChanged(scale), doc, &reg);
+        v.sync(doc, &reg);
+        v.set_flip(flip);
+        canvas.push_transform(Affine::translate((size.width * scale * i as f64, 0.0)));
+        v.paint(&mut canvas, doc, &reg);
+        canvas.pop_transform();
+    }
+    let png = canvas.finish().into_png().expect("png");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/preview/rack_bus_preview.png");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, png).unwrap();
 }

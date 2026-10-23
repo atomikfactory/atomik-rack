@@ -10,7 +10,7 @@ use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId, SocketKind,
 };
-use atomik_model::{Console, ConsoleChannel};
+use atomik_model::{Console, ConsoleBus, ConsoleChannel};
 use atomik_ui::ConsoleView;
 use atomik_ui::kurbo::Rect;
 
@@ -1814,6 +1814,41 @@ pub static MASTER: DeviceDescriptor = DeviceDescriptor {
     sockets: &MASTER_SOCKETS,
 };
 
+/// Stub `atomik.bus`: the channel's params, stages and sockets, but the summing input
+/// `bus_l`/`bus_r` in place of `in_l`/`in_r`.
+pub fn bus_descriptor() -> &'static DeviceDescriptor {
+    static BUS: std::sync::LazyLock<&'static DeviceDescriptor> = std::sync::LazyLock::new(|| {
+        let sockets: Vec<SocketDescriptor> = CHANNEL_SOCKETS
+            .iter()
+            .map(|s| match s.key {
+                "in_l" => SocketDescriptor {
+                    key: "bus_l",
+                    name: "Bus L",
+                    direction: Direction::SummingInput,
+                    ..*s
+                },
+                "in_r" => SocketDescriptor {
+                    key: "bus_r",
+                    name: "Bus R",
+                    direction: Direction::SummingInput,
+                    ..*s
+                },
+                _ => *s,
+            })
+            .collect();
+        Box::leak(Box::new(DeviceDescriptor {
+            stages: &CHANNEL_STAGES,
+            type_id: "atomik.bus",
+            name: "Console Bus",
+            kind: DeviceKind::Mixer,
+            version: 1,
+            params: &CHANNEL_PARAMS,
+            sockets: Box::leak(sockets.into_boxed_slice()),
+        }))
+    });
+    *BUS
+}
+
 struct Stub(&'static DeviceDescriptor);
 
 impl Device for Stub {
@@ -1840,6 +1875,11 @@ pub fn console_registry() -> Registry {
     r.register(DeviceFactory {
         descriptor: &MASTER,
         create: || Box::new(Stub(&MASTER)),
+    })
+    .unwrap();
+    r.register(DeviceFactory {
+        descriptor: bus_descriptor(),
+        create: || Box::new(Stub(bus_descriptor())),
     })
     .unwrap();
     r
@@ -1920,10 +1960,56 @@ pub fn console_doc() -> RackDoc {
             chan("ch-lead", Some("lead")),
             chan("ch-keys", Some("keys")),
         ],
+        buses: Vec::new(),
         master: Some(key("master")),
         returns,
         compensation: true,
     };
+    doc
+}
+
+/// [`console_doc`] with two output buses and the routing cables the output selector reads:
+/// `ch-bass` plays to Audio I/O pair 2 (3+4), `ch-lead` to `bus` ("Drums"), `ch-keys` (soloed) to
+/// `bus-2` ("Synths"), `bus-2` into `bus`, `bus` to the master, which feeds pair 1 (1+2). The
+/// project has 4 output channels.
+pub fn bus_doc() -> RackDoc {
+    let mut doc = console_doc();
+    doc.output_channels = 4;
+    doc.devices.push(device("bus", "atomik.bus", "Drums"));
+    doc.devices.push(device("bus-2", "atomik.bus", "Synths"));
+    doc.console.buses = vec![
+        ConsoleBus {
+            bus: key("bus"),
+            name: "Drums".into(),
+        },
+        ConsoleBus {
+            bus: key("bus-2"),
+            name: "Synths".into(),
+        },
+    ];
+    let wire = |from: &str, l: &str, to: &str| {
+        [
+            cable((from, "out_l"), (to, l)),
+            cable((from, "out_r"), (to, &l.replace("_l", "_r"))),
+        ]
+    };
+    doc.cables = [
+        wire("ch-lead", "bus_l", "bus"),
+        wire("ch-keys", "bus_l", "bus-2"),
+        wire("bus-2", "bus_l", "bus"),
+        wire("bus", "bus_l", "master"),
+        [
+            cable(("ch-bass", "out_l"), ("interface", "out_3")),
+            cable(("ch-bass", "out_r"), ("interface", "out_4")),
+        ],
+        [
+            cable(("master", "main_l"), ("interface", "out_1")),
+            cable(("master", "main_r"), ("interface", "out_2")),
+        ],
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     doc
 }
 

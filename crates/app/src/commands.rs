@@ -92,6 +92,8 @@ pub enum AppCommand {
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
     ToggleCompensation,
+    /// Mixer > Route to New Output Bus (Ctrl/Cmd+G): a new bus for the selected channels.
+    RouteToNewBus,
     /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
     CreateInstrument,
     /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
@@ -172,6 +174,7 @@ impl AppCommand {
             AppCommand::ToggleConsole => ("view.toggle_console", None),
             AppCommand::MaximiseConsole => ("view.maximise_console", None),
             AppCommand::AddChannel => ("mixer.add_channel", None),
+            AppCommand::RouteToNewBus => ("mixer.route_to_new_bus", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
@@ -243,6 +246,7 @@ impl AppCommand {
             ("view.toggle_console", None) => AppCommand::ToggleConsole,
             ("view.maximise_console", None) => AppCommand::MaximiseConsole,
             ("mixer.add_channel", None) => AppCommand::AddChannel,
+            ("mixer.route_to_new_bus", None) => AppCommand::RouteToNewBus,
             ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
             ("create.instrument", None) => AppCommand::CreateInstrument,
             ("create.effect", None) => AppCommand::CreateEffect,
@@ -535,6 +539,7 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 ),
                 MenuEntry::Separator,
                 item("Add Channel\u{2026}", AppCommand::AddChannel),
+                item("Route to New Output Bus", AppCommand::RouteToNewBus),
                 MenuEntry::Separator,
                 check(
                     "Delay Compensation",
@@ -643,6 +648,7 @@ mod tests {
             AppCommand::ToggleConsole,
             AppCommand::MaximiseConsole,
             AppCommand::AddChannel,
+            AppCommand::RouteToNewBus,
             AppCommand::ToggleCompensation,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
@@ -1018,6 +1024,7 @@ mod tests {
                 "Console",
                 "Maximise Console",
                 "Add Channel\u{2026}",
+                "Route to New Output Bus",
                 "Delay Compensation"
             ]
         );

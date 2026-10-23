@@ -139,7 +139,7 @@ impl<'r> Planner<'r> {
     }
 
     /// Removes device `key`, its song track (first) and its cables.
-    fn remove_device(&mut self, key: &DeviceKey) -> Result<(), ModelError> {
+    pub(crate) fn remove_device(&mut self, key: &DeviceKey) -> Result<(), ModelError> {
         if let Some(t) = self
             .scratch
             .song
@@ -286,7 +286,10 @@ fn main_cables(master: &DeviceKey, output_channels: u16) -> Vec<Cable> {
 }
 
 /// Master `main_l/r` → interface `out_1/2`, replacing other cables there (rule 6).
-fn wire_master_to_interface(p: &mut Planner<'_>, master: &DeviceKey) -> Result<(), ModelError> {
+pub(crate) fn wire_master_to_interface(
+    p: &mut Planner<'_>,
+    master: &DeviceKey,
+) -> Result<(), ModelError> {
     for cable in main_cables(master, p.doc().output_channels) {
         let (out, main) = (cable.to.clone(), cable.from.clone());
         p.disconnect_where(|c| c.to == out && c.from != main);
@@ -333,7 +336,7 @@ fn new_master_edits(doc: &RackDoc, index: usize, name: &str) -> (DeviceKey, [Edi
 }
 
 /// The console master, created (rule 1) when missing.
-fn ensure_master(p: &mut Planner<'_>) -> Result<DeviceKey, ModelError> {
+pub(crate) fn ensure_master(p: &mut Planner<'_>) -> Result<DeviceKey, ModelError> {
     if let Some(m) = &p.doc().console.master {
         return Ok(m.clone());
     }
@@ -514,6 +517,10 @@ fn remove_channel_at(p: &mut Planner<'_>, index: usize) -> Result<(), ModelError
 pub(crate) fn remove_device(p: &mut Planner<'_>, key: &DeviceKey) -> Result<(), ModelError> {
     let type_id = p.type_of(key)?.to_owned();
     rules::check_deletable(p.doc(), key)?;
+    // Deleting a bus device is `DeleteBus`: its feeders move to its own destination.
+    if p.doc().console.bus_index(key).is_some() {
+        return crate::console_bus::delete_bus(p, key);
+    }
     if let Some(index) = p.doc().console.channel_index(key) {
         p.push(Edit::ConsoleChannel {
             index,
@@ -671,6 +678,22 @@ pub(crate) fn plan(
             old: console.compensation,
             new: on,
         }),
+        ConsoleCommand::CreateBus { name, dest } => {
+            crate::console_bus::create_bus(&mut p, &name, &dest)?;
+        }
+        ConsoleCommand::RenameBus { bus, name } => {
+            crate::console_bus::rename_bus(&mut p, &bus, &name)?
+        }
+        ConsoleCommand::DeleteBus { bus } => crate::console_bus::delete_bus(&mut p, &bus)?,
+        ConsoleCommand::ReorderBus { bus, to } => {
+            crate::console_bus::reorder_bus(&mut p, &bus, to)?
+        }
+        ConsoleCommand::SetOutput { strip, dest } => {
+            crate::console_bus::set_output(&mut p, &strip, &dest)?
+        }
+        ConsoleCommand::RouteToNewBus { strips, name } => {
+            crate::console_bus::route_to_new_bus(&mut p, &strips, &name)?
+        }
         ConsoleCommand::ClearSolos => clear(&mut p, "solo")?,
         ConsoleCommand::ClearMutes => clear(&mut p, "mute")?,
     }

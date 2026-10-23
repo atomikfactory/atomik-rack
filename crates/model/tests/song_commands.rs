@@ -158,6 +158,29 @@ fn set_track_flags() {
 }
 
 #[test]
+fn track_flags_batch_as_one_undo_step() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(add_track("lead"), &reg).unwrap();
+    let flags = |device: &str, armed: bool| {
+        sc(SongCommand::SetTrackFlags {
+            device: key(device),
+            muted: false,
+            solo: false,
+            armed,
+        })
+    };
+    d.apply(flags("synth", true), &reg).unwrap();
+    let before = d.doc().clone();
+    let batch = Command::Batch(vec![flags("synth", false), flags("lead", true)]);
+    assert_eq!(d.apply(batch, &reg).unwrap(), changed());
+    let t = &d.doc().song.tracks;
+    assert!(!t[0].armed && t[1].armed);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before, "one undo reverts both tracks");
+}
+
+#[test]
 fn add_automation_lane_creates_track_when_needed() {
     let reg = registry();
     let mut d = song_start(&reg);

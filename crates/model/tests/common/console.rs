@@ -724,6 +724,36 @@ static CHANNEL_SOCKETS: [SocketDescriptor; 26] = [
     socket(25, "gr_cv_out", SocketKind::Cv, Direction::Output),
 ];
 
+/// `atomik.bus`: the channel's sockets minus `in_l/in_r`, plus the summing input `bus_l/bus_r`.
+static BUS_SOCKETS: [SocketDescriptor; 26] = [
+    socket(0, "bus_l", SocketKind::Audio, Direction::SummingInput),
+    socket(1, "bus_r", SocketKind::Audio, Direction::SummingInput),
+    socket(2, "key_in", SocketKind::Audio, Direction::Input),
+    socket(3, "insert_send_l", SocketKind::Audio, Direction::Output),
+    socket(4, "insert_send_r", SocketKind::Audio, Direction::Output),
+    socket(5, "insert_return_l", SocketKind::Audio, Direction::Input),
+    socket(6, "insert_return_r", SocketKind::Audio, Direction::Input),
+    socket(7, "send1_l", SocketKind::Audio, Direction::Output),
+    socket(8, "send1_r", SocketKind::Audio, Direction::Output),
+    socket(9, "send2_l", SocketKind::Audio, Direction::Output),
+    socket(10, "send2_r", SocketKind::Audio, Direction::Output),
+    socket(11, "send3_l", SocketKind::Audio, Direction::Output),
+    socket(12, "send3_r", SocketKind::Audio, Direction::Output),
+    socket(13, "send4_l", SocketKind::Audio, Direction::Output),
+    socket(14, "send4_r", SocketKind::Audio, Direction::Output),
+    socket(15, "send5_l", SocketKind::Audio, Direction::Output),
+    socket(16, "send5_r", SocketKind::Audio, Direction::Output),
+    socket(17, "send6_l", SocketKind::Audio, Direction::Output),
+    socket(18, "send6_r", SocketKind::Audio, Direction::Output),
+    socket(19, "send7_l", SocketKind::Audio, Direction::Output),
+    socket(20, "send7_r", SocketKind::Audio, Direction::Output),
+    socket(21, "send8_l", SocketKind::Audio, Direction::Output),
+    socket(22, "send8_r", SocketKind::Audio, Direction::Output),
+    socket(23, "out_l", SocketKind::Audio, Direction::Output),
+    socket(24, "out_r", SocketKind::Audio, Direction::Output),
+    socket(25, "gr_cv_out", SocketKind::Cv, Direction::Output),
+];
+
 static MASTER_PARAMS: [ParamDescriptor; 37] = [
     param(
         0,
@@ -1236,6 +1266,17 @@ pub static CHANNEL: DeviceDescriptor = DeviceDescriptor {
     sockets: &CHANNEL_SOCKETS,
 };
 
+/// Stub `atomik.bus` (the channel's params and stages, the bus sockets).
+pub static BUS: DeviceDescriptor = DeviceDescriptor {
+    stages: &CHANNEL_STAGES,
+    type_id: "atomik.bus",
+    name: "Bus",
+    kind: DeviceKind::Mixer,
+    version: 1,
+    params: &CHANNEL_PARAMS,
+    sockets: &BUS_SOCKETS,
+};
+
 /// Stub `atomik.master`.
 pub static MASTER: DeviceDescriptor = DeviceDescriptor {
     stages: &MASTER_STAGES,
@@ -1334,6 +1375,10 @@ pub fn register_stubs(r: &mut Registry) {
         DeviceFactory {
             descriptor: &CHANNEL,
             create: || Box::new(Null(&CHANNEL)),
+        },
+        DeviceFactory {
+            descriptor: &BUS,
+            create: || Box::new(Null(&BUS)),
         },
         DeviceFactory {
             descriptor: &MASTER,

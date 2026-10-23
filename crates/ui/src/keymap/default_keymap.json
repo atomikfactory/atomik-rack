@@ -23,6 +23,7 @@
         { "command": "create.effect", "context": "global", "chords": ["Cmd+E"] },
         { "command": "create.audio_track", "context": "global", "chords": ["Cmd+T"] },
         { "command": "create.mixer_channel", "context": "global", "chords": ["Cmd+Shift+M"] },
+        { "command": "mixer.route_to_new_bus", "context": "global", "chords": ["Cmd+G"] },
         { "command": "view.toggle_browser", "context": "global", "chords": ["F3", "Cmd+F", "Cmd+B"], "os": { "mac": ["F3", "Cmd+F", "Cmd+B", "Cmd+Alt+Digit3"] } },
         { "command": "view.toggle_file_browser", "context": "global", "chords": ["F4"], "os": { "mac": ["F4", "Cmd+Alt+Digit4"] } },
         { "command": "view.focus_browser_search", "context": "global", "chords": ["Cmd+Shift+F"] },

@@ -48,6 +48,7 @@ files.select_all | files | Cmd+A
 files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
+mixer.route_to_new_bus | global | Cmd+G
 mixer.scroll_end | mixer | End, Shift+End
 mixer.scroll_home | mixer | Home, Shift+Home
 mixer.scroll_left | mixer | Left, Shift+Left

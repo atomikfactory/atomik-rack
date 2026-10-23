@@ -1,11 +1,11 @@
 //! Console links and the output display: which cables the rack hides by
-//! default (the channel to master links, classified by `atomik_model::link_kind`) and the label
-//! "Output: Master" a channel shows instead, computed from the document by the model's
-//! `output_dest`. Pure functions of the document; the view caches the result per sync.
+//! default (the console links of channels and buses, classified by `atomik_model::link_kind`) and
+//! the label "Output: Master" / "Output: Bus Drums" / "Output: Audio I/O 3+4" a channel or bus
+//! shows instead, computed from the document by the model's `output_dest`. Pure functions of the document; the view caches the result per sync.
 
 use crate::interface::interface_descriptor;
 use atomik_device_sdk::Registry;
-use atomik_model::console::CHANNEL_TYPE;
+use atomik_model::console::{BUS_TYPE, CHANNEL_TYPE};
 use atomik_model::{
     Cable, DeviceKey, INTERFACE_KEY, OutputDest, RackDoc, SocketRef, link_kind, output_dest,
 };
@@ -16,7 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct OutputDisplay {
     /// The label, e.g. `Output: Master`.
     pub text: String,
-    /// The output leaves the master: painted in the warning colour.
+    /// The output was cabled by hand to somewhere that is not the master, a bus or an Audio I/O
+    /// stereo pair: painted in the warning colour.
     pub warn: bool,
     /// The tooltip (only for an output that leaves the master).
     pub tooltip: Option<String>,
@@ -31,12 +32,14 @@ pub fn links_of(doc: &RackDoc) -> BTreeSet<Cable> {
         .collect()
 }
 
-fn is_channel(doc: &RackDoc, key: &DeviceKey) -> bool {
+/// A console strip: a channel or an output bus.
+fn is_strip(doc: &RackDoc, key: &DeviceKey) -> bool {
     doc.console.channels.iter().any(|c| &c.channel == key)
+        || doc.console.bus_index(key).is_some()
         || doc
             .devices
             .iter()
-            .any(|d| &d.key == key && d.type_id == CHANNEL_TYPE)
+            .any(|d| &d.key == key && (d.type_id == CHANNEL_TYPE || d.type_id == BUS_TYPE))
 }
 
 /// The short name of a socket: its descriptor name without a leading "Output " ("Output 3" is
@@ -91,18 +94,37 @@ fn destinations_text(doc: &RackDoc, registry: &Registry, to: &[SocketRef]) -> St
         .join(" + ")
 }
 
-/// The output display of channel `key`, `None` for a device that is not a channel.
+/// The output display of channel or bus `key`, `None` for a device that is neither.
 pub fn channel_display(
     doc: &RackDoc,
     registry: &Registry,
     key: &DeviceKey,
 ) -> Option<OutputDisplay> {
-    if !is_channel(doc, key) {
+    if !is_strip(doc, key) {
         return None;
     }
     Some(match output_dest(doc, key) {
         OutputDest::Master => OutputDisplay {
             text: "Output: Master".into(),
+            warn: false,
+            tooltip: None,
+        },
+        OutputDest::Bus(bus) => {
+            let name = doc
+                .console
+                .buses
+                .iter()
+                .find(|b| b.bus == bus)
+                .map_or(bus.0.as_str(), |b| b.name.as_str());
+            OutputDisplay {
+                text: format!("Output: Bus {name}"),
+                warn: false,
+                tooltip: None,
+            }
+        }
+        // A stereo pair of the interface is a first-class destination: no warning.
+        OutputDest::AudioIo(n) => OutputDisplay {
+            text: format!("Output: Audio I/O {}+{}", 2 * n - 1, 2 * n),
             warn: false,
             tooltip: None,
         },

@@ -372,16 +372,11 @@ fn add_channel_lists_instruments_without_a_channel() {
 }
 
 #[test]
-fn right_click_on_a_name_removes_the_channel() {
+fn right_click_on_a_name_does_not_remove_the_channel() {
     let (doc, reg, mut v) = setup();
     let p = v.name_center(&key("ch-lead")).unwrap();
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
-    assert_eq!(
-        console_cmds(&a),
-        [ConsoleCommand::RemoveChannel {
-            channel: key("ch-lead")
-        }]
-    );
+    assert!(a.is_empty(), "{a:?}");
 }
 
 #[test]
@@ -977,7 +972,7 @@ fn a_command_chord_is_never_typed_into_the_name() {
 }
 
 #[test]
-fn a_pointer_press_or_losing_the_focus_ends_the_edit_without_renaming() {
+fn a_pointer_press_elsewhere_commits_the_edit_and_losing_the_focus_cancels_it() {
     let (doc, reg, mut v) = setup();
     assert!(v.begin_rename(&key("ch-lead")));
     typed(&mut v, &doc, &reg, Key::Char('q'));
@@ -986,10 +981,12 @@ fn a_pointer_press_or_losing_the_focus_ends_the_edit_without_renaming() {
     assert!(
         commands(&a)
             .iter()
-            .all(|c| !matches!(c, Command::Rename { .. }))
+            .any(|c| matches!(c, Command::Rename { .. })),
+        "a press elsewhere commits like Enter"
     );
     assert!(!v.is_text_owner());
     assert!(v.begin_rename(&key("ch-lead")));
+    typed(&mut v, &doc, &reg, Key::Char('q'));
     v.set_focused(false);
     assert!(!v.is_text_owner());
 }
