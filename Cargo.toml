@@ -33,6 +33,12 @@ atomik-plugin-scan = { path = "crates/plugin-scan" }
 atomik-test-clap-shell = { path = "crates/testplugins/clap-shell" }
 atomik-plugin-vst3 = { path = "crates/plugin-vst3" }
 atomik-test-vst3-shell = { path = "crates/testplugins/vst3-shell" }
+atomik-plugin-ipc = { path = "crates/plugin-ipc" }
+atomik-plugin-sandbox = { path = "crates/plugin-sandbox" }
+atomik-plugin-hostd = { path = "crates/plugin-hostd" }
+memmap2 = "0.9.11"
+libc = "0.2.190"
+windows-sys = "0.61.2"
 rtrb = "0.4.0"
 cpal = "0.18.2"
 midir = "0.11.1"

@@ -1,0 +1,42 @@
+[package]
+name = "atomik-plugin-ipc"
+description = "Atomik Rack plugin sandbox wire: the shared audio block, the doorbell and the control-channel messages."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-plugin-host.workspace = true
+memmap2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+atomik-testkit.workspace = true
+proptest.workspace = true
+
+# The one sandbox crate allowed `unsafe` (the mapping and the OS wake-up calls); every block
+# carries a `SAFETY:` comment.
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+float_cmp = "deny"
+disallowed_types = "deny"
+disallowed_methods = "deny"
+undocumented_unsafe_blocks = "deny"
