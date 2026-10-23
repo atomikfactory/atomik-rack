@@ -17,6 +17,8 @@ atomik-device-sdk.workspace = true
 atomik-model.workspace = true
 vello.workspace = true
 parley.workspace = true
+# Optional CPU rasteriser (feature `cpu-canvas`): PNG previews, snapshots and MCP screenshots.
+vello_cpu = { workspace = true, optional = true }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,10 +27,13 @@ serde_json.workspace = true
 atomik-devices.workspace = true
 atomik-plugin-host.workspace = true
 atomik-dsp.workspace = true
-vello_cpu.workspace = true
+# This crate's own tests use the CPU canvas (tests/support/cpu.rs).
+atomik-ui = { path = ".", features = ["cpu-canvas"] }
 proptest.workspace = true
 
 [features]
+# `cpu_canvas::CpuCanvas`: a `vello_cpu` Canvas for PNG previews, snapshots and screenshots.
+cpu-canvas = ["dep:vello_cpu"]
 # The `KeyScript` test driver (keymap::script), for the key-script tests of other crates.
 testkit = []
 

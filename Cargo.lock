@@ -646,6 +646,7 @@ dependencies = [
  "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
+ "atomik-ui",
  "parley",
  "proptest",
  "serde",
