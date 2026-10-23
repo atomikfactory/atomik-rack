@@ -442,6 +442,17 @@ mod tests {
     }
 
     #[test]
+    fn plugins_run_in_a_separate_process_by_default_and_old_files_keep_that() {
+        assert!(AudioSettings::default().plugins.sandbox);
+        let old = AudioSettings::from_json(r#"{"plugins": {"enabled": true}}"#).unwrap();
+        assert!(old.plugins.sandbox, "a file from before the sandbox: on");
+        let off = AudioSettings::from_json(r#"{"plugins": {"sandbox": false}}"#).unwrap();
+        assert!(!off.plugins.sandbox);
+        let saved = AudioSettings::from_json(&off.to_json()).unwrap();
+        assert!(!saved.plugins.sandbox, "the switch is saved");
+    }
+
+    #[test]
     fn json_round_trips() {
         let s = AudioSettings {
             host: HostChoice::Asio,
@@ -459,6 +470,7 @@ mod tests {
                 extra_paths: vec![PathBuf::from("D:/Plugins/CLAP")],
                 timeout_secs: 60,
                 disabled: ["clap.vendor.broken".to_string()].into(),
+                sandbox: false,
             },
         };
         let json = s.to_json();

@@ -29,6 +29,7 @@ fn a_real_plugin_added_from_the_browser_becomes_live_with_an_editor() {
         paths: PluginPaths::default(),
         runner: None,
         previous_crash: None,
+        isolation: None,
     });
     let entry = core
         .plugin_catalog()
@@ -94,6 +95,7 @@ fn a_real_plugin_goes_live_through_a_live_session_at_the_frame_cadence() {
         paths: PluginPaths::default(),
         runner: None,
         previous_crash: None,
+        isolation: None,
     });
     println!(
         "audio running={} error={:?}",
@@ -213,6 +215,7 @@ fn a_big_scan_cache_loads_and_registers_quickly() {
         paths: PluginPaths::default(),
         runner: None,
         previous_crash: None,
+        isolation: None,
     });
     println!(
         "configure (catalog of {}) in {:?}",

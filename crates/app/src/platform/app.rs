@@ -71,11 +71,17 @@ pub fn run(cli: Cli) -> Result<(), String> {
     if cli.stress_plugins {
         plugin_settings.enabled = true;
     }
+    let plugin_settings_sandbox = plugin_settings.sandbox;
     let mut plugin_config = plugin_setup::plugin_config(
         plugin_settings,
         settings_path.as_deref().and_then(std::path::Path::parent),
         exe.as_deref().map(plugin_setup::scanner_command),
     );
+    // Where plugins run is read once, here: the Settings switch applies at the next start.
+    plugin_config.isolation = Some(plugin_setup::plugin_isolation(
+        plugin_settings_sandbox,
+        exe.as_deref(),
+    ));
     if cli.stress_plugins
         && let Some(exe) = exe.as_deref()
     {
@@ -569,6 +575,10 @@ impl ApplicationHandler for App {
         {
             self.native = super::native_menu::NativeMenus::attach(&self.shell.menu_model());
         }
+        // The owner of the editors that live in a plugin's own process (sandbox).
+        self.shell
+            .core_mut()
+            .set_plugin_editor_owner(super::plugin_windows::owner_of(&window));
         self.window = Some(Arc::clone(&window));
         self.update_title();
         if self.screenshot_at.is_none()

@@ -1305,19 +1305,13 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         if self.plugin_settings.is_some() {
-            // The Plugins modal takes every event; Esc closes it (or its warning, which the
-            // view answers itself).
+            // The Plugins modal takes every event; Esc closes it.
             self.repaint = true;
-            let warning = self
-                .plugin_settings
-                .as_ref()
-                .is_some_and(PluginSettingsView::is_warning_open);
             if let UiEvent::Key {
                 key: Key::Escape,
                 pressed: true,
                 ..
             } = event
-                && !warning
             {
                 self.plugin_settings = None;
                 return Vec::new();

@@ -53,6 +53,7 @@ pub fn config(enabled: bool, packages: &[&str]) -> PluginConfig {
         paths: PluginPaths::default(),
         runner: None,
         previous_crash: None,
+        isolation: None,
     }
 }
 

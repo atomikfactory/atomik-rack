@@ -1900,6 +1900,10 @@ mod plugins_real_tests;
 mod plugins_latency_tests;
 
 #[cfg(test)]
+#[path = "app_core_plugins_sandbox_tests.rs"]
+mod plugins_sandbox_tests;
+
+#[cfg(test)]
 #[path = "app_core_tests.rs"]
 mod tests;
 

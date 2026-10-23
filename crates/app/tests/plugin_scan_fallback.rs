@@ -51,7 +51,7 @@ fn lonely_exe(dir: &Path) -> PathBuf {
 
 fn core_scanning(exe: &Path, folders: Vec<PathBuf>) -> AppCore<LiveSession<SystemBackend>> {
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     settings.extra_paths = folders;
     settings.set_timeout_secs(60);
     let config: PluginConfig = plugin_config(settings, None, Some(scanner_command(exe)));

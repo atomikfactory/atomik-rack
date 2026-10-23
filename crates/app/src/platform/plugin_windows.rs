@@ -71,6 +71,12 @@ fn native_parent(window: &Window) -> Result<NativeParent, String> {
     parent_from_raw(handle.as_raw())
 }
 
+/// The native handle of the app's main window, the owner of the editors that a plugin's own
+/// process shows; `None` where there is none to give (a Wayland session).
+pub(super) fn owner_of(window: &Window) -> Option<NativeParent> {
+    native_parent(window).ok()
+}
+
 impl PluginWindows {
     /// Whether `id` is one of the editor windows.
     pub(super) fn owns(&self, id: WindowId) -> bool {

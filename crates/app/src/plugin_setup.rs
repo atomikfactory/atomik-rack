@@ -1,5 +1,6 @@
 //! Start-up wiring of the plugin machinery: where the files live, where the
-//! scanner program is, and the in-repo test plugins for `--stress-plugins`.
+//! scanner program and the sandbox child program (`atomik-plugin-host`, or the app itself with
+//! `--plugin-host`) are, where plugins run, and the in-repo test plugins for `--stress-plugins`.
 //!
 //! The app never loads an unscanned plugin in its own process: the scanner is the
 //! `atomik-plugin-scan` program next to the app's executable, run once per file with a hard
@@ -11,6 +12,8 @@ use atomik_plugin_host::{
     CachedFile, ChildScanner, CrashJournal, FileStamp, PluginCache, PluginSettings,
     SCANNER_VERSION, ScanRunner, ScannerCommand,
 };
+use atomik_plugin_sandbox::HostCommand;
+use atomik_render::plugins::PluginIsolation;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -45,6 +48,38 @@ pub fn scanner_command(exe: &Path) -> ScannerCommand {
     }
 }
 
+/// The hidden first argument that makes the app run as a sandbox child (the code of the
+/// `atomik-plugin-host` program) when that program is not beside it.
+pub const PLUGIN_HOST_FLAG: &str = "--plugin-host";
+
+/// How to start a sandbox child for the app executable `exe`: the `atomik-plugin-host` program
+/// beside it when it is there (preferred), else the executable itself with the hidden
+/// `--plugin-host` argument, which runs the same child code.
+pub fn plugin_host_command(exe: &Path) -> HostCommand {
+    match atomik_render::plugins::locate_host_program(exe) {
+        Some(program) => HostCommand::new(program),
+        None => {
+            let mut command = HostCommand::new(exe);
+            command.args.push(PLUGIN_HOST_FLAG.into());
+            command
+        }
+    }
+}
+
+/// Where plugins run for this start: in child processes when the setting is on and the app's
+/// executable `exe` is known (the child is found from it), else in this process. Read once at
+/// start: a change in Settings applies at the next start.
+pub fn plugin_isolation(sandbox: bool, exe: Option<&Path>) -> PluginIsolation {
+    match exe {
+        Some(exe) if sandbox => PluginIsolation::Sandbox {
+            command: plugin_host_command(exe),
+            // The live app: a late result is dry or silence for that batch.
+            bounce: false,
+        },
+        _ => PluginIsolation::InProcess,
+    }
+}
+
 /// The plugin config for a run: the cache and the crash journal read from `config_dir` (a missing
 /// directory or file is an empty start), the recovery folder, and the real scanner when
 /// `scanner` is given. Reading the journal removes it, so an unclean exit is reported once.
@@ -69,6 +104,7 @@ pub fn plugin_config(
         paths,
         runner: scanner.map(|command| Arc::new(ChildScanner::new(command)) as Arc<dyn ScanRunner>),
         previous_crash,
+        isolation: None,
     }
 }
 
@@ -249,6 +285,55 @@ mod tests {
         assert_eq!(preferred.program, scanner);
         assert!(preferred.args.is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_plugin_host_command_prefers_the_program_and_falls_back_to_the_app_itself() {
+        let dir = temp("setup-host-command");
+        let exe = dir.join(if cfg!(windows) {
+            "atomik.exe"
+        } else {
+            "atomik"
+        });
+        // No child program beside the app: the app runs itself with the hidden argument.
+        let fallback = plugin_host_command(&exe);
+        assert_eq!(fallback.program, exe);
+        assert_eq!(
+            fallback.args,
+            vec![std::ffi::OsString::from("--plugin-host")]
+        );
+        assert_eq!(PLUGIN_HOST_FLAG, "--plugin-host");
+        // The program beside the app is preferred and needs no argument.
+        let program = dir.join(if cfg!(windows) {
+            "atomik-plugin-host.exe"
+        } else {
+            "atomik-plugin-host"
+        });
+        std::fs::write(&program, b"x").unwrap();
+        let preferred = plugin_host_command(&exe);
+        assert_eq!(preferred.program, program);
+        assert!(preferred.args.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_sandbox_setting_picks_where_plugins_run_at_start() {
+        let exe = Path::new("D:/apps/atomik.exe");
+        let sandboxed = plugin_isolation(true, Some(exe));
+        assert_eq!(
+            sandboxed,
+            PluginIsolation::Sandbox {
+                command: plugin_host_command(exe),
+                bounce: false
+            },
+            "on: the same command as the child program lookup"
+        );
+        assert_eq!(
+            plugin_isolation(false, Some(exe)),
+            PluginIsolation::InProcess
+        );
+        // Without an executable path there is no way to start a child.
+        assert_eq!(plugin_isolation(true, None), PluginIsolation::InProcess);
     }
 
     #[test]
