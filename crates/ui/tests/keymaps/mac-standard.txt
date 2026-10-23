@@ -87,6 +87,7 @@ tool.razor | sequencer | R
 tool.razor | editor | R
 tool.select | sequencer | Q
 tool.select | editor | Q
+transport.add_marker | global | Shift+M
 transport.bar_back | global | Numpad7
 transport.bar_forward | global | Numpad8
 transport.forward_bar | global | Numpad5
@@ -97,8 +98,10 @@ transport.loop | global | L, NumpadDiv
 transport.loop_and_play | sequencer | P
 transport.loop_to_selection | sequencer | Cmd+L
 transport.metronome | global | C, Numpad9
+transport.next_marker | global | .
 transport.play | global | NumpadEnter
 transport.play_stop | global | Space
+transport.prev_marker | global | ,
 transport.record | global | Cmd+Enter, Cmd+Space, NumpadMul
 transport.rewind_bar | global | Numpad4
 transport.stop | global | Shift+Enter, Numpad0

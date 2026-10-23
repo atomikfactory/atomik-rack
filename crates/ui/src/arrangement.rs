@@ -22,6 +22,7 @@ use crate::audio::{self, InputSel, TempoMap};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, Roles};
+use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
@@ -42,8 +43,10 @@ use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
+mod markers;
 mod tempo;
 
+pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
 pub use tempo::TempoMenu;
 
 /// Width of the track list.
@@ -184,6 +187,14 @@ enum Hit {
     TempoLane,
     /// The meter tag of change `i` in the ruler.
     MeterTag(usize),
+    /// The marker strip away from its markers and ranges (`true`: the row of markers).
+    MarkerStrip(bool),
+    /// A marker of the strip.
+    Marker(u32),
+    /// A range of the strip, and the part of it under the pointer.
+    Range(u32, RangePart),
+    /// The marker list.
+    Panel(markers::ListHit),
     Button(usize, TrackButton),
     Header(usize),
     AddTrack(DeviceKey),
@@ -331,6 +342,8 @@ enum Drag {
         emitted: bool,
         last: Vec<MeterEvent>,
     },
+    /// Moving or resizing a marker or range ([`markers::MarkDrag`] holds the gesture).
+    Mark,
     Pan {
         last: Point,
     },
@@ -408,6 +421,11 @@ pub struct ArrangementView {
     ctx_bar: u32,
     ctx_tempo: Option<usize>,
     ctx_meter: Option<usize>,
+    /// The marker strip, the marker list and their state.
+    mk: markers::MarkerUi,
+    /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
+    /// docked at the right edge.
+    outer: Rect,
     input_channels: u16,
     audio_headers: Vec<AudioHeader>,
     drop_hover: Option<DropHover>,
@@ -471,6 +489,8 @@ impl ArrangementView {
             ctx_bar: 1,
             ctx_tempo: None,
             ctx_meter: None,
+            mk: markers::MarkerUi::default(),
+            outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
             audio_headers: Vec::new(),
             drop_hover: None,
@@ -481,6 +501,20 @@ impl ArrangementView {
 
     /// Places the view in the window (logical pixels).
     pub fn set_bounds(&mut self, bounds: Rect) {
+        self.outer = bounds;
+        self.apply_bounds();
+    }
+
+    /// Sets the timeline's rectangle from the whole one: the marker list, when shown, takes its
+    /// width off the right edge.
+    fn apply_bounds(&mut self) {
+        let o = self.outer;
+        let bounds = if self.mk.list {
+            let x1 = (o.x1 - markers::MARKER_LIST_WIDTH).max(o.x0 + TRACK_LIST_WIDTH + 64.0);
+            Rect::new(o.x0, o.y0, x1.min(o.x1), o.y1)
+        } else {
+            o
+        };
         if bounds != self.bounds {
             self.bounds = bounds;
             self.axis.x0 = bounds.x0 + TRACK_LIST_WIDTH;
@@ -489,9 +523,13 @@ impl ArrangementView {
         }
     }
 
-    /// The view's rectangle (logical pixels).
+    /// The view's rectangle (logical pixels), the marker list included.
+    #[allow(
+        clippy::misnamed_getters,
+        reason = "`bounds` is the timeline part of the whole rectangle"
+    )]
     pub fn bounds(&self) -> Rect {
-        self.bounds
+        self.outer
     }
 
     /// Sets the display scale factor (also set by [`UiEvent::ScaleChanged`]).
@@ -530,6 +568,9 @@ impl ArrangementView {
         if focused != self.focused {
             self.focused = focused;
             self.repaint = true;
+        }
+        if !focused {
+            self.marker_blur();
         }
     }
 
@@ -1025,6 +1066,7 @@ impl ArrangementView {
         let (tempos, meters) = (song.tempo.len(), song.meter.len());
         self.tempo_sel = self.tempo_sel.filter(|i| *i < tempos);
         self.meter_sel = self.meter_sel.filter(|i| *i < meters);
+        self.marker_sync();
         self.clamp_scroll();
     }
 
@@ -1035,8 +1077,18 @@ impl ArrangementView {
         self.bounds.y0 + RULER_HEIGHT
     }
 
-    fn lanes_top(&self) -> f64 {
+    /// The bottom of the marker strip (the ruler's bottom when it is hidden).
+    fn markers_bottom(&self) -> f64 {
         self.ruler_bottom()
+            + if self.mk.strip {
+                MARKER_STRIP_HEIGHT
+            } else {
+                0.0
+            }
+    }
+
+    fn lanes_top(&self) -> f64 {
+        self.markers_bottom()
             + if self.tempo_lane {
                 TEMPO_LANE_HEIGHT
             } else {
@@ -1048,7 +1100,7 @@ impl ArrangementView {
     fn tempo_rect(&self) -> Rect {
         Rect::new(
             self.axis.x0,
-            self.ruler_bottom(),
+            self.markers_bottom(),
             self.bounds.x1.max(self.axis.x0),
             self.lanes_top(),
         )
@@ -1232,6 +1284,9 @@ impl ArrangementView {
                 return Hit::Empty;
             }
         }
+        if self.mk.list && self.marker_list_rect().contains(pos) {
+            return Hit::Panel(self.list_hit(pos));
+        }
         if !self.bounds.contains(pos) {
             return Hit::Empty;
         }
@@ -1262,6 +1317,13 @@ impl ArrangementView {
                 return Hit::RulerLabel;
             }
             return Hit::LoopBand;
+        }
+        if pos.y < self.markers_bottom() {
+            // The marker strip (only when it is shown).
+            if pos.x < tl.x0 {
+                return Hit::Empty;
+            }
+            return self.strip_hit(pos);
         }
         if pos.y < self.lanes_top() {
             // The tempo lane (only when it is shown).
@@ -1501,6 +1563,9 @@ impl ArrangementView {
             return;
         }
         let hit = self.hit(pos);
+        if self.rename_press(pos, out) {
+            return;
+        }
         if let Some(m) = self.menu.take() {
             if let Hit::Menu(i) = hit
                 && button == PointerButton::Primary
@@ -1530,7 +1595,16 @@ impl ArrangementView {
             self.tempo_sel = None;
             self.meter_sel = None;
         }
+        if !matches!(hit, Hit::Marker(_) | Hit::Range(..) | Hit::Panel(_)) {
+            self.mk.sel = None;
+        }
         match hit {
+            Hit::Marker(id) => self.marker_down(id, pos, button, clicks, tool, out),
+            Hit::Range(id, part) => self.range_down(id, part, pos, button, clicks, tool, out),
+            Hit::MarkerStrip(row) => {
+                self.strip_down(row, pos, button, modifiers, clicks, tool, out);
+            }
+            Hit::Panel(h) => self.list_down(h, pos, button, clicks, out),
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
             Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
             Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
@@ -2077,6 +2151,11 @@ impl ArrangementView {
             self.tempo_drag_move(pos, modifiers, out);
             return;
         }
+        if matches!(self.drag, Drag::Mark) {
+            let actions = self.marker_drag_move(pos, modifiers);
+            out.extend(actions);
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
@@ -2086,7 +2165,8 @@ impl ArrangementView {
             | Drag::Pan { .. }
             | Drag::HScroll { .. }
             | Drag::TempoPoint { .. }
-            | Drag::Meter { .. } => {}
+            | Drag::Meter { .. }
+            | Drag::Mark => {}
             Drag::Move {
                 start,
                 grabbed_start,
@@ -2289,6 +2369,7 @@ impl ArrangementView {
         self.repaint = true;
         match drag {
             Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } => {}
+            Drag::Mark => self.marker_drag_up(out),
             Drag::Move {
                 emitted,
                 moved,
@@ -2362,6 +2443,9 @@ impl ArrangementView {
 
     fn wheel(&mut self, dx: f64, dy: f64, pos: Point, modifiers: Modifiers) {
         self.repaint = true;
+        if self.list_wheel(dy, pos) {
+            return;
+        }
         if let Some(m) = &mut self.menu
             && m.rect().contains(pos)
         {
@@ -2394,6 +2478,10 @@ impl ArrangementView {
     /// ([`Self::command`]), so a remap or a context really applies.
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        if self.mk.rename.is_some() {
+            self.rename_key(key, modifiers, out);
+            return;
+        }
         if modifiers.command() {
             return;
         }
@@ -2410,6 +2498,7 @@ impl ArrangementView {
                     self.point_sel = None;
                     self.tempo_sel = None;
                     self.meter_sel = None;
+                    self.mk.sel = None;
                 }
             }
             Key::Home => {
@@ -2447,6 +2536,9 @@ impl ArrangementView {
             return CommandOutcome::Handled(Vec::new());
         }
         if let Some(outcome) = self.tempo_command(id, arg) {
+            return outcome;
+        }
+        if let Some(outcome) = self.marker_command(id, arg) {
             return outcome;
         }
         match id {
@@ -2713,6 +2805,10 @@ impl ArrangementView {
         if matches!(self.drag, Drag::TempoPoint { .. } | Drag::Meter { .. }) {
             return self.cancel_tempo_drag(out);
         }
+        if matches!(self.drag, Drag::Mark) {
+            self.drag = Drag::None;
+            return self.marker_cancel_drag(out);
+        }
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Move {
                 originals,
@@ -2778,10 +2874,11 @@ impl ArrangementView {
         self.sync(doc, registry);
         let b = self.bounds;
         canvas.push_transform(Affine::scale(self.scale));
-        canvas.push_clip(&b.into());
-        sp::rect(canvas, b, self.st.background);
+        canvas.push_clip(&self.outer.into());
+        sp::rect(canvas, self.outer, self.st.background);
         let tl = self.timeline_rect();
         self.paint_lanes(canvas, doc, tl);
+        self.paint_marker_strip(canvas);
         self.paint_tempo_lane(canvas);
         self.paint_ruler(canvas);
         self.paint_track_list(canvas, doc);
@@ -2790,6 +2887,7 @@ impl ArrangementView {
         let sep = self.st.separator;
         sp::line(canvas, tl.x0 - 0.5, b.y0, tl.x0 - 0.5, b.y1, sep);
         sp::line(canvas, b.x0, tl.y0 - 0.5, b.x1, tl.y0 - 0.5, sep);
+        self.paint_marker_list(canvas);
         if let Some(m) = &self.menu {
             paint_menu(canvas, &self.st, m);
         }

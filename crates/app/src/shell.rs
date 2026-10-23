@@ -425,10 +425,12 @@ impl<B: AudioBackend> Shell<B> {
             view.set_show_console_links(shell.ui.show_console_links);
             view.set_navigator_visible(shell.ui.show_rack_navigator);
         }
-        shell
-            .core
-            .arrangement_mut()
-            .set_tempo_lane(shell.ui.show_tempo_lane);
+        {
+            let arrangement = shell.core.arrangement_mut();
+            arrangement.set_tempo_lane(shell.ui.show_tempo_lane);
+            arrangement.set_marker_strip(shell.ui.show_marker_strip);
+            arrangement.set_marker_list(shell.ui.show_marker_list);
+        }
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
@@ -776,6 +778,9 @@ impl<B: AudioBackend> Shell<B> {
                     ContextStack::new(&[Context::Rack])
                 }
             }
+            Pane::Arrangement if self.core.arrangement().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Sequencer])
+            }
             Pane::Arrangement => ContextStack::new(&[Context::Sequencer]),
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
             Pane::SeqEditor if self.core.seq_editor().is_text_owner() => {
@@ -833,6 +838,8 @@ impl<B: AudioBackend> Shell<B> {
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
+            marker_strip: self.core.arrangement().marker_strip_visible(),
+            marker_list: self.core.arrangement().marker_list_visible(),
             rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
             sequencer_only: self.in_sequencer_only(),
@@ -1831,6 +1838,7 @@ impl<B: AudioBackend> Shell<B> {
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
             meter_can_delete: core.arrangement().meter_change_deletable(),
+            marker_selection: !clips.is_empty(),
         }
     }
 
@@ -2361,6 +2369,33 @@ impl<B: AudioBackend> Shell<B> {
                 self.save_ui_state();
                 Vec::new()
             }
+            AppCommand::ToggleMarkerStrip => {
+                let show = !self.core.arrangement().marker_strip_visible();
+                self.core.arrangement_mut().set_marker_strip(show);
+                self.ui.show_marker_strip = show;
+                self.save_ui_state();
+                Vec::new()
+            }
+            AppCommand::ToggleMarkerList => {
+                let show = !self.core.arrangement().marker_list_visible();
+                self.core.arrangement_mut().set_marker_list(show);
+                self.ui.show_marker_list = show;
+                self.save_ui_state();
+                Vec::new()
+            }
+            // The marker commands live in the arrangement view: the menu runs them there, so
+            // a menu item and a key do the same thing wherever the focus is.
+            AppCommand::AddMarker
+            | AppCommand::AddRangeFromLoop
+            | AppCommand::PreviousMarker
+            | AppCommand::NextMarker => {
+                if let Some((id, arg)) = command.command_id()
+                    && let Some(actions) = self.core.pane_command(Pane::Arrangement, id, arg)
+                {
+                    self.pane_actions(&actions);
+                }
+                Vec::new()
+            }
             AppCommand::ToggleRackNavigator => {
                 let view = self.core.view_mut();
                 let show = !view.navigator_visible();
@@ -2873,3 +2908,7 @@ mod editor_keys_tests;
 #[cfg(test)]
 #[path = "shell_tempo_tests.rs"]
 mod tempo_tests;
+
+#[cfg(test)]
+#[path = "shell_marker_tests.rs"]
+mod marker_tests;

@@ -87,6 +87,20 @@ pub enum AppCommand {
     /// View > Tempo Lane: the tempo curve lane between the ruler and the track lanes in the
     /// arrangement (saved with the view state).
     ToggleTempoLane,
+    /// View > Marker Strip: the strip of markers and ranges under the arrangement's ruler
+    /// (saved with the view state).
+    ToggleMarkerStrip,
+    /// View > Marker List: the list of markers and ranges docked at the right edge of the
+    /// arrangement (saved with the view state).
+    ToggleMarkerList,
+    /// Transport > Add Marker: a marker at the playhead.
+    AddMarker,
+    /// Transport > Add Range Marker from Loop.
+    AddRangeFromLoop,
+    /// Transport > Previous Marker: the playhead goes to the marker before it.
+    PreviousMarker,
+    /// Transport > Next Marker: the playhead goes to the marker after it.
+    NextMarker,
     /// Mixer ▸ Console (F5): swap the arrangement and the console in the lower pane.
     ToggleConsole,
     /// Mixer ▸ Maximise Console (Shift+F5): the console over the rack, or back.
@@ -175,6 +189,12 @@ impl AppCommand {
             AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
+            AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
+            AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
+            AppCommand::AddMarker => ("transport.add_marker", None),
+            AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
+            AppCommand::PreviousMarker => ("transport.prev_marker", None),
+            AppCommand::NextMarker => ("transport.next_marker", None),
             AppCommand::ToggleConsole => ("view.toggle_console", None),
             AppCommand::MaximiseConsole => ("view.maximise_console", None),
             AppCommand::AddChannel => ("mixer.add_channel", None),
@@ -248,6 +268,12 @@ impl AppCommand {
             ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
+            ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
+            ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
+            ("transport.add_marker", None) => AppCommand::AddMarker,
+            ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
+            ("transport.prev_marker", None) => AppCommand::PreviousMarker,
+            ("transport.next_marker", None) => AppCommand::NextMarker,
             ("view.toggle_console", None) => AppCommand::ToggleConsole,
             ("view.maximise_console", None) => AppCommand::MaximiseConsole,
             ("mixer.add_channel", None) => AppCommand::AddChannel,
@@ -334,6 +360,10 @@ pub struct MenuState {
     pub console_links: bool,
     /// The arrangement shows the tempo lane.
     pub tempo_lane: bool,
+    /// The arrangement shows the marker strip.
+    pub marker_strip: bool,
+    /// The arrangement shows the marker list.
+    pub marker_list: bool,
     /// The rack navigator is on.
     pub rack_navigator: bool,
     /// The rack is shown.
@@ -504,6 +534,16 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 ),
                 MenuEntry::Separator,
                 check("Tempo Lane", AppCommand::ToggleTempoLane, state.tempo_lane),
+                check(
+                    "Marker Strip",
+                    AppCommand::ToggleMarkerStrip,
+                    state.marker_strip,
+                ),
+                check(
+                    "Marker List",
+                    AppCommand::ToggleMarkerList,
+                    state.marker_list,
+                ),
             ],
         },
         Menu {
@@ -531,6 +571,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     transport(TransportAction::ToggleMetronome),
                     state.metronome,
                 ),
+                MenuEntry::Separator,
+                item("Add Marker", AppCommand::AddMarker),
+                item("Add Range Marker from Loop", AppCommand::AddRangeFromLoop),
+                item("Previous Marker", AppCommand::PreviousMarker),
+                item("Next Marker", AppCommand::NextMarker),
                 MenuEntry::Separator,
                 quantize("Input Quantize: Off", InputQuantize::Off),
                 quantize("Input Quantize: 1/8", InputQuantize::Eighth),
@@ -615,6 +660,8 @@ mod tests {
             console_devices: false,
             console_links: false,
             tempo_lane: false,
+            marker_strip: false,
+            marker_list: false,
             rack_navigator: true,
             rack: true,
             sequencer_only: false,
@@ -656,6 +703,12 @@ mod tests {
             AppCommand::ToggleConsoleDevices,
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleTempoLane,
+            AppCommand::ToggleMarkerStrip,
+            AppCommand::ToggleMarkerList,
+            AppCommand::AddMarker,
+            AppCommand::AddRangeFromLoop,
+            AppCommand::PreviousMarker,
+            AppCommand::NextMarker,
             AppCommand::ToggleConsole,
             AppCommand::MaximiseConsole,
             AppCommand::AddChannel,
@@ -1028,6 +1081,8 @@ mod tests {
                 "Show Console Devices in Rack",
                 "Show Console Links",
                 "Tempo Lane",
+                "Marker Strip",
+                "Marker List",
             ]
         );
         assert_eq!(
@@ -1084,6 +1139,8 @@ mod tests {
                 console_devices: true,
                 console_links: false,
                 tempo_lane: false,
+                marker_strip: false,
+                marker_list: false,
                 rack_navigator: true,
                 rack: true,
                 sequencer_only: false,

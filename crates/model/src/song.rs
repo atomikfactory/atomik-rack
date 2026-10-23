@@ -278,7 +278,44 @@ pub struct Song {
     pub end: i64,
     /// Next clip id to allocate.
     pub next_clip_id: u64,
+    /// Point markers, sorted by `(tick, id)`. Ticks, not time: they follow the bars when the
+    /// tempo changes.
+    pub markers: Vec<Marker>,
+    /// Named ranges (sections), sorted by `(start, id)`; they may overlap.
+    pub ranges: Vec<RangeMarker>,
 }
+
+/// A named point in the song. The id is only for telling markers apart while editing; files do
+/// not store it (a loaded song numbers its markers from 1 in file order).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Marker {
+    /// Unique among the markers.
+    pub id: u32,
+    /// Song tick, `0..=MAX_TICK`.
+    pub tick: i64,
+    /// Trimmed, non-empty, at most [`MAX_MARKER_NAME`] characters.
+    pub name: String,
+    /// Optional colour.
+    pub color: Option<[u8; 3]>,
+}
+
+/// A named section `[start, end)` of the song (Intro, Verse, ...).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeMarker {
+    /// Unique among the ranges.
+    pub id: u32,
+    /// Start tick, `0..end`.
+    pub start: i64,
+    /// End tick, at most `MAX_TICK`.
+    pub end: i64,
+    /// Trimmed, non-empty, at most [`MAX_MARKER_NAME`] characters.
+    pub name: String,
+    /// Optional colour.
+    pub color: Option<[u8; 3]>,
+}
+
+/// Longest marker or range name, in characters.
+pub const MAX_MARKER_NAME: usize = 64;
 
 /// Song edits (wrapped in `Command::Song`). Every command is undoable.
 #[derive(Debug, Clone, PartialEq)]
@@ -397,6 +434,28 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: u64,
     },
+    /// Replace the marker list (ids unique, names valid; the model sorts it by `(tick, id)`).
+    /// Reports [`crate::SyncOp::ViewChanged`] only: markers never reach the engine.
+    SetMarkers(Vec<Marker>),
+    /// [`SongCommand::SetMarkers`] for a drag: commands with the same `merge` id are one undo
+    /// step.
+    DragMarkers {
+        /// New list.
+        markers: Vec<Marker>,
+        /// Drag-merge group.
+        merge: u64,
+    },
+    /// Replace the range list (ids unique, `start < end`; sorted by `(start, id)`). Reports
+    /// [`crate::SyncOp::ViewChanged`] only.
+    SetRanges(Vec<RangeMarker>),
+    /// [`SongCommand::SetRanges`] for a drag: commands with the same `merge` id are one undo
+    /// step.
+    DragRanges {
+        /// New list.
+        ranges: Vec<RangeMarker>,
+        /// Drag-merge group.
+        merge: u64,
+    },
     /// Set the loop range and enable flag.
     SetLoop {
         /// Range `[start, end)`, start < end.
@@ -485,6 +544,8 @@ pub fn empty_song(bpm: f64) -> Song {
         loop_enabled: false,
         end: 16 * bar,
         next_clip_id: 1,
+        markers: Vec::new(),
+        ranges: Vec::new(),
     }
 }
 
@@ -526,6 +587,30 @@ impl Song {
                 .enumerate()
                 .find_map(|(lane, l)| l.clips.iter().find(|c| c.id == id).map(|c| (t, lane, c)))
         })
+    }
+
+    /// The first free marker id (above every id in use).
+    pub fn next_marker_id(&self) -> u32 {
+        self.markers.iter().map(|m| m.id).max().map_or(1, |m| m + 1)
+    }
+
+    /// The first free range id (above every id in use).
+    pub fn next_range_id(&self) -> u32 {
+        self.ranges.iter().map(|r| r.id).max().map_or(1, |r| r + 1)
+    }
+
+    /// The tick of the nearest marker strictly before `tick`.
+    pub fn prev_marker_tick(&self, tick: i64) -> Option<i64> {
+        self.markers
+            .iter()
+            .rev()
+            .map(|m| m.tick)
+            .find(|&t| t < tick)
+    }
+
+    /// The tick of the nearest marker strictly after `tick`.
+    pub fn next_marker_tick(&self, tick: i64) -> Option<i64> {
+        self.markers.iter().map(|m| m.tick).find(|&t| t > tick)
     }
 
     /// The tempo map compiled for tick <-> time maths (see [`atomik_core::TempoMap`]). A map

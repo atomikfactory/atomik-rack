@@ -9,6 +9,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Command | Atomik legacy keys | Standard keys |
 |---|---|---|
 | Import Audio | `Ctrl+I` | `Ctrl+Shift+I` |
+| Add Marker | - | `Shift+M` |
 | Back One Bar | - | `Numpad7` |
 | Fast Forward One Bar | - | `Numpad5` |
 | Forward One Bar | - | `Numpad8` |
@@ -18,8 +19,10 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Loop Selection and Play | - | `P` (sequencer) |
 | Loop to Selection | - | `Ctrl+L` (sequencer) |
 | Metronome | - | `C`, `Numpad9` |
+| Next Marker | - | `.` |
 | Play | - | `NumpadEnter` |
 | Play / Stop | `Space`, `Shift+Space` (rack, sequencer) | `Space` |
+| Previous Marker | - | `,` |
 | Record | `Ctrl+Space` (global); `R`, `Shift+R` (rack, sequencer) | `Ctrl+Enter`, `Ctrl+Space`, `NumpadMul` |
 | Return to Zero | `Enter`, `Shift+Enter` (rack, sequencer) | `NumpadDecimal`, `Enter` |
 | Rewind One Bar | - | `Numpad4` |
@@ -98,6 +101,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
+| Add Marker | global | `Shift+M` | `Shift+M` | `Shift+M` |
 | Back One Bar | global | `Numpad7` | `Numpad7` | `Numpad7` |
 | Fast Forward One Bar | global | `Numpad5` | `Numpad5` | `Numpad5` |
 | Forward One Bar | global | `Numpad8` | `Numpad8` | `Numpad8` |
@@ -107,8 +111,10 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Loop Selection and Play | sequencer | `P` | `P` | `P` |
 | Loop to Selection | sequencer | `Ctrl+L` | `Cmd+L` | `Ctrl+L` |
 | Metronome | global | `C`, `Numpad9` | `C`, `Numpad9` | `C`, `Numpad9` |
+| Next Marker | global | `.` | `.` | `.` |
 | Play | global | `NumpadEnter` | `NumpadEnter` | `NumpadEnter` |
 | Play / Stop | global | `Space` | `Space` | `Space` |
+| Previous Marker | global | `,` | `,` | `,` |
 | Record | global | `Ctrl+Enter`, `Ctrl+Space`, `NumpadMul` | `Cmd+Enter`, `Cmd+Space`, `NumpadMul` | `Ctrl+Enter`, `Ctrl+Space`, `NumpadMul` |
 | Return to Zero | global | `NumpadDecimal`, `Enter` | `NumpadDecimal`, `Enter` | `NumpadDecimal`, `Enter` |
 | Rewind One Bar | global | `Numpad4` | `Numpad4` | `Numpad4` |
@@ -265,7 +271,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Select Tool | sequencer | `Q` | `Q` | `Q` |
 | Select Tool | editor | `Q` | `Q` | `Q` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Export Patch, Stress Rack, Stress Song, Add Channel, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Remove Column, Delete Meter Change, Insert Meter Change, Set Meter, Set Snap, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Input Quantize, Cables, Show Console Devices in Rack, Show Console Links, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Export Patch, Stress Rack, Stress Song, Add Channel, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Remove Column, Add Marker Here, Marker Colour, Delete Marker, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Set Snap, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Add Range Marker from Loop, Input Quantize, Cables, Show Console Devices in Rack, Show Console Links, Marker List, Marker Strip, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
 
 ## Atomik legacy keys
 
@@ -383,4 +389,4 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Stop Preview | files | `Esc` | `Esc` | `Esc` |
 | Toggle Favourite | files | `F` | `F` | `F` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Export Patch, Stress Rack, Stress Song, Add Channel, Route to New Output Bus, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Delete Meter Change, Insert Meter Change, Set Meter, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Zoom to Selection, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Play, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Export Patch, Stress Rack, Stress Song, Add Channel, Route to New Output Bus, Delay Compensation, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Remove Column, Select Next Device, Select Previous Device, Follow Playhead, Join, Add Marker Here, Marker Colour, Delete Marker, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Open Clip, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Snap, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Zoom to Selection, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Add Marker, Add Range Marker from Loop, Back One Bar, Forward One Bar, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Next Marker, Play, Previous Marker, Rewind One Bar, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Focus Browser Search, Sequencer Only, Show Console Devices in Rack, Show Console Links, Clip Editor, Marker List, Marker Strip, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.

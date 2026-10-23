@@ -352,6 +352,8 @@ mod tests {
             console_devices: false,
             console_links: false,
             tempo_lane: false,
+            marker_strip: false,
+            marker_list: false,
             rack_navigator: true,
             rack: true,
             sequencer_only: false,

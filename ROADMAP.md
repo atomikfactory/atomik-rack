@@ -4,7 +4,7 @@ This is a list of intentions, not promises. There are no dates. The phases are i
 
 ## Done so far
 
-The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
+The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), named markers and range markers with a marker list, and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 
@@ -17,7 +17,6 @@ The plugin sandbox (each plugin instance in its own process), release pipeline a
 
 ## Phase 2: The sequencer
 
-- **Markers and locators.** Named markers in the arrangement, jump to marker, loop to a marker range.
 - **Automation recording.** Record knob moves and controller input into automation lanes, with overwrite, touch and latch behaviour, and thinning of the recorded points.
 - **MIDI controller data.** Pitch bend, aftertouch and controller lanes in the piano roll and in note clips, recorded and played back to devices and plugins.
 - **Loop recording and takes.** Record over a loop into stacked takes (note and audio), then pick or comp the best parts.

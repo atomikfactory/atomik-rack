@@ -249,7 +249,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
     assert!(
-        text.contains("\"version\": 13"),
+        text.contains("\"version\": 14"),
         "saved in the current format"
     );
 }
