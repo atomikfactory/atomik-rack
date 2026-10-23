@@ -144,6 +144,9 @@ pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `sequencer.set_snap`.
 pub const SNAP_ARGS: &[&str] = &["off", "bar", "beat", "eighth", "sixteenth"];
+/// The values of `sequencer.marker_color`: the palette names and `none`.
+pub const MARKER_COLOR_ARGS: &[&str] =
+    &["none", "red", "orange", "yellow", "green", "blue", "purple"];
 /// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
 pub const METER_ARGS: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"];
 
@@ -424,6 +427,56 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("sequencer.join", "Join", G::Sequencer, C::Sequencer),
     cmd(
+        "sequencer.marker_add_here",
+        "Add Marker Here",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.marker_color",
+        "Marker Colour",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(MARKER_COLOR_ARGS)
+    .decline(),
+    cmd(
+        "sequencer.marker_delete",
+        "Delete Marker",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.marker_loop_range",
+        "Loop This Range",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.marker_range_from_selection",
+        "Add Range Marker from Selection",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.marker_rename",
+        "Rename Marker...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.marker_select_clips",
+        "Select Clips in Range",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.meter_delete",
         "Delete Meter Change",
         G::Sequencer,
@@ -539,6 +592,20 @@ const COMMANDS: &[CommandDef] = &[
     cmd("tool.razor", "Razor Tool", G::Tools, C::Sequencer),
     cmd("tool.select", "Select Tool", G::Tools, C::Sequencer),
     cmd(
+        "transport.add_marker",
+        "Add Marker",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "transport.add_range_from_loop",
+        "Add Range Marker from Loop",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "transport.bar_back",
         "Back One Bar",
         G::Transport,
@@ -595,6 +662,14 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd("transport.metronome", "Metronome", G::Transport, C::Global).menu(),
+    cmd(
+        "transport.next_marker",
+        "Next Marker",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
+    .menu(),
     cmd("transport.play", "Play", G::Transport, C::Global),
     cmd(
         "transport.play_stop",
@@ -602,6 +677,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Transport,
         C::Global,
     )
+    .menu(),
+    cmd(
+        "transport.prev_marker",
+        "Previous Marker",
+        G::Transport,
+        C::Global,
+    )
+    .rep()
     .menu(),
     cmd("transport.record", "Record", G::Transport, C::Global).menu(),
     cmd(
@@ -668,6 +751,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
+    cmd("view.toggle_marker_list", "Marker List", G::View, C::Global).menu(),
+    cmd(
+        "view.toggle_marker_strip",
+        "Marker Strip",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_piano_roll", "Piano Roll", G::View, C::Global).menu(),
     cmd("view.toggle_rack", "Rack", G::View, C::Global).menu(),
     cmd(

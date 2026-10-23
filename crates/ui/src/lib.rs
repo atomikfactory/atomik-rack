@@ -267,6 +267,7 @@ pub mod fx_paint;
 pub mod interface;
 pub mod io_panel;
 pub mod keymap;
+pub mod marker_edit;
 pub mod master_panel;
 pub mod modsrc_panel;
 pub mod paint;
@@ -299,7 +300,9 @@ pub mod zone_edit;
 pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
-pub use arrangement::{ArrangementView, AudioHandle, TrackButton};
+pub use arrangement::{
+    ArrangementView, AudioHandle, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, TrackButton,
+};
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;

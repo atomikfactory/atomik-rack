@@ -55,12 +55,15 @@ mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
 sequencer.split_at_playhead | sequencer | Ctrl+E
 sequencer.toggle_mute | sequencer | M
+transport.add_marker | global | Shift+M
 transport.go_start | rack | Enter, Shift+Enter
 transport.go_start | sequencer | Enter, Shift+Enter
 transport.loop | rack | L, Shift+L
 transport.loop | sequencer | L, Shift+L
+transport.next_marker | global | .
 transport.play_stop | rack | Space, Shift+Space
 transport.play_stop | sequencer | Space, Shift+Space
+transport.prev_marker | global | ,
 transport.record | global | Ctrl+Space
 transport.record | rack | R, Shift+R
 transport.record | sequencer | R, Shift+R

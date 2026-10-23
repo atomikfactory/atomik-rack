@@ -317,6 +317,12 @@ pub enum ContextTarget {
     RulerMeter,
     /// A meter change in the ruler.
     MeterChange,
+    /// A marker of the marker strip or the marker list.
+    Marker,
+    /// A range marker of the strip or the list.
+    MarkerRange,
+    /// The marker strip away from its markers.
+    MarkerStrip,
 }
 
 /// How [`UiAction::SliceLoop`] finds the slice markers.
