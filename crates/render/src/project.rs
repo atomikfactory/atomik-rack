@@ -103,7 +103,7 @@ pub fn notes_input(desc: &DeviceDescriptor) -> Option<SocketId> {
 ///   `registry`, or it has no Notes input.
 /// - Notes: [`flatten_notes`]; automation: [`flatten_automation`] of every automation lane
 ///   whose param key the descriptor knows, with the descriptor's `ParamId`.
-/// - Tempo map from `song.tempo`; `beats_per_bar` is the meter numerator.
+/// - Tempo map from `song.tempo` (steps and ramps) and the meter map from `song.meter`.
 /// - No audio: see [`song_input_with_assets`].
 pub fn song_input(
     doc: &RackDoc,
@@ -280,6 +280,7 @@ pub fn song_input_with_assets(
             Some(SongTempo {
                 tick: Ticks(e.tick),
                 tempo: Tempo::new(e.bpm).ok()?,
+                ramp: e.ramp,
             })
         })
         .collect();
@@ -318,7 +319,7 @@ pub fn song_input_with_assets(
     SongInput {
         tracks,
         tempo,
-        beats_per_bar: song.beats_per_bar.max(1),
+        meter: song.meter.clone(),
         audio,
         assets: pool,
     }
@@ -871,7 +872,7 @@ mod tests {
         assert!(input.tracks[1].notes.is_empty());
         assert_eq!(input.tempo.len(), 1);
         assert!((input.tempo[0].tempo.bpm() - 120.0).abs() < 1e-12);
-        assert_eq!(input.beats_per_bar, 4);
+        assert_eq!(input.meter, vec![atomik_core::MeterEvent::new(1, 4, 4)]);
         assert!(compile_song(&input).is_ok());
     }
 
