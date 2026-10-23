@@ -249,26 +249,71 @@ pub enum Snap {
     /// Sixteenth notes (`PPQ / 4`).
     #[default]
     Sixteenth,
+    /// Thirty-second notes (`PPQ / 8`).
+    ThirtySecond,
+    /// Sixty-fourth notes (`PPQ / 16`).
+    SixtyFourth,
+    /// Quarter-note triplets (`PPQ * 2 / 3`: three in the time of two beats).
+    QuarterTriplet,
+    /// Eighth-note triplets (`PPQ / 3`).
+    EighthTriplet,
+    /// Sixteenth-note triplets (`PPQ / 6`).
+    SixteenthTriplet,
+    /// Thirty-second-note triplets (`PPQ / 12`).
+    ThirtySecondTriplet,
+    /// The visible grid: the step of the finest ruler line the zoom shows
+    /// ([`grid_step`], at most one bar), so snapping follows what is drawn.
+    Grid,
 }
+
+/// Minimum distance in pixels between the lines of the grid the views draw, and so the step of
+/// [`Snap::Grid`].
+pub const GRID_MIN_PX: f64 = 7.0;
 
 impl Snap {
     /// Every resolution, in selector order.
-    pub const ALL: [Snap; 5] = [
+    pub const ALL: [Snap; 12] = [
         Snap::Bar,
         Snap::Beat,
         Snap::Eighth,
         Snap::Sixteenth,
+        Snap::ThirtySecond,
+        Snap::SixtyFourth,
+        Snap::QuarterTriplet,
+        Snap::EighthTriplet,
+        Snap::SixteenthTriplet,
+        Snap::ThirtySecondTriplet,
+        Snap::Grid,
         Snap::Off,
     ];
 
-    /// Grid step in ticks, `None` when off.
+    /// Grid step in ticks, `None` when off. [`Snap::Grid`] needs the zoom
+    /// ([`Self::step_zoomed`]); without it, it is a sixteenth.
     pub fn step(self, meter: Meter) -> Option<i64> {
         match self {
             Snap::Off => None,
             Snap::Bar => Some(meter.bar_ticks()),
             Snap::Beat => Some(meter.beat_ticks()),
             Snap::Eighth => Some(PPQ / 2),
-            Snap::Sixteenth => Some(PPQ / 4),
+            Snap::Sixteenth | Snap::Grid => Some(PPQ / 4),
+            Snap::ThirtySecond => Some(PPQ / 8),
+            Snap::SixtyFourth => Some(PPQ / 16),
+            Snap::QuarterTriplet => Some(PPQ * 2 / 3),
+            Snap::EighthTriplet => Some(PPQ / 3),
+            Snap::SixteenthTriplet => Some(PPQ / 6),
+            Snap::ThirtySecondTriplet => Some(PPQ / 12),
+        }
+    }
+
+    /// Like [`Self::step`], with [`Snap::Grid`] resolved to the visible grid at `px_per_tick`:
+    /// the step [`grid_lines`] draws with, at most one bar. A zoom that is not a positive
+    /// number gives a sixteenth.
+    pub fn step_zoomed(self, meter: Meter, px_per_tick: f64) -> Option<i64> {
+        match self {
+            Snap::Grid if px_per_tick > 0.0 => {
+                Some(grid_step(px_per_tick, meter, GRID_MIN_PX).min(meter.bar_ticks()))
+            }
+            other => other.step(meter),
         }
     }
 
@@ -289,6 +334,13 @@ impl Snap {
             Snap::Beat => "Beat",
             Snap::Eighth => "1/8",
             Snap::Sixteenth => "1/16",
+            Snap::ThirtySecond => "1/32",
+            Snap::SixtyFourth => "1/64",
+            Snap::QuarterTriplet => "1/4T",
+            Snap::EighthTriplet => "1/8T",
+            Snap::SixteenthTriplet => "1/16T",
+            Snap::ThirtySecondTriplet => "1/32T",
+            Snap::Grid => "Grid",
         }
     }
 
@@ -310,12 +362,24 @@ impl Snap {
 pub struct SnapGrid {
     snap: Snap,
     bars: Bars,
+    /// Zoom for [`Snap::Grid`] (0 = unknown: a sixteenth).
+    px_per_tick: f64,
 }
 
 impl SnapGrid {
     /// The grid of `snap` over `bars`.
     pub fn new(snap: Snap, bars: Bars) -> Self {
-        Self { snap, bars }
+        Self {
+            snap,
+            bars,
+            px_per_tick: 0.0,
+        }
+    }
+
+    /// The same grid at a zoom, which [`Snap::Grid`] follows.
+    pub fn zoomed(mut self, px_per_tick: f64) -> Self {
+        self.px_per_tick = px_per_tick;
+        self
     }
 
     /// No snapping.
@@ -329,8 +393,7 @@ impl SnapGrid {
             Snap::Off => None,
             Snap::Bar => Some(self.bars.bar_ticks_at(tick)),
             Snap::Beat => Some(self.bars.beat_ticks_at(tick)),
-            Snap::Eighth => Some(PPQ / 2),
-            Snap::Sixteenth => Some(PPQ / 4),
+            other => other.step_zoomed(self.bars.meter_at(tick), self.px_per_tick),
         }
     }
 
@@ -452,8 +515,11 @@ pub struct TimeAxis {
 
 /// Smallest zoom (pixels per tick): a 4/4 bar is 8 px wide.
 pub const MIN_PX_PER_TICK: f64 = 8.0 / (4.0 * PPQ as f64);
-/// Largest zoom: a sixteenth is 480 px wide.
-pub const MAX_PX_PER_TICK: f64 = 480.0 / (PPQ as f64 / 4.0);
+/// Largest zoom: 16 px per tick. A tick is 1/15360 of a quarter, which at 120 BPM and 48 kHz is
+/// 1.5625 frames, so the deepest zoom shows a sample about 10 px wide (9 px at 44.1 kHz, 5 px at
+/// 96 kHz; 2 to 3 px per frame as slow as 40 BPM). A 1/128 note (480 ticks) is 7680 px wide
+/// there and spans a 1920 px screen from about 4 px per tick.
+pub const MAX_PX_PER_TICK: f64 = 16.0;
 
 impl TimeAxis {
     /// An axis with a 4/4 bar `bar_px` wide, unscrolled.
@@ -540,28 +606,54 @@ pub struct GridLine {
     pub level: GridLevel,
 }
 
-/// The finest grid step (ticks) whose lines are at least `min_px` apart: 1/16, 1/8, beat,
-/// bar, then 2, 4, 8… bars.
+/// Grid steps below a bar, finest first: a tick, then the divisors of a sixteenth down to
+/// 1/1024 of a quarter (15 ticks), the 1/128 note (`PPQ / 32` = 480 ticks) and 1/64 up to the
+/// eighth. Each step divides the next, so a coarser grid is a subset of a finer one.
+const SUBDIVISIONS: [i64; 12] = [
+    1,
+    5,
+    PPQ / 1024,
+    PPQ / 512,
+    PPQ / 256,
+    PPQ / 128,
+    PPQ / 64,
+    PPQ / 32,
+    PPQ / 16,
+    PPQ / 8,
+    PPQ / 4,
+    PPQ / 2,
+];
+
+/// Lines finer than a sixteenth are at least this many pixels apart, however small `min_px`
+/// is, so a deep zoom shows a calm grid instead of a line every few pixels.
+pub const FINE_GRID_PX: f64 = 40.0;
+
+/// The most lines [`grid_lines`] draws for one meter segment: a guard for zooms and ranges
+/// that do not belong together; real views stay below a thousand.
+const MAX_SEGMENT_LINES: i64 = 20_000;
+
+/// The finest grid step (ticks) whose lines are at least `min_px` apart (lines finer than a
+/// sixteenth at least [`FINE_GRID_PX`]): a tick, 5 ticks, then 1/1024 up to 1/128, 1/64, 1/32,
+/// 1/16, 1/8 and the beat (the steps that fit in a beat), then the bar, then 2, 4, 8… bars.
+/// Never zero.
 pub fn grid_step(px_per_tick: f64, meter: Meter, min_px: f64) -> i64 {
-    let mut candidates = vec![PPQ / 4, PPQ / 2, meter.beat_ticks()];
-    candidates.retain(|s| *s <= meter.beat_ticks());
-    candidates.sort_unstable();
-    candidates.dedup();
+    let beat = meter.beat_ticks();
+    let fine_px = min_px.max(FINE_GRID_PX);
+    let mut candidates: Vec<i64> = SUBDIVISIONS.into_iter().filter(|s| *s < beat).collect();
+    candidates.push(beat);
+    if let Some(s) = candidates.into_iter().find(|s| {
+        let need = if *s < PPQ / 4 { fine_px } else { min_px };
+        *s as f64 * px_per_tick >= need
+    }) {
+        return s;
+    }
     let mut bars = 1;
     loop {
-        if let Some(s) = candidates
-            .iter()
-            .copied()
-            .find(|s| *s as f64 * px_per_tick >= min_px)
-        {
-            return s;
-        }
         let s = meter.bar_ticks() * bars;
         if s as f64 * px_per_tick >= min_px || bars >= 1 << 20 {
             return s;
         }
         bars *= 2;
-        candidates.clear();
     }
 }
 
@@ -581,7 +673,10 @@ pub fn grid_lines(t0: i64, t1: i64, px_per_tick: f64, bars: &Bars, min_px: f64) 
             beats_per_bar: seg.num,
             beat_unit: seg.den,
         };
-        let step = grid_step(px_per_tick, meter, min_px);
+        let mut step = grid_step(px_per_tick, meter, min_px);
+        while (b - a) / step > MAX_SEGMENT_LINES {
+            step *= 2;
+        }
         let (bar, beat) = (meter.bar_ticks(), meter.beat_ticks());
         if step >= bar {
             let n = u32::try_from(step / bar).unwrap_or(u32::MAX);
@@ -612,6 +707,42 @@ pub fn grid_lines(t0: i64, t1: i64, px_per_tick: f64, bars: &Bars, min_px: f64) 
         }
     }
     out
+}
+
+/// `"bar.beat.sixteenth.tick"` for a tick inside a beat: the sixteenth is 1-based, the tick the
+/// remainder inside it (four digits). Whole beats shorten to `"bar.beat"`, whole sixteenths to
+/// `"bar.beat.sixteenth"`.
+pub fn deep_label(tick: i64, bars: &Bars) -> String {
+    let (bar, beat, t) = bars.bbt(tick);
+    let sixteenth = PPQ / 4;
+    match (t / sixteenth, t % sixteenth) {
+        (0, 0) => format!("{bar}.{beat}"),
+        (s, 0) => format!("{bar}.{beat}.{}", s + 1),
+        (s, rest) => format!("{bar}.{beat}.{}.{rest:04}", s + 1),
+    }
+}
+
+/// Labels for the ruler lines that are not bar lines, once the zoom shows lines finer than a
+/// beat: every beat and subdivision line at least `min_px` from the next one, labelled with
+/// [`deep_label`]. Empty while the grid is a beat or coarser (bar numbers alone label the ruler).
+/// Every returned tick is a line of [`grid_lines`] at the drawing `min_px`: the label step is a
+/// multiple of the drawn one.
+pub fn deep_labels(
+    t0: i64,
+    t1: i64,
+    px_per_tick: f64,
+    bars: &Bars,
+    min_px: f64,
+) -> Vec<(i64, String)> {
+    let lines = grid_lines(t0, t1, px_per_tick, bars, min_px);
+    if !lines.iter().any(|g| g.level == GridLevel::Sub) {
+        return Vec::new();
+    }
+    lines
+        .into_iter()
+        .filter(|g| g.level != GridLevel::Bar)
+        .map(|g| (g.tick, deep_label(g.tick, bars)))
+        .collect()
 }
 
 /// Bars between ruler labels so that labels are at least `min_px` apart (1, 2, 4, 8…).
@@ -749,6 +880,181 @@ mod tests {
     }
 
     #[test]
+    fn triplet_and_fine_snaps_have_their_exact_steps() {
+        let mt = m(4, 4);
+        assert_eq!(Snap::ThirtySecond.step(mt), Some(PPQ / 8));
+        assert_eq!(Snap::SixtyFourth.step(mt), Some(PPQ / 16));
+        // Three triplets fit where two plain notes of the next size up fit.
+        assert_eq!(Snap::QuarterTriplet.step(mt), Some(10_240));
+        assert_eq!(3 * 10_240, 2 * PPQ);
+        assert_eq!(Snap::EighthTriplet.step(mt), Some(5_120));
+        assert_eq!(3 * 5_120, PPQ);
+        assert_eq!(Snap::SixteenthTriplet.step(mt), Some(2_560));
+        assert_eq!(3 * 2_560, PPQ / 2);
+        assert_eq!(Snap::ThirtySecondTriplet.step(mt), Some(1_280));
+        assert_eq!(3 * 1_280, PPQ / 4);
+        for s in Snap::ALL {
+            assert_ne!(s.step(mt), Some(0), "{s:?}");
+            assert!(!s.label().is_empty());
+        }
+        let all: std::collections::BTreeSet<_> = Snap::ALL.iter().collect();
+        assert_eq!(all.len(), Snap::ALL.len(), "no value twice in the selector");
+        let mut s = Snap::Bar;
+        for _ in 0..Snap::ALL.len() {
+            s = s.cycle(true);
+        }
+        assert_eq!(s, Snap::Bar, "the cycle visits every value and wraps");
+    }
+
+    #[test]
+    fn triplet_grid_rounds_to_thirds_and_restarts_at_bar_lines() {
+        let g = SnapGrid::new(Snap::EighthTriplet, Bars::single(m(4, 4)));
+        assert_eq!(snap_round(2_559, &g), 0);
+        assert_eq!(snap_round(2_560, &g), 5_120, "halves round up");
+        assert_eq!(snap_round(5_119, &g), 5_120);
+        assert_eq!(snap_floor(10_239, &g), 5_120);
+        assert_eq!(snap_ceil(5_121, &g), 10_240);
+        assert_eq!(snap_round(PPQ, &g), PPQ, "three triplets make a beat");
+        assert_eq!(snap_round(-5_000, &g), -5_120);
+        // 3/4 bars hold 1.5 half-note triplets: the last cell stops at the bar line.
+        let g = SnapGrid::new(Snap::QuarterTriplet, Bars::single(m(3, 4)));
+        let bar = 3 * PPQ;
+        assert_eq!(snap_ceil(bar - 1, &g), bar, "never past the bar line");
+        assert_eq!(
+            snap_round(bar + 10_000, &g),
+            bar + 10_240,
+            "restarts in bar 2"
+        );
+        // A meter change moves the grid with the bar lines.
+        let g = SnapGrid::new(Snap::SixteenthTriplet, bars(&[(1, 4, 4), (2, 3, 8)]));
+        assert_eq!(snap_round(BAR + 2_559, &g), BAR + 2_560);
+        assert_eq!(snap_floor(BAR + 5_000, &g), BAR + 2_560);
+    }
+
+    #[test]
+    fn grid_snap_follows_the_visible_grid() {
+        let mt = m(4, 4);
+        let ppt = 96.0 / BAR as f64;
+        let want = grid_step(ppt, mt, GRID_MIN_PX).min(BAR);
+        assert_eq!(Snap::Grid.step_zoomed(mt, ppt), Some(want));
+        assert_eq!(
+            Snap::Grid.step_zoomed(mt, MAX_PX_PER_TICK),
+            Some(grid_step(MAX_PX_PER_TICK, mt, GRID_MIN_PX))
+        );
+        assert_eq!(
+            Snap::Grid.step_zoomed(mt, MIN_PX_PER_TICK / 64.0),
+            Some(BAR),
+            "far out the grid is capped at a bar"
+        );
+        assert_eq!(Snap::Grid.step_zoomed(mt, 0.0), Some(PPQ / 4), "no zoom");
+        assert_eq!(Snap::Grid.step_zoomed(mt, f64::NAN), Some(PPQ / 4));
+        assert_eq!(
+            Snap::Beat.step_zoomed(mt, 5.0),
+            Some(PPQ),
+            "others ignore it"
+        );
+        // The step is the one the drawn lines have.
+        let ppt = 0.05;
+        let step = Snap::Grid.step_zoomed(mt, ppt).unwrap();
+        let lines = grid_lines(0, BAR, ppt, &Bars::single(mt), GRID_MIN_PX);
+        assert_eq!(lines[1].tick - lines[0].tick, step);
+        let g = SnapGrid::new(Snap::Grid, Bars::single(mt)).zoomed(ppt);
+        assert_eq!(snap_round(step + step / 2 - 1, &g), step);
+        let unzoomed = SnapGrid::new(Snap::Grid, Bars::single(mt));
+        assert_eq!(unzoomed.step_at(0), Some(PPQ / 4));
+    }
+
+    #[test]
+    fn the_grid_stays_readable_at_every_zoom() {
+        let mt = m(4, 4);
+        let b = Bars::single(mt);
+        let mut ppt = MAX_PX_PER_TICK;
+        while ppt > MIN_PX_PER_TICK / 4.0 {
+            let step = grid_step(ppt, mt, GRID_MIN_PX);
+            assert!(step >= 1, "{ppt}");
+            assert!(step as f64 * ppt >= GRID_MIN_PX, "lines at {ppt} too close");
+            if step < PPQ / 4 {
+                assert!(step as f64 * ppt >= FINE_GRID_PX, "fine lines at {ppt}");
+            }
+            // A 1920 px screen at this zoom.
+            let t1 = (1920.0 / ppt) as i64;
+            let n = grid_lines(0, t1, ppt, &b, GRID_MIN_PX).len();
+            assert!(n <= 1920 / 7 + 2, "{n} lines at {ppt} px/tick");
+            ppt /= 1.37;
+        }
+    }
+
+    #[test]
+    fn grid_steps_walk_down_to_single_ticks() {
+        let mt = m(4, 4);
+        assert_eq!(grid_step(16.0, mt, 7.0), 5);
+        assert_eq!(grid_step(16.0, mt, 100.0), 15);
+        assert_eq!(grid_step(8.0, mt, 7.0), 5);
+        assert_eq!(grid_step(1.0, mt, 7.0), 60);
+        assert_eq!(grid_step(0.125, mt, 7.0), PPQ / 32, "the 1/128 note");
+        assert_eq!(grid_step(0.03125, mt, 7.0), PPQ / 8);
+        assert_eq!(
+            grid_step(0.0078125, mt, 7.0),
+            PPQ / 4,
+            "sixteenths from 7 px"
+        );
+        assert_eq!(
+            grid_step(1.0, m(6, 8), 1.0),
+            60,
+            "fine lines keep their distance"
+        );
+        assert_eq!(grid_step(1e9, m(7, 16), 7.0), 1);
+        // Every step divides the next one, so a coarser grid is a subset of a finer one.
+        for w in SUBDIVISIONS.windows(2) {
+            assert_eq!(w[1] % w[0], 0, "{} / {}", w[1], w[0]);
+        }
+    }
+
+    #[test]
+    fn degenerate_zooms_give_a_finite_nonzero_step_and_bounded_lines() {
+        let mt = m(4, 4);
+        for ppt in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e-300, 1e300] {
+            let step = grid_step(ppt, mt, GRID_MIN_PX);
+            assert!(step >= 1, "{ppt}: {step}");
+            let lines = grid_lines(0, 100 * BAR, ppt, &Bars::single(mt), GRID_MIN_PX);
+            assert!(lines.len() <= 30_000, "{ppt}: {} lines", lines.len());
+        }
+        // A range far too long for the zoom is thinned, not drawn line by line.
+        let lines = grid_lines(0, i64::MAX / 4, MAX_PX_PER_TICK, &Bars::default(), 7.0);
+        assert!(lines.len() <= 20_002, "{}", lines.len());
+        let far = i64::MAX / 2;
+        let lines = grid_lines(far, far + 10, 16.0, &Bars::default(), 7.0);
+        assert!(lines.len() <= 10);
+    }
+
+    #[test]
+    fn deep_labels_name_bar_beat_sixteenth_and_tick() {
+        let b = Bars::single(m(4, 4));
+        assert_eq!(deep_label(0, &b), "1.1");
+        assert_eq!(deep_label(PPQ, &b), "1.2");
+        assert_eq!(deep_label(BAR + PPQ / 4, &b), "2.1.2");
+        assert_eq!(deep_label(BAR + PPQ + PPQ / 2 + 480, &b), "2.2.3.0480");
+        assert_eq!(deep_label(1, &b), "1.1.1.0001");
+        // Beat-sized grids label nothing besides the bars; deep ones label the lines between.
+        let ppt = 96.0 / BAR as f64;
+        assert!(deep_labels(0, BAR, ppt, &b, 64.0).is_empty());
+        let zoom = 480.0 / PPQ as f64;
+        let deep = deep_labels(0, PPQ, zoom, &b, 64.0);
+        assert_eq!(deep.first(), Some(&(PPQ / 4, "1.1.2".to_string())));
+        assert!(deep.iter().all(|(t, _)| *t != 0), "bars keep their numbers");
+        // Every labelled tick is a drawn line.
+        let drawn: Vec<i64> = grid_lines(0, PPQ, zoom, &b, 7.0)
+            .iter()
+            .map(|g| g.tick)
+            .collect();
+        assert!(deep.iter().all(|(t, _)| drawn.contains(t)));
+        // At the deepest zoom the ticks themselves are named.
+        let ticks = deep_labels(0, 20, MAX_PX_PER_TICK, &b, 64.0);
+        assert_eq!(ticks.len(), 4, "{ticks:?}");
+        assert!(ticks.iter().all(|(_, l)| l.starts_with("1.1.1.")));
+    }
+
+    #[test]
     fn paging_keeps_a_tick_visible_and_fitting_fills_the_view() {
         let mut a = TimeAxis::new(100.0, 96.0);
         let ppt = a.px_per_tick;
@@ -829,9 +1135,8 @@ mod tests {
         assert_eq!(lines[4].tick, BAR);
         let fine = grid_lines(0, PPQ, 480.0 / PPQ as f64, &Bars::single(mt), 8.0);
         assert_eq!(fine[1].level, GridLevel::Sub);
-        assert_eq!(fine[1].tick, PPQ / 4);
-        // 6/8: beats are eighths, so no separate eighth subdivision.
-        assert_eq!(grid_step(1.0, m(6, 8), 1.0), PPQ / 4);
+        assert_eq!(fine[1].tick, PPQ / 8);
+
         assert_eq!(label_every_bars(ppt, mt, 40.0), 1);
         assert_eq!(label_every_bars(ppt / 4.0, mt, 40.0), 2);
     }

@@ -143,7 +143,20 @@ pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 /// The values of `transport.go_locator`.
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `sequencer.set_snap`.
-pub const SNAP_ARGS: &[&str] = &["off", "bar", "beat", "eighth", "sixteenth"];
+pub const SNAP_ARGS: &[&str] = &[
+    "off",
+    "bar",
+    "beat",
+    "eighth",
+    "sixteenth",
+    "thirtysecond",
+    "sixtyfourth",
+    "quarter_triplet",
+    "eighth_triplet",
+    "sixteenth_triplet",
+    "thirtysecond_triplet",
+    "grid",
+];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];

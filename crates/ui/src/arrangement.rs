@@ -1112,7 +1112,7 @@ impl ArrangementView {
         if self.vp.snap_disabled(modifiers) {
             SnapGrid::off()
         } else {
-            SnapGrid::new(self.snap, self.bars.clone())
+            SnapGrid::new(self.snap, self.bars.clone()).zoomed(self.axis.px_per_tick)
         }
     }
 
@@ -3822,6 +3822,13 @@ pub(crate) fn snap_from_arg(arg: &str) -> Option<Snap> {
         "beat" => Snap::Beat,
         "eighth" => Snap::Eighth,
         "sixteenth" => Snap::Sixteenth,
+        "thirtysecond" => Snap::ThirtySecond,
+        "sixtyfourth" => Snap::SixtyFourth,
+        "quarter_triplet" => Snap::QuarterTriplet,
+        "eighth_triplet" => Snap::EighthTriplet,
+        "sixteenth_triplet" => Snap::SixteenthTriplet,
+        "thirtysecond_triplet" => Snap::ThirtySecondTriplet,
+        "grid" => Snap::Grid,
         _ => return None,
     })
 }

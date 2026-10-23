@@ -510,7 +510,11 @@ fn rows_list_every_command_by_group_with_args_one_row_each() {
         .iter()
         .filter(|r| r.key.command == "sequencer.set_snap")
         .count();
-    assert_eq!(snaps, 5, "one row per argument value");
+    assert_eq!(
+        snaps,
+        super::command::SNAP_ARGS.len(),
+        "one row per argument value"
+    );
     assert!(rows.iter().any(|r| r.key.command == "transport.go_locator"
         && r.key.arg.as_deref() == Some("left")
         && r.chords.iter().any(|c| c.to_string() == "Alt+Left")));

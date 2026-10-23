@@ -567,7 +567,8 @@ impl PianoRollView {
     }
 
     fn step(&self, modifiers: Modifiers) -> Option<i64> {
-        self.vp.step(self.snap, self.meter, modifiers)
+        self.vp
+            .step(self.snap, self.meter, self.axis.px_per_tick, modifiers)
     }
 
     fn content_to_song(&self, tick: i64) -> i64 {
@@ -1131,7 +1132,10 @@ impl PianoRollView {
         } else {
             self.selection.items().clone()
         };
-        let step = self.snap.step(self.meter).or(Some(OFF_LENGTH));
+        let step = self
+            .snap
+            .step_zoomed(self.meter, self.axis.px_per_tick)
+            .or(Some(OFF_LENGTH));
         let q = seq_edit::quantize_notes(&notes, &sel, step, self.strength);
         let (list, new) = seq_edit::normalize_notes(q, &sel);
         if list != notes {

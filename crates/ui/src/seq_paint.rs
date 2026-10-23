@@ -5,7 +5,9 @@
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::theme::{Theme, mix};
-use crate::timeline::{Bars, GridLevel, TimeAxis, bar_labels, grid_lines};
+use crate::timeline::{
+    Bars, GRID_MIN_PX, GridLevel, TimeAxis, bar_labels, deep_labels, grid_lines,
+};
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{Direction, Registry, SocketKind};
 use atomik_model::{DeviceKey, RackDoc};
@@ -264,7 +266,7 @@ pub fn grid<C: Canvas + ?Sized>(
 ) {
     let t0 = axis.x_to_tick(area.x0) - 1;
     let t1 = axis.x_to_tick(area.x1) + 1;
-    for g in grid_lines(t0, t1, axis.px_per_tick, bars, 7.0) {
+    for g in grid_lines(t0, t1, axis.px_per_tick, bars, GRID_MIN_PX) {
         let x = axis.tick_to_x(g.tick).round() + 0.5;
         let col = match g.level {
             GridLevel::Bar => st.grid_bar,
@@ -300,7 +302,7 @@ pub fn ruler_labels<C: Canvas + ?Sized>(
             Align::Start,
         );
     };
-    let lines = grid_lines(t0, t1, axis.px_per_tick, bars, 7.0);
+    let lines = grid_lines(t0, t1, axis.px_per_tick, bars, GRID_MIN_PX);
     for g in &lines {
         let x = axis.tick_to_x(g.tick).round() + 0.5;
         let (h, col) = match g.level {
@@ -319,6 +321,19 @@ pub fn ruler_labels<C: Canvas + ?Sized>(
         if !lines.iter().any(|g| g.tick == tick) {
             paint_label(c, tick, bar);
         }
+    }
+    // Deep zoom: the lines between the bars carry bar.beat.sixteenth.tick names.
+    for (tick, text) in deep_labels(t0, t1, axis.px_per_tick, bars, 64.0) {
+        let x = axis.tick_to_x(tick).round() + 0.5;
+        label(
+            c,
+            &text,
+            x + 3.0,
+            strip.y0 + 11.0,
+            8.0,
+            t.text_muted,
+            Align::Start,
+        );
     }
 }
 
