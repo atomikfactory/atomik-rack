@@ -999,3 +999,26 @@ fn frame_at_follows_a_tempo_ramp() {
     let one_beat = song.frame_at(2 * BAR + PPQ, 48_000) - frames;
     assert_eq!(one_beat, 16_000);
 }
+
+#[test]
+fn nearest_bar_line_follows_the_meter_map() {
+    let reg = registry();
+    let mut d = with_track(&reg);
+    d.apply(
+        sc(SongCommand::SetMeterMap(vec![mev(1, 4, 4), mev(3, 3, 4)])),
+        &reg,
+    )
+    .unwrap();
+    let song = &d.doc().song;
+    // Bars: 0, 4 PPQ, 8 PPQ, 11 PPQ, 14 PPQ...
+    assert_eq!(song.nearest_bar_line(-5), 0);
+    assert_eq!(song.nearest_bar_line(2 * PPQ - 1), 0);
+    assert_eq!(song.nearest_bar_line(2 * PPQ), BAR);
+    assert_eq!(song.nearest_bar_line(2 * BAR + PPQ), 2 * BAR);
+    assert_eq!(song.nearest_bar_line(2 * BAR + 2 * PPQ), 2 * BAR + 3 * PPQ);
+    assert_eq!(
+        song.nearest_bar_line(2 * BAR + 3 * PPQ / 2),
+        2 * BAR + 3 * PPQ,
+        "halves round up"
+    );
+}

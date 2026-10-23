@@ -575,6 +575,19 @@ impl Song {
         bar_ticks(self.meter())
     }
 
+    /// The bar line nearest to `tick` (halves round up; 0 for a negative tick).
+    pub fn nearest_bar_line(&self, tick: i64) -> i64 {
+        let table = self.meter_table();
+        let meter = table.map();
+        let start = meter.bar_start(meter.bar_at(tick));
+        let next = meter.next_bar_line(tick);
+        if tick - start < next - tick {
+            start
+        } else {
+            next
+        }
+    }
+
     /// Ticks per bar of the bar that holds `tick`.
     pub fn bar_ticks_at(&self, tick: i64) -> i64 {
         self.meter_table().map().bar_ticks_at(tick)

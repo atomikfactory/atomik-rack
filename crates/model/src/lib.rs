@@ -82,8 +82,8 @@ use history::Edit;
 use rack_columns::Placement;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve,
-    Lane, LaneKind, MeterEvent, Note, Song, SongCommand, StepGrid, StepResolution, TempoEvent,
-    Track, empty_song,
+    Lane, LaneKind, MAX_TICK, MeterEvent, Note, Song, SongCommand, StepGrid, StepResolution,
+    TempoEvent, Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
