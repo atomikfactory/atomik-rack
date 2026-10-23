@@ -30,6 +30,8 @@ atomik-audio-file.workspace = true
 atomik-plugin-host.workspace = true
 atomik-plugin-clap.workspace = true
 atomik-plugin-vst3.workspace = true
+# The sandbox: each plugin instance in its own atomik-plugin-host process (on by default).
+atomik-plugin-sandbox.workspace = true
 serde.workspace = true
 # Correctly rounded float parsing: params and tempo round-trip exactly through patch files.
 # atomik-render enables it too, so every build reads patch numbers identically.

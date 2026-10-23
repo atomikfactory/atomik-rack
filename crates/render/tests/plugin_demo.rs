@@ -465,6 +465,8 @@ fn allow_plugins_bounces_with_the_report_line_and_the_cache() {
         "-o".into(),
         out.to_string_lossy().into_owned(),
         "--allow-plugins".into(),
+        "--plugin-sandbox".into(),
+        "off".into(),
         "--plugin-cache".into(),
         cache_path.to_string_lossy().into_owned(),
         "--stats".into(),
@@ -493,6 +495,8 @@ fn allow_plugins_bounces_with_the_report_line_and_the_cache() {
         "-o",
         rt.to_str().unwrap(),
         "--allow-plugins",
+        "--plugin-sandbox",
+        "off",
         "--plugin-cache",
         cache_path.to_str().unwrap(),
         "--plugin-mode",
@@ -509,6 +513,27 @@ fn allow_plugins_bounces_with_the_report_line_and_the_cache() {
 }
 
 #[test]
+fn the_sandbox_is_on_by_default_and_without_the_child_program_the_bounce_stops_with_exit_2() {
+    // The test executable has no `atomik-plugin-host` beside it.
+    let t = Tmp::new("nohost");
+    let cache_path = t.0.join("plugins.json");
+    test_cache().save(&cache_path).unwrap();
+    let out = t.0.join("o.wav");
+    let (code, _, err) = cli(&[
+        &demo_arg(),
+        "-o",
+        out.to_str().unwrap(),
+        "--allow-plugins",
+        "--plugin-cache",
+        cache_path.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("atomik-plugin-host"), "{err}");
+    assert!(err.contains("--plugin-sandbox off"), "{err}");
+    assert!(!out.exists(), "nothing is written");
+}
+
+#[test]
 fn a_named_cache_that_does_not_exist_is_reported_by_name() {
     let t = Tmp::new("nocache");
     let absent = t.0.join("nope.json");
@@ -518,6 +543,8 @@ fn a_named_cache_that_does_not_exist_is_reported_by_name() {
         "-o",
         out.to_str().unwrap(),
         "--allow-plugins",
+        "--plugin-sandbox",
+        "off",
         "--plugin-cache",
         absent.to_str().unwrap(),
     ]);
@@ -538,6 +565,8 @@ fn a_missing_plugin_is_an_error_naming_it_or_a_stand_in() {
         "-o".into(),
         out.to_string_lossy().into_owned(),
         "--allow-plugins".into(),
+        "--plugin-sandbox".into(),
+        "off".into(),
         "--plugin-cache".into(),
         empty.to_string_lossy().into_owned(),
     ];
