@@ -370,6 +370,9 @@ fn a_request_that_timed_out_is_not_carried_because_the_child_has_its_events() {
 fn bounce_rig(bounce: bool) -> Rig {
     let mut timeouts = crate::fake::test_timeouts();
     timeouts.bounce = bounce;
+    // A bounce waits up to the watchdog; keep it far above the fake's 300 ms delay so a
+    // slow CI runner never declares the child lost.
+    timeouts.watchdog = Duration::from_secs(10);
     let started = crate::fake::start_with(FakeOptions::default(), timeouts);
     Rig {
         instance: started.instance.map_err(|e| e.to_string()).unwrap(),
