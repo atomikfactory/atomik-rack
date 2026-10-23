@@ -31,7 +31,7 @@ esac
 for f in LICENSE README.md CHANGELOG.md; do
   test -f "$dir/$f" || { echo "error: $f missing" >&2; exit 1; }
 done
-for b in atomik atomik-render atomik-play atomik-plugin-scan; do
+for b in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host; do
   test -f "$bindir/$b$ext" || { echo "error: $b$ext missing in $bindir" >&2; exit 1; }
 done
 

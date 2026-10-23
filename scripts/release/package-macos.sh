@@ -5,7 +5,7 @@
 set -eu
 version="$1"
 name="atomik-rack-$version-macos-universal"
-bins="atomik atomik-render atomik-play atomik-plugin-scan"
+bins="atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host"
 arm="target/aarch64-apple-darwin/release"
 x64="target/x86_64-apple-darwin/release"
 
