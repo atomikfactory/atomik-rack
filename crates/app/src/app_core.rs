@@ -631,6 +631,7 @@ impl<S: EngineSink> AppCore<S> {
         match self.document.undo(&self.registry) {
             Some(ops) => {
                 self.sync_ops(&ops);
+                self.refresh_missing();
                 true
             }
             None => false,
@@ -643,6 +644,7 @@ impl<S: EngineSink> AppCore<S> {
         match self.document.redo(&self.registry) {
             Some(ops) => {
                 self.sync_ops(&ops);
+                self.refresh_missing();
                 true
             }
             None => false,

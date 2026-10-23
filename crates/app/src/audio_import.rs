@@ -103,6 +103,14 @@ pub(crate) enum Msg {
         job: SliceJob,
         result: Result<Vec<u64>, String>,
     },
+    /// A folder scan for missing audio finished: the files found, see
+    /// [`crate::audio_relink`].
+    Scanned {
+        generation: u64,
+        root: PathBuf,
+        found: Vec<(String, PathBuf)>,
+        truncated: bool,
+    },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
         generation: u64,
@@ -286,6 +294,28 @@ pub(crate) fn spawn_import(
                     result,
                 });
             }
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that scans `root` for the files of `wanted` and sends [`Msg::Scanned`].
+pub(crate) fn spawn_scan(
+    tx: Sender<Msg>,
+    generation: u64,
+    root: PathBuf,
+    wanted: Vec<crate::audio_relink::Wanted>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-relink-scan".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let result = crate::audio_relink::scan_folder(&root, &wanted);
+            let _ = tx.send(Msg::Scanned {
+                generation,
+                root,
+                found: result.found,
+                truncated: result.truncated,
+            });
         })
         .map(|_| ())
 }
