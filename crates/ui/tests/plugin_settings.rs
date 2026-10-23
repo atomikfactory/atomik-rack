@@ -1,9 +1,9 @@
-//! The Plugins section of the settings dialog and the project banner: the enable switch with its native-code warning, search folders, SCAN, FULL RESCAN and
+//! The Plugins section of the settings dialog and the project banner: the enable switch, search folders, SCAN, FULL RESCAN and
 //! RESCAN FAILED, the scan timeout stepper, the scan progress, the plugin list with per-plugin
 //! DISABLE, the failed list with RETRY, the log; the "This project uses N third-party plugins"
 //! banner with LOAD and OPEN WITHOUT, the unclean-exit banner; display-list goldens
 //! `plugin_settings_*` and `plugin_banner_*`; and the tests that pin the UI's mirrors of the host
-//! crate's consent text, timeout range and rescan modes.
+//! crate's timeout range and rescan modes.
 //! Regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-ui --test plugin_settings`.
 
 mod support;
@@ -12,12 +12,12 @@ use atomik_device_sdk::{PluginFormat, PluginRef};
 use atomik_ui::kurbo::{Point, Rect, Vec2};
 use atomik_ui::plugin_banner::BannerKind;
 use atomik_ui::plugin_data::{
-    ENABLE_WARNING, FailedFileInfo, PluginBannerAction, PluginEntryStatus, PluginRescan,
-    PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
+    FailedFileInfo, PluginBannerAction, PluginEntryStatus, PluginRescan, PluginSettingsAction,
+    PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
 };
 use atomik_ui::{
-    DisplayList, Key, Modifiers, PluginBannerView, PluginSettingsView, PointerButton, Theme,
-    UiAction, UiEvent,
+    DisplayList, Modifiers, PluginBannerView, PluginSettingsView, PointerButton, Theme, UiAction,
+    UiEvent,
 };
 use support::container::check;
 use support::*;
@@ -71,6 +71,7 @@ fn on_data() -> PluginSettingsData {
         scanner_available: true,
         last_scan: None,
         log: vec!["[Test Synth] loaded".into(), "[Test Fx] latency 128".into()],
+        sandbox: true,
     }
 }
 
@@ -114,8 +115,7 @@ fn has(texts: &[String], t: &str) -> bool {
 // ------------------------------------------------------------------ the mirrors
 
 #[test]
-fn the_consent_text_and_the_timeout_range_mirror_the_host_crate() {
-    assert_eq!(ENABLE_WARNING, atomik_plugin_host::ENABLE_WARNING);
+fn the_timeout_range_mirrors_the_host_crate() {
     assert_eq!(
         atomik_ui::plugin_data::MIN_TIMEOUT_SECS,
         atomik_plugin_host::MIN_TIMEOUT_SECS
@@ -154,68 +154,19 @@ fn while_plugins_are_off_only_the_switch_and_a_hint_show() {
 }
 
 #[test]
-fn turning_the_switch_on_asks_for_the_warning_first_and_only_the_answer_enables() {
+fn the_switch_turns_plugins_on_and_off_at_once_without_a_warning() {
     let mut v = view(PluginSettingsData::default());
-    assert!(!v.is_warning_open());
     let acts = {
         let p = v.enable_rect().center();
-        click_at(&mut v, p)
-    };
-    assert!(
-        settings(&acts).is_empty(),
-        "no action before the user answers"
-    );
-    assert!(v.is_warning_open());
-    let t = texts_of(&v);
-    assert!(
-        has(&t, "Plugins are native programs made by other companies."),
-        "the warning text is shown: {t:?}"
-    );
-    assert!(has(&t, "Only scan folders you trust."));
-    // Cancel closes it without an action.
-    let acts = {
-        let p = v.warning_cancel_rect().unwrap().center();
-        click_at(&mut v, p)
-    };
-    assert!(settings(&acts).is_empty());
-    assert!(!v.is_warning_open());
-    // Accept enables with the acknowledgement.
-    let _ = {
-        let p = v.enable_rect().center();
-        click_at(&mut v, p)
-    };
-    let acts = {
-        let p = v.warning_accept_rect().unwrap().center();
         click_at(&mut v, p)
     };
     assert_eq!(
         settings(&acts),
-        [PluginSettingsAction::SetEnabled {
-            enabled: true,
-            warning_acknowledged: true
-        }]
+        [PluginSettingsAction::SetEnabled { enabled: true }]
     );
-    assert!(!v.is_warning_open());
-}
-
-#[test]
-fn escape_closes_the_warning_and_the_switch_turns_plugins_off_without_a_warning() {
-    let mut v = view(PluginSettingsData::default());
-    let _ = {
-        let p = v.enable_rect().center();
-        click_at(&mut v, p)
-    };
-    assert!(v.is_warning_open());
-    let acts = feed(
-        &mut v,
-        UiEvent::Key {
-            key: Key::Escape,
-            modifiers: Modifiers::NONE,
-            pressed: true,
-        },
-    );
-    assert!(settings(&acts).is_empty());
-    assert!(!v.is_warning_open());
+    let t = texts_of(&v);
+    assert!(!has(&t, "native programs"), "no warning text: {t:?}");
+    assert!(!has(&t, "I UNDERSTAND"), "no confirmation: {t:?}");
     let mut v = view(on_data());
     let acts = {
         let p = v.enable_rect().center();
@@ -223,24 +174,8 @@ fn escape_closes_the_warning_and_the_switch_turns_plugins_off_without_a_warning(
     };
     assert_eq!(
         settings(&acts),
-        [PluginSettingsAction::SetEnabled {
-            enabled: false,
-            warning_acknowledged: false
-        }]
+        [PluginSettingsAction::SetEnabled { enabled: false }]
     );
-    assert!(!v.is_warning_open());
-}
-
-#[test]
-fn new_data_that_enables_plugins_closes_a_pending_warning() {
-    let mut v = view(PluginSettingsData::default());
-    let _ = {
-        let p = v.enable_rect().center();
-        click_at(&mut v, p)
-    };
-    assert!(v.is_warning_open());
-    v.set_data(on_data());
-    assert!(!v.is_warning_open());
 }
 
 // ------------------------------------------------------------------ folders and scanning
@@ -338,6 +273,46 @@ fn the_timeout_stepper_steps_by_five_and_stays_in_range() {
     };
     assert_eq!(settings(&acts), [PluginSettingsAction::SetTimeout(300)]);
     assert!(has(&texts_of(&view(on_data())), "30 s"));
+}
+
+#[test]
+fn the_sandbox_row_says_what_it_does_and_when_it_applies_and_toggles() {
+    let mut v = view(on_data());
+    let texts = texts_of(&v);
+    assert!(
+        has(&texts, "Run plugins in a separate process (recommended)"),
+        "{texts:?}"
+    );
+    assert!(has(&texts, "Applies after restarting Atomik"), "{texts:?}");
+    // On: a click asks for off; off: a click asks for on.
+    let acts = {
+        let p = v.sandbox_toggle_rect().unwrap().center();
+        click_at(&mut v, p)
+    };
+    assert_eq!(settings(&acts), [PluginSettingsAction::SetSandbox(false)]);
+    let mut data = on_data();
+    data.sandbox = false;
+    let mut v = view(data);
+    let acts = {
+        let p = v.sandbox_toggle_rect().unwrap().center();
+        click_at(&mut v, p)
+    };
+    assert_eq!(settings(&acts), [PluginSettingsAction::SetSandbox(true)]);
+}
+
+#[test]
+fn the_sandbox_row_is_there_while_plugins_are_off_and_sandboxing_defaults_on() {
+    assert!(PluginSettingsData::default().sandbox);
+    let mut v = view(PluginSettingsData::default());
+    assert!(has(
+        &texts_of(&v),
+        "Run plugins in a separate process (recommended)"
+    ));
+    let p = v.sandbox_toggle_rect().unwrap().center();
+    assert_eq!(
+        settings(&click_at(&mut v, p)),
+        [PluginSettingsAction::SetSandbox(false)]
+    );
 }
 
 // ------------------------------------------------------------------ the lists
@@ -570,18 +545,6 @@ fn the_off_state_matches_golden() {
 }
 
 #[test]
-fn the_warning_matches_golden() {
-    let mut v = view(PluginSettingsData::default());
-    let _ = {
-        let p = v.enable_rect().center();
-        click_at(&mut v, p)
-    };
-    let mut dl = DisplayList::new();
-    v.paint(&mut dl);
-    check("plugin_settings_warning_1x.json", &dl.to_json());
-}
-
-#[test]
 fn the_on_state_matches_golden() {
     let mut data = on_data();
     data.scan = Some(ScanProgressInfo {
@@ -638,18 +601,12 @@ fn banner_texts(b: &PluginBannerView) -> Vec<String> {
 
 #[test]
 fn the_project_banner_says_how_many_plugins_and_offers_load_and_open_without() {
-    let b = banner(BannerKind::ProjectUsesPlugins {
-        count: 3,
-        needs_consent: true,
-    });
+    let b = banner(BannerKind::ProjectUsesPlugins { count: 3 });
     assert!(b.is_visible());
     let t = banner_texts(&b);
     assert!(has(&t, "This project uses 3 third-party plugins"), "{t:?}");
     assert!(has(&t, "LOAD") && has(&t, "OPEN WITHOUT"));
-    let one = banner(BannerKind::ProjectUsesPlugins {
-        count: 1,
-        needs_consent: false,
-    });
+    let one = banner(BannerKind::ProjectUsesPlugins { count: 1 });
     assert!(has(
         &banner_texts(&one),
         "This project uses 1 third-party plugin"
@@ -662,49 +619,18 @@ fn the_project_banner_says_how_many_plugins_and_offers_load_and_open_without() {
 }
 
 #[test]
-fn load_asks_for_the_same_warning_when_plugins_were_off_and_open_without_hides() {
-    let mut b = banner(BannerKind::ProjectUsesPlugins {
-        count: 2,
-        needs_consent: true,
-    });
+fn load_emits_at_once_and_hides_and_open_without_hides() {
+    let mut b = banner(BannerKind::ProjectUsesPlugins { count: 2 });
     let h0 = b.height();
+    assert!(h0 > 0.0);
     let acts = {
         let p = b.load_rect().unwrap().center();
         banner_click(&mut b, p)
     };
-    assert!(banner_actions(&acts).is_empty(), "the warning comes first");
-    assert!(b.is_warning_open());
-    assert!(b.height() > h0, "the banner grows to hold the warning");
-    assert!(has(&banner_texts(&b), "Only scan folders you trust."));
-    // Cancel goes back.
-    let acts = {
-        let p = b.cancel_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    assert!(banner_actions(&acts).is_empty());
-    assert!(!b.is_warning_open());
-    assert_eq!(b.height(), h0);
-    // Accept loads with the acknowledgement and hides the banner.
-    let _ = {
-        let p = b.load_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    let acts = {
-        let p = b.accept_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    assert_eq!(
-        banner_actions(&acts),
-        [PluginBannerAction::Load {
-            warning_acknowledged: true
-        }]
-    );
+    assert_eq!(banner_actions(&acts), [PluginBannerAction::Load]);
     assert!(!b.is_visible());
     // OPEN WITHOUT.
-    let mut b = banner(BannerKind::ProjectUsesPlugins {
-        count: 2,
-        needs_consent: true,
-    });
+    let mut b = banner(BannerKind::ProjectUsesPlugins { count: 2 });
     let acts = {
         let p = b.open_without_rect().unwrap().center();
         banner_click(&mut b, p)
@@ -713,26 +639,6 @@ fn load_asks_for_the_same_warning_when_plugins_were_off_and_open_without_hides()
     assert!(!b.is_visible());
     // Clicks on a hidden banner do nothing.
     assert!(banner_click(&mut b, Point::new(10.0, 10.0)).is_empty());
-}
-
-#[test]
-fn load_needs_no_warning_when_plugins_are_already_enabled() {
-    let mut b = banner(BannerKind::ProjectUsesPlugins {
-        count: 2,
-        needs_consent: false,
-    });
-    let acts = {
-        let p = b.load_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    assert_eq!(
-        banner_actions(&acts),
-        [PluginBannerAction::Load {
-            warning_acknowledged: true
-        }],
-        "plugins were enabled (and the warning accepted) before"
-    );
-    assert!(!b.is_visible());
 }
 
 #[test]
@@ -779,22 +685,7 @@ fn the_unclean_exit_banner_offers_disable_keep_and_the_recovery_snapshot() {
 }
 
 #[test]
-fn escape_closes_the_banner_warning_and_a_long_plugin_list_is_cut() {
-    let mut b = banner(BannerKind::ProjectUsesPlugins {
-        count: 2,
-        needs_consent: true,
-    });
-    let _ = {
-        let p = b.load_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    let acts = b.handle(&UiEvent::Key {
-        key: Key::Escape,
-        modifiers: Modifiers::NONE,
-        pressed: true,
-    });
-    assert!(banner_actions(&acts).is_empty());
-    assert!(!b.is_warning_open() && b.is_visible());
+fn a_long_plugin_list_is_cut() {
     let long = BannerKind::UncleanExit {
         plugins: (0..40).map(|i| format!("Plugin number {i}")).collect(),
         has_recovery: false,
@@ -808,23 +699,8 @@ fn escape_closes_the_banner_warning_and_a_long_plugin_list_is_cut() {
 #[test]
 fn the_banner_matches_goldens() {
     let mut dl = DisplayList::new();
-    banner(BannerKind::ProjectUsesPlugins {
-        count: 3,
-        needs_consent: true,
-    })
-    .paint(&mut dl);
+    banner(BannerKind::ProjectUsesPlugins { count: 3 }).paint(&mut dl);
     check("plugin_banner_project_1x.json", &dl.to_json());
-    let mut b = banner(BannerKind::ProjectUsesPlugins {
-        count: 3,
-        needs_consent: true,
-    });
-    let _ = {
-        let p = b.load_rect().unwrap().center();
-        banner_click(&mut b, p)
-    };
-    let mut dl = DisplayList::new();
-    b.paint(&mut dl);
-    check("plugin_banner_warning_1x.json", &dl.to_json());
     let mut dl = DisplayList::new();
     banner(BannerKind::UncleanExit {
         plugins: vec!["Test Synth".into(), "Test Fx".into()],

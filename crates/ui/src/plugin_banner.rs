@@ -1,15 +1,13 @@
-//! The project banner of the plugin consent flow: a strip the
-//! app shows above the rack.
+//! The project banner of the plugin flow: a strip the app shows above the rack.
 //!
 //! ```text
 //! This project uses 3 third-party plugins                       [LOAD] [OPEN WITHOUT]
 //! ```
 //!
 //! * [`BannerKind::ProjectUsesPlugins`]: a project that uses plugins was opened while plugins
-//!   are off or some are missing, so it opened with stand-ins. `LOAD` turns plugins on for this
-//!   session after the same native-code warning as the settings switch (`needs_consent`; when
-//!   plugins were already enabled there is nothing to warn about) and emits
-//!   [`PluginBannerAction::Load`]; `OPEN WITHOUT` keeps the stand-ins
+//!   are off or some are missing, so it opened with stand-ins. `LOAD` emits
+//!   [`PluginBannerAction::Load`] (the app turns plugins on if they are off and loads them);
+//!   `OPEN WITHOUT` keeps the stand-ins
 //!   ([`PluginBannerAction::OpenWithout`]). Either hides the banner.
 //! * [`BannerKind::UncleanExit`]: the crash journal says Atomik ended unexpectedly while these
 //!   plugins were loaded. `DISABLE` blacklists them ([`PluginBannerAction::DisableCrashed`]),
@@ -18,26 +16,22 @@
 //!   [`PluginBannerAction::OpenRecovery`] and leaves the question open.
 //!
 //! Hosting: `set_bounds` (only the width and the top-left matter), `show`, `handle`, `paint`,
-//! `height` (0 while hidden; it grows while the warning is open, so lay the rack out below it).
+//! `height` (0 while hidden, else the strip, so lay the rack out below it).
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
-use crate::event::{Key, PointerButton, UiEvent};
+use crate::event::{PointerButton, UiEvent};
 use crate::paint::fit_label;
-use crate::plugin_data::{ENABLE_WARNING, PluginBannerAction};
-use crate::plugin_settings::wrap_words;
+use crate::plugin_data::PluginBannerAction;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
 use vello::kurbo::{Affine, Point, Rect};
 
 /// Height of the banner strip.
 pub const BAR_HEIGHT: f64 = 40.0;
-/// Extra height while the warning is open.
-pub const WARNING_HEIGHT: f64 = 84.0;
 const PAD: f64 = 14.0;
 const BTN_H: f64 = 24.0;
 const GAP: f64 = 8.0;
-const WRAP_CHARS: usize = 110;
 
 /// What the banner says.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,8 +40,6 @@ pub enum BannerKind {
     ProjectUsesPlugins {
         /// How many plugins the project uses.
         count: usize,
-        /// Plugins are off, so LOAD must show the warning first.
-        needs_consent: bool,
     },
     /// The last session ended unexpectedly while these plugins were loaded.
     UncleanExit {
@@ -65,7 +57,6 @@ pub struct PluginBannerView {
     bounds: Rect,
     scale: f64,
     kind: Option<BannerKind>,
-    warning: bool,
     hover: Option<Point>,
     repaint: bool,
 }
@@ -78,7 +69,6 @@ impl PluginBannerView {
             bounds: Rect::new(0.0, 0.0, 900.0, BAR_HEIGHT),
             scale: 1.0,
             kind: None,
-            warning: false,
             hover: None,
             repaint: true,
         }
@@ -98,17 +88,15 @@ impl PluginBannerView {
         self.repaint = true;
     }
 
-    /// Shows the banner (closing any open warning).
+    /// Shows the banner.
     pub fn show(&mut self, kind: BannerKind) {
         self.kind = Some(kind);
-        self.warning = false;
         self.repaint = true;
     }
 
     /// Hides the banner.
     pub fn hide(&mut self) {
         if self.kind.take().is_some() {
-            self.warning = false;
             self.repaint = true;
         }
     }
@@ -123,23 +111,14 @@ impl PluginBannerView {
         self.kind.as_ref()
     }
 
-    /// Whether the native-code warning is open.
-    pub fn is_warning_open(&self) -> bool {
-        self.warning
-    }
-
     /// True when something changed since the last [`Self::paint`].
     pub fn needs_repaint(&self) -> bool {
         self.repaint
     }
 
-    /// The banner's height: 0 while hidden, the strip, plus the warning while it is open.
+    /// The banner's height: 0 while hidden, else the strip.
     pub fn height(&self) -> f64 {
-        match (&self.kind, self.warning) {
-            (None, _) => 0.0,
-            (Some(_), false) => BAR_HEIGHT,
-            (Some(_), true) => BAR_HEIGHT + WARNING_HEIGHT,
-        }
+        if self.kind.is_some() { BAR_HEIGHT } else { 0.0 }
     }
 
     fn bar(&self) -> Rect {
@@ -214,36 +193,6 @@ impl PluginBannerView {
         self.crash_buttons().and_then(|b| b.2)
     }
 
-    fn warning_area(&self) -> Option<Rect> {
-        self.warning.then(|| {
-            Rect::new(
-                self.bounds.x0,
-                self.bounds.y0 + BAR_HEIGHT,
-                self.bounds.x1,
-                self.bounds.y0 + BAR_HEIGHT + WARNING_HEIGHT,
-            )
-        })
-    }
-
-    fn warning_buttons(&self) -> Option<(Rect, Rect)> {
-        let a = self.warning_area()?;
-        let y = a.y1 - 32.0;
-        Some((
-            Rect::new(a.x0 + PAD, y, a.x0 + PAD + 150.0, y + BTN_H),
-            Rect::new(a.x0 + PAD + 158.0, y, a.x0 + PAD + 158.0 + 80.0, y + BTN_H),
-        ))
-    }
-
-    /// The accept button of the warning (`I UNDERSTAND - LOAD`).
-    pub fn accept_rect(&self) -> Option<Rect> {
-        self.warning_buttons().map(|b| b.0)
-    }
-
-    /// The CANCEL button of the warning.
-    pub fn cancel_rect(&self) -> Option<Rect> {
-        self.warning_buttons().map(|b| b.1)
-    }
-
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {
         let mut out = Vec::new();
@@ -262,14 +211,6 @@ impl PluginBannerView {
                 button: PointerButton::Primary,
                 ..
             } if self.kind.is_some() => self.pointer_down(*pos, &mut out),
-            UiEvent::Key {
-                key: Key::Escape,
-                pressed: true,
-                ..
-            } if self.warning => {
-                self.warning = false;
-                self.repaint = true;
-            }
             _ => {}
         }
         out
@@ -280,39 +221,9 @@ impl PluginBannerView {
         let emit = |out: &mut Vec<UiAction>, a: PluginBannerAction| {
             out.push(UiAction::PluginBanner(a));
         };
-        if self.warning {
-            if self.accept_rect().is_some_and(|r| r.contains(pos)) {
-                emit(
-                    out,
-                    PluginBannerAction::Load {
-                        warning_acknowledged: true,
-                    },
-                );
-                self.hide();
-            } else if self.cancel_rect().is_some_and(|r| r.contains(pos)) {
-                self.warning = false;
-            }
-            return;
-        }
         if self.load_rect().is_some_and(|r| r.contains(pos)) {
-            let needs = matches!(
-                self.kind,
-                Some(BannerKind::ProjectUsesPlugins {
-                    needs_consent: true,
-                    ..
-                })
-            );
-            if needs {
-                self.warning = true;
-            } else {
-                emit(
-                    out,
-                    PluginBannerAction::Load {
-                        warning_acknowledged: true,
-                    },
-                );
-                self.hide();
-            }
+            emit(out, PluginBannerAction::Load);
+            self.hide();
         } else if self.open_without_rect().is_some_and(|r| r.contains(pos)) {
             emit(out, PluginBannerAction::OpenWithout);
             self.hide();
@@ -373,24 +284,6 @@ impl PluginBannerView {
         );
         for (rect, label, lit) in self.button_list() {
             sp::button(c, st, rect, label, lit.then_some(accent), hovered(rect));
-        }
-        if let Some(area) = self.warning_area() {
-            sp::rect(c, area, t.lcd);
-            for (i, line) in wrap_words(ENABLE_WARNING, WRAP_CHARS).iter().enumerate() {
-                sp::label(
-                    c,
-                    line,
-                    area.x0 + PAD,
-                    area.y0 + 18.0 + i as f64 * 14.0,
-                    9.5,
-                    t.text,
-                    Align::Start,
-                );
-            }
-            if let Some((a, cancel)) = self.warning_buttons() {
-                sp::button(c, st, a, "I UNDERSTAND - LOAD", Some(accent), hovered(a));
-                sp::button(c, st, cancel, "CANCEL", None, hovered(cancel));
-            }
         }
         c.pop_clip();
         c.pop_transform();

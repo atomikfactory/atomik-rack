@@ -3,6 +3,8 @@
 //!
 //! ```text
 //! PLUGINS                                                        [ ENABLE ]
+//! [x] Run plugins in a separate process (recommended)
+//!     Applies after restarting Atomik
 //! SEARCH FOLDERS
 //!   D:/Plugins/CLAP                                                   [x]
 //!   [ADD FOLDER...]
@@ -24,12 +26,11 @@
 //! [`PluginSettingsView::set_data`] whenever it changes (every frame is fine); what the user
 //! does arrives as [`UiAction::PluginSettings`].
 //!
-//! * **Consent.** Plugins are off by default. While they are off only the switch and a hint
-//!   show. Turning the switch on opens the native-code warning ([`ENABLE_WARNING`]) with
-//!   `I UNDERSTAND - ENABLE` and `CANCEL`; nothing is emitted until the user answers, and only
-//!   the answer emits [`PluginSettingsAction::SetEnabled`] with `warning_acknowledged: true`.
-//!   Turning it off emits at once. New data that says plugins are enabled closes a pending
-//!   warning.
+//! * **Switch.** Plugins are off by default. While they are off only the switch and a hint
+//!   show. The ENABLE switch emits [`PluginSettingsAction::SetEnabled`] at once, on or off.
+//! * **Process.** The check under the header (always shown) emits
+//!   [`PluginSettingsAction::SetSandbox`]; the note under it says the change applies at the next
+//!   start.
 //! * **Scanning.** `SCAN`, `FULL RESCAN` and `RESCAN FAILED` emit [`PluginSettingsAction::Scan`]
 //!   with the matching [`crate::plugin_data::PluginRescan`]; while a scan runs they are dim and
 //!   the progress bar and `CANCEL` show. The timeout steps by 5 s (Shift: 30 s) within 5 to 300.
@@ -39,11 +40,11 @@
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt};
-use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::event::{Modifiers, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::plugin_data::{
-    ENABLE_WARNING, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEntryStatus, PluginRescan,
-    PluginSettingsAction, PluginSettingsData, format_badge,
+    MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginEntryStatus, PluginRescan, PluginSettingsAction,
+    PluginSettingsData, format_badge,
 };
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
@@ -52,8 +53,8 @@ use vello::peniko::Color;
 
 const PAD: f64 = 14.0;
 const HEADER_H: f64 = 34.0;
-const WARNING_H: f64 = 104.0;
 const HINT_H: f64 = 30.0;
+const SANDBOX_H: f64 = 40.0;
 const HEADING_H: f64 = 26.0;
 const FOLDER_H: f64 = 24.0;
 const BUTTONS_H: f64 = 30.0;
@@ -63,14 +64,12 @@ const FAILED_H: f64 = 36.0;
 const LOG_H: f64 = 14.0;
 /// Log lines shown (the newest).
 pub const LOG_LINES: usize = 12;
-/// The characters per line the warning text wraps at.
-const WRAP_CHARS: usize = 100;
 
 /// One block of the settings column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
     Header,
-    Warning,
+    Sandbox,
     OffHint,
     NoScanner,
     ScanSummary,
@@ -98,7 +97,7 @@ impl Item {
     fn height(self) -> f64 {
         match self {
             Item::Header => HEADER_H,
-            Item::Warning => WARNING_H,
+            Item::Sandbox => SANDBOX_H,
             Item::OffHint | Item::NoScanner | Item::ScanSummary => HINT_H,
             Item::Heading(_) => HEADING_H,
             Item::Folder(_) => FOLDER_H,
@@ -111,25 +110,6 @@ impl Item {
     }
 }
 
-/// Wraps `text` at word boundaries to lines of at most `max` characters.
-pub(crate) fn wrap_words(text: &str, max: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > max {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
 /// The Plugins section of the settings dialog. See the module documentation.
 #[derive(Debug)]
 pub struct PluginSettingsView {
@@ -137,7 +117,6 @@ pub struct PluginSettingsView {
     bounds: Rect,
     scale: f64,
     data: PluginSettingsData,
-    warning: bool,
     scroll: f64,
     items: Vec<Item>,
     /// Prefix sums of the item heights (`offsets[i]` is the top of item `i`).
@@ -156,7 +135,6 @@ impl PluginSettingsView {
             bounds: Rect::new(0.0, 0.0, 760.0, 560.0),
             scale: 1.0,
             data: PluginSettingsData::default(),
-            warning: false,
             scroll: 0.0,
             items: Vec::new(),
             offsets: vec![0.0],
@@ -196,14 +174,10 @@ impl PluginSettingsView {
         self.repaint
     }
 
-    /// Replaces what the view shows. Cheap when nothing changed. Plugins being enabled closes
-    /// a pending warning.
+    /// Replaces what the view shows. Cheap when nothing changed.
     pub fn set_data(&mut self, data: PluginSettingsData) {
         if data == self.data {
             return;
-        }
-        if data.enabled {
-            self.warning = false;
         }
         self.data = data;
         self.relayout();
@@ -213,11 +187,6 @@ impl PluginSettingsView {
     /// What the view shows.
     pub fn data(&self) -> &PluginSettingsData {
         &self.data
-    }
-
-    /// Whether the native-code warning is open.
-    pub fn is_warning_open(&self) -> bool {
-        self.warning
     }
 
     /// The scroll offset in pixels.
@@ -233,9 +202,7 @@ impl PluginSettingsView {
     fn relayout(&mut self) {
         let d = &self.data;
         let mut items = vec![Item::Header];
-        if self.warning {
-            items.push(Item::Warning);
-        }
+        items.push(Item::Sandbox);
         if !d.enabled {
             items.push(Item::OffHint);
         } else {
@@ -327,25 +294,6 @@ impl PluginSettingsView {
         Rect::new(r.x1 - 96.0, r.y0 + 5.0, r.x1, r.y1 - 5.0)
     }
 
-    fn warning_buttons(&self) -> Option<(Rect, Rect)> {
-        let (_, r) = self.find(Item::Warning)?;
-        let y = r.y1 - 30.0;
-        Some((
-            Rect::new(r.x0 + 12.0, y, r.x0 + 12.0 + 190.0, y + 22.0),
-            Rect::new(r.x0 + 12.0 + 198.0, y, r.x0 + 12.0 + 198.0 + 80.0, y + 22.0),
-        ))
-    }
-
-    /// The `I UNDERSTAND - ENABLE` button of the warning.
-    pub fn warning_accept_rect(&self) -> Option<Rect> {
-        self.warning_buttons().map(|b| b.0)
-    }
-
-    /// The `CANCEL` button of the warning.
-    pub fn warning_cancel_rect(&self) -> Option<Rect> {
-        self.warning_buttons().map(|b| b.1)
-    }
-
     /// The ADD FOLDER button.
     pub fn add_folder_rect(&self) -> Option<Rect> {
         let (_, r) = self.find(Item::AddFolder)?;
@@ -406,6 +354,12 @@ impl PluginSettingsView {
         Some(Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x0 + 16.0, r.y0 + 18.0))
     }
 
+    /// The check of the separate-process row.
+    pub fn sandbox_toggle_rect(&self) -> Option<Rect> {
+        let (_, r) = self.find(Item::Sandbox)?;
+        Some(Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x0 + 16.0, r.y0 + 18.0))
+    }
+
     /// The RETRY button of failed file `i`.
     pub fn retry_rect(&self, i: usize) -> Option<Rect> {
         let (_, r) = self.find(Item::Failed(i))?;
@@ -438,15 +392,6 @@ impl PluginSettingsView {
                 self.clamp_scroll();
                 self.repaint = true;
             }
-            UiEvent::Key {
-                key: Key::Escape,
-                pressed: true,
-                ..
-            } if self.warning => {
-                self.warning = false;
-                self.relayout();
-                self.repaint = true;
-            }
             _ => {}
         }
         out
@@ -462,35 +407,19 @@ impl PluginSettingsView {
             return;
         }
         if self.enable_rect().contains(pos) && self.find(Item::Header).is_some() {
-            if self.data.enabled {
-                Self::emit(
-                    out,
-                    PluginSettingsAction::SetEnabled {
-                        enabled: false,
-                        warning_acknowledged: false,
-                    },
-                );
-            } else {
-                self.warning = !self.warning;
-                self.relayout();
-            }
+            Self::emit(
+                out,
+                PluginSettingsAction::SetEnabled {
+                    enabled: !self.data.enabled,
+                },
+            );
             return;
         }
-        if self.warning {
-            if self.warning_accept_rect().is_some_and(|r| r.contains(pos)) {
-                self.warning = false;
-                self.relayout();
-                Self::emit(
-                    out,
-                    PluginSettingsAction::SetEnabled {
-                        enabled: true,
-                        warning_acknowledged: true,
-                    },
-                );
-            } else if self.warning_cancel_rect().is_some_and(|r| r.contains(pos)) {
-                self.warning = false;
-                self.relayout();
-            }
+        if self
+            .sandbox_toggle_rect()
+            .is_some_and(|r| r.inflate(4.0, 4.0).contains(pos))
+        {
+            Self::emit(out, PluginSettingsAction::SetSandbox(!self.data.sandbox));
             return;
         }
         if !self.data.enabled {
@@ -604,31 +533,35 @@ impl PluginSettingsView {
                     self.hovered(e),
                 );
             }
-            Item::Warning => {
-                c.fill_with(RoundedRect::from_rect(r, 4.0), t.lcd);
-                c.stroke_with(RoundedRect::from_rect(r.inset(-0.5), 4.5), 1.0, accent);
-                for (i, line) in wrap_words(ENABLE_WARNING, WRAP_CHARS).iter().enumerate() {
-                    label(
-                        c,
-                        line,
-                        r.x0 + 12.0,
-                        r.y0 + 18.0 + i as f64 * 14.0,
-                        9.5,
-                        t.text,
-                        Align::Start,
-                    );
+            Item::Sandbox => {
+                if let Some(tg) = self.sandbox_toggle_rect() {
+                    c.stroke_with(RoundedRect::from_rect(tg, 2.0), 1.0, t.text_muted);
+                    if d.sandbox {
+                        c.fill_with(RoundedRect::from_rect(tg.inset(-3.0), 1.0), accent);
+                    }
                 }
-                if let Some((a, cancel)) = self.warning_buttons() {
-                    sp::button(
-                        c,
-                        st,
-                        a,
-                        "I UNDERSTAND - ENABLE",
-                        Some(accent),
-                        self.hovered(a),
-                    );
-                    sp::button(c, st, cancel, "CANCEL", None, self.hovered(cancel));
-                }
+                label(
+                    c,
+                    &fit_label(
+                        "Run plugins in a separate process (recommended)",
+                        r.width() - 26.0,
+                        10.0,
+                    ),
+                    r.x0 + 26.0,
+                    r.y0 + 15.0,
+                    10.0,
+                    t.text,
+                    Align::Start,
+                );
+                label(
+                    c,
+                    "Applies after restarting Atomik",
+                    r.x0 + 26.0,
+                    r.y0 + 30.0,
+                    9.0,
+                    t.text_muted,
+                    Align::Start,
+                );
             }
             Item::OffHint => label(
                 c,

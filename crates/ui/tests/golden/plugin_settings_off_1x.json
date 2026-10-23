@@ -7,7 +7,11 @@
 {"stroke":{"line":[652.00,12.50,744.00,12.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
 {"stroke":{"rrect":[650.50,12.50,745.50,35.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"ENABLE","at":[698.00,27.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
-{"text":"Third-party plugins are off. Press ENABLE (top right) to scan folders and use plugins.","at":[14.00,61.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"stroke":{"rrect":[16.00,45.00,30.00,59.00,2.00]},"width":1.00,"cap":"round","join":"round","brush":"#8f96a0ff"},
+{"fill":{"rrect":[19.00,48.00,27.00,56.00,1.00]},"brush":"#ffe08aff"},
+{"text":"Run plugins in a separate process (recommended)","at":[40.00,56.00],"size":10.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Applies after restarting Atomik","at":[40.00,71.00],"size":9.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Third-party plugins are off. Press ENABLE (top right) to scan folders and use plugins.","at":[14.00,101.00],"size":10.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}

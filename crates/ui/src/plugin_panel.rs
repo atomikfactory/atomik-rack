@@ -24,9 +24,9 @@
 //!   plugin has an editor ([`crate::RackView::set_plugin_status`]); PARAMS opens the parameter
 //!   pane; TO CH (instruments only) adds the console channel; RELOAD recreates the instance;
 //!   RELINK (a stand-in only) points the device at another installed plugin.
-//! * The status lines show the state (RUNNING, SLEEPING, STOPPED, RESTARTING from the meter
-//!   values), the reported latency and the dropped-event count, and MISSING or FAILED with the
-//!   reason (and the saved path hint of a stand-in).
+//! * The status lines show the state (RUNNING, SLEEPING, STOPPED, RESTARTING, CRASHED from the
+//!   meter values), the reported latency and the dropped-event count, and MISSING, CRASHED or
+//!   FAILED with the reason (and the saved path hint of a stand-in).
 //!
 //! This module holds the geometry and the pure helpers; the rack view drives the gestures
 //! (`rack/plugin_input.rs`) and `paint_panel` draws the extras.
@@ -271,6 +271,7 @@ pub fn state_label(state: f32) -> &'static str {
         2 => "STOPPED",
         3 => "FAILED",
         4 => "RESTARTING",
+        5 => "CRASHED",
         _ => "RUNNING",
     }
 }
@@ -289,7 +290,18 @@ pub struct StatusLines {
     pub detail: String,
 }
 
-/// The status lines of a device (MISSING beats FAILED beats LOADING beats the meter state).
+/// A multi-line reason on one line: the non-empty lines joined with ` | `.
+fn one_line(reason: &str) -> String {
+    reason
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The status lines of a device (MISSING beats CRASHED beats FAILED beats LOADING beats the
+/// meter state).
 pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines {
     let meter = |i: usize| meters.get(i).copied().unwrap_or(0.0);
     let latency =
@@ -300,6 +312,15 @@ pub fn status_lines(status: &PluginDeviceStatus, meters: &[f32]) -> StatusLines 
             error: true,
             latency: None,
             detail: r.clone(),
+        };
+    }
+    if status.crashed.is_some() || meter(METER_STATE).round() as i32 == 5 {
+        return StatusLines {
+            state: "CRASHED".into(),
+            error: true,
+            latency,
+            // One line: the exit code first, then what the process wrote last.
+            detail: status.crashed.as_deref().map(one_line).unwrap_or_default(),
         };
     }
     let failed_meter = meter(METER_STATE).round() as i32 == 3;
@@ -573,6 +594,32 @@ mod tests {
         assert_eq!(featured_pins(&d), [105, 101]);
         let d = doc_with(&ids, &(100..120).collect::<Vec<u32>>());
         assert_eq!(featured_pins(&d).len(), MAX_FEATURED);
+    }
+
+    #[test]
+    fn a_crashed_device_is_crashed_not_failed_and_the_reason_is_one_line() {
+        let ok = PluginDeviceStatus::default();
+        let l = status_lines(&ok, &[0.0, 0.0, 5.0]);
+        assert_eq!((l.state.as_str(), l.error), ("CRASHED", true));
+        let crashed = PluginDeviceStatus {
+            crashed: Some(
+                "exited with code 3
+thread panicked
+"
+                .into(),
+            ),
+            failed: Some("the plugin process stopped".into()),
+            ..ok.clone()
+        };
+        let l = status_lines(&crashed, &[0.0, 0.0, 5.0, 64.0]);
+        assert_eq!(l.state, "CRASHED");
+        assert_eq!(l.detail, "exited with code 3 | thread panicked");
+        assert_eq!(l.latency.as_deref(), Some("64 fr"));
+        let missing = PluginDeviceStatus {
+            missing: Some("gone".into()),
+            ..crashed
+        };
+        assert_eq!(status_lines(&missing, &[]).state, "MISSING");
     }
 
     #[test]
