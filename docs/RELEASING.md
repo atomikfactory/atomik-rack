@@ -32,7 +32,7 @@ The `Release` workflow (`.github/workflows/release.yml`) runs on a `vX.Y.Z` tag 
 Jobs:
 
 1. `version` resolves the version: the tag name on a tag, `dev-<shortsha>` otherwise. On a tag it fails unless the tag is `v` plus the `[workspace.package]` version in `Cargo.toml` (`scripts/release/version.sh`).
-2. `build` runs on Linux, Windows and macOS and builds `atomik`, `atomik-render`, `atomik-play` and `atomik-plugin-scan` with `cargo build --release --locked`. The ASIO feature is never enabled. On macOS it builds `aarch64-apple-darwin` and `x86_64-apple-darwin` and joins each program with `lipo`.
+2. `build` runs on Linux, Windows and macOS and builds `atomik`, `atomik-render`, `atomik-play`, `atomik-plugin-scan` and `atomik-plugin-host` (the plugin sandbox child, package `atomik-plugin-hostd`) with `cargo build --release --locked`. The ASIO feature is never enabled. On macOS it builds `aarch64-apple-darwin` and `x86_64-apple-darwin` and joins each program with `lipo`.
 3. `smoke` downloads each archive, verifies its `.sha256`, unpacks it the way a user would and runs the checks below (`scripts/release/smoke.sh`).
 4. `draft-release` (tags only, after `build` and `smoke`) writes `SHA256SUMS`, checks it and runs `gh release create --draft --verify-tag` with every archive, `.sha256` file and `SHA256SUMS`. A tag with a `-` in it becomes a pre-release. Only this job has `contents: write`.
 
@@ -46,7 +46,7 @@ Jobs:
 
 `<version>` is the tag (for example `v0.1.0`) or `dev-<shortsha>`. Each archive has a `.sha256` file; the release also has one `SHA256SUMS` over all archives.
 
-`Atomik Rack.app` holds all four programs in `Contents/MacOS/`, so the app finds `atomik-plugin-scan` beside its executable. `Contents/Info.plist` sets the identifier `com.atomikfactory.atomik-rack`, the name `Atomik Rack`, the executable `atomik`, the version from `Cargo.toml` (without any pre-release suffix), `NSHighResolutionCapable`, a microphone usage text for audio input, and `LSMinimumSystemVersion`, which `package-macos.sh` reads from the built binaries (the higher of the two architectures' deployment targets, Rust's default). The bundle is signed ad hoc (`codesign -s -`), which is enough for Apple Silicon to run it but is not a developer signature. There is no icon yet.
+`Atomik Rack.app` holds all five programs in `Contents/MacOS/`, so the app finds `atomik-plugin-scan` and `atomik-plugin-host` beside its executable. `Contents/Info.plist` sets the identifier `com.atomikfactory.atomik-rack`, the name `Atomik Rack`, the executable `atomik`, the version from `Cargo.toml` (without any pre-release suffix), `NSHighResolutionCapable`, a microphone usage text for audio input, and `LSMinimumSystemVersion`, which `package-macos.sh` reads from the built binaries (the higher of the two architectures' deployment targets, Rust's default). The bundle is signed ad hoc (`codesign -s -`), which is enough for Apple Silicon to run it but is not a developer signature. There is no icon yet.
 
 ### Smoke checks
 

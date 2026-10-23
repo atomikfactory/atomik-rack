@@ -8,14 +8,11 @@
 
 use atomik_device_sdk::{PluginFormat, PluginKindHint, PluginLayout, PluginRef};
 
-/// The one-time warning of (the host crate's `ENABLE_WARNING`; a test pins the two).
-pub const ENABLE_WARNING: &str = "Plugins are native programs made by other companies. They run inside Atomik with the same access as Atomik, and a faulty plugin can crash it. Only scan folders you trust.";
-
 /// The help line of the parameter pane: what undo covers.
 pub const PARAMS_HELP: &str = "Undo covers parameter edits, one gesture each. A patch or preset change made inside the plugin's own window is not undoable.";
 
 /// Index of the state in a plugin device's meter values (0 running, 1 sleeping, 2 stopped, 3
-/// failed, 4 restarting).
+/// failed, 4 restarting, 5 crashed).
 pub const METER_STATE: usize = 2;
 /// Index of the reported latency (frames) in a plugin device's meter values.
 pub const METER_LATENCY: usize = 3;
@@ -24,6 +21,8 @@ pub const METER_DROPPED: usize = 4;
 
 /// Meter state value of a failed plugin device.
 pub const STATE_FAILED: f32 = 3.0;
+/// Meter state value of a plugin device whose process is gone (sandbox).
+pub const STATE_CRASHED: f32 = 5.0;
 
 /// The short badge of a format.
 pub fn format_badge(format: PluginFormat) -> &'static str {
@@ -132,6 +131,9 @@ pub struct PluginDeviceStatus {
     pub missing: Option<String>,
     /// The instance failed (error status, non-finite output, failed restore). The reason.
     pub failed: Option<String>,
+    /// The plugin's process ended (sandbox): the reason, the exit code or signal and the last
+    /// lines it wrote. RELOAD creates a new instance.
+    pub crashed: Option<String>,
     /// The instance is being created.
     pub loading: bool,
     /// The instance waits for the audio engine (audio is off): the reason. The editor and the
@@ -195,6 +197,8 @@ pub struct PluginSettingsData {
     pub last_scan: Option<String>,
     /// The bounded plugin log, oldest first.
     pub log: Vec<String>,
+    /// Plugins run in a separate process (a change applies after a restart of the app).
+    pub sandbox: bool,
 }
 
 impl Default for PluginSettingsData {
@@ -209,6 +213,7 @@ impl Default for PluginSettingsData {
             scanner_available: true,
             last_scan: None,
             log: Vec::new(),
+            sandbox: true,
         }
     }
 }
@@ -221,13 +226,10 @@ pub const MAX_TIMEOUT_SECS: u32 = 300;
 /// What the Plugins section of the settings dialog asks the app to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginSettingsAction {
-    /// Switch plugins on or off. Turning on is only emitted after the user acknowledged
-    /// [`ENABLE_WARNING`] (`warning_acknowledged` is then true).
+    /// Switch plugins on or off.
     SetEnabled {
         /// The new setting.
         enabled: bool,
-        /// The user confirmed the warning.
-        warning_acknowledged: bool,
     },
     /// Show the folder dialog and add the folder to the search paths.
     AddFolderDialog,
@@ -239,6 +241,8 @@ pub enum PluginSettingsAction {
     CancelScan,
     /// Set the scan timeout (seconds, 5 to 300).
     SetTimeout(u32),
+    /// Run plugins in a separate process (applies after a restart of the app).
+    SetSandbox(bool),
     /// Disable or enable one plugin (type id).
     SetPluginDisabled {
         /// The type id (`clap.<id>`).
@@ -253,12 +257,8 @@ pub enum PluginSettingsAction {
 /// What the project banner asks the app to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginBannerAction {
-    /// "This project uses N third-party plugins": LOAD. `warning_acknowledged` is true when the
-    /// user confirmed [`ENABLE_WARNING`] (or plugins were already enabled).
-    Load {
-        /// The user confirmed the warning.
-        warning_acknowledged: bool,
-    },
+    /// "This project uses N third-party plugins": LOAD (turns plugins on if they are off).
+    Load,
     /// OPEN WITHOUT: keep the stand-ins.
     OpenWithout,
     /// After an unclean exit: DISABLE the plugins that were loaded (blacklist them).

@@ -42,6 +42,20 @@
 //! the value back. A change outside a gesture is dropped (a patch change inside the plugin is
 //! not undoable and not stored).
 //!
+//! # Where plugins run
+//!
+//! [`PluginConfig::isolation`] (from `PluginSettings::sandbox` at start) decides whether the
+//! host builds in-process backends or one child process per instance; a change in Settings
+//! applies at the next start. A sandboxed instance whose process ends is **CRASHED**
+//! (`ManagerEvent::Crashed`): its device passes the dry signal or silence, the panel shows the
+//! reason, and RELOAD replaces the instance (the old one cannot be restarted) with a new one
+//! built from the document's last captured state and the rack's params. A sandboxed plugin
+//! cannot crash the app, so it is not journaled.
+//!
+//! An [`EditorKind::External`] editor is a window of the plugin's own process: OPEN GUI calls
+//! `open_external_editor` with the app window's native handle ([`AppCore::set_plugin_editor_owner`])
+//! and asks the platform for nothing.
+//!
 //! # Crash handling
 //!
 //! A [`CrashJournal`] lists the loaded plugins and is removed on a clean exit; at the next start
@@ -59,11 +73,11 @@ use atomik_model::{
 };
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
-    CrashJournal, InUsePlugin, InstanceId, InstantiateRequest, ManagerEvent, ParamPhase,
-    PluginCache, PluginCatalog, PluginHandle, PluginSettings, PluginStatus, RecoveryDir,
-    RescanMode, ScanJob, ScanRunner, blacklist_in_use,
+    CrashJournal, EditorKind, InUsePlugin, InstanceId, InstantiateRequest, LOST, ManagerEvent,
+    NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle, PluginSettings,
+    PluginStatus, RecoveryDir, RescanMode, ScanJob, ScanRunner, blacklist_in_use,
 };
-use atomik_render::plugins::PluginHost;
+use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
     FailedFileInfo, PluginBannerAction, PluginDeviceStatus, PluginEntryInfo, PluginEntryStatus,
     PluginRescan, PluginSettingsAction, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
@@ -117,6 +131,8 @@ pub struct PluginConfig {
     pub runner: Option<Arc<dyn ScanRunner>>,
     /// The plugins the previous run left in the journal (it ended while they were loaded).
     pub previous_crash: Option<Vec<InUsePlugin>>,
+    /// Where plugins run, read once at start (`None`: the core's host as it is, in process).
+    pub isolation: Option<PluginIsolation>,
 }
 
 impl std::fmt::Debug for PluginConfig {
@@ -185,6 +201,8 @@ enum EditorWindow {
     Opening,
     /// The view is embedded.
     Open,
+    /// The plugin's own process shows the window (an [`EditorKind::External`] editor).
+    External,
 }
 
 /// The recovery snapshot writer state.
@@ -220,6 +238,8 @@ pub(super) struct PluginState {
     batch_done: usize,
     /// Why a device is FAILED (an error, a restore that failed, a creation that failed).
     failed: BTreeMap<DeviceKey, String>,
+    /// Why a device is CRASHED: its plugin process ended (sandbox).
+    crashed: BTreeMap<DeviceKey, String>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
@@ -249,6 +269,8 @@ pub(super) struct PluginState {
     windows: BTreeMap<DeviceKey, EditorWindow>,
     remembered: BTreeMap<DeviceKey, (u32, u32)>,
     window_requests: Vec<PluginWindowRequest>,
+    /// The app window's native handle: the owner of external editors.
+    editor_owner: Option<NativeParent>,
     settings_changed: bool,
     folder_dialog: bool,
 }
@@ -271,6 +293,7 @@ impl PluginState {
             batch_total: 0,
             batch_done: 0,
             failed: BTreeMap::new(),
+            crashed: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
             offline: BTreeSet::new(),
@@ -292,6 +315,7 @@ impl PluginState {
             windows: BTreeMap::new(),
             remembered: BTreeMap::new(),
             window_requests: Vec::new(),
+            editor_owner: None,
             settings_changed: false,
             folder_dialog: false,
         }
@@ -379,6 +403,18 @@ impl<S: EngineSink> AppCore<S> {
     /// recovery snapshots go, and what scans files. The catalog is registered from the cache
     /// (no plugin file is opened); a document already open with plugins is rebuilt.
     pub fn configure_plugins(&mut self, config: PluginConfig) {
+        // The host is built once, before any instance exists: a setting changed later applies at
+        // the next start. The old host's plugin types leave the registry first.
+        if let Some(isolation) = config.isolation
+            && self.plugins.host.manager_ref().instance_count() == 0
+        {
+            self.plugins.host.set_catalog(
+                &PluginCache::default(),
+                &PluginSettings::default(),
+                &mut self.registry,
+            );
+            self.plugins.host = PluginHost::with_isolation(isolation);
+        }
         let p = &mut self.plugins;
         p.settings = config.settings;
         p.cache = config.cache;
@@ -612,6 +648,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.dirty.remove(&id);
         }
         self.plugins.live_desc.remove(key);
+        self.plugins.crashed.remove(key);
     }
 
     /// Called by `rebuild_engine` before the engine is reset: captures the states and keeps (or,
@@ -632,6 +669,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins.keys.clear();
             self.plugins.dirty.clear();
             self.plugins.failed.clear();
+            self.plugins.crashed.clear();
             self.plugins.no_capture.clear();
             self.plugins.live_desc.clear();
         }
@@ -699,6 +737,7 @@ impl<S: EngineSink> AppCore<S> {
             self.plugins_poll_events();
         }
         self.plugins.failed.remove(flat);
+        self.plugins.crashed.remove(flat);
         self.plugins.no_capture.remove(flat);
         self.plugins.shown.remove(flat);
         self.view
@@ -819,9 +858,21 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             ManagerEvent::Failed { instance, reason } => {
+                // The device's own Failed that goes with a lost process says nothing more than
+                // the Crashed event does.
+                if self.plugins.host.manager_ref().is_lost(instance) {
+                    return;
+                }
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.log(format!("[{key}] failed: {reason}"));
                     self.plugins.failed.insert(key, reason);
+                }
+            }
+            ManagerEvent::Crashed { instance, reason } => {
+                if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    self.plugins.log(format!("[{key}] crashed: {reason}"));
+                    self.plugins.failed.remove(&key);
+                    self.plugins.crashed.insert(key, reason);
                 }
             }
             ManagerEvent::LayoutChanged { instance, layout } => {
@@ -838,6 +889,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             ManagerEvent::GuiClosed(instance) => {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
+                    // An external editor has no host window to destroy: the close path knows.
                     self.close_plugin_gui(&key);
                 }
             }
@@ -873,6 +925,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             ManagerEvent::Destroyed(id) => {
                 if let Some(info) = self.plugins.loaded.remove(&id)
+                    && !self.plugins.host.is_sandboxed()
                     && let Some(journal) = &mut self.plugins.journal
                 {
                     let _ = journal.unloaded(&info);
@@ -986,7 +1039,10 @@ impl<S: EngineSink> AppCore<S> {
             plugin: plugin.clone(),
             path: self.plugins.host.path_of(plugin).unwrap_or_default(),
         };
-        if let Some(journal) = &mut self.plugins.journal {
+        // A sandboxed plugin cannot take the app down, so there is nothing to journal for it.
+        if !self.plugins.host.is_sandboxed()
+            && let Some(journal) = &mut self.plugins.journal
+        {
             let _ = journal.loaded(info.clone());
         }
         self.plugins.loaded.insert(id, info);
@@ -1279,7 +1335,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// RELOAD: a stand-in whose plugin is installed gets its instance; a live instance restores
-    /// the saved state and restarts (a FAILED device is reset by the hand-shake).
+    /// the saved state and restarts (a FAILED device is reset by the hand-shake); a CRASHED one
+    /// (its process is gone) is replaced by a new instance.
     fn reload_plugin(&mut self, device: &DeviceKey) {
         let Some(pd) = self.doc().resolve(device).and_then(|d| d.plugin.as_deref()) else {
             return;
@@ -1288,6 +1345,19 @@ impl<S: EngineSink> AppCore<S> {
         let state = pd.state.as_deref().cloned();
         self.plugins.failed.remove(device);
         match self.plugins.instances.get(device).copied() {
+            Some(id) if self.plugins.host.manager_ref().is_lost(id) => {
+                // Its process is gone and nothing can restart it: forget it (the engine keeps
+                // the crashed device until the new one is swapped in; the manager reaps the old
+                // instance then) and create a new one from the document's last captured state
+                // and the rack's params, through the normal path.
+                if self.plugins.offline.remove(device) {
+                    let _ = self.plugins.host.manager().remove(id);
+                }
+                self.plugins.no_capture.remove(device);
+                self.plugins.windows.remove(device);
+                self.release_instance_maps(device);
+                self.queue_instance(device, &plugin);
+            }
             Some(id) => {
                 if self.plugins.no_capture.contains(device) {
                     if let Some(blob) = &state {
@@ -1312,16 +1382,20 @@ impl<S: EngineSink> AppCore<S> {
                     self.plugins.failed.insert(device.clone(), e.to_string());
                 }
             }
-            None if self.plugin_usable(&plugin) => {
-                if !self.plugins.pending.contains(device) {
-                    self.plugins.pending.push_back(device.clone());
-                    self.plugins.batch_total += 1;
-                }
+            None => self.queue_instance(device, &plugin),
+        }
+    }
+
+    /// Queues the creation of an instance for `device` (one per frame), or says why not.
+    fn queue_instance(&mut self, device: &DeviceKey, plugin: &PluginRef) {
+        if self.plugin_usable(plugin) {
+            if !self.plugins.pending.contains(device) {
+                self.plugins.pending.push_back(device.clone());
+                self.plugins.batch_total += 1;
             }
-            None => {
-                let why = self.missing_reason(&plugin);
-                self.reject(format!("cannot load the plugin: {why}"));
-            }
+        } else {
+            let why = self.missing_reason(plugin);
+            self.reject(format!("cannot load the plugin: {why}"));
         }
     }
 
@@ -1453,6 +1527,7 @@ impl<S: EngineSink> AppCore<S> {
                 has_editor: self.plugins.host.manager_ref().has_gui(*id),
                 missing: None,
                 failed,
+                crashed: self.plugins.crashed.get(key).cloned(),
                 loading: false,
                 waiting,
             },
@@ -1460,6 +1535,7 @@ impl<S: EngineSink> AppCore<S> {
                 has_editor: false,
                 missing: None,
                 failed,
+                crashed: None,
                 loading: true,
                 waiting: None,
             },
@@ -1469,6 +1545,7 @@ impl<S: EngineSink> AppCore<S> {
                 has_editor: false,
                 missing: None,
                 failed,
+                crashed: None,
                 loading: false,
                 waiting: None,
             },
@@ -1476,6 +1553,7 @@ impl<S: EngineSink> AppCore<S> {
                 has_editor: false,
                 missing: Some(self.missing_reason(plugin)),
                 failed,
+                crashed: None,
                 loading: false,
                 waiting: None,
             },
@@ -1514,6 +1592,14 @@ impl<S: EngineSink> AppCore<S> {
                 && status.failed.is_none()
             {
                 status.failed = Some("the plugin failed; press RELOAD".to_string());
+            }
+            if let Some(id) = self.plugins.instances.get(&key)
+                && let Some(slot) = self.plugins.host.manager_ref().slot(*id)
+                && slot.device_state() == atomik_plugin_host::DeviceState::Crashed
+                && status.crashed.is_none()
+            {
+                // The device knows before the process's exit reason arrives.
+                status.crashed = Some(LOST.to_string());
             }
             if self.plugins.shown.get(&key) != Some(&status) {
                 self.view.set_plugin_status(&key, status.clone());
@@ -1563,22 +1649,17 @@ impl<S: EngineSink> AppCore<S> {
             scanner_available: self.plugins.runner.is_some(),
             last_scan: self.plugins.scan_note.clone(),
             log: self.plugins.log.iter().cloned().collect(),
+            sandbox: self.plugins.settings.sandbox,
         }
     }
 
     fn plugin_settings_action(&mut self, action: &PluginSettingsAction) {
         match action {
-            PluginSettingsAction::SetEnabled {
-                enabled: true,
-                warning_acknowledged,
-            } => {
-                if let Err(e) = self.plugins.settings.enable(*warning_acknowledged) {
-                    self.reject(e.to_string());
-                    return;
-                }
+            PluginSettingsAction::SetEnabled { enabled: true } => {
+                self.plugins.settings.enable();
                 self.settings_changed();
             }
-            PluginSettingsAction::SetEnabled { enabled: false, .. } => {
+            PluginSettingsAction::SetEnabled { enabled: false } => {
                 self.plugins.settings.disable_all();
                 self.settings_changed();
             }
@@ -1598,6 +1679,11 @@ impl<S: EngineSink> AppCore<S> {
             }
             PluginSettingsAction::SetTimeout(secs) => {
                 self.plugins.settings.set_timeout_secs(*secs);
+                self.plugins.settings_changed = true;
+            }
+            PluginSettingsAction::SetSandbox(on) => {
+                // Saved now, applied at the next start: this run's host is not touched.
+                self.plugins.settings.sandbox = *on;
                 self.plugins.settings_changed = true;
             }
             PluginSettingsAction::SetPluginDisabled { type_id, disabled } => {
@@ -1738,11 +1824,8 @@ impl<S: EngineSink> AppCore<S> {
             .count();
         if !self.plugins.settings.enabled || missing > 0 {
             let count = devices.len();
-            let needs_consent = !self.plugins.settings.enabled;
-            self.plugins.show_banner(BannerKind::ProjectUsesPlugins {
-                count,
-                needs_consent,
-            });
+            self.plugins
+                .show_banner(BannerKind::ProjectUsesPlugins { count });
         } else if matches!(
             self.plugins.banner,
             Some(BannerKind::ProjectUsesPlugins { .. })
@@ -1758,13 +1841,8 @@ impl<S: EngineSink> AppCore<S> {
 
     fn plugin_banner_action(&mut self, action: &PluginBannerAction) {
         match action {
-            PluginBannerAction::Load {
-                warning_acknowledged,
-            } => {
-                if let Err(e) = self.plugins.settings.enable(*warning_acknowledged) {
-                    self.reject(e.to_string());
-                    return;
-                }
+            PluginBannerAction::Load => {
+                self.plugins.settings.enable();
                 self.plugins.hide_banner();
                 self.settings_changed();
             }
@@ -1872,6 +1950,10 @@ impl<S: EngineSink> AppCore<S> {
             self.reject("this plugin has no editor window".to_string());
             return;
         }
+        if self.plugins.host.manager_ref().editor_kind(id) == Some(EditorKind::External) {
+            self.open_external_editor(device, id);
+            return;
+        }
         if self.plugins.windows.contains_key(device) {
             self.plugins
                 .window_requests
@@ -1898,6 +1980,31 @@ impl<S: EngineSink> AppCore<S> {
                 title,
                 remembered: self.plugins.remembered.get(device).copied(),
             });
+    }
+
+    /// OPEN GUI of an external editor: the plugin's own process shows its window, owned by the
+    /// app window; asking again raises it. No host window is involved.
+    fn open_external_editor(&mut self, device: &DeviceKey, id: InstanceId) {
+        let owner = self.plugins.editor_owner;
+        match self.plugins.host.manager().open_external_editor(id, owner) {
+            Ok(()) => {
+                self.plugins
+                    .windows
+                    .insert(device.clone(), EditorWindow::External);
+            }
+            Err(e) => self.reject(format!("cannot open the plugin editor: {e}")),
+        }
+    }
+
+    /// The app window's native handle, the owner of the editors that live in the plugin's own
+    /// process (the platform layer sets it once its window exists).
+    pub fn set_plugin_editor_owner(&mut self, owner: Option<NativeParent>) {
+        self.plugins.editor_owner = owner;
+    }
+
+    /// The owner handle of external editors.
+    pub fn plugin_editor_owner(&self) -> Option<NativeParent> {
+        self.plugins.editor_owner
     }
 
     /// The platform made the window: embeds the plugin's view in it and asks for its size.
@@ -2001,9 +2108,11 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn close_plugin_gui_inner(&mut self, device: &DeviceKey, destroy_window: bool) {
-        if self.plugins.windows.remove(device).is_none() {
+        let Some(window) = self.plugins.windows.remove(device) else {
             return;
-        }
+        };
+        // An external editor is a window of the plugin's process: nothing to destroy here.
+        let destroy_window = destroy_window && window != EditorWindow::External;
         if let Some(id) = self.plugins.instances.get(device).copied() {
             match self.plugins.host.manager().close_gui(id) {
                 Ok(Some(blob)) if !self.plugins.no_capture.contains(device) => {
@@ -2079,6 +2188,11 @@ impl<S: EngineSink> AppCore<S> {
     /// Why a plugin device is FAILED, if it is.
     pub fn plugin_failure(&self, device: &DeviceKey) -> Option<&str> {
         self.plugins.failed.get(device).map(String::as_str)
+    }
+
+    /// Why a plugin device is CRASHED (its process ended), if it is.
+    pub fn plugin_crash(&self, device: &DeviceKey) -> Option<&str> {
+        self.plugins.crashed.get(device).map(String::as_str)
     }
 
     /// What the unclean-exit and project banners should show now.

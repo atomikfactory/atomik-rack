@@ -41,6 +41,9 @@ atomik-render.workspace = true
 atomik-plugin-host.workspace = true
 # The scanner code, shared: `atomik --plugin-scan` runs it when no atomik-plugin-scan program is beside the app.
 atomik-plugin-scan.workspace = true
+# The sandbox child, shared: `atomik --plugin-host` runs it when no atomik-plugin-host program is beside the app.
+atomik-plugin-hostd.workspace = true
+atomik-plugin-sandbox.workspace = true
 atomik-ui.workspace = true
 atomik-audio-io.workspace = true
 atomik-midi-io.workspace = true

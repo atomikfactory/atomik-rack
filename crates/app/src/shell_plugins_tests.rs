@@ -91,7 +91,7 @@ fn the_banner_shows_above_the_rack_and_open_without_hides_it() {
 }
 
 #[test]
-fn load_in_the_banner_enables_plugins_after_the_warning() {
+fn load_in_the_banner_enables_plugins_at_once() {
     let path = temp("shell-banner").join("settings.json");
     let mut s = shell_with(Some(path.clone()));
     s.core_mut().configure_plugins(config(false, &[PKG]));
@@ -99,13 +99,6 @@ fn load_in_the_banner_enables_plugins_after_the_warning() {
     s.frame();
     let load = s.banner_view().load_rect().unwrap().center();
     click(&mut s, load);
-    assert!(
-        s.banner_view().is_warning_open(),
-        "the native-code warning comes first"
-    );
-    assert!(!s.core().plugin_settings().enabled);
-    let accept = s.banner_view().accept_rect().unwrap().center();
-    click(&mut s, accept);
     assert!(s.core().plugin_settings().enabled);
     assert!(!s.banner_view().is_visible());
     // The setting is saved with the audio settings.
@@ -119,7 +112,7 @@ fn load_in_the_banner_enables_plugins_after_the_warning() {
 // ------------------------------------------------------------------ the Plugins settings modal
 
 #[test]
-fn the_plugins_modal_enables_plugins_after_the_warning_lists_them_and_saves_the_choice() {
+fn the_plugins_modal_enables_plugins_at_once_lists_them_and_saves_the_choice() {
     let path = temp("shell-modal").join("settings.json");
     let mut s = shell_with(Some(path.clone()));
     s.core_mut().configure_plugins(config(false, &[PKG]));
@@ -137,18 +130,6 @@ fn the_plugins_modal_enables_plugins_after_the_warning_lists_them_and_saves_the_
     );
     let enable = s.plugin_settings_view().unwrap().enable_rect().center();
     click(&mut s, enable);
-    assert!(s.plugin_settings_view().unwrap().is_warning_open());
-    assert!(
-        !s.core().plugin_settings().enabled,
-        "nothing before the answer"
-    );
-    let accept = s
-        .plugin_settings_view()
-        .unwrap()
-        .warning_accept_rect()
-        .unwrap()
-        .center();
-    click(&mut s, accept);
     assert!(s.core().plugin_settings().enabled);
     s.frame();
     let shown = s.plugin_settings_view().unwrap().data();

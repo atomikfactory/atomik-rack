@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 const ALLOWED_DIRS: &[&str] = &[
     "crates/plugin-clap/",
     "crates/plugin-vst3/",
+    // The sandbox wire: the shared-memory mapping and the OS wake-up calls.
+    "crates/plugin-ipc/",
     "crates/testplugins/clap/",
     "crates/testplugins/clap-shell/",
     "crates/testplugins/clap-bad/",

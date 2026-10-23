@@ -89,6 +89,11 @@ pub enum PluginMessage {
         /// Why.
         reason: &'static str,
     },
+    /// The plugin's process ended (sandbox only).
+    ProcessExited {
+        /// The exit code or signal and the last lines the process wrote to stderr.
+        reason: String,
+    },
 }
 
 /// Takes `m`'s lock once, so that its first real lock cannot allocate.
@@ -154,6 +159,9 @@ pub enum DeviceState {
     Failed = 3,
     /// The processor is with the manager for a restart.
     Restarting = 4,
+    /// The plugin's process is gone (sandbox); the device outputs silence or the dry signal
+    /// until RELOAD creates a new instance.
+    Crashed = 5,
 }
 
 impl DeviceState {
@@ -163,11 +171,12 @@ impl DeviceState {
             2 => Self::Stopped,
             3 => Self::Failed,
             4 => Self::Restarting,
+            5 => Self::Crashed,
             _ => Self::Running,
         }
     }
 
-    /// The meter value (0 to 4).
+    /// The meter value (0 to 5).
     pub fn as_f32(self) -> f32 {
         f32::from(self as u8)
     }

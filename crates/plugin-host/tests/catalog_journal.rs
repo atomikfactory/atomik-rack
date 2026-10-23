@@ -75,7 +75,7 @@ fn add_file(cache: &mut PluginCache, path: &str, plugins: Vec<ScannedPlugin>) {
 
 fn enabled() -> PluginSettings {
     let mut s = PluginSettings::default();
-    s.enable(true).unwrap();
+    s.enable();
     s
 }
 

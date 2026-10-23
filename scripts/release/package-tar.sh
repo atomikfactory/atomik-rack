@@ -6,7 +6,7 @@ version="$1"
 name="atomik-rack-$version-linux-x86_64"
 rm -rf dist
 mkdir -p "dist/$name"
-for bin in atomik atomik-render atomik-play atomik-plugin-scan; do
+for bin in atomik atomik-render atomik-play atomik-plugin-scan atomik-plugin-host; do
   cp "target/release/$bin" "dist/$name/"
 done
 cp LICENSE README.md CHANGELOG.md "dist/$name/"

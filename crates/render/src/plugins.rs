@@ -20,6 +20,7 @@ use atomik_plugin_host::{
     PluginCache, PluginCatalog, PluginInstance, PluginManager, PluginSettings, RegisterReport,
     SCANNER_VERSION, ScannedPlugin, mark_main_thread,
 };
+use atomik_plugin_sandbox::{HostCommand, SandboxBackend, SandboxConfig};
 use atomik_plugin_vst3::Vst3Backend;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -70,20 +71,112 @@ pub fn format_of_file(path: &Path) -> PluginFormat {
     }
 }
 
+/// The file name of the sandbox child program on this OS.
+pub fn host_program_name() -> &'static str {
+    if cfg!(windows) {
+        "atomik-plugin-host.exe"
+    } else {
+        "atomik-plugin-host"
+    }
+}
+
+/// The sandbox child program beside the executable `exe`, when it is there.
+pub fn locate_host_program(exe: &Path) -> Option<PathBuf> {
+    let path = exe.parent()?.join(host_program_name());
+    path.is_file().then_some(path)
+}
+
+/// Where plugin instances run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginIsolation {
+    /// In this process, through the CLAP and VST3 backends.
+    InProcess,
+    /// Each instance in its own child process, started with this command.
+    Sandbox {
+        /// How to start a child.
+        command: HostCommand,
+        /// The host is a bounce (`atomik-render`), not the live app: every batch waits for the
+        /// child, whatever mode the plugin is told.
+        bounce: bool,
+    },
+}
+
+impl PluginIsolation {
+    /// True when instances run in child processes.
+    pub fn is_sandboxed(&self) -> bool {
+        matches!(self, Self::Sandbox { .. })
+    }
+}
+
+/// The sandbox configuration of a host: the default timeouts, and whether it is a bounce.
+pub fn sandbox_config(command: HostCommand, bounce: bool) -> SandboxConfig {
+    SandboxConfig {
+        bounce,
+        ..SandboxConfig::new(command)
+    }
+}
+
+/// Decides where plugins run: in child processes started with `command` when `sandbox` is on
+/// (the setting or `--plugin-sandbox`), else in this process. `bounce` is true for
+/// `atomik-render` and false for the live app.
+pub fn isolation(sandbox: bool, command: HostCommand, bounce: bool) -> PluginIsolation {
+    if sandbox {
+        PluginIsolation::Sandbox { command, bounce }
+    } else {
+        PluginIsolation::InProcess
+    }
+}
+
+/// The backends of one host: never a mix of in-process and sandboxed.
+enum Backends {
+    InProcess {
+        clap: Arc<ClapBackend>,
+        vst3: Arc<Vst3Backend>,
+    },
+    Sandbox {
+        clap: Arc<SandboxBackend>,
+        vst3: Arc<SandboxBackend>,
+    },
+    /// Backends the caller made (tests of the code around the host); no file is registered.
+    Custom { sandboxed: bool },
+}
+
+impl Backends {
+    /// Where the plugin file `path` of `format` holds `plugin`, told to the backend of that
+    /// format (nothing is opened).
+    fn register(&self, plugin: &PluginRef, path: &Path) {
+        match (self, plugin.format) {
+            (Self::InProcess { clap, .. }, PluginFormat::Clap) => {
+                clap.register_plugin_file(&plugin.id, path);
+            }
+            (Self::InProcess { vst3, .. }, PluginFormat::Vst3) => {
+                vst3.register_plugin_file(&plugin.id, path);
+            }
+            (Self::Sandbox { clap, .. }, PluginFormat::Clap) => {
+                clap.register_plugin_file(path, std::slice::from_ref(plugin));
+            }
+            (Self::Sandbox { vst3, .. }, PluginFormat::Vst3) => {
+                vst3.register_plugin_file(path, std::slice::from_ref(plugin));
+            }
+            (Self::Custom { .. }, _) => {}
+        }
+    }
+}
+
 /// The plugin manager, the catalog and the registry glue.
 ///
 /// The thread that creates a host is the plugin **main thread** (it is marked): create it
 /// on the thread that will also poll it and create the instances.
 pub struct PluginHost {
     manager: PluginManager,
-    clap: Arc<ClapBackend>,
-    vst3: Arc<Vst3Backend>,
+    backends: Backends,
     catalog: PluginCatalog,
 }
 
 impl std::fmt::Debug for PluginHost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PluginHost")
+            .field("sandboxed", &self.is_sandboxed())
             .field("plugins", &self.catalog.entries().len())
             .field("instances", &self.manager.instance_count())
             .finish()
@@ -97,20 +190,69 @@ impl Default for PluginHost {
 }
 
 impl PluginHost {
-    /// A host with the CLAP and VST3 backends and an empty catalog. The calling thread becomes the plugin
-    /// main thread.
+    /// A host with the in-process CLAP and VST3 backends and an empty catalog. The calling
+    /// thread becomes the plugin main thread.
     pub fn new() -> Self {
+        Self::with_isolation(PluginIsolation::InProcess)
+    }
+
+    /// A host whose backends follow `isolation` and an empty catalog: in process, or one
+    /// sandbox backend per format (this process then never loads a plugin file). The calling
+    /// thread becomes the plugin main thread.
+    pub fn with_isolation(isolation: PluginIsolation) -> Self {
         mark_main_thread();
-        let clap = Arc::new(ClapBackend::new());
         let mut manager = PluginManager::new();
-        let vst3 = Arc::new(Vst3Backend::new());
-        manager.add_backend(Box::new(Shared(Arc::clone(&clap))));
-        manager.add_backend(Box::new(Shared(Arc::clone(&vst3))));
+        let backends = match isolation {
+            PluginIsolation::InProcess => {
+                let clap = Arc::new(ClapBackend::new());
+                let vst3 = Arc::new(Vst3Backend::new());
+                manager.add_backend(Box::new(Shared(Arc::clone(&clap))));
+                manager.add_backend(Box::new(Shared(Arc::clone(&vst3))));
+                Backends::InProcess { clap, vst3 }
+            }
+            PluginIsolation::Sandbox { command, bounce } => {
+                let config = sandbox_config(command, bounce);
+                let clap = Arc::new(SandboxBackend::new(PluginFormat::Clap, config.clone()));
+                let vst3 = Arc::new(SandboxBackend::new(PluginFormat::Vst3, config));
+                manager.add_backend(Box::new(Shared(Arc::clone(&clap))));
+                manager.add_backend(Box::new(Shared(Arc::clone(&vst3))));
+                Backends::Sandbox { clap, vst3 }
+            }
+        };
         Self {
             manager,
-            clap,
-            vst3,
+            backends,
             catalog: PluginCatalog::default(),
+        }
+    }
+
+    /// A host over the backends the caller made, reporting `isolation` as where they run. For
+    /// tests of the code around the host (the plugin files of the catalog are not told to
+    /// them). The calling thread becomes the plugin main thread.
+    pub fn with_backends(
+        isolation: PluginIsolation,
+        backends: Vec<Box<dyn PluginBackend>>,
+    ) -> Self {
+        mark_main_thread();
+        let mut manager = PluginManager::new();
+        for backend in backends {
+            manager.add_backend(backend);
+        }
+        Self {
+            manager,
+            backends: Backends::Custom {
+                sandboxed: isolation.is_sandboxed(),
+            },
+            catalog: PluginCatalog::default(),
+        }
+    }
+
+    /// True when instances run in child processes.
+    pub fn is_sandboxed(&self) -> bool {
+        match &self.backends {
+            Backends::InProcess { .. } => false,
+            Backends::Sandbox { .. } => true,
+            Backends::Custom { sandboxed } => *sandboxed,
         }
     }
 
@@ -140,10 +282,9 @@ impl PluginHost {
     ) -> RegisterReport {
         self.catalog.unregister_from(registry);
         let mut catalog = PluginCatalog::from_cache(cache, settings);
-        let (clap, vst3) = (&self.clap, &self.vst3);
-        let report = catalog.register_into(registry, &mut |plugin, path| match plugin.format {
-            PluginFormat::Clap => clap.register_plugin_file(&plugin.id, path),
-            PluginFormat::Vst3 => vst3.register_plugin_file(&plugin.id, path),
+        let backends = &self.backends;
+        let report = catalog.register_into(registry, &mut |plugin, path| {
+            backends.register(plugin, path);
         });
         self.catalog = catalog;
         report
@@ -166,14 +307,22 @@ impl PluginHost {
         self.manager.poll()
     }
 
-    /// The CLAP backend, for the code that scans in this process (tests, the demo generator).
-    pub fn clap_backend(&self) -> &ClapBackend {
-        &self.clap
+    /// The in-process CLAP backend, for the code that scans in this process (tests, the demo
+    /// generator); `None` when the plugins run sandboxed.
+    pub fn clap_backend(&self) -> Option<&ClapBackend> {
+        match &self.backends {
+            Backends::InProcess { clap, .. } => Some(clap),
+            Backends::Sandbox { .. } | Backends::Custom { .. } => None,
+        }
     }
 
-    /// The VST3 backend, for the code that scans in this process.
-    pub fn vst3_backend(&self) -> &Vst3Backend {
-        &self.vst3
+    /// The in-process VST3 backend, for the code that scans in this process; `None` when the
+    /// plugins run sandboxed.
+    pub fn vst3_backend(&self) -> Option<&Vst3Backend> {
+        match &self.backends {
+            Backends::InProcess { vst3, .. } => Some(vst3),
+            Backends::Sandbox { .. } | Backends::Custom { .. } => None,
+        }
     }
 }
 
@@ -421,6 +570,133 @@ mod tests {
             assert_eq!(handle.layout.name, "Atomik Test Gain");
         }
         assert_eq!(host.manager_ref().instance_count(), 2);
+    }
+
+    #[test]
+    fn the_sandbox_switch_picks_the_child_command_or_the_in_process_backends() {
+        let command = HostCommand::new("atomik-plugin-host");
+        assert_eq!(
+            isolation(false, command.clone(), true),
+            PluginIsolation::InProcess
+        );
+        assert_eq!(
+            isolation(true, command.clone(), true),
+            PluginIsolation::Sandbox {
+                command: command.clone(),
+                bounce: true
+            }
+        );
+        assert_eq!(
+            isolation(true, command, false),
+            PluginIsolation::Sandbox {
+                command: HostCommand::new("atomik-plugin-host"),
+                bounce: false
+            }
+        );
+        assert!(!PluginIsolation::InProcess.is_sandboxed());
+    }
+
+    #[test]
+    fn the_sandbox_config_marks_a_bounce_and_not_the_live_app() {
+        let command = HostCommand::new("atomik-plugin-host");
+        assert!(sandbox_config(command.clone(), true).bounce);
+        assert!(!sandbox_config(command, false).bounce);
+    }
+
+    #[test]
+    fn a_host_over_given_backends_uses_them_and_reports_the_given_isolation() {
+        use atomik_plugin_host::{NullBackend, NullBehavior, NullPlugin};
+        let plugin = PluginRef::from_type_id("clap.atomik.test.null").unwrap();
+        let layout =
+            scan_in_process(&[
+                atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap").unwrap(),
+            ])
+            .files()
+            .flat_map(|f| f.plugins.iter())
+            .next()
+            .unwrap()
+            .layout
+            .clone();
+        let backend = NullBackend::new().with_plugin(NullPlugin {
+            path: PathBuf::from("null.clap"),
+            plugin: plugin.clone(),
+            layout,
+            behavior: NullBehavior::Gain(0.5),
+            latency: 0,
+        });
+        let stats = backend.stats();
+        let mut host =
+            PluginHost::with_backends(PluginIsolation::InProcess, vec![Box::new(backend)]);
+        assert!(!host.is_sandboxed() && host.clap_backend().is_none());
+        let request = atomik_plugin_host::InstantiateRequest {
+            plugin,
+            state: None,
+            sample_rate: 48_000.0,
+            mode: RunMode::Offline,
+            pinned: false,
+            powered: true,
+        };
+        host.manager().instantiate(&request).unwrap();
+        assert_eq!(stats.created(), 1);
+        let sandboxed = PluginHost::with_backends(
+            PluginIsolation::Sandbox {
+                command: HostCommand::new("x"),
+                bounce: false,
+            },
+            Vec::new(),
+        );
+        assert!(sandboxed.is_sandboxed());
+    }
+
+    #[test]
+    fn the_child_program_is_found_beside_the_executable() {
+        let dir = std::env::temp_dir().join(format!("atomik-render-host-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) {
+            "atomik-render.exe"
+        } else {
+            "atomik-render"
+        });
+        assert_eq!(locate_host_program(&exe), None);
+        let program = dir.join(host_program_name());
+        std::fs::write(&program, b"x").unwrap();
+        assert_eq!(locate_host_program(&exe), Some(program));
+        assert_eq!(
+            host_program_name(),
+            if cfg!(windows) {
+                "atomik-plugin-host.exe"
+            } else {
+                "atomik-plugin-host"
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_default_host_runs_plugins_in_process() {
+        let host = PluginHost::new();
+        assert!(!host.is_sandboxed());
+        assert!(host.clap_backend().is_some() && host.vst3_backend().is_some());
+    }
+
+    #[test]
+    fn a_sandboxed_host_has_no_in_process_backend_and_a_catalog_that_registers_files() {
+        let mut host = PluginHost::with_isolation(PluginIsolation::Sandbox {
+            command: HostCommand::new("atomik-plugin-host"),
+            bounce: false,
+        });
+        assert!(host.is_sandboxed());
+        assert!(host.clap_backend().is_none() && host.vst3_backend().is_none());
+        let clap = atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap").unwrap();
+        let vst3 = atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3").unwrap();
+        let cache = scan_in_process(&[clap, vst3]);
+        let mut registry = Registry::new();
+        let report = host.set_catalog(&cache, &bounce_settings(), &mut registry);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert!(host.catalog().entries().len() >= 2);
+        for e in host.catalog().entries() {
+            assert!(host.is_installed(&e.plugin));
+        }
     }
 
     #[test]

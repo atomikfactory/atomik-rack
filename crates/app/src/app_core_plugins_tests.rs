@@ -76,20 +76,14 @@ fn an_enabled_catalog_registers_the_test_plugins_without_loading_a_file() {
 }
 
 #[test]
-fn the_enable_switch_needs_the_warning_acknowledged() {
+fn the_enable_switch_turns_plugins_on_at_once() {
     let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
     core.configure_plugins(config(false, &[PKG]));
-    core.handle_action(UiAction::PluginSettings(PluginSettingsAction::SetEnabled {
-        enabled: true,
-        warning_acknowledged: false,
-    }));
-    assert!(!core.plugin_settings().enabled);
-    assert!(core.last_rejection().is_some());
     assert_eq!(core.take_plugin_settings_change(), None);
     core.handle_action(UiAction::PluginSettings(PluginSettingsAction::SetEnabled {
         enabled: true,
-        warning_acknowledged: true,
     }));
+    assert!(core.last_rejection().is_none());
     assert!(core.plugin_settings().enabled);
     assert_eq!(
         core.take_plugin_settings_change().map(|s| s.enabled),
@@ -109,7 +103,6 @@ fn the_enable_switch_needs_the_warning_acknowledged() {
     );
     core.handle_action(UiAction::PluginSettings(PluginSettingsAction::SetEnabled {
         enabled: false,
-        warning_acknowledged: false,
     }));
     assert!(!core.plugin_settings().enabled);
     assert!(core.plugin_catalog().entries().is_empty());
@@ -609,10 +602,7 @@ fn a_project_with_plugins_opens_with_stand_ins_and_the_banner_while_plugins_are_
     assert_eq!(core.plugin_instance_count(), 0);
     assert_eq!(
         core.plugin_banner(),
-        Some(&BannerKind::ProjectUsesPlugins {
-            count: 5,
-            needs_consent: true
-        })
+        Some(&BannerKind::ProjectUsesPlugins { count: 5 })
     );
     let status = core.view().plugin_status(&key("lead"));
     assert!(
@@ -628,10 +618,8 @@ fn a_project_with_plugins_opens_with_stand_ins_and_the_banner_while_plugins_are_
         std::fs::read_to_string(demo_file()).unwrap(),
         "the project saves unchanged"
     );
-    // LOAD with the warning accepted enables plugins and creates every instance.
-    core.handle_action(UiAction::PluginBanner(PluginBannerAction::Load {
-        warning_acknowledged: true,
-    }));
+    // LOAD enables plugins and creates every instance.
+    core.handle_action(UiAction::PluginBanner(PluginBannerAction::Load));
     core.wait_plugins();
     assert!(core.plugin_settings().enabled);
     assert_eq!(core.plugin_instance_count(), 5);

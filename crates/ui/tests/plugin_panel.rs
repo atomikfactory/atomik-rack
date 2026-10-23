@@ -9,7 +9,7 @@ mod support;
 use atomik_model::{Command, ConsoleCommand, Document, PluginCommand, RackDoc};
 use atomik_ui::autolayout::PanelSpec;
 use atomik_ui::kurbo::{Point, Vec2};
-use atomik_ui::plugin_data::{PluginDeviceStatus, STATE_FAILED};
+use atomik_ui::plugin_data::{PluginDeviceStatus, STATE_CRASHED, STATE_FAILED};
 use atomik_ui::plugin_panel::{
     MAX_FEATURED, PLUGIN_UNITS, PluginButton, featured_pins, plugin_layout,
 };
@@ -218,6 +218,37 @@ fn a_failed_plugin_matches_golden_and_says_why() {
     check(
         "plugin_panel_failed_1x.json",
         &paint_rack(&mut v, d.doc()).to_json(),
+    );
+}
+
+#[test]
+fn a_crashed_plugin_says_crashed_with_the_reason_and_reload_still_works() {
+    let (d, mut v) = setup();
+    v.set_plugin_status(
+        &key("synth"),
+        PluginDeviceStatus {
+            crashed: Some("exited with code 3".into()),
+            ..with_editor()
+        },
+    );
+    v.set_device_meter_values(&key("synth"), &[0.0, 0.0, STATE_CRASHED, 0.0, 0.0]);
+    let texts = texts_of(&mut v, d.doc());
+    for t in ["CRASHED", "exited with code 3", "RELOAD"] {
+        assert!(
+            texts.iter().any(|x| x.contains(t)),
+            "missing {t:?}: {texts:?}"
+        );
+    }
+    assert!(
+        !texts.iter().any(|x| x.contains("FAILED")),
+        "crashed is not failed: {texts:?}"
+    );
+    let actions = press_button(&mut v, &d, "synth", PluginButton::Reload);
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, UiAction::ReloadPlugin { .. })),
+        "{actions:?}"
     );
 }
 

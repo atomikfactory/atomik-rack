@@ -1,4 +1,4 @@
-//! The plugin settings the app owns and persists: the consent switch, the search
+//! The plugin settings the app owns and persists: the on/off switch, the search
 //! folders, the scan timeout and the per-plugin disable list. Plugins are **off by default**;
 //! nothing in this crate scans, registers or loads while [`PluginSettings::enabled`] is false.
 
@@ -7,23 +7,12 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// The one-time warning the Settings dialog shows when the user turns plugins on.
-pub const ENABLE_WARNING: &str = "Plugins are native programs made by other companies. They run inside Atomik with the same access as Atomik, and a faulty plugin can crash it. Only scan folders you trust.";
-
 /// Shortest scan timeout in seconds.
 pub const MIN_TIMEOUT_SECS: u32 = 5;
 /// Longest scan timeout in seconds.
 pub const MAX_TIMEOUT_SECS: u32 = 300;
 /// The default scan timeout in seconds.
 pub const DEFAULT_TIMEOUT_SECS: u32 = 30;
-
-/// Why plugins could not be switched on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ConsentError {
-    /// The user has not confirmed [`ENABLE_WARNING`].
-    #[error("the user has not accepted the third-party plugin warning")]
-    WarningNotAcknowledged,
-}
 
 /// The plugin section of the app settings. Serialises with defaults for every missing field, so
 /// an old settings file loads with plugins off.
@@ -38,6 +27,9 @@ pub struct PluginSettings {
     pub timeout_secs: u32,
     /// Type ids (`clap.<id>`) the user disabled: hidden from the browser, existing devices MISSING.
     pub disabled: BTreeSet<String>,
+    /// Run each plugin instance in its own process, so a plugin crash cannot take the app down
+    /// (on by default; an old settings file loads with it on).
+    pub sandbox: bool,
 }
 
 impl Default for PluginSettings {
@@ -47,22 +39,15 @@ impl Default for PluginSettings {
             extra_paths: Vec::new(),
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             disabled: BTreeSet::new(),
+            sandbox: true,
         }
     }
 }
 
 impl PluginSettings {
-    /// Switches plugins on. `warning_acknowledged` is the user's answer to [`ENABLE_WARNING`].
-    ///
-    /// # Errors
-    /// [`ConsentError::WarningNotAcknowledged`] (and nothing changes) when it is false.
-    pub fn enable(&mut self, warning_acknowledged: bool) -> Result<(), ConsentError> {
-        if warning_acknowledged {
-            self.enabled = true;
-            Ok(())
-        } else {
-            Err(ConsentError::WarningNotAcknowledged)
-        }
+    /// Switches plugins on.
+    pub fn enable(&mut self) {
+        self.enabled = true;
     }
 
     /// Switches plugins off.

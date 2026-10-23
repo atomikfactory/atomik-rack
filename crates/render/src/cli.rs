@@ -2,15 +2,19 @@
 
 use crate::build::build;
 use crate::patch::Patch;
-use crate::plugins::{MissingPlugins, PluginHost, bounce_settings, determinism_note, load_cache};
+use crate::plugins::{
+    MissingPlugins, PluginHost, PluginIsolation, bounce_settings, determinism_note,
+    host_program_name, load_cache, locate_host_program,
+};
 use crate::project::{PluginBounce, ProjectOptions, is_project, render_doc_with};
 use crate::wav::{SampleFormat, write_wav_file};
 use crate::{RenderError, default_registry, render_built};
 use atomik_device_sdk::RunMode;
+use atomik_plugin_sandbox::HostCommand;
 use clap::{Parser, ValueEnum};
 use std::io::Write;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Exit code for any failure (bad arguments, unreadable or invalid patch, write error).
 pub const EXIT_FAILURE: i32 = 2;
@@ -31,6 +35,40 @@ impl PluginModeArg {
             Self::Offline => RunMode::Offline,
             Self::Realtime => RunMode::Realtime,
         }
+    }
+}
+
+/// The `--plugin-sandbox` switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SandboxArg {
+    /// Each plugin runs in its own `atomik-plugin-host` process, which must sit beside this
+    /// program (the default).
+    On,
+    /// Plugins are loaded into this process.
+    Off,
+}
+
+/// Where plugins run for `--plugin-sandbox`: in process when it is off, else in child processes
+/// started from the `atomik-plugin-host` program beside the executable `exe`.
+///
+/// # Errors
+/// A message that says how to get the program, when the sandbox is on and it is not there.
+pub fn plugin_isolation(arg: SandboxArg, exe: Option<&Path>) -> Result<PluginIsolation, String> {
+    match arg {
+        SandboxArg::Off => Ok(PluginIsolation::InProcess),
+        SandboxArg::On => exe
+            .and_then(locate_host_program)
+            .map(|program| PluginIsolation::Sandbox {
+                command: HostCommand::new(program),
+                // The bounce waits for every batch.
+                bounce: true,
+            })
+            .ok_or_else(|| {
+                format!(
+                    "the plugin host program {} is not next to atomik-render: build it (`cargo build -p atomik-plugin-hostd`) or pass --plugin-sandbox off to load plugins into this process",
+                    host_program_name()
+                )
+            }),
     }
 }
 
@@ -74,7 +112,8 @@ pub struct Args {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub loop_count: Option<u32>,
     /// Projects only: allow third-party plugins (native code made by other companies; it runs in
-    /// this process with its access). A project that uses plugins is refused without this flag.
+    /// this process with its access, or in a child process with --plugin-sandbox on, the default). A
+    /// project that uses plugins is refused without this flag.
     /// The host gives every plugin the same inputs for any --block and --workers, but a plugin's
     /// output is bit-identical only if the plugin itself is deterministic: many real synths and
     /// reverbs are not (the report says "determinism not guaranteed").
@@ -83,6 +122,11 @@ pub struct Args {
     /// Projects with --allow-plugins: the mode plugins render in.
     #[arg(long, value_enum, default_value_t = PluginModeArg::Offline)]
     pub plugin_mode: PluginModeArg,
+    /// Projects with --allow-plugins: run every plugin in its own `atomik-plugin-host` process
+    /// (it must sit beside atomik-render), so a plugin that crashes cannot take the bounce
+    /// down. `off` loads plugins into this process.
+    #[arg(long, value_enum, default_value_t = SandboxArg::On)]
+    pub plugin_sandbox: SandboxArg,
     /// Projects with --allow-plugins: what to do with a plugin that is not installed.
     #[arg(long, value_enum, default_value_t = MissingArg::Error)]
     pub missing_plugins: MissingArg,
@@ -154,8 +198,14 @@ pub fn run(args: &Args, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Resul
     let (channels, sample_rate, wall) = if is_project(&text) {
         // With --allow-plugins the installed plugins are device types before the project loads, so
         // their real descriptors win over the project's saved layouts (no plugin is loaded yet).
+        let isolation = if args.allow_plugins {
+            let exe = std::env::current_exe().ok();
+            plugin_isolation(args.plugin_sandbox, exe.as_deref()).map_err(RenderError::Project)?
+        } else {
+            PluginIsolation::InProcess
+        };
         let mut host = args.allow_plugins.then(|| {
-            let mut host = PluginHost::new();
+            let mut host = PluginHost::with_isolation(isolation);
             let (cache, status) = load_cache(args.plugin_cache.as_deref());
             match (&status, &args.plugin_cache) {
                 (atomik_plugin_host::LoadStatus::Rebuilt(reason), _) => {
@@ -410,6 +460,51 @@ mod tests {
             RunMode::Offline,
             "offline is the default"
         );
+    }
+
+    #[test]
+    fn the_plugin_sandbox_argument_is_on_by_default_and_takes_on_or_off() {
+        let base = ["atomik-render", "p.atomik", "-o", "o.wav"];
+        assert_eq!(
+            Args::try_parse_from(base).unwrap().plugin_sandbox,
+            SandboxArg::On
+        );
+        for (text, arg) in [("on", SandboxArg::On), ("off", SandboxArg::Off)] {
+            let a =
+                Args::try_parse_from(base.into_iter().chain(["--plugin-sandbox", text])).unwrap();
+            assert_eq!(a.plugin_sandbox, arg);
+        }
+        assert!(
+            Args::try_parse_from(base.into_iter().chain(["--plugin-sandbox", "maybe"])).is_err()
+        );
+        let (code, help, _) = run(&["--help"]);
+        assert_eq!(code, 0);
+        assert!(help.contains("--plugin-sandbox"), "{help}");
+    }
+
+    #[test]
+    fn the_sandbox_needs_the_child_program_beside_the_executable_unless_it_is_off() {
+        let dir = std::env::temp_dir().join(format!("atomik-render-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("atomik-render");
+        assert_eq!(
+            plugin_isolation(SandboxArg::Off, Some(&exe)),
+            Ok(PluginIsolation::InProcess)
+        );
+        let err = plugin_isolation(SandboxArg::On, Some(&exe)).unwrap_err();
+        assert!(err.contains(crate::plugins::host_program_name()), "{err}");
+        assert!(err.contains("--plugin-sandbox off"), "{err}");
+        assert!(plugin_isolation(SandboxArg::On, None).is_err());
+        let program = dir.join(crate::plugins::host_program_name());
+        std::fs::write(&program, b"x").unwrap();
+        assert_eq!(
+            plugin_isolation(SandboxArg::On, Some(&exe)),
+            Ok(PluginIsolation::Sandbox {
+                command: HostCommand::new(program),
+                bounce: true
+            })
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

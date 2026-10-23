@@ -104,12 +104,11 @@ fn preview_params_pane() {
 #[ignore = "writes preview images; run explicitly"]
 fn preview_settings_and_banner() {
     use atomik_device_sdk::{PluginFormat, PluginRef};
+    use atomik_ui::PluginSettingsView;
     use atomik_ui::kurbo::Rect;
-    use atomik_ui::plugin_banner::BannerKind;
     use atomik_ui::plugin_data::{
         FailedFileInfo, PluginEntryStatus, PluginSettingsData, ScanProgressInfo, SettingsPluginRow,
     };
-    use atomik_ui::{PluginBannerView, PluginSettingsView};
     let mut text = TextEngine::new();
     let row = |id: &str, n: &str, s| SettingsPluginRow {
         plugin: PluginRef {
@@ -145,6 +144,7 @@ fn preview_settings_and_banner() {
         scanner_available: true,
         last_scan: None,
         log: vec!["[Test Synth] loaded".into()],
+        sandbox: true,
     };
     let bounds = Rect::new(0.0, 0.0, 760.0, 520.0);
     let (pw, ph) = (
@@ -158,32 +158,4 @@ fn preview_settings_and_banner() {
     let mut canvas = CpuCanvas::new(pw, ph, &mut text);
     v.paint(&mut canvas);
     write("settings_on.png", canvas);
-    let mut v = PluginSettingsView::new(Theme::dark());
-    v.set_bounds(bounds);
-    v.set_scale(SCALE);
-    let _ = v.handle(&atomik_ui::UiEvent::PointerDown {
-        pos: v.enable_rect().center(),
-        button: atomik_ui::PointerButton::Primary,
-        modifiers: atomik_ui::Modifiers::NONE,
-        clicks: 1,
-    });
-    let mut canvas = CpuCanvas::new(pw, ph, &mut text);
-    v.paint(&mut canvas);
-    write("settings_warning.png", canvas);
-    let mut b = PluginBannerView::new(Theme::dark());
-    b.set_bounds(Rect::new(0.0, 0.0, 900.0, 40.0));
-    b.set_scale(SCALE);
-    b.show(BannerKind::ProjectUsesPlugins {
-        count: 3,
-        needs_consent: true,
-    });
-    let _ = b.handle(&atomik_ui::UiEvent::PointerDown {
-        pos: b.load_rect().unwrap().center(),
-        button: atomik_ui::PointerButton::Primary,
-        modifiers: atomik_ui::Modifiers::NONE,
-        clicks: 1,
-    });
-    let mut canvas = CpuCanvas::new((900.0 * SCALE) as u16, (140.0 * SCALE) as u16, &mut text);
-    b.paint(&mut canvas);
-    write("banner_warning.png", canvas);
 }

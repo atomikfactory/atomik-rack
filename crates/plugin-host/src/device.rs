@@ -8,7 +8,9 @@
 //!    as events with host note ids,
 //! 3. applies the skipping rules (sleep, zero tail, power off),
 //! 4. calls the processor with exactly 64 frames inside a panic boundary and a flush-to-zero
-//!    guard, and fails the device on an error status, a panic or non-finite output,
+//!    guard, and fails the device on an error status, a panic or non-finite output (a sandboxed
+//!    plugin may also answer `Late`: no wet signal this batch, counted; or `Lost`: its process
+//!    is gone and the device is CRASHED for good),
 //! 5. writes the outputs through the 5 ms bypass crossfade and forwards a note effect's notes.
 //!
 //! Nothing in `process` allocates, locks or blocks; everything it needs is sized in `new`.
@@ -20,6 +22,7 @@ use crate::backend::{
 };
 use crate::fpenv::FtzGuard;
 use crate::layout::{PluginSockets, layout_matches, param_ids};
+use crate::manager::LOST;
 use crate::slot::{
     DeviceEnd, DeviceState, HostMessenger, PluginMessage, PluginSlot, ReapItem, ReaperQueue,
 };
@@ -35,8 +38,8 @@ use rtrb::{Consumer, Producer, PushError};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Number of meter values a plugin device publishes: input peak, output peak, state, latency
-/// frames, dropped events.
-pub const METER_VALUES: usize = 5;
+/// frames, dropped events, late batches (sandbox: batches whose result did not arrive in time).
+pub const METER_VALUES: usize = 6;
 
 /// Events the device can hold per batch: the notes of a full note buffer, the extra Offs of an
 /// all-notes-off, and the param changes.
@@ -111,6 +114,8 @@ pub struct PluginDevice {
     in_peak: f32,
     out_peak: f32,
     dropped: u64,
+    /// Batches whose result did not arrive in time (sandbox).
+    late: u64,
 }
 
 fn idle_batches_for(sample_rate: f64) -> u32 {
@@ -226,6 +231,7 @@ impl PluginDevice {
             in_peak: 0.0,
             out_peak: 0.0,
             dropped: 0,
+            late: 0,
         }
     }
 
@@ -253,6 +259,13 @@ impl PluginDevice {
         self.failed = true;
         self.state = DeviceState::Failed;
         self.messenger.post(PluginMessage::Failed { reason });
+    }
+
+    /// The plugin's process is gone: CRASHED for good (a new instance replaces it).
+    fn fail_lost(&mut self) {
+        self.failed = true;
+        self.state = DeviceState::Crashed;
+        self.messenger.post(PluginMessage::Failed { reason: LOST });
     }
 
     fn close_all_notes(&mut self) {
@@ -550,7 +563,8 @@ impl PluginDevice {
     // ----- one batch --------------------------------------------------------------------------
 
     /// Runs the plugin (or skips it by the skipping rules). Returns true when `self.wet` holds
-    /// this batch's wet output (silence while skipped), false when the device failed.
+    /// this batch's wet output (silence while skipped), false when there is none: the device
+    /// failed, or the result was late.
     fn run_plugin(
         &mut self,
         ctx: &mut ProcessContext<'_>,
@@ -675,6 +689,15 @@ impl PluginDevice {
             }
             Ok(ProcessStatus::Error) => {
                 self.fail("the plugin returned an error status");
+                false
+            }
+            Ok(ProcessStatus::Late) => {
+                // Not a failure: this batch has no wet signal, the state stays as it was.
+                self.late += 1;
+                false
+            }
+            Ok(ProcessStatus::Lost) => {
+                self.fail_lost();
                 false
             }
             Ok(status) => {
@@ -839,6 +862,7 @@ impl Device for PluginDevice {
             self.state.as_f32(),
             self.slot.latency() as f32,
             self.dropped as f32,
+            self.late as f32,
         ];
         let n = out.len().min(values.len());
         out[..n].copy_from_slice(&values[..n]);

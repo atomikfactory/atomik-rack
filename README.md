@@ -28,7 +28,7 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 - **The Character effect.** A stereo insert with 16 presets in a 4 x 4 matrix and a Transform macro that morphs each preset, built from an original set of DSP stages.
 - **Players.** A step sequencer and an arpeggiator that send notes and CV to any device, synchronised to the transport.
 - **Container device.** A device that holds another rack: its own devices and cables, 8 macro knobs and key/velocity note splits. Containers are flattened for the engine, so they cost nothing special at run time.
-- **Plugin hosting.** CLAP and VST3 instruments and effects are rack devices like any built-in one (cabled, automated, macro-mapped, saved and bounced). Scanning runs out of process. VST2 is not supported.
+- **Plugin hosting.** CLAP and VST3 instruments and effects are rack devices like any built-in one (cabled, automated, macro-mapped, saved and bounced). Each instance runs in its own process, so a plugin crash cannot take the app down; scanning runs out of process. VST2 is not supported.
 - **Arrangement and audio.** Note, automation and audio clips; a piano roll and step/slice/sample editors; import of WAV, AIFF, FLAC, MP3 and OGG; audio recording with latency compensation; large files stream from disk.
 - **File browser.** A docked panel (`F4`) to browse folders, search by name, `#tag` or favourites, preview audio files with one click and drag them onto the arrangement, sample editor or a sampler; tags and favourites are saved in `library.json` next to the settings.
 - **Workflow and keymap.** A data-driven keymap with a standard profile and a legacy profile, remappable in Settings (see [docs/KEYBOARD.md](docs/KEYBOARD.md)), tools (select, pencil, eraser, razor), a clipboard for clips, notes, devices and tracks, context menus, and a creation chain that wires new instruments and effects automatically.
@@ -117,7 +117,7 @@ Useful options: `--host`, `--audio-device` and `--buffer` choose the audio devic
 
 ### Plugins
 
-Plugin hosting is off until you enable it in Settings and add your plugin folders. Atomik Rack hosts CLAP and VST3 plugins; the in-repo test plugins under `crates/testplugins` and the `plugin-demo` projects let you try the feature without installing anything (see [examples/README.md](examples/README.md)). A plugin runs inside the application process, so a plugin crash takes the application down; scanning is out of process, and recovery snapshots limit the damage.
+Plugin hosting is off until you enable it in Settings and add your plugin folders. Atomik Rack hosts CLAP and VST3 plugins; the in-repo test plugins under `crates/testplugins` and the `plugin-demo` projects let you try the feature without installing anything (see [examples/README.md](examples/README.md)). Each plugin instance runs in its own `atomik-plugin-host` process (Settings > Plugins, on by default), so a plugin that crashes or hangs cannot take the application down: its device shows CRASHED and RELOAD starts it again from its last saved state. Its editor opens in a window of that process. Scanning is out of process too. With the option off, plugins run inside the application and a plugin crash takes it down; recovery snapshots limit the damage. `atomik-render` uses the sandbox as well (`--plugin-sandbox on|off`).
 
 ## Rendering a patch or a project
 
@@ -159,6 +159,7 @@ Four rules are never traded away. Each one is enforced by tests or process, not 
           atomik-audio-file ◄┘      atomik-dsp ── atomik-device-sdk ── atomik-core
       file browser data: atomik-library (used by audio-file, ui and app)
       plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
+      plugin sandbox: atomik-plugin-ipc, -sandbox, -hostd (child binary atomik-plugin-host)
       atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)
 ```
 

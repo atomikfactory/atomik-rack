@@ -6,8 +6,8 @@ use atomik_device_sdk::{
 };
 use atomik_plugin_host::paths::Os;
 use atomik_plugin_host::{
-    ConsentError, FailureKind, LoadStatus, PluginCache, PluginSettings, RescanMode, ScanFailure,
-    ScanProgress, ScanRequest, ScanResult, ScanRunner, ScannedPlugin, rescan,
+    FailureKind, LoadStatus, PluginCache, PluginSettings, RescanMode, ScanFailure, ScanProgress,
+    ScanRequest, ScanResult, ScanRunner, ScannedPlugin, rescan,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -137,7 +137,7 @@ fn no_env(_: &str) -> Option<OsString> {
 
 fn enabled(dir: &Path) -> PluginSettings {
     let mut s = PluginSettings::default();
-    s.enable(true).unwrap();
+    s.enable();
     s.extra_paths = vec![dir.to_path_buf()];
     s
 }
@@ -581,12 +581,9 @@ fn plugins_are_off_by_default_and_scanning_needs_the_switch() {
         atomik_plugin_host::ScanError::PluginsDisabled
     );
     assert_eq!(fake.count(), 0);
-    // Enabling needs the user to have seen the warning.
-    assert_eq!(s.enable(false), Err(ConsentError::WarningNotAcknowledged));
-    assert!(!s.enabled);
-    assert_eq!(s.enable(true), Ok(()));
+    // Enabling is one call: there is no warning to acknowledge.
+    s.enable();
     assert!(s.enabled);
-    assert!(atomik_plugin_host::ENABLE_WARNING.contains("native programs"));
     let _ = std::fs::remove_dir_all(&d);
 }
 

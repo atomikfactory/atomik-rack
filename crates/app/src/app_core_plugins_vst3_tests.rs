@@ -530,10 +530,7 @@ fn a_project_with_vst3_plugins_opens_with_stand_ins_when_only_clap_is_installed(
     assert!(core.view().plugin_status(&key("lead")).missing.is_none());
     assert_eq!(
         core.plugin_banner(),
-        Some(&BannerKind::ProjectUsesPlugins {
-            count: 7,
-            needs_consent: false
-        })
+        Some(&BannerKind::ProjectUsesPlugins { count: 7 })
     );
     // Nothing is lost: the stand-ins keep everything and save back unchanged (the live CLAP
     // devices add the state they captured, so the VST3 devices are compared one by one).
@@ -585,14 +582,9 @@ fn opening_the_vst3_demo_while_plugins_are_off_gives_stand_ins_and_load_enables_
     assert_eq!(core.plugin_instance_count(), 0);
     assert_eq!(
         core.plugin_banner(),
-        Some(&BannerKind::ProjectUsesPlugins {
-            count: 7,
-            needs_consent: true
-        })
+        Some(&BannerKind::ProjectUsesPlugins { count: 7 })
     );
-    core.handle_action(UiAction::PluginBanner(PluginBannerAction::Load {
-        warning_acknowledged: true,
-    }));
+    core.handle_action(UiAction::PluginBanner(PluginBannerAction::Load));
     core.wait_plugins();
     assert_eq!(core.plugin_instance_count(), 7);
 }

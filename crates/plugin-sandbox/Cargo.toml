@@ -1,0 +1,24 @@
+[package]
+name = "atomik-plugin-sandbox"
+description = "Atomik Rack plugin sandbox, app side: runs each plugin instance in its own atomik-plugin-host process."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-plugin-host.workspace = true
+atomik-plugin-ipc.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+atomik-engine.workspace = true
+atomik-testkit.workspace = true
+
+[lints]
+workspace = true
