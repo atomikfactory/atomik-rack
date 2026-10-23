@@ -35,8 +35,8 @@ use atomik_audio_file::PeakPyramid;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    AssetMeta, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Command, Curve,
-    DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, Song, SongCommand, TempoEvent,
+    AssetMeta, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, ClipMove, Command,
+    Curve, DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, Song, SongCommand, TempoEvent,
     WorkflowCommand,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -284,6 +284,23 @@ enum Drag {
         emitted: bool,
         last_dt: i64,
         reselect: Option<ClipId>,
+        /// Ctrl pressed on a selected clip: a drag copies the selection, a click without a
+        /// drag takes the clip out of it again.
+        toggle_off: Option<ClipId>,
+        /// A drag drops copies (Ctrl at the press); the clips themselves stay put meanwhile.
+        copy: bool,
+        /// The track of the grabbed clip, and the track under the pointer now (`None` over a
+        /// row that is no lane).
+        grab_track: usize,
+        over: Option<usize>,
+    },
+    /// A rubber band over the lanes: the clips it touches are the selection (plus `base`).
+    Marquee {
+        start: Point,
+        end: Point,
+        /// The selection at the press, kept when the band adds (Shift or Ctrl).
+        base: BTreeSet<ClipId>,
+        moved: bool,
     },
     Resize {
         start: Point,
@@ -1726,6 +1743,26 @@ impl ArrangementView {
                 });
             }
             Hit::Lane { .. } if primary && matches!(tool, Tool::Razor | Tool::Eraser) => {}
+            // Shift or Ctrl on an empty lane starts the rubber band (a plain drag draws).
+            Hit::Lane { .. }
+                if primary
+                    && tool == Tool::Select
+                    && clicks < 2
+                    && (modifiers.shift || modifiers.command())
+                    && !modifiers.alt =>
+            {
+                self.start_marquee(pos, true);
+            }
+            // Below the last track the plain drag is the rubber band.
+            Hit::Empty
+                if primary
+                    && tool == Tool::Select
+                    && self.bounds.contains(pos)
+                    && pos.x >= self.timeline_rect().x0
+                    && pos.y >= self.lanes_top() =>
+            {
+                self.start_marquee(pos, modifiers.shift || modifiers.command());
+            }
             Hit::Lane { track, lane } if primary => {
                 self.selected_track = None;
                 self.point_sel = None;
@@ -2090,8 +2127,16 @@ impl ArrangementView {
                     return;
                 }
                 let was_selected = self.selection.contains(&id);
-                self.selection
-                    .click(id, modifiers.command(), modifiers.shift);
+                // Ctrl adds the clip to the selection, and a drag from it copies the
+                // selection; a click without a drag takes a selected clip out again (on the
+                // release). Ctrl with Alt is the disable-snap role: a plain toggle.
+                let copy = modifiers.command() && !modifiers.alt;
+                if copy {
+                    self.selection.add(id);
+                } else {
+                    self.selection
+                        .click(id, modifiers.command(), modifiers.shift);
+                }
                 if !self.selection.contains(&id) {
                     return;
                 }
@@ -2100,6 +2145,7 @@ impl ArrangementView {
                     && !modifiers.shift
                     && self.selection.len() > 1)
                     .then_some(id);
+                let toggle_off = (copy && was_selected).then_some(id);
                 let originals: Vec<Clip> = self
                     .song_clips()
                     .filter(|c| self.selection.contains(&c.id))
@@ -2115,6 +2161,10 @@ impl ArrangementView {
                     emitted: false,
                     last_dt: 0,
                     reselect,
+                    toggle_off,
+                    copy,
+                    grab_track: track,
+                    over: Some(track),
                 };
             }
             _ => {}
@@ -2217,12 +2267,21 @@ impl ArrangementView {
             out.extend(actions);
             return;
         }
+        if matches!(self.drag, Drag::Marquee { .. }) {
+            self.marquee_move(pos);
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
+        let over_row = self.row_at(pos.y).and_then(|r| match r.kind {
+            RowKind::Lane { track, .. } => Some(track),
+            _ => None,
+        });
         let (tempo, assets) = (&self.tempo, &self.assets);
         match &mut self.drag {
             Drag::None
+            | Drag::Marquee { .. }
             | Drag::Pan { .. }
             | Drag::HScroll { .. }
             | Drag::TempoPoint { .. }
@@ -2237,17 +2296,23 @@ impl ArrangementView {
                 moved,
                 emitted,
                 last_dt,
+                copy,
+                over,
                 ..
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
                 if !*moved {
                     return;
                 }
+                *over = over_row;
                 let delta = axis.dx_to_ticks(pos.x - start.x);
                 let new = seq_edit::drag_start(*grabbed_start, delta, step);
                 let min_start = originals.iter().map(|c| c.start).min().unwrap_or(0);
                 let dt = (new - *grabbed_start).max(-min_start);
-                if dt != *last_dt {
+                if *copy {
+                    // The copies land on the release; the clips stay where they are.
+                    *last_dt = dt;
+                } else if dt != *last_dt {
                     for c in originals.iter() {
                         out.push(geometry_cmd(
                             c,
@@ -2434,16 +2499,56 @@ impl ArrangementView {
             Drag::Mark => self.marker_drag_up(out),
             Drag::Height => self.height_up(out),
             Drag::Move {
+                originals,
+                merge,
                 emitted,
                 moved,
+                last_dt,
                 reselect,
+                toggle_off,
+                copy,
+                grab_track,
+                over,
                 ..
             } => {
+                if moved
+                    && let Some(plan) = self.drop_plan(&originals, last_dt, grab_track, over, copy)
+                {
+                    // One undo step with the live moves of the gesture.
+                    out.push(workflow_cmd(WorkflowCommand::MoveClips {
+                        moves: plan
+                            .into_iter()
+                            .map(|(id, track, _, start)| ClipMove {
+                                id,
+                                track: self.song.tracks[track].device.clone(),
+                                start,
+                            })
+                            .collect(),
+                        copy,
+                        merge: (!copy).then_some(merge),
+                    }));
+                }
                 if emitted {
                     out.push(UiAction::EndMerge);
                 }
                 if !moved && let Some(id) = reselect {
                     self.selection.select_only(id);
+                }
+                if !moved && let Some(id) = toggle_off {
+                    self.selection.toggle(id);
+                }
+            }
+            Drag::Marquee {
+                start,
+                end,
+                base,
+                moved,
+            } => {
+                if moved {
+                    self.marquee_select(start, end, &base);
+                } else if base.is_empty() {
+                    self.selection.clear();
+                    self.point_sel = None;
                 }
             }
             Drag::Resize { emitted, .. }
@@ -2904,6 +3009,99 @@ impl ArrangementView {
             .collect()
     }
 
+    /// Where the dragged clips land when dropped: `(clip, track, lane, start)` for each, or
+    /// `None` when the drop adds nothing to the live drag (a move inside the lanes) or is not
+    /// allowed. The grabbed clip's track change (`over` against `grab_track`) applies to every
+    /// clip, each keeping its own lane kind; one clip without such a lane on its target track
+    /// makes the whole drop impossible.
+    fn drop_plan(
+        &self,
+        originals: &[Clip],
+        dt: i64,
+        grab_track: usize,
+        over: Option<usize>,
+        copy: bool,
+    ) -> Option<Vec<(ClipId, usize, usize, i64)>> {
+        let delta = over? as i64 - grab_track as i64;
+        if delta == 0 && (!copy || dt == 0) {
+            return None;
+        }
+        originals
+            .iter()
+            .map(|c| {
+                let (track, lane, _) = self.find_clip(c.id)?;
+                let kind = &self.song.tracks[track].lanes[lane].kind;
+                let to = usize::try_from(track as i64 + delta).ok()?;
+                let lane_to = self
+                    .song
+                    .tracks
+                    .get(to)?
+                    .lanes
+                    .iter()
+                    .position(|l| &l.kind == kind)?;
+                Some((c.id, to, lane_to, c.start + dt))
+            })
+            .collect()
+    }
+
+    /// Starts a rubber band at `pos`; `add` keeps the current selection.
+    fn start_marquee(&mut self, pos: Point, add: bool) {
+        self.selected_track = None;
+        self.point_sel = None;
+        let base = if add {
+            self.selection.items().clone()
+        } else {
+            BTreeSet::new()
+        };
+        self.drag = Drag::Marquee {
+            start: pos,
+            end: pos,
+            base,
+            moved: false,
+        };
+    }
+
+    fn marquee_move(&mut self, pos: Point) {
+        let Drag::Marquee {
+            start,
+            end,
+            base,
+            moved,
+        } = &mut self.drag
+        else {
+            return;
+        };
+        *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+        *end = pos;
+        if !*moved {
+            return;
+        }
+        let (a, b, base) = (*start, *end, base.clone());
+        self.marquee_select(a, b, &base);
+        self.repaint = true;
+    }
+
+    /// Selects `base` and the clips whose rectangles touch the band `a`-`b`.
+    fn marquee_select(&mut self, a: Point, b: Point, base: &BTreeSet<ClipId>) {
+        let tl = self.timeline_rect();
+        let mut ids = Vec::new();
+        let mut rects = Vec::new();
+        for (row, rr) in self.visible_rows() {
+            let RowKind::Lane { track, lane } = row.kind else {
+                continue;
+            };
+            for clip in &self.song.tracks[track].lanes[lane].clips {
+                ids.push(clip.id);
+                rects.push(self.clip_rect_in(rr, clip).intersect(tl));
+            }
+        }
+        let picked: Vec<ClipId> = seq_edit::rubber_band(a, b, &rects)
+            .into_iter()
+            .map(|i| ids[i])
+            .collect();
+        self.selection.set(base.iter().copied().chain(picked));
+    }
+
     fn cancel_drag(&mut self, out: &mut Vec<UiAction>) {
         if matches!(self.drag, Drag::TempoPoint { .. } | Drag::Meter { .. }) {
             return self.cancel_tempo_drag(out);
@@ -2927,6 +3125,7 @@ impl ArrangementView {
                 }
                 out.push(UiAction::EndMerge);
             }
+            Drag::Marquee { base, .. } => self.selection.set(base),
             Drag::Resize {
                 clip,
                 merge,
@@ -3095,6 +3294,7 @@ impl ArrangementView {
             c.fill_with(RoundedRect::from_rect(r, 3.0), accent.with_alpha(0.25));
             c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.0, accent);
         }
+        self.paint_drag_overlays(c, doc, tl);
         self.paint_drop_hint(c, doc, tl);
         let col = if self.recording {
             st.record
@@ -3111,6 +3311,57 @@ impl ArrangementView {
             );
         }
         c.pop_clip();
+    }
+
+    /// The rubber band, and where a copy or a lane change would drop the dragged clips.
+    fn paint_drag_overlays(&self, c: &mut dyn Canvas, doc: &RackDoc, tl: Rect) {
+        let st = &self.st;
+        match &self.drag {
+            Drag::Marquee {
+                start,
+                end,
+                moved: true,
+                ..
+            } => {
+                let r = Rect::from_points(*start, *end);
+                c.fill_with(r, st.selection.with_alpha(0.15));
+                c.stroke_with(r, 1.0, st.selection);
+            }
+            Drag::Move {
+                originals,
+                last_dt,
+                moved: true,
+                copy,
+                grab_track,
+                over,
+                ..
+            } => {
+                let Some(plan) = self.drop_plan(originals, *last_dt, *grab_track, *over, *copy)
+                else {
+                    return;
+                };
+                for (id, track, lane, start) in plan {
+                    let Some(clip) = originals.iter().find(|c| c.id == id) else {
+                        continue;
+                    };
+                    let device = &self.song.tracks[track].device;
+                    let Some(lr) = self.lane_rect(device, lane) else {
+                        continue;
+                    };
+                    let r = Rect::new(
+                        self.axis.tick_to_x(start),
+                        lr.y0 + 3.0,
+                        self.axis.tick_to_x(start + clip.length),
+                        lr.y1 - 3.0,
+                    )
+                    .intersect(tl);
+                    let accent = sp::device_accent(&st.base, doc, device);
+                    c.fill_with(RoundedRect::from_rect(r, 3.0), accent.with_alpha(0.25));
+                    c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.0, accent);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The drop indicator: the audio lane under the pointer highlighted (or a placeholder for
