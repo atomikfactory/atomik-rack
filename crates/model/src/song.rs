@@ -239,6 +239,9 @@ pub struct Track {
     pub solo: bool,
     /// Armed for recording.
     pub armed: bool,
+    /// Notes that span the play position start sounding on play, locate and loop wrap. On by
+    /// default; a track that plays only from its note starts turns it off.
+    pub chase: bool,
     /// Lanes: index 0 is the note lane, or the audio lane of an audio track.
     pub lanes: Vec<Lane>,
 }
@@ -358,6 +361,13 @@ pub enum SongCommand {
         solo: bool,
         /// Armed.
         armed: bool,
+    },
+    /// Set whether a track chases notes (see [`Track::chase`]).
+    SetTrackChase {
+        /// Device.
+        device: DeviceKey,
+        /// Chase notes that span the play position.
+        chase: bool,
     },
     /// Add an automation lane for a parameter (creates the track if needed).
     AddAutomationLane {
