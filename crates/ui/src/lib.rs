@@ -311,6 +311,7 @@ pub use display_list::{DisplayList, Op};
 pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
+pub use marker_edit::MarkSel;
 pub use piano_roll::PianoRollView;
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};

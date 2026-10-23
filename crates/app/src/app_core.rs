@@ -1967,3 +1967,7 @@ mod browser_tests;
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]
 mod tempo_tests;
+
+#[cfg(test)]
+#[path = "app_core_marker_tests.rs"]
+mod marker_tests;

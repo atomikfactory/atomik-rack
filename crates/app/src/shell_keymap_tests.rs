@@ -84,21 +84,33 @@ fn open_tab(s: &mut Shell<NullBackend>, tab: Tab) {
     click(s, r.center());
 }
 
-/// Rebinds `transport.loop` slot 0 to `chord` through the dialog (the dialog stays open).
+/// Rebinds `transport.loop` slot 0 to `chord` through the dialog (the dialog stays open). The
+/// list is scrolled until the row shows.
 fn learn_loop(s: &mut Shell<NullBackend>, os: Os, chord: &str) {
-    let l = s.dialog().unwrap().keyboard_layout(VIEW).unwrap();
-    let chip = l
-        .items
-        .iter()
-        .find_map(|i| match i {
-            crate::keyboard_tab::Item::Row { row, chips, .. }
-                if row.key.command == "transport.loop" && row.key.context == Context::Global =>
-            {
-                Some(chips[0].rect.center())
-            }
-            _ => None,
-        })
-        .unwrap();
+    let chip = loop {
+        let l = s.dialog().unwrap().keyboard_layout(VIEW).unwrap();
+        let chip = l
+            .items
+            .iter()
+            .find_map(|i| match i {
+                crate::keyboard_tab::Item::Row { row, chips, .. }
+                    if row.key.command == "transport.loop"
+                        && row.key.context == Context::Global =>
+                {
+                    Some(chips[0].rect.center())
+                }
+                _ => None,
+            })
+            .unwrap();
+        if l.list.contains(chip) {
+            break chip;
+        }
+        s.handle(&UiEvent::Wheel {
+            delta: atomik_ui::kurbo::Vec2::new(0.0, -1.0),
+            pos: l.list.center(),
+            modifiers: Modifiers::NONE,
+        });
+    };
     click(s, chip);
     s.handle(&key_event(os, chord, true));
 }

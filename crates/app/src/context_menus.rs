@@ -38,6 +38,25 @@ pub struct MenuEnable {
     pub tempo_can_delete: bool,
     /// Meter change: it can be deleted (it is not the first).
     pub meter_can_delete: bool,
+    /// Marker strip: clips are selected, so "Add Range Marker from Selection" works.
+    pub marker_selection: bool,
+}
+
+/// The items of the colour part of a marker menu: the command argument and the label.
+const MARKER_COLORS: [(&str, &str); 7] = [
+    ("red", "Colour: Red"),
+    ("orange", "Colour: Orange"),
+    ("yellow", "Colour: Yellow"),
+    ("green", "Colour: Green"),
+    ("blue", "Colour: Blue"),
+    ("purple", "Colour: Purple"),
+    ("none", "Colour: None"),
+];
+
+fn marker_colors() -> impl Iterator<Item = Spec> {
+    MARKER_COLORS
+        .iter()
+        .map(|(arg, label)| meter_item("sequencer.marker_color", arg, label))
 }
 
 /// The meters of the ruler menus: the command argument, the label of the insert item and the
@@ -161,6 +180,29 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             ]);
             v
         }
+        ContextTarget::Marker => {
+            let mut v = vec![item("sequencer.marker_rename", true), Spec::Separator];
+            v.extend(marker_colors());
+            v.extend([Spec::Separator, item("sequencer.marker_delete", true)]);
+            v
+        }
+        ContextTarget::MarkerRange => {
+            let mut v = vec![
+                item("sequencer.marker_loop_range", true),
+                item("sequencer.marker_select_clips", true),
+                Spec::Separator,
+                item("sequencer.marker_rename", true),
+                Spec::Separator,
+            ];
+            v.extend(marker_colors());
+            v.extend([Spec::Separator, item("sequencer.marker_delete", true)]);
+            v
+        }
+        ContextTarget::MarkerStrip => vec![
+            item("sequencer.marker_add_here", true),
+            item("transport.add_range_from_loop", true),
+            item("sequencer.marker_range_from_selection", e.marker_selection),
+        ],
         ContextTarget::Notes => {
             let mut v = edit(None);
             v.extend([
