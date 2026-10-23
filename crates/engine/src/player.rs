@@ -31,23 +31,27 @@
 //! * **Automation.** At each playing batch start (after a pending wrap), every lane is
 //!   evaluated at the exact fractional batch-start tick and applied with the clamping
 //!   `set_param`; nothing is applied while stopped.
-//! * **Metronome.** Beats are every `PPQ` ticks (`F(k * PPQ)`), accented every
-//!   `beats_per_bar`. A click is a 30 ms decaying sine burst from a table computed when the
+//! * **Metronome.** Beats are the beats of the meter map (a quarter note in 4/4, an eighth in 6/8;
+//!   the beat lines restart at every bar line), each at the frame of its tick, accented on the
+//!   first beat of a bar. A click is a 30 ms decaying sine burst from a table computed when the
 //!   engine is created (1760 Hz accent at full level, 1320 Hz at 0.6), added to interface
 //!   outputs 1/2 times the gain, only while playing (stopping cuts it).
 //! * **Tempo.** With a song loaded, the song's tempo map drives positions and `TimeInfo::tempo`
-//!   (the tempo at the batch start); `set_tempo` only matters for song-less racks, where it
+//!   (the tempo at the batch start, the instantaneous one inside a ramp) and `TimeInfo::time_signature`
+//!   (the meter at the batch start); `set_tempo` only matters for song-less racks, where it
 //!   drives the transport too (the tick is kept when it changes while playing).
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
 use crate::graph::DeviceInstanceId;
 use crate::seq::{
-    CompiledTrack, SongCurve, SongPoint, SongSnapshot, TempoMap, TempoSegment, TrackCursor,
-    TransportCommand, TransportState,
+    CompiledTrack, SongCurve, SongPoint, SongSnapshot, TrackCursor, TransportCommand,
+    TransportState,
 };
 use crate::stream::{StreamRequest, StreamStats};
-use atomik_core::{BATCH, Batch, LoopWrap, NoteKind, PPQ, Tempo};
+use atomik_core::{
+    BATCH, Batch, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, Tempo, TempoMap, TempoSegment,
+};
 use atomik_device_sdk::SocketId;
 use rtrb::Producer;
 use std::sync::Arc;
@@ -324,7 +328,7 @@ pub(crate) struct BatchTime {
     pub(crate) loop_wrap: Option<LoopWrap>,
     /// The enabled loop region in ticks (only with a song).
     pub(crate) loop_ticks: Option<(f64, f64)>,
-    /// `(numerator, denominator)`: the song's beats per bar over 4; 4/4 without a song.
+    /// `(numerator, denominator)`: the meter at the batch start; 4/4 without a song.
     pub(crate) time_signature: (u8, u8),
 }
 
@@ -582,15 +586,22 @@ impl Player {
             free_tick,
             ..
         } = self;
-        let (map, lanes, mut parts, beats_per_bar, mut aud) = match song.as_deref_mut() {
+        let four_four = [MeterSegment::FOUR_FOUR];
+        let (map, meters, lanes, mut parts, mut aud) = match song.as_deref_mut() {
             Some(s) => (
                 TempoMap(&s.tempo),
+                MeterMap(&s.meter),
                 &s.lanes[..],
                 Some((&s.tracks[..], &mut s.cursors[..])),
-                u64::from(s.beats_per_bar.max(1)),
                 Some((&s.audio[..], &mut s.audio_rt[..])),
             ),
-            None => (TempoMap(&constant), &[][..], None, 4, None),
+            None => (
+                TempoMap(&constant),
+                MeterMap(&four_four),
+                &[][..],
+                None,
+                None,
+            ),
         };
         let (ls, le) = (
             map.song_frame(self.loop_start, sr),
@@ -642,11 +653,7 @@ impl Player {
             loop_wrap: None,
             loop_ticks: (lp.is_some() && parts.is_some())
                 .then_some((self.loop_start as f64, self.loop_end as f64)),
-            time_signature: if parts.is_some() {
-                (u8::try_from(beats_per_bar).unwrap_or(u8::MAX), 4)
-            } else {
-                (4, 4)
-            },
+            time_signature: meters.meter_at(tick.floor() as i64),
         };
         *click_count = 0;
         if !*playing {
@@ -682,20 +689,17 @@ impl Player {
                 }
             }
             // Beats are >= 480 frames apart, so a segment holds at most one onset.
-            let mut k = (map.tick(a as f64, sr) / PPQ as f64).floor().max(0.0) as i64;
+            let mut beat = meters.beat_at_or_before(map.tick(a as f64, sr).floor() as i64);
             loop {
-                let f = map.song_frame(k * PPQ, sr);
+                let f = map.song_frame(beat.0, sr);
                 if f >= b {
                     break;
                 }
                 if f >= a && *click_count < clicks.len() {
-                    clicks[*click_count] = (
-                        (off + (f - a) as usize) as u16,
-                        (k as u64).is_multiple_of(beats_per_bar),
-                    );
+                    clicks[*click_count] = ((off + (f - a) as usize) as u16, beat.1);
                     *click_count += 1;
                 }
-                k += 1;
+                beat = meters.beat_after(beat.0);
             }
             *pos = b;
             off += len as usize;

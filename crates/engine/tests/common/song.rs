@@ -19,6 +19,7 @@ pub fn tempo(map: &[(i64, f64)]) -> Vec<SongTempo> {
         .map(|&(tick, bpm)| SongTempo {
             tick: Ticks(tick),
             tempo: Tempo::new(bpm).unwrap(),
+            ramp: false,
         })
         .collect()
 }
@@ -48,7 +49,7 @@ pub fn song_input(tracks: Vec<SongTrack>, map: &[(i64, f64)]) -> SongInput {
     SongInput {
         tracks,
         tempo: tempo(map),
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio: Vec::new(),
         assets: Vec::new(),
     }
@@ -114,4 +115,15 @@ pub fn on(key: u8) -> NoteKind {
 /// `Off { key }`.
 pub fn off(key: u8) -> NoteKind {
     NoteKind::Off { key }
+}
+
+/// A tempo map from `(tick, bpm, ramp)` triples.
+pub fn tempo_ramps(map: &[(i64, f64, bool)]) -> Vec<SongTempo> {
+    map.iter()
+        .map(|&(tick, bpm, ramp)| SongTempo {
+            tick: Ticks(tick),
+            tempo: Tempo::new(bpm).unwrap(),
+            ramp,
+        })
+        .collect()
 }

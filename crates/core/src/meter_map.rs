@@ -26,6 +26,13 @@ pub struct MeterEvent {
     pub den: u8,
 }
 
+impl MeterEvent {
+    /// A time signature `num/den` from the start of `bar`.
+    pub const fn new(bar: u32, num: u8, den: u8) -> Self {
+        Self { bar, num, den }
+    }
+}
+
 /// One segment of a compiled meter map: from `bar` (at `tick`) on, the signature `num/den`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeterSegment {

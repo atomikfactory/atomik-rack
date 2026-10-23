@@ -280,16 +280,87 @@ fn a_song_less_engine_has_no_loop_region_and_is_four_four() {
 }
 
 #[test]
-fn the_time_signature_follows_the_songs_beats_per_bar() {
+fn the_time_signature_follows_the_songs_meter() {
     let (mut e, mut h, log) = rig();
     batches(&mut e, 1);
     let mut input = song_input(Vec::new(), &[(0, 120.0)]);
-    input.beats_per_bar = 7;
+    input.meter = vec![atomik_core::MeterEvent::new(1, 7, 8)];
     h.submit_song(atomik_engine::compile_song(&input).unwrap())
         .unwrap();
     batches(&mut e, 2);
     let log = log.lock().unwrap();
     assert_eq!(log[0].time_signature, (4, 4), "before the song arrives");
-    assert_eq!(log[1].time_signature, (7, 4));
-    assert_eq!(log[2].time_signature, (7, 4));
+    assert_eq!(log[1].time_signature, (7, 8));
+    assert_eq!(log[2].time_signature, (7, 8));
+}
+
+#[test]
+fn the_tempo_follows_a_ramp_and_the_tick_matches_the_closed_form() {
+    let (mut e, mut h, log) = rig();
+    let len = 2 * PPQ;
+    let mut input = song_input(Vec::new(), &[(0, 120.0)]);
+    input.tempo = tempo_ramps(&[(0, 60.0, true), (len, 180.0, false)]);
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 1_000);
+    let log = log.lock().unwrap();
+    let mut last_bpm = 0.0;
+    for (n, t) in log.iter().enumerate() {
+        assert!(t.playing);
+        let p = 64.0 * n as f64; // song frame at the batch start
+        // seconds(tick) = 60 / PPQ * L / (b1 - b0) * ln(b(tick) / b0), then the tempo holds.
+        let b = if t.tick < len as f64 {
+            60.0 + 120.0 * t.tick / len as f64
+        } else {
+            180.0
+        };
+        let secs = if t.tick < len as f64 {
+            60.0 / PPQ as f64 * len as f64 / 120.0 * (b / 60.0).ln()
+        } else {
+            60.0 / PPQ as f64 * len as f64 / 120.0 * 3.0f64.ln()
+                + 60.0 / PPQ as f64 * (t.tick - len as f64) / 180.0
+        };
+        assert!(
+            (secs * 48_000.0 - p).abs() < 1e-6,
+            "batch {n}: {}",
+            secs * 48_000.0
+        );
+        assert!(
+            (t.tempo.bpm() - b).abs() < 1e-9,
+            "batch {n}: {}",
+            t.tempo.bpm()
+        );
+        assert!((t.ticks_per_frame - tpf_of(t)).abs() < 1e-12);
+        assert!(
+            t.tempo.bpm() >= last_bpm,
+            "the tempo never falls on this ramp"
+        );
+        last_bpm = t.tempo.bpm();
+    }
+    assert_eq!(log.last().unwrap().tempo.bpm(), 180.0);
+}
+
+#[test]
+fn the_time_signature_changes_at_the_bar_line() {
+    let (mut e, mut h, log) = rig();
+    let mut input = song_input(Vec::new(), &[(0, 120.0)]);
+    input.meter = vec![
+        atomik_core::MeterEvent::new(1, 4, 4),
+        atomik_core::MeterEvent::new(2, 3, 4),
+    ];
+    h.submit_song(atomik_engine::compile_song(&input).unwrap())
+        .unwrap();
+    h.transport(TransportCommand::Play).unwrap();
+    batches(&mut e, 1_600);
+    let log = log.lock().unwrap();
+    for (n, t) in log.iter().enumerate() {
+        let want = if t.tick >= 4.0 * PPQ as f64 {
+            (3, 4)
+        } else {
+            (4, 4)
+        };
+        assert_eq!(t.time_signature, want, "batch {n} at tick {}", t.tick);
+    }
+    assert_eq!(log.last().unwrap().time_signature, (3, 4));
 }

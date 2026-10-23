@@ -10,8 +10,9 @@
 //!   A retired snapshot is handed back and dropped by `collect_garbage`.
 //! - Notes are sample-accurate; automation is applied once per 64-frame batch.
 //! - Transport state is published lock-free for the UI and for recording ([`TransportState`]).
-//! - Tempo: while a song is loaded its tempo map drives the transport and `TimeInfo::tempo`;
-//!   `EngineHandle::set_tempo` only matters for song-less racks.
+//! - Tempo: while a song is loaded its tempo map (steps and linear ramps, `atomik_core::TempoMap`)
+//!   drives the transport and `TimeInfo::tempo`; `EngineHandle::set_tempo` only matters for
+//!   song-less racks. The meter map gives `TimeInfo::time_signature` and the metronome's beats.
 //! - Recording: [`SongSnapshot::position_at`] maps a live event's engine frame to the exact
 //!   song frame and tick, replaying loop wraps from a published [`TransportState`].
 //!
@@ -20,7 +21,10 @@
 //! Public signatures are a stable contract: changes need review.
 
 use crate::graph::DeviceInstanceId;
-use atomik_core::{NoteKind, PPQ, ParamId, Tempo, Ticks};
+use atomik_core::{
+    MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo, TempoMap, TempoPoint,
+    TempoSegment, Ticks, compile_meter, compile_tempo,
+};
 use atomik_device_sdk::SocketId;
 
 /// One note event of a track, in song ticks (already flattened from clips, loops, offsets
@@ -80,13 +84,16 @@ pub struct SongTrack {
     pub automation: Vec<SongAutomation>,
 }
 
-/// A tempo change (step) at a tick.
+/// A tempo change at a tick: a step, or with `ramp` a linear ramp (in BPM, over ticks) to the
+/// next event's tempo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SongTempo {
     /// Tick where it takes effect (the first must be at tick 0).
     pub tick: Ticks,
     /// Tempo.
     pub tempo: Tempo,
+    /// Ramps to the next event's tempo instead of holding.
+    pub ramp: bool,
 }
 
 /// Engine-native song input (built by the app from the model; muted/soloed tracks already
@@ -97,9 +104,9 @@ pub struct SongInput {
     pub tracks: Vec<SongTrack>,
     /// Tempo map (sorted, first at tick 0).
     pub tempo: Vec<SongTempo>,
-    /// Beats (quarter notes) per bar, >= 1: the metronome accents the first beat of each bar
-    /// (the model's time signature numerator).
-    pub beats_per_bar: u8,
+    /// Meter map (bars strictly increasing, first at bar 1): the time signature devices see and
+    /// the metronome's beats, accented on the first beat of each bar.
+    pub meter: Vec<MeterEvent>,
     /// Audio tracks: the clips of `atomik.audio-track` devices.
     pub audio: Vec<crate::SongAudioTrack>,
     /// The audio assets; `AssetId(n)` is `assets[n]`.
@@ -109,9 +116,14 @@ pub struct SongInput {
 /// Song compilation errors.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum SongError {
-    /// The tempo map is empty or does not start at tick 0.
+    /// The tempo map is empty, does not start at tick 0, is not strictly increasing or holds a
+    /// tempo outside 20..=999 BPM.
     #[error("tempo map must start at tick 0")]
     BadTempoMap,
+    /// The meter map is empty, does not start at bar 1, is not strictly increasing or holds an
+    /// unsupported time signature.
+    #[error("invalid meter map: {0}")]
+    BadMeterMap(MapError),
     /// A note or point has a negative tick or non-positive length.
     #[error("invalid event: {0}")]
     BadEvent(String),
@@ -137,8 +149,8 @@ pub enum SongError {
 pub struct SongSnapshot {
     /// Tempo segments (first at tick 0, ticks strictly increasing).
     pub(crate) tempo: Vec<TempoSegment>,
-    /// Metronome accent period in beats (>= 1).
-    pub(crate) beats_per_bar: u32,
+    /// Meter segments (first at bar 1): the signature and the metronome's beats.
+    pub(crate) meter: Vec<MeterSegment>,
     /// Tracks in input order.
     pub(crate) tracks: Vec<CompiledTrack>,
     /// `(device, socket, track index)` sorted, for matching tracks across swaps.
@@ -152,15 +164,6 @@ pub struct SongSnapshot {
     pub(crate) audio: Vec<crate::audio::CompiledAudio>,
     /// RT scratch per audio track: the playback pair and the stream lane.
     pub(crate) audio_rt: Vec<crate::audio::AudioRt>,
-}
-
-/// One step of the tempo map: from `tick` on, `bpm`; `seconds` is the time at `tick`,
-/// accumulated once per segment from integer tick spans (no per-sample drift).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TempoSegment {
-    pub(crate) tick: i64,
-    pub(crate) seconds: f64,
-    pub(crate) bpm: f64,
 }
 
 /// One flattened note event of a track.
@@ -224,12 +227,8 @@ impl std::fmt::Debug for SongSnapshot {
 /// without points are dropped. Device and param ids are not checked here: the engine ignores
 /// unknown targets (notes to them are counted as dropped).
 pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
-    let tempo = compile_tempo(&input.tempo)?;
-    if input.beats_per_bar == 0 {
-        return Err(SongError::BadEvent(
-            "beats_per_bar must be at least 1".into(),
-        ));
-    }
+    let tempo = compile_tempo_map(&input.tempo)?;
+    let meter = compile_meter(&input.meter).map_err(SongError::BadMeterMap)?;
     let mut tracks = Vec::with_capacity(input.tracks.len());
     let mut lanes = Vec::new();
     for track in &input.tracks {
@@ -276,7 +275,7 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
     }
     Ok(SongSnapshot {
         tempo,
-        beats_per_bar: u32::from(input.beats_per_bar),
+        meter,
         audio_rt: (0..audio.len())
             .map(|_| crate::audio::AudioRt::new())
             .collect(),
@@ -288,32 +287,17 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
     })
 }
 
-/// Validates the tempo map and accumulates each segment's start time from integer tick spans.
-fn compile_tempo(map: &[SongTempo]) -> Result<Vec<TempoSegment>, SongError> {
-    match map.first() {
-        Some(first) if first.tick.0 == 0 => {}
-        _ => return Err(SongError::BadTempoMap),
-    }
-    if map.windows(2).any(|w| w[1].tick <= w[0].tick) {
-        return Err(SongError::BadTempoMap);
-    }
-    let mut segments: Vec<TempoSegment> = Vec::with_capacity(map.len());
-    for t in map {
-        let seconds = segments.last().map_or(0.0, |prev| {
-            prev.seconds + span_seconds(t.tick.0 - prev.tick, prev.bpm)
-        });
-        segments.push(TempoSegment {
+/// Validates the tempo map and compiles its segment table (`atomik_core::compile_tempo`).
+fn compile_tempo_map(map: &[SongTempo]) -> Result<Vec<TempoSegment>, SongError> {
+    let points: Vec<TempoPoint> = map
+        .iter()
+        .map(|t| TempoPoint {
             tick: t.tick.0,
-            seconds,
             bpm: t.tempo.bpm(),
-        });
-    }
-    Ok(segments)
-}
-
-/// Seconds spanned by `ticks` at `bpm`: one correctly rounded division for integer spans.
-fn span_seconds(ticks: i64, bpm: f64) -> f64 {
-    (ticks as f64 * 60.0) / (bpm * PPQ as f64)
+            ramp: t.ramp,
+        })
+        .collect();
+    compile_tempo(&points).map_err(|_| SongError::BadTempoMap)
 }
 
 /// Validates and flattens one track's notes (see [`compile_song`]).
@@ -411,59 +395,6 @@ fn encode(kind: NoteKind) -> u64 {
     }
 }
 
-impl TempoSegment {
-    /// A one-segment map at a constant tempo (song-less transport).
-    pub(crate) fn constant(tempo: Tempo) -> Self {
-        Self {
-            tick: 0,
-            seconds: 0.0,
-            bpm: tempo.bpm(),
-        }
-    }
-}
-
-/// Tempo maths over a segment table (a snapshot's, or a constant one-segment map). Pure and
-/// allocation-free, so the RT player uses it too.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TempoMap<'a>(pub(crate) &'a [TempoSegment]);
-
-impl TempoMap<'_> {
-    fn segment_at_tick(self, tick: f64) -> TempoSegment {
-        let k = self.0.partition_point(|s| s.tick as f64 <= tick);
-        self.0[k.saturating_sub(1)]
-    }
-
-    /// Seconds at a (fractional) tick.
-    pub(crate) fn seconds(self, tick: f64) -> f64 {
-        let s = self.segment_at_tick(tick);
-        s.seconds + ((tick - s.tick as f64) * 60.0) / (s.bpm * PPQ as f64)
-    }
-
-    /// Fractional song frame at a tick.
-    pub(crate) fn frame(self, tick: f64, sample_rate: f64) -> f64 {
-        self.seconds(tick) * sample_rate
-    }
-
-    /// The integer song frame where events at `tick` are emitted (nearest, ties up; >= 0).
-    pub(crate) fn song_frame(self, tick: i64, sample_rate: f64) -> u64 {
-        let f = self.frame(tick as f64, sample_rate).round();
-        if f > 0.0 { f as u64 } else { 0 }
-    }
-
-    /// Fractional tick at a song frame.
-    pub(crate) fn tick(self, frame: f64, sample_rate: f64) -> f64 {
-        let seconds = frame / sample_rate;
-        let k = self.0.partition_point(|s| s.seconds <= seconds);
-        let s = self.0[k.saturating_sub(1)];
-        s.tick as f64 + (seconds - s.seconds) * (s.bpm * PPQ as f64) / 60.0
-    }
-
-    /// Tempo in BPM at a (fractional) tick.
-    pub(crate) fn bpm(self, tick: f64) -> f64 {
-        self.segment_at_tick(tick).bpm
-    }
-}
-
 /// Replays the player's loop wrapping: the song frame and loop count `d` frames after (or
 /// before, `d < 0`) a batch start at song frame `start` with `loops` wraps so far. `lp` is the
 /// active loop `(start frame, end frame)`, `end > start`. See [`SongSnapshot::position_at`].
@@ -530,7 +461,12 @@ impl SongSnapshot {
         self.map().song_frame(tick.0, sample_rate)
     }
 
-    /// The tempo in effect at `tick`.
+    /// The time signature `(numerator, denominator)` in effect at `tick`.
+    pub fn meter_at(&self, tick: Ticks) -> (u8, u8) {
+        self.meter_map().meter_at(tick.0)
+    }
+
+    /// The tempo at `tick` (inside a ramp, the instantaneous tempo).
     pub fn tempo_at(&self, tick: Ticks) -> Tempo {
         let bpm = self.map().bpm(tick.0 as f64);
         Tempo::new(bpm).unwrap_or_else(|_| unreachable!("segments come from valid tempos"))
@@ -538,6 +474,10 @@ impl SongSnapshot {
 
     pub(crate) fn map(&self) -> TempoMap<'_> {
         TempoMap(&self.tempo)
+    }
+
+    pub(crate) fn meter_map(&self) -> MeterMap<'_> {
+        MeterMap(&self.meter)
     }
 
     /// Converts a live event's engine frame (the `ScheduledNote::frame` timeline) into a song
@@ -622,6 +562,7 @@ pub struct TransportState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use atomik_core::PPQ;
 
     const SR: f64 = 48_000.0;
 
@@ -634,6 +575,7 @@ mod tests {
             .map(|&(tick, b)| SongTempo {
                 tick: Ticks(tick),
                 tempo: bpm(b),
+                ramp: false,
             })
             .collect()
     }
@@ -668,7 +610,7 @@ mod tests {
         SongInput {
             tracks,
             tempo: tempo_map(map),
-            beats_per_bar: 4,
+            meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
             audio: Vec::new(),
             assets: Vec::new(),
         }
@@ -710,6 +652,66 @@ mod tests {
     }
 
     #[test]
+    fn compile_rejects_bad_meter_maps_and_ramps_to_nowhere() {
+        let with_meter = |meter: Vec<MeterEvent>| SongInput {
+            meter,
+            ..input(Vec::new(), &[(0, 120.0)])
+        };
+        for meter in [
+            vec![],
+            vec![MeterEvent::new(2, 4, 4)],
+            vec![MeterEvent::new(1, 4, 4), MeterEvent::new(1, 3, 4)],
+            vec![MeterEvent::new(1, 0, 4)],
+            vec![MeterEvent::new(1, 4, 5)],
+        ] {
+            assert!(
+                matches!(
+                    compile_song(&with_meter(meter.clone())),
+                    Err(SongError::BadMeterMap(_))
+                ),
+                "{meter:?}"
+            );
+        }
+        let map = [MeterEvent::new(1, 3, 4), MeterEvent::new(3, 6, 8)];
+        let snap = compile_song(&with_meter(map.to_vec())).unwrap();
+        assert_eq!(snap.meter_at(Ticks(0)), (3, 4));
+        assert_eq!(snap.meter_at(Ticks(6 * PPQ - 1)), (3, 4));
+        assert_eq!(snap.meter_at(Ticks(6 * PPQ)), (6, 8));
+        assert_eq!(snap.meter_at(Ticks(-5)), (3, 4));
+    }
+
+    #[test]
+    fn ramp_segments_run_to_the_next_events_tempo_and_convert_both_ways() {
+        let bar = 4 * PPQ;
+        let ramp = SongInput {
+            tempo: vec![
+                SongTempo {
+                    tick: Ticks(0),
+                    tempo: bpm(60.0),
+                    ramp: true,
+                },
+                SongTempo {
+                    tick: Ticks(2 * bar),
+                    tempo: bpm(180.0),
+                    ramp: false,
+                },
+            ],
+            ..input(Vec::new(), &[(0, 120.0)])
+        };
+        let snap = compile_song(&ramp).unwrap();
+        assert_eq!(snap.tempo[0].end_tick, 2 * bar);
+        assert_eq!(snap.tempo[0].end_bpm, 180.0);
+        assert_eq!(snap.tempo[1].end_tick, i64::MAX);
+        assert_eq!(snap.tempo_at(Ticks(0)), bpm(60.0));
+        assert_eq!(snap.tempo_at(Ticks(bar)), bpm(120.0));
+        assert_eq!(snap.tempo_at(Ticks(2 * bar)), bpm(180.0));
+        for tick in [0, 1, PPQ, bar, 2 * bar - 1, 2 * bar, 3 * bar + 7] {
+            let f = snap.tick_to_frame(Ticks(tick), SR);
+            assert_eq!(snap.frame_to_tick(f, SR), Ticks(tick), "tick {tick}");
+        }
+    }
+
+    #[test]
     fn compile_rejects_invalid_events_and_tracks() {
         let bad_note = |n: SongNote| input(vec![track(1, vec![n])], &[(0, 120.0)]);
         let lane = |points: Vec<SongPoint>| {
@@ -744,9 +746,6 @@ mod tests {
             });
         }
         cases.push(input(vec![two_lanes], &[(0, 120.0)]));
-        let mut no_beats = input(Vec::new(), &[(0, 120.0)]);
-        no_beats.beats_per_bar = 0;
-        cases.push(no_beats);
         for case in cases {
             assert!(
                 matches!(compile_song(&case), Err(SongError::BadEvent(_))),
@@ -866,13 +865,19 @@ mod tests {
     fn tempo_segments_convert_ticks_and_frames_piecewise() {
         let bar = 4 * PPQ;
         let snap = song(&[(0, 120.0), (bar, 60.0), (2 * bar, 240.0)]);
-        let seg = |tick, seconds, bpm| TempoSegment { tick, seconds, bpm };
+        let seg = |tick, seconds, bpm, end_tick, end_bpm| TempoSegment {
+            tick,
+            seconds,
+            bpm,
+            end_tick,
+            end_bpm,
+        };
         assert_eq!(
             snap.tempo,
             vec![
-                seg(0, 0.0, 120.0),
-                seg(bar, 2.0, 60.0),
-                seg(2 * bar, 6.0, 240.0)
+                seg(0, 0.0, 120.0, bar, 120.0),
+                seg(bar, 2.0, 60.0, 2 * bar, 60.0),
+                seg(2 * bar, 6.0, 240.0, i64::MAX, 240.0)
             ]
         );
         let cases = [

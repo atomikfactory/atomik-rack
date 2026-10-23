@@ -64,7 +64,7 @@ fn input(variant: u8) -> SongInput {
         tracks: Vec::new(),
         // Tempo change inside the loop [PPQ, 3 PPQ).
         tempo: tempo(&[(0, 240.0), (2 * PPQ, 180.0)]),
-        beats_per_bar: 4,
+        meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
         audio: vec![audio_track_of(1, a), audio_track_of(2, b)],
         assets: vec![asset(2, 50_000), asset(1, 80_000)],
     }
