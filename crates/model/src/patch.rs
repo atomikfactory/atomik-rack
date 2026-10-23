@@ -124,7 +124,7 @@ pub(crate) fn array<'v>(v: &'v Value, path: &JsonPath) -> Result<&'v [Value], Mo
 }
 
 /// Parses `"#rrggbb"` (either case).
-fn parse_color(v: &Value, path: &JsonPath) -> Result<Option<[u8; 3]>, ModelError> {
+pub(crate) fn parse_color(v: &Value, path: &JsonPath) -> Result<Option<[u8; 3]>, ModelError> {
     if v.is_null() {
         return Ok(None);
     }

@@ -82,8 +82,8 @@ use history::Edit;
 use rack_columns::Placement;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve,
-    Lane, LaneKind, MAX_TICK, MeterEvent, Note, Song, SongCommand, StepGrid, StepResolution,
-    TempoEvent, Track, empty_song,
+    Lane, LaneKind, MAX_MARKER_NAME, MAX_TICK, Marker, MeterEvent, Note, RangeMarker, Song,
+    SongCommand, StepGrid, StepResolution, TempoEvent, Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -444,6 +444,7 @@ pub enum Command {
 /// | `RegisterAsset` | none (not an undo step) |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
+/// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
 /// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
 /// | `SetZones` (also undo/redo) | `ZonesChanged` |
@@ -641,6 +642,10 @@ enum MergeKey {
     TempoMap(u64),
     /// `DragMeterMap`.
     MeterMap(u64),
+    /// `DragMarkers`.
+    Markers(u64),
+    /// `DragRanges`.
+    Ranges(u64),
     /// `SetZones` on one device.
     Zones(u64, DeviceKey),
     /// `SetPattern` on one pattern of one device.
@@ -720,6 +725,10 @@ impl Document {
             Command::Song(SongCommand::DragMeterMap { merge, .. }) => {
                 Some(MergeKey::MeterMap(*merge))
             }
+            Command::Song(SongCommand::DragMarkers { merge, .. }) => {
+                Some(MergeKey::Markers(*merge))
+            }
+            Command::Song(SongCommand::DragRanges { merge, .. }) => Some(MergeKey::Ranges(*merge)),
             Command::SetZones {
                 device,
                 merge: Some(m),
@@ -777,6 +786,12 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::MeterMap { new, .. }), Edit::MeterMap { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Markers { new, .. }), Edit::Markers { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Ranges { new, .. }), Edit::Ranges { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             _ => self.undo.push(edit),

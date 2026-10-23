@@ -5,7 +5,7 @@ use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR, MAX_LOOP_REPEATS,
-    MAX_TICK, MeterEvent, SongCommand, TempoEvent, Track,
+    MAX_MARKER_NAME, MAX_TICK, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent, Track,
 };
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, TEMPO_MAX,
@@ -351,6 +351,70 @@ pub(crate) fn check_meter_map(map: &[MeterEvent]) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// True for a marker name the model accepts: trimmed, non-empty, at most
+/// [`MAX_MARKER_NAME`] characters.
+pub(crate) fn name_ok(name: &str) -> bool {
+    name == name.trim() && !name.is_empty() && name.chars().count() <= MAX_MARKER_NAME
+}
+
+fn check_name(what: &str, i: usize, name: &str) -> Result<(), ModelError> {
+    if name_ok(name) {
+        Ok(())
+    } else {
+        Err(bad(format!(
+            "{what} {i}: the name must be trimmed, non-empty and at most {MAX_MARKER_NAME} characters"
+        )))
+    }
+}
+
+fn check_ids(what: &str, ids: impl Iterator<Item = u32>) -> Result<(), ModelError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, id) in ids.enumerate() {
+        if !seen.insert(id) {
+            return Err(bad(format!("{what} {i}: id {id} is used twice")));
+        }
+    }
+    Ok(())
+}
+
+/// Validates a marker list and returns it sorted by `(tick, id)`.
+pub(crate) fn check_markers(mut markers: Vec<Marker>) -> Result<Vec<Marker>, ModelError> {
+    for (i, m) in markers.iter().enumerate() {
+        if !tick_ok(m.tick) {
+            return Err(range(format!(
+                "marker {i}: tick {} is outside 0..={MAX_TICK}",
+                m.tick
+            )));
+        }
+        check_name("marker", i, &m.name)?;
+    }
+    check_ids("marker", markers.iter().map(|m| m.id))?;
+    markers.sort_by_key(|m| (m.tick, m.id));
+    Ok(markers)
+}
+
+/// Validates a range list and returns it sorted by `(start, id)`.
+pub(crate) fn check_ranges(mut ranges: Vec<RangeMarker>) -> Result<Vec<RangeMarker>, ModelError> {
+    for (i, r) in ranges.iter().enumerate() {
+        if !tick_ok(r.start) {
+            return Err(range(format!(
+                "range {i}: start {} is outside 0..={MAX_TICK}",
+                r.start
+            )));
+        }
+        if !tick_ok(r.end) || r.end <= r.start {
+            return Err(range(format!(
+                "range {i}: end {} must be above the start ({}) and within {MAX_TICK}",
+                r.end, r.start
+            )));
+        }
+        check_name("range", i, &r.name)?;
+    }
+    check_ids("range", ranges.iter().map(|r| r.id))?;
+    ranges.sort_by_key(|r| (r.start, r.id));
+    Ok(ranges)
 }
 
 /// Checks a time signature.
@@ -744,6 +808,20 @@ pub(crate) fn plan(
             Edit::MeterMap {
                 old: song.meter.clone(),
                 new: map,
+            }
+        }
+        SongCommand::SetMarkers(markers) | SongCommand::DragMarkers { markers, .. } => {
+            let markers = check_markers(markers)?;
+            Edit::Markers {
+                old: song.markers.clone(),
+                new: markers,
+            }
+        }
+        SongCommand::SetRanges(ranges) | SongCommand::DragRanges { ranges, .. } => {
+            let ranges = check_ranges(ranges)?;
+            Edit::Ranges {
+                old: song.ranges.clone(),
+                new: ranges,
             }
         }
         SongCommand::SetLoop { range: r, enabled } => {

@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 13,
+//! { "format": "atomik-project", "version": 14,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -16,6 +16,8 @@
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
 //!             "meter": [{"bar", "num", "den"}…] (v13; before it one [beats_per_bar, beat_unit]),
 //!             "loop": {"start", "end", "enabled"}, "end", "next_clip_id",
+//!             "markers"?: [{"tick", "name", "color"? ("#rrggbb")}…]   (v14; written only when non-empty),
+//!             "ranges"?: [{"start", "end", "name", "color"?}…]        (v14; written only when non-empty),
 //!             "tracks": [{ "device", "muted", "solo", "armed",
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio", "param"?,
 //!                                      "clips": [{ "id", "start", "length", "offset",
@@ -97,7 +99,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. Saving always writes version 13.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). Saving always writes version 14.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -106,16 +108,16 @@ use crate::console::{
 use crate::patch::{
     DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
     DEVICE_FIELDS_V11, DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str,
-    load_rack, number, object, string, uint, write_devices_and_cables,
+    load_rack, number, object, parse_color, string, uint, write_devices_and_cables,
 };
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AudioClipContent, AutomationPoint, Clip, ClipContent,
-    ClipId, Curve, FadeCurve, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_LOOP_REPEATS, MeterEvent, Note,
-    Song, StepGrid, StepResolution, TempoEvent, Track,
+    ClipId, Curve, FadeCurve, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_LOOP_REPEATS, MAX_MARKER_NAME,
+    Marker, MeterEvent, Note, RangeMarker, Song, StepGrid, StepResolution, TempoEvent, Track,
 };
 use crate::song_cmd::{
     check_end, check_loop, check_meter, check_meter_map, check_note, has_notes_input,
-    is_audio_track_type, length_ok, tick_ok,
+    is_audio_track_type, length_ok, name_ok, tick_ok,
 };
 use crate::steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
@@ -135,7 +137,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes).
-pub const PROJECT_VERSION: u32 = 13;
+pub const PROJECT_VERSION: u32 = 14;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -283,6 +285,16 @@ const CONSOLE_FIELDS_V12: &[&str] = &["channels", "buses", "master", "returns", 
 const BUS_FIELDS: &[&str] = &["bus", "name"];
 const CHANNEL_FIELDS: &[&str] = &["channel", "source"];
 const SONG_FIELDS: &[&str] = &["tempo", "meter", "loop", "end", "next_clip_id", "tracks"];
+const SONG_FIELDS_V14: &[&str] = &[
+    "tempo",
+    "meter",
+    "loop",
+    "end",
+    "next_clip_id",
+    "markers",
+    "ranges",
+    "tracks",
+];
 const TRACK_FIELDS: &[&str] = &["device", "muted", "solo", "armed", "lanes"];
 const NOTES_LANE_FIELDS: &[&str] = &["kind", "clips"];
 const AUTOMATION_LANE_FIELDS: &[&str] = &["kind", "param", "clips"];
@@ -448,7 +460,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12 | 13 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=14 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1056,13 +1068,96 @@ fn load_meter(v: &Value, path: &JsonPath) -> Result<Vec<MeterEvent>, ModelError>
     Ok(meter)
 }
 
+/// The optional `"markers"` list: sorted by tick on load (equal ticks keep file order), ids
+/// numbered from 1 in that order.
+fn load_markers(v: Option<&Value>, path: &JsonPath) -> Result<Vec<Marker>, ModelError> {
+    let Some(v) = v else {
+        return Ok(Vec::new());
+    };
+    let mut markers = Vec::new();
+    for (i, item) in array(v, path)?.iter().enumerate() {
+        let p = path.index(i);
+        let e = object(item, &p, &["tick", "name", "color"], &["tick", "name"])?;
+        markers.push(Marker {
+            id: 0,
+            tick: tick(&e["tick"], &p.field("tick"))?,
+            name: marker_name(&e["name"], &p.field("name"))?,
+            color: marker_color(e, &p)?,
+        });
+    }
+    markers.sort_by_key(|m| m.tick);
+    for (id, m) in (1..).zip(markers.iter_mut()) {
+        m.id = id;
+    }
+    Ok(markers)
+}
+
+/// The optional `"ranges"` list, loaded like the markers (sorted by start).
+fn load_ranges(v: Option<&Value>, path: &JsonPath) -> Result<Vec<RangeMarker>, ModelError> {
+    let Some(v) = v else {
+        return Ok(Vec::new());
+    };
+    let mut ranges = Vec::new();
+    for (i, item) in array(v, path)?.iter().enumerate() {
+        let p = path.index(i);
+        let e = object(
+            item,
+            &p,
+            &["start", "end", "name", "color"],
+            &["start", "end", "name"],
+        )?;
+        let start = tick(&e["start"], &p.field("start"))?;
+        let end = tick(&e["end"], &p.field("end"))?;
+        if end <= start {
+            return Err(p
+                .field("end")
+                .error(format!("the end ({end}) must be above the start ({start})")));
+        }
+        ranges.push(RangeMarker {
+            id: 0,
+            start,
+            end,
+            name: marker_name(&e["name"], &p.field("name"))?,
+            color: marker_color(e, &p)?,
+        });
+    }
+    ranges.sort_by_key(|r| r.start);
+    for (id, r) in (1..).zip(ranges.iter_mut()) {
+        r.id = id;
+    }
+    Ok(ranges)
+}
+
+fn marker_name(v: &Value, path: &JsonPath) -> Result<String, ModelError> {
+    let name = string(v, path)?;
+    if !name_ok(name) {
+        return Err(path.error(format!(
+            "the name must be trimmed, non-empty and at most {MAX_MARKER_NAME} characters"
+        )));
+    }
+    Ok(name.to_owned())
+}
+
+fn marker_color(
+    e: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+) -> Result<Option<[u8; 3]>, ModelError> {
+    e.get("color")
+        .map_or(Ok(None), |v| parse_color(v, &path.field("color")))
+}
+
 fn load_song(
     v: &Value,
     path: &JsonPath,
     (doc, registry): (&RackDoc, &Registry),
     version: u64,
 ) -> Result<Song, ModelError> {
-    let obj = object(v, path, SONG_FIELDS, SONG_FIELDS)?;
+    let allowed = if version >= 14 {
+        SONG_FIELDS_V14
+    } else {
+        SONG_FIELDS
+    };
+    let obj = object(v, path, allowed, SONG_FIELDS)?;
 
     let tempo_path = path.field("tempo");
     let mut tempo = Vec::new();
@@ -1143,6 +1238,8 @@ fn load_song(
         loop_enabled,
         end,
         next_clip_id,
+        markers: load_markers(obj.get("markers"), &path.field("markers"))?,
+        ranges: load_ranges(obj.get("ranges"), &path.field("ranges"))?,
     };
     let tracks_path = path.field("tracks");
     let mut track_first: BTreeMap<DeviceKey, JsonPath> = BTreeMap::new();
@@ -1733,6 +1830,44 @@ fn write_song(w: &mut String, song: &Song) {
     );
     let _ = writeln!(w, "    \"end\": {},", song.end);
     let _ = writeln!(w, "    \"next_clip_id\": {},", song.next_clip_id);
+    let color = |c: Option<[u8; 3]>| {
+        c.map_or(String::new(), |[r, g, b]| {
+            format!(", \"color\": \"#{r:02x}{g:02x}{b:02x}\"")
+        })
+    };
+    if !song.markers.is_empty() {
+        let _ = write!(w, "    \"markers\": ");
+        list(
+            w,
+            "    ",
+            song.markers.iter().map(|m| {
+                format!(
+                    "{{\"tick\": {}, \"name\": {}{}}}",
+                    m.tick,
+                    json_str(&m.name),
+                    color(m.color)
+                )
+            }),
+        );
+        let _ = writeln!(w, ",");
+    }
+    if !song.ranges.is_empty() {
+        let _ = write!(w, "    \"ranges\": ");
+        list(
+            w,
+            "    ",
+            song.ranges.iter().map(|r| {
+                format!(
+                    "{{\"start\": {}, \"end\": {}, \"name\": {}{}}}",
+                    r.start,
+                    r.end,
+                    json_str(&r.name),
+                    color(r.color)
+                )
+            }),
+        );
+        let _ = writeln!(w, ",");
+    }
     let _ = write!(w, "    \"tracks\": [");
     for (i, t) in song.tracks.iter().enumerate() {
         let sep = if i == 0 { "" } else { "," };
