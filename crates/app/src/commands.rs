@@ -23,6 +23,9 @@ pub enum AppCommand {
     /// File ▸ Import Audio…: pick audio files for new tracks or the selected
     /// audio track.
     ImportAudio,
+    /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
+    /// (a file each, or a folder search). Only enabled while some are missing.
+    RelinkAudio,
     /// File ▸ Export Patch… (the rack as patch v2, without the song).
     ExportPatch,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
@@ -143,6 +146,7 @@ impl AppCommand {
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
             AppCommand::ImportAudio => ("file.import_audio", None),
+            AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::ExportPatch => ("file.export_patch", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
@@ -223,6 +227,7 @@ impl AppCommand {
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
             ("file.import_audio", None) => AppCommand::ImportAudio,
+            ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.export_patch", None) => AppCommand::ExportPatch,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
@@ -372,6 +377,8 @@ pub struct MenuState {
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
     pub editor: bool,
+    /// Audio files of the project are missing (File > Relink Missing Audio is available).
+    pub missing_audio: bool,
 }
 
 /// One menu item.
@@ -445,6 +452,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
+                enabled(
+                    "Relink Missing Audio\u{2026}",
+                    AppCommand::RelinkAudio,
+                    state.missing_audio,
+                ),
                 item("Export Patch\u{2026}", AppCommand::ExportPatch),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
@@ -666,6 +678,7 @@ mod tests {
             rack: true,
             sequencer_only: false,
             editor: false,
+            missing_audio: false,
         }
     }
 
@@ -677,6 +690,7 @@ mod tests {
             AppCommand::Save,
             AppCommand::SaveAs,
             AppCommand::ImportAudio,
+            AppCommand::RelinkAudio,
             AppCommand::ExportPatch,
             AppCommand::StressRack,
             AppCommand::StressSong,
@@ -1038,6 +1052,7 @@ mod tests {
                 "Save",
                 "Save As\u{2026}",
                 "Import Audio\u{2026}",
+                "Relink Missing Audio\u{2026}",
                 "Export Patch\u{2026}",
                 "Stress Rack",
                 "Stress Song",
@@ -1145,6 +1160,7 @@ mod tests {
                 rack: true,
                 sequencer_only: false,
                 editor: false,
+                missing_audio: true,
             },
             &keymap,
         );

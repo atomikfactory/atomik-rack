@@ -385,6 +385,11 @@ impl SliceEditorView {
         }
     }
 
+    /// Whether `asset` is reported missing (see [`Self::set_missing_assets`]).
+    pub fn is_asset_missing(&self, asset: &str) -> bool {
+        self.missing.contains(asset)
+    }
+
     /// The zones of the open slicer, as last synced.
     pub fn zones(&self) -> &[ZoneDoc] {
         &self.zones

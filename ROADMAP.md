@@ -4,15 +4,14 @@ This is a list of intentions, not promises. There are no dates. The phases are i
 
 ## Done so far
 
-The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), named markers and range markers with a marker list, scales and chords in the piano roll (a scale per clip, fold, snap to scale, a chord stamp, chordify, arpeggiate and strum), and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
+The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), named markers and range markers with a marker list, scales and chords in the piano roll (a scale per clip, fold, snap to scale, a chord stamp, chordify, arpeggiate and strum), deep zoom down to the sample with finer snap values and per-track heights, plugin editor fixes (Serum 2 and other VSTGUI editors on Windows, editors opening from the sandbox, VST3 file-descriptor handlers on Linux), the `atomik-mcp` QA server, relinking of missing audio (any file or a folder search, one undo step), and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 
 - **Plugin sandbox follow-ups.** Run the sandbox on Linux and macOS for real (the wake-up and stdout redirection are compile-checked only), optional grouping of several instances in one process, and embedding sandboxed editors where the platform allows it.
 - **macOS and Linux verification.** Linux has been tried on Ubuntu 26.04 only; other distributions, audio setups and real plugins still need checking. macOS compiles and is linted but has not been run on a Mac. Verifying and fixing both is a priority.
-- **Missing audio relink.** A way to relink audio files that went missing.
 - **Note chase.** Notes that started before the play position or a locate sound from the right place.
-- **VST3 on Linux and Wayland.** Run-loop support for editors that need file-descriptor handlers, and plugin editor embedding on Wayland (today the parameter pane is the fallback).
+- **VST3 on Wayland.** Plugin editor embedding on Wayland (today the parameter pane is the fallback). Editors that need file-descriptor handlers now run on Linux; they still need checking with more real plugins.
 - **Signed builds.** Code signing and notarisation for the release archives.
 
 ## Phase 2: The sequencer

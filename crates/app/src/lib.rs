@@ -11,6 +11,7 @@
 pub mod app_core;
 pub mod audio_import;
 pub mod audio_record;
+pub mod audio_relink;
 pub mod audio_writer;
 pub mod browser_workers;
 pub mod cli;

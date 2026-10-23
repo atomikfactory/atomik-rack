@@ -234,6 +234,9 @@
 //!   emitting [`UiAction::PluginSettings`]) and [`PluginBannerView`] (the project and unclean-exit
 //!   banner, emitting [`UiAction::PluginBanner`]) take their data from the app and show the
 //!   native-code warning before anything is enabled.
+//! - **Relink.** [`RelinkView`] lists the audio files a project lost and emits
+//!   [`UiAction::Relink`] (`LOCATE...` per file, `SEARCH FOLDER...`, `CLOSE`); the app feeds it with
+//!   [`RelinkView::set_missing`].
 //!
 //! # Backends
 //! - [`SceneCanvas`]: vello GPU scene (text shaped with parley, system fonts via fontique).
@@ -283,6 +286,7 @@ pub mod plugin_panel;
 pub mod plugin_params;
 pub mod plugin_settings;
 pub mod rack;
+pub mod relink_panel;
 pub mod sample_editor;
 pub mod scene_canvas;
 pub mod seq_edit;
@@ -325,6 +329,7 @@ pub use plugin_settings::PluginSettingsView;
 pub use rack::{
     COLUMN_GAP, CableVisibility, Flip, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
+pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use sample_editor::SampleEditorView;
 pub use scene_canvas::{SceneCache, SceneCanvas};
 pub use seq_editor::SeqEditorView;

@@ -72,6 +72,11 @@ pub const TOOLS: &[Tool] = &[
         run: save,
     },
     Tool {
+        name: "session_relink",
+        definition: relink_def,
+        run: relink,
+    },
+    Tool {
         name: "session_bounce",
         definition: bounce_def,
         run: bounce,
@@ -191,6 +196,10 @@ fn request_json(r: ShellRequest) -> Value {
         ShellRequest::PickOpenFile => (
             "pick_open_file",
             "a file dialog: use session_open with a path",
+        ),
+        ShellRequest::PickRelinkFile | ShellRequest::PickRelinkFolder => (
+            "pick_relink_path",
+            "a file or folder dialog: use session_relink with a file or a folder",
         ),
         ShellRequest::PickSaveFile | ShellRequest::PickExportFile => (
             "pick_save_file",
@@ -849,6 +858,133 @@ fn save(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     })))
 }
 
+// -------------------------------------------------------------- session_relink
+
+fn relink_def() -> Value {
+    definition(
+        "session_relink",
+        "Relinks the missing audio of the open project, answering the dialogs of File > Relink \
+Missing Audio... (session_command file.relink_audio shows the list; its buttons need a native \
+dialog). With `file`, that audio file replaces the missing asset `asset` (its name, or the start \
+of its id; omit it when exactly one is missing): every clip and sampler zone that used it is \
+swapped in one undo step, or, if the file is the very same audio, the bundle just gets its file \
+back. With `folder`, the folder is searched recursively and the missing files are matched by \
+name. Waits for the import and returns what is still missing.",
+        &[
+            ("file", "string", "An audio file to relink one asset to."),
+            (
+                "asset",
+                "string",
+                "With file: the missing asset, by file name or id prefix.",
+            ),
+            (
+                "folder",
+                "string",
+                "A folder to search for the missing files.",
+            ),
+        ],
+        &[],
+    )
+}
+
+fn relink(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let (file, folder, asset) = (
+        args.opt_str("file")?,
+        args.opt_str("folder")?,
+        args.opt_str("asset")?,
+    );
+    let target = match (file, folder) {
+        (Some(f), None) => {
+            let path = server.paths().read(f)?;
+            if !path.is_file() {
+                return Err(format!("{f}: not a file"));
+            }
+            path
+        }
+        (None, Some(d)) => {
+            if asset.is_some() {
+                return Err("`asset` goes with `file`, not with `folder`".to_string());
+            }
+            let path = server.paths().read(d)?;
+            if !path.is_dir() {
+                return Err(format!("{d}: not a folder"));
+            }
+            path
+        }
+        _ => return Err("give exactly one of `file` and `folder`".to_string()),
+    };
+    let session = server.require_session()?;
+    let core = session.shell_mut().core_mut();
+    let before: Vec<_> = core.missing_assets().to_vec();
+    if before.is_empty() {
+        return Err("no audio file is missing in the open project".to_string());
+    }
+    let changed_from = core.doc().clone();
+    if file.is_some() {
+        let hash = pick_missing(&before, asset)?;
+        core.relink_asset(&hash, target);
+    } else {
+        core.relink_search_folder(target);
+    }
+    core.wait_background();
+    let changed = core.doc() != &changed_from;
+    let after: Vec<Value> = core
+        .missing_assets()
+        .iter()
+        .map(|m| json!({"hash": m.hash, "name": m.name}))
+        .collect();
+    let message = core.last_rejection().map(str::to_owned);
+    session.shell_mut().frame();
+    Ok(ToolOutput::json(&json!({
+        "relinked": before.len().saturating_sub(after.len()),
+        "still_missing": after,
+        "document_changed": changed,
+        "message": message,
+        "status_text": session.shell().status_text(),
+        "dirty": session.shell().core().is_dirty(),
+        "can_undo": session.shell().core().document().can_undo(),
+    })))
+}
+
+/// The missing asset `query` names (file name in any case, or the start of the id).
+fn pick_missing(
+    missing: &[atomik_render::bundle::MissingAsset],
+    query: Option<&str>,
+) -> Result<String, String> {
+    let list = || {
+        missing
+            .iter()
+            .map(|m| format!("{} ({})", m.name, &m.hash[..8.min(m.hash.len())]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let Some(query) = query else {
+        return match missing {
+            [only] => Ok(only.hash.clone()),
+            _ => Err(format!(
+                "{} assets are missing; name one with `asset`: {}",
+                missing.len(),
+                list()
+            )),
+        };
+    };
+    let lower = query.to_lowercase();
+    let hits: Vec<&atomik_render::bundle::MissingAsset> = missing
+        .iter()
+        .filter(|m| {
+            m.name.to_lowercase() == lower || (!query.is_empty() && m.hash.starts_with(query))
+        })
+        .collect();
+    match hits.as_slice() {
+        [one] => Ok(one.hash.clone()),
+        [] => Err(format!("`{query}` is not a missing asset: {}", list())),
+        _ => Err(format!(
+            "`{query}` names several missing assets: {}",
+            list()
+        )),
+    }
+}
+
 // -------------------------------------------------------------- session_bounce
 
 fn bounce_def() -> Value {
@@ -856,7 +992,8 @@ fn bounce_def() -> Value {
         "session_bounce",
         "Bounces the session's document as it is now (edits included, saved or not) to a WAV, \
 and returns the audio report; with `reference`, compares with that WAV. The same renderer as \
-`bounce`. Audio clips need a saved bundle: save with session_save and use `bounce` on that.",
+`bounce`. Audio clips play from the session's bundle (the project's own folder, or the scratch \
+bundle of imports).",
         &[
             (
                 "output",
@@ -932,7 +1069,7 @@ fn bounce(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         block as usize,
         workers,
         loop_count,
-        None,
+        core.bundle_root(),
     )?;
     write_wav_file(&out, &b.channels, b.sample_rate, format).map_err(|e| e.to_string())?;
     let window_s = args.opt_f64("window_s")?.unwrap_or(0.5);

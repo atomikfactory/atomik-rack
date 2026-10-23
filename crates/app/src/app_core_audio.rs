@@ -22,8 +22,23 @@
 //!   the saved song nor the undo/redo history ([`atomik_model::Document::referenced_assets`])
 //!   reference. Assets only the history references stay on disk (and in the live pool).
 //! * **Open** verifies every pool asset: missing files are listed
-//!   ([`AppCore::missing_assets`], and a toast); those clips play silence. Relinking is not
-//!   implemented yet.
+//!   ([`AppCore::missing_assets`], and a toast); those clips play silence. They can be relinked
+//!   (see below).
+//!
+//! # Relink
+//!
+//! A missing asset is fixed with [`AppCore::relink_asset`] (any audio file the user picks for
+//! it) or [`AppCore::relink_search_folder`] (a bounded folder scan that matches the missing
+//! assets by original file name, see [`crate::audio_relink`]). The file goes through the import
+//! worker (decode, resample, store, peaks). If its content hash **is** the missing hash
+//! (the file was only moved or renamed) the bundle simply has its file back: the clips load,
+//! the document does not change and there is no undo step. Otherwise the new asset is registered
+//! (`RegisterAsset`, under the new file's name) and **one** `RelinkAsset` step swaps every clip
+//! and zone reference from the old hash to the new one (clips, samplers, slicers, drum pads); undo
+//! brings the old, missing state back (and the missing list with it). The old pool entry stays
+//! until the history no longer needs it. A file that does not decode, or that is too short for the
+//! zones that used the old one, is reported by name and changes nothing. Each finished batch
+//! reports `relinked N, M still missing` as a toast.
 //!
 //! # Import
 //!
@@ -94,6 +109,8 @@ struct Batch {
     total: usize,
     done: usize,
     errors: Vec<String>,
+    /// Set when the files relink missing assets instead of adding clips.
+    relink: Option<relink::RelinkJob>,
 }
 
 /// Everything audio of an open project.
@@ -108,6 +125,9 @@ pub(super) struct AudioState {
     /// Assets a worker is loading into RAM for samplers.
     pub(super) ram_pending: BTreeSet<String>,
     pub(super) missing: Vec<MissingAsset>,
+    /// Assets that were missing and have been relinked away: they are missing again when an
+    /// undo makes the document use them (see `AppCore::refresh_missing`).
+    relinked: Vec<MissingAsset>,
     pub(super) generation: u64,
     next_batch: u64,
     /// Workers that have not sent their completion yet.
@@ -140,6 +160,7 @@ impl AudioState {
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
             missing: Vec::new(),
+            relinked: Vec::new(),
             generation: 0,
             next_batch: 0,
             pending: 0,
@@ -358,11 +379,12 @@ impl<S: EngineSink> AppCore<S> {
                     result,
                 } if generation == current => {
                     // A sample import sends the maps itself, through its one `SetZones`.
+                    // A relink applies its own `RelinkAsset`, which sends them too.
                     let sampler_batch = self
                         .audio
                         .batches
                         .get(&batch)
-                        .is_some_and(|b| b.samples.is_some());
+                        .is_some_and(|b| b.samples.is_some() || b.relink.is_some());
                     if let (Ok(loaded), false) = (&result, sampler_batch) {
                         fresh.insert(loaded.hash.clone());
                     }
@@ -390,6 +412,14 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_sliced(job, result),
+                Msg::Scanned {
+                    generation,
+                    root,
+                    found,
+                    truncated,
+                } if generation == current => {
+                    self.apply_scanned(&root, found, truncated);
+                }
                 Msg::Loaded {
                     generation,
                     hash,
@@ -413,7 +443,8 @@ impl<S: EngineSink> AppCore<S> {
                 Msg::Imported { .. }
                 | Msg::Loaded { .. }
                 | Msg::Sampled { .. }
-                | Msg::Sliced { .. } => {}
+                | Msg::Sliced { .. }
+                | Msg::Scanned { .. } => {}
             }
         }
         if resubmit {
@@ -451,8 +482,16 @@ impl<S: EngineSink> AppCore<S> {
                 .samples
                 .and_then(|samples| self.finish_sample_import(samples));
             let mut report = Vec::new();
+            if let Some(job) = &batch.relink {
+                report.push(self.relink_summary(job));
+            }
             if !batch.errors.is_empty() {
-                report.push(format!("audio import: {}", batch.errors.join("; ")));
+                let what = if batch.relink.is_some() {
+                    "audio relink"
+                } else {
+                    "audio import"
+                };
+                report.push(format!("{what}: {}", batch.errors.join("; ")));
             }
             report.extend(note);
             if !report.is_empty() {
@@ -566,6 +605,17 @@ impl<S: EngineSink> AppCore<S> {
         tick: i64,
         samples: Option<SampleImport>,
     ) {
+        self.start_batch(paths, target, tick, samples, None);
+    }
+
+    fn start_batch(
+        &mut self,
+        paths: Vec<PathBuf>,
+        target: ImportTarget,
+        tick: i64,
+        samples: Option<SampleImport>,
+        relink: Option<relink::RelinkJob>,
+    ) {
         if paths.is_empty() {
             return;
         }
@@ -586,6 +636,7 @@ impl<S: EngineSink> AppCore<S> {
                 total: paths.len(),
                 done: 0,
                 errors: Vec::new(),
+                relink,
             },
         );
         let rate = self.doc().sample_rate;
@@ -612,6 +663,13 @@ impl<S: EngineSink> AppCore<S> {
         let outcome = result.and_then(|loaded| {
             self.insert_loaded(&loaded);
             if self
+                .audio
+                .batches
+                .get(&batch)
+                .is_some_and(|b| b.relink.is_some())
+            {
+                self.relink_loaded(batch, &loaded)
+            } else if self
                 .audio
                 .batches
                 .get(&batch)
@@ -745,6 +803,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.buffers.clear();
         self.audio.ram_pending.clear();
         self.audio.missing.clear();
+        self.audio.relinked.clear();
         if self.audio.bundle.as_ref().is_some_and(|b| b.scratch) && self.audio.pending == 0 {
             self.audio.remove_scratch();
         }
@@ -894,6 +953,9 @@ impl<S: EngineSink> AppCore<S> {
         self.import_audio(paths, ImportTarget::NewTracks, tick);
     }
 }
+
+#[path = "app_core_relink.rs"]
+mod relink;
 
 #[cfg(test)]
 #[path = "app_core_audio_tests.rs"]

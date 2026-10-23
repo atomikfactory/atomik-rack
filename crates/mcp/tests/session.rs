@@ -50,6 +50,7 @@ fn every_session_tool_needs_an_open_session() {
         ("session_texts", json!({})),
         ("session_screenshot", json!({})),
         ("session_save", json!({"path": "target/tmp/never.atomik"})),
+        ("session_relink", json!({"folder": "examples"})),
         ("session_bounce", json!({})),
     ] {
         let r = call(&mut s, tool, args);
@@ -649,4 +650,213 @@ fn a_session_bounce_hears_a_cable_edit() {
         json!({"output": tmp("without-bass.wav"), "reference": reference}),
     );
     assert_eq!(after["comparison"]["matches"], false, "{after}");
+}
+
+// ------------------------------------------------------------------ relink
+
+/// A saved project with one clip per name in `names` (a ramp each, distinct audio) whose
+/// asset files were then deleted; the project file, relative to the repository when it can be.
+fn missing_project(tag: &str, names: &[&str]) -> String {
+    use atomik_app::AppCore;
+    use atomik_app::session::{LiveSession, NullBackend};
+    use atomik_app::settings::AudioSettings;
+    use atomik_render::wav::{SampleFormat, write_wav_file};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("mcp-relink-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("source")).unwrap();
+    let mut core = AppCore::with_doc(
+        LiveSession::new(NullBackend, AudioSettings::default(), false),
+        atomik_model::empty_doc(),
+        None,
+    );
+    for (i, name) in names.iter().enumerate() {
+        let seed = 1.0 / (i as f32 + 1.0);
+        let ramp: Vec<f32> = (0..4_800).map(|n| n as f32 / 4_800.0 * seed).collect();
+        let file = dir.join("source").join(name);
+        write_wav_file(&file, &[ramp], 48_000, SampleFormat::F32).unwrap();
+        core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
+        core.wait_background();
+    }
+    core.save_as(&dir.join("song.atomik")).unwrap();
+    let audio = dir.join("song").join("Audio");
+    for entry in std::fs::read_dir(&audio).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|e| e == "wav") {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    dir.join("song")
+        .join("song.atomik")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A replacement ramp under the project's folder, by absolute path.
+fn replacement(tag: &str, name: &str, seed: f32) -> String {
+    use atomik_render::wav::{SampleFormat, write_wav_file};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("mcp-relink-{tag}"))
+        .join("new");
+    std::fs::create_dir_all(&dir).unwrap();
+    let ramp: Vec<f32> = (0..4_800).map(|n| n as f32 / 4_800.0 * seed).collect();
+    let file = dir.join(name);
+    write_wav_file(&file, &[ramp], 48_000, SampleFormat::F32).unwrap();
+    file.to_string_lossy().into_owned()
+}
+
+#[test]
+fn relink_validates_its_arguments() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({}));
+    for args in [
+        json!({}),
+        json!({"file": "README.md", "folder": "examples"}),
+        json!({"folder": "examples", "asset": "kick.wav"}),
+    ] {
+        let r = call(&mut s, "session_relink", args);
+        assert!(r.is_error);
+        assert!(
+            r.first_text().contains("exactly one") || r.first_text().contains("`asset`"),
+            "{}",
+            r.first_text()
+        );
+    }
+    // A file must be a file and a folder a folder; nothing missing is an error too.
+    assert!(call(&mut s, "session_relink", json!({"file": "examples"})).is_error);
+    assert!(call(&mut s, "session_relink", json!({"folder": "README.md"})).is_error);
+    assert!(call(&mut s, "session_relink", json!({"file": 3})).is_error);
+    let r = call(&mut s, "session_relink", json!({"folder": "examples"}));
+    assert!(r.is_error);
+    assert!(
+        r.first_text().contains("no audio file is missing"),
+        "{}",
+        r.first_text()
+    );
+}
+
+#[test]
+fn relink_paths_stay_inside_the_allowed_folders() {
+    let mut s = server();
+    let project = missing_project("policy", &["kick.wav"]);
+    ok(&mut s, "session_open", json!({"path": project}));
+    let outside = std::env::temp_dir();
+    for key in ["file", "folder"] {
+        let r = call(
+            &mut s,
+            "session_relink",
+            json!({ key: outside.to_string_lossy() }),
+        );
+        assert!(r.is_error, "{key}");
+        assert!(
+            r.first_text().contains("outside the allowed folders"),
+            "{}",
+            r.first_text()
+        );
+    }
+    assert!(
+        call(
+            &mut s,
+            "session_relink",
+            json!({"file": "no/such/file.wav"})
+        )
+        .is_error
+    );
+}
+
+#[test]
+fn the_relink_command_lists_the_missing_files_and_relink_fixes_them() {
+    let mut s = server();
+    let project = missing_project("flow", &["kick.wav"]);
+    ok(&mut s, "session_open", json!({"path": project}));
+    let row = command_row(&mut s, "file.relink_audio");
+    assert_eq!(row["enabled"], true);
+    assert_eq!(row["label"], "Relink Missing Audio\u{2026}");
+    let opened = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "file.relink_audio"}),
+    );
+    assert_eq!(opened["requests"], json!([]));
+    let kick = ok(&mut s, "session_texts", json!({"contains": "kick.wav"}));
+    assert!(!kick["texts"].as_array().unwrap().is_empty(), "{kick}");
+    let locate = ok(&mut s, "session_texts", json!({"contains": "LOCATE"}));
+    assert!(!locate["texts"].as_array().unwrap().is_empty());
+    // Missing audio cannot bounce yet.
+    assert!(call(&mut s, "session_bounce", json!({})).is_error);
+
+    let file = replacement("flow", "snare.wav", 0.5);
+    let r = ok(&mut s, "session_relink", json!({"file": file}));
+    assert_eq!(r["relinked"], 1, "{r}");
+    assert_eq!(r["still_missing"], json!([]));
+    assert_eq!(r["document_changed"], true);
+    assert_eq!(r["can_undo"], true);
+    assert_eq!(r["dirty"], true);
+    assert!(
+        r["message"]
+            .as_str()
+            .unwrap()
+            .contains("relinked 1, 0 still missing")
+    );
+    // The list closed with the last missing file, and the command is disabled again.
+    assert_eq!(command_row(&mut s, "file.relink_audio")["enabled"], false);
+    let gone = ok(&mut s, "session_texts", json!({"contains": "LOCATE"}));
+    assert!(gone["texts"].as_array().unwrap().is_empty());
+    // The session bounce now plays the relinked audio.
+    let out = tmp("relinked.wav");
+    let b = ok(&mut s, "session_bounce", json!({"output": out}));
+    assert_eq!(b["audio"]["silent"], false, "{b}");
+    // Undo brings the missing file back.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(command_row(&mut s, "file.relink_audio")["enabled"], true);
+}
+
+#[test]
+fn relink_picks_the_asset_by_name_or_id_and_searches_a_folder() {
+    let mut s = server();
+    let project = missing_project("pick", &["kick.wav", "snare.wav"]);
+    ok(&mut s, "session_open", json!({"path": project}));
+    let file = replacement("pick", "other.wav", 0.25);
+    // Two are missing: the asset must be named.
+    let r = call(&mut s, "session_relink", json!({"file": file}));
+    assert!(r.is_error);
+    assert!(
+        r.first_text().contains("name one with `asset`"),
+        "{}",
+        r.first_text()
+    );
+    let r = call(
+        &mut s,
+        "session_relink",
+        json!({"file": file, "asset": "hat.wav"}),
+    );
+    assert!(r.is_error);
+    assert!(
+        r.first_text().contains("not a missing asset"),
+        "{}",
+        r.first_text()
+    );
+    let v = ok(
+        &mut s,
+        "session_relink",
+        json!({"file": file, "asset": "SNARE.WAV"}),
+    );
+    assert_eq!(v["relinked"], 1);
+    assert_eq!(v["still_missing"].as_array().unwrap().len(), 1);
+    assert_eq!(v["still_missing"][0]["name"], "kick.wav");
+
+    // A folder search with a nested, differently cased file name relinks the other one.
+    let deep = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("mcp-relink-pick")
+        .join("pool")
+        .join("deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::copy(
+        replacement("pick", "found.wav", 0.75),
+        deep.join("KICK.WAV"),
+    )
+    .unwrap();
+    let pool = deep.parent().unwrap().to_string_lossy().into_owned();
+    let v = ok(&mut s, "session_relink", json!({"folder": pool}));
+    assert_eq!(v["relinked"], 1, "{v}");
+    assert_eq!(v["still_missing"], json!([]));
+    assert_eq!(command_row(&mut s, "file.relink_audio")["enabled"], false);
 }

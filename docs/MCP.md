@@ -84,7 +84,8 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 | `session_texts` | `contains`, `limit` | Every text the UI draws, with its position and size. |
 | `session_screenshot` | `save_to` | A PNG of the window as the app paints it, returned as an image; `save_to` also writes the file. |
 | `session_save` | `path` | Saves the document as a project. |
-| `session_bounce` | as `bounce` without `path` | Bounces the document as it is now, edits included, saved or not, and returns the report. A project with audio clips must be saved first (`session_save`, then `bounce`): a session has no bundle. |
+| `session_relink` | `file`, `asset`, `folder` | Relinks the missing audio of the open project, answering the dialogs of File > Relink Missing Audio... (`session_command` `file.relink_audio` opens the list; its LOCATE... and SEARCH FOLDER... buttons raise native dialogs, reported as `pick_relink_path`). With `file`, that audio file replaces the missing asset `asset` (its file name in any case, or the start of its id; optional when exactly one is missing); with `folder`, the folder is searched and the missing files matched by name. Waits for the import and returns `relinked`, `still_missing`, `document_changed`, `message` (the toast), `dirty` and `can_undo`. |
+| `session_bounce` | as `bounce` without `path` | Bounces the document as it is now, edits included, saved or not, and returns the report. Audio clips play from the session's bundle (the project's own folder, or the scratch bundle of this session's imports); a project with missing audio is refused until it is relinked. |
 | `session_close` | | Closes the session without saving. |
 
 #### Pointer and keys
@@ -115,6 +116,10 @@ These are the QA steps this project expects for a change, in the order to do the
 4. Assert on the document with `session_status`: the devices, cables, tracks, markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
 5. If the edit should change the sound (or must not), `session_bounce` with `reference` set to the bounce of the file you opened.
 6. Turn what you proved into a headless test (`crates/app/src/shell_*_tests.rs`, `crates/ui/tests/workflow_*.rs`) before the PR is done.
+
+**Missing audio and relink**
+
+`session_open` a bundle project whose `Audio/<hash>.wav` was deleted, `session_commands` with `query: relink` (the command is enabled only while audio is missing), `session_command` `file.relink_audio` and read the panel with `session_texts` or `session_screenshot`. Then `session_relink` with a `file` (different audio: one undo step, `document_changed` true) or the same audio (file moved or renamed: the file is restored, `document_changed` false) or a `folder`. `session_bounce` must now be audible and the same on every run; `edit.undo` brings the missing state back and enables the command again.
 
 **Reproducing a bug report**
 

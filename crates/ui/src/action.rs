@@ -278,6 +278,9 @@ pub enum UiAction {
     PluginSettings(crate::plugin_data::PluginSettingsAction),
     /// The project banner asks for something.
     PluginBanner(crate::plugin_data::PluginBannerAction),
+    /// The relink panel ([`crate::RelinkView`]) asks for something: a file for a missing audio
+    /// asset, a folder to search, or to close.
+    Relink(crate::relink_panel::RelinkAction),
     /// The parameter pane needs the display text of these params (plugin param id and the
     /// plain value to format): the visible rows that have no fresh text. Answer with
     /// [`crate::PluginParamsView::set_texts`] from `PluginManager::param_text`. Emitted by
