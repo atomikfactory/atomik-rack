@@ -1050,9 +1050,14 @@ impl PianoRollView {
                 pos,
                 modifiers,
             } => {
-                if modifiers.alt && !modifiers.command() {
-                    // Alt + wheel: the key zoom, the key under the pointer stays under it.
-                    self.zoom_keys_to(self.key_h * KEY_ZOOM_STEP.powf(delta.y), pos.y);
+                if modifiers.zooms_vertically() {
+                    // Alt or Ctrl+Shift + wheel: the key zoom, the key under the pointer
+                    // stays under it.
+                    self.zoom_keys_to(
+                        self.key_h
+                            * KEY_ZOOM_STEP.powf(crate::event::zoom_wheel_amount(delta.x, delta.y)),
+                        pos.y,
+                    );
                 } else if modifiers.command() {
                     self.axis
                         .zoom_at(ZOOM_STEP.powf(delta.y), pos.x.max(self.axis.x0));

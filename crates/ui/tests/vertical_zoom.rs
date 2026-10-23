@@ -154,6 +154,37 @@ fn alt_wheel_zooms_the_tracks_and_keeps_the_row_under_the_pointer() {
 }
 
 #[test]
+fn ctrl_shift_wheel_zooms_the_tracks_vertically_and_not_the_time_axis() {
+    let (mut v, d, reg) = setup();
+    let pos = Point::new(500.0, 150.0);
+    let ctrl_shift = Modifiers {
+        shift: true,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
+    let ppt = v.px_per_tick();
+    wheel(&mut v, &d, &reg, pos, 2.0, ctrl_shift);
+    let z = v.track_zoom();
+    assert!(z > 1.0);
+    assert_eq!(v.px_per_tick(), ppt, "the time zoom is Ctrl alone");
+    wheel(&mut v, &d, &reg, pos, -2.0, ctrl_shift);
+    assert!(v.track_zoom() < z);
+    // Systems that turn Shift+wheel into sideways scrolling send the amount as dx.
+    let _ = v.handle(
+        &UiEvent::Wheel {
+            delta: Vec2::new(2.0, 0.0),
+            pos,
+            modifiers: ctrl_shift,
+        },
+        d.doc(),
+        &reg,
+    );
+    assert!(v.track_zoom() > 1.0);
+    assert_eq!(v.px_per_tick(), ppt);
+}
+
+#[test]
 fn the_zoom_commands_step_the_zoom_and_reset_clears_the_heights_too() {
     let (mut v, mut d, reg) = setup();
     assert!(
@@ -454,6 +485,22 @@ fn alt_wheel_zooms_the_keys_keeping_the_key_under_the_pointer() {
     roll_wheel(&mut v, &doc, &reg, pos, 2.0, Modifiers::CTRL);
     assert_eq!(v.key_height(), kh);
     assert!(v.px_per_tick() > ppt);
+}
+
+#[test]
+fn ctrl_shift_wheel_zooms_the_keys_and_leaves_the_time_axis() {
+    let (mut v, doc, reg) = roll();
+    let pos = Point::new(500.0, 250.0);
+    let ctrl_shift = Modifiers {
+        shift: true,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
+    let ppt = v.px_per_tick();
+    roll_wheel(&mut v, &doc, &reg, pos, 3.0, ctrl_shift);
+    assert!(v.key_height() > KEY_HEIGHT);
+    assert_eq!(v.px_per_tick(), ppt);
 }
 
 #[test]

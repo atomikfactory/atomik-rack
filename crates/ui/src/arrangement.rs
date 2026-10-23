@@ -2520,9 +2520,13 @@ impl ArrangementView {
             };
             return;
         }
-        if modifiers.alt && !modifiers.command() {
-            // Alt + wheel: the vertical zoom, the row under the pointer stays under it.
-            self.zoom_tracks_at(TRACK_ZOOM_STEP.powf(dy), pos.y);
+        if modifiers.zooms_vertically() {
+            // Alt or Ctrl+Shift + wheel: the vertical zoom, the row under the pointer stays
+            // under it.
+            self.zoom_tracks_at(
+                TRACK_ZOOM_STEP.powf(crate::event::zoom_wheel_amount(dx, dy)),
+                pos.y,
+            );
             return;
         }
         if modifiers.command() {
