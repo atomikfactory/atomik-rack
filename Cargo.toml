@@ -68,6 +68,8 @@ sha2 = "0.11"
 unsafe_code = "deny"
 missing_docs = "warn"
 unused_must_use = "deny"
+# `cargo llvm-cov` builds with `--cfg coverage`.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
