@@ -7,6 +7,10 @@
 //!   render worker.
 //!
 //! Both are const-initialised thread-locals: reading or setting them never allocates.
+//!
+//! Marking the main thread also prepares it the way a host's UI thread is: on Windows it
+//! initialises OLE (single-threaded apartment), which editors built on VSTGUI need when the
+//! plugin module loads.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -16,8 +20,15 @@ thread_local! {
     static AUDIO_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-/// Marks the calling thread as the plugin main thread. Call once, on the winit thread.
+/// Marks the calling thread as the plugin main thread. Call once, on the winit thread, before
+/// any plugin module is loaded.
+///
+/// It also prepares the thread the way a host's UI thread is: on Windows it initialises OLE
+/// (once per thread), because VSTGUI editors create their Direct2D and DirectWrite factories
+/// through COM when the module loads and crash when the thread has none. Nothing elsewhere.
 pub fn mark_main_thread() {
+    #[cfg(windows)]
+    crate::ole::init_on_this_thread();
     MAIN.with(|m| m.set(true));
 }
 

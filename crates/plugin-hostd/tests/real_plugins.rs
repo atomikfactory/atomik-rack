@@ -430,3 +430,41 @@ fn the_clap_editor_opens_in_a_window_of_the_child_and_closes_again() {
         FromChild::Ok { .. }
     ));
 }
+
+/// Opens the editor of an installed VST3 plugin in a real window of the child, for editors the
+/// test plugins cannot stand in for (VSTGUI on Windows). `ATOMIK_VST3_EDITOR_FILE` is the
+/// `.vst3` and `ATOMIK_VST3_EDITOR_ID` the class id in hex; without them the test does nothing.
+/// Notifications such as `GuiResize` may come before the reply: `TestParent::call` keeps them.
+#[test]
+#[ignore = "opens a real window of an installed plugin; run by hand"]
+fn a_vst3_editor_opens_in_a_window_of_the_child_and_closes_again() {
+    let (Ok(file), Ok(id)) = (
+        std::env::var("ATOMIK_VST3_EDITOR_FILE"),
+        std::env::var("ATOMIK_VST3_EDITOR_ID"),
+    ) else {
+        eprintln!("skipped: set ATOMIK_VST3_EDITOR_FILE and ATOMIK_VST3_EDITOR_ID");
+        return;
+    };
+    let mut p = TestParent::spawn(&Spawn::real("vst3", Path::new(&file), &id));
+    p.hello();
+    let (_, has_gui, _) = p.instantiate();
+    assert!(has_gui);
+    let opened = p
+        .call(
+            |id| ToChild::OpenGui {
+                id,
+                owner: None,
+                scale: 1.0,
+            },
+            None,
+        )
+        .0;
+    assert!(
+        matches!(opened, FromChild::GuiOpened { w, h, .. } if w > 0 && h > 0),
+        "{opened:?}"
+    );
+    assert!(matches!(
+        p.call(|id| ToChild::CloseGui { id }, None).0,
+        FromChild::Ok { .. }
+    ));
+}

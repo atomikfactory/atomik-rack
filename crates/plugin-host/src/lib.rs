@@ -26,6 +26,8 @@ mod fpenv;
 mod journal;
 pub mod layout;
 mod manager;
+#[cfg(windows)]
+mod ole;
 pub mod paths;
 mod scan;
 mod settings;

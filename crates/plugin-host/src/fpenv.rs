@@ -2,9 +2,9 @@
 //!
 //! Denormal floats make DSP code slow by orders of magnitude, and plugins expect the host to
 //! turn them off in the audio thread. The control bits live in the floating-point control
-//! register (MXCSR on x86-64, FPCR on aarch64), which has no safe API: this module is the one
-//! place in the host crate that uses `unsafe` (pinned by name in `tests/unsafe_policy.rs`).
-//! Each block has a `SAFETY:` comment; nothing here allocates or blocks.
+//! register (MXCSR on x86-64, FPCR on aarch64), which has no safe API: this module and `ole`
+//! are the only places in the host crate that use `unsafe` (pinned by name in
+//! `tests/unsafe_policy.rs`). Each block has a `SAFETY:` comment; nothing here allocates or blocks.
 #![allow(unsafe_code)] // Justification: reading and writing the FP control register.
 #![deny(clippy::undocumented_unsafe_blocks)]
 
