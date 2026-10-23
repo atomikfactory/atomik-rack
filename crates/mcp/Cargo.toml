@@ -1,0 +1,37 @@
+[package]
+name = "atomik-mcp"
+description = "Atomik Rack MCP server: bounce, analyse and drive the app headlessly, for agent-assisted QA."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "atomik_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atomik-mcp"
+path = "src/main.rs"
+
+[dependencies]
+atomik-core.workspace = true
+atomik-device-sdk.workspace = true
+atomik-model.workspace = true
+# Bounces: the same code as the `atomik-render` program.
+atomik-render.workspace = true
+# The headless shell of the session tools.
+atomik-app.workspace = true
+# Screenshots: the CPU canvas.
+atomik-ui = { workspace = true, features = ["cpu-canvas"] }
+# The plugin scan cache (read only).
+atomik-plugin-host.workspace = true
+serde_json.workspace = true
+# The spectrum of the audio report.
+rustfft.workspace = true
+
+[lints]
+workspace = true
