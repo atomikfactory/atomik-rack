@@ -238,6 +238,10 @@ fn sandboxed_plugins_in_the_engine_are_bit_identical_to_in_process_across_blocks
 }
 
 #[test]
+#[cfg_attr(
+    coverage,
+    ignore = "a live deadline is not met by an instrumented build on a shared runner"
+)]
 fn a_live_render_of_sandboxed_plugins_meets_every_batch_deadline_and_equals_in_process() {
     for format in FORMATS {
         let mut local = in_process(format, &[format.main_file()]);
