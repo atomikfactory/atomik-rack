@@ -28,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Nudge by beat or tick.** In the piano roll, the selected notes can move by one beat or by one tick, whatever the snap: `Ctrl+Shift+Left/Right` (beat) and `Ctrl+Alt+Left/Right` (tick) in the standard profile, `Shift+Left/Right` and `Alt+Left/Right` in the legacy one (`Cmd` for `Ctrl` on macOS).
 - **Console keys are commands.** The console's arrow, Page Up/Down, Home and End keys are now `mixer.*` commands in the Mixer context (the same keys as before, Shift for fine steps), so they show in the cheat sheet and can be rebound in Settings, Keyboard. The console also owns the keyboard as a text field while a channel name is being typed, so Space, Delete and the letters never run commands then; Enter commits and Esc cancels.
 - **Editor keys follow the keymap.** Delete and Backspace in the sample editor (remove the selected zone) and the slice editor (merge the selected slice into the previous one) are now the `edit.delete` command, so they follow Settings, Keyboard and the active profile. The sample, slice, step, sequencer and container editors no longer read Ctrl+Z and Ctrl+Y themselves: undo and redo are `edit.undo` and `edit.redo` everywhere, and rebinding them takes effect in the editors. Esc and typing a name are unchanged.
+- **Time signature in the transport bar.** Double-click the meter readout and type a signature (`3/4`, or a bare `3` to keep the beat unit, 1 to 32 over 2, 4, 8 or 16): it changes the meter change in effect at the playhead, undoable like the tempo. Before, the first signature could not be changed at all (a 4/4 start has no ruler tag).
+- **Ctrl+Shift+wheel zooms vertically.** In the arrangement (track heights) and the piano roll (key heights), next to Alt+wheel; Ctrl+wheel stays the time zoom.
+
+### Fixed
+
+- **Device search.** Typing in the device browser's search kept the scroll of the full list, so the few matches (Serum for "ser") sat above the visible panel; the list now returns to the top on every edit.
 
 ### Removed
 - **The plugin warning.** Turning plugins on in Settings > Plugins, or LOAD on a project that uses plugins, no longer shows a warning to confirm: plugins now run in their own processes by default.
