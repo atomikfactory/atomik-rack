@@ -69,7 +69,7 @@ pub struct TimeInfo {
     pub frame: u64,
     /// Current sample rate.
     pub sample_rate: SampleRate,
-    /// Current tempo.
+    /// Tempo at the first frame of the batch (inside a ramp, the instantaneous tempo there).
     pub tempo: Tempo,
     /// Whether the transport is playing.
     pub playing: bool,
@@ -77,14 +77,14 @@ pub struct TimeInfo {
     /// (fractional). While stopped it stays at the playhead; without a song it advances with
     /// the engine at the engine tempo.
     pub tick: f64,
-    /// Ticks per sample frame in this batch (constant inside a batch; follows the tempo map).
+    /// Ticks per sample frame in this batch (constant inside a batch; the tempo map's tempo at its first frame).
     pub ticks_per_frame: f64,
     /// Set when the transport jumps back to the loop start inside this batch.
     pub loop_wrap: Option<LoopWrap>,
     /// The enabled loop region as `(start, end)` in ticks, `None` when the
     /// loop is off or there is no song.
     pub loop_ticks: Option<(f64, f64)>,
-    /// Time signature `(numerator, denominator)`; 4/4 until the model has one.
+    /// Time signature `(numerator, denominator)` in effect at `tick`; 4/4 without a song.
     pub time_signature: (u8, u8),
 }
 

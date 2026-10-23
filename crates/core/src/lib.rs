@@ -1,13 +1,21 @@
-//! Core types shared by every Atomik Rack crate: time, parameters, note events and batch buffers.
+//! Core types shared by every Atomik Rack crate: time and the tempo and meter maps, parameters,
+//! note events and batch buffers.
 //!
 //! This crate is a stable contract: public changes need review.
 
+mod meter_map;
 mod note;
 mod param;
+mod tempo_map;
 mod time;
 
+pub use meter_map::{
+    BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent, MeterMap, MeterSegment, MeterTable, compile_meter,
+    meter_ok,
+};
 pub use note::{BufferFull, ExprKind, NoteBuffer, NoteEvent, NoteKind};
 pub use param::{ParamDescriptor, ParamId, Taper, Unit, db_to_gain, gain_to_db};
+pub use tempo_map::{MapError, TempoMap, TempoPoint, TempoSegment, TempoTable, compile_tempo};
 pub use time::{
     LoopWrap, SampleRate, Tempo, Ticks, TimeError, TimeInfo, beats_to_frames, ticks_to_frames,
 };
