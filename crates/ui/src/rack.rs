@@ -3214,19 +3214,23 @@ impl RackView {
             match key {
                 Key::Char(c) => {
                     self.browser.query.push(*c);
-                    self.browser.highlighted =
-                        Browser::first_selectable(&self.browser.list(registry));
+                    self.browser.query_changed(registry);
                 }
-                Key::Space => self.browser.query.push(' '),
+                Key::Space => {
+                    self.browser.query.push(' ');
+                    self.browser.query_changed(registry);
+                }
                 Key::Backspace => {
                     self.browser.query.pop();
-                    self.browser.highlighted =
-                        Browser::first_selectable(&self.browser.list(registry));
+                    self.browser.query_changed(registry);
                 }
                 // Create mode: Esc cancels and closes, nothing is removed.
                 Key::Escape if self.browser.create.is_some() => self.set_browser_visible(false),
                 Key::Escape if self.browser.query.is_empty() => self.browser.focused = false,
-                Key::Escape => self.browser.query.clear(),
+                Key::Escape => {
+                    self.browser.query.clear();
+                    self.browser.query_changed(registry);
+                }
                 Key::Down if !rows.is_empty() => {
                     self.browser.highlighted =
                         Browser::next_selectable(&rows, self.browser.highlighted);

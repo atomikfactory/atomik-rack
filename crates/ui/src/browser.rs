@@ -345,6 +345,14 @@ impl Browser {
         out
     }
 
+    /// After an edit of the search text: the list starts over, so the highlight goes to the
+    /// first match and the scroll to the top (a scroll kept from the full list would leave
+    /// the few matches above the panel).
+    pub fn query_changed(&mut self, registry: &Registry) {
+        self.scroll = 0.0;
+        self.highlighted = Self::first_selectable(&self.list(registry));
+    }
+
     /// The first row that can be highlighted (0 when there is none).
     pub fn first_selectable(rows: &[BrowserRow]) -> usize {
         rows.iter().position(BrowserRow::selectable).unwrap_or(0)
@@ -722,5 +730,91 @@ mod tests {
         assert!(!listed(&browser).contains(&"atomik.bus"));
         browser.query = "bus".into();
         assert!(!listed(&browser).contains(&"atomik.bus"));
+    }
+
+    fn plugin(name: &str, vendor: &str, kind: PluginKindHint) -> PluginEntryInfo {
+        use atomik_device_sdk::{PluginFormat, PluginLayout, PluginRef};
+        PluginEntryInfo {
+            plugin: PluginRef {
+                format: PluginFormat::Vst3,
+                id: name.to_lowercase().replace(' ', "-"),
+            },
+            name: name.into(),
+            vendor: vendor.into(),
+            version: "1".into(),
+            kind,
+            status: PluginEntryStatus::Ok,
+            path: None,
+            layout: PluginLayout {
+                name: name.into(),
+                vendor: vendor.into(),
+                version: "1".into(),
+                kind_hint: kind,
+                main_in: None,
+                main_out: None,
+                sidechain: false,
+                notes_in: false,
+                notes_out: false,
+                params: Vec::new(),
+            },
+        }
+    }
+
+    fn listed_plugins(b: &Browser, reg: &Registry) -> Vec<String> {
+        b.list(reg)
+            .into_iter()
+            .filter_map(|r| match r {
+                BrowserRow::Plugin(i) => Some(b.plugins[i].name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_prefix_of_a_plugin_name_lists_it_whatever_the_case() {
+        let reg = registry();
+        let mut browser = Browser {
+            plugins: vec![
+                plugin("Serum 2", "Xfer Records", PluginKindHint::Instrument),
+                plugin("Serum 2 FX", "Xfer Records", PluginKindHint::Effect),
+                plugin("Surge XT", "Surge Synth Team", PluginKindHint::Instrument),
+            ],
+            ..Browser::default()
+        };
+        for q in ["ser", "SER", " Ser ", "serum", "rum 2"] {
+            browser.query = q.into();
+            let found = listed_plugins(&browser, &reg);
+            assert!(found.contains(&"Serum 2".to_string()), "{q:?}: {found:?}");
+            assert!(!found.contains(&"Surge XT".to_string()), "{q:?}: {found:?}");
+        }
+        // The effect create list offers the effect only, the instrument list the synth only.
+        browser.query = "ser".into();
+        browser.create = Some(CreateKind::Instrument);
+        assert_eq!(listed_plugins(&browser, &reg), ["Serum 2"]);
+        browser.create = Some(CreateKind::Effect);
+        assert_eq!(listed_plugins(&browser, &reg), ["Serum 2 FX"]);
+    }
+
+    #[test]
+    fn editing_the_search_brings_the_matches_back_into_view() {
+        let reg = registry();
+        let mut browser = Browser {
+            plugins: vec![plugin(
+                "Serum 2",
+                "Xfer Records",
+                PluginKindHint::Instrument,
+            )],
+            scroll: 900.0,
+            highlighted: 40,
+            ..Browser::default()
+        };
+        browser.query = "ser".into();
+        browser.query_changed(&reg);
+        assert_eq!(
+            browser.scroll, 0.0,
+            "a scroll kept from the full list hides the matches"
+        );
+        let rows = browser.list(&reg);
+        assert!(matches!(rows.get(browser.highlighted), Some(r) if r.selectable()));
     }
 }
