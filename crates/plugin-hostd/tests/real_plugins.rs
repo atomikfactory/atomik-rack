@@ -7,6 +7,7 @@ mod support;
 use atomik_core::{BATCH, Batch};
 use atomik_device_sdk::{PluginFormat, PluginRef, RunMode};
 use atomik_plugin_clap::ClapBackend;
+#[cfg(windows)]
 use atomik_plugin_host::NativeParent;
 use atomik_plugin_host::testing::{clap_test_plugin, vst3_test_plugin};
 use atomik_plugin_host::{
