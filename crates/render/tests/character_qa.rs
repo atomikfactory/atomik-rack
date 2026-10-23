@@ -86,7 +86,7 @@ fn a_project_with_every_preset_round_trips_save_load_save_byte_identically() {
     }
     // The preset is a plain numeric param, so no new project field appeared.
     assert!(
-        first.contains("\"version\": 15"),
+        first.contains("\"version\": 16"),
         "saved in the current format"
     );
 }
@@ -103,6 +103,7 @@ fn clip(content: ClipContent) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content,
     }

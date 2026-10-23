@@ -58,6 +58,7 @@ pub fn audio_clip(
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Audio(AudioClipContent {
             asset: asset.to_string(),

@@ -24,6 +24,7 @@ pub fn notes_clip(id: u64, start: i64, length: i64, notes: Vec<Note>) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Notes(notes),
     }
@@ -37,6 +38,7 @@ pub fn auto_clip(id: u64, start: i64, length: i64, points: Vec<AutomationPoint>)
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Automation(points),
     }

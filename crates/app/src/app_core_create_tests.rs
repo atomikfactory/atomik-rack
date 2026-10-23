@@ -448,6 +448,7 @@ mod live {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Notes(
                 [(0, 60u8), (PPQ / 2, 64), (PPQ, 67)]

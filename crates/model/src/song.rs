@@ -6,6 +6,7 @@
 //! Public types are a stable contract: changes need review.
 
 use crate::DeviceKey;
+use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
 use std::collections::BTreeMap;
@@ -123,6 +124,9 @@ pub struct Clip {
     /// on audio and automation clips). It drives swing in [`flatten_notes`] and the step
     /// editor; it never changes the clip's length or notes.
     pub grid: Option<StepGrid>,
+    /// The scale the note editors highlight and snap to: `Some` only on a note clip and never
+    /// chromatic (no scale is `None`). It never changes the clip's notes or how they play.
+    pub scale: Option<Scale>,
     /// Content.
     pub content: ClipContent,
 }
@@ -501,6 +505,16 @@ pub enum SongCommand {
         grid: Option<StepGrid>,
         /// Drag-merge group.
         merge: Option<u64>,
+    },
+    /// Set or clear a note clip's scale (what the piano roll highlights and snaps to). The clip
+    /// must be a note clip. `None` and a chromatic scale both clear it (a chromatic scale is
+    /// stored as no scale). The notes and the engine's view of the clip do not change. One undo
+    /// step. Reports [`crate::SyncOp::SongChanged`].
+    SetClipScale {
+        /// Clip id.
+        clip: ClipId,
+        /// New scale, or `None` to clear it.
+        scale: Option<Scale>,
     },
     /// One undo step that adds an `atomik.audio-track` device (appended to the rack,
     /// key `audio-track`, `audio-track-2`, ...; named `name`, or the descriptor name made

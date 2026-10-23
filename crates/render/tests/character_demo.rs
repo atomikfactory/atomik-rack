@@ -196,6 +196,7 @@ fn clip(content: ClipContent) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content,
     }
@@ -469,7 +470,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
     assert!(
-        text.contains("\"version\": 15"),
+        text.contains("\"version\": 16"),
         "saved in the current format"
     );
 }

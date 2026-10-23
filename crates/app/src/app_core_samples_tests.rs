@@ -721,6 +721,7 @@ fn opening_the_editor_replaces_the_piano_roll_and_a_new_document_closes_it() {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: atomik_model::ClipContent::Notes(Vec::new()),
         },

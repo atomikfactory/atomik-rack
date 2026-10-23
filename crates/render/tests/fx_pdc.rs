@@ -123,6 +123,7 @@ fn click_doc(effect: (&str, &[(&str, f32)])) -> RackDoc {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: ClipContent::Notes(notes),
             },

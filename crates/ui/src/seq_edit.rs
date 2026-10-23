@@ -445,6 +445,7 @@ mod tests {
             offset,
             loop_length: looped,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Notes(Vec::new()),
         }

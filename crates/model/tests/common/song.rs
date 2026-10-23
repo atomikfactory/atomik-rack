@@ -31,6 +31,7 @@ pub fn clip(start: i64, length: i64, content: ClipContent) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content,
     }
@@ -285,6 +286,7 @@ pub fn resolve_song(
                     offset: *o,
                     loop_length: *lp,
                     muted: *m,
+                    scale: None,
                     grid: None,
                     content: content(&t.lanes[lane].kind, *seed, *bad),
                 },

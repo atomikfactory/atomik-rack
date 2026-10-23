@@ -358,6 +358,7 @@ fn a_double_click_on_a_drum_clip_opens_the_step_editor_and_a_synth_clip_the_pian
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Notes(vec![Note::new(0, PPQ, 36, 0.8)]),
     };

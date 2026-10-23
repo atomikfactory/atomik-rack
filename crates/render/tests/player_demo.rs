@@ -216,6 +216,7 @@ pub fn demo_doc() -> RackDoc {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Notes(chord.to_vec()),
         },
@@ -282,7 +283,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     let again = load_project(&save_project(&doc), &registry).unwrap();
     assert_eq!(again, doc);
-    assert!(text.contains("\"version\": 15"));
+    assert!(text.contains("\"version\": 16"));
 }
 
 #[test]

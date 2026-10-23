@@ -284,6 +284,7 @@ pub fn demo_doc() -> RackDoc {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Notes(notes),
         },
@@ -302,6 +303,7 @@ pub fn demo_doc() -> RackDoc {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Automation(vec![
                 AutomationPoint {
@@ -431,7 +433,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 15"));
+    assert!(text.contains("\"version\": 16"));
     assert!(text.contains("\"inner\""));
 }
 
@@ -678,6 +680,7 @@ fn a_macro_automation_lane_equals_lanes_written_on_each_target() {
                     offset: 0,
                     loop_length: None,
                     muted: false,
+                    scale: None,
                     grid: None,
                     content: ClipContent::Automation(mapped),
                 },

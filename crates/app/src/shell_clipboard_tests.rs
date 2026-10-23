@@ -497,6 +497,7 @@ fn with_clips() -> Shell<NullBackend> {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: atomik_model::ClipContent::Notes(vec![atomik_model::Note::new(
                     0, 15_360, 60, 0.8,

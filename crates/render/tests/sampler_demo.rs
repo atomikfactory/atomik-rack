@@ -241,6 +241,7 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Notes(content),
     };
