@@ -119,7 +119,7 @@ fn noise(seed: u64, amp: f32) -> impl Fn(usize) -> f32 {
     move |n| v[n % v.len()]
 }
 
-const ALL_KEYS: [&str; 28] = [
+const ALL_KEYS: [&str; 29] = [
     "input",
     "multiband.on",
     "xover.low",
@@ -148,6 +148,7 @@ const ALL_KEYS: [&str; 28] = [
     "release",
     "output",
     "meter.reset",
+    "bypass",
 ];
 
 #[test]

@@ -19,6 +19,7 @@
 //! * Buffers hold 4 s at the prepared sample rate (allocated in `prepare`).
 //! * Denormals: the delay lines flush values below 1e-20 on write.
 
+use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::add_norm;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -63,7 +64,7 @@ const P_PING_PONG: u32 = 5;
 const P_MIX_TRIM: u32 = 6;
 const P_FB_TRIM: u32 = 7;
 
-static PARAMS: [ParamDescriptor; 8] = [
+static PARAMS: [ParamDescriptor; 9] = [
     ParamDescriptor {
         id: ParamId(P_MODE),
         key: "time.mode",
@@ -155,6 +156,7 @@ static PARAMS: [ParamDescriptor; 8] = [
         unit: Unit::Percent,
         discrete: false,
     },
+    bypass_param(8),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -232,7 +234,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(StereoDelay::new()),
+        create: || Box::new(Bypassable::new(StereoDelay::new())),
     }
 }
 
@@ -495,6 +497,7 @@ mod tests {
                 "ping_pong",
                 "mix_cv_trim",
                 "feedback_cv_trim",
+                "bypass",
             ],
             &[
                 "in_l",

@@ -43,6 +43,7 @@
 //! only matters if an interpolator overshoots at the maximum feedback), and all state is flushed
 //! below 1e-20, so the output is finite and bounded for any parameters.
 
+use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -83,7 +84,7 @@ const PHASER_OCTAVES: f32 = 3.0;
 /// Feedback clamp.
 const FB_LIMIT: f32 = 8.0;
 
-static PARAMS: [ParamDescriptor; 11] = [
+static PARAMS: [ParamDescriptor; 12] = [
     ParamDescriptor {
         id: ParamId(P_MODE),
         key: "mode",
@@ -207,6 +208,7 @@ static PARAMS: [ParamDescriptor; 11] = [
         unit: Unit::Percent,
         discrete: false,
     },
+    bypass_param(11),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -268,7 +270,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Modulation::new()),
+        create: || Box::new(Bypassable::new(Modulation::new())),
     }
 }
 

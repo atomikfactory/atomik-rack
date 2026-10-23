@@ -58,6 +58,7 @@
 //!   flushes; the per-sample path uses only `+ - * /` and `sqrt` plus the deterministic
 //!   `log2_det`/`exp2_det`.
 
+use crate::bypass::{Bypassable, bypass_param};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -113,7 +114,7 @@ const fn toggle(id: u32, key: &'static str, name: &'static str) -> ParamDescript
     }
 }
 
-static PARAMS: [ParamDescriptor; 16] = [
+static PARAMS: [ParamDescriptor; 17] = [
     ParamDescriptor {
         id: ParamId(P_THRESHOLD),
         key: "threshold",
@@ -250,6 +251,7 @@ static PARAMS: [ParamDescriptor; 16] = [
         unit: Unit::Choice(&["peak", "rms"]),
         discrete: true,
     },
+    bypass_param(16),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -327,7 +329,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Compressor::new()),
+        create: || Box::new(Bypassable::new(Compressor::new())),
     }
 }
 

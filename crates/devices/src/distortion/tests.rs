@@ -42,6 +42,7 @@ fn descriptor_validates() {
             "oversample",
             "drive_cv_trim",
             "mix_cv_trim",
+            "bypass",
         ],
         &["in_l", "in_r", "out_l", "out_r", "drive_cv_in", "mix_cv_in"],
     );

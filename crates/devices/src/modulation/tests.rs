@@ -73,6 +73,7 @@ fn descriptor_validates() {
             "mix",
             "output",
             "mix_cv_trim",
+            "bypass",
         ],
         &["in_l", "in_r", "out_l", "out_r", "mix_cv_in"],
     );

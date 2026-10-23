@@ -100,6 +100,7 @@ fn descriptor_validates_and_pins_keys_ids_and_order() {
             "volume",
             "transform_cv_trim",
             "mix_cv_trim",
+            "bypass",
         ],
         &[
             "in_l",
@@ -128,7 +129,7 @@ fn descriptor_validates_and_pins_keys_ids_and_order() {
         ]
     );
     let defaults: Vec<f32> = DESCRIPTOR.params.iter().map(|p| p.default).collect();
-    assert_eq!(defaults, [0.5, 0.0, 0.5, 1.0, 0.5, 1.0, 1.0]);
+    assert_eq!(defaults, [0.5, 0.0, 0.5, 1.0, 0.5, 1.0, 1.0, 0.0]);
     let preset = &DESCRIPTOR.params[1];
     assert!(preset.discrete);
     assert!((preset.min - 0.0).abs() < f32::EPSILON && (preset.max - 15.0).abs() < f32::EPSILON);

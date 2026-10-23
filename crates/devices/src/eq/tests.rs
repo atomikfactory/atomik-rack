@@ -81,6 +81,7 @@ fn descriptor_validates() {
             "band3.gain_cv_trim",
             "band4.gain_cv_trim",
             "band5.gain_cv_trim",
+            "bypass",
         ],
         &[
             "in_l",
