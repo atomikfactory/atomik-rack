@@ -38,6 +38,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "session_texts",
     "session_screenshot",
     "session_save",
+    "session_relink",
     "session_bounce",
     "session_close",
 ];
