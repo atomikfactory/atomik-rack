@@ -20,6 +20,7 @@ mod plugin_cmd;
 mod plugin_io;
 mod project;
 mod rack_columns;
+mod relink;
 mod rules;
 mod slices;
 mod song_cmd;
@@ -327,6 +328,22 @@ pub enum Command {
         /// Format of the stored audio.
         meta: AssetMeta,
     },
+    /// Swap every reference to the pool asset `from` for the pool asset `to` (one undo step):
+    /// the audio clips and the zones of samplers, slicers and drum machines, inside containers
+    /// too. This is how a missing audio file is relinked: the app imports the replacement
+    /// file, registers it ([`Command::RegisterAsset`]) and issues this. Both ids must be in the
+    /// pool, differ, and `from` must be used by a clip or a zone. Zone ranges and clip source
+    /// offsets are kept, so a replacement shorter than they need is rejected
+    /// ([`ModelError::BadZones`] or [`ModelError::BadSong`]). The old pool entry stays (undo and
+    /// redo need it; a save drops it once the history no longer references it). Reports
+    /// [`SyncOp::SongChanged`] once if clips changed and [`SyncOp::ZonesChanged`] per device.
+    /// Not accepted by [`Command::Batch`].
+    RelinkAsset {
+        /// The asset to replace (usually one whose file is missing).
+        from: String,
+        /// The asset that takes its place.
+        to: String,
+    },
     /// Set the interface's input channel count (0..=[`MAX_INPUT_CHANNELS`]).
     /// Cables from inputs above the new count are removed in the same step. Reports
     /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
@@ -444,6 +461,7 @@ pub enum Command {
 /// | `SetInputChannels` | `RoutingChanged` |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits) |
 /// | `RegisterAsset` | none (not an undo step) |
+/// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
@@ -1125,6 +1143,7 @@ impl Document {
             Command::Container(c) => container_cmd::plan(doc, registry, c)?,
             Command::Plugin(c) => plugin_cmd::plan(doc, registry, c)?,
             Command::RegisterAsset { .. } => unreachable!("handled before planning"),
+            Command::RelinkAsset { from, to } => relink::plan(doc, &from, &to)?,
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
