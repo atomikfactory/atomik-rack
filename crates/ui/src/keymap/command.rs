@@ -753,6 +753,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "sequencer.toggle_chase",
+        "Chase Notes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.toggle_mute",
         "Mute Clips",
         G::Sequencer,

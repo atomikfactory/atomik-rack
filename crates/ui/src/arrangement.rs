@@ -729,6 +729,15 @@ impl ArrangementView {
         self.selected_track.as_ref()
     }
 
+    /// The state of the selected track for the "Chase Notes" menu item: whether it has a note
+    /// lane (an audio track has no notes to chase) and whether it chases now.
+    pub fn chase_menu(&self) -> (bool, bool) {
+        self.selected_track
+            .as_ref()
+            .and_then(|d| self.song.track(d))
+            .map_or((false, false), |t| (!t.is_audio(), t.chase))
+    }
+
     /// Selects a track (or none); the clip and point selections are cleared.
     pub fn set_selected_track(&mut self, device: Option<DeviceKey>) {
         if device.is_some() {
@@ -2690,6 +2699,22 @@ impl ArrangementView {
                 let muted = clips.iter().any(|c| !c.muted);
                 let ids = clips.iter().map(|c| c.id).collect();
                 CommandOutcome::Handled(vec![mute_cmd(ids, muted)])
+            }
+            "sequencer.toggle_chase" => {
+                let track = self
+                    .selected_track
+                    .as_ref()
+                    .and_then(|d| self.song.track(d))
+                    .filter(|t| !t.is_audio());
+                match track {
+                    Some(t) => {
+                        CommandOutcome::Handled(vec![song_cmd(SongCommand::SetTrackChase {
+                            device: t.device.clone(),
+                            chase: !t.chase,
+                        })])
+                    }
+                    None => CommandOutcome::Declined,
+                }
             }
             "sequencer.open_clip" => {
                 let first = self

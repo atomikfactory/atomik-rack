@@ -1028,3 +1028,29 @@ fn a_clip_with_a_missing_asset_still_trims_freely_at_the_right() {
     };
     assert_eq!(content.source_offset, 0);
 }
+
+#[test]
+fn toggle_chase_flips_the_selected_note_track_and_declines_for_audio_and_no_track() {
+    use atomik_ui::keymap::CommandOutcome;
+    let (doc, reg) = (audio_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    let run =
+        |v: &mut atomik_ui::ArrangementView| v.command("sequencer.toggle_chase", None, &doc, &reg);
+    assert_eq!(run(&mut v), CommandOutcome::Declined, "no track selected");
+    assert_eq!(v.chase_menu(), (false, false));
+    v.set_selected_track(Some(key("bass")));
+    assert_eq!(v.chase_menu(), (true, true));
+    let CommandOutcome::Handled(a) = run(&mut v) else {
+        panic!("a note track toggles");
+    };
+    assert_eq!(
+        song_commands(&a),
+        vec![SongCommand::SetTrackChase {
+            device: key("bass"),
+            chase: false
+        }]
+    );
+    v.set_selected_track(Some(key("audio-track")));
+    assert_eq!(v.chase_menu(), (false, true), "an audio track has no notes");
+    assert_eq!(run(&mut v), CommandOutcome::Declined);
+}
