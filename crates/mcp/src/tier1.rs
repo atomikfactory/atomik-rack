@@ -246,7 +246,11 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                             ClipContent::Audio(_) => 1,
                         })
                         .sum();
-                    json!({"kind": kind, "clips": l.clips.len(), "items": items})
+                    let mut lane = json!({"kind": kind, "clips": l.clips.len(), "items": items});
+                    if let LaneKind::Automation(p) = &l.kind {
+                        lane["write"] = json!(doc.song.write_mode(&t.device, p).name());
+                    }
+                    lane
                 })
                 .collect();
             json!({
