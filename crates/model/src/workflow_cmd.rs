@@ -157,6 +157,21 @@ pub enum WorkflowCommand {
         /// The clips.
         ids: Vec<ClipId>,
     },
+    /// Puts clips on other tracks and ticks, or copies of them (a drag across lanes, one undo
+    /// step). Each clip goes to the lane of its own kind on its target track (a note clip to the
+    /// note lane, an audio clip to the audio lane, an automation clip to the lane of its
+    /// param); a track without such a lane rejects the whole command. With `copy` the clips stay
+    /// and the copies get new ids from the song's next free id in `moves` order (the last is
+    /// [`crate::Document::last_clip_id`]). `merge` joins the move to the drag-merge group of the
+    /// `SetClipGeometry` commands of the same drag. Unknown clips and an empty list reject it.
+    MoveClips {
+        /// Where each clip goes.
+        moves: Vec<ClipMove>,
+        /// Copy instead of move.
+        copy: bool,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Removes the clips (one undo step; `SongCommand::RemoveClip` cannot be batched, so a
     /// selection of several clips goes through this command). Unknown clips reject it.
     RemoveClips {
@@ -283,6 +298,17 @@ pub enum WorkflowCommand {
     },
 }
 
+/// Where [`WorkflowCommand::MoveClips`] puts one clip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipMove {
+    /// The clip.
+    pub id: ClipId,
+    /// The track that takes it.
+    pub track: DeviceKey,
+    /// Its new start tick.
+    pub start: i64,
+}
+
 fn bad_song(message: impl Into<String>) -> ModelError {
     ModelError::BadSong(message.into())
 }
@@ -397,6 +423,7 @@ pub(crate) fn plan(
             let s = ClipSnapshot::capture(doc, &ids)?;
             paste_clips(doc, registry, None, s.origin.saturating_add(s.span), &s)
         }
+        WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
         WorkflowCommand::RemoveClips { ids } => plain(remove_clips(doc, &ids)),
         WorkflowCommand::SetClipsMuted { ids, muted } => plain(set_clips_muted(doc, &ids, muted)),
@@ -972,6 +999,90 @@ fn paste_clips(
     }
     p.push(Edit::NextClipId {
         old: start,
+        new: next,
+    });
+    Ok((p.finish(), Some(ClipId(next - 1))))
+}
+
+/// Moves or copies clips to other tracks and ticks in one step (see
+/// [`WorkflowCommand::MoveClips`]).
+fn move_clips(
+    doc: &RackDoc,
+    registry: &Registry,
+    moves: &[ClipMove],
+    copy: bool,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    if moves.is_empty() {
+        return Err(bad_song("no clips are selected"));
+    }
+    let mut seen = BTreeSet::new();
+    let mut p = Planner::new(doc, registry);
+    let first = doc.song.next_clip_id;
+    let mut next = first;
+    for m in moves {
+        if !seen.insert(m.id) {
+            return Err(bad_song(format!("clip {} is listed twice", m.id.0)));
+        }
+        let (device, lane, c) = clip_of(doc, m.id)?;
+        let t = doc
+            .song
+            .track(&m.track)
+            .ok_or_else(|| bad_song(format!("{} has no track", m.track)))?;
+        let kind = &doc
+            .song
+            .track(&device)
+            .expect("clip_of found its track")
+            .lanes[lane]
+            .kind;
+        let to = t
+            .lanes
+            .iter()
+            .position(|l| &l.kind == kind)
+            .ok_or_else(|| bad_song(format!("{} has no {} lane", m.track, lane_name(kind))))?;
+        check_geometry(m.start, c.length, c.offset, c.loop_length)
+            .map_err(ModelError::OutOfRange)?;
+        let placed = Clip {
+            start: m.start,
+            ..c.clone()
+        };
+        if copy {
+            let id = ClipId(next);
+            next = next
+                .checked_add(1)
+                .ok_or_else(|| bad_song("clip ids are exhausted"))?;
+            p.push(Edit::Clip {
+                device: m.track.clone(),
+                lane: to,
+                old: None,
+                new: Some(Clip { id, ..placed }),
+            });
+        } else if device == m.track && lane == to {
+            p.push(Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(placed),
+            });
+        } else {
+            p.push(Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: None,
+            });
+            p.push(Edit::Clip {
+                device: m.track.clone(),
+                lane: to,
+                old: None,
+                new: Some(placed),
+            });
+        }
+    }
+    if !copy {
+        return Ok((p.finish(), None));
+    }
+    p.push(Edit::NextClipId {
+        old: first,
         new: next,
     });
     Ok((p.finish(), Some(ClipId(next - 1))))

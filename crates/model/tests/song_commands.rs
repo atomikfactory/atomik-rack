@@ -505,17 +505,18 @@ fn clip_drags_with_the_same_merge_id_merge_into_one_step() {
     d.redo(&reg).unwrap();
     assert_eq!(d.doc(), &dragged);
 
-    // end_merge splits; another clip or another id splits.
+    // end_merge splits and another id splits; another clip of the same group joins the step
+    // (a drag of several clips is one step).
     d.apply(geometry(1, 40, BAR, Some(5)), &reg).unwrap();
     let a = d.doc().clone();
     d.end_merge();
     d.apply(geometry(1, 50, BAR, Some(5)), &reg).unwrap();
-    let b = d.doc().clone();
     d.apply(geometry(2, 50, BAR, Some(5)), &reg).unwrap();
+    let b = d.doc().clone();
     d.apply(geometry(2, 60, BAR, Some(6)), &reg).unwrap();
     d.apply(geometry(2, 70, BAR, None), &reg).unwrap();
     d.apply(geometry(2, 80, BAR, None), &reg).unwrap();
-    for _ in 0..4 {
+    for _ in 0..3 {
         d.undo(&reg).unwrap();
     }
     assert_eq!(d.doc(), &b);

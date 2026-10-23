@@ -64,7 +64,7 @@ pub use workflow::{
     ClipEntry, ClipSnapshot, DeviceSnapshot, NoteSnapshot, PointSnapshot, neighbour_clip,
     neighbour_device, neighbour_track,
 };
-pub use workflow_cmd::WorkflowCommand;
+pub use workflow_cmd::{ClipMove, WorkflowCommand};
 pub use workflow_create::{
     CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
     first_free_send_slot,
@@ -657,8 +657,9 @@ pub struct Document {
 enum MergeKey {
     /// `SetParam` on one device param.
     Param(u64, DeviceKey, String),
-    /// `SetClipGeometry` / `SetClipContent` on one clip.
-    Clip(u64, ClipId),
+    /// The clip commands of one gesture (`SetClipGeometry`, `SetClipContent`, ..., and the
+    /// final `MoveClips` of a drag): a drag of several clips is one step.
+    Clip(u64),
     /// `DragTempoMap`.
     TempoMap(u64),
     /// `DragMeterMap`.
@@ -727,21 +728,14 @@ impl Document {
                 ..
             } => Some(MergeKey::Param(*id, key.clone(), param.clone())),
             Command::Song(
-                SongCommand::SetClipGeometry {
-                    id, merge: Some(m), ..
-                }
-                | SongCommand::SetClipContent {
-                    id, merge: Some(m), ..
-                }
-                | SongCommand::SetAudioClip {
-                    id, merge: Some(m), ..
-                }
-                | SongCommand::SetClipGrid {
-                    clip: id,
-                    merge: Some(m),
-                    ..
-                },
-            ) => Some(MergeKey::Clip(*m, *id)),
+                SongCommand::SetClipGeometry { merge: Some(m), .. }
+                | SongCommand::SetClipContent { merge: Some(m), .. }
+                | SongCommand::SetAudioClip { merge: Some(m), .. }
+                | SongCommand::SetClipGrid { merge: Some(m), .. },
+            ) => Some(MergeKey::Clip(*m)),
+            Command::Workflow(WorkflowCommand::MoveClips { merge: Some(m), .. }) => {
+                Some(MergeKey::Clip(*m))
+            }
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
             }
@@ -789,12 +783,20 @@ impl Document {
         let ops = edit.perform(&mut self.doc);
         self.redo.clear();
         let merged = merge.is_some() && merge == self.merge;
+        if merged
+            && matches!(merge, Some(MergeKey::Clip(_)))
+            && let Some(last) = self.undo.last_mut()
+        {
+            last.fold_clip_edit(edit);
+            self.merge = merge;
+            if new_clip.is_some() {
+                self.last_clip = new_clip;
+            }
+            return Ok(ops);
+        }
         match (self.undo.last_mut(), &edit) {
             (Some(Edit::Param { new, .. }), Edit::Param { new: latest, .. }) if merged => {
                 *new = *latest;
-            }
-            (Some(Edit::Clip { new, .. }), Edit::Clip { new: latest, .. }) if merged => {
-                new.clone_from(latest);
             }
             (Some(Edit::Zones { new, .. }), Edit::Zones { new: latest, .. }) if merged => {
                 new.clone_from(latest);
