@@ -145,7 +145,7 @@ fn play(
     let tracks = logs
         .iter()
         .zip(notes)
-        .map(|((dev, _), n)| strack(*dev, n.clone()))
+        .map(|((dev, _), n)| strack_plain(*dev, n.clone()))
         .collect();
     let snap = song(tracks, map);
     h.submit_song(snap.clone()).unwrap();
@@ -254,7 +254,7 @@ fn loops_shorter_than_a_batch_wrap_several_times_per_batch() {
 }
 
 #[test]
-fn locate_inside_a_note_skips_it_and_never_sends_its_off() {
+fn locate_inside_a_note_with_chase_off_skips_it_and_never_sends_its_off() {
     let notes = vec![vec![snote(0, PPQ, 60), snote(PPQ / 4, PPQ, 61)]];
     let cmds = [
         cmd(0, TransportCommand::Locate(Ticks(PPQ / 2))),

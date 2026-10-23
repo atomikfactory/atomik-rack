@@ -69,6 +69,7 @@ fn ac_s4_automation_matches_the_curve_at_every_batch_start() {
     let track = SongTrack {
         device: id,
         notes_socket: ParamLog::NOTES_IN,
+        chase: true,
         notes: Vec::new(),
         automation: vec![
             SongAutomation {

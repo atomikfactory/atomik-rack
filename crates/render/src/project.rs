@@ -161,6 +161,7 @@ fn push_macro_lane(
         None => tracks.push(SongTrack {
             device,
             notes_socket: notes_input(desc).unwrap_or(SocketId(0)),
+            chase: true,
             notes: Vec::new(),
             automation: vec![lane],
         }),
@@ -268,6 +269,7 @@ pub fn song_input_with_assets(
         tracks.push(SongTrack {
             device,
             notes_socket,
+            chase: true,
             notes,
             automation,
         });

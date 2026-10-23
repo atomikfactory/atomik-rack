@@ -52,6 +52,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
             SongTrack {
                 device: s1,
                 notes_socket: notes_socket(),
+                chase: true,
                 notes: lead,
                 automation: vec![SongAutomation {
                     param: param_id(poly_synth::factory(), "filter.cutoff"),
@@ -66,6 +67,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
             SongTrack {
                 device: s2,
                 notes_socket: notes_socket(),
+                chase: true,
                 notes: bass,
                 automation: Vec::new(),
             },

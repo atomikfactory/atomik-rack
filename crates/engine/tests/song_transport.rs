@@ -117,7 +117,7 @@ fn locate_while_playing_sends_all_off_and_continues_from_the_new_position() {
         .unwrap();
     h.transport(PLAY).unwrap();
     run(&mut e, 30_016, 64);
-    // Inside note 60; its off must not come (it is no longer held).
+    // Inside notes 60 and 62: AllOff, then both are chased from the new position (key order).
     h.transport(locate(3 * PPQ / 2)).unwrap();
     run(&mut e, 40_000 - 30_016, 7);
     h.transport(locate(0)).unwrap();
@@ -128,6 +128,8 @@ fn locate_while_playing_sends_all_off_and_continues_from_the_new_position() {
             (12_000, on(62)),
             (24_000, on(60)),
             (30_016, NoteKind::AllOff),
+            (30_016, on(60)),
+            (30_016, on(62)),
             (40_000, NoteKind::AllOff),
             (52_000, on(62)),
             (64_000, on(60)),
@@ -246,7 +248,8 @@ fn song_swap_while_playing_keeps_position_and_releases_changed_tracks() {
     h.transport(PLAY).unwrap();
     run(&mut e, 30_016, 64);
     assert_eq!(h.collect_garbage(), 0);
-    // d1 unchanged, d2 removed, d3 changed (a new note at 2 beats).
+    // d1 unchanged, d2 removed, d3 changed (a new note at 2 beats; its note 62 still covers the
+    // position, so it keeps sounding).
     let second = vec![
         strack(d1, vec![long(60)]),
         strack(d3, vec![long(62), snote(2 * PPQ, PPQ, 63)]),
@@ -267,9 +270,9 @@ fn song_swap_while_playing_keeps_position_and_releases_changed_tracks() {
         logs[2].1.events(),
         vec![
             (0, on(62)),
-            (30_016, off(62)),
             (48_000, on(63)),
-            (72_000, off(63))
+            (72_000, off(63)),
+            (96_000, off(62))
         ]
     );
     // A swap with another tempo map keeps the tick: song frame 30016 at 120 BPM (tick
