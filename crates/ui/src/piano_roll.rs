@@ -128,7 +128,7 @@ impl ScaleBarField {
 }
 
 /// What the scale, chord and fold menus need to know about the roll: the checks of their items.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NoteTools {
     /// The clip's scale (`None`: chromatic).
     pub scale: Option<Scale>,

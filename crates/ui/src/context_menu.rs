@@ -198,6 +198,10 @@ pub struct ContextMenu {
     hover: Option<usize>,
     bounds: Size,
     open: Option<Box<Open>>,
+    /// A release is only a choice once the pointer has moved or pressed in the menu: the
+    /// release that ends the press which opened the menu (a toolbar field opens one on a press,
+    /// and the panel may be moved under the pointer to fit the window) chooses nothing.
+    armed: bool,
 }
 
 /// The submenu open beside a panel: the row that opened it and its panel.
@@ -304,6 +308,7 @@ impl ContextMenu {
             hover: None,
             bounds,
             open: None,
+            armed: false,
         };
         let size = menu.rect().size();
         menu.origin = Point::new(
@@ -439,6 +444,7 @@ impl ContextMenu {
             (self.origin.x - child_width + OVERLAP).max(0.0)
         };
         child.origin.x = x;
+        child.armed = true;
         self.hover = Some(row);
         self.open = Some(Box::new(Open { row, menu: child }));
     }
@@ -447,6 +453,10 @@ impl ContextMenu {
     /// the menu on [`MenuOutcome::Consumed`] after a press outside every panel, on `Run`
     /// and on [`Self::wants_close`].
     pub fn handle(&mut self, event: &UiEvent) -> MenuOutcome {
+        match event {
+            UiEvent::PointerMove { .. } | UiEvent::PointerDown { .. } => self.armed = true,
+            _ => {}
+        }
         match event {
             UiEvent::PointerMove { pos, .. } => {
                 if let Some(o) = &mut self.open
@@ -474,7 +484,7 @@ impl ContextMenu {
                 {
                     return o.menu.handle(event);
                 }
-                if *button != PointerButton::Primary {
+                if *button != PointerButton::Primary || !self.armed {
                     return MenuOutcome::Consumed;
                 }
                 match self.row_at(*pos).map(|r| (r, &self.entries[r])) {
@@ -684,6 +694,7 @@ mod tests {
         let mut m = menu(&specs, Os::Windows);
         let copy = m.item_center("edit.copy").unwrap();
         let paste = m.item_center("edit.paste").unwrap();
+        m.handle(&mv(copy));
         assert_eq!(m.handle(&up(paste)), MenuOutcome::Consumed);
         assert_eq!(
             m.handle(&up(copy)),
@@ -810,6 +821,7 @@ mod tests {
     fn a_click_on_a_submenu_row_opens_it_and_runs_nothing() {
         let mut m = menu(&nested(), Os::Windows);
         let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(Point::new(0.0, 0.0)));
         assert_eq!(m.handle(&up(row)), MenuOutcome::Consumed);
         assert_eq!(m.open_path(), ["Chords"]);
         // A disabled item of the submenu does nothing.
@@ -821,6 +833,31 @@ mod tests {
         m.handle(&mv(off));
         m.handle(&up(off));
         assert!(m.open_path().is_empty());
+    }
+
+    #[test]
+    fn the_release_that_ends_the_press_which_opened_the_menu_chooses_nothing() {
+        let specs = [Spec::item("edit.copy"), Spec::item("edit.paste")];
+        let mut m = menu(&specs, Os::Windows);
+        let copy = m.item_center("edit.copy").unwrap();
+        // The panel sits under the pointer (it was moved to fit the window): the release alone
+        // is not a choice.
+        assert_eq!(m.handle(&up(copy)), MenuOutcome::Consumed);
+        // After a press (or a move) in the menu, a release is.
+        let down = UiEvent::PointerDown {
+            pos: copy,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        };
+        m.handle(&down);
+        assert_eq!(
+            m.handle(&up(copy)),
+            MenuOutcome::Run {
+                command: "edit.copy".into(),
+                arg: None
+            }
+        );
     }
 
     #[test]

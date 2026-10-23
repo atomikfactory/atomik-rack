@@ -4,9 +4,11 @@
 //! through [`KeyRows`].
 
 use atomik_model::theory::Scale;
+use serde::{Deserialize, Serialize};
 
 /// Which keys the piano roll shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Fold {
     /// Every key.
     #[default]

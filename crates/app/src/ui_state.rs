@@ -13,12 +13,14 @@
 //!   "show_marker_strip": true, "show_marker_list": false,
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
+//!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
 //!   "console_notice_seen": false }
 //! ```
 
 use crate::record::InputQuantize;
 use atomik_ui::FileBrowserView;
 use atomik_ui::arrangement::clamp_track_zoom;
+use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -64,6 +66,12 @@ pub struct UiState {
     pub track_zoom: f64,
     /// The piano roll's key row height in pixels (`6..=48`). An absent key means 12.
     pub piano_roll_key_height: f64,
+    /// The piano roll snaps drawn notes, drags and transposes to the scale of the clip. An
+    /// absent key means off.
+    pub piano_roll_snap_scale: bool,
+    /// Which keys the piano roll shows (`"off"`, `"scale"` or `"used"`). An absent key means
+    /// every key.
+    pub piano_roll_fold: Fold,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -94,6 +102,8 @@ impl Default for UiState {
             show_rack_navigator: true,
             track_zoom: 1.0,
             piano_roll_key_height: KEY_HEIGHT,
+            piano_roll_snap_scale: false,
+            piano_roll_fold: Fold::Off,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,
@@ -201,6 +211,8 @@ mod tests {
             console_notice_seen: true,
             track_zoom: 1.75,
             piano_roll_key_height: 30.0,
+            piano_roll_snap_scale: true,
+            piano_roll_fold: Fold::Used,
             file_browser_visible: true,
             ..UiState::default()
         };
@@ -227,6 +239,18 @@ mod tests {
             (old.track_zoom - 1.0).abs() < 1e-12
                 && (old.piano_roll_key_height - 12.0).abs() < 1e-12,
             "an older file has the default zooms"
+        );
+        assert!(
+            !old.piano_roll_snap_scale && old.piano_roll_fold == Fold::Off,
+            "an older file has no snap to scale and no fold"
+        );
+        std::fs::write(&path, r#"{"piano_roll_fold": "scale"}"#).unwrap();
+        assert_eq!(UiState::load(&path).piano_roll_fold, Fold::Scale);
+        std::fs::write(&path, r#"{"piano_roll_fold": "sideways"}"#).unwrap();
+        assert_eq!(
+            UiState::load(&path),
+            UiState::default(),
+            "an unknown fold: the defaults"
         );
         std::fs::write(&path, r#"{"track_zoom": 99, "piano_roll_key_height": 1}"#).unwrap();
         let wild = UiState::load(&path);
