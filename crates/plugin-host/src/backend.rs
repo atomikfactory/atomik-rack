@@ -259,6 +259,23 @@ pub enum ProcessStatus {
     Sleep,
     /// The plugin failed: the device becomes FAILED.
     Error,
+    /// Sandbox: the result did not come back in time for this batch. Not a failure: the
+    /// device has no valid wet signal this batch (dry for effects, silence otherwise).
+    Late,
+    /// Sandbox: the plugin's process is gone (crashed, killed or stopped by the watchdog).
+    /// The device becomes CRASHED.
+    Lost,
+}
+
+/// How a plugin's editor is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EditorKind {
+    /// Embedded in a window the host creates ([`PluginInstance::open_gui`]).
+    #[default]
+    Embedded,
+    /// In a top-level window the plugin's own process creates
+    /// ([`PluginInstance::open_external_gui`]).
+    External,
 }
 
 /// How long the plugin keeps sounding after its input stops.
@@ -398,6 +415,22 @@ pub trait PluginInstance {
     fn native_handle(&self) -> usize {
         0
     }
+    /// How the editor is shown.
+    fn editor_kind(&self) -> EditorKind {
+        EditorKind::Embedded
+    }
+    /// [`EditorKind::External`] editors: opens (or raises) the plugin's own window, owned by
+    /// `owner` (the app window) where the platform allows it.
+    fn open_external_gui(&mut self, _owner: Option<NativeParent>) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported(
+            "this plugin's editor is embedded".to_string(),
+        ))
+    }
+    /// True when the instance can no longer be used: its process is gone. Every other call
+    /// then fails without doing anything; recovery is a new instance.
+    fn is_lost(&self) -> bool {
+        false
+    }
 }
 
 /// One plugin found in a file.
@@ -414,7 +447,7 @@ pub struct ScannedPlugin {
     pub params_truncated: bool,
 }
 
-/// A plugin format. The future out-of-process backend implements the same traits.
+/// A plugin format. The sandbox (`atomik-plugin-sandbox`) implements the same traits.
 pub trait PluginBackend {
     /// The format this backend loads.
     fn format(&self) -> PluginFormat;
@@ -467,6 +500,9 @@ pub struct NullStats {
     last_rate_bits: AtomicU64,
     latency_override: AtomicU32,
     fail_activation: AtomicBool,
+    lost: AtomicBool,
+    external_editor: AtomicBool,
+    external_opens: AtomicUsize,
 }
 
 impl NullStats {
@@ -499,6 +535,19 @@ impl NullStats {
     /// Makes the next activation fail once.
     pub fn fail_next_activation(&self) {
         self.fail_activation.store(true, Ordering::Relaxed);
+    }
+    /// Makes every null instance report its process as gone (`is_lost`), as a crashed
+    /// sandboxed plugin does.
+    pub fn set_lost(&self, lost: bool) {
+        self.lost.store(lost, Ordering::Relaxed);
+    }
+    /// Makes every null instance have an [`EditorKind::External`] editor.
+    pub fn set_external_editor(&self, external: bool) {
+        self.external_editor.store(external, Ordering::Relaxed);
+    }
+    /// How many times an external editor was opened.
+    pub fn external_opens(&self) -> usize {
+        self.external_opens.load(Ordering::Relaxed)
     }
 }
 
@@ -641,6 +690,32 @@ impl PluginInstance for NullInstance {
     fn close_gui(&mut self) {}
 
     fn poll(&mut self) {}
+
+    fn editor_kind(&self) -> EditorKind {
+        if self.stats.external_editor.load(Ordering::Relaxed) {
+            EditorKind::External
+        } else {
+            EditorKind::Embedded
+        }
+    }
+
+    fn has_gui(&self) -> bool {
+        self.stats.external_editor.load(Ordering::Relaxed)
+    }
+
+    fn open_external_gui(&mut self, _owner: Option<NativeParent>) -> Result<(), BackendError> {
+        if self.editor_kind() != EditorKind::External {
+            return Err(BackendError::Unsupported(
+                "the null plugin has no editor".to_string(),
+            ));
+        }
+        self.stats.external_opens.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn is_lost(&self) -> bool {
+        self.stats.lost.load(Ordering::Relaxed)
+    }
 }
 
 /// The processor of a [`NullPlugin`]: silence, a copy or a scaled copy of its main input.

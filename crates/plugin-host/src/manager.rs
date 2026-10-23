@@ -12,8 +12,8 @@
 //! Every entry point is `[main-thread]` and checks it in debug builds.
 
 use crate::backend::{
-    ActivateConfig, BackendError, HostHandle, NativeParent, PluginBackend, PluginInstance,
-    PluginProcessor,
+    ActivateConfig, BackendError, EditorKind, HostHandle, NativeParent, PluginBackend,
+    PluginInstance, PluginProcessor,
 };
 use crate::device::PluginDevice;
 use crate::layout::truncate_params;
@@ -28,6 +28,9 @@ use atomik_device_sdk::{
     RunMode, descriptor_for,
 };
 use std::collections::BTreeMap;
+
+/// The error text of a call on an instance whose process is gone.
+pub const LOST: &str = "the plugin process stopped";
 
 /// What to create.
 #[derive(Debug, Clone)]
@@ -159,6 +162,14 @@ pub enum ManagerEvent {
     },
     /// The instance was deactivated and destroyed.
     Destroyed(InstanceId),
+    /// The plugin's process ended (sandbox): the device is CRASHED until RELOAD creates a new
+    /// instance.
+    Crashed {
+        /// The instance.
+        instance: InstanceId,
+        /// The exit code or signal and the last lines of the process's stderr.
+        reason: String,
+    },
 }
 
 /// Builds plugin devices; the app and the render tool use it through this trait.
@@ -414,6 +425,32 @@ impl PluginManager {
         Ok(self.get(id)?.instance.open_gui(parent, scale)?)
     }
 
+    /// How the instance's editor is shown.
+    pub fn editor_kind(&self, id: InstanceId) -> Option<EditorKind> {
+        self.instances.get(&id).map(|m| m.instance.editor_kind())
+    }
+
+    /// Opens (or raises) an [`EditorKind::External`] editor, owned by `owner`.
+    ///
+    /// # Errors
+    /// An unknown instance, or what the plugin said.
+    pub fn open_external_editor(
+        &mut self,
+        id: InstanceId,
+        owner: Option<NativeParent>,
+    ) -> Result<(), ManagerError> {
+        assert_main_thread("PluginManager::open_external_editor");
+        Ok(self.get(id)?.instance.open_external_gui(owner)?)
+    }
+
+    /// True when the instance's process is gone (sandbox): it cannot be restarted, only
+    /// replaced by a new instance.
+    pub fn is_lost(&self, id: InstanceId) -> bool {
+        self.instances
+            .get(&id)
+            .is_some_and(|m| m.instance.is_lost())
+    }
+
     /// Resizes the plugin's editor (the plugin may adjust the size).
     ///
     /// # Errors
@@ -446,10 +483,12 @@ impl PluginManager {
     /// last re-activation failed is re-activated at once.
     ///
     /// # Errors
-    /// An unknown instance.
+    /// An unknown instance, or a lost one (its process is gone: `BackendError::Failed`).
     pub fn restart(&mut self, id: InstanceId) -> Result<(), ManagerError> {
         assert_main_thread("PluginManager::restart");
-        self.get(id)?;
+        if self.get(id)?.instance.is_lost() {
+            return Err(BackendError::Failed(LOST.to_string()).into());
+        }
         self.begin_restart(id);
         Ok(())
     }
@@ -458,7 +497,7 @@ impl PluginManager {
     /// hand-shake.
     ///
     /// # Errors
-    /// An unknown instance.
+    /// An unknown or a lost instance (see [`PluginManager::restart`]).
     pub fn reload(&mut self, id: InstanceId) -> Result<(), ManagerError> {
         self.restart(id)
     }
@@ -479,7 +518,7 @@ impl PluginManager {
         let Some(m) = self.instances.get_mut(&id) else {
             return;
         };
-        if m.parked {
+        if m.parked || m.instance.is_lost() {
             return;
         }
         match m.phase {
@@ -694,7 +733,21 @@ impl PluginManager {
                     instance: id,
                     reason: reason.to_string(),
                 }),
+                PluginMessage::ProcessExited { reason } => {
+                    events.push(ManagerEvent::Crashed {
+                        instance: id,
+                        reason,
+                    });
+                }
             }
+        }
+        if m.instance.is_lost() {
+            // Nothing to restart: the process is gone. A processor the device handed back is
+            // given to the instance, which only drops it.
+            if let Some(processor) = m.end.take_processor() {
+                m.instance.deactivate(processor);
+            }
+            return;
         }
         if restart && !m.parked && m.phase == Phase::Running {
             m.end.request_stop();

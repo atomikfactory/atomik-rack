@@ -36,9 +36,10 @@ mod threads;
 mod wire;
 
 pub use backend::{
-    ActivateConfig, BackendError, EventList, HostHandle, NativeParent, NullBackend, NullBehavior,
-    NullPlugin, NullStats, PluginBackend, PluginEvent, PluginEventKind, PluginInstance, PluginIo,
-    PluginProcessor, PluginTransport, ProcessStatus, ScannedPlugin, SleepRule, TailLength,
+    ActivateConfig, BackendError, EditorKind, EventList, HostHandle, NativeParent, NullBackend,
+    NullBehavior, NullPlugin, NullStats, PluginBackend, PluginEvent, PluginEventKind,
+    PluginInstance, PluginIo, PluginProcessor, PluginTransport, ProcessStatus, ScannedPlugin,
+    SleepRule, TailLength,
 };
 pub use cache::{
     BlacklistEntry, CACHE_VERSION, CachedFile, FileStamp, LoadStatus, PluginCache, SCANNER_VERSION,
@@ -49,16 +50,14 @@ pub use device::{METER_VALUES, PluginDevice};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
-    InstantiateRequest, ManagerError, ManagerEvent, PluginHandle, PluginManager, PluginProvider,
+    InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle, PluginManager,
+    PluginProvider,
 };
 pub use scan::{
     ALL_FORMATS, FailureKind, MAX_PARALLEL_SCANS, RescanMode, ScanEnv, ScanError, ScanFailure,
     ScanJob, ScanProgress, ScanReport, ScanRequest, ScanResult, ScanRunner, rescan,
 };
-pub use settings::{
-    ConsentError, DEFAULT_TIMEOUT_SECS, ENABLE_WARNING, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
-    PluginSettings,
-};
+pub use settings::{DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS, PluginSettings};
 pub use slot::{
     DeviceEnd, DeviceState, HostMessenger, InstanceId, LogLevel, MESSAGE_CAPACITY, ManagerEnd,
     ParamPhase, PluginMessage, PluginSlot, ReapItem, ReaperQueue, plugin_channel, warm, warmed,

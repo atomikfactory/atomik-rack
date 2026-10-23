@@ -201,7 +201,7 @@ fn the_transport_fields_follow_the_batch_time_info() {
 }
 
 #[test]
-fn the_meter_values_report_peaks_state_latency_and_dropped() {
+fn the_meter_values_report_peaks_state_latency_dropped_and_late() {
     let (probe, shared) = Probe::new();
     shared.set_out(ProbeOut::Gain(0.5));
     let (mut h, r) = harness(rig("io.meters", &fx_layout(), Box::new(probe)));
@@ -210,12 +210,13 @@ fn the_meter_values_report_peaks_state_latency_and_dropped() {
     h.process();
     let mut out = [0.0f32; 8];
     let n = h.device().meter_values(&mut out);
-    assert_eq!(n, 5);
+    assert_eq!(n, 6);
     assert!((out[0] - 0.8).abs() < 1e-6, "input peak {}", out[0]);
     assert!((out[1] - 0.4).abs() < 1e-6, "output peak {}", out[1]);
     assert_eq!(out[2], 0.0, "running");
     assert_eq!(out[3], 0.0, "latency");
     assert_eq!(out[4], 0.0, "dropped");
+    assert_eq!(out[5], 0.0, "late");
     r.manager.slot().set_latency(300, SR);
     h.process();
     h.device().meter_values(&mut out);

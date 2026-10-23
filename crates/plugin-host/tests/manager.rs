@@ -484,3 +484,79 @@ fn notes_still_reach_a_managed_device() {
     );
     h.process();
 }
+
+// ----- sandboxed (lost) instances ------------------------------------------------------------------
+
+#[test]
+fn a_process_exit_message_becomes_a_crashed_event_with_its_reason() {
+    let (mut m, _) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    let messenger = m.slot(id).unwrap().messenger();
+    messenger.post(PluginMessage::ProcessExited {
+        reason: "exited with code 3".to_string(),
+    });
+    assert_eq!(
+        m.poll(),
+        vec![ManagerEvent::Crashed {
+            instance: id,
+            reason: "exited with code 3".to_string()
+        }]
+    );
+}
+
+#[test]
+fn restarting_or_reloading_a_lost_instance_is_an_error_and_nothing_happens() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    assert!(!m.is_lost(id));
+    stats.set_lost(true);
+    assert!(m.is_lost(id));
+    for result in [m.restart(id), m.reload(id)] {
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, ManagerError::Backend(e) if e.to_string() == atomik_plugin_host::LOST),
+            "{err:?}"
+        );
+    }
+    run(&mut h, 3);
+    assert!(m.poll().is_empty(), "no restart began");
+    assert_eq!(stats.activated(), 1);
+    assert!(!m.slot(id).unwrap().stop_requested());
+}
+
+#[test]
+fn a_lost_instance_is_not_restarted_by_a_latency_change_or_a_new_sample_rate() {
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let messenger = m.slot(handle.id).unwrap().messenger();
+    let (mut h, id) = harness_of(handle);
+    h.process();
+    stats.set_lost(true);
+    messenger.post(PluginMessage::LatencyChanged);
+    messenger.post(PluginMessage::RequestRestart);
+    m.poll();
+    m.set_sample_rate(44_100.0);
+    run(&mut h, 3);
+    m.poll();
+    assert_eq!(stats.activated(), 1, "never re-activated");
+    assert!(!m.slot(id).unwrap().stop_requested());
+}
+
+#[test]
+fn the_editor_kind_and_the_external_editor_route_to_the_instance() {
+    use atomik_plugin_host::{EditorKind, NativeParent};
+    let (mut m, stats) = manager();
+    let handle = m.instantiate(&request("null.fx")).unwrap();
+    let id = handle.id;
+    assert_eq!(m.editor_kind(id), Some(EditorKind::Embedded));
+    assert!(m.open_external_editor(id, None).is_err());
+    stats.set_external_editor(true);
+    assert_eq!(m.editor_kind(id), Some(EditorKind::External));
+    m.open_external_editor(id, Some(NativeParent::Win32(7)))
+        .unwrap();
+    assert_eq!(stats.external_opens(), 1);
+    assert_eq!(m.editor_kind(atomik_plugin_host::InstanceId(999)), None);
+}

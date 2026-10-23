@@ -64,7 +64,7 @@ fn scan_dir(
     mode: RescanMode,
 ) -> atomik_plugin_host::ScanReport {
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     settings.extra_paths = vec![dir.to_path_buf()];
     settings.set_timeout_secs(5);
     rescan(
@@ -254,7 +254,7 @@ fn a_full_scan_of_a_folder_with_bundles_survives_bad_ones_and_the_catalog_follow
     // Descriptors register from the cache without touching the bundles: delete them first.
     std::fs::remove_dir_all(&plugins).unwrap();
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     let mut catalog = PluginCatalog::from_cache(&cache, &settings);
     assert_eq!(catalog.entries().len(), 4);
     assert!(

@@ -54,7 +54,7 @@ fn scan_dir(
     mode: RescanMode,
 ) -> atomik_plugin_host::ScanReport {
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     settings.extra_paths = vec![dir.to_path_buf()];
     settings.set_timeout_secs(5);
     rescan(
@@ -290,7 +290,7 @@ fn a_full_scan_survives_bad_files_and_the_cache_and_catalog_follow() {
     // Descriptors register from the cache without touching the plugin files: delete them first.
     std::fs::remove_dir_all(&plugins).unwrap();
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     let mut catalog = PluginCatalog::from_cache(&loaded, &settings);
     assert_eq!(catalog.entries().len(), 4);
     assert!(
@@ -321,7 +321,7 @@ fn cancelling_kills_the_running_child_and_blacklists_nothing() {
     std::fs::create_dir_all(&plugins).unwrap();
     install("atomik-test-clap-hang", &plugins, "hang.clap");
     let mut settings = PluginSettings::default();
-    settings.enable(true).unwrap();
+    settings.enable();
     settings.extra_paths = vec![plugins.clone()];
     settings.set_timeout_secs(300);
     let runner = Arc::new(ChildScanner::new(scanner_command()));
