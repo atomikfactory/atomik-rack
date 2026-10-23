@@ -21,12 +21,12 @@
 //!   exactly at `LE`, the wrap happens at offset 0 of the next batch (before the state is
 //!   published).
 //! * **Held notes.** One 128-bit set per track. An `On` sets its bit; an `Off` is emitted only
-//!   for a held key (so locating into a note with chase off never sends its off). Stop and Locate while playing send `AllOff` to every track input and clear
-//!   the sets; a loop wrap releases the held keys with explicit `Off`s; a snapshot swap transfers
-//!   the set of an unchanged track (same device input, same content hash) wholesale. On a
-//!   changed track it transfers the keys that the new content still covers at the position (see
-//!   *Chase*; chase on or off, nothing is retriggered) and releases every other held key with
-//!   `Off`s.
+//!   for a held key (so locating into a note with chase off never sends its off). Stop and
+//!   Locate while playing send `AllOff` to every track input and clear the sets; a loop wrap
+//!   releases the held keys with explicit `Off`s; a snapshot swap transfers the set of an
+//!   unchanged track (same device input, same content hash) wholesale. On a changed track it
+//!   transfers the keys that the new content still covers at the position (see *Chase*; chase
+//!   on or off, nothing is retriggered) and releases every other held key with `Off`s.
 //! * **Chase.** A track with `SongTrack::chase` starts the notes that span a seek position `pos`
 //!   (`F(start) < pos < F(end)`, strictly: a note starting at `pos` plays from the event list, one
 //!   ending at `pos` is over) after every seek: Play (after the seek, at offset 0), Locate while
