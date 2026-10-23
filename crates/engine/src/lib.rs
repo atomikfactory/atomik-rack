@@ -39,6 +39,7 @@ pub use offline::{
     OfflineJob, render_offline, render_offline_scripted, render_offline_song, render_offline_with,
 };
 pub use plan::RenderPlan;
+pub use player::HOLD_CAPACITY;
 pub use preview::{
     PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
 };
