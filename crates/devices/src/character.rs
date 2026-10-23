@@ -52,6 +52,7 @@ pub mod stages;
 mod tests;
 pub mod voicing;
 
+use crate::bypass::{Bypassable, bypass_param};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -92,7 +93,7 @@ pub const PRESET_NAMES: [&str; 16] = [
     "Ghost Pipes",
 ];
 
-static PARAMS: [ParamDescriptor; 7] = [
+static PARAMS: [ParamDescriptor; 8] = [
     ParamDescriptor {
         id: ParamId(P_GAIN),
         key: "gain",
@@ -170,6 +171,7 @@ static PARAMS: [ParamDescriptor; 7] = [
         unit: Unit::Percent,
         discrete: false,
     },
+    bypass_param(7),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -239,7 +241,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Character::new()),
+        create: || Box::new(Bypassable::new(Character::new())),
     }
 }
 

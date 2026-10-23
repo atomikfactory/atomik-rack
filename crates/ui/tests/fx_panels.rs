@@ -7,7 +7,7 @@
 mod support;
 
 use atomik_model::{Command, Document};
-use atomik_ui::autolayout::{CONTENT_X, auto_layout};
+use atomik_ui::autolayout::{CONTENT_X, auto_layout, has_strip_bypass};
 use atomik_ui::fx::{EQ_METERS, FxKind};
 use atomik_ui::fx_layout::fx_layout;
 use atomik_ui::kurbo::{Point, Rect, Size};
@@ -104,6 +104,14 @@ fn every_param_and_socket_is_placed_once_and_nothing_overlaps() {
             let preset = d.params.iter().position(|p| p.key == "preset").unwrap();
             params.push(preset);
         }
+        // The `bypass` param is placed by the switch of the name strip, never as a knob.
+        assert!(has_strip_bypass(d), "{kind:?}");
+        let bypass = d.params.iter().position(|p| p.key == "bypass").unwrap();
+        assert!(
+            !params.contains(&bypass),
+            "{kind:?} places bypass as a control"
+        );
+        params.push(bypass);
         params.sort_unstable();
         assert_eq!(params, (0..d.params.len()).collect::<Vec<_>>(), "{kind:?}");
         let mut sockets: Vec<usize> = spec.back.iter().map(|s| s.socket).collect();

@@ -2,6 +2,8 @@
 //! [`compressor`], [`eq`], [`distortion`], [`modulation`] and [`mastering`], and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
+//! The effects are wrapped in [`bypass::Bypassable`], which adds their `bypass` param.
+//!
 //! Each module exposes a `pub static DESCRIPTOR`, a `pub fn factory()` and the device struct.
 //! All three are original designs.
 //! `process`, `reset` and `set_param` never allocate, lock or block; any randomness comes
@@ -10,6 +12,7 @@
 pub mod arpeggiator;
 pub mod audio_track;
 pub mod bus;
+pub mod bypass;
 pub mod channel;
 pub mod character;
 pub mod compressor;

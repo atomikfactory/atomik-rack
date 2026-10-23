@@ -3029,6 +3029,10 @@ mod console_tests;
 mod sampler_tests;
 
 #[cfg(test)]
+#[path = "shell_bypass_tests.rs"]
+mod bypass_tests;
+
+#[cfg(test)]
 #[path = "shell_drums_tests.rs"]
 mod drums_tests;
 

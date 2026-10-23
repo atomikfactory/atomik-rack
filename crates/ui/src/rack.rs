@@ -142,6 +142,8 @@ enum Hit {
     MacroName(usize, u8),
     /// A button of a plugin panel.
     Plugin(usize, PluginButton),
+    /// The BYPASS switch of a built-in effect's name strip.
+    Bypass(usize),
     /// A socket cell of the Audio I/O panel (device index, socket): lamp, meter, clip lamp.
     IoCell(usize, usize),
     /// The clip lamp of an Audio I/O socket (click resets it).
@@ -190,6 +192,7 @@ impl Hit {
             | Hit::Container(i, _)
             | Hit::MacroName(i, _)
             | Hit::Plugin(i, _)
+            | Hit::Bypass(i)
             | Hit::Control(i, _)
             | Hit::IoCell(i, _)
             | Hit::IoClip(i, _)
@@ -278,6 +281,18 @@ fn descriptor_id(registry: &Registry, d: &RackDevice) -> usize {
 }
 
 impl DeviceView {
+    /// The panel has the BYPASS switch of the name strip (see
+    /// [`autolayout::has_strip_bypass`]).
+    fn has_strip_bypass(&self) -> bool {
+        self.device.is_some() && self.desc.as_ref().is_some_and(autolayout::has_strip_bypass)
+    }
+    /// The effect's `bypass` param is on.
+    fn is_bypassed(&self) -> bool {
+        self.device
+            .as_ref()
+            .and_then(|d| d.params.get(autolayout::BYPASS_KEY))
+            .is_some_and(|v| *v >= 0.5)
+    }
     fn rect(&self) -> Rect {
         Rect::new(
             self.x,
@@ -1229,6 +1244,14 @@ impl RackView {
                     Hit::Fold(i),
                     false,
                 );
+                if d.has_strip_bypass() {
+                    tree.add(
+                        pn,
+                        paint::bypass_button_rect(d.height, d.folded) + off,
+                        Hit::Bypass(i),
+                        false,
+                    );
+                }
             }
             let Some(desc) = d.desc else { continue };
             if !d.folded {
@@ -1713,6 +1736,21 @@ impl RackView {
             .then(|| self.rack_to_view(paint::fold_button_center(d.height, d.folded) + d.offset()))
     }
 
+    /// The BYPASS switch of an effect's name strip (logical view coordinates, front or back
+    /// side): `None` for a device without one (instruments, utilities, plugins, the
+    /// interface).
+    pub fn bypass_button_rect(&self, key: &DeviceKey) -> Option<Rect> {
+        let d = &self.devices[self.device_index(key)?];
+        d.has_strip_bypass().then(|| {
+            let r = paint::bypass_button_rect(d.height, d.folded) + d.offset();
+            let (a, b) = (
+                self.rack_to_view(Point::new(r.x0, r.y0)),
+                self.rack_to_view(Point::new(r.x1, r.y1)),
+            );
+            Rect::new(a.x, a.y, b.x, b.y)
+        })
+    }
+
     /// Midpoint of a cable's curve (logical view coordinates).
     pub fn cable_midpoint(&self, cable: &Cable) -> Option<Point> {
         let c = self.cable_curve(cable)?;
@@ -2098,6 +2136,14 @@ impl RackView {
                 }
                 Some(h @ Hit::ReturnEdit(..)) => self.return_edit_tooltip(h),
                 Some(Hit::Preset(i, n)) => self.preset_name(i, n),
+                Some(Hit::Bypass(i)) => Some(
+                    if self.devices[i].is_bypassed() {
+                        "Bypassed: the dry signal passes. Click to switch the effect back in"
+                    } else {
+                        "Click to bypass the effect: the dry signal passes"
+                    }
+                    .to_string(),
+                ),
                 Some(Hit::Plate(i)) => {
                     let d = &self.devices[i];
                     if self.locked.as_ref() == Some(&d.key) {
@@ -2523,6 +2569,7 @@ impl RackView {
                     folded: !d.folded,
                 }));
             }
+            (Hit::Bypass(i), PointerButton::Primary) => self.bypass_down(i, out),
             (Hit::Plate(i), PointerButton::Primary) => {
                 let collapse = self.select_click(i, modifiers, out);
                 if self.locked.as_ref() == Some(&self.devices[i].key) {
@@ -2720,6 +2767,24 @@ impl RackView {
             }
             _ => {}
         }
+    }
+
+    /// A press on the BYPASS switch of an effect's name strip: toggles its `bypass` param,
+    /// one undo step like any other param edit.
+    fn bypass_down(&mut self, i: usize, out: &mut Vec<UiAction>) {
+        self.select(i, out);
+        if self.driven_by(i, autolayout::BYPASS_KEY).is_some() {
+            self.notify_driven(i, autolayout::BYPASS_KEY);
+            return;
+        }
+        let on = self.devices[i].is_bypassed();
+        let key = self.devices[i].key.clone();
+        out.push(param_cmd(
+            &key,
+            autolayout::BYPASS_KEY,
+            if on { 0.0 } else { 1.0 },
+            None,
+        ));
     }
 
     fn control_down(

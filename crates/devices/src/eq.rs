@@ -58,6 +58,7 @@
 //! Non-finite input samples are treated as 0. The per-sample path uses only `+ - * /` (the
 //! biquad state is `f64`); coefficient design runs at control rate.
 
+use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::batch_mean;
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -202,7 +203,7 @@ const fn trim(id: u32, key: &'static str, name: &'static str) -> ParamDescriptor
     }
 }
 
-static PARAMS: [ParamDescriptor; 29] = [
+static PARAMS: [ParamDescriptor; 30] = [
     on(0, "band1.on", "Low cut on", 0.0),
     freq(1, "band1.freq", "Low cut freq", 20.0, 2_000.0, 80.0),
     q(2, "band1.q", "Low cut Q", 0.3, 4.0, FRAC_1_SQRT_2),
@@ -256,6 +257,7 @@ static PARAMS: [ParamDescriptor; 29] = [
     trim(26, "band3.gain_cv_trim", "Peak 1 gain CV trim"),
     trim(27, "band4.gain_cv_trim", "Peak 2 gain CV trim"),
     trim(28, "band5.gain_cv_trim", "High shelf gain CV trim"),
+    bypass_param(29),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -339,7 +341,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Equalizer::new()),
+        create: || Box::new(Bypassable::new(Equalizer::new())),
     }
 }
 

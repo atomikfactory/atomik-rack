@@ -82,6 +82,7 @@ fn descriptor_validates() {
             "sc_lp",
             "stereo_link",
             "detector",
+            "bypass",
         ],
         &[
             "in_l",

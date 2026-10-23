@@ -52,6 +52,7 @@
 //! * **Meter values** (`has_meter_values`): `[output peak L, output peak R, tail RMS]`, linear,
 //!   of the last batch.
 
+use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -83,7 +84,7 @@ const P_FREEZE: u32 = 10;
 const P_OUTPUT: u32 = 11;
 const P_MIX_TRIM: u32 = 12;
 
-static PARAMS: [ParamDescriptor; 13] = [
+static PARAMS: [ParamDescriptor; 14] = [
     ParamDescriptor {
         id: ParamId(P_ALGORITHM),
         key: "algorithm",
@@ -227,6 +228,7 @@ static PARAMS: [ParamDescriptor; 13] = [
         unit: Unit::Percent,
         discrete: false,
     },
+    bypass_param(13),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -288,7 +290,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Reverb::new()),
+        create: || Box::new(Bypassable::new(Reverb::new())),
     }
 }
 

@@ -63,7 +63,10 @@
 //! - **Rack interactions:** drag a knob or fader vertically ([`widget`] documents the
 //!   numbers); double-click resets; wheel steps; Ctrl/Cmd+wheel zooms (0.5×–2×) around the
 //!   pointer; wheel elsewhere scrolls (Shift = horizontal); middle-drag pans; click a name plate
-//!   to select, drag it to reorder; the chevron folds a device to a 0.5 U strip; on the back,
+//!   to select, drag it to reorder; the chevron folds a device to a 0.5 U strip; the BYPASS
+//!   button of a built-in effect's name strip toggles its `bypass` param and veils the panel
+//!   body while on ([`autolayout::has_strip_bypass`]; plugins have their own BYPASS in the
+//!   panel); on the back,
 //!   drag between jacks to patch (dragging a connected input detaches its cable first;
 //!   dropping on an occupied input replaces its cable); double-click empty rack space opens
 //!   the browser, where typing filters and double-click/Enter adds a device below the

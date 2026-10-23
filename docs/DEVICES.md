@@ -163,6 +163,7 @@ A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-po
 | `feedback` | 0 to 0.95 | 0.4 | percent | Linear | no |
 | `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
 | `ping_pong` | 0 or 1 | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -204,6 +205,7 @@ A stereo algorithmic reverb with three algorithms. Source: [crates/devices/src/r
 | `mix` | 0 (dry) to 1 (wet) | 0.3 | percent | Linear | no |
 | `freeze` | 0 or 1 | 0 | toggle | Linear | yes |
 | `output` | −24 to 12 | 0 | dB | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -254,6 +256,7 @@ A stereo feed-forward compressor with a sidechain input. Source: [crates/devices
 | `sc_lp` | 1000 to 20000 (20000 = off) | 20000 | Hz | Exp | no |
 | `stereo_link` | 0 (independent) to 1 (linked) | 1 | percent | Linear | no |
 | `detector` | 0 peak, 1 RMS | 0 | choice | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -291,6 +294,7 @@ A six-band stereo parametric EQ with an analyser feed. Source: [crates/devices/s
 | `band6.on` / `.freq` / `.q` (high cut) | 0 or 1 / 1000 to 20000 Hz / 0.3 to 4 | 0 / 16000 / 0.707 | toggle / Hz / none | on: yes |
 | `highcut.slope` | 0 to 2: 12, 24, 48 dB/oct | 0 | choice | yes |
 | `output` | −24 to 24 | 0 | dB | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 Frequencies and Q use the exponential taper, gains and `output` the linear one. The bands run in the order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 24).
 
@@ -325,6 +329,7 @@ Oversampled saturation, waveshaping and bitcrushing. Source: [crates/devices/src
 | `crush.bits` | 1 to 16 | 8 | none | Linear | yes |
 | `crush.rate` | 500 to 96000 (hold rate; at or above the sample rate no hold) | 96000 | Hz | Exp | no |
 | `oversample` | 0–2: off, 2x, 4x | 2 | choice | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -363,6 +368,7 @@ Chorus, flanger and phaser with tempo sync. Source: [crates/devices/src/modulati
 | `spread` | 0 to 180 (right LFO phase offset, degrees) | 90 | none | Linear | no |
 | `mix` | 0 (dry) to 1 (wet) | 0.5 | percent | Linear | no |
 | `output` | −24 to 12 | 0 | dB | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -457,6 +463,7 @@ Multiband compressor, stereo width, true-peak limiter and a BS.1770 loudness met
 | `release` | 10 to 2000 (limiter) | 150 | ms | Exp | no |
 | `output` | −24 to 12 (after the limiter) | 0 | dB | Linear | no |
 | `meter.reset` | momentary toggle: a rising edge clears the loudness and true-peak meters | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 The param ids run in this order (`input` 0 … `meter.reset` 27); the band params are grouped per band (threshold, ratio, attack, release, gain, on).
 
@@ -506,6 +513,7 @@ A stereo insert with 16 character presets in a 4 x 4 matrix, an input gain, a ma
 | `volume` | 0 to 1 (same law as `gain`) | 0.5 | none | Linear | no |
 | `transform_cv_trim` | 0 to 1 | 1 | percent | Linear | no |
 | `mix_cv_trim` | 0 to 1 | 1 | percent | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
 `gain` and `volume` are linear knob positions; the dB display is the UI's job (`atomik_devices::character::knob_gain_db`), because the shared param model has no square taper.
 
@@ -929,6 +937,16 @@ Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main
 Try it with the test plugins: [../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and [../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both formats in one project).
 
 VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
+
+## Effect bypass
+
+Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, modulation, mastering and Character) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
+
+- **Bypassed (>= 0.5).** `out_l` / `out_r` carry the main inputs `in_l` / `in_r` **delayed by the device's current `latency_frames()`**, bit for bit, so plugin delay compensation stays right and a bypassed latent effect (compressor lookahead, oversampled distortion and modulation, mastering, Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in `prepare`; a latency that changes at run time (Character across its two latency classes) moves the dry tap at the next batch boundary.
+- **The effect keeps running.** Its state and tail continue and every other output (the compressor's `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged; un-bypassing is seamless, and the CPU cost does not drop.
+- **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample, `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed input. The first batch after `prepare` or `reset` starts at the param's value without a fade, so a project saved bypassed opens bypassed.
+- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all eight effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
+- **Console inserts.** A channel's insert slot has its own `insert.bypass` (a channel-level switch, see [ARCHITECTURE.md](ARCHITECTURE.md)); the two are independent.
 
 ## CV inputs: the trim convention
 

@@ -800,3 +800,17 @@ proptest! {
         prop_assert_eq!(save_project(&back), t);
     }
 }
+
+#[test]
+fn an_old_project_without_the_effect_bypass_param_loads_with_bypass_off() {
+    // The v8 golden predates the `bypass` param of built-in effects: its compressor stores no
+    // value for it, so it takes the descriptor default and the file saves back unchanged.
+    let r = registry();
+    let t = fixture("container-v8.atomik");
+    let doc = load_project(&t, &r).unwrap();
+    let comp = key("layer/fx/comp");
+    let device = doc.resolve(&comp).unwrap();
+    assert!(!device.params.contains_key("bypass"));
+    assert_eq!(doc.param_value(&comp, "bypass", &r), Some(0.0));
+    assert_eq!(save_project(&doc), as_current(&t, 8));
+}

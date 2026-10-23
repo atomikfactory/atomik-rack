@@ -387,7 +387,7 @@ fn panel_button<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, label: &s
     button_sized(c, theme, r, label, enabled, 7.2, 0.3);
 }
 
-fn led_button<C: Canvas + ?Sized>(
+pub(crate) fn led_button<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
     r: Rect,

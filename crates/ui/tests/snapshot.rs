@@ -69,7 +69,14 @@ fn recording_is_deterministic_and_complete() {
     let a = record(1.0);
     assert_eq!(a, record(1.0));
     for text in [
-        "Poly", "Synth", "Stereo", "Line", "Cutoff", "Feedback", "AUDIO IN", "CV OUT",
+        "Poly",
+        "Synth",
+        "Stereo Delay",
+        "Line",
+        "Cutoff",
+        "Feedback",
+        "AUDIO IN",
+        "CV OUT",
     ] {
         assert!(
             a.contains(&format!("\"text\":\"{text}\"")),

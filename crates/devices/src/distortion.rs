@@ -52,6 +52,7 @@
 //! * **Safety:** non-finite input samples are treated as 0; the curves are bounded by 1 so the
 //!   output stays bounded for any drive.
 
+use crate::bypass::{Bypassable, bypass_param};
 use crate::cv_in::{add_norm, batch_mean};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -79,7 +80,7 @@ const P_MIX_TRIM: u32 = 10;
 /// Range of the drive knob in dB (its CV is applied in normalised space over it).
 const DRIVE_MAX_DB: f32 = 48.0;
 
-static PARAMS: [ParamDescriptor; 11] = [
+static PARAMS: [ParamDescriptor; 12] = [
     ParamDescriptor {
         id: ParamId(P_CURVE),
         key: "curve",
@@ -201,6 +202,7 @@ static PARAMS: [ParamDescriptor; 11] = [
         unit: Unit::Percent,
         discrete: false,
     },
+    bypass_param(11),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -270,7 +272,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Distortion::new()),
+        create: || Box::new(Bypassable::new(Distortion::new())),
     }
 }
 

@@ -48,6 +48,7 @@
 //!   compression gain.
 //! * **Safety.** Non-finite input is treated as 0; filter state is `f64` with denormal flushes.
 
+use crate::bypass::{Bypassable, bypass_param};
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
@@ -251,7 +252,7 @@ const B3: [ParamDescriptor; 6] = band_params(
     100.0,
 );
 
-static PARAMS: [ParamDescriptor; 28] = [
+static PARAMS: [ParamDescriptor; 29] = [
     param(
         P_INPUT,
         "input",
@@ -380,6 +381,7 @@ static PARAMS: [ParamDescriptor; 28] = [
         Unit::Toggle,
         true,
     ),
+    bypass_param(28),
 ];
 
 const IN_L: SocketId = SocketId(0);
@@ -441,7 +443,7 @@ pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
 pub fn factory() -> DeviceFactory {
     DeviceFactory {
         descriptor: &DESCRIPTOR,
-        create: || Box::new(Mastering::new()),
+        create: || Box::new(Bypassable::new(Mastering::new())),
     }
 }
 
