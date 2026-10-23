@@ -440,6 +440,105 @@ fn h_and_g_zoom_time_in_the_sequencer_and_the_rack_zoom_stays_on_ctrl_equals() {
 }
 
 #[test]
+fn shift_h_g_z_zoom_the_track_heights_in_the_sequencer_and_the_keys_in_the_roll() {
+    for os in [Os::Windows, Os::Mac, Os::Linux] {
+        let mut s = shell_for(os);
+        demo(&mut s);
+        s.set_focus(Pane::Arrangement);
+        let (time, keys0) = (
+            s.core().arrangement().px_per_tick(),
+            s.core().piano_roll().key_height(),
+        );
+        keys_on(&mut s, os).tap("Shift+H");
+        assert!(s.core().arrangement().track_zoom() > 1.0, "{os:?}");
+        keys_on(&mut s, os).tap("Shift+G");
+        assert!(
+            (s.core().arrangement().track_zoom() - 1.0).abs() < 1e-9,
+            "{os:?}"
+        );
+        keys_on(&mut s, os).tap("Shift+H");
+        keys_on(&mut s, os).tap("Shift+Z");
+        assert_eq!(s.core().arrangement().track_zoom(), 1.0, "reset");
+        assert_eq!(
+            s.core().arrangement().px_per_tick(),
+            time,
+            "not the time zoom"
+        );
+        assert_eq!(
+            s.core().piano_roll().key_height(),
+            keys0,
+            "not the key zoom"
+        );
+        s.execute(AppCommand::TogglePianoRoll);
+        s.set_focus(Pane::PianoRoll);
+        keys_on(&mut s, os).tap("Shift+H");
+        assert!(s.core().piano_roll().key_height() > keys0, "{os:?}");
+        keys_on(&mut s, os).tap("Shift+G");
+        keys_on(&mut s, os).tap("Shift+G");
+        assert!(s.core().piano_roll().key_height() < keys0, "{os:?}");
+        keys_on(&mut s, os).tap("Shift+Z");
+        assert_eq!(s.core().piano_roll().key_height(), keys0);
+        assert_eq!(
+            s.core().arrangement().track_zoom(),
+            1.0,
+            "not the track zoom"
+        );
+    }
+}
+
+#[test]
+fn the_vertical_zooms_are_saved_in_the_window_state_and_restored_at_start() {
+    let dir = std::env::temp_dir().join(format!("atomik-zoom-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("ui-state.json");
+    let _ = std::fs::remove_file(&path);
+    let make = |path: &PathBuf| {
+        let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
+        let mut s = Shell::new(
+            AppCore::new(session),
+            ShellOptions {
+                os: Some(Os::Windows),
+                profile: None,
+                in_window_menu: true,
+                settings_path: None,
+                ui_state_path: Some(path.clone()),
+                library_path: None,
+            },
+        );
+        s.handle(&UiEvent::Resize(Size::new(1100.0, 800.0)));
+        s
+    };
+    let mut s = make(&path);
+    demo(&mut s);
+    assert_eq!(s.ui_state().track_zoom, 1.0);
+    s.set_focus(Pane::Arrangement);
+    keys(&mut s).tap("Shift+H");
+    keys(&mut s).tap("Shift+H");
+    let zoom = s.core().arrangement().track_zoom();
+    assert!(zoom > 1.5);
+    assert_eq!(s.ui_state().track_zoom, zoom);
+    s.execute(AppCommand::TogglePianoRoll);
+    s.set_focus(Pane::PianoRoll);
+    keys(&mut s).tap("Shift+H");
+    let kh = s.core().piano_roll().key_height();
+    let saved = atomik_ui_state(&path);
+    assert!(
+        (saved.track_zoom - zoom).abs() < 1e-12,
+        "{saved:?} vs {zoom} {kh}"
+    );
+    assert!((saved.piano_roll_key_height - kh).abs() < 1e-12);
+    // A new shell reads them back.
+    let s2 = make(&path);
+    assert!((s2.core().arrangement().track_zoom() - zoom).abs() < 1e-12);
+    assert!((s2.core().piano_roll().key_height() - kh).abs() < 1e-12);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn atomik_ui_state(path: &Path) -> crate::ui_state::UiState {
+    crate::ui_state::UiState::load(path)
+}
+
+#[test]
 fn z_zooms_to_the_selection_and_f_follows_the_playhead() {
     let mut s = shell();
     demo(&mut s);

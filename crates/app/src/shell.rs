@@ -431,6 +431,14 @@ impl<B: AudioBackend> Shell<B> {
             arrangement.set_marker_strip(shell.ui.show_marker_strip);
             arrangement.set_marker_list(shell.ui.show_marker_list);
         }
+        shell
+            .core
+            .arrangement_mut()
+            .set_track_zoom(shell.ui.track_zoom);
+        shell
+            .core
+            .piano_roll_mut()
+            .set_key_height(shell.ui.piano_roll_key_height);
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
@@ -1145,6 +1153,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Handles one window event (logical units).
     pub fn handle(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
         let mut requests = self.handle_event_inner(event);
+        self.save_zoom_state();
         requests.append(&mut self.pending);
         requests
     }
@@ -1702,6 +1711,19 @@ impl<B: AudioBackend> Shell<B> {
         self.ui.rack_split = rack_h.clamp(lo, avail - lo) / avail;
         self.layout_view();
         if released {
+            self.save_ui_state();
+        }
+    }
+
+    /// The vertical zooms (track heights, key height) are saved when an event changed them.
+    fn save_zoom_state(&mut self) {
+        let zoom = self.core.arrangement().track_zoom();
+        let keys = self.core.piano_roll().key_height();
+        if (zoom - self.ui.track_zoom).abs() > f64::EPSILON
+            || (keys - self.ui.piano_roll_key_height).abs() > f64::EPSILON
+        {
+            self.ui.track_zoom = zoom;
+            self.ui.piano_roll_key_height = keys;
             self.save_ui_state();
         }
     }
