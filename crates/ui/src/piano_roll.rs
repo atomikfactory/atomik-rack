@@ -10,8 +10,13 @@
 use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::arrangement::snap_from_arg;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::chord_edit::{
+    self, ARP_GATES, ARP_OCTAVES, ArpOptions, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection,
+    StrumOptions, strum_ticks,
+};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
-use crate::keymap::{CommandOutcome, Roles};
+use crate::key_rows::{Fold, KeyRows};
+use crate::keymap::{CommandOutcome, ROOT_ARGS, Roles};
 use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
@@ -19,6 +24,7 @@ use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{Tool, ViewportState};
 use atomik_device_sdk::Registry;
+use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
 use atomik_model::{
     Clip, ClipContent, ClipId, Command, DeviceKey, Note, RackDoc, SongCommand, WorkflowCommand,
 };
@@ -28,6 +34,8 @@ use vello::peniko::Color;
 
 /// Height of the top bar (title, snap, quantize, close).
 pub const TOP_BAR_HEIGHT: f64 = 28.0;
+/// Height of the scale bar under the top bar (scale, fold and chord controls).
+pub const SCALE_BAR_HEIGHT: f64 = 22.0;
 /// Height of the ruler.
 pub const ROLL_RULER_HEIGHT: f64 = 20.0;
 /// Width of the keyboard strip.
@@ -42,6 +50,8 @@ pub const MIN_KEY_HEIGHT: f64 = 6.0;
 pub const MAX_KEY_HEIGHT: f64 = 48.0;
 /// Zoom factor of one step of the key zoom commands and of a wheel notch.
 pub const KEY_ZOOM_STEP: f64 = 1.25;
+/// Everything above the ruler: the top bar and the scale bar.
+const HEADER_HEIGHT: f64 = TOP_BAR_HEIGHT + SCALE_BAR_HEIGHT;
 const VEL_PAD: f64 = 8.0;
 const EDGE_PX: f64 = 5.0;
 const DRAG_THRESHOLD: f64 = 3.0;
@@ -61,6 +71,81 @@ enum TopItem {
     Quantize,
     Close,
     Tool(Tool),
+    // The scale bar.
+    ScaleRoot,
+    ScaleKind,
+    ScaleDetect,
+    ScaleSnap,
+    Fold,
+    Chord,
+    Inversion,
+}
+
+impl TopItem {
+    /// The items of the scale bar, left to right.
+    const SCALE_BAR: [TopItem; 7] = [
+        TopItem::ScaleRoot,
+        TopItem::ScaleKind,
+        TopItem::ScaleDetect,
+        TopItem::ScaleSnap,
+        TopItem::Fold,
+        TopItem::Chord,
+        TopItem::Inversion,
+    ];
+}
+
+/// The fields of the scale bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleBarField {
+    /// The root note of the scale (opens a menu of the twelve).
+    Root,
+    /// The kind of scale (opens a menu).
+    Kind,
+    /// Detect the scale from the notes.
+    Detect,
+    /// Snap to scale on or off.
+    SnapScale,
+    /// The fold (click cycles).
+    Fold,
+    /// The chord stamp (opens a menu).
+    Chord,
+    /// The inversion of the stamp (click cycles).
+    Inversion,
+}
+
+impl ScaleBarField {
+    fn item(self) -> TopItem {
+        match self {
+            ScaleBarField::Root => TopItem::ScaleRoot,
+            ScaleBarField::Kind => TopItem::ScaleKind,
+            ScaleBarField::Detect => TopItem::ScaleDetect,
+            ScaleBarField::SnapScale => TopItem::ScaleSnap,
+            ScaleBarField::Fold => TopItem::Fold,
+            ScaleBarField::Chord => TopItem::Chord,
+            ScaleBarField::Inversion => TopItem::Inversion,
+        }
+    }
+}
+
+/// What the scale, chord and fold menus need to know about the roll: the checks of their items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NoteTools {
+    /// The clip's scale (`None`: chromatic).
+    pub scale: Option<Scale>,
+    /// The root shown: the scale's, or the one a new scale would get.
+    pub root: u8,
+    /// Snap to scale is on.
+    pub snap_scale: bool,
+    /// The fold.
+    pub fold: Fold,
+    /// The chord stamp.
+    pub stamp: Stamp,
+    /// The stamp's inversion.
+    pub inversion: u8,
+    /// The arpeggio settings.
+    pub arp: ArpOptions,
+    /// The strum settings.
+    pub strum: StrumOptions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +165,8 @@ enum Drag {
     Draw {
         start: Point,
         base: Vec<Note>,
-        note: Note,
+        /// The notes being drawn: one, or the chord of the stamp (same start and length).
+        notes: Vec<Note>,
         merge: u64,
         last: Vec<Note>,
     },
@@ -89,7 +175,8 @@ enum Drag {
         originals: Vec<Note>,
         sel: BTreeSet<usize>,
         grabbed: usize,
-        anchor_key: i32,
+        /// The row under the pointer at the press (rows count down from the top).
+        anchor_row: i32,
         merge: u64,
         moved: bool,
         emitted: bool,
@@ -137,6 +224,17 @@ pub struct PianoRollView {
     scroll_y: f64,
     /// Height of one key row (the key zoom).
     key_h: f64,
+    /// The visible keys (all of them unless a fold hides some).
+    rows: KeyRows,
+    rows_dirty: bool,
+    fold: Fold,
+    snap_scale: bool,
+    /// The root a scale gets when it is chosen while the clip has none.
+    root_pref: u8,
+    stamp: Stamp,
+    inversion: u8,
+    arp: ArpOptions,
+    strum: StrumOptions,
     snap: Snap,
     vp: ViewportState,
     strength: f32,
@@ -171,6 +269,15 @@ impl PianoRollView {
             axis: TimeAxis::new(KEYBOARD_WIDTH, 200.0),
             scroll_y: 0.0,
             key_h: KEY_HEIGHT,
+            rows: KeyRows::all(),
+            rows_dirty: false,
+            fold: Fold::Off,
+            snap_scale: false,
+            root_pref: 0,
+            stamp: Stamp::None,
+            inversion: 0,
+            arp: ArpOptions::default(),
+            strum: StrumOptions::default(),
             snap: Snap::default(),
             vp: ViewportState::new(),
             strength: 1.0,
@@ -204,6 +311,7 @@ impl PianoRollView {
         self.clip = None;
         self.drag = Drag::None;
         self.fit_pending = true;
+        self.rows_dirty = true;
         self.repaint = true;
     }
 
@@ -414,10 +522,9 @@ impl PianoRollView {
         self.key_top(key) + self.key_h / 2.0
     }
 
-    /// The key at a logical y (clamped to 0..=127).
+    /// The key at a logical y (clamped to the visible rows).
     pub fn key_at(&self, y: f64) -> u8 {
-        let k = 127.0 - ((y - self.grid_rect().y0 + self.scroll_y) / self.key_h).floor();
-        k.clamp(0.0, 127.0) as u8
+        self.rows.keys()[self.row_at(y)]
     }
 
     /// A point on the keyboard strip for `key`.
@@ -451,7 +558,7 @@ impl PianoRollView {
 
     /// The y of the ruler (click to locate).
     pub fn ruler_y(&self) -> f64 {
-        self.bounds.y0 + TOP_BAR_HEIGHT + ROLL_RULER_HEIGHT / 2.0
+        self.bounds.y0 + HEADER_HEIGHT + ROLL_RULER_HEIGHT / 2.0
     }
 
     /// Centre of the close button.
@@ -467,6 +574,130 @@ impl PianoRollView {
     /// Centre of the snap selector.
     pub fn snap_button_center(&self) -> Point {
         self.top_rect(TopItem::Snap).center()
+    }
+
+    // ------------------------------------------------------------------ scale and chords
+
+    /// The scale of the open clip (`None`: chromatic, no scale).
+    pub fn scale(&self) -> Option<Scale> {
+        self.clip.as_ref().and_then(|c| c.scale)
+    }
+
+    /// Whether pencil-drawn notes and vertical drags land on in-scale keys only and the
+    /// transpose commands move by scale degree (it needs a scale to do anything).
+    pub fn snap_to_scale(&self) -> bool {
+        self.snap_scale
+    }
+
+    /// Switches snap to scale on or off (saved in the window state).
+    pub fn set_snap_to_scale(&mut self, on: bool) {
+        if on != self.snap_scale {
+            self.snap_scale = on;
+            self.repaint = true;
+        }
+    }
+
+    /// Which keys the roll shows.
+    pub fn fold(&self) -> Fold {
+        self.fold
+    }
+
+    /// Sets the fold (saved in the window state), keeping the key at the middle of the grid
+    /// where it is.
+    pub fn set_fold(&mut self, fold: Fold) {
+        if fold != self.fold {
+            self.fold = fold;
+            self.rows_dirty = true;
+            self.refresh_rows(true);
+            self.repaint = true;
+        }
+    }
+
+    /// The visible keys, top row first.
+    pub fn rows(&self) -> &KeyRows {
+        &self.rows
+    }
+
+    /// The chord the pencil drops.
+    pub fn stamp(&self) -> Stamp {
+        self.stamp
+    }
+
+    /// Sets the chord the pencil drops (and chordify builds).
+    pub fn set_stamp(&mut self, stamp: Stamp) {
+        self.stamp = stamp;
+        self.repaint = true;
+    }
+
+    /// The inversion of the stamp, 0 (root position) to 3.
+    pub fn inversion(&self) -> u8 {
+        self.inversion
+    }
+
+    /// Sets the inversion of the stamp (limited to 0..=3).
+    pub fn set_inversion(&mut self, inversion: u8) {
+        self.inversion = inversion.min(3);
+        self.repaint = true;
+    }
+
+    /// The arpeggio settings.
+    pub fn arp_options(&self) -> ArpOptions {
+        self.arp
+    }
+
+    /// The strum settings.
+    pub fn strum_options(&self) -> StrumOptions {
+        self.strum
+    }
+
+    /// The state the scale, chord and fold menus show their checks from.
+    pub fn tools(&self) -> NoteTools {
+        NoteTools {
+            scale: self.scale(),
+            root: self.scale().map_or(self.root_pref, |s| s.root),
+            snap_scale: self.snap_scale,
+            fold: self.fold,
+            stamp: self.stamp,
+            inversion: self.inversion,
+            arp: self.arp,
+            strum: self.strum,
+        }
+    }
+
+    /// Centre of one of the scale bar fields (tests click it).
+    pub fn scale_bar_center(&self, field: ScaleBarField) -> Point {
+        self.top_rect(field.item()).center()
+    }
+
+    /// The row under a logical y, counted from the top row (clamped to the rows).
+    pub fn row_at(&self, y: f64) -> usize {
+        let r = ((y - self.grid_rect().y0 + self.scroll_y) / self.key_h).floor();
+        r.clamp(0.0, (self.rows.len() - 1) as f64) as usize
+    }
+
+    /// Rebuilds the rows when the clip, the scale or the fold changed. A drag keeps the rows it
+    /// started with (the keys under the pointer must not move while notes are being moved), so
+    /// the rebuild waits for the end of the gesture. With `anchor` the key at the middle of the
+    /// grid stays there.
+    fn refresh_rows(&mut self, anchor: bool) {
+        if !self.rows_dirty || !matches!(self.drag, Drag::None) {
+            return;
+        }
+        self.rows_dirty = false;
+        let used: Vec<u8> = self.notes().iter().map(|n| n.key).collect();
+        let rows = KeyRows::build(self.fold, self.scale(), &used);
+        if rows == self.rows {
+            return;
+        }
+        let g = self.grid_rect();
+        let mid = self.key_at((g.y0 + g.y1) / 2.0);
+        self.rows = rows;
+        if anchor {
+            let r = self.rows.nearest_row(mid) as f64;
+            self.scroll_y = r * self.key_h + self.key_h / 2.0 - g.height() / 2.0;
+        }
+        self.clamp_scroll();
+        self.repaint = true;
     }
 
     // ------------------------------------------------------------------ sync
@@ -489,14 +720,19 @@ impl PianoRollView {
         // The clip grid counts content ticks from the clip start: the meter in effect there.
         let meter = Meter::at(&doc.song, clip.as_ref().map_or(0, |c| c.start));
         if clip != self.clip || device != self.device || meter != self.meter {
+            self.rows_dirty = true;
             self.clip = clip;
             self.device = device;
             self.meter = meter;
             self.bars = Bars::single(meter);
             let n = self.notes().len();
             self.selection.retain(|i| *i < n);
+            if let Some(s) = self.scale() {
+                self.root_pref = s.root;
+            }
             self.repaint = true;
         }
+        self.refresh_rows(false);
         if let Some(d) = &self.device {
             let accent = sp::device_accent(&self.st.base, doc, d);
             let title = sp::track_name(doc, d);
@@ -537,7 +773,8 @@ impl PianoRollView {
             (f64::from(lo) + f64::from(hi)) / 2.0
         };
         let g = self.grid_rect();
-        self.scroll_y = (127.0 - mid) * self.key_h + self.key_h / 2.0 - g.height() / 2.0;
+        let row = self.rows.nearest_row(mid.round().clamp(0.0, 127.0) as u8) as f64;
+        self.scroll_y = row * self.key_h + self.key_h / 2.0 - g.height() / 2.0;
         self.clamp_scroll();
     }
 
@@ -565,7 +802,7 @@ impl PianoRollView {
 
     fn grid_rect(&self) -> Rect {
         let b = self.bounds;
-        let y0 = b.y0 + TOP_BAR_HEIGHT + ROLL_RULER_HEIGHT;
+        let y0 = b.y0 + HEADER_HEIGHT + ROLL_RULER_HEIGHT;
         let y1 = (b.y1 - VELOCITY_HEIGHT).max(y0);
         Rect::new(self.axis.x0, y0, b.x1.max(self.axis.x0), y1)
     }
@@ -575,8 +812,18 @@ impl PianoRollView {
         (r.y0 + VEL_PAD, (r.height() - 2.0 * VEL_PAD).max(1.0))
     }
 
+    /// The top of a key's row (a key a fold hides is drawn on the nearest row).
     fn key_top(&self, key: u8) -> f64 {
-        self.grid_rect().y0 + (127.0 - f64::from(key)) * self.key_h - self.scroll_y
+        self.row_top(self.rows.nearest_row(key))
+    }
+
+    fn row_top(&self, row: usize) -> f64 {
+        self.grid_rect().y0 + row as f64 * self.key_h - self.scroll_y
+    }
+
+    /// The rows that show between `y0` and `y1` (logical y), first to last.
+    fn visible_rows(&self, y0: f64, y1: f64) -> std::ops::RangeInclusive<usize> {
+        self.row_at(y0)..=self.row_at(y1 - 0.01)
     }
 
     fn rect_of(&self, n: &Note) -> Rect {
@@ -590,7 +837,7 @@ impl PianoRollView {
     }
 
     fn clamp_scroll(&mut self) {
-        let max = (128.0 * self.key_h - self.grid_rect().height()).max(0.0);
+        let max = (self.rows.len() as f64 * self.key_h - self.grid_rect().height()).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max);
     }
 
@@ -605,6 +852,19 @@ impl PianoRollView {
                 let i = Tool::ALL.iter().position(|x| *x == t).unwrap_or(0) as f64;
                 let x = b.x1 - 294.0 + i * 25.0;
                 Rect::new(x, y, x + 23.0, y + 18.0)
+            }
+            scale_bar => {
+                let (x0, x1) = match scale_bar {
+                    TopItem::ScaleRoot => (56.0, 90.0),
+                    TopItem::ScaleKind => (94.0, 206.0),
+                    TopItem::ScaleDetect => (210.0, 240.0),
+                    TopItem::ScaleSnap => (244.0, 300.0),
+                    TopItem::Fold => (336.0, 386.0),
+                    TopItem::Chord => (432.0, 502.0),
+                    _ => (506.0, 548.0),
+                };
+                let y = b.y0 + TOP_BAR_HEIGHT + 3.0;
+                Rect::new(b.x0 + x0, y, b.x0 + x1, y + 16.0)
             }
         }
     }
@@ -632,10 +892,11 @@ impl PianoRollView {
         if !b.contains(pos) || self.clip.is_none() {
             return Hit::None;
         }
-        if pos.y < b.y0 + TOP_BAR_HEIGHT {
+        if pos.y < b.y0 + HEADER_HEIGHT {
             let item = [TopItem::Snap, TopItem::Quantize, TopItem::Close]
                 .into_iter()
                 .chain(Tool::ALL.into_iter().map(TopItem::Tool))
+                .chain(TopItem::SCALE_BAR)
                 .find(|i| self.top_rect(*i).contains(pos));
             return Hit::Top(item);
         }
@@ -704,6 +965,50 @@ impl PianoRollView {
             key,
             on,
         })
+    }
+
+    /// A request for the menu of a scale bar field, opened below it.
+    fn bar_menu(&self, item: TopItem, target: ContextTarget) -> UiAction {
+        let r = self.top_rect(item);
+        UiAction::ContextMenu {
+            target,
+            at: Point::new(r.x0, r.y1),
+        }
+    }
+
+    /// The key a drawn note gets: the key under the pointer, moved to the nearest scale key
+    /// (ties down) with snap to scale on.
+    fn drawn_key(&self, key: u8) -> u8 {
+        match self.scale() {
+            Some(s) if self.snap_scale && !s.is_chromatic() => s.nearest(key),
+            _ => key,
+        }
+    }
+
+    /// The keys the pencil drops on `key`: the stamp's chord, or `key` alone.
+    fn stamp_keys(&self, key: u8) -> Vec<u8> {
+        let keys = self.stamp.keys(key, self.scale(), self.inversion);
+        if keys.is_empty() { vec![key] } else { keys }
+    }
+
+    /// `SetClipScale` for the open clip.
+    fn scale_action(&self, scale: Option<Scale>) -> Option<UiAction> {
+        Some(UiAction::Command(Command::Song(
+            SongCommand::SetClipScale {
+                clip: self.clip_id?,
+                scale,
+            },
+        )))
+    }
+
+    /// Picks the scale that fits the notes best (the longer a note, the more it counts).
+    fn detect_scale(&self, out: &mut Vec<UiAction>) {
+        let weights: Vec<(u8, i64)> = self.notes().iter().map(|n| (n.key, n.length)).collect();
+        if let Some(s) = detect_scale(&weights)
+            && self.scale() != Some(s)
+        {
+            out.extend(self.scale_action(Some(s)));
+        }
     }
 
     // ------------------------------------------------------------------ events
@@ -796,6 +1101,29 @@ impl PianoRollView {
             Hit::Top(Some(TopItem::Snap)) => self.snap = self.snap.cycle(primary),
             Hit::Top(Some(TopItem::Quantize)) if primary => self.quantize(out),
             Hit::Top(Some(TopItem::Close)) if primary => out.push(UiAction::ClosePianoRoll),
+            Hit::Top(Some(TopItem::ScaleRoot)) if primary => {
+                out.push(self.bar_menu(TopItem::ScaleRoot, ContextTarget::PianoScaleRoot));
+            }
+            Hit::Top(Some(TopItem::ScaleKind)) if primary => {
+                out.push(self.bar_menu(TopItem::ScaleKind, ContextTarget::PianoScaleKind));
+            }
+            Hit::Top(Some(TopItem::Chord)) if primary => {
+                out.push(self.bar_menu(TopItem::Chord, ContextTarget::PianoChord));
+            }
+            Hit::Top(Some(TopItem::ScaleDetect)) if primary => self.detect_scale(out),
+            Hit::Top(Some(TopItem::ScaleSnap)) if primary => self.snap_scale = !self.snap_scale,
+            Hit::Top(Some(TopItem::Fold)) => {
+                let next = if primary {
+                    cycle(&Fold::ALL, self.fold, 1)
+                } else {
+                    cycle(&Fold::ALL, self.fold, -1)
+                };
+                self.set_fold(next);
+            }
+            Hit::Top(Some(TopItem::Inversion)) => {
+                let d: i32 = if primary { 1 } else { -1 };
+                self.inversion = (i32::from(self.inversion) + d).rem_euclid(4) as u8;
+            }
             Hit::Ruler if primary => {
                 let c = snap_round(self.axis.x_to_tick(pos.x), step);
                 let t = self.content_to_song(c).max(0);
@@ -834,22 +1162,24 @@ impl PianoRollView {
                 }
                 let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
                 let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
-                let note = seq_edit::clamp_note(Note::new(
-                    tick,
-                    length,
-                    self.key_at(pos.y),
-                    DEFAULT_VELOCITY,
-                ));
+                let key = self.drawn_key(self.key_at(pos.y));
+                let notes: Vec<Note> = self
+                    .stamp_keys(key)
+                    .into_iter()
+                    .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
+                    .collect();
                 let base = self.notes().to_vec();
                 let merge = self.merge_id();
-                let (list, sel) = with_note(&base, note);
+                let (list, sel) = with_notes(&base, &notes);
                 self.selection.set(sel);
                 out.extend(self.content(list.clone(), Some(merge)));
-                out.extend(self.audition(note.key, true));
+                for n in &notes {
+                    out.extend(self.audition(n.key, true));
+                }
                 self.drag = Drag::Draw {
                     start: pos,
                     base,
-                    note,
+                    notes,
                     merge,
                     last: list,
                 };
@@ -949,7 +1279,7 @@ impl PianoRollView {
                     originals,
                     sel,
                     grabbed: i,
-                    anchor_key: i32::from(self.key_at(pos.y)),
+                    anchor_row: self.row_at(pos.y) as i32,
                     merge,
                     moved: false,
                     emitted: false,
@@ -973,6 +1303,10 @@ impl PianoRollView {
         let min = seq_edit::min_length(step, MIN_TICKS);
         let axis = self.axis;
         let key_here = self.key_at(pos.y);
+        let row_here = self.row_at(pos.y) as i32;
+        let scale = self.scale();
+        let snap_scale = self.snap_scale;
+        let rows = &self.rows;
         let (vtop, vh) = self.velocity_range();
         let rects: Vec<Rect> = if matches!(self.drag, Drag::Band { .. }) {
             self.notes().iter().map(|n| self.rect_of(n)).collect()
@@ -1027,20 +1361,16 @@ impl PianoRollView {
             Drag::Draw {
                 start,
                 base,
-                note,
+                notes,
                 merge,
                 last,
             } => {
                 let delta = axis.dx_to_ticks(pos.x - start.x);
+                let first = notes[0];
                 let len =
-                    seq_edit::drag_length(note.tick, note.tick + note.length, delta, step, min);
-                let (list, sel) = with_note(
-                    base,
-                    Note {
-                        length: len,
-                        ..*note
-                    },
-                );
+                    seq_edit::drag_length(first.tick, first.tick + first.length, delta, step, min);
+                let drawn: Vec<Note> = notes.iter().map(|n| Note { length: len, ..*n }).collect();
+                let (list, sel) = with_notes(base, &drawn);
                 if list != *last {
                     out.extend(content(list.clone(), *merge));
                     *last = list;
@@ -1053,7 +1383,7 @@ impl PianoRollView {
                 originals,
                 sel,
                 grabbed,
-                anchor_key,
+                anchor_row,
                 merge,
                 moved,
                 emitted,
@@ -1068,8 +1398,16 @@ impl PianoRollView {
                 let g = originals[*grabbed];
                 let delta = axis.dx_to_ticks(pos.x - start.x);
                 let dt = seq_edit::drag_start(g.tick, delta, step) - g.tick;
-                let dkey = i32::from(key_here) - *anchor_key;
-                let moved_notes = seq_edit::move_notes(originals, sel, dt, dkey);
+                let timed = seq_edit::move_notes(originals, sel, dt, 0);
+                let moved_notes = vertical_move(
+                    rows,
+                    scale,
+                    snap_scale,
+                    &timed,
+                    sel,
+                    *grabbed,
+                    *anchor_row - row_here,
+                );
                 let now_key = moved_notes[*grabbed].key;
                 let mut tracked = BTreeSet::new();
                 tracked.insert(*grabbed);
@@ -1140,8 +1478,10 @@ impl PianoRollView {
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::None | Drag::Pan { .. } | Drag::Band { .. } => {}
             Drag::Keys { key } => out.extend(self.audition(key, false)),
-            Drag::Draw { note, .. } => {
-                out.extend(self.audition(note.key, false));
+            Drag::Draw { notes, .. } => {
+                for n in &notes {
+                    out.extend(self.audition(n.key, false));
+                }
                 out.push(UiAction::EndMerge);
             }
             Drag::Move {
@@ -1297,8 +1637,8 @@ impl PianoRollView {
                     .collect();
                 CommandOutcome::Handled(self.content(notes, None).into_iter().collect())
             }
-            "editor.transpose_up" => self.move_selection(0, 1),
-            "editor.transpose_down" => self.move_selection(0, -1),
+            "editor.transpose_up" => self.transpose(1),
+            "editor.transpose_down" => self.transpose(-1),
             "editor.octave_up" => self.move_selection(0, 12),
             "editor.octave_down" => self.move_selection(0, -12),
             "editor.nudge_left" => self.move_selection(-step, 0),
@@ -1308,6 +1648,148 @@ impl PianoRollView {
             "editor.nudge_right_beat" => self.move_selection(self.meter.beat_ticks(), 0),
             "editor.nudge_left_tick" => self.move_selection(-1, 0),
             "editor.nudge_right_tick" => self.move_selection(1, 0),
+            "editor.scale_snap_toggle" => {
+                self.snap_scale = !self.snap_scale;
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.fold_toggle" => {
+                let next = match (self.fold, self.scale()) {
+                    (Fold::Off, Some(s)) if !s.is_chromatic() => Fold::Scale,
+                    (Fold::Off, _) => Fold::Used,
+                    _ => Fold::Off,
+                };
+                self.set_fold(next);
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.fold_set" => match arg.and_then(Fold::from_id) {
+                Some(fold) => {
+                    self.set_fold(fold);
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
+            "editor.set_scale_root" => {
+                let Some(root) = arg.and_then(|a| ROOT_ARGS.iter().position(|r| *r == a)) else {
+                    return CommandOutcome::Declined;
+                };
+                let root = root as u8;
+                match self.scale() {
+                    Some(s) => CommandOutcome::Handled(
+                        self.scale_action(Some(Scale::new(root, s.kind)))
+                            .into_iter()
+                            .collect(),
+                    ),
+                    None => {
+                        // Nothing to move: the root is the one the next scale gets.
+                        self.root_pref = root;
+                        CommandOutcome::Handled(Vec::new())
+                    }
+                }
+            }
+            "editor.set_scale" => {
+                let Some(kind) = arg.and_then(ScaleKind::from_id) else {
+                    return CommandOutcome::Declined;
+                };
+                let root = self.scale().map_or(self.root_pref, |s| s.root);
+                let scale = (kind != ScaleKind::Chromatic).then(|| Scale::new(root, kind));
+                CommandOutcome::Handled(self.scale_action(scale).into_iter().collect())
+            }
+            "editor.detect_scale" => {
+                let mut out = Vec::new();
+                self.detect_scale(&mut out);
+                CommandOutcome::Handled(out)
+            }
+            "editor.conform_to_scale" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let Some(scale) = self.scale() else {
+                    return CommandOutcome::Handled(Vec::new());
+                };
+                let sel = self.selection.items().clone();
+                let moved = chord_edit::conform(self.notes(), &sel, scale);
+                let result = chord_edit::unique(moved, &sel);
+                self.apply_edit(Some(result))
+            }
+            "editor.set_chord" => match arg.and_then(Stamp::from_id) {
+                Some(stamp) => {
+                    self.stamp = stamp;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
+            "editor.set_chord_inversion" => match arg.and_then(|a| a.parse::<u8>().ok()) {
+                Some(i) if i <= 3 => {
+                    self.inversion = i;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                _ => CommandOutcome::Declined,
+            },
+            "editor.chordify" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let sel = self.selection.items().clone();
+                let result = chord_edit::chordify(
+                    self.notes(),
+                    &sel,
+                    self.stamp,
+                    self.inversion,
+                    self.scale(),
+                );
+                self.apply_edit(result)
+            }
+            "editor.arpeggiate" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let sel = self.selection.items().clone();
+                let result = chord_edit::arpeggiate(self.notes(), &sel, self.arp, step);
+                self.apply_edit(result)
+            }
+            "editor.strum" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let sel = self.selection.items().clone();
+                let result = chord_edit::strum(self.notes(), &sel, self.strum);
+                self.apply_edit(result)
+            }
+            "editor.set_arp_pattern" => match arg.and_then(ArpPattern::from_id) {
+                Some(pattern) => {
+                    self.arp.pattern = pattern;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
+            "editor.set_arp_gate" => match arg.and_then(|a| a.parse::<u8>().ok()) {
+                Some(g) if ARP_GATES.contains(&g) => {
+                    self.arp.gate_percent = g;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                _ => CommandOutcome::Declined,
+            },
+            "editor.set_arp_octaves" => match arg.and_then(|a| a.parse::<u8>().ok()) {
+                Some(o) if ARP_OCTAVES.contains(&o) => {
+                    self.arp.octaves = o;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                _ => CommandOutcome::Declined,
+            },
+            "editor.set_strum_amount" => match arg.and_then(|a| a.parse::<u16>().ok()) {
+                Some(d) if STRUM_AMOUNTS.contains(&d) => {
+                    self.strum.ticks = strum_ticks(d);
+                    CommandOutcome::Handled(Vec::new())
+                }
+                _ => CommandOutcome::Declined,
+            },
+            "editor.set_strum_direction" => match arg.and_then(StrumDirection::from_id) {
+                Some(direction) => {
+                    self.strum.direction = direction;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
             "sequencer.snap_toggle" => {
                 self.snap = self.vp.toggle_snap(self.snap);
                 CommandOutcome::Handled(Vec::new())
@@ -1388,8 +1870,33 @@ impl PianoRollView {
         let sel = self.selection.items().clone();
         let moved = seq_edit::move_notes(self.notes(), &sel, dt, dkey);
         let (list, new) = seq_edit::normalize_notes(moved, &sel);
+        self.apply_edit(Some((list, new)))
+    }
+
+    /// Transposes the selection by one semitone, or by one scale degree when snap to scale is
+    /// on and the clip has a scale (Declined without a selection).
+    fn transpose(&mut self, by: i32) -> CommandOutcome {
+        match self.scale() {
+            Some(s) if self.snap_scale && !s.is_chromatic() => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let sel = self.selection.items().clone();
+                let moved = chord_edit::move_degrees(self.notes(), &sel, by, s);
+                let (list, new) = seq_edit::normalize_notes(moved, &sel);
+                self.apply_edit(Some((list, new)))
+            }
+            _ => self.move_selection(0, by),
+        }
+    }
+
+    /// Sends a new note list (one `SetClipContent`, so one undo step) and selects `new`;
+    /// nothing is sent when the list is the clip's own.
+    fn apply_edit(&mut self, result: Option<(Vec<Note>, BTreeSet<usize>)>) -> CommandOutcome {
         let mut out = Vec::new();
-        if list != self.notes() {
+        if let Some((list, new)) = result
+            && list != self.notes()
+        {
             self.selection.set(new);
             out.extend(self.content(list, None));
         }
@@ -1400,9 +1907,11 @@ impl PianoRollView {
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::Keys { key } => out.extend(self.audition(key, false)),
             Drag::Draw {
-                base, note, merge, ..
+                base, notes, merge, ..
             } => {
-                out.extend(self.audition(note.key, false));
+                for n in &notes {
+                    out.extend(self.audition(n.key, false));
+                }
                 out.extend(self.content(base, Some(merge)));
                 out.push(UiAction::EndMerge);
                 self.selection.clear();
@@ -1471,6 +1980,9 @@ impl PianoRollView {
             );
         }
         self.paint_top_bar(c);
+        if self.clip.is_some() {
+            self.paint_scale_bar(c);
+        }
         if self.focused {
             sp::line(c, b.x0, b.y0 + 0.5, b.x1, b.y0 + 0.5, self.st.base.focus);
         }
@@ -1484,15 +1996,27 @@ impl PianoRollView {
         let g = self.grid_rect();
         c.push_clip(&g.into());
         sp::rect(c, g, st.lane);
-        let k_hi = self.key_at(g.y0);
-        let k_lo = self.key_at(g.y1 - 0.01);
-        for k in k_lo..=k_hi {
-            let y = self.key_top(k);
+        let scale = self.scale().filter(|s| !s.is_chromatic());
+        for r in self.visible_rows(g.y0, g.y1) {
+            let k = self.rows.keys()[r];
+            let y = self.row_top(r);
             let row = Rect::new(g.x0, y, g.x1, y + self.key_h);
-            if is_black(k) {
-                sp::rect(c, row, st.row_black);
+            match scale {
+                // In the scale the row is tinted (the root more), out of it the row is dark.
+                Some(s) if s.is_root(k) => {
+                    sp::rect(c, row, mix(st.lane, self.accent, 0.30));
+                    sp::rect(
+                        c,
+                        Rect::new(g.x0, y, g.x0 + 3.0, y + self.key_h),
+                        self.accent,
+                    );
+                }
+                Some(s) if s.contains(k) => sp::rect(c, row, mix(st.lane, self.accent, 0.10)),
+                Some(_) => sp::rect(c, row, st.row_black),
+                None if is_black(k) => sp::rect(c, row, st.row_black),
+                None => {}
             }
-            let col = if k % 12 == 0 {
+            let col = if k.is_multiple_of(12) {
                 st.grid_bar
             } else {
                 st.grid_sub
@@ -1598,16 +2122,16 @@ impl PianoRollView {
         let kb = Rect::new(self.bounds.x0, g.y0, g.x0, g.y1);
         c.push_clip(&kb.into());
         sp::rect(c, kb, st.key_white);
-        let sounding = match &self.drag {
-            Drag::Keys { key } => Some(*key),
-            Drag::Move { sounding, .. } => Some(*sounding),
-            Drag::Draw { note, .. } => Some(note.key),
-            _ => None,
+        let sounding: Vec<u8> = match &self.drag {
+            Drag::Keys { key } => vec![*key],
+            Drag::Move { sounding, .. } => vec![*sounding],
+            Drag::Draw { notes, .. } => notes.iter().map(|n| n.key).collect(),
+            _ => Vec::new(),
         };
-        let k_hi = self.key_at(g.y0);
-        let k_lo = self.key_at(g.y1 - 0.01);
-        for k in k_lo..=k_hi {
-            let y = self.key_top(k);
+        let scale = self.scale().filter(|s| !s.is_chromatic());
+        for r in self.visible_rows(g.y0, g.y1) {
+            let k = self.rows.keys()[r];
+            let y = self.row_top(r);
             let row = Rect::new(kb.x0, y, kb.x1, y + self.key_h);
             if is_black(k) {
                 let split = row.center().y.round() + 0.5;
@@ -1625,14 +2149,14 @@ impl PianoRollView {
                     kb.x0 + KEYBOARD_WIDTH * 0.6,
                     row.y1 - 1.0,
                 );
-                let col = if sounding == Some(k) {
+                let col = if sounding.contains(&k) {
                     self.accent
                 } else {
                     st.key_black
                 };
                 c.fill_with(RoundedRect::from_rect(r, 1.5), col);
             } else {
-                if sounding == Some(k) {
+                if sounding.contains(&k) {
                     sp::rect(c, row, mix(st.key_white, self.accent, 0.6));
                 }
                 if matches!(k % 12, 4 | 11) || k == 127 {
@@ -1654,23 +2178,50 @@ impl PianoRollView {
                 8.0
             };
             let base = if self.key_h < 10.0 { 1.0 } else { 3.0 };
-            if k % 12 == 0 {
+            if let Some(s) = scale
+                && s.contains(k)
+            {
+                // A strip at the edge marks the scale keys, a bright one the root.
+                let strip = Rect::new(kb.x1 - 3.0, row.y0 + 1.0, kb.x1 - 1.0, row.y1 - 1.0);
+                sp::rect(
+                    c,
+                    strip,
+                    self.accent
+                        .with_alpha(if s.is_root(k) { 1.0 } else { 0.55 }),
+                );
+            }
+            let is_root = scale.is_some_and(|s| s.is_root(k));
+            if k.is_multiple_of(12) {
                 sp::line(c, kb.x0, row.y1 - 0.5, kb.x1, row.y1 - 0.5, t.knob_bottom);
                 let name = format!("C{}", i32::from(k) / 12 - 1);
                 sp::label(
                     c,
                     &name,
-                    kb.x1 - 4.0,
+                    kb.x1 - 6.0,
                     row.y1 - base,
                     size as f32,
-                    t.plate,
+                    if is_root { self.accent } else { t.plate },
                     Align::End,
                 );
-            } else if self.key_h >= 16.0 && !is_black(k) {
+            } else if is_root {
+                // The root of the scale is named wherever it is.
                 sp::label(
                     c,
                     &crate::zone_edit::note_name(k),
-                    kb.x1 - 4.0,
+                    kb.x1 - 6.0,
+                    row.y1 - base,
+                    size as f32,
+                    self.accent,
+                    Align::End,
+                );
+            } else if (self.key_h >= 16.0 && !is_black(k))
+                || (!self.rows.is_full() && self.key_h >= 9.0)
+            {
+                // A folded roll is a list of notes, so every row is named.
+                sp::label(
+                    c,
+                    &crate::zone_edit::note_name(k),
+                    kb.x1 - 6.0,
                     row.y1 - base,
                     size as f32,
                     t.plate.with_alpha(0.7),
@@ -1719,6 +2270,125 @@ impl PianoRollView {
         sp::line(c, vr.x0, vr.y0 + 0.5, vr.x1, vr.y0 + 0.5, st.separator);
         c.pop_clip();
         sp::line(c, side.x0, vr.y0 + 0.5, side.x1, vr.y0 + 0.5, st.separator);
+    }
+
+    /// The scale bar: scale, detect, snap to scale, fold and chord stamp.
+    fn paint_scale_bar(&self, c: &mut dyn Canvas) {
+        let st = &self.st;
+        let t = &st.base;
+        let b = self.bounds;
+        let bar = Rect::new(
+            b.x0,
+            b.y0 + TOP_BAR_HEIGHT,
+            b.x1,
+            b.y0 + TOP_BAR_HEIGHT + SCALE_BAR_HEIGHT,
+        );
+        sp::rect(c, bar, st.header);
+        sp::line(c, bar.x0, bar.y1 - 0.5, bar.x1, bar.y1 - 0.5, st.separator);
+        let hovered = |item| self.hover == Hit::Top(Some(item));
+        let field = |c: &mut dyn Canvas, item: TopItem, text: &str, color: Color, active: bool| {
+            let r = self.top_rect(item);
+            sp::lcd(
+                c,
+                st,
+                r,
+                (hovered(item) || active).then_some(if active { t.highlight } else { t.focus }),
+            );
+            sp::label(
+                c,
+                text,
+                r.center().x,
+                r.center().y + 3.5,
+                9.0,
+                color,
+                Align::Center,
+            );
+        };
+        let caption = |c: &mut dyn Canvas, item: TopItem, text: &str| {
+            let r = self.top_rect(item);
+            sp::label(
+                c,
+                text,
+                r.x0 - 6.0,
+                r.center().y + 3.0,
+                8.0,
+                t.text_muted,
+                Align::End,
+            );
+        };
+        let scale = self.scale().filter(|s| !s.is_chromatic());
+        caption(c, TopItem::ScaleRoot, "SCALE");
+        let root = scale.map_or(self.root_pref, |s| s.root);
+        field(
+            c,
+            TopItem::ScaleRoot,
+            pitch_name(root),
+            if scale.is_some() {
+                t.highlight
+            } else {
+                t.text_muted
+            },
+            false,
+        );
+        field(
+            c,
+            TopItem::ScaleKind,
+            scale.map_or(ScaleKind::Chromatic, |s| s.kind).label(),
+            if scale.is_some() {
+                t.highlight
+            } else {
+                t.text_muted
+            },
+            false,
+        );
+        field(c, TopItem::ScaleDetect, "DET", t.text, false);
+        field(
+            c,
+            TopItem::ScaleSnap,
+            "SCL SNAP",
+            if self.snap_scale {
+                t.highlight
+            } else {
+                t.text_muted
+            },
+            self.snap_scale,
+        );
+        caption(c, TopItem::Fold, "FOLD");
+        field(
+            c,
+            TopItem::Fold,
+            match self.fold {
+                Fold::Off => "OFF",
+                Fold::Scale => "SCALE",
+                Fold::Used => "USED",
+            },
+            if self.fold == Fold::Off {
+                t.text_muted
+            } else {
+                t.highlight
+            },
+            self.fold != Fold::Off,
+        );
+        caption(c, TopItem::Chord, "CHORD");
+        let stamped = self.stamp.is_active(self.scale());
+        field(
+            c,
+            TopItem::Chord,
+            self.stamp.short(),
+            if stamped { t.highlight } else { t.text_muted },
+            stamped,
+        );
+        field(
+            c,
+            TopItem::Inversion,
+            &format!("INV {}", self.inversion),
+            if self.inversion > 0 {
+                t.highlight
+            } else {
+                t.text_muted
+            },
+            false,
+        );
     }
 
     fn paint_top_bar(&self, c: &mut dyn Canvas) {
@@ -1844,12 +2514,74 @@ impl PianoRollView {
     }
 }
 
-/// `base` plus `note`, normalized; the returned selection holds the new note's index.
-fn with_note(base: &[Note], note: Note) -> (Vec<Note>, BTreeSet<usize>) {
+/// `base` plus `notes`, sorted and without two notes on one start and key; the returned
+/// selection holds the indices of the new notes.
+fn with_notes(base: &[Note], notes: &[Note]) -> (Vec<Note>, BTreeSet<usize>) {
     let mut list = base.to_vec();
-    list.push(note);
-    let tracked: BTreeSet<usize> = [base.len()].into_iter().collect();
-    seq_edit::normalize_notes(list, &tracked)
+    list.extend_from_slice(notes);
+    let tracked: BTreeSet<usize> = (base.len()..list.len()).collect();
+    chord_edit::unique(list, &tracked)
+}
+
+/// The next (`by` = 1) or previous (-1) value of a list, wrapping around.
+fn cycle<T: Copy + PartialEq>(all: &[T], current: T, by: isize) -> T {
+    let i = all.iter().position(|x| *x == current).unwrap_or(0) as isize;
+    all[(i + by).rem_euclid(all.len() as isize) as usize]
+}
+
+/// Moves the `sel` notes vertically by `steps` (positive = up) the way the roll's state says:
+/// by rows when a fold hides keys (the pointer's rows are the unit), by scale degree when snap
+/// to scale is on and the clip has a scale (the grabbed note lands on the in-scale key nearest
+/// to the pointer and the others move the same number of degrees), else by semitones. The
+/// group keeps its shape: the move is cut so that every note stays on the keyboard.
+fn vertical_move(
+    rows: &KeyRows,
+    scale: Option<Scale>,
+    snap_scale: bool,
+    notes: &[Note],
+    sel: &BTreeSet<usize>,
+    grabbed: usize,
+    steps: i32,
+) -> Vec<Note> {
+    if steps == 0 {
+        return notes.to_vec();
+    }
+    if !rows.is_full() {
+        let picked: Vec<usize> = notes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| sel.contains(i))
+            .map(|(_, n)| rows.nearest_row(n.key))
+            .collect();
+        let (Some(lo), Some(hi)) = (picked.iter().min(), picked.iter().max()) else {
+            return notes.to_vec();
+        };
+        // A row index grows downwards: moving up by `steps` subtracts.
+        let steps = steps.clamp(*hi as i32 - (rows.len() as i32 - 1), *lo as i32);
+        return notes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                if sel.contains(&i) {
+                    let r = rows.nearest_row(n.key) as i64 - i64::from(steps);
+                    Note {
+                        key: rows.key_at_row(r),
+                        ..*n
+                    }
+                } else {
+                    *n
+                }
+            })
+            .collect();
+    }
+    match scale {
+        Some(s) if snap_scale && !s.is_chromatic() => {
+            let from = notes[grabbed].key;
+            let to = s.nearest((i32::from(from) + steps).clamp(0, 127) as u8);
+            chord_edit::move_degrees(notes, sel, s.degrees_between(from, to), s)
+        }
+        _ => seq_edit::move_notes(notes, sel, 0, steps),
+    }
 }
 
 fn is_black(key: u8) -> bool {

@@ -43,6 +43,7 @@ fn notes_clip(length: i64, notes: Vec<Note>) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Notes(notes),
     }

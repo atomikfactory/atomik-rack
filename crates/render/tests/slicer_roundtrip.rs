@@ -184,6 +184,7 @@ fn project(f: &Fixture, tempo: f64) -> (RackDoc, Vec<ZoneDoc>) {
             offset: 0,
             loop_length: None,
             muted: false,
+            scale: None,
             grid: None,
             content: ClipContent::Notes(notes),
         },

@@ -7,6 +7,9 @@
 mod support;
 
 use atomik_model::ClipId;
+use atomik_model::theory::{ChordKind, Scale, ScaleKind};
+use atomik_ui::chord_edit::Stamp;
+use atomik_ui::key_rows::Fold;
 use atomik_ui::timeline::Snap;
 use atomik_ui::{DisplayList, TransportState};
 use std::path::PathBuf;
@@ -63,6 +66,21 @@ fn record_piano_roll() -> DisplayList {
     dl
 }
 
+/// The piano roll on the bass clip with a scale (C minor pentatonic... the bass line is in
+/// C and G with the odd F, E flat and B flat), the fold and the chord stamp shown.
+fn record_piano_roll_scale(fold: Fold) -> DisplayList {
+    let (mut doc, reg) = (song_doc(), registry());
+    doc.song.tracks[0].lanes[0].clips[0].scale = Some(Scale::new(0, ScaleKind::NaturalMinor));
+    let mut v = piano_roll(&doc, &reg);
+    v.set_fold(fold);
+    v.set_snap_to_scale(true);
+    v.set_stamp(Stamp::Chord(ChordKind::Minor));
+    v.set_selected_notes(&[4]);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
 fn record_transport() -> DisplayList {
     let (doc, reg) = (song_doc(), registry());
     let mut v = transport_bar(&doc, &reg);
@@ -85,6 +103,30 @@ fn arrangement_matches_golden() {
 #[test]
 fn piano_roll_matches_golden() {
     check("piano_roll_1x.json", &record_piano_roll().to_json());
+}
+
+#[test]
+fn piano_roll_with_a_scale_matches_golden() {
+    check(
+        "piano_roll_scale_1x.json",
+        &record_piano_roll_scale(Fold::Off).to_json(),
+    );
+}
+
+#[test]
+fn piano_roll_folded_to_the_scale_matches_golden() {
+    check(
+        "piano_roll_scale_fold_1x.json",
+        &record_piano_roll_scale(Fold::Scale).to_json(),
+    );
+}
+
+#[test]
+fn piano_roll_folded_to_the_used_notes_matches_golden() {
+    check(
+        "piano_roll_used_fold_1x.json",
+        &record_piano_roll_scale(Fold::Used).to_json(),
+    );
 }
 
 #[test]

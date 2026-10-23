@@ -265,6 +265,7 @@ impl Builder<'_> {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: ClipContent::Notes(notes),
             },

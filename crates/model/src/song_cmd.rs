@@ -605,11 +605,24 @@ pub(crate) fn plan(
                 }
                 g.validate().map_err(range)?;
             }
+            if clip.scale.is_some() && !kind.is_notes() {
+                return Err(bad("only a note clip can have a scale"));
+            }
             if kind.is_audio() {
                 check_audio_shape(clip.offset, clip.loop_length)?;
             }
             let content = check_content(doc, clip.content, kind, desc)?;
-            let (edit, id) = insert_new(doc, device, lane, Clip { content, ..clip })?;
+            let scale = clip.scale.filter(|s| !s.is_chromatic());
+            let (edit, id) = insert_new(
+                doc,
+                device,
+                lane,
+                Clip {
+                    content,
+                    scale,
+                    ..clip
+                },
+            )?;
             return Ok((edit, Some(id)));
         }
         SongCommand::RemoveClip { id } => {
@@ -680,6 +693,24 @@ pub(crate) fn plan(
                 lane,
                 old: Some(c.clone()),
                 new: Some(Clip { grid, ..c.clone() }),
+            }
+        }
+        SongCommand::SetClipScale { clip, scale } => {
+            let (device, lane, c) = find_clip(doc, clip)?;
+            if !c.content.is_notes() {
+                return Err(bad(format!(
+                    "clip {} is not a note clip, so it has no scale",
+                    clip.0
+                )));
+            }
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    scale: scale.filter(|s| !s.is_chromatic()),
+                    ..c.clone()
+                }),
             }
         }
         SongCommand::SplitClip { id, at } => {
@@ -771,6 +802,7 @@ pub(crate) fn plan(
                 loop_length: None,
                 muted: false,
                 grid: None,
+                scale: None,
                 content: ClipContent::Audio(content),
             };
             let (edit, id) = insert_new(doc, device, lane, clip)?;

@@ -33,6 +33,7 @@ fn song(muted: bool) -> RackDoc {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note {
                     muted,

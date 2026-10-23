@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 15,
+//! { "format": "atomik-project", "version": 16,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -100,7 +100,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. Saving always writes version 15.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. Saving always writes version 16.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -124,6 +124,7 @@ use crate::song_cmd::{
 use crate::steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
 };
+use crate::theory::{Scale, ScaleKind};
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
 use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, rules};
 use atomik_device_sdk::Registry;
@@ -139,8 +140,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
-/// track heights).
-pub const PROJECT_VERSION: u32 = 15;
+/// track heights) and 15 (no clip scales).
+pub const PROJECT_VERSION: u32 = 16;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -225,6 +226,7 @@ const PATTERNS_FIELDS: &[&str] = &["patterns"];
 const PATTERN_FIELDS: &[&str] = &["name", "length", "resolution", "swing", "steps"];
 const STEP_FIELDS: &[&str] = &["on", "key", "velocity", "gate", "prob", "tie"];
 const GRID_FIELDS: &[&str] = &["resolution", "steps", "swing"];
+const SCALE_FIELDS: &[&str] = &["root", "kind"];
 const ZONE_FIELDS: &[&str] = &[
     "asset",
     "key_lo",
@@ -329,6 +331,17 @@ const NOTE_CLIP_FIELDS_V5: &[&str] = &[
     "loop_length",
     "muted",
     "grid",
+    "notes",
+];
+const NOTE_CLIP_FIELDS_V16: &[&str] = &[
+    "id",
+    "start",
+    "length",
+    "offset",
+    "loop_length",
+    "muted",
+    "grid",
+    "scale",
     "notes",
 ];
 const AUTOMATION_CLIP_FIELDS: &[&str] = &[
@@ -474,7 +487,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=15 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=16 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1369,7 +1382,9 @@ fn load_track(
         } else if i == 0 {
             (
                 NOTES_LANE_FIELDS,
-                if version >= 5 {
+                if version >= 16 {
+                    NOTE_CLIP_FIELDS_V16
+                } else if version >= 5 {
                     NOTE_CLIP_FIELDS_V5
                 } else {
                     NOTE_CLIP_FIELDS
@@ -1494,6 +1509,7 @@ fn load_clip(
             loop_length,
             muted,
             grid: None,
+            scale: None,
             content: ClipContent::Audio(audio),
         });
     }
@@ -1576,6 +1592,10 @@ fn load_clip(
             Some(g) => Some(load_grid(g, &path.field("grid"))?),
             None => None,
         },
+        scale: match obj.get("scale") {
+            Some(s) => Some(load_scale(s, &path.field("scale"))?),
+            None => None,
+        },
         content,
     })
 }
@@ -1601,6 +1621,22 @@ fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
     };
     grid.validate().map_err(|m| path.error(m))?;
     Ok(grid)
+}
+
+/// Reads a note clip's `"scale"` object: a root `0..=11` and a kind name. A chromatic scale is
+/// not stored, so it is refused.
+fn load_scale(v: &Value, path: &JsonPath) -> Result<Scale, ModelError> {
+    let s = object(v, path, SCALE_FIELDS, SCALE_FIELDS)?;
+    let root = uint(&s["root"], &path.field("root"), 11)? as u8;
+    let kp = path.field("kind");
+    let name = string(&s["kind"], &kp)?;
+    match ScaleKind::from_id(name) {
+        Some(ScaleKind::Chromatic) => {
+            Err(kp.error("a chromatic scale is not stored (leave the scale out)"))
+        }
+        Some(kind) => Ok(Scale::new(root, kind)),
+        None => Err(kp.error(format!("unknown scale {name:?}"))),
+    }
 }
 
 /// Reads and validates an audio clip's `"audio"` object against the pool.
@@ -2005,6 +2041,15 @@ fn write_song(w: &mut String, song: &Song) {
                                 ",
 {indent}\"grid\": {{\"resolution\": \"{resolution}\", \"steps\": {}, \"swing\": {}}}",
                                 g.steps, g.swing
+                            );
+                        }
+                        if let Some(s) = c.scale.filter(|s| !s.is_chromatic()) {
+                            let _ = write!(
+                                w,
+                                ",
+{indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
+                                s.root,
+                                s.kind.id()
                             );
                         }
                     }

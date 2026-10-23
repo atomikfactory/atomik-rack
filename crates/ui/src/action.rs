@@ -309,6 +309,12 @@ pub enum ContextTarget {
     Lane,
     /// The grid of the piano roll (notes are selected there).
     Notes,
+    /// The root field of the piano roll's scale bar (a menu of the twelve notes).
+    PianoScaleRoot,
+    /// The scale field of the piano roll's scale bar (a menu of the scales).
+    PianoScaleKind,
+    /// The chord field of the piano roll's scale bar (a menu of the chord stamps).
+    PianoChord,
     /// A point of the tempo lane.
     TempoPoint,
     /// The tempo lane away from its points.

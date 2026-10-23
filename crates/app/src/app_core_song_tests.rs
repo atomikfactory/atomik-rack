@@ -56,6 +56,7 @@ fn note_clip(start: i64, notes: &[(i64, u8)]) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content: ClipContent::Notes(
             notes

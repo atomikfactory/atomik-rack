@@ -134,6 +134,7 @@ fn clip(length: i64, content: ClipContent) -> Clip {
         offset: 0,
         loop_length: None,
         muted: false,
+        scale: None,
         grid: None,
         content,
     }

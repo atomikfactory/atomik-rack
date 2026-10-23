@@ -157,6 +157,71 @@ pub const SNAP_ARGS: &[&str] = &[
     "thirtysecond_triplet",
     "grid",
 ];
+/// The values of `editor.set_scale_root`: the twelve pitch classes, C first.
+pub const ROOT_ARGS: &[&str] = &[
+    "c", "c_sharp", "d", "d_sharp", "e", "f", "f_sharp", "g", "g_sharp", "a", "a_sharp", "b",
+];
+/// The values of `editor.set_scale`: the scale kinds (`chromatic` clears the scale).
+pub const SCALE_ARGS: &[&str] = &[
+    "chromatic",
+    "major",
+    "natural_minor",
+    "harmonic_minor",
+    "melodic_minor",
+    "dorian",
+    "phrygian",
+    "lydian",
+    "mixolydian",
+    "locrian",
+    "major_pentatonic",
+    "minor_pentatonic",
+    "blues",
+    "whole_tone",
+    "phrygian_dominant",
+    "hungarian_minor",
+];
+/// The values of `editor.set_chord`: no chord, the chords and the diatonic chords.
+pub const CHORD_ARGS: &[&str] = &[
+    "none",
+    "major",
+    "minor",
+    "dim",
+    "aug",
+    "sus2",
+    "sus4",
+    "6",
+    "m6",
+    "7",
+    "maj7",
+    "m7",
+    "m7b5",
+    "dim7",
+    "9",
+    "maj9",
+    "m9",
+    "add9",
+    "11",
+    "13",
+    "power",
+    "octave",
+    "diatonic_triad",
+    "diatonic_seventh",
+    "diatonic_ninth",
+];
+/// The values of `editor.set_chord_inversion`.
+pub const INVERSION_ARGS: &[&str] = &["0", "1", "2", "3"];
+/// The values of `editor.fold_set`.
+pub const FOLD_ARGS: &[&str] = &["off", "scale", "used"];
+/// The values of `editor.set_arp_pattern`.
+pub const ARP_PATTERN_ARGS: &[&str] = &["up", "down", "up_down", "down_up", "random", "as_played"];
+/// The values of `editor.set_arp_gate`: the gate in percent.
+pub const ARP_GATE_ARGS: &[&str] = &["25", "50", "75", "100"];
+/// The values of `editor.set_arp_octaves`.
+pub const ARP_OCTAVE_ARGS: &[&str] = &["1", "2", "3"];
+/// The values of `editor.set_strum_amount`: the note value of the delay per note (`64` is 1/64).
+pub const STRUM_AMOUNT_ARGS: &[&str] = &["128", "64", "32", "16"];
+/// The values of `editor.set_strum_direction`.
+pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
@@ -225,6 +290,32 @@ const COMMANDS: &[CommandDef] = &[
         .decline()
         .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
+    cmd(
+        "editor.arpeggiate",
+        "Arpeggiate Selection",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd(
+        "editor.chordify",
+        "Chordify Selection",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd(
+        "editor.conform_to_scale",
+        "Conform Selection to Scale",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd(
+        "editor.detect_scale",
+        "Detect Scale from Notes",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
+    cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
     cmd("editor.nudge_left", "Nudge Left", G::Editor, C::Editor).rep(),
     cmd(
         "editor.nudge_left_beat",
@@ -270,6 +361,64 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("editor.quantize", "Quantize", G::Editor, C::Editor),
+    cmd(
+        "editor.scale_snap_toggle",
+        "Snap to Scale",
+        G::Editor,
+        C::Editor,
+    ),
+    cmd(
+        "editor.set_arp_gate",
+        "Set Arpeggio Gate",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(ARP_GATE_ARGS),
+    cmd(
+        "editor.set_arp_octaves",
+        "Set Arpeggio Octaves",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(ARP_OCTAVE_ARGS),
+    cmd(
+        "editor.set_arp_pattern",
+        "Set Arpeggio Pattern",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(ARP_PATTERN_ARGS),
+    cmd("editor.set_chord", "Set Chord", G::Editor, C::Editor).arg(CHORD_ARGS),
+    cmd(
+        "editor.set_chord_inversion",
+        "Set Chord Inversion",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(INVERSION_ARGS),
+    cmd("editor.set_scale", "Set Scale", G::Editor, C::Editor).arg(SCALE_ARGS),
+    cmd(
+        "editor.set_scale_root",
+        "Set Scale Root",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(ROOT_ARGS),
+    cmd(
+        "editor.set_strum_amount",
+        "Set Strum Amount",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(STRUM_AMOUNT_ARGS),
+    cmd(
+        "editor.set_strum_direction",
+        "Set Strum Direction",
+        G::Editor,
+        C::Editor,
+    )
+    .arg(STRUM_DIRECTION_ARGS),
+    cmd("editor.strum", "Strum Selection", G::Editor, C::Editor),
     cmd(
         "editor.toggle_note_mute",
         "Mute Notes",

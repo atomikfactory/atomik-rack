@@ -439,6 +439,11 @@ impl<B: AudioBackend> Shell<B> {
             .core
             .piano_roll_mut()
             .set_key_height(shell.ui.piano_roll_key_height);
+        {
+            let roll = shell.core.piano_roll_mut();
+            roll.set_snap_to_scale(shell.ui.piano_roll_snap_scale);
+            roll.set_fold(shell.ui.piano_roll_fold);
+        }
         if console_notice == Some(true) {
             shell.notify(CONSOLE_DEVICES_NOTICE);
         }
@@ -1715,15 +1720,21 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
-    /// The vertical zooms (track heights, key height) are saved when an event changed them.
+    /// The vertical zooms (track heights, key height) and the piano roll's snap to scale and
+    /// fold are saved when an event changed them.
     fn save_zoom_state(&mut self) {
         let zoom = self.core.arrangement().track_zoom();
-        let keys = self.core.piano_roll().key_height();
+        let roll = self.core.piano_roll();
+        let (keys, snap_scale, fold) = (roll.key_height(), roll.snap_to_scale(), roll.fold());
         if (zoom - self.ui.track_zoom).abs() > f64::EPSILON
             || (keys - self.ui.piano_roll_key_height).abs() > f64::EPSILON
+            || snap_scale != self.ui.piano_roll_snap_scale
+            || fold != self.ui.piano_roll_fold
         {
             self.ui.track_zoom = zoom;
             self.ui.piano_roll_key_height = keys;
+            self.ui.piano_roll_snap_scale = snap_scale;
+            self.ui.piano_roll_fold = fold;
             self.save_ui_state();
         }
     }
@@ -1861,6 +1872,7 @@ impl<B: AudioBackend> Shell<B> {
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
             meter_can_delete: core.arrangement().meter_change_deletable(),
             marker_selection: !clips.is_empty(),
+            notes: core.piano_roll().tools(),
         }
     }
 
@@ -2934,3 +2946,7 @@ mod tempo_tests;
 #[cfg(test)]
 #[path = "shell_marker_tests.rs"]
 mod marker_tests;
+
+#[cfg(test)]
+#[path = "shell_scale_tests.rs"]
+mod scale_tests;

@@ -25,6 +25,7 @@ mod slices;
 mod song_cmd;
 mod steps;
 mod steps_cmd;
+pub mod theory;
 mod workflow;
 mod workflow_cmd;
 mod workflow_create;

@@ -5,6 +5,9 @@
 mod support;
 
 use atomik_model::ClipId;
+use atomik_model::theory::{ChordKind, Scale, ScaleKind};
+use atomik_ui::chord_edit::Stamp;
+use atomik_ui::key_rows::Fold;
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::timeline::Snap;
 use atomik_ui::{TextEngine, TransportState};
@@ -55,6 +58,26 @@ fn preview_pngs() {
     let mut canvas = CpuCanvas::new(w, h, &mut text);
     roll.paint(&mut canvas, &doc, &reg);
     write("piano_roll.png", canvas);
+
+    // The scale bar, the scale tint and the folds.
+    let mut scaled = doc.clone();
+    scaled.song.tracks[0].lanes[0].clips[0].scale = Some(Scale::new(0, ScaleKind::NaturalMinor));
+    for (name, fold) in [
+        ("piano_roll_scale.png", Fold::Off),
+        ("piano_roll_scale_fold.png", Fold::Scale),
+        ("piano_roll_used_fold.png", Fold::Used),
+    ] {
+        let mut roll = piano_roll(&scaled, &reg);
+        roll.set_scale(SCALE);
+        roll.set_fold(fold);
+        roll.set_snap_to_scale(true);
+        roll.set_stamp(Stamp::Chord(ChordKind::Minor));
+        roll.set_selected_notes(&[4, 5]);
+        let (w, h) = size(ROLL_BOUNDS);
+        let mut canvas = CpuCanvas::new(w, h, &mut text);
+        roll.paint(&mut canvas, &scaled, &reg);
+        write(name, canvas);
+    }
 
     let mut bar = transport_bar(&doc, &reg);
     bar.set_scale(SCALE);

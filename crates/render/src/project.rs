@@ -784,6 +784,7 @@ mod tests {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, 60, 0.5)]),
             },
@@ -802,6 +803,7 @@ mod tests {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content: ClipContent::Automation(vec![
                     AutomationPoint {

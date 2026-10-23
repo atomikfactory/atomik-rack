@@ -1097,6 +1097,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         loop_length: None,
         muted: clips.iter().all(|(_, _, c)| c.muted),
         grid: first.grid,
+        scale: first.scale,
         content,
     };
     let mut edits: Vec<Edit> = clips[1..]

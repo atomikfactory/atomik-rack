@@ -4,7 +4,7 @@ This is a list of intentions, not promises. There are no dates. The phases are i
 
 ## Done so far
 
-The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), named markers and range markers with a marker list, and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
+The plugin sandbox (each plugin instance in its own process), release pipeline and binaries, the file browser for audio, per-clip and per-note mute, output buses, multi-column rack, the Mod Source device (two LFOs and an envelope as CV), CV inputs on the effects and instruments, gates on the drum machine, tempo ramps and meter changes along the song (a tempo lane and meter tags in the arrangement), named markers and range markers with a marker list, scales and chords in the piano roll (a scale per clip, fold, snap to scale, a chord stamp, chordify, arpeggiate and strum), and the keyboard workflow (remappable keymap, nudge by beat or tick, console text owner). See [CHANGELOG.md](CHANGELOG.md) for the details.
 
 ## Phase 1: Stability and platforms
 

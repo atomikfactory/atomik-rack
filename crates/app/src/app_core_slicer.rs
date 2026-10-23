@@ -400,6 +400,7 @@ impl<S: EngineSink> AppCore<S> {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                scale: None,
                 grid: None,
                 content,
             },
