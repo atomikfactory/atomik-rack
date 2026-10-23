@@ -407,6 +407,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -424,6 +425,7 @@ dependencies = [
  "atomik-test-plugin-core",
  "atomik-testkit",
  "thread-priority",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

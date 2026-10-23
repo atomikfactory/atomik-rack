@@ -220,10 +220,17 @@ impl Control {
             }
             request => {
                 let id = request_id(&request);
+                let opens_editor = matches!(request, ToChild::OpenGui { .. });
                 let (reply, blob) = self
                     .request(request, blob, windows)
                     .unwrap_or_else(|e| (err(id, &e), None));
-                self.reply(&reply, blob.as_deref(), windows)
+                let code = self.reply(&reply, blob.as_deref(), windows);
+                // The window is shown after the answer: showing a window owned by the parent's
+                // window waits for the parent's thread, which waits for this answer.
+                if code.is_none() && opens_editor && matches!(reply, FromChild::GuiOpened { .. }) {
+                    self.editor.present(windows);
+                }
+                code
             }
         }
     }

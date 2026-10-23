@@ -93,7 +93,8 @@ impl Editor {
         self.open
     }
 
-    /// Opens the editor, or raises it when it is open already; returns its size.
+    /// Opens the editor, or finds it open already; returns its size. The window stays hidden:
+    /// [`Editor::present`] shows it, and the caller answers the parent first (see there).
     ///
     /// # Errors
     /// The window system's reason, or the plugin's own error (the window is destroyed again).
@@ -106,7 +107,6 @@ impl Editor {
         requested_scale: f64,
     ) -> Result<(u32, u32), BackendError> {
         if self.open {
-            windows.show();
             return Ok(self.size);
         }
         let created = windows
@@ -116,7 +116,6 @@ impl Editor {
         match instance.open_gui(created.parent, scale) {
             Ok((w, h)) => {
                 windows.resize(w, h);
-                windows.show();
                 self.open = true;
                 self.size = (w, h);
                 Ok((w, h))
@@ -125,6 +124,17 @@ impl Editor {
                 windows.destroy();
                 Err(e)
             }
+        }
+    }
+
+    /// Shows the window, raises it and gives it the focus; nothing when the editor is not open.
+    ///
+    /// This is the step that can wait on the window's owner: a window owned by one on another
+    /// thread shares its activation, so showing it sends messages to the owner's thread. The
+    /// parent's thread is blocked on the answer to `OpenGui`, so the answer goes out before this.
+    pub fn present(&mut self, windows: &mut dyn WindowSystem) {
+        if self.open {
+            windows.show();
         }
     }
 
@@ -204,6 +214,8 @@ pub(crate) mod fakes {
         pub scale: f64,
         pub fail_create: Option<String>,
         pub native: NativeParent,
+        /// Called when the window is shown.
+        pub on_show: Option<Box<dyn FnMut()>>,
     }
 
     impl FakeWindows {
@@ -213,6 +225,7 @@ pub(crate) mod fakes {
                 scale: 1.5,
                 fail_create: None,
                 native: NativeParent::Win32(0xABC),
+                on_show: None,
             }
         }
     }
@@ -240,6 +253,9 @@ pub(crate) mod fakes {
         }
         fn show(&mut self) {
             self.log.borrow_mut().push("show".to_string());
+            if let Some(f) = self.on_show.as_mut() {
+                f();
+            }
         }
         fn hide(&mut self) {
             self.log.borrow_mut().push("hide".to_string());
@@ -379,7 +395,6 @@ mod tests {
                 format!("create Fake Some(Win32(77)) {DEFAULT_SIZE:?}"),
                 format!("open_gui Win32(2748) {want_scale}"),
                 "resize 400x300".to_string(),
-                "show".to_string(),
             ]
         );
     }
@@ -396,7 +411,28 @@ mod tests {
         l.borrow_mut().clear();
         let size = ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
         assert_eq!(size, (400, 300));
+        assert!(lines(&l).is_empty(), "the window is not touched");
+        ed.present(&mut ws);
         assert_eq!(lines(&l), vec!["show".to_string()]);
+    }
+
+    #[test]
+    fn present_shows_an_open_editor_and_nothing_else() {
+        let l = log();
+        let (mut inst, mut ws, mut ed) = (
+            FakeInstance::new(&l),
+            FakeWindows::new(&l),
+            Editor::default(),
+        );
+        ed.present(&mut ws);
+        assert!(lines(&l).is_empty(), "no editor, no window to show");
+        ed.open(&mut inst, &mut ws, "Fake", None, 1.0).unwrap();
+        assert!(
+            !lines(&l).contains(&"show".to_string()),
+            "open does not show"
+        );
+        ed.present(&mut ws);
+        assert_eq!(lines(&l).last().map(String::as_str), Some("show"));
     }
 
     #[test]
