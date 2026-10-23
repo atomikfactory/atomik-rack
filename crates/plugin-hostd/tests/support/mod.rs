@@ -130,6 +130,8 @@ pub struct TestParent {
     /// Notifications that arrived while a request waited for its answer.
     pub notes: Vec<FromChild>,
     stderr: Arc<Mutex<String>>,
+    /// The thread copying the child's stderr; it ends when the pipe closes.
+    stderr_reader: Option<std::thread::JoinHandle<()>>,
 }
 
 impl TestParent {
@@ -179,7 +181,7 @@ impl TestParent {
         let stderr = Arc::new(Mutex::new(String::new()));
         let mut err = child.stderr.take().expect("piped stderr");
         let sink = Arc::clone(&stderr);
-        std::thread::spawn(move || {
+        let stderr_reader = std::thread::spawn(move || {
             let mut buf = [0u8; 1024];
             while let Ok(n) = io::Read::read(&mut err, &mut buf) {
                 if n == 0 {
@@ -199,6 +201,7 @@ impl TestParent {
             next_id: 1,
             notes: Vec::new(),
             stderr,
+            stderr_reader: Some(stderr_reader),
         }
     }
 
@@ -432,6 +435,10 @@ impl TestParent {
         let limit = Deadline::after(timeout);
         loop {
             if let Ok(Some(status)) = self.child.try_wait() {
+                // The process is gone, but its last stderr lines may still be in the pipe.
+                if let Some(reader) = self.stderr_reader.take() {
+                    let _ = reader.join();
+                }
                 return Some(status);
             }
             if limit.passed() {
