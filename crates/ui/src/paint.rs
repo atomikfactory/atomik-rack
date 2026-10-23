@@ -314,6 +314,34 @@ pub fn plate_rect(height: f64, folded: bool) -> Rect {
     }
 }
 
+/// The BYPASS switch of an effect's name strip, in panel coordinates: under the name and the
+/// type label, above the fold chevron and the status LED row. Folded, it ends the plate.
+pub fn bypass_button_rect(height: f64, folded: bool) -> Rect {
+    let plate = plate_rect(height, folded);
+    if folded {
+        let cy = plate.center().y;
+        Rect::new(plate.x1 - 64.0, cy - 8.0, plate.x1 - 8.0, cy + 8.0)
+    } else {
+        let y1 = height - 24.0;
+        Rect::new(plate.x0 + 6.0, y1 - 13.0, plate.x1 - 6.0, y1)
+    }
+}
+
+/// Whether the panel of `info` has the strip BYPASS switch (a device of the document, not
+/// the interface, of an effect type with a `bypass` param).
+fn strip_bypass(info: &PanelInfo<'_>) -> bool {
+    info.device.is_some() && info.desc.is_some_and(autolayout::has_strip_bypass)
+}
+
+/// Whether the effect of `info` is bypassed (its `bypass` param is on).
+fn bypassed(info: &PanelInfo<'_>) -> bool {
+    strip_bypass(info)
+        && info
+            .device
+            .and_then(|d| d.params.get(autolayout::BYPASS_KEY))
+            .is_some_and(|v| *v >= 0.5)
+}
+
 fn chevron<C: Canvas + ?Sized>(c: &mut C, center: Point, open: bool, color: Color) {
     let mut p = BezPath::new();
     if open {
@@ -353,8 +381,26 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         c.fill_with(Circle::new(fold, 7.0), mix(theme.plate, Color::WHITE, 0.07));
         chevron(c, fold, !info.folded, theme.text_muted);
     }
+    let has_bypass = strip_bypass(info);
+    if has_bypass {
+        let b = bypass_button_rect(info.height, info.folded);
+        crate::plugin_panel::led_button(
+            c,
+            theme,
+            b,
+            "BYPASS",
+            Some(bypassed(info)),
+            true,
+            info.accent,
+        );
+    }
     if info.folded {
         let x = fold.x + 14.0;
+        let caption_x = if has_bypass {
+            bypass_button_rect(info.height, true).x0 - 8.0
+        } else {
+            r.x1 - 8.0
+        };
         c.text(
             &TextRun::new(
                 info.name,
@@ -366,8 +412,8 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         );
         c.text(
             &TextRun::new(
-                info.caption,
-                pt(r.x1 - 8.0, r.center().y + 3.0),
+                fit_label(info.caption, caption_x - x - 70.0, 7.0),
+                pt(caption_x, r.center().y + 3.0),
                 7.0,
                 theme.text_muted,
             )
@@ -376,19 +422,20 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         );
         return;
     }
-    let lines = wrap_name(info.name, r.width() - 10.0, theme.name_size);
+    let width = r.width() - 10.0;
+    let mut size = theme.name_size;
+    let mut lines = wrap_name(info.name, width, size);
+    if has_bypass && info.height < 2.0 * f64::from(atomik_device_sdk::RACK_UNIT) {
+        // One unit tall: the switch leaves room for a single line of name, set smaller (down
+        // to 8) until the whole name fits.
+        let chars = info.name.chars().count().max(1) as f64;
+        size = ((width / (chars * 0.56) * 0.99) as f32).clamp(8.0, theme.name_size);
+        lines = vec![fit_label(info.name, width, size)];
+    }
     let mut y = r.y0 + 19.0;
     for line in &lines {
-        c.text(
-            &TextRun::new(
-                line.as_str(),
-                pt(r.x0 + 6.0, y),
-                theme.name_size,
-                theme.text,
-            )
-            .weight(700),
-        );
-        y += theme.name_size as f64 + 1.0;
+        c.text(&TextRun::new(line.as_str(), pt(r.x0 + 6.0, y), size, theme.text).weight(700));
+        y += f64::from(size) + 1.0;
     }
     c.text(
         &TextRun::new(
@@ -644,6 +691,13 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             if !info.driven.is_empty() {
                 driven_tags(c, theme, desc, info, false);
             }
+            if bypassed(info) {
+                // A bypassed effect: the body is veiled (still usable), the strip stays lit.
+                c.fill_with(
+                    bypass_veil(info.height),
+                    with_alpha(theme.panel_bottom, 0.6),
+                );
+            }
             if let (Some(panel), Some(device)) = (info.spec.modsrc, info.device) {
                 crate::modsrc_panel::paint_panel(
                     c,
@@ -699,6 +753,17 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
         }
     }
+}
+
+/// The veil over the body of a bypassed effect (panel coordinates): everything right of the
+/// name strip.
+pub fn bypass_veil(height: f64) -> Rect {
+    Rect::new(
+        PLATE_X.1 + 2.0,
+        1.0,
+        f64::from(RACK_WIDTH) - EAR,
+        height - 1.0,
+    )
 }
 
 /// Locks the controls whose param a macro drives: a dim veil and a small `M<n>` tag.

@@ -172,6 +172,19 @@ impl PanelSpec {
     }
 }
 
+/// The key of the `bypass` param of a built-in effect.
+pub const BYPASS_KEY: &str = "bypass";
+
+/// Whether a device gets the BYPASS switch of the name strip: a built-in effect (a plugin
+/// keeps its own BYPASS button inside its panel) that has the `bypass` param. Such a param is
+/// placed by that switch, never as a knob of the panel body: the auto-layout skips it, the
+/// hand-made layouts do not list it.
+pub fn has_strip_bypass(desc: &DeviceDescriptor) -> bool {
+    desc.kind == atomik_device_sdk::DeviceKind::Effect
+        && !atomik_device_sdk::is_plugin_type_id(desc.type_id)
+        && desc.param_by_key(BYPASS_KEY).is_some()
+}
+
 /// The widget chosen for a param.
 pub fn choose_widget(p: &ParamDescriptor) -> ControlKind {
     match p.unit {
@@ -321,7 +334,11 @@ pub(crate) struct Group {
 
 fn front_groups(desc: &DeviceDescriptor) -> Vec<Group> {
     let mut groups: Vec<(&str, Group)> = Vec::new();
+    let strip_bypass = has_strip_bypass(desc);
     for (i, p) in desc.params.iter().enumerate() {
+        if strip_bypass && p.key == BYPASS_KEY {
+            continue;
+        }
         let prefix = group_prefix(p.key);
         let (w, h) = cell_size(choose_widget(p));
         let item = (i, w, h);
@@ -969,6 +986,10 @@ mod tests {
         for d in all() {
             let spec = auto_layout(d);
             let mut params: Vec<usize> = spec.front.iter().map(|c| c.param).collect();
+            // The `bypass` param of an effect is placed by the name strip's switch.
+            if has_strip_bypass(d) {
+                params.push(d.params.iter().position(|p| p.key == BYPASS_KEY).unwrap());
+            }
             params.sort_unstable();
             assert_eq!(
                 params,
