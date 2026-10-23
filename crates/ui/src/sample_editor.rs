@@ -59,6 +59,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::wave_paint::max_wave_zoom;
 use crate::zone_edit::{self, Edges, Field, Marker};
 use atomik_audio_file::PeakPyramid;
 use atomik_device_sdk::{LoopMode, Registry, TriggerMode};
@@ -94,7 +95,6 @@ const DRAG_THRESHOLD: f64 = 2.0;
 const SCROLL_STEP: f64 = 36.0;
 const ZOOM_STEP: f64 = 1.15;
 const MAX_KEY_PX: f64 = 48.0;
-const MAX_WAVE_ZOOM: f64 = 4096.0;
 const MERGE_BASE: u64 = 4 << 40;
 /// Velocity of an audition from the keyboard strip.
 const STRIP_VELOCITY: u8 = 100;
@@ -205,6 +205,8 @@ pub struct SampleEditorView {
     zones: Vec<ZoneDoc>,
     metas: BTreeMap<String, AssetMeta>,
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
+    /// Samples of the assets held in RAM (the waveform reads them below the finest peak level).
+    samples: BTreeMap<String, Arc<[Vec<f32>]>>,
     missing: BTreeSet<String>,
     selected: Option<usize>,
     pick_first: bool,
@@ -237,6 +239,7 @@ impl SampleEditorView {
             zones: Vec::new(),
             metas: BTreeMap::new(),
             peaks: BTreeMap::new(),
+            samples: BTreeMap::new(),
             missing: BTreeSet::new(),
             selected: None,
             pick_first: false,
@@ -343,9 +346,18 @@ impl SampleEditorView {
         self.repaint = true;
     }
 
+    /// Sets the samples of an asset held in RAM (planar, one `Vec` per channel, shared with the
+    /// engine), which the waveform reads below the finest peak level. Assets without samples
+    /// (streamed from disk) keep the finest level at every zoom.
+    pub fn set_samples(&mut self, asset: &str, samples: Arc<[Vec<f32>]>) {
+        self.samples.insert(asset.to_string(), samples);
+        self.repaint = true;
+    }
+
     /// Forgets the peaks of an asset.
     pub fn clear_peaks(&mut self, asset: &str) {
-        if self.peaks.remove(asset).is_some() {
+        let had_samples = self.samples.remove(asset).is_some();
+        if self.peaks.remove(asset).is_some() || had_samples {
             self.repaint = true;
         }
     }
@@ -633,7 +645,9 @@ impl SampleEditorView {
         let max = (128.0 * fit * self.zoom - l.map.width()).max(0.0);
         self.scroll_x = self.scroll_x.clamp(0.0, max);
         let frames = self.selected_with_meta().map_or(0, |(_, _, m)| m.frames);
-        self.wave_zoom = self.wave_zoom.clamp(1.0, MAX_WAVE_ZOOM);
+        self.wave_zoom = self
+            .wave_zoom
+            .clamp(1.0, max_wave_zoom(frames as f64, l.wave.width()));
         let span = frames as f64 / self.wave_zoom;
         let max = (frames as f64 - span).max(0.0);
         self.wave_scroll = self.wave_scroll.clamp(0.0, max);
@@ -1229,7 +1243,8 @@ impl SampleEditorView {
             if modifiers.command() {
                 let old_fpp = frames / (w * self.wave_zoom);
                 let anchor = (pos.x - l.wave.x0) * old_fpp + self.wave_scroll;
-                self.wave_zoom = (self.wave_zoom * ZOOM_STEP.powf(dy)).clamp(1.0, MAX_WAVE_ZOOM);
+                self.wave_zoom =
+                    (self.wave_zoom * ZOOM_STEP.powf(dy)).clamp(1.0, max_wave_zoom(frames, w));
                 let fpp = frames / (w * self.wave_zoom);
                 self.wave_scroll = anchor - (pos.x - l.wave.x0) * fpp;
             } else {

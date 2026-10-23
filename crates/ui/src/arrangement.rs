@@ -30,6 +30,7 @@ use crate::tempo_lane::{self as lane, TEMPO_LANE_HEIGHT};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, PPQ, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{Tool, ViewportState};
+use crate::wave_paint::{MAX_COLUMNS, WaveChannel, WaveDetail, paint_channel};
 use atomik_audio_file::PeakPyramid;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
@@ -112,8 +113,6 @@ const GAIN_MIN_WIDTH: f64 = 64.0;
 /// Gain handle size.
 const GAIN_W: f64 = 28.0;
 const GAIN_H: f64 = 6.0;
-/// Most waveform columns painted per clip and channel (a clip wider than the screen is cut).
-const MAX_COLUMNS: usize = 4096;
 
 /// A handle on an audio clip (see [`ArrangementView::audio_handle_center`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,6 +405,8 @@ pub struct ArrangementView {
     focused: bool,
     repaint: bool,
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
+    /// The samples of the assets held in RAM, for the waveform below the finest peak level.
+    samples: BTreeMap<String, Arc<[Vec<f32>]>>,
     assets: BTreeMap<String, AssetMeta>,
     tempo: TempoMap,
     /// The meter map: bar lines, beat lines, bar numbers and the snap grid.
@@ -479,6 +480,7 @@ impl ArrangementView {
             focused: false,
             repaint: true,
             peaks: BTreeMap::new(),
+            samples: BTreeMap::new(),
             assets: BTreeMap::new(),
             tempo: TempoMap::default(),
             bars: Bars::default(),
@@ -871,9 +873,18 @@ impl ArrangementView {
         self.repaint = true;
     }
 
+    /// Sets the samples of an asset held in RAM (planar, one `Vec` per channel, shared with the
+    /// engine), which the waveform reads below the finest peak level. Assets without samples
+    /// (streamed from disk) keep the finest level at every zoom.
+    pub fn set_samples(&mut self, asset: &str, samples: Arc<[Vec<f32>]>) {
+        self.samples.insert(asset.to_string(), samples);
+        self.repaint = true;
+    }
+
     /// Forgets the peaks of an asset.
     pub fn clear_peaks(&mut self, asset: &str) {
-        if self.peaks.remove(asset).is_some() {
+        let had_samples = self.samples.remove(asset).is_some();
+        if self.peaks.remove(asset).is_some() || had_samples {
             self.repaint = true;
         }
     }
@@ -3154,47 +3165,35 @@ impl ArrangementView {
             }
             if let Some(peaks) = self.peaks.get(&a.asset) {
                 let mid = (x_start + x_end) / 2.0;
-                let per_px = (source(mid + 1.0) - source(mid)).abs().max(1.0);
-                let level = peaks.level_for(per_px);
+                let fpp = (source(mid + 1.0) - source(mid)).abs().max(1e-4);
+                let samples = self.samples.get(&a.asset).map(|s| &s[..]);
+                let detail = WaveDetail::pick(peaks, samples, fpp);
                 let gain = 10f64.powf(f64::from(a.gain_db) / 20.0);
                 let wave = st.audio_wave(accent, muted);
-                let bands =
-                    audio::channel_bands(body.y0 + 2.0, body.y1 - 2.0, level.channels.len());
+                let bands = audio::channel_bands(body.y0 + 2.0, body.y1 - 2.0, detail.channels());
                 let columns = ((x_end - x_start).max(0.0) as usize).min(MAX_COLUMNS);
+                // A source frame back to its x: the inverse of `source`.
+                let frame_x = |f: f64| {
+                    self.x_of_tick(
+                        self.tempo
+                            .tick_at_frame(g.start_frame + (f - a.source_offset as f64), g.rate),
+                    )
+                };
                 for (ch, (cy, half)) in bands.into_iter().enumerate() {
-                    let peak = |i: usize| {
-                        let x = x_start + i as f64;
-                        audio::column_peak(level, ch, source(x), source(x + 1.0), meta.frames)
+                    let channel = WaveChannel {
+                        detail,
+                        ch,
+                        cy,
+                        half,
+                        gain,
+                        color: wave,
+                        x_start,
+                        columns,
+                        line_x: (vis.x0, vis.x1),
+                        limit: meta.frames,
+                        frames_per_pixel: fpp,
                     };
-                    let level_y = |v: f32| cy - (f64::from(v) * gain).clamp(-1.0, 1.0) * half;
-                    let n = (0..columns).take_while(|i| peak(*i).is_some()).count();
-                    if n == 0 {
-                        continue;
-                    }
-                    sp::line(
-                        c,
-                        vis.x0,
-                        cy.round() + 0.5,
-                        vis.x1,
-                        cy.round() + 0.5,
-                        wave.with_alpha(0.22),
-                    );
-                    let mut path = BezPath::new();
-                    for i in 0..n {
-                        let (_, hi) = peak(i).unwrap_or((0.0, 0.0));
-                        let p = pt(x_start + i as f64 + 0.5, level_y(hi));
-                        if i == 0 {
-                            path.move_to(p);
-                        } else {
-                            path.line_to(p);
-                        }
-                    }
-                    for i in (0..n).rev() {
-                        let (lo, _) = peak(i).unwrap_or((0.0, 0.0));
-                        path.line_to(pt(x_start + i as f64 + 0.5, level_y(lo)));
-                    }
-                    path.close_path();
-                    c.fill_with(path, wave);
+                    paint_channel(c, &channel, &source, &frame_x);
                 }
             } else {
                 let text = fit_label(&meta.original_name, vis.width() - 12.0, 9.0);

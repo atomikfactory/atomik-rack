@@ -294,6 +294,7 @@ pub mod timeline;
 pub mod transport;
 pub mod tree;
 pub mod viewport;
+pub mod wave_paint;
 pub mod widget;
 pub mod zone_edit;
 
