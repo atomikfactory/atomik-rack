@@ -197,7 +197,11 @@ fn crash_case(mut sb: Sandbox, plugin: &PluginRef) {
             _ => None,
         })
         .unwrap_or_else(|| panic!("no Crashed event: {events:?}"));
-    assert!(reason.contains("exited with code"), "{reason}");
+    // An abort is exit code 3 on Windows and SIGABRT on Unix.
+    assert!(
+        reason.contains("exited with code") || reason.contains("killed by signal"),
+        "{reason}"
+    );
     assert!(sb.manager.is_lost(id));
     assert!(
         sb.manager.restart(id).is_err(),
