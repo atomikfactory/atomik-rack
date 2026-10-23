@@ -29,6 +29,11 @@ impl Write for Sink {
 }
 
 impl Sink {
+    /// How many bytes are waiting to be read.
+    fn pending(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
     /// The frames written since the last call.
     fn frames(&self) -> Vec<FromChild> {
         let data = std::mem::take(&mut *self.0.lock().unwrap());
@@ -255,6 +260,42 @@ fn opening_the_editor_answers_its_size_and_a_second_open_raises_the_same_window(
         }]
     );
     assert_eq!(r.lines(), vec!["show".to_string()]);
+}
+
+#[test]
+fn the_editor_is_shown_only_after_the_answer_to_open_gui_is_written() {
+    let mut r = rig().instantiated();
+    let (sink, log) = (r.sink.clone(), Rc::clone(&r.log));
+    r.windows.on_show = Some(Box::new(move || {
+        log.borrow_mut()
+            .push(format!("answered before show: {}", sink.pending() > 0));
+    }));
+    for id in [2, 3] {
+        r.send(ToChild::OpenGui {
+            id,
+            owner: Some(WireParent::Win32(5)),
+            scale: 1.0,
+        });
+        let lines = r.lines();
+        assert_eq!(
+            &lines[lines.len() - 2..],
+            ["show", "answered before show: true"],
+            "open {id} (the second one raises): {lines:?}"
+        );
+        r.sink.frames();
+        r.log.borrow_mut().clear();
+    }
+}
+
+#[test]
+fn a_failed_open_shows_nothing() {
+    let mut r = rig_with(Vec::new(), true, None).instantiated();
+    r.send(ToChild::OpenGui {
+        id: 2,
+        owner: None,
+        scale: 1.0,
+    });
+    assert!(!r.lines().contains(&"show".to_string()));
 }
 
 #[test]

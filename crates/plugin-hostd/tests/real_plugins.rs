@@ -7,6 +7,7 @@ mod support;
 use atomik_core::{BATCH, Batch};
 use atomik_device_sdk::{PluginFormat, PluginRef, RunMode};
 use atomik_plugin_clap::ClapBackend;
+use atomik_plugin_host::NativeParent;
 use atomik_plugin_host::testing::{clap_test_plugin, vst3_test_plugin};
 use atomik_plugin_host::{
     ActivateConfig, AudioThreadGuard, EventList, HostHandle, InstanceId, PluginBackend,
@@ -467,4 +468,87 @@ fn a_vst3_editor_opens_in_a_window_of_the_child_and_closes_again() {
         p.call(|id| ToChild::CloseGui { id }, None).0,
         FromChild::Ok { .. }
     ));
+}
+
+/// How long the app waits for the child's answer to a request (the sandbox's call timeout).
+#[cfg(windows)]
+const APP_PATIENCE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Sends a request and waits up to `within` for its answer; `None` when none came.
+#[cfg(windows)]
+fn call_within(
+    p: &mut TestParent,
+    within: std::time::Duration,
+    make: impl FnOnce(u64) -> ToChild,
+) -> Option<FromChild> {
+    let id = p.id();
+    p.send(&make(id));
+    let end = atomik_plugin_ipc::Deadline::after(within);
+    while !end.passed() {
+        let Ok((msg, _)) = p.recv_or_end(std::time::Duration::from_millis(20)) else {
+            continue;
+        };
+        if support::reply_id(&msg) == Some(id) {
+            return Some(msg);
+        }
+        p.notes.push(msg);
+    }
+    None
+}
+
+/// Opens and closes the editor of a plugin owned by a window whose thread pumps no messages
+/// while a request is out, like the app's UI thread blocked on the reply. Both answers must come
+/// within the app's call timeout.
+#[cfg(windows)]
+fn editor_answers_while_the_owner_does_not_pump(format: Format, file: &Path, plugin: &str) {
+    let owner = support::owner_window::OwnerWindow::new();
+    let mut p = TestParent::spawn(&Spawn::real(format.name(), file, plugin));
+    p.hello();
+    let (_, has_gui, _) = p.instantiate();
+    assert!(has_gui);
+    let opened = call_within(&mut p, APP_PATIENCE, |id| ToChild::OpenGui {
+        id,
+        owner: Some(NativeParent::Win32(owner.hwnd()).into()),
+        scale: 1.0,
+    });
+    assert!(
+        matches!(opened, Some(FromChild::GuiOpened { w, h, .. }) if w > 0 && h > 0),
+        "OpenGui was not answered in time (or failed): {opened:?}; stderr: {}",
+        p.stderr()
+    );
+    // The app is free again: it handles its messages, and the child's window finishes showing.
+    for _ in 0..20 {
+        owner.pump();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let closed = call_within(&mut p, APP_PATIENCE, |id| ToChild::CloseGui { id });
+    assert!(
+        matches!(closed, Some(FromChild::Ok { .. })),
+        "CloseGui was not answered in time: {closed:?}; stderr: {}",
+        p.stderr()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "opens a real window; run by hand"]
+fn the_clap_editor_opens_while_the_owner_window_does_not_pump_messages() {
+    let file = Format::Clap.file("atomik-test-clap");
+    let id = Format::Clap.id(Kind::Gain);
+    editor_answers_while_the_owner_does_not_pump(Format::Clap, &file, &id);
+}
+
+/// The same with an installed VST3 (`ATOMIK_VST3_EDITOR_FILE` and `ATOMIK_VST3_EDITOR_ID`).
+#[cfg(windows)]
+#[test]
+#[ignore = "opens a real window of an installed plugin; run by hand"]
+fn a_vst3_editor_opens_while_the_owner_window_does_not_pump_messages() {
+    let (Ok(file), Ok(id)) = (
+        std::env::var("ATOMIK_VST3_EDITOR_FILE"),
+        std::env::var("ATOMIK_VST3_EDITOR_ID"),
+    ) else {
+        eprintln!("skipped: set ATOMIK_VST3_EDITOR_FILE and ATOMIK_VST3_EDITOR_ID");
+        return;
+    };
+    editor_answers_while_the_owner_does_not_pump(Format::Vst3, Path::new(&file), &id);
 }

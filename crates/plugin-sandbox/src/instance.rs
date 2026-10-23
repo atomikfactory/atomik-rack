@@ -317,11 +317,12 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn open_external_gui(&mut self, owner: Option<NativeParent>) -> Result<(), BackendError> {
-        let call = self.timeouts().call;
+        // A heavy editor (Serum 2, Kontakt) can take seconds to build: as long as an instantiate.
+        let wait = self.timeouts().create;
         let owner = owner.map(WireParent::from);
         let reply = self.link.call(
             "OpenGui",
-            call,
+            wait,
             |id| ToChild::OpenGui {
                 id,
                 owner,

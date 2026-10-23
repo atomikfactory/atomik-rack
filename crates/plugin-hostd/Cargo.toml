@@ -33,5 +33,8 @@ atomik-engine.workspace = true
 atomik-testkit.workspace = true
 atomik-test-plugin-core.workspace = true
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [lints]
 workspace = true

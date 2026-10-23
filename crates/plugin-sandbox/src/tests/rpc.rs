@@ -307,6 +307,28 @@ fn activate_that_is_not_answered_fails_after_the_create_timeout_and_frees_the_ca
 }
 
 #[test]
+fn opening_the_editor_waits_for_the_create_timeout_and_not_the_call_timeout() {
+    let mut timeouts = test_timeouts();
+    timeouts.create = Duration::from_millis(300);
+    timeouts.call = Duration::from_secs(30);
+    let started = start_with(
+        FakeOptions::default()
+            .script(|req, _| matches!(req, ToChild::OpenGui { .. }).then_some(Action::Silent)),
+        timeouts,
+    );
+    let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let t = now();
+    let err = instance.open_external_gui(None).unwrap_err();
+    let took = now().saturating_duration_since(t);
+    assert!(
+        took >= Duration::from_millis(300) && took < Duration::from_secs(10),
+        "{took:?}"
+    );
+    assert!(err.to_string().contains("OpenGui"), "{err}");
+    assert!(instance.is_lost());
+}
+
+#[test]
 fn the_other_calls_use_the_call_timeout() {
     let mut timeouts = test_timeouts();
     timeouts.call = Duration::from_millis(150);

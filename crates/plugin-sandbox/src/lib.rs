@@ -65,7 +65,7 @@ impl HostCommand {
 pub struct SandboxConfig {
     /// How to start a child.
     pub command: HostCommand,
-    /// Instantiate, activate, capture and restore state.
+    /// Instantiate, activate, capture and restore state, and open the editor.
     pub create_timeout: Duration,
     /// Every other main-thread call.
     pub call_timeout: Duration,

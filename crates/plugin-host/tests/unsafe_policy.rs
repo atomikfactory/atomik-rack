@@ -1,6 +1,6 @@
 //! `unsafe` is confined. The workspace denies `unsafe_code`; only the plugin
 //! format backends and the test plugin libraries (which talk to C ABIs), the test allocator and
-//! the host's float-environment and OLE modules may use it, and every `unsafe` block there has a
+//! the host's float-environment and OLE modules and one test window helper may use it, and every `unsafe` block there has a
 //! `SAFETY:` comment. This test reads the sources and fails if `unsafe` shows up anywhere else.
 
 use std::fs;
@@ -37,6 +37,8 @@ const ALLOWED_FILES: &[&str] = &[
     "crates/plugin-host/src/fpenv.rs",
     // OleInitialize on the plugin main thread (Windows); the one other exception.
     "crates/plugin-host/src/ole.rs",
+    // A stand-in for the app's main window in the editor tests (Windows).
+    "crates/plugin-hostd/tests/support/owner_window.rs",
 ];
 
 fn workspace_root() -> PathBuf {

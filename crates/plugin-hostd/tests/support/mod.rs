@@ -14,6 +14,9 @@ use atomik_plugin_ipc::{
     Response, SharedBlock, ToChild, WireLayout, block_file_name, default_block_dir, read_frame,
     write_frame,
 };
+#[cfg(windows)]
+pub mod owner_window;
+
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
