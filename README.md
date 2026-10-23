@@ -161,6 +161,7 @@ Four rules are never traded away. Each one is enforced by tests or process, not 
       plugin hosting: atomik-plugin-host, -clap, -vst3, -scan (scanner binary)
       plugin sandbox: atomik-plugin-ipc, -sandbox, -hostd (child binary atomik-plugin-host)
       atomik-testkit (dev-dependency only: fakes, signal analysis, no-alloc harness)
+      atomik-mcp (bin, development tool: MCP server for QA over render, model, app and ui)
 ```
 
 A crate depends only on crates below it; `engine` and `devices` meet only through `device-sdk`; the engine knows neither the model nor the audio files; production crates never depend on `testkit`. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full crate table, data flow and threading model.
@@ -185,6 +186,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo deny check                     # needs: cargo install cargo-deny
 ```
+
+For a change to the sound or to what the app shows, [docs/MCP.md](docs/MCP.md) describes the QA steps (bounce and compare, drive the app headlessly, read and screenshot the UI) and the `atomik-mcp` server that does them for an MCP client.
 
 ## Contributing
 

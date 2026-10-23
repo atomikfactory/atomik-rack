@@ -1,0 +1,691 @@
+//! The stateless tools: they read files and write WAVs, and keep nothing between calls.
+
+use crate::analysis;
+use crate::rpc::{Server, Tool};
+use crate::tool::{Args, ToolOutput, definition};
+use atomik_model::{ClipContent, LaneKind, RackDoc};
+use atomik_render::project::{ProjectOptions, is_project, render_doc_in};
+use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
+use atomik_render::{default_registry, patch::Patch, render_built};
+use serde_json::{Value, json};
+use std::num::NonZeroUsize;
+use std::path::Path;
+
+/// The stateless tools.
+pub const TOOLS: &[Tool] = &[
+    Tool {
+        name: "list_devices",
+        definition: list_devices_def,
+        run: list_devices,
+    },
+    Tool {
+        name: "project_inspect",
+        definition: project_inspect_def,
+        run: project_inspect,
+    },
+    Tool {
+        name: "validate",
+        definition: validate_def,
+        run: validate,
+    },
+    Tool {
+        name: "bounce",
+        definition: bounce_def,
+        run: bounce,
+    },
+    Tool {
+        name: "analyze_audio",
+        definition: analyze_audio_def,
+        run: analyze_audio,
+    },
+    Tool {
+        name: "compare_audio",
+        definition: compare_audio_def,
+        run: compare_audio,
+    },
+    Tool {
+        name: "list_plugins",
+        definition: list_plugins_def,
+        run: list_plugins,
+    },
+];
+
+fn r6(x: f32) -> f64 {
+    (f64::from(x) * 1e6).round() / 1e6
+}
+
+/// A text of `path` (a project folder resolves to its `.atomik` file), and that file's path.
+pub(crate) fn read_project_text(
+    server: &Server,
+    name: &str,
+) -> Result<(std::path::PathBuf, String), String> {
+    let path = server.paths().read(name)?;
+    let file = atomik_render::bundle::resolve_project_path(&path);
+    if file.is_dir() {
+        return Err(format!(
+            "{}: no project file (.atomik) in this folder",
+            file.display()
+        ));
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|e| format!("{}: cannot read: {e}", file.display()))?;
+    Ok((file, text))
+}
+
+// ---------------------------------------------------------------- list_devices
+
+fn list_devices_def() -> Value {
+    definition(
+        "list_devices",
+        "The built-in device types: type id, name, kind, parameter and socket counts. With \
+`type_id`, the full descriptor (every parameter with its range and default, every socket). Use \
+it to write a patch or a project that loads.",
+        &[
+            (
+                "type_id",
+                "string",
+                "One device type id, e.g. atomik.poly-synth, for its full descriptor.",
+            ),
+            (
+                "kind",
+                "string",
+                "Only this kind: instrument, effect, mixer, utility, interface, container.",
+            ),
+            (
+                "query",
+                "string",
+                "Only types whose id or name contains this text (case-insensitive).",
+            ),
+        ],
+        &[],
+    )
+}
+
+fn kind_name(kind: atomik_device_sdk::DeviceKind) -> String {
+    format!("{kind:?}").to_lowercase()
+}
+
+fn list_devices(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let _ = server;
+    let registry = default_registry();
+    if let Some(type_id) = args.opt_str("type_id")? {
+        let d = registry
+            .descriptor(type_id)
+            .ok_or_else(|| format!("unknown device type `{type_id}`"))?;
+        let params: Vec<Value> = d
+            .params
+            .iter()
+            .map(|p| {
+                json!({
+                    "key": p.key, "name": p.name,
+                    "min": r6(p.min), "max": r6(p.max), "default": r6(p.default),
+                    "taper": format!("{:?}", p.taper), "unit": format!("{:?}", p.unit),
+                    "discrete": p.discrete,
+                })
+            })
+            .collect();
+        let sockets: Vec<Value> = d
+            .sockets
+            .iter()
+            .map(|s| {
+                json!({
+                    "key": s.key, "name": s.name,
+                    "kind": format!("{:?}", s.kind).to_lowercase(),
+                    "direction": format!("{:?}", s.direction).to_lowercase(),
+                })
+            })
+            .collect();
+        return Ok(ToolOutput::json(&json!({
+            "type_id": d.type_id, "name": d.name, "kind": kind_name(d.kind),
+            "version": d.version, "params": params, "sockets": sockets,
+        })));
+    }
+    let kind = args.opt_str("kind")?.map(str::to_lowercase);
+    let query = args.opt_str("query")?.map(str::to_lowercase);
+    let mut out = Vec::new();
+    for id in registry.type_ids() {
+        let Some(d) = registry.descriptor(id) else {
+            continue;
+        };
+        if kind.as_deref().is_some_and(|k| k != kind_name(d.kind)) {
+            continue;
+        }
+        if let Some(q) = &query
+            && !d.type_id.to_lowercase().contains(q)
+            && !d.name.to_lowercase().contains(q)
+        {
+            continue;
+        }
+        out.push(json!({
+            "type_id": d.type_id, "name": d.name, "kind": kind_name(d.kind),
+            "params": d.params.len(), "sockets": d.sockets.len(),
+        }));
+    }
+    Ok(ToolOutput::json(
+        &json!({ "count": out.len(), "devices": out }),
+    ))
+}
+
+// ------------------------------------------------------------- project_inspect
+
+fn project_inspect_def() -> Value {
+    definition(
+        "project_inspect",
+        "Loads a project (.atomik, or a bundle folder) or a patch and describes it: devices, \
+cables, the song (tracks, lanes, clips, tempo, loop, markers) and the console. Fails with the \
+JSON path of the first problem when the file does not load.",
+        &[
+            (
+                "path",
+                "string",
+                "Project file, bundle folder or patch file.",
+            ),
+            (
+                "include_params",
+                "boolean",
+                "List every device's saved parameter values (default false).",
+            ),
+        ],
+        &["path"],
+    )
+}
+
+/// The description of a document, shared with `session_status`.
+pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
+    let devices: Vec<Value> = doc
+        .devices
+        .iter()
+        .map(|d| {
+            let mut v = json!({
+                "key": d.key.as_str(), "type_id": d.type_id, "name": d.name,
+                "column": d.column, "folded": d.folded,
+                "plugin": d.plugin.is_some(), "container": d.inner.is_some(),
+                "sample_zones": d.zones.len(), "step_sequencer": d.steps.is_some(),
+            });
+            if include_params {
+                let params: serde_json::Map<String, Value> = d
+                    .params
+                    .iter()
+                    .map(|(k, x)| (k.clone(), json!(r6(*x))))
+                    .collect();
+                v["params"] = Value::Object(params);
+            }
+            v
+        })
+        .collect();
+    let cables: Vec<String> = doc
+        .cables
+        .iter()
+        .map(|c| {
+            format!(
+                "{}:{} -> {}:{}",
+                c.from.device, c.from.socket, c.to.device, c.to.socket
+            )
+        })
+        .collect();
+    let tracks: Vec<Value> = doc
+        .song
+        .tracks
+        .iter()
+        .map(|t| {
+            let lanes: Vec<Value> = t
+                .lanes
+                .iter()
+                .map(|l| {
+                    let kind = match &l.kind {
+                        LaneKind::Notes => "notes".to_string(),
+                        LaneKind::Automation(p) => format!("automation:{p}"),
+                        LaneKind::Audio => "audio".to_string(),
+                    };
+                    let items: usize = l
+                        .clips
+                        .iter()
+                        .map(|c| match &c.content {
+                            ClipContent::Notes(n) => n.len(),
+                            ClipContent::Automation(a) => a.len(),
+                            ClipContent::Audio(_) => 1,
+                        })
+                        .sum();
+                    json!({"kind": kind, "clips": l.clips.len(), "items": items})
+                })
+                .collect();
+            json!({
+                "device": t.device.as_str(), "muted": t.muted, "solo": t.solo,
+                "armed": t.armed, "lanes": lanes,
+            })
+        })
+        .collect();
+    let ppq = atomik_core::PPQ;
+    json!({
+        "sample_rate": doc.sample_rate,
+        "tempo_bpm": doc.tempo_bpm,
+        "output_channels": doc.output_channels,
+        "input_channels": doc.input_channels,
+        "devices": devices,
+        "cables": cables,
+        "plugins": doc.plugin_devices().len(),
+        "assets": doc.assets.len(),
+        "song": {
+            "ticks_per_beat": ppq,
+            "end_ticks": doc.song.end,
+            "end_beats": doc.song.end as f64 / ppq as f64,
+            "loop": {
+                "enabled": doc.song.loop_enabled,
+                "start_ticks": doc.song.loop_range.0,
+                "end_ticks": doc.song.loop_range.1,
+            },
+            "tempo_events": doc.song.tempo.iter()
+                .map(|t| json!({"tick": t.tick, "bpm": t.bpm, "ramp": t.ramp}))
+                .collect::<Vec<_>>(),
+            "meter_events": doc.song.meter.len(),
+            "markers": doc.song.markers.iter()
+                .map(|m| json!({"tick": m.tick, "name": m.name}))
+                .collect::<Vec<_>>(),
+            "ranges": doc.song.ranges.len(),
+            "tracks": tracks,
+        },
+        "console": { "master": doc.console.master.is_some() },
+    })
+}
+
+fn project_inspect(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let (file, text) = read_project_text(server, args.str("path")?)?;
+    let doc = atomik_model::load_project(&text, &default_registry()).map_err(|e| e.to_string())?;
+    let mut v = doc_json(&doc, args.opt_bool("include_params")?.unwrap_or(false));
+    v["file"] = json!(file.to_string_lossy());
+    v["kind"] = json!(if is_project(&text) {
+        "project"
+    } else {
+        "patch"
+    });
+    Ok(ToolOutput::json(&v))
+}
+
+// ------------------------------------------------------------------- validate
+
+fn validate_def() -> Value {
+    definition(
+        "validate",
+        "Checks that a project or patch loads and builds, without rendering. The result is data: \
+`valid` false carries the error (a JSON path and what is wrong), warnings are listed either way.",
+        &[(
+            "path",
+            "string",
+            "Project file, bundle folder or patch file.",
+        )],
+        &["path"],
+    )
+}
+
+fn validate(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let (file, text) = read_project_text(server, args.str("path")?)?;
+    let registry = default_registry();
+    let project = is_project(&text);
+    let outcome: Result<Vec<String>, String> = if project {
+        atomik_model::load_project_with_warnings(&text, &registry)
+            .map(|(_, w)| w)
+            .map_err(|e| e.to_string())
+    } else {
+        Patch::from_json(&text)
+            .map_err(|e| e.to_string())
+            .and_then(|p| {
+                atomik_render::build::build(&p, &registry)
+                    .map(|b| b.warnings.iter().map(ToString::to_string).collect())
+                    .map_err(|e| e.to_string())
+            })
+    };
+    let kind = if project { "project" } else { "patch" };
+    Ok(ToolOutput::json(&match outcome {
+        Ok(warnings) => json!({
+            "valid": true, "kind": kind, "file": file.to_string_lossy(), "warnings": warnings,
+        }),
+        Err(error) => json!({
+            "valid": false, "kind": kind, "file": file.to_string_lossy(), "error": error,
+        }),
+    }))
+}
+
+// --------------------------------------------------------------------- bounce
+
+fn bounce_def() -> Value {
+    definition(
+        "bounce",
+        "Renders a project (its song, end + 2 beats) or a patch offline to a WAV file, the same \
+code as `atomik-render`, and returns the audio report (levels, silence, loudness windows, \
+spectrum). With `reference`, also compares the render with that WAV. Projects that use \
+third-party plugins are refused: bounce those with `atomik-render --allow-plugins`.",
+        &[
+            (
+                "path",
+                "string",
+                "Project file, bundle folder or patch file.",
+            ),
+            (
+                "output",
+                "string",
+                "Output WAV (default target/mcp/<name>.wav under the first allowed folder).",
+            ),
+            ("format", "string", "f32 (default) or pcm24."),
+            (
+                "block",
+                "integer",
+                "Host block size in frames (default 512); the output does not depend on it.",
+            ),
+            (
+                "workers",
+                "integer",
+                "Engine worker threads, projects only (default 0); the output does not depend on it.",
+            ),
+            (
+                "loop_count",
+                "integer",
+                "Projects only: play the song loop this many times.",
+            ),
+            (
+                "window_s",
+                "number",
+                "Loudness window of the report in seconds (default 0.5).",
+            ),
+            ("reference", "string", "A WAV to compare the render with."),
+            (
+                "tolerance_db",
+                "number",
+                "With reference: the largest loudness difference per window that still matches (default 0.5).",
+            ),
+        ],
+        &["path"],
+    )
+}
+
+/// What a bounce produced.
+pub struct Bounced {
+    /// One buffer per output channel.
+    pub channels: Vec<Vec<f32>>,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Warnings from building.
+    pub warnings: Vec<String>,
+    /// Wall time in seconds.
+    pub wall_s: f64,
+}
+
+/// Bounces a project document, refusing third-party plugins (they need `atomik-render
+/// --allow-plugins`, with its sandbox and plugin cache).
+///
+/// # Errors
+/// The renderer's message, or the plugins refusal.
+pub fn render_doc_checked(
+    doc: &RackDoc,
+    registry: &atomik_device_sdk::Registry,
+    block: usize,
+    workers: u16,
+    loop_count: Option<u32>,
+    bundle_root: Option<&Path>,
+) -> Result<Bounced, String> {
+    let block = NonZeroUsize::new(block).ok_or("block must be at least 1")?;
+    let used = doc.plugin_devices();
+    if !used.is_empty() {
+        let names: Vec<String> = used
+            .iter()
+            .map(|(_, d)| format!("{} ({})", d.name, d.type_id))
+            .collect();
+        return Err(format!(
+            "this project uses third-party plugins ({}); bounce it with `atomik-render --allow-plugins`",
+            names.join(", ")
+        ));
+    }
+    let options = ProjectOptions {
+        host_block: block,
+        workers,
+        loop_count,
+    };
+    #[allow(clippy::disallowed_methods)]
+    // Justification: wall time is only reported; it never influences a sample.
+    let started = std::time::Instant::now();
+    let mut r = render_doc_in(doc, registry, &options, bundle_root).map_err(|e| e.to_string())?;
+    Ok(Bounced {
+        warnings: r.warnings.drain(..).map(|w| w.to_string()).collect(),
+        channels: r.channels,
+        sample_rate: r.sample_rate,
+        wall_s: started.elapsed().as_secs_f64(),
+    })
+}
+
+/// Renders project text (`project` true) or patch text.
+///
+/// # Errors
+/// The renderer's message (a JSON path or file for problems in the file).
+pub fn render_text(
+    text: &str,
+    bundle_of: &Path,
+    block: usize,
+    workers: u16,
+    loop_count: Option<u32>,
+) -> Result<Bounced, String> {
+    let registry = default_registry();
+    if is_project(text) {
+        let doc = atomik_model::load_project(text, &registry).map_err(|e| e.to_string())?;
+        let root = atomik_render::bundle::existing_bundle_root(bundle_of);
+        render_doc_checked(&doc, &registry, block, workers, loop_count, root.as_deref())
+    } else {
+        if workers != 0 || loop_count.is_some() {
+            return Err("workers and loop_count apply to projects, not patches".to_string());
+        }
+        let block = NonZeroUsize::new(block).ok_or("block must be at least 1")?;
+        #[allow(clippy::disallowed_methods)]
+        // Justification: wall time is only reported; it never influences a sample.
+        let started = std::time::Instant::now();
+        let patch = Patch::from_json(text).map_err(|e| e.to_string())?;
+        let mut built =
+            atomik_render::build::build(&patch, &registry).map_err(|e| e.to_string())?;
+        let warnings = built.warnings.drain(..).map(|w| w.to_string()).collect();
+        Ok(Bounced {
+            channels: render_built(built, block),
+            sample_rate: patch.sample_rate,
+            warnings,
+            wall_s: started.elapsed().as_secs_f64(),
+        })
+    }
+}
+
+/// The report of a bounce: the audio report plus the run's numbers.
+pub fn bounce_json(b: &Bounced, window_s: f64) -> Value {
+    let frames = analysis::frames(&b.channels);
+    let seconds = frames as f64 / f64::from(b.sample_rate.max(1));
+    let mut v = json!({
+        "wall_s": (b.wall_s * 1000.0).round() / 1000.0,
+        "realtime_factor": if b.wall_s > 0.0 { (seconds / b.wall_s * 10.0).round() / 10.0 } else { 0.0 },
+        "warnings": b.warnings,
+    });
+    v["audio"] = analysis::report(&b.channels, b.sample_rate, window_s);
+    v
+}
+
+fn sample_format(args: &Args) -> Result<SampleFormat, String> {
+    match args.opt_str("format")? {
+        None | Some("f32") => Ok(SampleFormat::F32),
+        Some("pcm24") => Ok(SampleFormat::Pcm24),
+        Some(other) => Err(format!("format must be f32 or pcm24, not `{other}`")),
+    }
+}
+
+fn block_arg(args: &Args) -> Result<usize, String> {
+    let block = args.opt_u64("block")?.unwrap_or(512);
+    if (1..=1_048_576).contains(&block) {
+        Ok(block as usize)
+    } else {
+        Err("block must be 1..=1048576".to_string())
+    }
+}
+
+/// Writes a bounce to `out` and, with a reference WAV, compares them.
+fn finish_bounce(
+    server: &Server,
+    b: &Bounced,
+    out: &Path,
+    format: SampleFormat,
+    args: &Args,
+) -> Result<Value, String> {
+    write_wav_file(out, &b.channels, b.sample_rate, format).map_err(|e| e.to_string())?;
+    let window_s = args.opt_f64("window_s")?.unwrap_or(0.5);
+    let mut v = bounce_json(b, window_s);
+    v["output"] = json!(out.to_string_lossy());
+    if let Some(reference) = args.opt_str("reference")? {
+        let tolerance = args.opt_f64("tolerance_db")?.unwrap_or(0.5);
+        let wav = read_wav_file(&server.paths().read(reference)?).map_err(|e| e.to_string())?;
+        let c = analysis::compare(
+            &b.channels,
+            b.sample_rate,
+            &wav.channels,
+            wav.sample_rate,
+            window_s,
+        );
+        v["comparison"] = c.to_json(tolerance);
+        v["comparison"]["reference"] = json!(reference);
+    }
+    Ok(v)
+}
+
+fn bounce(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let (file, text) = read_project_text(server, args.str("path")?)?;
+    let workers = u16::try_from(args.opt_u64("workers")?.unwrap_or(0))
+        .ok()
+        .filter(|w| *w <= 64)
+        .ok_or("workers must be 0..=64")?;
+    let loop_count = args
+        .opt_u64("loop_count")?
+        .map(|n| u32::try_from(n).ok().filter(|n| (1..=10_000).contains(n)))
+        .map(|n| n.ok_or("loop_count must be 1..=10000"))
+        .transpose()?;
+    let b = render_text(&text, &file, block_arg(args)?, workers, loop_count)?;
+    let stem = file.file_stem().map_or_else(
+        || "bounce".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    let out = match args.opt_str("output")? {
+        Some(o) => server.paths().write(o)?,
+        None => server
+            .paths()
+            .write(&server.paths().default_output(&format!("{stem}.wav")))?,
+    };
+    let v = finish_bounce(server, &b, &out, sample_format(args)?, args)?;
+    Ok(ToolOutput::json(&v))
+}
+
+// -------------------------------------------------------------- analyze_audio
+
+fn analyze_audio_def() -> Value {
+    definition(
+        "analyze_audio",
+        "Measures a WAV file: peak and RMS in dBFS per channel, DC offset, clipped and \
+non-finite samples, silent stretches, RMS per window (the loudness fingerprint), and a coarse \
+spectrum (eight bands and the dominant frequency). dB values are floored at -240.",
+        &[
+            ("path", "string", "WAV file (32-bit float or 24-bit PCM)."),
+            (
+                "window_s",
+                "number",
+                "Loudness window in seconds (default 0.5).",
+            ),
+        ],
+        &["path"],
+    )
+}
+
+fn analyze_audio(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let path = server.paths().read(args.str("path")?)?;
+    let wav = read_wav_file(&path).map_err(|e| e.to_string())?;
+    let mut v = analysis::report(
+        &wav.channels,
+        wav.sample_rate,
+        args.opt_f64("window_s")?.unwrap_or(0.5),
+    );
+    v["file"] = json!(path.to_string_lossy());
+    Ok(ToolOutput::json(&v))
+}
+
+// -------------------------------------------------------------- compare_audio
+
+fn compare_audio_def() -> Value {
+    definition(
+        "compare_audio",
+        "Compares two WAV files: same shape (rate, channels, length), bit-identical, largest \
+sample difference, the first differing frame, and the largest per-window loudness difference in \
+dB with where it happens. `matches` is true when the shapes agree and no window differs by more \
+than `tolerance_db` (the goldens use 0.5).",
+        &[
+            ("a", "string", "First WAV (usually the reference)."),
+            ("b", "string", "Second WAV."),
+            ("tolerance_db", "number", "Default 0.5."),
+            (
+                "window_s",
+                "number",
+                "Loudness window in seconds (default 0.5).",
+            ),
+        ],
+        &["a", "b"],
+    )
+}
+
+fn compare_audio(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let read = |name: &str| read_wav_file(&server.paths().read(name)?).map_err(|e| e.to_string());
+    let (a, b) = (read(args.str("a")?)?, read(args.str("b")?)?);
+    let c = analysis::compare(
+        &a.channels,
+        a.sample_rate,
+        &b.channels,
+        b.sample_rate,
+        args.opt_f64("window_s")?.unwrap_or(0.5),
+    );
+    Ok(ToolOutput::json(
+        &c.to_json(args.opt_f64("tolerance_db")?.unwrap_or(0.5)),
+    ))
+}
+
+// --------------------------------------------------------------- list_plugins
+
+fn list_plugins_def() -> Value {
+    definition(
+        "list_plugins",
+        "The third-party plugins the app has scanned (read from its scan cache, plugins.json in \
+the app's config folder): type id, name, vendor, format, file, and the blacklist. Scan with the \
+app first; this tool never loads a plugin.",
+        &[(
+            "cache",
+            "string",
+            "A plugins.json to read instead of the app's.",
+        )],
+        &[],
+    )
+}
+
+fn list_plugins(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let cache_path = args
+        .opt_str("cache")?
+        .map(|c| server.paths().read(c))
+        .transpose()?;
+    let (cache, status) = atomik_render::plugins::load_cache(cache_path.as_deref());
+    let mut plugins = Vec::new();
+    for file in cache.files() {
+        for p in &file.plugins {
+            plugins.push(json!({
+                "type_id": p.plugin.type_id(),
+                "name": p.layout.name, "vendor": p.layout.vendor, "version": p.layout.version,
+                "format": p.plugin.format.name(),
+                "file": file.path.to_string_lossy(),
+                "params": p.layout.params.len(),
+                "unsupported": p.unsupported,
+            }));
+        }
+    }
+    let blacklist: Vec<Value> = cache
+        .blacklist()
+        .map(|b| json!({"file": b.path.to_string_lossy(), "format": b.format.name(), "reason": b.reason}))
+        .collect();
+    Ok(ToolOutput::json(&json!({
+        "cache": format!("{status:?}"),
+        "count": plugins.len(),
+        "plugins": plugins,
+        "blacklist": blacklist,
+    })))
+}

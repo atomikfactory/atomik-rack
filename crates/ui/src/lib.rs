@@ -238,7 +238,8 @@
 //! # Backends
 //! - [`SceneCanvas`]: vello GPU scene (text shaped with parley, system fonts via fontique).
 //! - [`DisplayList`]: deterministic recorder; [`DisplayList::to_json`] feeds the snapshot tests.
-//! - A `vello_cpu` canvas for PNG previews lives in `tests/support/cpu.rs`.
+//! - A `vello_cpu` canvas for PNG previews and screenshots is [`cpu_canvas::CpuCanvas`] (feature
+//!   `cpu-canvas`).
 
 pub mod action;
 pub mod arp_panel;
@@ -259,6 +260,8 @@ pub mod container_edit;
 pub mod container_editor;
 pub mod container_panel;
 pub mod context_menu;
+#[cfg(feature = "cpu-canvas")]
+pub mod cpu_canvas;
 pub mod display_list;
 pub mod event;
 pub mod file_browser;

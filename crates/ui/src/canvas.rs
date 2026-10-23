@@ -4,8 +4,8 @@
 //! Backends:
 //! - [`crate::SceneCanvas`]: encodes into a [`vello::Scene`] (GPU path, used by the app);
 //! - [`crate::DisplayList`]: records ops as plain data (deterministic snapshot tests, caching);
-//! - a `vello_cpu` backend for pixel previews lives in the test support code
-//!   (`tests/support/cpu.rs`), because `vello_cpu` is a dev-dependency.
+//! - a `vello_cpu` backend for pixel previews and screenshots is `cpu_canvas::CpuCanvas`
+//!   (feature `cpu-canvas`).
 
 use crate::display_list::DisplayList;
 use vello::kurbo::{

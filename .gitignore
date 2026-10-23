@@ -47,5 +47,6 @@ examples/projects/*/Audio/.peaks/
 /.aider*
 /.github/copilot-instructions.md
 /.codex/
+/.mcp.json
 
 /not-for-git/

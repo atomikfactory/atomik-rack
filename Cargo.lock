@@ -336,6 +336,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomik-mcp"
+version = "0.1.0"
+dependencies = [
+ "atomik-app",
+ "atomik-core",
+ "atomik-device-sdk",
+ "atomik-model",
+ "atomik-plugin-host",
+ "atomik-render",
+ "atomik-ui",
+ "rustfft",
+ "serde_json",
+]
+
+[[package]]
 name = "atomik-midi-io"
 version = "0.1.0"
 dependencies = [
@@ -646,6 +661,7 @@ dependencies = [
  "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
+ "atomik-ui",
  "parley",
  "proptest",
  "serde",

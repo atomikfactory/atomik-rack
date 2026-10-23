@@ -43,6 +43,7 @@ The DCO is not a copyright assignment. You keep your copyright; you license your
 - Work on a branch in your fork (or a feature branch) and open a pull request against `main`. **Do not push directly to `main`.**
 - Keep each pull request focused on one change, fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md), and link the issue.
 - Update the docs when behaviour or public APIs change.
+- QA what you changed before you ask for review: for a change to the sound or to what the app shows, follow the recipes in [docs/MCP.md](docs/MCP.md) (bounce and compare against the previous render, drive the app headlessly, read the screen) and say in the pull request what you ran and what it showed. The `atomik-mcp` server automates them for an MCP client; `atomik-render` and the headless tests do the same by hand. This is evidence, not a substitute for tests: behaviour that matters still gets a headless test (section 5).
 - Respect the crate dependency rules in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#1-crates-and-the-dependency-rule).
 - On Windows, set `git config core.autocrlf false` so line endings stay as the repository stores them.
 
@@ -82,6 +83,7 @@ Guidelines:
 - Bug fixes include a regression test that fails without the fix.
 - Prefer property tests (`proptest`) for numerical code, parameter ranges and anything with "for all inputs" semantics.
 - Tests must be deterministic: no sleeps, no wall-clock time, no unseeded randomness, no network. Tests that need hardware or a real plugin are `#[ignore]`d (see [docs/TESTING.md](docs/TESTING.md)).
+- A change to `atomik-mcp` follows [docs/MCP.md](docs/MCP.md#extending-the-server): every tool has an argument-validation, a path-policy and a result test through `Server::call_tool`.
 - Goldens (display lists, render fingerprints, the keyboard reference) are regenerated with `ATOMIK_UPDATE_GOLDEN=1` and the diff is reviewed; see [docs/TESTING.md](docs/TESTING.md).
 
 ## 6. Real-time safety (HI-1)

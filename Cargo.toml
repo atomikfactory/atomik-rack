@@ -18,6 +18,7 @@ atomik-device-sdk = { path = "crates/device-sdk" }
 atomik-dsp = { path = "crates/dsp" }
 atomik-devices = { path = "crates/devices" }
 atomik-engine = { path = "crates/engine" }
+atomik-app = { path = "crates/app" }
 atomik-testkit = { path = "crates/testkit" }
 atomik-audio-io = { path = "crates/audio-io" }
 atomik-midi-io = { path = "crates/midi-io" }
