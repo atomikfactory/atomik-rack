@@ -4,7 +4,10 @@
 
 ## How it was tested
 
-<!-- Name the new or changed tests. For bug fixes, confirm the regression test failed before the fix. -->
+<!-- Name the new or changed tests. For bug fixes, confirm the regression test failed before the fix.
+     For a change to the sound or the UI, also say which QA steps of docs/MCP.md you ran and what they
+     showed (for example: bounce bit-identical before and after, blocks 64/333/512, or the screenshot and
+     the texts of the new state). -->
 
 ## Checklist
 
