@@ -28,6 +28,7 @@ Useful subsets:
 
 ```sh
 cargo test -p atomik-engine                 # graph, compile, engine, offline
+cargo test -p atomik-mcp                    # the QA server: protocol, tools, headless sessions
 cargo test -p atomik-devices                # the built-in devices
 cargo test -p atomik-render --test e2e      # end-to-end CLI tests and goldens
 ```
@@ -157,6 +158,12 @@ The master section and Audio I/O are covered in the app by `crates/app/src/app_c
 ## The Character effect in the app and the bounce
 
 `crates/app/src/app_core_character_tests.rs` holds the app half of the Character tests: the four meter values reaching the view (recording sink and a real offline engine, the inner Character of a container by path key), the tiered latency published by the real engine (no epoch bump inside a class, one at the end of a fade across the classes), the routing recompile on a class change, and the live twins of the `character-demo` bounce (host blocks 64, 480 and 512; a preset change across the classes made through the app; undo, redo and an engine restart; a class change driven by a song lane, stepped one batch per frame like the bounce loop). A live twin must start from a cold engine: devices keep free-running state, so an engine that rendered idle frames before Play no longer equals a bounce bit for bit. In `atomik-render`, `tests/character_demo.rs` generates and checks the example project (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test character_demo regenerate`; determinism across host blocks 64, 333, 480, 512 and workers 0, 2, 3) and `tests/character_pdc.rs` aligns identical clicks through a Character in both latency classes and across a class change in the middle of the song (the regression test of the bounce that did not follow the engine's latency epoch). `--stress-character` is tested in `stress.rs` (structure, preset cycle, class changes under load, determinism, combination with the other loads) and `cli.rs`.
+
+## QA with the MCP server
+
+[MCP.md](MCP.md) describes `atomik-mcp`, a development server that gives an MCP client the checks a person does by hand: bounce a project or patch and compare it with an earlier render, measure a WAV (levels, silence, loudness windows, spectrum), and drive a headless `Shell` (menu commands, pointer, keys, the texts the UI draws, PNG screenshots, undo, save, a bounce of the open document). Use it for the QA of a change before review, and to keep the evidence; it does not replace the tests of this page, and a behaviour it shows is worth a headless test.
+
+`crates/mcp/tests` tests the server itself: `protocol.rs` (the handshake, the tool list, the JSON-RPC errors, the real binary over stdio), `stateless.rs` (every stateless tool against the example projects: bounces bit-identical across host blocks 64, 333 and 512 and worker counts 0 and 2, a changed patch caught against its reference, the plugin refusal, the path policy for reads, writes and `..` through a folder that does not exist yet) and `session.rs` (every session tool against a real headless shell: commands and their toggles, undo by command and by chord, the discard confirmation, the dialog requests, pointer and key input, texts at two scales, screenshots, save and read back, and a session bounce that equals the bounce of the same file and hears an edit). The analysis maths (levels, silence, windows, spectrum, comparison) has unit tests in `crates/mcp/src/analysis.rs`.
 
 ## Hardware and manual tests
 

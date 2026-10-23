@@ -51,6 +51,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, model | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-clap | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-mcp` | [crates/mcp](../crates/mcp) | core, device-sdk, model, render, app, ui (feature `cpu-canvas`), plugin-host | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | Test-only: fakes, signal analysis, the allocation guard |
 
 Rules (all hold in the `Cargo.toml` files today):
@@ -60,6 +61,7 @@ Rules (all hold in the `Cargo.toml` files today):
 - The engine does not know the model or the audio files. The app turns the model into engine-native `SongInput` data, and implements the engine's `StreamSource` trait over the file reader.
 - `atomik-render` is the offline composition root and `atomik-app` the live one. They share one song builder, [`project::song_input`](../crates/render/src/project.rs), so a bounce and live playback build identical engine input.
 - `atomik-testkit` is only ever a `[dev-dependencies]` entry.
+- `atomik-mcp` is a development tool above the app: nothing depends on it, release archives do not contain it, and it only wraps code that has its own tests (bounces, documents, the shell). It opens no audio device. `atomik-ui`'s `cpu-canvas` feature (a `vello_cpu` canvas, also used by the preview tests) is turned on only by it and by the UI's own tests, so the app does not link `vello_cpu`.
 
 To check the rule yourself, read the `[dependencies]` section of each `crates/*/Cargo.toml`.
 
