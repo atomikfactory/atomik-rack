@@ -284,6 +284,33 @@ fn the_interface_inputs_of_the_document_resolve_the_audio_track_cables() {
     );
 }
 
+#[test]
+fn assets_in_ram_hand_their_samples_to_the_waveform_views_and_streamed_ones_do_not() {
+    let t = Tmp::new("samples");
+    let small = wav(&t, "small.wav", 1_000, 48_000, 1.0);
+    let big = wav(&t, "big.wav", 8_000, 48_000, 0.5);
+    // 1 000 mono frames are 4 000 bytes, 8 000 frames 32 000.
+    let mut sink = RecordingSink::new();
+    sink.stream_threshold = Some(16_000);
+    let mut c = AppCore::with_doc(sink, empty_doc(), None);
+    import(&mut c, &[small, big], ImportTarget::NewTracks, 0);
+    let mut by_size: Vec<(u64, String)> = c
+        .song_assets()
+        .iter()
+        .map(|(h, a)| (a.frames(), h.clone()))
+        .collect();
+    by_size.sort_unstable();
+    let (small, big) = (&by_size[0].1, &by_size[1].1);
+    assert!(c.song_assets()[big].is_stream());
+    assert!(c.arrangement().has_samples(small));
+    assert!(c.sample_editor().has_samples(small));
+    assert!(c.slice_editor().has_samples(small));
+    assert!(!c.arrangement().has_samples(big), "streamed: peaks only");
+    assert!(!c.sample_editor().has_samples(big));
+    assert!(!c.slice_editor().has_samples(big));
+    assert!(c.peaks().contains_key(big), "the peaks are there for both");
+}
+
 // ------------------------------------------------------------------ save, open, bundles
 
 fn import_one(
@@ -343,6 +370,10 @@ fn a_project_with_audio_saves_and_reopens_bit_exactly() {
     assert_eq!(other.doc(), &doc);
     assert!(other.missing_assets().is_empty());
     assert!(other.peaks().contains_key(&hash), "peaks fed after open");
+    assert!(
+        other.arrangement().has_samples(&hash),
+        "samples fed after open"
+    );
     assert_eq!(other.song_assets()[&hash].frames(), 9_600);
     assert_eq!(
         last_song(&mut other).audio.len(),

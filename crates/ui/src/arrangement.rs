@@ -881,6 +881,11 @@ impl ArrangementView {
         self.repaint = true;
     }
 
+    /// Whether the samples of an asset are held (see [`Self::set_samples`]).
+    pub fn has_samples(&self, asset: &str) -> bool {
+        self.samples.contains_key(asset)
+    }
+
     /// Forgets the peaks of an asset.
     pub fn clear_peaks(&mut self, asset: &str) {
         let had_samples = self.samples.remove(asset).is_some();
