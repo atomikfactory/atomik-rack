@@ -1,5 +1,6 @@
 //! Validation of song commands and their translation into reversible edits.
 
+use crate::WriteMode;
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::history::Edit;
 use crate::song::{
@@ -562,6 +563,23 @@ pub(crate) fn plan(
                 device,
                 old: t.chase,
                 new: chase,
+            }
+        }
+        SongCommand::SetLaneWriteMode {
+            device,
+            param,
+            mode,
+        } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            if t.automation_lane(&param).is_none() {
+                return Err(bad(format!("{device} has no automation lane for {param}")));
+            }
+            let key = (device.clone(), param.clone());
+            Edit::LaneWrite {
+                old: song.lane_write.get(&key).copied(),
+                new: (mode != WriteMode::default()).then_some(mode),
+                device,
+                param,
             }
         }
         SongCommand::AddAutomationLane { device, param } => {

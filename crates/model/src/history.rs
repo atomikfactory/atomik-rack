@@ -1,6 +1,7 @@
 //! Reversible edits. Every applied command becomes one [`Edit`] holding everything needed to
 //! perform it again or invert it; undo performs the inverse.
 
+use crate::WriteMode;
 use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::plugin_cmd::RelinkData;
@@ -84,6 +85,13 @@ pub(crate) enum Edit {
         device: DeviceKey,
         old: bool,
         new: bool,
+    },
+    /// Write mode of an automation lane (`None` is the default).
+    LaneWrite {
+        device: DeviceKey,
+        param: String,
+        old: Option<WriteMode>,
+        new: Option<WriteMode>,
     },
     /// Insert or remove lane `index` of a track.
     Lane {
@@ -409,6 +417,17 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::LaneWrite {
+                device,
+                param,
+                old,
+                new,
+            } => Edit::LaneWrite {
+                device,
+                param,
+                old: new,
+                new: old,
+            },
             Edit::Lane {
                 device,
                 index,
@@ -684,6 +703,20 @@ impl Edit {
             Edit::TrackChase { device, new, .. } => {
                 track_mut(doc, device).chase = *new;
                 vec![SyncOp::SongChanged]
+            }
+            Edit::LaneWrite {
+                device, param, new, ..
+            } => {
+                let key = (device.clone(), param.clone());
+                match new {
+                    Some(mode) => {
+                        doc.song.lane_write.insert(key, *mode);
+                    }
+                    None => {
+                        doc.song.lane_write.remove(&key);
+                    }
+                }
+                vec![SyncOp::ViewChanged]
             }
             Edit::Lane {
                 device,
