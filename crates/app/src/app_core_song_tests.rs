@@ -154,8 +154,9 @@ fn start_up_submits_the_song_and_the_transport_setup_after_the_rack() {
             tempo: vec![atomik_engine::SongTempo {
                 tick: Ticks(0),
                 tempo: Tempo::new(120.0).unwrap(),
+                ramp: false,
             }],
-            beats_per_bar: 4,
+            meter: vec![atomik_core::MeterEvent::new(1, 4, 4)],
             audio: Vec::new(),
             assets: Vec::new(),
         }

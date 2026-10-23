@@ -26,7 +26,7 @@
 //!   before the clip is made; lengths are kept.
 //! - Notes still held at stop are closed at the stop position.
 
-use atomik_core::{NoteKind, PPQ};
+use atomik_core::{MeterTable, NoteKind, PPQ};
 use atomik_engine::{DeviceInstanceId, ScheduledNote, SongPosition, TransportState};
 use atomik_model::{Clip, ClipContent, ClipId, DeviceKey, Note};
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,8 @@ struct TakeNote {
 pub struct Take {
     tracks: BTreeMap<DeviceInstanceId, DeviceKey>,
     loop_range: Option<(i64, i64)>,
-    bar: i64,
+    /// The song's meter map: a clip is rounded out to its bar lines.
+    meter: MeterTable,
     /// `(tick, loop_count)` of the first playing state.
     origin: Option<(i64, u64)>,
     held: BTreeMap<(DeviceInstanceId, u8), (u64, i64, f32)>,
@@ -190,16 +191,16 @@ pub struct Take {
 
 impl Take {
     /// A take on `tracks` (engine id → device key), with the song loop range when the loop
-    /// is enabled, and `bar` ticks per bar.
+    /// is enabled, and the song's meter map (the bar lines a clip is rounded to).
     pub fn new(
         tracks: impl IntoIterator<Item = (DeviceInstanceId, DeviceKey)>,
         loop_range: Option<(i64, i64)>,
-        bar: i64,
+        meter: MeterTable,
     ) -> Self {
         Self {
             tracks: tracks.into_iter().collect(),
             loop_range: loop_range.filter(|(s, e)| s < e),
-            bar: bar.max(1),
+            meter,
             origin: None,
             held: BTreeMap::new(),
             notes: BTreeMap::new(),
@@ -328,9 +329,15 @@ impl Take {
             };
             let first = notes.iter().map(|n| n.tick).min().unwrap_or(from);
             let last = notes.iter().map(|n| n.tick + n.length).max().unwrap_or(to);
-            let start = from.min(first).max(0).div_euclid(self.bar) * self.bar;
+            let meter = self.meter.map();
+            let floor_bar = |t: i64| meter.bar_start(meter.bar_at(t));
+            let start = floor_bar(from.min(first).max(0));
             let end = to.max(last).max(start + 1);
-            let end = (end + self.bar - 1).div_euclid(self.bar) * self.bar;
+            let end = if floor_bar(end) == end {
+                end
+            } else {
+                meter.next_bar_line(end)
+            };
             let content = notes
                 .iter()
                 .map(|n| Note::new(n.tick - start, n.length.max(1), n.key, n.velocity))

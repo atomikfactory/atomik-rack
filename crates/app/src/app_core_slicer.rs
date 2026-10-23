@@ -48,7 +48,6 @@ use atomik_model::{
     default_loop_beats, grid_markers, slices_from_markers, to_track_notes,
 };
 use atomik_render::samples::song_asset_buffer;
-use atomik_ui::timeline::snap_round;
 use atomik_ui::{SliceEditorView, SliceMode};
 use std::sync::Arc;
 
@@ -389,8 +388,7 @@ impl<S: EngineSink> AppCore<S> {
         length: i64,
     ) -> Option<ClipId> {
         let song = &self.doc().song;
-        let bar = song.bar_ticks().max(1);
-        let start = snap_round(self.position, Some(bar)).max(0);
+        let start = song.nearest_bar_line(self.position).max(0);
         let has_track = song.track(device).is_some();
         let add = Command::Song(SongCommand::AddClip {
             device: device.clone(),

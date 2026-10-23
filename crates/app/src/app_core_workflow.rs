@@ -54,15 +54,14 @@ impl<S: EngineSink> AppCore<S> {
     /// `|bars|` times, never before the start. From the middle of a bar, one step back goes to
     /// the start of that bar.
     pub fn locate_bars(&mut self, bars: i64) {
-        let bar = self.doc().song.bar_ticks().max(1);
+        let table = self.doc().song.meter_table();
+        let meter = table.map();
         let mut tick = self.position;
         for _ in 0..bars.unsigned_abs() {
             tick = if bars > 0 {
-                (tick.div_euclid(bar) + 1) * bar
-            } else if tick.rem_euclid(bar) != 0 {
-                tick.div_euclid(bar) * bar
+                meter.next_bar_line(tick)
             } else {
-                (tick - bar).max(0)
+                meter.prev_bar_line(tick)
             };
         }
         self.transport_action(TransportAction::Locate(tick.max(0)));

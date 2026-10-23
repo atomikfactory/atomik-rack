@@ -509,6 +509,8 @@ impl<S: EngineSink> AppCore<S> {
                 let _ = self.apply_command(c);
             }
             UiAction::EndMerge => self.document.end_merge(),
+            // "Set Tempo..." on a tempo point: the transport bar's tempo entry takes that event.
+            UiAction::EditTempoPoint(i) => self.transport_bar.begin_tempo_edit(Some(i)),
             UiAction::Undo => {
                 self.undo();
             }
@@ -1705,13 +1707,13 @@ impl<S: EngineSink> AppCore<S> {
             })
             .collect();
         let loop_range = song.loop_enabled.then_some(song.loop_range);
-        let bar = song.bar_ticks();
+        let meter = song.meter_table();
         let audio_started = !audio.is_empty() && self.start_audio_recording(&audio);
         if tracks.is_empty() && !audio_started {
             // Nothing can record: the reason was reported.
             return;
         }
-        let take = Take::new(tracks, loop_range, bar);
+        let take = Take::new(tracks, loop_range, meter);
         self.sink.set_recording(&take.devices());
         self.take = Some(take);
         if !self.playing {
@@ -1961,3 +1963,7 @@ mod starter_tests;
 #[cfg(test)]
 #[path = "app_core_browser_tests.rs"]
 mod browser_tests;
+
+#[cfg(test)]
+#[path = "app_core_tempo_tests.rs"]
+mod tempo_tests;
