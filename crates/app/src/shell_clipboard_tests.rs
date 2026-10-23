@@ -617,6 +617,41 @@ fn right_click_on_a_track_header_opens_the_track_menu() {
 }
 
 #[test]
+fn the_track_menu_chase_item_toggles_the_flag_and_undoes() {
+    let mut s = with_clips();
+    let at = s
+        .core()
+        .arrangement()
+        .track_header_center(&key("a"))
+        .unwrap();
+    let chase = |s: &Shell<NullBackend>| s.core().doc().song.track(&key("a")).unwrap().chase;
+    let state = |s: &Shell<NullBackend>| {
+        let i = s
+            .context_menu()
+            .unwrap()
+            .items()
+            .find(|i| i.command == "sequencer.toggle_chase")
+            .unwrap()
+            .clone();
+        (i.label, i.enabled, i.checked)
+    };
+    assert!(chase(&s), "a track chases by default");
+    open_menu(&mut s, at);
+    assert_eq!(state(&s), ("Chase Notes".to_string(), true, Some(true)));
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center("sequencer.toggle_chase")
+        .unwrap();
+    click(&mut s, item, Modifiers::NONE);
+    assert!(!chase(&s));
+    open_menu(&mut s, at);
+    assert_eq!(state(&s).2, Some(false), "the check mark follows the flag");
+    assert!(s.core_mut().undo());
+    assert!(chase(&s), "one undo step restores it");
+}
+
+#[test]
 fn piano_roll_keys_copy_paste_and_duplicate_notes() {
     let mut s = with_clips();
     s.core_mut().open_piano_roll(ClipId(1));

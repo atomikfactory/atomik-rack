@@ -1991,6 +1991,8 @@ impl<B: AudioBackend> Shell<B> {
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
             columns: doc.columns,
+            track_can_chase: core.arrangement().chase_menu().0,
+            track_chase: core.arrangement().chase_menu().1,
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,

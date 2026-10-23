@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[102.00,1308.00,333.20,1436.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[100.00,1305.00,331.20,1433.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[100.00,1305.00,331.20,1433.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[102.00,1308.00,333.20,1469.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[100.00,1305.00,331.20,1466.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[100.00,1305.00,331.20,1466.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[132.00,1325.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+X","at":[317.20,1325.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[132.00,1349.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -11,5 +11,8 @@
 {"text":"Duplicate Track","at":[132.00,1397.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+D","at":[317.20,1397.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Delete Track","at":[132.00,1421.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Delete","at":[317.20,1421.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"}
+{"text":"Delete","at":[317.20,1421.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"fill":{"rect":[110.00,1433.00,321.20,1434.00]},"brush":"#ffffff1c"},
+{"text":"✓","at":[112.00,1454.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Chase Notes","at":[132.00,1454.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
 ]}
