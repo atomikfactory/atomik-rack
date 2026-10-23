@@ -1,6 +1,7 @@
 //! The transport bar (UI): return-to-zero, stop, play, record, loop and metronome
 //! buttons, the position in bars.beats.ticks and mm:ss.mmm (through the song's tempo map),
-//! an editable tempo readout and the meter.
+//! an editable tempo readout and the meter. The tempo and the meter shown are those at the
+//! playhead; typing a tempo changes the tempo event in effect there.
 //!
 //! The app owns the transport: it passes the state in with [`TransportBar::set_state`] and
 //! maps the emitted [`TransportAction`]s to engine calls (no time source here).
@@ -10,7 +11,8 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
-use crate::timeline::{Meter, format_bbt, format_time, tick_to_seconds};
+use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
+use atomik_core::{TempoPoint, TempoTable};
 use atomik_device_sdk::Registry;
 use atomik_model::{Command, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
@@ -85,9 +87,11 @@ pub struct TransportBar {
     scale: f64,
     state: TransportState,
     tempo: Vec<TempoEvent>,
-    meter: Meter,
+    bars: Bars,
     loop_enabled: bool,
     editing: Option<(String, bool)>,
+    /// The tempo event the typed value goes to (fixed when the entry starts).
+    edit_event: usize,
     hover: Option<TransportButton>,
     focused: bool,
     repaint: bool,
@@ -102,9 +106,10 @@ impl TransportBar {
             scale: 1.0,
             state: TransportState::default(),
             tempo: vec![TempoEvent::step(0, 120.0)],
-            meter: Meter::default(),
+            bars: Bars::default(),
             loop_enabled: false,
             editing: None,
+            edit_event: 0,
             hover: None,
             focused: false,
             repaint: true,
@@ -185,27 +190,63 @@ impl TransportBar {
     pub fn position_text(&self) -> (String, String) {
         let p = self.state.position;
         (
-            format_bbt(p, self.meter),
+            format_bbt(p, &self.bars),
             format_time(tick_to_seconds(p, &self.tempo)),
         )
     }
 
     /// Reads the tempo map, meter and loop flag from the document.
     pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
-        let meter = Meter::of(&doc.song);
+        let bars = Bars::of(&doc.song);
         if self.tempo != doc.song.tempo
-            || self.meter != meter
+            || self.bars != bars
             || self.loop_enabled != doc.song.loop_enabled
         {
             self.tempo.clone_from(&doc.song.tempo);
-            self.meter = meter;
+            self.bars = bars;
             self.loop_enabled = doc.song.loop_enabled;
             self.repaint = true;
         }
     }
 
+    /// The index of the tempo event in effect at the playhead.
+    fn event_at_playhead(&self) -> usize {
+        let at = self.state.position.max(0);
+        self.tempo
+            .partition_point(|e| e.tick <= at)
+            .saturating_sub(1)
+    }
+
+    /// The tempo at the playhead: the event's own BPM, or inside a ramp the tempo there.
     fn bpm(&self) -> f64 {
-        self.tempo.first().map_or(120.0, |e| e.bpm)
+        let points: Vec<TempoPoint> = self
+            .tempo
+            .iter()
+            .map(|e| TempoPoint {
+                tick: e.tick,
+                bpm: e.bpm,
+                ramp: e.ramp,
+            })
+            .collect();
+        TempoTable::new(&points).map_or_else(
+            |_| self.tempo.first().map_or(120.0, |e| e.bpm),
+            |t| t.map().bpm(self.state.position.max(0) as f64),
+        )
+    }
+
+    /// The BPM of tempo event `i`.
+    fn event_bpm(&self, i: usize) -> f64 {
+        self.tempo.get(i).map_or(120.0, |e| e.bpm)
+    }
+
+    /// Starts typing a tempo for event `event` (the one in effect at the playhead when `None`).
+    /// The text field shows its BPM; Enter changes that event.
+    pub fn begin_tempo_edit(&mut self, event: Option<usize>) {
+        self.edit_event = event
+            .filter(|i| *i < self.tempo.len())
+            .unwrap_or_else(|| self.event_at_playhead());
+        self.editing = Some((format_bpm(self.event_bpm(self.edit_event)), true));
+        self.repaint = true;
     }
 
     fn button_rect(&self, b: TransportButton) -> Rect {
@@ -229,15 +270,16 @@ impl TransportBar {
         out
     }
 
-    fn tempo_cmd(&self, bpm: f64) -> Option<UiAction> {
+    /// The command that sets the BPM of event `event` (`None` when nothing changes).
+    fn tempo_cmd(&self, event: usize, bpm: f64) -> Option<UiAction> {
         let bpm = bpm.clamp(TEMPO_MIN, TEMPO_MAX);
-        if !bpm.is_finite() || (bpm - self.bpm()).abs() < 1e-9 {
+        if !bpm.is_finite() || (bpm - self.event_bpm(event)).abs() < 1e-9 {
             return None;
         }
         let mut map = self.tempo.clone();
-        match map.first_mut() {
+        match map.get_mut(event) {
             Some(e) => e.bpm = bpm,
-            None => map.push(TempoEvent { tick: 0, bpm }),
+            None => map.push(TempoEvent::step(0, bpm)),
         }
         Some(UiAction::Command(Command::Song(SongCommand::SetTempoMap(
             map,
@@ -248,7 +290,7 @@ impl TransportBar {
         if let Some((text, _)) = self.editing.take()
             && let Ok(v) = text.trim().parse::<f64>()
         {
-            out.extend(self.tempo_cmd(v));
+            out.extend(self.tempo_cmd(self.edit_event, v));
         }
         self.repaint = true;
     }
@@ -295,7 +337,7 @@ impl TransportBar {
                         TransportButton::Metronome => TransportAction::ToggleMetronome,
                     }));
                 } else if *clicks >= 2 && self.lcd_rects()[2].contains(*pos) {
-                    self.editing = Some((format_bpm(self.bpm()), true));
+                    self.begin_tempo_edit(None);
                 }
                 self.repaint = true;
             }
@@ -305,8 +347,9 @@ impl TransportBar {
                 modifiers,
             } if self.lcd_rects()[2].contains(*pos) && self.editing.is_none() => {
                 let step = if modifiers.shift { 0.1 } else { 1.0 };
-                let v = ((self.bpm() + delta.y.signum() * step) * 100.0).round() / 100.0;
-                out.extend(self.tempo_cmd(v));
+                let at = self.event_at_playhead();
+                let v = ((self.event_bpm(at) + delta.y.signum() * step) * 100.0).round() / 100.0;
+                out.extend(self.tempo_cmd(at, v));
             }
             UiEvent::Key {
                 key,
@@ -440,7 +483,7 @@ impl TransportBar {
         sp::lcd(c, st, meter_r, None);
         c.text(
             &TextRun::new(
-                format!("{}/{}", self.meter.beats_per_bar, self.meter.beat_unit),
+                self.bars.meter_at(self.state.position).label(),
                 pt(meter_r.center().x, meter_r.y1 - 9.0),
                 12.0,
                 lcd_text,
