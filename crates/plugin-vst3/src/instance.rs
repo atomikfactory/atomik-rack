@@ -567,6 +567,7 @@ impl HostInstance for Vst3Instance {
     fn poll(&mut self) {
         assert_main_thread("polling a VST3 plugin");
         self.apply_mirrored();
+        self.frame.run_event_handlers();
         self.frame.run_timers();
     }
 }

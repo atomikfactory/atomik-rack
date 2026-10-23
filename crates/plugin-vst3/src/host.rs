@@ -436,6 +436,29 @@ impl IComponentHandler2Trait for ComponentHandler {
 
 // ----- IPlugFrame and IRunLoop ---------------------------------------------------------------------
 
+/// `poll(2)`, declared here: `IRunLoop` is a Linux interface and no crate is needed for one call.
+#[cfg(target_os = "linux")]
+mod sys {
+    use std::ffi::c_ulong;
+
+    pub const POLLIN: i16 = 0x001;
+    pub const POLLERR: i16 = 0x008;
+    pub const POLLHUP: i16 = 0x010;
+
+    /// `struct pollfd`.
+    #[repr(C)]
+    pub struct PollFd {
+        pub fd: i32,
+        pub events: i16,
+        pub revents: i16,
+    }
+
+    // SAFETY: the signature is that of `poll(2)` in libc, which every Linux target links.
+    unsafe extern "C" {
+        pub fn poll(fds: *mut PollFd, nfds: c_ulong, timeout: i32) -> i32;
+    }
+}
+
 struct TimerReg {
     handler: ComPtr<ITimerHandler>,
     period: Duration,
@@ -444,8 +467,9 @@ struct TimerReg {
 
 /// `IPlugFrame` and `IRunLoop`: resize requests go to the message ring; timers registered by
 /// Linux editors are run by [`PlugFrame::run_timers`] from the instance's `poll`. Event
-/// handlers (file descriptors) are accepted and recorded but not pumped: the editor's own
-/// timers are what the test plugins and most editors need.
+/// handlers (file descriptors, such as an editor's own X connection) are recorded, and
+/// [`PlugFrame::run_event_handlers`] calls `onFDIsSet` for those whose descriptor is readable,
+/// also from `poll`; that is how an editor gets its mouse and keyboard input.
 pub(crate) struct PlugFrame {
     hub: Arc<Hub>,
     timers: Mutex<Vec<TimerReg>>,
@@ -491,6 +515,47 @@ impl PlugFrame {
             unsafe { h.onTimer() };
         }
         due.len()
+    }
+
+    /// Calls the event handlers whose file descriptor is readable, in error or hung up (on the
+    /// main thread). Never waits. Returns how many ran.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn run_event_handlers(&self) -> usize {
+        use vst3::Steinberg::Linux::IEventHandlerTrait;
+        // Cloned out, so the plugin may register or unregister from inside `onFDIsSet`.
+        let handlers: Vec<(ComPtr<IEventHandler>, i32)> = lock(&self.handlers).clone();
+        if handlers.is_empty() {
+            return 0;
+        }
+        let mut fds: Vec<sys::PollFd> = handlers
+            .iter()
+            .map(|(_, fd)| sys::PollFd {
+                fd: *fd,
+                events: sys::POLLIN,
+                revents: 0,
+            })
+            .collect();
+        // SAFETY: `fds` is a live, writable array of exactly `len` entries; a zero timeout
+        // makes the call return at once.
+        let ready = unsafe { sys::poll(fds.as_mut_ptr(), fds.len() as std::ffi::c_ulong, 0) };
+        if ready <= 0 {
+            return 0;
+        }
+        let mut ran = 0;
+        for ((handler, fd), polled) in handlers.iter().zip(&fds) {
+            if polled.revents & (sys::POLLIN | sys::POLLERR | sys::POLLHUP) != 0 {
+                // SAFETY: a live event handler the plugin registered.
+                unsafe { handler.onFDIsSet(*fd) };
+                ran += 1;
+            }
+        }
+        ran
+    }
+
+    /// Event handlers are a Linux interface (`IRunLoop`): nothing to run elsewhere.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn run_event_handlers(&self) -> usize {
+        0
     }
 
     /// Drops every registration (the editor is gone).

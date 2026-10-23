@@ -316,3 +316,60 @@ fn the_connection_proxy_forwards_to_its_destination_and_stops_when_cut() {
     assert_eq!(unsafe { p.notify(std::ptr::null_mut()) }, kResultOk);
     assert_eq!(seen.load(Ordering::Relaxed), 2);
 }
+
+#[cfg(target_os = "linux")]
+struct FdWatcher(Arc<AtomicUsize>);
+
+#[cfg(target_os = "linux")]
+impl Class for FdWatcher {
+    type Interfaces = (IEventHandler,);
+}
+
+#[cfg(target_os = "linux")]
+impl vst3::Steinberg::Linux::IEventHandlerTrait for FdWatcher {
+    unsafe fn onFDIsSet(&self, _fd: i32) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn plugin_event_handlers_run_when_their_fd_is_readable_and_stop_when_unregistered() {
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let (hub, _m) = hub();
+    let frame = PlugFrame::new(hub);
+    let count = Arc::new(AtomicUsize::new(0));
+    let w = ComWrapper::new(FdWatcher(Arc::clone(&count)));
+    let handler = w.as_com_ref::<IEventHandler>().unwrap();
+    let r = frame.as_com_ref::<IRunLoop>().unwrap();
+    let (mut ours, mut theirs) = UnixStream::pair().unwrap();
+    // SAFETY: valid handler pointers.
+    unsafe {
+        assert_eq!(
+            r.registerEventHandler(handler.as_ptr(), theirs.as_raw_fd()),
+            kResultOk
+        );
+        assert_eq!(
+            r.registerEventHandler(std::ptr::null_mut(), 0),
+            kInvalidArgument
+        );
+    }
+    assert_eq!(frame.run_event_handlers(), 0, "nothing to read yet");
+    ours.write_all(&[1]).unwrap();
+    assert_eq!(frame.run_event_handlers(), 1);
+    assert_eq!(count.load(Ordering::Relaxed), 1);
+    let mut byte = [0u8];
+    theirs.read_exact(&mut byte).unwrap();
+    assert_eq!(frame.run_event_handlers(), 0, "drained");
+    // SAFETY: valid handler pointers.
+    unsafe {
+        assert_eq!(r.unregisterEventHandler(handler.as_ptr()), kResultOk);
+    }
+    ours.write_all(&[1]).unwrap();
+    assert_eq!(frame.run_event_handlers(), 0, "unregistered");
+    assert_eq!(count.load(Ordering::Relaxed), 1);
+    frame.clear();
+}
