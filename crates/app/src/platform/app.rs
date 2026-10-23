@@ -497,6 +497,27 @@ impl App {
                         self.shell.import_keymap_from(&path);
                     }
                 }
+                ShellRequest::PickRelinkFile => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Locate the audio file")
+                        .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.relink_file(path);
+                    }
+                }
+                ShellRequest::PickRelinkFolder => {
+                    let mut dialog =
+                        rfd::FileDialog::new().set_title("Search a folder for the missing audio");
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.relink_search_folder(folder);
+                    }
+                }
                 ShellRequest::PickPluginFolder => {
                     let mut dialog = rfd::FileDialog::new().set_title("Add a plugin folder");
                     if let Some(w) = &self.window {

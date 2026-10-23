@@ -358,6 +358,7 @@ mod tests {
             rack: true,
             sequencer_only: false,
             editor: false,
+            missing_audio: false,
         }
     }
 

@@ -137,8 +137,8 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
-    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, TextRun, UiAction,
-    UiEvent,
+    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, RelinkAction,
+    RelinkEntry, RelinkView, TextRun, UiAction, UiEvent,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -174,6 +174,12 @@ pub enum ShellRequest {
     /// Show a multi-select open dialog for audio files (the sample editor's Load button), then
     /// call [`Shell::load_samples`] with the picked paths.
     PickLoadSamples,
+    /// Show an open dialog for one audio file (the relink panel's LOCATE...), then call
+    /// [`Shell::relink_file`] with the picked path.
+    PickRelinkFile,
+    /// Show a folder dialog (the relink panel's SEARCH FOLDER...), then call
+    /// [`Shell::relink_search_folder`] with the picked folder.
+    PickRelinkFolder,
     /// The rack has unsaved changes: ask, then call [`Shell::confirmed`] with the command.
     ConfirmDiscard(AppCommand),
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
@@ -278,6 +284,10 @@ pub struct Shell<B: AudioBackend> {
     banner: PluginBannerView,
     /// The Plugins settings modal while it is open.
     plugin_settings: Option<PluginSettingsView>,
+    /// The relink panel (File > Relink Missing Audio) while it is open.
+    relink: Option<RelinkView>,
+    /// The missing asset the open file dialog is for (LOCATE...).
+    relink_target: Option<String>,
     /// The key router: the keymap and the held keys.
     router: Router,
     /// The modifiers last reported by `UiEvent::ModifiersChanged` (for hold-style roles).
@@ -398,6 +408,8 @@ impl<B: AudioBackend> Shell<B> {
             load_device: None,
             banner,
             plugin_settings: None,
+            relink: None,
+            relink_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
             os,
@@ -491,6 +503,83 @@ impl<B: AudioBackend> Shell<B> {
     /// The Plugins settings modal, while it is open.
     pub fn plugin_settings_view(&self) -> Option<&PluginSettingsView> {
         self.plugin_settings.as_ref()
+    }
+
+    /// Whether the relink panel is open.
+    pub fn relink_open(&self) -> bool {
+        self.relink.is_some()
+    }
+
+    /// The relink panel, while it is open.
+    pub fn relink_view(&self) -> Option<&RelinkView> {
+        self.relink.as_ref()
+    }
+
+    /// Relinks the asset LOCATE... was pressed for to the picked audio file.
+    pub fn relink_file(&mut self, path: PathBuf) {
+        if let Some(hash) = self.relink_target.take() {
+            self.core.relink_asset(&hash, path);
+        }
+        self.repaint = true;
+    }
+
+    /// Searches the picked folder for the missing audio files (see
+    /// [`AppCore::relink_search_folder`]).
+    pub fn relink_search_folder(&mut self, folder: PathBuf) {
+        self.core.relink_search_folder(folder);
+        self.repaint = true;
+    }
+
+    /// Opens the relink panel, or says there is nothing to relink.
+    fn open_relink(&mut self) {
+        if self.core.missing_assets().is_empty() {
+            self.notify("no missing audio files".to_owned());
+            return;
+        }
+        let theme = self.core.view().theme().clone();
+        let mut view = RelinkView::new(theme);
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        self.relink = Some(view);
+        self.sync_relink();
+    }
+
+    /// Feeds the relink panel the missing list; it closes when nothing is missing any more.
+    fn sync_relink(&mut self) {
+        let entries: Vec<RelinkEntry> = self
+            .core
+            .missing_assets()
+            .iter()
+            .map(|m| RelinkEntry {
+                hash: m.hash.clone(),
+                name: m.name.clone(),
+            })
+            .collect();
+        if entries.is_empty() {
+            if self.relink.take().is_some() {
+                self.repaint = true;
+            }
+        } else if let Some(view) = &mut self.relink {
+            view.set_missing(entries);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the relink panel asked for.
+    fn relink_action(&mut self, action: RelinkAction) -> Vec<ShellRequest> {
+        match action {
+            RelinkAction::Locate { hash } => {
+                self.relink_target = Some(hash);
+                vec![ShellRequest::PickRelinkFile]
+            }
+            RelinkAction::SearchFolder => vec![ShellRequest::PickRelinkFolder],
+            RelinkAction::Close => {
+                self.relink = None;
+                Vec::new()
+            }
+        }
     }
 
     /// Requests raised between events (a folder dialog, for instance): the platform loop takes
@@ -858,6 +947,7 @@ impl<B: AudioBackend> Shell<B> {
             sequencer_only: self.in_sequencer_only(),
             editor: !self.ui.show_console
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
+            missing_audio: !self.core.missing_assets().is_empty(),
         }
     }
 
@@ -1026,6 +1116,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.plugin_settings.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.plugin_settings {
+                v.set_bounds(rect);
+            }
+        }
+        if self.relink.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.relink {
                 v.set_bounds(rect);
             }
         }
@@ -1303,6 +1399,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.plugin_settings {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.relink {
+                    v.set_scale(*scale);
+                }
                 self.core.transport_bar_mut().set_scale(*scale);
                 self.core.console_mut().set_scale(*scale);
                 self.core.file_browser_mut().set_scale(*scale);
@@ -1352,6 +1451,31 @@ impl<B: AudioBackend> Shell<B> {
             }
             self.sync_plugin_ui();
             return Vec::new();
+        }
+        if self.relink.is_some() {
+            // The relink panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.relink = None;
+                return Vec::new();
+            }
+            let actions = self
+                .relink
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            let mut requests = Vec::new();
+            for action in actions {
+                if let UiAction::Relink(a) = action {
+                    requests.extend(self.relink_action(a));
+                }
+            }
+            return requests;
         }
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
@@ -2232,6 +2356,11 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::SaveAs => vec![ShellRequest::PickSaveFile],
             AppCommand::ExportPatch => vec![ShellRequest::PickExportFile],
             AppCommand::ImportAudio => vec![ShellRequest::PickImportFiles],
+            AppCommand::RelinkAudio => {
+                self.open_relink();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::Undo => {
                 self.core.undo();
                 Vec::new()
@@ -2595,6 +2724,7 @@ impl<B: AudioBackend> Shell<B> {
         let busy = self.core.is_busy();
         self.core.frame();
         self.sync_plugin_ui();
+        self.sync_relink();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -2728,6 +2858,9 @@ impl<B: AudioBackend> Shell<B> {
         // The plugin views scale themselves (physical pixels), like the panes above.
         self.banner.paint(canvas);
         if let Some(view) = &self.plugin_settings {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.relink {
             view.paint(canvas);
         }
         let theme = self.core.view().theme().clone();
@@ -2882,6 +3015,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "shell_audio_tests.rs"]
 mod audio_tests;
+
+#[cfg(test)]
+#[path = "shell_relink_tests.rs"]
+mod relink_tests;
 
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]

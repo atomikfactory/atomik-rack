@@ -388,6 +388,7 @@ fn relinking_swaps_the_zones_of_a_sampler_and_the_editor_stops_showing_missing()
     c.open(&t.path("song").join("song.atomik")).unwrap();
     c.wait_background();
     c.open_sample_editor(key.clone());
+    assert!(c.sample_editor().is_asset_missing(&hash));
     c.sink_mut().take();
 
     c.relink_asset(&hash, wav_in(&t.path("new"), "b_C3.wav", 4_800, 0.5));
@@ -396,6 +397,16 @@ fn relinking_swaps_the_zones_of_a_sampler_and_the_editor_stops_showing_missing()
     assert_eq!(zones.len(), 1);
     assert_ne!(zones[0].asset, hash);
     assert!(c.missing_assets().is_empty());
+    // The zone row is no longer drawn as missing, and neither is the old asset reported.
+    assert!(!c.sample_editor().is_asset_missing(&zones[0].asset));
+    assert!(!c.sample_editor().is_asset_missing(&hash));
+    // Undo makes the old zone missing again in the editor.
+    assert!(c.undo());
+    c.after_view_change();
+    assert!(c.sample_editor().is_asset_missing(&hash));
+    assert!(c.redo());
+    c.after_view_change();
+    assert!(!c.sample_editor().is_asset_missing(&hash));
     // The sampler got a playable map.
     let sent = c
         .sink_mut()

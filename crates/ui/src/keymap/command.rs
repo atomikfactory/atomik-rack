@@ -446,6 +446,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("file.new", "New", G::Global, C::Global).menu(),
     cmd("file.open", "Open", G::Global, C::Global).menu(),
     cmd("file.quit", "Quit", G::Global, C::Global).menu(),
+    cmd(
+        "file.relink_audio",
+        "Relink Missing Audio",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.save", "Save", G::Global, C::Global).menu(),
     cmd("file.save_as", "Save As", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
