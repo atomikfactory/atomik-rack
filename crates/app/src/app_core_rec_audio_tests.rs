@@ -690,7 +690,7 @@ struct SlowDisk;
 
 impl crate::stream_source::FrameReader for SlowDisk {
     fn read_frames(&mut self, start: u64, out: &mut [Vec<f32>]) -> Result<usize, String> {
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(400));
         for ch in out.iter_mut() {
             for (i, s) in ch.iter_mut().enumerate() {
                 *s = 0.25 + (start + i as u64) as f32 * 1e-9;
@@ -707,7 +707,7 @@ fn a_slow_disk_costs_counted_underruns_but_never_blocks_the_audio_thread() {
     let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
     core.import_audio(vec![wav], atomik_ui::ImportTarget::NewTracks, 0);
     core.wait_background();
-    // Swap the engine's copy for the same asset behind a disk that is 8x too slow.
+    // Swap the engine's copy for the same asset behind a disk far too slow to keep up.
     let hash = core.song_assets().keys().next().unwrap().clone();
     let slow = SongAsset::stream(
         96_000,
@@ -731,8 +731,9 @@ fn a_slow_disk_costs_counted_underruns_but_never_blocks_the_audio_thread() {
         core.sink().stream_underruns() > 0,
         "the starved reads are counted"
     );
+    // Well under one 400 ms read, with room for a slow or instrumented build.
     assert!(
-        worst < std::time::Duration::from_millis(30),
+        worst < std::time::Duration::from_millis(200),
         "a render call never waits for the disk: {worst:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);
