@@ -37,7 +37,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::{
     AssetMeta, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, ClipMove, Command,
     Curve, DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, Song, SongCommand, TempoEvent,
-    WorkflowCommand,
+    WorkflowCommand, WriteMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -149,6 +149,15 @@ pub enum TrackButton {
     Monitor,
 }
 
+/// A control in the header of an automation lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneButton {
+    /// Arm the lane for automation recording.
+    Arm,
+    /// Cycle the write mode: Overwrite, Touch, Latch.
+    Mode,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum RowKind {
     Lane { track: usize, lane: usize },
@@ -202,6 +211,8 @@ enum Hit {
     /// The marker list.
     Panel(markers::ListHit),
     Button(usize, TrackButton),
+    /// A control in the header of automation lane `lane` of track `track`.
+    LaneButton(usize, usize, LaneButton),
     Header(usize),
     AddTrack(DeviceKey),
     AddAudio,
@@ -428,6 +439,8 @@ pub struct ArrangementView {
     next_merge: u64,
     playhead: i64,
     recording: bool,
+    /// The automation lanes armed for recording (device, param), fed by the app.
+    armed_lanes: BTreeSet<(DeviceKey, String)>,
     focused: bool,
     repaint: bool,
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
@@ -505,6 +518,7 @@ impl ArrangementView {
             next_merge: MERGE_BASE,
             playhead: 0,
             recording: false,
+            armed_lanes: BTreeSet::new(),
             focused: false,
             repaint: true,
             peaks: BTreeMap::new(),
@@ -590,6 +604,25 @@ impl ArrangementView {
         if recording != self.recording {
             self.recording = recording;
             self.repaint = true;
+        }
+    }
+
+    /// Shows which automation lanes are armed for recording (the app owns the set): an armed
+    /// lane's arm button is lit, and a red bar marks it while a take records.
+    pub fn set_armed_lanes(&mut self, armed: &BTreeSet<(DeviceKey, String)>) {
+        if &self.armed_lanes != armed {
+            self.armed_lanes.clone_from(armed);
+            self.repaint = true;
+        }
+    }
+
+    /// The rectangle of a control in the header row `row` of an automation lane. The controls
+    /// sit at the right end of the header, centred vertically.
+    fn lane_button_rect(&self, row: Rect, button: LaneButton) -> Rect {
+        let (x, cy) = (self.bounds.x0, row.y0 + row.height() / 2.0);
+        match button {
+            LaneButton::Mode => Rect::new(x + 134.0, cy - 8.0, x + 168.0, cy + 8.0),
+            LaneButton::Arm => Rect::new(x + 174.0, cy - 8.0, x + 194.0, cy + 8.0),
         }
     }
 
@@ -840,6 +873,20 @@ impl ArrangementView {
         }
         let rr = self.row_rect(self.row_of(track, 0)?);
         button_shown(rr, button).then(|| self.button_rect(rr, button).center())
+    }
+
+    /// Centre of a control in the header of the automation lane of `param` on `device`'s track
+    /// (`None` when there is no such lane or it is hidden).
+    pub fn lane_button_center(
+        &self,
+        device: &DeviceKey,
+        param: &str,
+        button: LaneButton,
+    ) -> Option<Point> {
+        let track = self.song.tracks.iter().position(|t| &t.device == device)?;
+        let lane = self.song.tracks[track].automation_lane(param)?;
+        let rr = self.row_rect(self.row_of(track, lane)?);
+        Some(self.lane_button_rect(rr, button).center())
     }
 
     /// Centre of the "+ track" row of a device that can have a track but has none.
@@ -1448,6 +1495,12 @@ impl ArrangementView {
                                 return Hit::Button(track, b);
                             }
                         }
+                    } else if self.is_automation_lane(track, lane) {
+                        for b in [LaneButton::Arm, LaneButton::Mode] {
+                            if self.lane_button_rect(rr, b).contains(pos) {
+                                return Hit::LaneButton(track, lane, b);
+                            }
+                        }
                     }
                     return Hit::Header(track);
                 }
@@ -1713,6 +1766,7 @@ impl ArrangementView {
                 };
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
+            Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::AddTrack(device) if primary => {
                 out.push(song_cmd(SongCommand::AddTrack { device }));
             }
@@ -1813,6 +1867,41 @@ impl ArrangementView {
     /// The cached header state of an audio track.
     fn audio_header(&self, device: &DeviceKey) -> Option<&AudioHeader> {
         self.audio_headers.iter().find(|h| &h.device == device)
+    }
+
+    /// Whether lane `lane` of track `track` is an automation lane.
+    fn is_automation_lane(&self, track: usize, lane: usize) -> bool {
+        self.song
+            .tracks
+            .get(track)
+            .and_then(|t| t.lanes.get(lane))
+            .is_some_and(|l| matches!(l.kind, LaneKind::Automation(_)))
+    }
+
+    /// The `(device, param)` of an automation lane.
+    fn lane_id(&self, track: usize, lane: usize) -> Option<(DeviceKey, String)> {
+        let t = self.song.tracks.get(track)?;
+        match &t.lanes.get(lane)?.kind {
+            LaneKind::Automation(p) => Some((t.device.clone(), p.clone())),
+            LaneKind::Notes | LaneKind::Audio => None,
+        }
+    }
+
+    fn lane_button(&mut self, track: usize, lane: usize, b: LaneButton, out: &mut Vec<UiAction>) {
+        let Some((device, param)) = self.lane_id(track, lane) else {
+            return;
+        };
+        match b {
+            LaneButton::Arm => out.push(UiAction::ToggleLaneArm { device, param }),
+            LaneButton::Mode => {
+                let mode = self.song.write_mode(&device, &param).next();
+                out.push(song_cmd(SongCommand::SetLaneWriteMode {
+                    device,
+                    param,
+                    mode,
+                }));
+            }
+        }
     }
 
     fn track_button(
@@ -3969,7 +4058,7 @@ impl ArrangementView {
                             accent.with_alpha(0.7),
                         );
                         let p = self.param_of(*track, *lane);
-                        let name = fit_label(p.name, TRACK_LIST_WIDTH - 40.0, 10.0);
+                        let name = fit_label(p.name, LANE_NAME_WIDTH, 10.0);
                         sp::label(
                             c,
                             &name,
@@ -3986,13 +4075,14 @@ impl ArrangementView {
                         );
                         sp::label(
                             c,
-                            &fit_label(&range, TRACK_LIST_WIDTH - 40.0, 8.0),
+                            &fit_label(&range, LANE_NAME_WIDTH, 8.0),
                             hr.x0 + 26.0,
                             hr.y0 + 35.0,
                             8.0,
                             t.text_muted,
                             Align::Start,
                         );
+                        self.paint_lane_buttons(c, hr, *track, *lane);
                     }
                 }
             }
@@ -4006,6 +4096,46 @@ impl ArrangementView {
             }
         }
         c.pop_clip();
+    }
+
+    /// The write mode and arm buttons of an automation lane header. An armed lane's button is
+    /// lit with the record colour, and a red bar marks it while a take records.
+    fn paint_lane_buttons(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
+        let Some((device, param)) = self.lane_id(track, lane) else {
+            return;
+        };
+        let st = &self.st;
+        let t = &st.base;
+        let armed = self.armed_lanes.contains(&(device.clone(), param.clone()));
+        let hovered = |b| self.hover == Some(Hit::LaneButton(track, lane, b));
+        let mode = self.song.write_mode(&device, &param);
+        let mr = self.lane_button_rect(hr, LaneButton::Mode);
+        sp::button(c, st, mr, "", None, hovered(LaneButton::Mode));
+        sp::label(
+            c,
+            mode_label(mode),
+            mr.center().x,
+            mr.center().y + 3.0,
+            7.5,
+            if armed { t.text } else { t.text_muted },
+            Align::Center,
+        );
+        let ar = self.lane_button_rect(hr, LaneButton::Arm);
+        sp::button(
+            c,
+            st,
+            ar,
+            "W",
+            armed.then_some(st.record),
+            hovered(LaneButton::Arm),
+        );
+        if armed && self.recording {
+            sp::rect(
+                c,
+                Rect::new(hr.x1 - 3.0, hr.y0 + 4.0, hr.x1 - 1.0, hr.y1 - 4.0),
+                st.record,
+            );
+        }
     }
 
     fn paint_track_header(
@@ -4284,6 +4414,18 @@ fn value_range(r: Rect) -> (f64, f64) {
         // A clip too short for the margins: a small range in the middle of the body.
         let mid = (r.y0 + CLIP_HEADER + r.y1) / 2.0;
         (mid - 2.0, mid + 2.0)
+    }
+}
+
+/// Room for the name of an automation lane in its header, left of the write controls.
+const LANE_NAME_WIDTH: f64 = 104.0;
+
+/// The short label of a write mode on the lane header.
+fn mode_label(mode: WriteMode) -> &'static str {
+    match mode {
+        WriteMode::Overwrite => "OVR",
+        WriteMode::Touch => "TCH",
+        WriteMode::Latch => "LTC",
     }
 }
 

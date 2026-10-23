@@ -64,6 +64,14 @@ pub enum UiAction {
     ClosePianoRoll,
     /// A transport request (buttons, shortcuts, ruler clicks).
     Transport(TransportAction),
+    /// The arm button of an automation lane was clicked: arm the lane for automation recording,
+    /// or disarm it. Session state of the app, not an undo step.
+    ToggleLaneArm {
+        /// The lane's track device.
+        device: DeviceKey,
+        /// The lane's param key.
+        param: String,
+    },
     /// Preview a key on a device (piano-roll keyboard or a new/moved note): note on when
     /// `on`, note off otherwise. Every `on` is followed by a matching `off`.
     Audition {
