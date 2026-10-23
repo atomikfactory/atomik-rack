@@ -15,6 +15,8 @@ edit.paste | global | Cmd+V
 edit.redo | global | Cmd+Y, Cmd+Shift+Z
 edit.select_all | global | Cmd+A
 edit.undo | global | Cmd+Z
+editor.chordify | editor | Shift+C
+editor.fold_toggle | editor | Shift+F
 editor.nudge_left | editor | Cmd+Left
 editor.nudge_left_beat | editor | Cmd+Shift+Left
 editor.nudge_left_tick | editor | Cmd+Opt+Left
@@ -24,6 +26,7 @@ editor.nudge_right_tick | editor | Cmd+Opt+Right
 editor.octave_down | editor | Cmd+Shift+Down
 editor.octave_up | editor | Cmd+Shift+Up
 editor.quantize | editor | Cmd+K
+editor.scale_snap_toggle | editor | Shift+S
 editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Cmd+Down
 editor.transpose_up | editor | Cmd+Up

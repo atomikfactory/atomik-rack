@@ -203,6 +203,10 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             item("transport.add_range_from_loop", true),
             item("sequencer.marker_range_from_selection", e.marker_selection),
         ],
+        // The scale bar fields of the piano roll open their own menus (see the Notes menu).
+        ContextTarget::PianoScaleRoot
+        | ContextTarget::PianoScaleKind
+        | ContextTarget::PianoChord => Vec::new(),
         ContextTarget::Notes => {
             let mut v = edit(None);
             v.extend([
@@ -231,7 +235,7 @@ mod tests {
                 Spec::Item {
                     command, enabled, ..
                 } => Some((command, enabled)),
-                Spec::Separator => None,
+                Spec::Separator | Spec::Submenu { .. } => None,
             })
             .collect()
     }
@@ -341,7 +345,7 @@ mod tests {
             .into_iter()
             .filter_map(|s| match s {
                 Spec::Item { label, .. } => Some(label),
-                Spec::Separator => None,
+                Spec::Separator | Spec::Submenu { .. } => None,
             })
             .collect();
         assert_eq!(
@@ -377,7 +381,7 @@ mod tests {
             .into_iter()
             .filter_map(|s| match s {
                 Spec::Item { command, label, .. } => Some((command, label)),
-                Spec::Separator => None,
+                Spec::Separator | Spec::Submenu { .. } => None,
             })
             .collect()
     }

@@ -31,7 +31,11 @@ pub mod sheet;
 mod user;
 
 pub use chord::{Chord, ChordError, ChordKey, Mods, Os, PhysChord};
-pub use command::{ArgKind, CommandDef, Group, Registry};
+pub use command::{
+    ARP_GATE_ARGS, ARP_OCTAVE_ARGS, ARP_PATTERN_ARGS, ArgKind, CHORD_ARGS, CommandDef, FOLD_ARGS,
+    Group, INVERSION_ARGS, ROOT_ARGS, Registry, SCALE_ARGS, STRUM_AMOUNT_ARGS,
+    STRUM_DIRECTION_ARGS,
+};
 pub use conflict::{Conflict, Shadow, find_conflicts, find_shadows};
 pub use context::{Context, ContextStack};
 pub use editor::{Clash, KeymapEditor, Rebind, Resolve, Row, RowKey, Slot, Source};
