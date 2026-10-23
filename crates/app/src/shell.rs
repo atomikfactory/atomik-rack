@@ -99,8 +99,8 @@
 //!   (`workflow.json`) are read next to `settings.json`, applied by the Settings dialog (Keyboard
 //!   and Workflow tabs) and hot-reloaded ([`Shell::reload_keymap_file`]).
 //! - **Commands**: every command the router resolves is offered to the focused
-//!   view first (`command()` of the arrangement, the piano roll or the rack: a view's own
-//!   commands such as duplicate, delete, split, quantize, tools, zoom), then to the shell
+//!   view first (`command()` of the arrangement, the piano roll, the rack or the step, sample and slice
+//!   editors: a view's own commands such as duplicate, delete, split, quantize, tools, zoom), then to the shell
 //!   itself (transport steps, pane toggles, create keys, the menu commands). The first that
 //!   takes it wins, so a user binding in a context really shadows a `Global` binding of the
 //!   same chord. A key that no command took reaches the view as a key (text, Escape).
@@ -2855,3 +2855,7 @@ mod create_tests;
 #[cfg(test)]
 #[path = "shell_browser_tests.rs"]
 mod shell_browser_tests;
+
+#[cfg(test)]
+#[path = "shell_editor_keys_tests.rs"]
+mod editor_keys_tests;

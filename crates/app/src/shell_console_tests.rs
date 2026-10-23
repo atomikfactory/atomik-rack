@@ -500,6 +500,175 @@ fn file_new_in_the_shell_makes_the_starter_project_and_is_confirmed_when_dirty()
     assert_eq!(s.core().doc().devices[0].key, DeviceKey("master".into()));
 }
 
+// ---------------------------------------------------------------- keys and the text owner
+
+use atomik_ui::keymap::{Context, ContextStack};
+
+/// A console with `n` synth channels on show and focused.
+fn console_with(n: usize) -> Shell<NullBackend> {
+    let mut s = shell();
+    for i in 0..n {
+        add_synth(&mut s, &format!("s{i}"));
+    }
+    s.execute(AppCommand::ToggleConsole);
+    s.set_focus(Pane::Console);
+    s
+}
+
+fn first_channel(s: &Shell<NullBackend>) -> DeviceKey {
+    s.core().doc().console.channels[0].channel.clone()
+}
+
+fn param(s: &Shell<NullBackend>, device: &DeviceKey, name: &str) -> f32 {
+    // An untouched parameter is absent from the document: the fader sits at unity.
+    s.core()
+        .doc()
+        .device(device)
+        .unwrap()
+        .params
+        .get(name)
+        .copied()
+        .unwrap_or(0.75)
+}
+
+#[test]
+fn the_console_context_is_mixer_until_a_name_is_typed() {
+    let mut s = console_with(1);
+    assert_eq!(s.context_stack(), ContextStack::new(&[Context::Mixer]));
+    let channel = first_channel(&s);
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    assert_eq!(
+        s.context_stack(),
+        ContextStack::new(&[Context::Text, Context::Mixer])
+    );
+    assert!(s.context_stack().is_text());
+    tap(&mut s, Key::Escape, Modifiers::NONE);
+    assert_eq!(s.context_stack(), ContextStack::new(&[Context::Mixer]));
+}
+
+#[test]
+fn space_and_delete_do_not_leak_out_of_a_console_name() {
+    let mut s = console_with(1);
+    let channel = first_channel(&s);
+    let devices = s.core().doc().devices.len();
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    s.core_mut().select(Some(DeviceKey("s0".into())));
+    for k in [Key::Space, Key::Delete, Key::Backspace, Key::Char('r')] {
+        tap(&mut s, k, Modifiers::NONE);
+    }
+    assert!(!s.core().is_playing(), "Space is a typed space, not play");
+    assert!(!s.core().is_recording());
+    assert_eq!(
+        s.core().doc().devices.len(),
+        devices,
+        "Delete deleted nothing"
+    );
+    assert!(
+        s.core().console().is_text_owner(),
+        "typing does not end the edit"
+    );
+}
+
+#[test]
+fn enter_renames_and_escape_cancels_through_the_shell() {
+    let mut s = console_with(1);
+    let channel = first_channel(&s);
+    let name = |s: &Shell<NullBackend>| {
+        s.core()
+            .doc()
+            .device(&DeviceKey("s0".into()))
+            .unwrap()
+            .name
+            .clone()
+    };
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    for _ in 0..40 {
+        tap(&mut s, Key::Backspace, Modifiers::NONE);
+    }
+    for c in "Lead".chars() {
+        tap(&mut s, Key::Char(c), Modifiers::NONE);
+    }
+    tap(&mut s, Key::Escape, Modifiers::NONE);
+    assert!(!s.core().console().is_text_owner());
+    assert_ne!(name(&s), "Lead", "Escape cancels");
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    for _ in 0..40 {
+        tap(&mut s, Key::Backspace, Modifiers::NONE);
+    }
+    for c in "Lead".chars() {
+        tap(&mut s, Key::Char(c), Modifiers::NONE);
+    }
+    tap(&mut s, Key::Enter, Modifiers::NONE);
+    assert!(!s.core().console().is_text_owner());
+    assert_eq!(name(&s), "Lead", "Enter commits");
+    assert!(s.core().document().can_undo());
+}
+
+#[test]
+fn a_command_chord_no_binding_took_is_not_typed_into_a_console_name() {
+    let mut s = console_with(1);
+    let channel = first_channel(&s);
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    let before = s.core().console().rename_text().unwrap().to_string();
+    // Ctrl+Alt+Q has no binding in any profile.
+    tap(
+        &mut s,
+        Key::Char('q'),
+        Modifiers {
+            ctrl: true,
+            alt: true,
+            ..Modifiers::NONE
+        },
+    );
+    assert_eq!(s.core().console().rename_text(), Some(before.as_str()));
+}
+
+#[test]
+fn a_command_chord_still_runs_while_a_console_name_is_typed() {
+    let mut s = console_with(1);
+    let channel = first_channel(&s);
+    assert!(s.core_mut().console_mut().begin_rename(&channel));
+    let shown = s.menu_state().console;
+    tap(&mut s, Key::F(5), Modifiers::NONE);
+    assert_ne!(s.menu_state().console, shown, "F5 is not typing");
+}
+
+#[test]
+fn the_arrows_are_mixer_commands_that_step_the_focused_control_and_scroll() {
+    let mut s = console_with(12);
+    let channel = first_channel(&s);
+    let p = s
+        .core()
+        .console()
+        .control_center(&channel, "fader")
+        .unwrap();
+    click(&mut s, p);
+    let v0 = param(&s, &channel, "fader");
+    tap(&mut s, Key::Up, Modifiers::NONE);
+    let v1 = param(&s, &channel, "fader");
+    assert!(v1 > v0, "Up raises the focused fader");
+    tap(&mut s, Key::Down, Modifiers::NONE);
+    assert!(param(&s, &channel, "fader") < v1);
+    tap(&mut s, Key::Down, Modifiers::SHIFT);
+    tap(&mut s, Key::PageUp, Modifiers::NONE);
+    assert_eq!(s.core().console().scroll_x(), 0.0);
+    tap(&mut s, Key::Right, Modifiers::NONE);
+    let one = s.core().console().scroll_x();
+    assert!(one > 0.0, "Right scrolls the strips");
+    tap(&mut s, Key::End, Modifiers::NONE);
+    assert!(s.core().console().scroll_x() > one);
+    tap(&mut s, Key::Home, Modifiers::NONE);
+    assert_eq!(s.core().console().scroll_x(), 0.0);
+}
+
+#[test]
+fn the_mixer_keys_only_run_in_the_console() {
+    let mut s = console_with(12);
+    s.set_focus(Pane::Rack);
+    tap(&mut s, Key::Right, Modifiers::NONE);
+    assert_eq!(s.core().console().scroll_x(), 0.0);
+}
+
 #[test]
 fn ctrl_g_routes_the_selected_instruments_to_a_new_output_bus() {
     use atomik_model::console::OutputDest;
@@ -584,7 +753,7 @@ fn the_console_is_a_text_context_while_a_bus_name_is_edited() {
     for ch in "xy".chars() {
         tap(&mut s, Key::Char(ch), Modifiers::NONE);
     }
-    assert_eq!(s.core().console().rename_text().as_deref(), Some("Drumsxy"));
+    assert_eq!(s.core().console().rename_text(), Some("Drumsxy"));
     tap(&mut s, Key::Enter, Modifiers::NONE);
     assert_eq!(s.core().doc().console.buses[0].name, "Drumsxy");
     assert!(!s.core().console().is_text_owner());

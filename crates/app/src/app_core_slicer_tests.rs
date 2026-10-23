@@ -727,12 +727,9 @@ fn the_pane_routes_its_events_and_esc_closes_it() {
     c.sink_mut().take();
     // Delete removes the marker of the selected slice: the view emits a SetZones.
     c.slice_editor_mut().set_selected_slice(Some(2));
-    let del = UiEvent::Key {
-        key: Key::Delete,
-        modifiers: Modifiers::NONE,
-        pressed: true,
-    };
-    let actions = c.handle_pane_event(Pane::SliceEditor, &del);
+    let actions = c
+        .pane_command(Pane::SliceEditor, "edit.delete", None)
+        .expect("the view takes edit.delete");
     assert!(
         actions
             .iter()

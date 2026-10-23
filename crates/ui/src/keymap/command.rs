@@ -208,7 +208,35 @@ const COMMANDS: &[CommandDef] = &[
         .menu(),
     cmd("edit.undo", "Undo", G::Edit, C::Global).rep().menu(),
     cmd("editor.nudge_left", "Nudge Left", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.nudge_left_beat",
+        "Nudge Left by Beat",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.nudge_left_tick",
+        "Nudge Left by Tick",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd("editor.nudge_right", "Nudge Right", G::Editor, C::Editor).rep(),
+    cmd(
+        "editor.nudge_right_beat",
+        "Nudge Right by Beat",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.nudge_right_tick",
+        "Nudge Right by Tick",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd(
         "editor.octave_down",
         "Transpose Octave Down",
@@ -276,12 +304,94 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.scroll_end",
+        "Scroll to Last Channel",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.scroll_home",
+        "Scroll to First Channel",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.scroll_left",
+        "Scroll Channels Left",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.scroll_right",
+        "Scroll Channels Right",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
         "mixer.toggle_compensation",
         "Delay Compensation",
         G::Mixer,
         C::Global,
     )
     .menu(),
+    cmd(
+        "mixer.value_down",
+        "Lower Focused Control",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_down_fine",
+        "Lower Focused Control (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_down",
+        "Lower Focused Control by Ten",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_down_fine",
+        "Lower Focused Control by Ten (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_up",
+        "Raise Focused Control by Ten",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_page_up_fine",
+        "Raise Focused Control by Ten (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_up",
+        "Raise Focused Control",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.value_up_fine",
+        "Raise Focused Control (Fine)",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),

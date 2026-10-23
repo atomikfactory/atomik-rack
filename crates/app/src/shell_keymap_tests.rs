@@ -7,6 +7,7 @@ use super::*;
 use crate::keymap_store::{KEYMAP_FILE, WORKFLOW_FILE};
 use crate::session::NullBackend;
 use crate::settings_dialog::Tab;
+use atomik_model::Command;
 use atomik_ui::TransportAction;
 use atomik_ui::keymap::script::event_for;
 use std::path::PathBuf;
@@ -454,4 +455,49 @@ fn the_keymap_flag_uses_another_file_and_saves_to_it() {
             .contains("Cmd+Alt+K")
     );
     assert!(!dir.join(KEYMAP_FILE).exists());
+}
+
+#[test]
+fn a_mixer_key_can_be_rebound_and_the_old_key_stops_working() {
+    let dir = config("mixer-rebind");
+    std::fs::write(
+        dir.join(KEYMAP_FILE),
+        r#"{"bindings": [{"command": "mixer.scroll_right", "context": "mixer", "chords": ["Cmd+Alt+Right"]}]}"#,
+    )
+    .unwrap();
+    let mut s = shell_in(&dir, Os::Windows, Some(Profile::Standard));
+    for i in 0..12 {
+        s.core_mut()
+            .apply_command(Command::AddDevice {
+                index: usize::MAX,
+                type_id: "atomik.poly-synth".into(),
+                key: Some(DeviceKey(format!("s{i}"))),
+            })
+            .unwrap();
+    }
+    s.execute(AppCommand::ToggleConsole);
+    s.set_focus(Pane::Console);
+    tap(&mut s, Os::Windows, "Right");
+    assert_eq!(s.core().console().scroll_x(), 0.0, "the old key is unbound");
+    tap(&mut s, Os::Windows, "Cmd+Alt+Right");
+    assert!(s.core().console().scroll_x() > 0.0, "the new key scrolls");
+    assert_eq!(
+        s.keymap()
+            .shortcut_text("mixer.scroll_right", None)
+            .as_deref(),
+        Some("Ctrl+Alt+Right")
+    );
+}
+
+#[test]
+fn a_mixer_key_that_collides_in_the_context_is_a_conflict() {
+    let dir = config("mixer-conflict");
+    std::fs::write(
+        dir.join(KEYMAP_FILE),
+        r#"{"bindings": [{"command": "mixer.value_up", "context": "mixer", "chords": ["Down"]}]}"#,
+    )
+    .unwrap();
+    let s = shell_in(&dir, Os::Windows, Some(Profile::Standard));
+    let msg = s.core().last_rejection().unwrap();
+    assert!(msg.contains("keymap.json") && msg.contains("Down"), "{msg}");
 }

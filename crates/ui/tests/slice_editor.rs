@@ -8,6 +8,7 @@ mod support;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{Command, Document, ZoneDoc, markers_of};
+use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::zone_edit::Field;
 use atomik_ui::{DisplayList, Key, Modifiers, SliceEditorView, SliceMode, UiAction, UiEvent};
@@ -297,7 +298,7 @@ fn delete_merges_the_selected_slice_into_the_previous_one() {
     let (mut d, reg, mut v) = default_setup();
     let p = v.slice_point(2).unwrap();
     let _ = click(&mut v, &d, &reg, p, 1);
-    let a = send(&mut v, &d, &reg, &press(Key::Delete, Modifiers::NONE));
+    let a = delete(&mut v, &d, &reg).unwrap();
     let lists = zone_lists(&a);
     assert_eq!(lists.len(), 1);
     assert_eq!(lists[0].1, None);
@@ -305,20 +306,64 @@ fn delete_merges_the_selected_slice_into_the_previous_one() {
     assert_eq!(v.selected_slice(), Some(1));
     apply_all(&mut d, &reg, &a);
     assert_eq!(d.doc().devices[0].zones.len(), 3);
-    // Backspace removes too.
+    // Again: the previous slice is selected now.
     let _ = send(&mut v, &d, &reg, &mv(Point::new(-9.0, -9.0)));
-    let a = send(&mut v, &d, &reg, &press(Key::Backspace, Modifiers::NONE));
+    let a = delete(&mut v, &d, &reg).unwrap();
     assert_eq!(markers_of(&last_list(&a)), vec![0, 72_000]);
+}
+
+/// Runs `edit.delete` on the view (the registry command the shell offers for Delete);
+/// `None` when the view declined.
+fn delete(v: &mut SliceEditorView, d: &Document, reg: &Registry) -> Option<Vec<UiAction>> {
+    match v.command("edit.delete", None, d.doc(), reg) {
+        CommandOutcome::Handled(a) => Some(a),
+        CommandOutcome::Declined => None,
+        other => panic!("edit.delete was {other:?}"),
+    }
 }
 
 #[test]
 fn the_first_slice_cannot_be_removed() {
     let (d, reg, mut v) = default_setup();
     assert_eq!(v.selected_slice(), Some(0));
-    let a = send(&mut v, &d, &reg, &press(Key::Delete, Modifiers::NONE));
-    assert!(a.is_empty());
-    let a = send(&mut v, &d, &reg, &press(Key::Backspace, Modifiers::NONE));
-    assert!(a.is_empty());
+    assert!(delete(&mut v, &d, &reg).is_none());
+}
+
+#[test]
+fn the_view_no_longer_reads_delete_keys_itself() {
+    let (d, reg, mut v) = default_setup();
+    let p = v.slice_point(2).unwrap();
+    let _ = click(&mut v, &d, &reg, p, 1);
+    for key in [Key::Delete, Key::Backspace] {
+        let a = send(&mut v, &d, &reg, &press(key, Modifiers::NONE));
+        assert!(a.is_empty(), "{a:?}");
+    }
+    assert_eq!(v.selected_slice(), Some(2));
+}
+
+#[test]
+fn only_edit_delete_is_the_views_command_and_it_declines_mid_gesture() {
+    let (d, reg, mut v) = default_setup();
+    for id in [
+        "edit.copy",
+        "edit.select_all",
+        "view.zoom_in",
+        "sequencer.follow",
+        "editor.quantize",
+        "transport.play_stop",
+    ] {
+        assert_eq!(
+            v.command(id, None, d.doc(), &reg),
+            CommandOutcome::Declined,
+            "{id}"
+        );
+    }
+    let p = v.slice_point(2).unwrap();
+    let _ = click(&mut v, &d, &reg, p, 1);
+    let m = v.marker_point(2).unwrap();
+    let _ = send(&mut v, &d, &reg, &down(m));
+    assert!(delete(&mut v, &d, &reg).is_none(), "mid-drag it waits");
+    let _ = send(&mut v, &d, &reg, &up(m));
 }
 
 #[test]
@@ -717,25 +762,16 @@ fn close_button_and_escape_close_the_editor() {
 }
 
 #[test]
-fn undo_and_redo_shortcuts_are_forwarded() {
+fn undo_and_redo_are_not_the_views_keys() {
     let (d, reg, mut v) = default_setup();
     let ctrl = Modifiers::CTRL;
-    assert_eq!(
-        send(&mut v, &d, &reg, &press(Key::Char('z'), ctrl)),
-        vec![UiAction::Undo]
-    );
     let sc = Modifiers {
         shift: true,
         ..ctrl
     };
-    assert_eq!(
-        send(&mut v, &d, &reg, &press(Key::Char('z'), sc)),
-        vec![UiAction::Redo]
-    );
-    assert_eq!(
-        send(&mut v, &d, &reg, &press(Key::Char('y'), ctrl)),
-        vec![UiAction::Redo]
-    );
+    for (c, m) in [('z', ctrl), ('z', sc), ('y', ctrl)] {
+        assert!(send(&mut v, &d, &reg, &press(Key::Char(c), m)).is_empty());
+    }
 }
 
 #[test]

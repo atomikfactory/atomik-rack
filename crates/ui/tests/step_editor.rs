@@ -782,19 +782,17 @@ fn open_close_and_presence() {
 }
 
 #[test]
-fn undo_and_redo_shortcuts() {
+fn undo_and_redo_are_not_the_views_keys() {
     let (d, reg, mut v) = setup();
-    let a = feed(&mut v, &d, &reg, &[press(Key::Char('z'), Modifiers::CTRL)]);
-    assert_eq!(a, vec![UiAction::Undo]);
-    let a = feed(&mut v, &d, &reg, &[press(Key::Char('y'), Modifiers::CTRL)]);
-    assert_eq!(a, vec![UiAction::Redo]);
     let both = Modifiers {
         shift: true,
         ctrl: true,
         ..Modifiers::NONE
     };
-    let a = feed(&mut v, &d, &reg, &[press(Key::Char('z'), both)]);
-    assert_eq!(a, vec![UiAction::Redo]);
+    for (c, m) in [('z', Modifiers::CTRL), ('y', Modifiers::CTRL), ('z', both)] {
+        let a = feed(&mut v, &d, &reg, &[press(Key::Char(c), m)]);
+        assert!(a.is_empty(), "{c}: {a:?}");
+    }
 }
 
 #[test]

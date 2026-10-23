@@ -1327,18 +1327,9 @@ impl SeqEditorView {
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        // Command chords (undo, redo, clipboard) are registry commands the shell resolves;
+        // what no command took is not a key of the view.
         if modifiers.command() {
-            if let Key::Char(c) = key {
-                match c.to_ascii_lowercase() {
-                    'z' => out.push(if modifiers.shift {
-                        UiAction::Redo
-                    } else {
-                        UiAction::Undo
-                    }),
-                    'y' => out.push(UiAction::Redo),
-                    _ => {}
-                }
-            }
             return;
         }
         if let Some(mut r) = self.rename.take() {

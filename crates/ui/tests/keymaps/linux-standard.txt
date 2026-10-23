@@ -16,7 +16,11 @@ edit.redo | global | Ctrl+Y, Ctrl+Shift+Z
 edit.select_all | global | Ctrl+A
 edit.undo | global | Ctrl+Z
 editor.nudge_left | editor | Ctrl+Left
+editor.nudge_left_beat | editor | Ctrl+Shift+Left
+editor.nudge_left_tick | editor | Ctrl+Alt+Left
 editor.nudge_right | editor | Ctrl+Right
+editor.nudge_right_beat | editor | Ctrl+Shift+Right
+editor.nudge_right_tick | editor | Ctrl+Alt+Right
 editor.octave_down | editor | Ctrl+Shift+Down
 editor.octave_up | editor | Ctrl+Shift+Up
 editor.quantize | editor | Ctrl+K
@@ -45,6 +49,18 @@ files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
 mixer.route_to_new_bus | global | Ctrl+G
+mixer.scroll_end | mixer | End, Shift+End
+mixer.scroll_home | mixer | Home, Shift+Home
+mixer.scroll_left | mixer | Left, Shift+Left
+mixer.scroll_right | mixer | Right, Shift+Right
+mixer.value_down | mixer | Down
+mixer.value_down_fine | mixer | Shift+Down
+mixer.value_page_down | mixer | PageDown
+mixer.value_page_down_fine | mixer | Shift+PageDown
+mixer.value_page_up | mixer | PageUp
+mixer.value_page_up_fine | mixer | Shift+PageUp
+mixer.value_up | mixer | Up
+mixer.value_up_fine | mixer | Shift+Up
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
 rack.select_next | rack | Down

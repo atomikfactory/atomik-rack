@@ -139,6 +139,54 @@ fn quantize_transpose_octave_and_nudge_are_commands() {
 }
 
 #[test]
+fn nudge_by_beat_and_by_tick_ignore_the_snap_step() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_snap(Snap::Off);
+    assert_eq!(
+        v.command("editor.nudge_right_beat", None, &doc, &reg),
+        CommandOutcome::Declined,
+        "nothing selected: nothing to nudge"
+    );
+    v.set_selected_notes(&[1, 3]);
+    for (id, d) in [
+        ("editor.nudge_right_beat", PPQ),
+        ("editor.nudge_right_tick", 1),
+        ("editor.nudge_left_beat", -PPQ),
+        ("editor.nudge_left_tick", -1),
+    ] {
+        let t0 = bass_line()[1].tick;
+        let t2 = bass_line()[3].tick;
+        let (e0, e2) = ((t0 + d).max(0), (t2 + d).max(0));
+        v.set_selected_notes(&[1, 3]);
+        let a = v.command(id, None, &doc, &reg);
+        let notes = &notes_of(a.actions())[0];
+        assert_eq!(notes.len(), bass_line().len(), "{id}");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.tick == e0 && n.key == bass_line()[1].key),
+            "{id}"
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.tick == e2 && n.key == bass_line()[3].key),
+            "{id}"
+        );
+    }
+    // Clamped at zero: the first note is at tick 0, so a tick to the left changes nothing.
+    v.set_selected_notes(&[0]);
+    let a = v.command("editor.nudge_left_tick", None, &doc, &reg);
+    assert!(notes_of(a.actions()).is_empty(), "clamped at 0, no edit");
+    // The snap step does not matter.
+    v.set_snap(Snap::Bar);
+    v.set_selected_notes(&[0]);
+    let a = v.command("editor.nudge_right_tick", None, &doc, &reg);
+    assert!(notes_of(a.actions())[0].iter().any(|n| n.tick == 1));
+}
+
+#[test]
 fn commands_that_are_not_the_rolls_decline() {
     let (mut v, doc, reg) = setup();
     for id in [

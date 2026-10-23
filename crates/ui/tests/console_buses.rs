@@ -429,14 +429,14 @@ fn double_clicking_a_bus_name_edits_it_and_enter_renames() {
     v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
     v.handle(&up(p), &doc, &reg);
     assert!(v.is_text_owner());
-    assert_eq!(v.rename_text().as_deref(), Some("Drums"));
+    assert_eq!(v.rename_text(), Some("Drums"));
     for _ in 0..5 {
         v.handle(&key_event(Key::Backspace), &doc, &reg);
     }
     type_text(&mut v, &doc, &reg, "Kit");
     v.handle(&key_event(Key::Space), &doc, &reg);
     type_text(&mut v, &doc, &reg, "A");
-    assert_eq!(v.rename_text().as_deref(), Some("Kit A"));
+    assert_eq!(v.rename_text(), Some("Kit A"));
     let a = v.handle(&key_event(Key::Enter), &doc, &reg);
     assert_eq!(
         console_cmds(&a),
@@ -482,7 +482,7 @@ fn double_clicking_a_channel_name_renames_the_device_the_strip_shows() {
     v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
     v.handle(&up(p), &doc, &reg);
     assert!(v.is_text_owner());
-    assert_eq!(v.rename_text().as_deref(), Some("Bass"));
+    assert_eq!(v.rename_text(), Some("Bass"));
     for _ in 0..4 {
         v.handle(&key_event(Key::Backspace), &doc, &reg);
     }
@@ -551,7 +551,7 @@ fn the_bus_context_menu_offers_rename_and_delete() {
     let a = pick(&mut v, &doc, &reg, "Rename");
     assert!(a.is_empty());
     assert!(v.is_text_owner());
-    assert_eq!(v.rename_text().as_deref(), Some("Drums"));
+    assert_eq!(v.rename_text(), Some("Drums"));
 }
 
 #[test]

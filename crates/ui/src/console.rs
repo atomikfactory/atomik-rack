@@ -31,6 +31,11 @@
 //! buses (`ReorderBus`). A click on a plate selects the strip (Ctrl/Cmd toggles, Shift
 //! extends); see [`ConsoleView::selected_strips`]. Right-clicking a channel plate does nothing.
 //!
+//! Keys: the arrows, Page Up / Down, Home and End are the `mixer.*` registry commands
+//! ([`ConsoleView::command`]); `handle` reads only Escape and F5 itself. While a strip or bus
+//! name is typed (double-click, or [`ConsoleView::begin_rename`]) the view is the one text owner
+//! ([`ConsoleView::is_text_owner`]): one buffer, Enter commits, Esc cancels, a chord is not typed.
+//!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
@@ -44,6 +49,7 @@ use crate::console_layout::{
 use crate::console_meter::{ChannelMeters, GR_MAX_DB, MeterBallistics, meter_norm};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
+use crate::keymap::CommandOutcome;
 use crate::paint::{self, fit_label};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
@@ -595,6 +601,45 @@ impl ConsoleView {
             self.focused = focused;
             self.repaint = true;
         }
+        if !focused {
+            self.cancel_rename();
+        }
+    }
+
+    // ------------------------------------------------------------------ text owner
+
+    /// Whether the view owns the keyboard as a text field: a strip or bus name is being typed
+    /// (one edit, one buffer: [`Self::begin_rename`], a double-click on a name plate). The
+    /// shell then reports the `Text` context over `Mixer`, so plain keys reach [`Self::handle`]
+    /// instead of commands; only chords with the primary modifier and function keys may be
+    /// commands (a chord no binding took is not typed).
+    pub fn is_text_owner(&self) -> bool {
+        self.rename.is_some()
+    }
+
+    /// The name being typed, if an edit is open.
+    pub fn rename_text(&self) -> Option<&str> {
+        self.rename.as_ref().map(|r| r.text.as_str())
+    }
+
+    /// Starts typing the name of the strip `strip` (a channel or a bus): a channel renames the
+    /// device whose name it shows (its source instrument, else the channel), a bus its own
+    /// name. False when there is no such strip.
+    pub fn begin_rename(&mut self, strip: &DeviceKey) -> bool {
+        match self.strips.iter().position(|s| &s.key == strip) {
+            Some(i) => {
+                self.begin_rename_at(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Ends an open edit without renaming.
+    pub fn cancel_rename(&mut self) {
+        if self.rename.take().is_some() {
+            self.repaint = true;
+        }
     }
 
     /// Whether the view has focus.
@@ -781,12 +826,6 @@ impl ConsoleView {
         }
     }
 
-    /// True while a strip name is being edited: the keys are text and only chords with the
-    /// primary modifier, function keys and Esc may be commands.
-    pub fn is_text_owner(&self) -> bool {
-        self.rename.is_some()
-    }
-
     /// Shows a rejected command's message in the toolbar until the next click (the host calls
     /// it with the model's error, e.g. an invalid bus name).
     pub fn notify_rejected(&mut self, message: impl Into<String>) {
@@ -797,11 +836,6 @@ impl ConsoleView {
     /// The message shown in the toolbar, if any.
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
-    }
-
-    /// The strip name being edited, if any.
-    pub fn rename_text(&self) -> Option<String> {
-        self.rename.as_ref().map(|r| r.text.clone())
     }
 
     /// What a strip's output selector reads ("Master", "Bus Drums", "Audio I/O 3+4", ...).
@@ -1356,6 +1390,7 @@ impl ConsoleView {
             }
             self.drag = Drag::None;
             self.focus = None;
+            self.rename = None;
             self.repaint = true;
         }
         let generation = self.generation;
@@ -1635,7 +1670,7 @@ impl ConsoleView {
             }
             (Hit::Name(i), PointerButton::Primary) => {
                 if clicks >= 2 {
-                    self.begin_rename(i);
+                    self.begin_rename_at(i);
                     return;
                 }
                 self.drag = Drag::Move {
@@ -1897,7 +1932,7 @@ impl ConsoleView {
             (MenuItem::RenameBus(bus), _) => {
                 if let Some(i) = self.strips.iter().position(|s| &s.key == bus) {
                     self.menu = None;
-                    self.begin_rename(i);
+                    self.begin_rename_at(i);
                 }
                 return;
             }
@@ -2022,7 +2057,7 @@ impl ConsoleView {
     // ---------------------------------------------------------------- rename and selection
 
     /// Starts editing the name of strip `i` in place.
-    fn begin_rename(&mut self, i: usize) {
+    fn begin_rename_at(&mut self, i: usize) {
         let Some(s) = self.strips.get(i) else {
             return;
         };
@@ -2328,6 +2363,43 @@ impl ConsoleView {
         self.repaint = true;
     }
 
+    /// Runs a registry command of the `Mixer` context (what the arrow keys, Page Up / Down,
+    /// Home and End did when the view read them itself): `mixer.value_*` step the focused
+    /// control (`_fine` is the Shift form, a page is ten notches), `mixer.scroll_*` move the
+    /// strips sideways. Anything else is declined.
+    pub fn command(
+        &mut self,
+        id: &str,
+        _arg: Option<&str>,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> CommandOutcome {
+        self.sync(doc, registry);
+        let (notches, fine) = match id {
+            "mixer.value_up" => (1.0, false),
+            "mixer.value_down" => (-1.0, false),
+            "mixer.value_page_up" => (10.0, false),
+            "mixer.value_page_down" => (-10.0, false),
+            "mixer.value_up_fine" => (1.0, true),
+            "mixer.value_down_fine" => (-1.0, true),
+            "mixer.value_page_up_fine" => (10.0, true),
+            "mixer.value_page_down_fine" => (-10.0, true),
+            "mixer.scroll_left" => return self.scrolled(self.scroll.x - STRIP_W - STRIP_GAP),
+            "mixer.scroll_right" => return self.scrolled(self.scroll.x + STRIP_W + STRIP_GAP),
+            "mixer.scroll_home" => return self.scrolled(0.0),
+            "mixer.scroll_end" => return self.scrolled(f64::MAX),
+            _ => return CommandOutcome::Declined,
+        };
+        self.repaint = true;
+        let action = self.focus.and_then(|(t, c)| self.step(t, c, notches, fine));
+        CommandOutcome::Handled(action.into_iter().collect())
+    }
+
+    fn scrolled(&mut self, x: f64) -> CommandOutcome {
+        self.set_scroll_x(x);
+        CommandOutcome::Handled(Vec::new())
+    }
+
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.repaint = true;
         if self.rename.is_some() {
@@ -2338,58 +2410,31 @@ impl ConsoleView {
             out.push(a);
             return;
         }
-        if modifiers.command() {
-            match key {
-                Key::Char(c) if c.eq_ignore_ascii_case(&'z') => out.push(if modifiers.shift {
-                    UiAction::Redo
-                } else {
-                    UiAction::Undo
-                }),
-                Key::Char(c) if c.eq_ignore_ascii_case(&'y') => out.push(UiAction::Redo),
-                _ => {}
-            }
+        // Command chords (undo, redo) and the arrows are registry commands the shell
+        // resolves; what no command took is not a key of the view. Escape stays here.
+        if modifiers.command() || *key != Key::Escape {
             return;
         }
-        match key {
-            Key::Escape => {
-                if self.menu.take().is_some() {
-                    return;
+        if self.menu.take().is_some() {
+            return;
+        }
+        match std::mem::replace(&mut self.drag, Drag::None) {
+            Drag::Value {
+                target,
+                ctrl,
+                merge,
+                start,
+                value,
+                ..
+            } => {
+                if start.to_bits() != value.to_bits()
+                    && let Some((pc, _, _)) = self.ctrl_of(target, ctrl)
+                {
+                    out.extend(self.set_param(target, pc.param, start, Some(merge)));
                 }
-                match std::mem::replace(&mut self.drag, Drag::None) {
-                    Drag::Value {
-                        target,
-                        ctrl,
-                        merge,
-                        start,
-                        value,
-                        ..
-                    } => {
-                        if start.to_bits() != value.to_bits()
-                            && let Some((pc, _, _)) = self.ctrl_of(target, ctrl)
-                        {
-                            out.extend(self.set_param(target, pc.param, start, Some(merge)));
-                        }
-                        out.push(UiAction::EndMerge);
-                    }
-                    Drag::None => self.focus = None,
-                    _ => {}
-                }
+                out.push(UiAction::EndMerge);
             }
-            Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
-                if let Some((t, c)) = self.focus {
-                    let n = match key {
-                        Key::Up => 1.0,
-                        Key::Down => -1.0,
-                        Key::PageUp => 10.0,
-                        _ => -10.0,
-                    };
-                    out.extend(self.step(t, c, n, modifiers.shift));
-                }
-            }
-            Key::Left => self.set_scroll_x(self.scroll.x - STRIP_W - STRIP_GAP),
-            Key::Right => self.set_scroll_x(self.scroll.x + STRIP_W + STRIP_GAP),
-            Key::Home => self.set_scroll_x(0.0),
-            Key::End => self.set_scroll_x(f64::MAX),
+            Drag::None => self.focus = None,
             _ => {}
         }
     }

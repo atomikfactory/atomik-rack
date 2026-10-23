@@ -618,30 +618,31 @@ fn escape_closes_and_so_does_the_button() {
 }
 
 #[test]
-fn undo_and_redo_keys_are_forwarded() {
+fn undo_and_redo_are_not_the_views_keys() {
     let d = layered();
     let mut v = editor(d.doc());
     let ctrl = Modifiers {
         ctrl: true,
         ..Modifiers::NONE
     };
-    let z = |m| UiEvent::Key {
-        key: Key::Char('z'),
-        modifiers: m,
-        pressed: true,
-    };
-    assert_eq!(feed(&mut v, d.doc(), z(ctrl)), vec![UiAction::Undo]);
-    assert_eq!(
-        feed(
-            &mut v,
-            d.doc(),
-            z(Modifiers {
+    for (c, m) in [
+        ('z', ctrl),
+        (
+            'z',
+            Modifiers {
                 shift: true,
                 ..ctrl
-            })
+            },
         ),
-        vec![UiAction::Redo]
-    );
+        ('y', ctrl),
+    ] {
+        let e = UiEvent::Key {
+            key: Key::Char(c),
+            modifiers: m,
+            pressed: true,
+        };
+        assert!(feed(&mut v, d.doc(), e).is_empty(), "{c}");
+    }
 }
 
 // ------------------------------------------------------------------ the MACROS tab
@@ -1013,4 +1014,24 @@ fn the_sample_slice_and_sequencer_editors_open_for_inner_devices_by_path_key() {
     seq.open(key("layer/nope"));
     seq.sync(d.doc(), &reg);
     assert!(!seq.is_present());
+}
+
+#[test]
+fn a_command_chord_is_never_typed_into_the_macro_name() {
+    let d = layered();
+    let mut v = macros_view(&d);
+    let p = v.macro_name_rect(1).center();
+    let _ = click_with(&mut v, d.doc(), p, 2, Modifiers::NONE);
+    for c in ['v', 'z', 'a'] {
+        let e = UiEvent::Key {
+            key: Key::Char(c),
+            modifiers: Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
+            pressed: true,
+        };
+        assert!(feed(&mut v, d.doc(), e).is_empty(), "{c}");
+    }
+    assert_eq!(v.renaming(), Some(""));
 }

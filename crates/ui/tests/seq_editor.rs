@@ -854,29 +854,21 @@ fn a_changed_cursor_asks_for_a_repaint_and_an_unchanged_one_does_not() {
 }
 
 #[test]
-fn escape_and_the_close_button_close_the_editor_and_undo_redo_pass_through() {
+fn escape_and_the_close_button_close_the_editor_and_undo_redo_are_not_the_views_keys() {
     let (d, reg, mut v) = setup();
     let a = v.handle(&press(Key::Escape, Modifiers::NONE), d.doc(), &reg);
     assert_eq!(a, vec![UiAction::CloseSeqEditor]);
     let a = click!(v, &d, &reg, v.close_button_center());
     assert_eq!(a, vec![UiAction::CloseSeqEditor]);
-    let a = v.handle(&press(Key::Char('z'), Modifiers::CTRL), d.doc(), &reg);
-    assert_eq!(a, vec![UiAction::Undo]);
-    let a = v.handle(
-        &press(
-            Key::Char('z'),
-            Modifiers {
-                shift: true,
-                ctrl: true,
-                ..Modifiers::NONE
-            },
-        ),
-        d.doc(),
-        &reg,
-    );
-    assert_eq!(a, vec![UiAction::Redo]);
-    let a = v.handle(&press(Key::Char('y'), Modifiers::CTRL), d.doc(), &reg);
-    assert_eq!(a, vec![UiAction::Redo]);
+    let both = Modifiers {
+        shift: true,
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    for (c, m) in [('z', Modifiers::CTRL), ('z', both), ('y', Modifiers::CTRL)] {
+        let a = v.handle(&press(Key::Char(c), m), d.doc(), &reg);
+        assert!(a.is_empty(), "{c}: {a:?}");
+    }
 }
 
 #[test]
@@ -1003,3 +995,17 @@ proptest! {
 
 // Keep the type used by the fixtures referenced.
 const _: fn() -> PatternDoc = bass;
+
+#[test]
+fn a_command_chord_is_never_typed_into_the_pattern_name() {
+    // Undo and the clipboard are registry commands the shell resolves; what no command took
+    // must not leak into the text field as a letter.
+    let (d, reg, mut v) = setup();
+    let _ = click_with!(v, &d, &reg, v.slot_center(1), 2);
+    let before = v.renaming().map(str::to_string);
+    for c in ['v', 'z', 'a'] {
+        let a = v.handle(&press(Key::Char(c), Modifiers::CTRL), d.doc(), &reg);
+        assert!(a.is_empty(), "{c}: {a:?}");
+    }
+    assert_eq!(v.renaming().map(str::to_string), before);
+}
