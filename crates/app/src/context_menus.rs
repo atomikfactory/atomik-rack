@@ -37,6 +37,10 @@ pub struct MenuEnable {
     pub assign_send: bool,
     /// Rack: how many columns the rack has (Remove Column needs two, Add Column room).
     pub columns: u16,
+    /// Track header: the track has a note lane, so "Chase Notes" can be switched.
+    pub track_can_chase: bool,
+    /// Track header: the track chases notes (the item is checked).
+    pub track_chase: bool,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -317,7 +321,20 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             Spec::Separator,
             item("edit.select_all", true),
         ],
-        ContextTarget::TrackHeader => edit(Some(("Duplicate Track", "Delete Track"))),
+        ContextTarget::TrackHeader => {
+            let mut v = edit(Some(("Duplicate Track", "Delete Track")));
+            v.extend([
+                Spec::Separator,
+                Spec::Item {
+                    command: "sequencer.toggle_chase",
+                    arg: None,
+                    label: None,
+                    enabled: e.track_can_chase,
+                    checked: Some(e.track_chase),
+                },
+            ]);
+            v
+        }
         ContextTarget::Clip => {
             let mut v = edit(None);
             v.extend([
@@ -575,9 +592,35 @@ mod tests {
                 None,
                 None,
                 Some("Duplicate Track"),
-                Some("Delete Track")
+                Some("Delete Track"),
+                None
             ]
         );
+    }
+
+    #[test]
+    fn the_track_header_menu_has_a_checked_chase_item_for_note_tracks_only() {
+        let chase = |e: &MenuEnable| {
+            specs(ContextTarget::TrackHeader, e)
+                .into_iter()
+                .find_map(|s| match s {
+                    Spec::Item {
+                        command: "sequencer.toggle_chase",
+                        enabled,
+                        checked,
+                        ..
+                    } => Some((enabled, checked)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(chase(&MenuEnable::default()), (false, Some(false)));
+        let note_track = MenuEnable {
+            track_can_chase: true,
+            track_chase: true,
+            ..MenuEnable::default()
+        };
+        assert_eq!(chase(&note_track), (true, Some(true)));
     }
 
     #[test]

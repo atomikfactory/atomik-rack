@@ -251,7 +251,7 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 .collect();
             json!({
                 "device": t.device.as_str(), "muted": t.muted, "solo": t.solo,
-                "armed": t.armed, "lanes": lanes,
+                "armed": t.armed, "chase": t.chase, "lanes": lanes,
             })
         })
         .collect();

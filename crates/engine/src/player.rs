@@ -21,10 +21,27 @@
 //!   exactly at `LE`, the wrap happens at offset 0 of the next batch (before the state is
 //!   published).
 //! * **Held notes.** One 128-bit set per track. An `On` sets its bit; an `Off` is emitted only
-//!   for a held key (so locating into a note never sends its off). Stop and Locate while
-//!   playing send `AllOff` to every track input and clear the sets; a loop wrap releases the
-//!   held keys with explicit `Off`s; a snapshot swap transfers the set of an unchanged track
-//!   (same device input, same content hash) and releases every other held key with `Off`s.
+//!   for a held key (so locating into a note with chase off never sends its off). Stop and
+//!   Locate while playing send `AllOff` to every track input and clear the sets; a loop wrap
+//!   releases the held keys with explicit `Off`s; a snapshot swap transfers the set of an
+//!   unchanged track (same device input, same content hash) wholesale. On a changed track it
+//!   transfers the keys that the new content still covers at the position (see *Chase*; chase
+//!   on or off, nothing is retriggered) and releases every other held key with `Off`s.
+//! * **Chase.** A track with `SongTrack::chase` starts the notes that span a seek position `pos`
+//!   (`F(start) < pos < F(end)`, strictly: a note starting at `pos` plays from the event list, one
+//!   ending at `pos` is over) after every seek: Play (after the seek, at offset 0), Locate while
+//!   playing (after the `AllOff`, at offset 0; a stopped Locate only seeks, Play chases) and a
+//!   loop wrap (after the releases, at the wrap offset; the pending wrap at offset 0 of a batch
+//!   included). Each chased `On` carries the note's own velocity, goes to the track's input and
+//!   sets the key's held bit, so the note's regular `Off` releases it. Keys are emitted in
+//!   ascending order per track, tracks in order, so the (offset, generation order) sort keeps
+//!   the releases before the chased `On`s. The notes come from the compiled per-track index
+//!   (per-key overlaps already resolved: at most one note per key covers a position), sorted by
+//!   start tick with a prefix maximum of the end ticks; a position walks it backwards from the
+//!   last note starting before it and stops when no earlier note can still sound. Frames are
+//!   compared through `F`, so the index holds ticks and survives any tempo map or sample rate.
+//!   A snapshot swap never chases: notes that newly cover the position (an edit under the
+//!   playhead) are not started.
 //! * **Merge order.** Song events are generated per segment in track order, then sorted by
 //!   (offset, generation order). The engine merges them with the scheduled and live queues by
 //!   frame; on equal frames: song, then scheduled, then live.
@@ -45,7 +62,7 @@ use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
 use crate::graph::DeviceInstanceId;
 use crate::seq::{
-    CompiledTrack, SongCurve, SongPoint, SongSnapshot, TrackCursor, TransportCommand,
+    ChaseNote, CompiledTrack, SongCurve, SongPoint, SongSnapshot, TrackCursor, TransportCommand,
     TransportState,
 };
 use crate::stream::{StreamRequest, StreamStats};
@@ -211,7 +228,70 @@ fn seek(
     }
 }
 
-/// A loop wrap at batch offset `at`: releases every held key, then seeks to `ls`.
+/// The keys of `t` whose note spans song frame `pos` (`F(start) < pos < F(end)`), as a bit set;
+/// `velocity[key]` receives each one's velocity. Per-key overlaps are resolved at compile time,
+/// so at most one note per key covers a position. Walks the start-sorted notes backwards from
+/// the last one starting before `pos` and stops once the prefix maximum of the end ticks says
+/// that no earlier note is still sounding. No allocation.
+fn covering(
+    map: TempoMap<'_>,
+    sr: f64,
+    t: &CompiledTrack,
+    pos: u64,
+    velocity: &mut [f32; 128],
+) -> u128 {
+    let started = t
+        .notes
+        .partition_point(|n: &ChaseNote| map.song_frame(n.start, sr) < pos);
+    let mut keys = 0u128;
+    for i in (0..started).rev() {
+        if map.song_frame(t.max_end[i], sr) <= pos {
+            break;
+        }
+        let n = &t.notes[i];
+        if map.song_frame(n.end, sr) > pos {
+            keys |= 1u128 << n.key;
+            velocity[usize::from(n.key)] = n.velocity;
+        }
+    }
+    keys
+}
+
+/// Starts the notes spanning song frame `pos` on every chasing track: an `On` at batch offset
+/// `offset` per covered key (ascending keys, tracks in order) with the note's own velocity,
+/// setting the key's held bit so the note's regular `Off` releases it. Call after the seek
+/// (and after the releases of a wrap), so these `On`s sort after them.
+fn chase(
+    map: TempoMap<'_>,
+    sr: f64,
+    tracks: &[CompiledTrack],
+    cursors: &mut [TrackCursor],
+    pos: u64,
+    offset: usize,
+    em: &mut Emitter<'_>,
+) {
+    let mut velocity = [0.0f32; 128];
+    for (t, c) in tracks.iter().zip(cursors) {
+        if !t.chase {
+            continue;
+        }
+        let mut keys = covering(map, sr, t, pos, &mut velocity);
+        while keys != 0 {
+            let key = keys.trailing_zeros() as u8;
+            keys &= keys - 1;
+            let kind = NoteKind::On {
+                key,
+                velocity: velocity[usize::from(key)],
+            };
+            if em.push(offset, t.device, t.socket, kind) {
+                c.held |= 1u128 << key;
+            }
+        }
+    }
+}
+
+/// A loop wrap at batch offset `at`: releases every held key, seeks to `ls` and chases the
+/// notes spanning it.
 fn wrap(
     map: TempoMap<'_>,
     sr: f64,
@@ -223,6 +303,7 @@ fn wrap(
     if let Some((tracks, cursors)) = parts.as_mut() {
         em.release(tracks, cursors, at);
         seek(map, sr, tracks, cursors, ls);
+        chase(map, sr, tracks, cursors, ls, at, em);
     }
 }
 
@@ -456,6 +537,12 @@ impl Player {
                         new.cursors[j].held = held;
                         continue;
                     }
+                    // A changed track keeps the keys its new content still covers at the
+                    // position (no retrigger, chase or not); the rest is released below.
+                    let mut velocity = [0.0f32; 128];
+                    let covered = covering(new_map, sr, &new.tracks[j], self.pos, &mut velocity);
+                    new.cursors[j].held = held & covered;
+                    held &= !covered;
                 }
                 em.release_track(t.device, t.socket, &mut held, 0);
             }
@@ -506,6 +593,7 @@ impl Player {
                     *playing = true;
                     if let Some((tracks, cursors)) = parts.as_mut() {
                         seek(map, sr, tracks, cursors, *pos);
+                        chase(map, sr, tracks, cursors, *pos, 0, &mut em);
                     }
                 }
             }
@@ -525,6 +613,10 @@ impl Player {
                     }
                     *pos = map.song_frame(tick.0, sr);
                     seek(map, sr, tracks, cursors, *pos);
+                    // While stopped, Play chases from the new position instead.
+                    if *playing {
+                        chase(map, sr, tracks, cursors, *pos, 0, &mut em);
+                    }
                 } else {
                     *pos = map.song_frame(tick.0, sr);
                 }

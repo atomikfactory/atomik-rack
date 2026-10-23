@@ -161,6 +161,7 @@ fn push_macro_lane(
         None => tracks.push(SongTrack {
             device,
             notes_socket: notes_input(desc).unwrap_or(SocketId(0)),
+            chase: true,
             notes: Vec::new(),
             automation: vec![lane],
         }),
@@ -268,6 +269,7 @@ pub fn song_input_with_assets(
         tracks.push(SongTrack {
             device,
             notes_socket,
+            chase: track.chase,
             notes,
             automation,
         });
@@ -820,6 +822,23 @@ mod tests {
             },
         }));
         d.doc().clone()
+    }
+
+    #[test]
+    fn song_input_track_without_chase_compiles_as_not_chasing() {
+        let mut doc = doc();
+        let r = registry();
+        let ids = expanded_ids(&doc.expand(&r));
+        let chase = |doc: &RackDoc| -> Vec<bool> {
+            song_input(doc, &r, |k| ids.get(k).copied())
+                .tracks
+                .iter()
+                .map(|t| t.chase)
+                .collect()
+        };
+        assert_eq!(chase(&doc), [true, true], "tracks chase by default");
+        doc.song.tracks[1].chase = false;
+        assert_eq!(chase(&doc), [true, false]);
     }
 
     #[test]

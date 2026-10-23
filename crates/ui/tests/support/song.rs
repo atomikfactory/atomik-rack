@@ -69,6 +69,7 @@ pub fn track(device: &str, lanes: Vec<Lane>) -> Track {
         muted: false,
         solo: false,
         armed: false,
+        chase: true,
         lanes,
     }
 }

@@ -79,6 +79,12 @@ pub(crate) enum Edit {
         old: [bool; 3],
         new: [bool; 3],
     },
+    /// Track chase flag.
+    TrackChase {
+        device: DeviceKey,
+        old: bool,
+        new: bool,
+    },
     /// Insert or remove lane `index` of a track.
     Lane {
         device: DeviceKey,
@@ -347,6 +353,11 @@ impl Edit {
                 new: old,
             },
             Edit::TrackFlags { device, old, new } => Edit::TrackFlags {
+                device,
+                old: new,
+                new: old,
+            },
+            Edit::TrackChase { device, old, new } => Edit::TrackChase {
                 device,
                 old: new,
                 new: old,
@@ -621,6 +632,10 @@ impl Edit {
             Edit::TrackFlags { device, new, .. } => {
                 let t = track_mut(doc, device);
                 [t.muted, t.solo, t.armed] = *new;
+                vec![SyncOp::SongChanged]
+            }
+            Edit::TrackChase { device, new, .. } => {
+                track_mut(doc, device).chase = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::Lane {

@@ -39,8 +39,17 @@ pub fn strack(device: DeviceInstanceId, notes: Vec<SongNote>) -> SongTrack {
     SongTrack {
         device,
         notes_socket: NoteLog::NOTES_IN,
+        chase: true,
         notes,
         automation: Vec::new(),
+    }
+}
+
+/// Like [`strack`] with note chase off: notes spanning a play position stay silent.
+pub fn strack_plain(device: DeviceInstanceId, notes: Vec<SongNote>) -> SongTrack {
+    SongTrack {
+        chase: false,
+        ..strack(device, notes)
     }
 }
 

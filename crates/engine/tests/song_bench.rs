@@ -26,6 +26,7 @@ fn e3_2_song(devices: &[atomik_engine::DeviceInstanceId]) -> SongInput {
         .map(|(t, &device)| SongTrack {
             device,
             notes_socket: CallLog::NOTES_IN,
+            chase: true,
             notes: (0..BARS * 16)
                 .map(|k| snote(k * PPQ / 4, PPQ / 8, 36 + ((k * 7 + t as i64) % 48) as u8))
                 .collect(),

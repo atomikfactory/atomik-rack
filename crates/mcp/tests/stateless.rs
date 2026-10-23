@@ -80,6 +80,14 @@ fn project_inspect_describes_a_project_and_a_patch() {
     assert_eq!(v["kind"], "project");
     assert_eq!(v["song"]["tracks"].as_array().unwrap().len(), 2);
     assert!(
+        v["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["chase"] == true),
+        "every track reports its chase flag, on for a project that never set it"
+    );
+    assert!(
         v["devices"]
             .as_array()
             .unwrap()

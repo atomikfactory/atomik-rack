@@ -82,6 +82,11 @@ pub struct SongTrack {
     pub notes: Vec<SongNote>,
     /// Automation lanes.
     pub automation: Vec<SongAutomation>,
+    /// Note chase: when playback starts or jumps (play, locate while playing, loop wrap) at a
+    /// position inside a note (`start < position < end`), the note sounds from there, with its
+    /// own velocity, and its regular off releases it. `false` plays only notes that start at or
+    /// after the position (a note spanning it stays silent).
+    pub chase: bool,
 }
 
 /// A tempo change at a tick: a step, or with `ramp` a linear ramp (in BPM, over ticks) to the
@@ -180,8 +185,26 @@ pub(crate) struct CompiledTrack {
     pub(crate) device: DeviceInstanceId,
     pub(crate) socket: SocketId,
     pub(crate) events: Vec<SeqEvent>,
-    /// Content hash (device, socket, events): equal hashes mean an unchanged track on swap.
+    /// Notes sorted by start tick (per-key overlaps resolved), for chase and for the keys a
+    /// swapped track still covers.
+    pub(crate) notes: Vec<ChaseNote>,
+    /// `max_end[i]` = the greatest end tick among `notes[..=i]` (lets a backwards walk from a
+    /// position stop as soon as no earlier note can still be sounding).
+    pub(crate) max_end: Vec<i64>,
+    /// Whether a seek chases the notes spanning the position ([`SongTrack::chase`]).
+    pub(crate) chase: bool,
+    /// Content hash (device, socket, chase flag, events): equal hashes mean an unchanged track
+    /// on swap.
     pub(crate) hash: u64,
+}
+
+/// One note of a compiled track, in ticks (frames depend on the tempo map and sample rate).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ChaseNote {
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) key: u8,
+    pub(crate) velocity: f32,
 }
 
 /// One automated parameter, points sorted by tick (stable).
@@ -223,9 +246,12 @@ impl std::fmt::Debug for SongSnapshot {
 /// notes into on/off events sorted by (tick, offs before ons, key) — overlapping notes of one
 /// key are cut where the next one starts, and a note starting at the same tick as an earlier
 /// one of the same key replaces it, so ons and offs strictly alternate per key — and sorts
-/// automation points by tick (stable, so equal ticks keep their input order: a jump). Lanes
-/// without points are dropped. Device and param ids are not checked here: the engine ignores
-/// unknown targets (notes to them are counted as dropped).
+/// automation points by tick (stable, so equal ticks keep their input order: a jump). Each
+/// track also gets a note index sorted by start tick (with a prefix maximum of the end ticks)
+/// that the player uses to chase notes spanning a position ([`SongTrack::chase`]); the chase
+/// flag is part of the track's content hash. Lanes without points are dropped. Device and param
+/// ids are not checked here: the engine ignores unknown targets (notes to them are counted as
+/// dropped).
 pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
     let tempo = compile_tempo_map(&input.tempo)?;
     let meter = compile_meter(&input.meter).map_err(SongError::BadMeterMap)?;
@@ -355,13 +381,35 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
         mix(0x6a09_e667_f3bc_c908, u64::from(track.device.0)),
         u64::from(track.notes_socket.0),
     );
+    hash = mix(hash, u64::from(track.chase));
     for e in &events {
         hash = mix(mix(hash, e.tick as u64), encode(e.kind));
     }
+    // `kept` is already sorted by (start, key).
+    let notes: Vec<ChaseNote> = kept
+        .iter()
+        .map(|&(start, end, key, velocity)| ChaseNote {
+            start,
+            end,
+            key,
+            velocity,
+        })
+        .collect();
+    let mut latest = i64::MIN;
+    let max_end = notes
+        .iter()
+        .map(|n| {
+            latest = latest.max(n.end);
+            latest
+        })
+        .collect();
     Ok(CompiledTrack {
         device: track.device,
         socket: track.notes_socket,
         events,
+        notes,
+        max_end,
+        chase: track.chase,
         hash,
     })
 }
@@ -593,6 +641,7 @@ mod tests {
         SongTrack {
             device: DeviceInstanceId(device),
             notes_socket: SocketId(0),
+            chase: true,
             notes,
             automation: Vec::new(),
         }
@@ -859,6 +908,36 @@ mod tests {
         t.notes[0].key = 61;
         let changed = compile_song(&input(vec![t], &[(0, 120.0)])).unwrap();
         assert_ne!(snap.tracks[0].hash, changed.tracks[0].hash);
+    }
+
+    #[test]
+    fn compile_hash_includes_the_chase_flag() {
+        let on = track(2, vec![note(0, 10, 60)]);
+        let mut off = on.clone();
+        off.chase = false;
+        let a = compile_song(&input(vec![on], &[(0, 120.0)])).unwrap();
+        let b = compile_song(&input(vec![off], &[(0, 120.0)])).unwrap();
+        assert_ne!(a.tracks[0].hash, b.tracks[0].hash);
+        assert!(a.tracks[0].chase && !b.tracks[0].chase);
+    }
+
+    #[test]
+    fn compile_builds_the_chase_index_from_the_resolved_notes() {
+        // Key 60 overlaps itself (the first is cut at 50); a long note starts before a short one.
+        let notes = vec![
+            note(50, 100, 60),
+            note(0, 100, 60),
+            note(10, 500, 62),
+            note(20, 30, 64),
+        ];
+        let snap = compile_song(&input(vec![track(1, notes)], &[(0, 120.0)])).unwrap();
+        let t = &snap.tracks[0];
+        let got: Vec<_> = t.notes.iter().map(|n| (n.start, n.end, n.key)).collect();
+        assert_eq!(
+            got,
+            vec![(0, 50, 60), (10, 510, 62), (20, 50, 64), (50, 150, 60)]
+        );
+        assert_eq!(t.max_end, vec![50, 510, 510, 510]);
     }
 
     #[test]

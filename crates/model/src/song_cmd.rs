@@ -51,6 +51,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         muted: false,
         solo: false,
         armed: false,
+        chase: true,
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips: Vec::new(),
@@ -65,6 +66,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         muted: false,
         solo: false,
         armed: false,
+        chase: true,
         lanes: vec![Lane {
             kind: LaneKind::Audio,
             clips: Vec::new(),
@@ -552,6 +554,14 @@ pub(crate) fn plan(
                 device,
                 old: [t.muted, t.solo, t.armed],
                 new: [muted, solo, armed],
+            }
+        }
+        SongCommand::SetTrackChase { device, chase } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            Edit::TrackChase {
+                device,
+                old: t.chase,
+                new: chase,
             }
         }
         SongCommand::AddAutomationLane { device, param } => {
