@@ -5,6 +5,7 @@
 
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
+use atomik_ui::arrangement::OrgMenu;
 use atomik_ui::chord_edit::{
     ARP_GATES, ARP_OCTAVES, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection, strum_ticks,
 };
@@ -41,6 +42,8 @@ pub struct MenuEnable {
     pub track_can_chase: bool,
     /// Track header: the track chases notes (the item is checked).
     pub track_chase: bool,
+    /// Track header and folder row: what the selected tracks and folder allow.
+    pub org: OrgMenu,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -71,6 +74,46 @@ fn marker_colors() -> impl Iterator<Item = Spec> {
     MARKER_COLORS
         .iter()
         .map(|(arg, label)| meter_item("sequencer.marker_color", arg, label))
+}
+
+/// The colours of the track and folder menus: the command argument and the label.
+const TRACK_COLORS: [(&str, &str); 7] = [
+    ("red", "Red"),
+    ("orange", "Orange"),
+    ("yellow", "Yellow"),
+    ("green", "Green"),
+    ("blue", "Blue"),
+    ("purple", "Purple"),
+    ("none", "None (the device's colour)"),
+];
+
+/// The height presets of the track and folder menus: the command argument and the label.
+const TRACK_HEIGHTS: [(&str, &str); 4] = [
+    ("small", "Small"),
+    ("medium", "Medium"),
+    ("large", "Large"),
+    ("fit", "Fit the View"),
+];
+
+/// The organisation items shared by the track header menu and the folder menu: the two
+/// submenus.
+fn track_submenus() -> [Spec; 2] {
+    [
+        Spec::submenu(
+            "Colour",
+            TRACK_COLORS
+                .iter()
+                .map(|(arg, label)| meter_item("sequencer.track_color", arg, label))
+                .collect(),
+        ),
+        Spec::submenu(
+            "Height",
+            TRACK_HEIGHTS
+                .iter()
+                .map(|(arg, label)| meter_item("sequencer.track_height", arg, label))
+                .collect(),
+        ),
+    ]
 }
 
 /// The meters of the ruler menus: the command argument, the label of the insert item and the
@@ -332,7 +375,42 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     enabled: e.track_can_chase,
                     checked: Some(e.track_chase),
                 },
+                Spec::Separator,
+                item("sequencer.group_tracks", e.org.can_group),
+                item("sequencer.ungroup_tracks", e.org.in_folder),
+                item("sequencer.move_track_up", e.org.can_move_up),
+                item("sequencer.move_track_down", e.org.can_move_down),
+                item("sequencer.track_comment", e.org.track_selected),
+                Spec::Separator,
             ]);
+            v.extend(track_submenus());
+            v.push(meter_item(
+                "sequencer.fold_lanes",
+                "fold",
+                "Fold Automation Lanes",
+            ));
+            v.push(meter_item(
+                "sequencer.fold_lanes",
+                "unfold",
+                "Unfold Automation Lanes",
+            ));
+            v
+        }
+        ContextTarget::Folder => {
+            let mut v = vec![
+                item("sequencer.rename_folder", true),
+                item("sequencer.toggle_folder", true).labelled(if e.org.collapsed {
+                    "Expand Folder"
+                } else {
+                    "Collapse Folder"
+                }),
+                item("sequencer.ungroup_tracks", true),
+                Spec::Separator,
+                item("sequencer.move_track_up", e.org.can_move_up).labelled("Move Folder Up"),
+                item("sequencer.move_track_down", e.org.can_move_down).labelled("Move Folder Down"),
+                Spec::Separator,
+            ];
+            v.extend(track_submenus());
             v
         }
         ContextTarget::Clip => {
@@ -595,7 +673,14 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
-                None
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("Fold Automation Lanes"),
+                Some("Unfold Automation Lanes")
             ]
         );
     }
@@ -919,5 +1004,101 @@ mod tests {
             .collect();
         assert_eq!(on.len(), 1);
         assert_eq!(on[0].1, Some("chromatic"));
+    }
+
+    #[test]
+    fn the_organisation_items_follow_the_selection_state() {
+        let state = |e: &MenuEnable, target| -> Vec<(&'static str, bool, Option<&'static str>)> {
+            specs(target, e)
+                .into_iter()
+                .filter_map(|s| match s {
+                    Spec::Item {
+                        command,
+                        enabled,
+                        label,
+                        ..
+                    } => Some((command, enabled, label)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let on = |list: &[(&'static str, bool, Option<&'static str>)], id: &str| {
+            list.iter().find(|i| i.0 == id).map(|i| i.1)
+        };
+        let none = state(&MenuEnable::default(), ContextTarget::TrackHeader);
+        assert_eq!(on(&none, "sequencer.group_tracks"), Some(false));
+        assert_eq!(on(&none, "sequencer.track_comment"), Some(false));
+        let track = MenuEnable {
+            org: OrgMenu {
+                can_group: true,
+                track_selected: true,
+                can_move_up: true,
+                ..OrgMenu::default()
+            },
+            ..MenuEnable::default()
+        };
+        let list = state(&track, ContextTarget::TrackHeader);
+        assert_eq!(on(&list, "sequencer.group_tracks"), Some(true));
+        assert_eq!(on(&list, "sequencer.move_track_up"), Some(true));
+        assert_eq!(on(&list, "sequencer.move_track_down"), Some(false));
+        assert_eq!(on(&list, "sequencer.ungroup_tracks"), Some(false));
+        // The colours and heights are submenus whose items carry the argument.
+        let walked: Vec<_> = {
+            fn walk(items: &[Spec], out: &mut Vec<(&'static str, Option<&'static str>)>) {
+                for s in items {
+                    match s {
+                        Spec::Item { command, arg, .. } => out.push((command, *arg)),
+                        Spec::Submenu { items, .. } => walk(items, out),
+                        Spec::Separator => {}
+                    }
+                }
+            }
+            let mut out = Vec::new();
+            walk(&specs(ContextTarget::TrackHeader, &track), &mut out);
+            out
+        };
+        let args = |id: &str| -> Vec<&str> {
+            walked
+                .iter()
+                .filter(|(c, _)| *c == id)
+                .filter_map(|(_, a)| *a)
+                .collect()
+        };
+        assert_eq!(
+            args("sequencer.track_color"),
+            ["red", "orange", "yellow", "green", "blue", "purple", "none"]
+        );
+        assert_eq!(
+            args("sequencer.track_height"),
+            ["small", "medium", "large", "fit"]
+        );
+        assert_eq!(args("sequencer.fold_lanes"), ["fold", "unfold"]);
+        // The folder row has its own list, and the toggle names what it will do.
+        let folder = MenuEnable {
+            org: OrgMenu {
+                in_folder: true,
+                collapsed: true,
+                folder_selected: true,
+                can_move_down: true,
+                ..OrgMenu::default()
+            },
+            ..MenuEnable::default()
+        };
+        let list = state(&folder, ContextTarget::Folder);
+        let ids: Vec<&str> = list.iter().map(|i| i.0).collect();
+        assert_eq!(
+            ids,
+            [
+                "sequencer.rename_folder",
+                "sequencer.toggle_folder",
+                "sequencer.ungroup_tracks",
+                "sequencer.move_track_up",
+                "sequencer.move_track_down",
+            ]
+        );
+        assert_eq!(list[1].2, Some("Expand Folder"));
+        assert_eq!(list[3].2, Some("Move Folder Up"));
+        assert_eq!(on(&list, "sequencer.move_track_up"), Some(false));
+        assert_eq!(on(&list, "sequencer.move_track_down"), Some(true));
     }
 }

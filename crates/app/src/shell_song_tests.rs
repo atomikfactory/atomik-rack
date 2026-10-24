@@ -366,6 +366,7 @@ fn transport_menu_lists_the_transport_and_quantize_choices() {
             "Transport",
             "Mixer",
             "Create",
+            "Track",
             "Audio"
         ]
     );

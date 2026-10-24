@@ -6,6 +6,7 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::record::InputQuantize;
+use atomik_ui::arrangement::{HeightPreset, OrgMenu};
 use atomik_ui::keymap::Keymap;
 use atomik_ui::{CableVisibility, Flip, TransportAction};
 
@@ -146,6 +147,26 @@ pub enum AppCommand {
     SequencerOnly,
     /// View ▸ Clip Editor (F8): open the editor of the selected clip, or close the open one.
     ToggleEditor,
+    /// Track ▸ Group Tracks: the selected tracks (or the tracks of the selected clips) into a
+    /// new folder.
+    GroupTracks,
+    /// Track ▸ Ungroup: dissolve the selected folder, or the folder of the selected track.
+    UngroupTracks,
+    /// Track ▸ Collapse Folder / Expand Folder.
+    ToggleFolder,
+    /// Track ▸ Rename Folder…: type a new name for the selected folder.
+    RenameFolder,
+    /// Track ▸ Move Track Up (a selected folder moves with its tracks).
+    MoveTrackUp,
+    /// Track ▸ Move Track Down.
+    MoveTrackDown,
+    /// Track ▸ Track Comment…: type the selected track's comment.
+    TrackComment,
+    /// Track ▸ Fold Automation Lanes (`true`) and Unfold Automation Lanes (`false`), of the
+    /// selected tracks or of every track.
+    FoldLanes(bool),
+    /// Track ▸ Track Height: Small, Medium, Large or Fit, for the selected tracks or every track.
+    TrackHeight(HeightPreset),
     /// Audio ▸ Settings….
     AudioSettings,
     /// Audio ▸ Plugins…: the third-party plugin settings, scan and list.
@@ -237,6 +258,16 @@ impl AppCommand {
             AppCommand::ToggleRackNavigator => ("view.toggle_rack_navigator", None),
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
+            AppCommand::GroupTracks => ("sequencer.group_tracks", None),
+            AppCommand::UngroupTracks => ("sequencer.ungroup_tracks", None),
+            AppCommand::ToggleFolder => ("sequencer.toggle_folder", None),
+            AppCommand::RenameFolder => ("sequencer.rename_folder", None),
+            AppCommand::MoveTrackUp => ("sequencer.move_track_up", None),
+            AppCommand::MoveTrackDown => ("sequencer.move_track_down", None),
+            AppCommand::TrackComment => ("sequencer.track_comment", None),
+            AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
+            AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
+            AppCommand::TrackHeight(p) => ("sequencer.track_height", Some(p.arg())),
             AppCommand::AudioSettings => ("audio.settings", None),
             AppCommand::PluginSettings => ("audio.plugins", None),
             AppCommand::RestartAudio => ("audio.restart", None),
@@ -324,6 +355,18 @@ impl AppCommand {
             ("view.toggle_rack_navigator", None) => AppCommand::ToggleRackNavigator,
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
+            ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
+            ("sequencer.ungroup_tracks", None) => AppCommand::UngroupTracks,
+            ("sequencer.toggle_folder", None) => AppCommand::ToggleFolder,
+            ("sequencer.rename_folder", None) => AppCommand::RenameFolder,
+            ("sequencer.move_track_up", None) => AppCommand::MoveTrackUp,
+            ("sequencer.move_track_down", None) => AppCommand::MoveTrackDown,
+            ("sequencer.track_comment", None) => AppCommand::TrackComment,
+            ("sequencer.fold_lanes", Some("fold")) => AppCommand::FoldLanes(true),
+            ("sequencer.fold_lanes", Some("unfold")) => AppCommand::FoldLanes(false),
+            ("sequencer.track_height", Some(arg)) => {
+                return HeightPreset::from_arg(arg).map(AppCommand::TrackHeight);
+            }
             ("audio.settings", None) => AppCommand::AudioSettings,
             ("audio.plugins", None) => AppCommand::PluginSettings,
             ("audio.restart", None) => AppCommand::RestartAudio,
@@ -417,6 +460,8 @@ pub struct MenuState {
     pub midi_track: bool,
     /// The song has a note track (File > Export MIDI Song is available).
     pub midi_song: bool,
+    /// What the selected tracks and folder allow (the Track menu).
+    pub org: OrgMenu,
 }
 
 /// One menu item.
@@ -685,6 +730,63 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
             ],
         },
         Menu {
+            title: "Track",
+            entries: vec![
+                enabled("Group Tracks", AppCommand::GroupTracks, state.org.can_group),
+                enabled("Ungroup", AppCommand::UngroupTracks, state.org.in_folder),
+                enabled(
+                    if state.org.collapsed {
+                        "Expand Folder"
+                    } else {
+                        "Collapse Folder"
+                    },
+                    AppCommand::ToggleFolder,
+                    state.org.in_folder,
+                ),
+                enabled(
+                    "Rename Folder\u{2026}",
+                    AppCommand::RenameFolder,
+                    state.org.folder_selected,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Move Track Up",
+                    AppCommand::MoveTrackUp,
+                    state.org.can_move_up,
+                ),
+                enabled(
+                    "Move Track Down",
+                    AppCommand::MoveTrackDown,
+                    state.org.can_move_down,
+                ),
+                enabled(
+                    "Track Comment\u{2026}",
+                    AppCommand::TrackComment,
+                    state.org.track_selected,
+                ),
+                MenuEntry::Separator,
+                item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
+                item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
+                MenuEntry::Separator,
+                item(
+                    "Track Height: Small",
+                    AppCommand::TrackHeight(HeightPreset::Small),
+                ),
+                item(
+                    "Track Height: Medium",
+                    AppCommand::TrackHeight(HeightPreset::Medium),
+                ),
+                item(
+                    "Track Height: Large",
+                    AppCommand::TrackHeight(HeightPreset::Large),
+                ),
+                item(
+                    "Track Height: Fit",
+                    AppCommand::TrackHeight(HeightPreset::Fit),
+                ),
+            ],
+        },
+        Menu {
             title: "Audio",
             entries: vec![
                 item("Settings\u{2026}", AppCommand::AudioSettings),
@@ -740,6 +842,7 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            org: OrgMenu::default(),
         }
     }
 
@@ -804,10 +907,27 @@ mod tests {
             AppCommand::ToggleRackNavigator,
             AppCommand::SequencerOnly,
             AppCommand::ToggleEditor,
+            AppCommand::GroupTracks,
+            AppCommand::UngroupTracks,
+            AppCommand::ToggleFolder,
+            AppCommand::RenameFolder,
+            AppCommand::MoveTrackUp,
+            AppCommand::MoveTrackDown,
+            AppCommand::TrackComment,
+            AppCommand::FoldLanes(true),
+            AppCommand::FoldLanes(false),
             AppCommand::AudioSettings,
             AppCommand::PluginSettings,
             AppCommand::RestartAudio,
         ];
+        for p in [
+            HeightPreset::Small,
+            HeightPreset::Medium,
+            HeightPreset::Large,
+            HeightPreset::Fit,
+        ] {
+            v.push(AppCommand::TrackHeight(p));
+        }
         for c in [
             CableVisibility::Show,
             CableVisibility::HoverOnly,
@@ -1108,6 +1228,7 @@ mod tests {
                 "Transport",
                 "Mixer",
                 "Create",
+                "Track",
                 "Audio"
             ]
         );
@@ -1196,6 +1317,24 @@ mod tests {
         );
         assert_eq!(
             labels(6),
+            [
+                "Group Tracks",
+                "Ungroup",
+                "Collapse Folder",
+                "Rename Folder\u{2026}",
+                "Move Track Up",
+                "Move Track Down",
+                "Track Comment\u{2026}",
+                "Fold Automation Lanes",
+                "Unfold Automation Lanes",
+                "Track Height: Small",
+                "Track Height: Medium",
+                "Track Height: Large",
+                "Track Height: Fit"
+            ]
+        );
+        assert_eq!(
+            labels(7),
             ["Settings\u{2026}", "Plugins\u{2026}", "Restart Audio"]
         );
     }
@@ -1239,6 +1378,7 @@ mod tests {
                 midi_clip: true,
                 midi_track: false,
                 midi_song: true,
+                org: OrgMenu::default(),
             },
             &keymap,
         );
