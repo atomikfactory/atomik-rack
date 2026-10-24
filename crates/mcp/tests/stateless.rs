@@ -115,6 +115,92 @@ fn project_inspect_lists_the_controller_lanes_of_a_note_lane() {
 }
 
 #[test]
+fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
+    use atomik_model::{Clip, ClipContent, ClipId, Command, Document, Note, SongCommand};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut d = Document::new(atomik_model::load_project(&text, &reg).unwrap());
+    let device = d.doc().song.tracks[0].device.clone();
+    let ppq = atomik_core::PPQ;
+    let take = |start: i64, length: i64, key: u8| Clip {
+        id: ClipId(0),
+        start,
+        length,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        grid: None,
+        scale: None,
+        controllers: Vec::new(),
+        content: ClipContent::Notes(vec![Note::new(0, ppq, key, 0.8)]),
+    };
+    d.apply(
+        Command::Song(SongCommand::NewTakeGroup {
+            device,
+            lane: 0,
+            takes: vec![
+                take(0, 8 * ppq, 60),
+                take(0, 8 * ppq, 62),
+                take(0, 4 * ppq, 64),
+            ],
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply(
+        Command::Song(SongCommand::SetCompSegment {
+            group: 1,
+            take: 0,
+            start: 2 * ppq,
+            end: 3 * ppq,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let path = tmp("takes.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let lane = &r.parsed()["song"]["tracks"][0]["lanes"][0];
+    let groups = lane["take_groups"].as_array().expect("take_groups");
+    assert_eq!(groups.len(), 1);
+    let g = &groups[0];
+    assert_eq!((g["id"].as_u64(), g["takes"].as_u64()), (Some(1), Some(3)));
+    assert_eq!(
+        (g["start"].as_i64(), g["end"].as_i64()),
+        (Some(0), Some(8 * ppq))
+    );
+    assert_eq!(g["picked"], Value::Null, "the comp is not one whole take");
+    assert_eq!(
+        g["comp"],
+        json!([
+            {"take": 2, "start": 0, "end": 2 * ppq},
+            {"take": 0, "start": 2 * ppq, "end": 3 * ppq},
+            {"take": 2, "start": 3 * ppq, "end": 4 * ppq},
+            {"take": 1, "start": 4 * ppq, "end": 8 * ppq},
+        ])
+    );
+    assert_eq!(
+        g["clips"].as_array().unwrap().len(),
+        4,
+        "the compiled lane clips"
+    );
+    // The plain demo has no such field.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(
+        plain["song"]["tracks"][0]["lanes"][0]
+            .get("take_groups")
+            .is_none()
+    );
+}
+
+#[test]
 fn project_inspect_describes_a_project_and_a_patch() {
     let mut s = server();
     let p = call(

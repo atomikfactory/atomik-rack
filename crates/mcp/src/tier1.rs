@@ -214,6 +214,32 @@ fn controller_summary(lane: &Lane) -> Vec<Value> {
         .collect()
 }
 
+/// The take groups of a lane: id, number of takes, range, the comp as `{take, start, end}`
+/// (takes are 0-based), the take that plays alone when the comp is one whole pick, and the ids of
+/// the lane clips the comp compiles to. Empty for a lane without groups.
+fn take_summary(lane: &Lane) -> Vec<Value> {
+    lane.take_groups
+        .iter()
+        .map(|g| {
+            let (start, end) = g.range();
+            let comp: Vec<Value> = g
+                .comp
+                .iter()
+                .map(|s| json!({"take": s.take, "start": s.start, "end": s.end}))
+                .collect();
+            json!({
+                "id": g.id,
+                "takes": g.takes.len(),
+                "start": start,
+                "end": end,
+                "comp": comp,
+                "picked": g.picked(),
+                "clips": g.clips.iter().map(|c| c.0).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -274,6 +300,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);
+                    }
+                    let groups = take_summary(l);
+                    if !groups.is_empty() {
+                        lane["take_groups"] = Value::Array(groups);
                     }
                     if let LaneKind::Automation(p) = &l.kind {
                         lane["write"] = json!(doc.song.write_mode(&t.device, p).name());
