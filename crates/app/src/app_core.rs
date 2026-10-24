@@ -1916,6 +1916,10 @@ mod workflow;
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
+#[path = "app_core_quantize.rs"]
+mod quantize_ops;
+pub use quantize_ops::QuantizeTarget;
+
 #[path = "app_core_create.rs"]
 mod create_ops;
 

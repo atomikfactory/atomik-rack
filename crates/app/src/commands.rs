@@ -50,6 +50,9 @@ pub enum AppCommand {
     Delete,
     /// Edit ▸ Select All.
     SelectAll,
+    /// Edit ▸ Quantize Options…: the quantize panel (grid, strength, swing, groove, humanize and
+    /// the groove library) for the selected notes or clips.
+    QuantizeOptions,
     /// View ▸ Front/Back.
     ToggleFlip,
     /// View ▸ Cables ▸ Show / Hover / Hide.
@@ -159,6 +162,7 @@ impl AppCommand {
             AppCommand::Duplicate => ("edit.duplicate", None),
             AppCommand::Delete => ("edit.delete", None),
             AppCommand::SelectAll => ("edit.select_all", None),
+            AppCommand::QuantizeOptions => ("edit.quantize_options", None),
             AppCommand::ToggleFlip => ("view.toggle_flip", None),
             AppCommand::Cables(CableVisibility::Show) => ("view.cables", Some("show")),
             AppCommand::Cables(CableVisibility::HoverOnly) => ("view.cables", Some("hover")),
@@ -240,6 +244,7 @@ impl AppCommand {
             ("edit.duplicate", None) => AppCommand::Duplicate,
             ("edit.delete", None) => AppCommand::Delete,
             ("edit.select_all", None) => AppCommand::SelectAll,
+            ("edit.quantize_options", None) => AppCommand::QuantizeOptions,
             ("view.toggle_flip", None) => AppCommand::ToggleFlip,
             ("view.cables", Some("show")) => AppCommand::Cables(CableVisibility::Show),
             ("view.cables", Some("hover")) => AppCommand::Cables(CableVisibility::HoverOnly),
@@ -478,6 +483,8 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 enabled("Delete", AppCommand::Delete, state.can_edit),
                 MenuEntry::Separator,
                 item("Select All", AppCommand::SelectAll),
+                MenuEntry::Separator,
+                item("Quantize Options\u{2026}", AppCommand::QuantizeOptions),
             ],
         },
         Menu {
@@ -703,6 +710,7 @@ mod tests {
             AppCommand::Duplicate,
             AppCommand::Delete,
             AppCommand::SelectAll,
+            AppCommand::QuantizeOptions,
             AppCommand::ToggleFlip,
             AppCommand::ZoomIn,
             AppCommand::ZoomOut,
@@ -1069,7 +1077,8 @@ mod tests {
                 "Paste",
                 "Duplicate",
                 "Delete",
-                "Select All"
+                "Select All",
+                "Quantize Options\u{2026}"
             ]
         );
         assert_eq!(

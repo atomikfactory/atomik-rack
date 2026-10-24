@@ -137,8 +137,9 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
-    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, RelinkAction,
-    RelinkEntry, RelinkView, TextRun, UiAction, UiEvent,
+    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
+    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, TextRun, UiAction,
+    UiEvent,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -286,6 +287,10 @@ pub struct Shell<B: AudioBackend> {
     plugin_settings: Option<PluginSettingsView>,
     /// The relink panel (File > Relink Missing Audio) while it is open.
     relink: Option<RelinkView>,
+    /// The quantize panel (Edit > Quantize Options) while it is open.
+    quantize: Option<QuantizeView>,
+    /// The panel's settings, kept between openings (view state, not in the project).
+    quantize_values: QuantizeValues,
     /// The missing asset the open file dialog is for (LOCATE...).
     relink_target: Option<String>,
     /// The key router: the keymap and the held keys.
@@ -409,6 +414,8 @@ impl<B: AudioBackend> Shell<B> {
             banner,
             plugin_settings: None,
             relink: None,
+            quantize: None,
+            quantize_values: QuantizeValues::default(),
             relink_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
@@ -510,6 +517,23 @@ impl<B: AudioBackend> Shell<B> {
         self.relink.is_some()
     }
 
+    /// Whether the quantize panel is open.
+    pub fn quantize_open(&self) -> bool {
+        self.quantize.is_some()
+    }
+
+    /// The quantize panel, while it is open.
+    pub fn quantize_view(&self) -> Option<&QuantizeView> {
+        self.quantize.as_ref()
+    }
+
+    /// The quantize panel's settings (those of the open panel, else the last ones).
+    pub fn quantize_values(&self) -> &QuantizeValues {
+        self.quantize
+            .as_ref()
+            .map_or(&self.quantize_values, QuantizeView::values)
+    }
+
     /// The relink panel, while it is open.
     pub fn relink_view(&self) -> Option<&RelinkView> {
         self.relink.as_ref()
@@ -542,6 +566,74 @@ impl<B: AudioBackend> Shell<B> {
         view.set_bounds(self.plugin_modal_rect());
         self.relink = Some(view);
         self.sync_relink();
+    }
+
+    /// Opens the quantize panel with the settings of the last time.
+    fn open_quantize(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = QuantizeView::new(theme, self.quantize_values.clone());
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        self.quantize = Some(view);
+        self.sync_quantize();
+    }
+
+    /// Closes the quantize panel, keeping its settings for the next time.
+    fn close_quantize(&mut self) {
+        if let Some(view) = self.quantize.take() {
+            self.quantize_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the quantize panel what it applies to and the grooves it can pick.
+    fn sync_quantize(&mut self) {
+        if self.quantize.is_none() {
+            return;
+        }
+        let pane = self.live_pane(self.focus);
+        let target = self.core.quantize_target(pane);
+        let can_extract = self.core.groove_source(pane).is_some();
+        let grooves = self.core.groove_entries();
+        if let Some(view) = &mut self.quantize {
+            view.set_grooves(grooves);
+            view.set_target(
+                target.text(),
+                target != crate::app_core::QuantizeTarget::None,
+                can_extract,
+            );
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the quantize panel asked for.
+    fn quantize_action(&mut self, action: QuantizeAction) {
+        let pane = self.live_pane(self.focus);
+        let Some(view) = &self.quantize else {
+            return;
+        };
+        let (params, values) = (view.params(), view.values().clone());
+        match action {
+            QuantizeAction::Close => self.close_quantize(),
+            QuantizeAction::Apply => self.core.apply_quantize(pane, params),
+            QuantizeAction::Extract => {
+                if let Some(name) =
+                    self.core
+                        .extract_groove(pane, values.extract_step, values.extract_slots)
+                {
+                    // The new groove is the one to try.
+                    self.sync_quantize();
+                    if let Some(view) = &mut self.quantize {
+                        view.select_groove(&name);
+                    }
+                }
+            }
+            QuantizeAction::Delete(name) => self.core.delete_groove(&name),
+        }
+        self.sync_quantize();
+        self.repaint = true;
     }
 
     /// Feeds the relink panel the missing list; it closes when nothing is missing any more.
@@ -1125,6 +1217,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.quantize.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.quantize {
+                v.set_bounds(rect);
+            }
+        }
         // Lights the console's MAX button (every pane change passes here: F5 / Shift+F5,
         // the Mixer menu, the ui-state restore and the CLI flags).
         let maximised = self.maximised();
@@ -1402,6 +1500,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.relink {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.quantize {
+                    v.set_scale(*scale);
+                }
                 self.core.transport_bar_mut().set_scale(*scale);
                 self.core.console_mut().set_scale(*scale);
                 self.core.file_browser_mut().set_scale(*scale);
@@ -1476,6 +1577,31 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return requests;
+        }
+        if self.quantize.is_some() {
+            // The quantize panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_quantize();
+                return Vec::new();
+            }
+            let actions = self
+                .quantize
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Quantize(a) = action {
+                    self.quantize_action(a);
+                }
+            }
+            self.sync_quantize();
+            return Vec::new();
         }
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
@@ -2362,6 +2488,11 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::SaveAs => vec![ShellRequest::PickSaveFile],
             AppCommand::ExportPatch => vec![ShellRequest::PickExportFile],
             AppCommand::ImportAudio => vec![ShellRequest::PickImportFiles],
+            AppCommand::QuantizeOptions => {
+                self.open_quantize();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::RelinkAudio => {
                 self.open_relink();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -2731,6 +2862,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.frame();
         self.sync_plugin_ui();
         self.sync_relink();
+        self.sync_quantize();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
             self.repaint = true;
@@ -2867,6 +2999,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.relink {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.quantize {
             view.paint(canvas);
         }
         let theme = self.core.view().theme().clone();
@@ -3025,6 +3160,10 @@ mod audio_tests;
 #[cfg(test)]
 #[path = "shell_relink_tests.rs"]
 mod relink_tests;
+
+#[cfg(test)]
+#[path = "shell_quantize_tests.rs"]
+mod quantize_tests;
 
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]

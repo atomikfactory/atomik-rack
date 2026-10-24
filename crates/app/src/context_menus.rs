@@ -348,6 +348,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 } else {
                     "Mute"
                 }),
+                item("edit.quantize_options", e.selection),
             ]);
             v
         }
@@ -418,6 +419,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             v.extend([
                 Spec::Separator,
                 item("editor.quantize", e.selection),
+                item("edit.quantize_options", true),
                 item("editor.toggle_note_mute", e.selection).labelled(if e.notes_muted {
                     "Unmute Notes"
                 } else {

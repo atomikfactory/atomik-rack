@@ -585,6 +585,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.split_at_playhead",
             "sequencer.join",
             "sequencer.toggle_mute",
+            "edit.quantize_options",
         ]
     );
     let enabled = |id: &str| items.iter().find(|(c, _, _)| c == id).unwrap().2;
@@ -832,6 +833,7 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "edit.duplicate",
             "edit.delete",
             "editor.quantize",
+            "edit.quantize_options",
             "editor.toggle_note_mute",
             "edit.select_all"
         ]
