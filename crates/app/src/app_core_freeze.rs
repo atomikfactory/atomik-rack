@@ -541,6 +541,7 @@ impl<S: EngineSink> AppCore<S> {
             Kind::Bounce { mute } => {
                 let applied = self.apply_command(Command::Song(SongCommand::AddRenderedTrack {
                     name: Some(format!("{} (bounce)", job.name)),
+                    after: Some(device),
                     start: done.start,
                     length: done.length,
                     audio,

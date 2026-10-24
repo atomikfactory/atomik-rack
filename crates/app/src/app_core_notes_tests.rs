@@ -159,10 +159,12 @@ fn a_melody_becomes_a_note_clip_on_a_new_track_in_one_undo_step() {
     let id = import(&mut c, write(&t, "Melody.wav", sines(2.0, &MELODY)));
     let before = c.doc().clone();
     let audio_clip = c.doc().song.clip(id).unwrap().2.clone();
+    c.sink_mut().take();
     assert!(c.audio_to_notes(&pitched()));
     assert!(c.notes_busy());
     c.wait_background();
     assert!(!c.notes_busy());
+    crate::sink::assert_new_devices_routed(&c.sink_mut().take());
     let doc = c.doc();
     assert_eq!(doc.song.tracks.len(), before.song.tracks.len() + 1);
     let track = doc.song.tracks.last().unwrap();

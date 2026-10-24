@@ -976,7 +976,8 @@ pub enum SongCommand {
     },
     /// Unfreezes the track of `device` (one undo step): the track, its clips, its instrument and
     /// its effects are exactly as they were before the freeze. With `keep_audio` the render also
-    /// becomes the clip of a new audio track (in the same step). The render's asset stays in the
+    /// becomes the clip of a new audio track (in the same step) that sits right after the unfrozen
+    /// one. The render's asset stays in the
     /// pool while undo can bring it back, and goes at the next save otherwise.
     UnfreezeTrack {
         /// The track's device.
@@ -990,6 +991,9 @@ pub enum SongCommand {
     AddRenderedTrack {
         /// The name of the new track, or `None` for the default.
         name: Option<String>,
+        /// The track the render comes from: the new track goes right after it, in its folder,
+        /// with its colour. `None` puts the track at the end of the list.
+        after: Option<DeviceKey>,
         /// Song tick where the clip starts.
         start: i64,
         /// Clip length in ticks.
