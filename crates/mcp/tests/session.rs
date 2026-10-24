@@ -1207,3 +1207,204 @@ fn the_warp_commands_are_menu_commands_that_need_an_audio_clip() {
     );
     assert!(r.is_error && r.first_text().contains("Warp Audio"));
 }
+
+/// Opens a copy of the master demo that lives in the temp folder, so that the render a freeze
+/// stores goes to a scratch bundle and never into the examples.
+fn open_master_demo_copy(s: &mut Server, name: &str) {
+    ok(
+        s,
+        "session_open",
+        json!({"path": "examples/projects/master-demo/master-demo.atomik"}),
+    );
+    let copy = tmp(name);
+    ok(s, "session_save", json!({"path": copy}));
+    ok(s, "session_open", json!({"path": copy}));
+}
+
+#[test]
+fn a_track_is_frozen_with_a_menu_command_and_the_bounce_stays_the_same() {
+    let mut s = server();
+    open_master_demo_copy(&mut s, "freeze-copy-1.atomik");
+    // The freeze commands are Track menu commands, and need a selected track.
+    let menu = ok(
+        &mut s,
+        "session_commands",
+        json!({"menu": "Track", "query": "freeze"}),
+    );
+    let rows = menu["commands"].as_array().unwrap();
+    for id in [
+        "sequencer.freeze_track",
+        "sequencer.freeze_track_to_device",
+        "sequencer.unfreeze_track",
+        "sequencer.unfreeze_track_keep",
+        "sequencer.freeze_cancel",
+        "sequencer.freeze_tail",
+    ] {
+        assert!(rows.iter().any(|c| c["id"] == id), "{id} in the Track menu");
+    }
+    assert_eq!(
+        command_row(&mut s, "sequencer.freeze_track")["enabled"],
+        false
+    );
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.freeze_track"}),
+    );
+    assert!(r.is_error && r.first_text().contains("Freeze Track"));
+
+    // Select Lead by its header (the lowest "Lead" on the screen is the arrangement's).
+    let texts = ok(
+        &mut s,
+        "session_texts",
+        json!({"contains": "Lead", "limit": 1000}),
+    );
+    let (x, y) = texts["texts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["text"] == "Lead")
+        .map(|t| (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap()))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("Lead is on screen");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x + 2.0, "y": y - 3.0}),
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.freeze_track")["enabled"],
+        true
+    );
+
+    let before = tmp("freeze-before.wav");
+    ok(&mut s, "session_bounce", json!({"output": before}));
+    let r = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.freeze_track"}),
+    );
+    assert_eq!(r["waited"], true);
+    assert!(
+        r["message"].as_str().unwrap().starts_with("Froze Lead"),
+        "{r}"
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    let tracks = v["document"]["song"]["tracks"].as_array().unwrap().clone();
+    let lead = tracks.iter().find(|t| t["device"] == "lead").unwrap();
+    assert_eq!(lead["frozen"]["start"], 0);
+    assert!(lead["frozen"]["length"].as_i64().unwrap() > 0);
+    assert!(lead.get("lanes").is_some(), "its own clips stay listed");
+    assert!(
+        tracks
+            .iter()
+            .filter(|t| t["device"] != "lead")
+            .all(|t| t.get("frozen").is_none())
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.unfreeze_track")["enabled"],
+        true
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.freeze_track")["enabled"],
+        false
+    );
+
+    // The frozen project sounds exactly like the project did.
+    let after = tmp("freeze-after.wav");
+    ok(&mut s, "session_bounce", json!({"output": after}));
+    let same = ok(&mut s, "compare_audio", json!({"a": before, "b": after}));
+    assert_eq!(same["bit_identical"], true, "{same}");
+
+    // A saved frozen project (the render goes into its bundle) reads back, and the stateless
+    // inspection lists the freeze too.
+    let saved = tmp("freeze-saved.atomik");
+    ok(&mut s, "session_save", json!({"path": saved}));
+    // A project with audio is saved as a bundle folder next to the picked name.
+    let bundle = saved.trim_end_matches(".atomik").to_owned();
+    let inspected = ok(&mut s, "project_inspect", json!({"path": bundle}));
+    let lead = inspected["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["device"] == "lead")
+        .unwrap()
+        .clone();
+    assert_eq!(lead["frozen"]["start"], 0);
+    assert!(lead["frozen"]["effects"].as_array().unwrap().is_empty());
+    assert_eq!(inspected["assets"], 1, "the render");
+
+    // One undo step brings the track back, and Unfreeze does the same from the menu.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    let v = ok(&mut s, "session_status", json!({}));
+    assert!(
+        v["document"]["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t.get("frozen").is_none())
+    );
+    ok(&mut s, "session_command", json!({"id": "edit.redo"}));
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.unfreeze_track"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    assert!(
+        v["document"]["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t.get("frozen").is_none())
+    );
+}
+
+#[test]
+fn a_freeze_that_is_not_waited_for_can_be_cancelled() {
+    let mut s = server();
+    open_master_demo_copy(&mut s, "freeze-copy-2.atomik");
+    let texts = ok(
+        &mut s,
+        "session_texts",
+        json!({"contains": "Bass", "limit": 1000}),
+    );
+    let (x, y) = texts["texts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["text"] == "Bass")
+        .map(|t| (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap()))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .expect("Bass is on screen");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x + 2.0, "y": y - 3.0}),
+    );
+    let r = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.freeze_track", "wait": false}),
+    );
+    assert!(r.get("waited").is_none());
+    assert!(r["status_text"].as_str().unwrap().contains("Freezing Bass"));
+    assert_eq!(
+        command_row(&mut s, "sequencer.freeze_cancel")["enabled"],
+        true
+    );
+    // Cancel returns once the render is over: it was stopped, or it had finished before the
+    // stop was seen.
+    let r = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.freeze_cancel"}),
+    );
+    assert_eq!(r["waited"], true);
+    let message = r["message"].as_str().unwrap();
+    assert!(
+        message.contains("cancelled") || message.starts_with("Froze Bass"),
+        "{message}"
+    );
+    assert!(!r["status_text"].as_str().unwrap().contains("Freezing"));
+}

@@ -430,6 +430,15 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             if !comment.is_empty() {
                 track["comment"] = json!(comment);
             }
+            if let Some(f) = &t.frozen {
+                // The render a frozen track plays instead of its instrument and the effects it
+                // froze (the track's own clips stay in `lanes`).
+                track["frozen"] = json!({
+                    "start": f.start, "length": f.length,
+                    "asset": f.audio.asset.get(..8).unwrap_or(&f.audio.asset),
+                    "effects": f.effects.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
+                });
+            }
             track
         })
         .collect();

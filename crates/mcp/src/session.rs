@@ -397,7 +397,7 @@ fn command_def() -> Value {
         "session_command",
         "Runs a menu command by id (see session_commands), as the menu or its shortcut would. \
 A command that needs a native dialog or a confirmation is reported in `requests`, not run \
-silently; `confirm` true accepts a discard-changes question.",
+silently; `confirm` true accepts a discard-changes question. A freeze or bounce (sequencer.freeze_track, sequencer.bounce_in_place ...) renders on a worker: the session has no frame loop, so the call waits for the render to finish (and the track to be frozen) unless `wait` is false; `message` then carries what it said (for example `Froze Lead`).",
         &[
             (
                 "id",
@@ -409,6 +409,11 @@ silently; `confirm` true accepts a discard-changes question.",
                 "boolean",
                 "Accept the 'discard unsaved changes' question.",
             ),
+            (
+                "wait",
+                "boolean",
+                "Wait for a freeze or bounce render to finish (default true).",
+            ),
         ],
         &["id"],
     )
@@ -417,6 +422,7 @@ silently; `confirm` true accepts a discard-changes question.",
 fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let id = args.str("id")?;
     let confirm = args.opt_bool("confirm")?.unwrap_or(false);
+    let wait = args.opt_bool("wait")?.unwrap_or(true);
     let session = server.require_session()?;
     let found = session
         .shell()
@@ -437,14 +443,26 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             other => done.push(request_json(other)),
         }
     }
+    // A render started by this command finishes (and is applied) before the answer.
+    let waited = wait && shell.core().freeze_busy();
+    if waited {
+        shell.core_mut().wait_background();
+    }
     shell.frame();
-    Ok(ToolOutput::json(&json!({
+    // The status line carries the progress of a render that was not waited for.
+    shell.poll_status();
+    let mut out = json!({
         "command": id,
         "requests": done,
         "status_text": session.shell().status_text(),
         "dirty": session.shell().core().is_dirty(),
         "title": session.shell().title(),
-    })))
+    });
+    if waited {
+        out["waited"] = json!(true);
+        out["message"] = json!(session.shell().core().last_rejection());
+    }
+    Ok(ToolOutput::json(&out))
 }
 
 // ------------------------------------------------------------ session_pointer
