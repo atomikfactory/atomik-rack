@@ -13,6 +13,9 @@
 //!   [`ScheduledNote`] through the [`LiveNoteSender`]. Before the audio callback has published
 //!   the clock, notes are delivered at frame 0 (offset 0 of the next batch). Frames pushed by
 //!   one input never decrease.
+//! - [`smf`] reads and writes Standard MIDI Files (format 0 and 1), pure bytes in and out.
+
+pub mod smf;
 
 use atomik_core::NoteKind;
 use atomik_device_sdk::SocketId;
