@@ -198,6 +198,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Add to VCA", None),
             ("Remove from VCA", None),
             ("Delete VCA", None),
+            ("Toggle Polarity", None),
+            ("Bypass All Inserts", None),
             ("Delay Compensation", None),
         ]
     );
@@ -929,4 +931,61 @@ fn the_vca_menu_items_enable_with_the_selection_and_run_through_the_shell() {
     assert!(s.core().doc().console.vcas[0].members.is_empty());
     s.execute(AppCommand::DeleteVca(Some(1)));
     assert!(s.core().doc().console.vcas.is_empty());
+}
+
+#[test]
+fn polarity_and_insert_bypass_are_mixer_menu_items_without_keys_that_enable_with_the_selection() {
+    let mut s = shell();
+    let mixer_item = |s: &Shell<NullBackend>, command: AppCommand| {
+        s.menu_model()
+            .into_iter()
+            .find(|m| m.title == "Mixer")
+            .and_then(|m| m.items().find(|i| i.command == command).cloned())
+            .expect("in the Mixer menu")
+    };
+    for (label, command, id) in [
+        (
+            "Toggle Polarity",
+            AppCommand::TogglePolarity,
+            "mixer.toggle_polarity",
+        ),
+        (
+            "Bypass All Inserts",
+            AppCommand::BypassAllInserts,
+            "mixer.bypass_all_inserts",
+        ),
+    ] {
+        let item = mixer_item(&s, command);
+        assert_eq!(item.label, label);
+        assert_eq!(item.shortcut, None, "no default key");
+        assert!(!item.enabled, "nothing is selected");
+        assert_eq!(command.command_id(), Some((id, None)));
+        assert_eq!(AppCommand::from_command(id, None), Some(command));
+    }
+    add_synth(&mut s, "a");
+    let a = DeviceKey("a".into());
+    s.core_mut()
+        .view_mut()
+        .set_selection(std::slice::from_ref(&a), Some(&a));
+    assert!(mixer_item(&s, AppCommand::TogglePolarity).enabled);
+    assert!(
+        !mixer_item(&s, AppCommand::BypassAllInserts).enabled,
+        "no insert effect yet"
+    );
+    s.execute(AppCommand::TogglePolarity);
+    let strip = s
+        .core()
+        .doc()
+        .console
+        .channel_of(&a)
+        .unwrap()
+        .channel
+        .clone();
+    let phase = |s: &Shell<NullBackend>| {
+        let device = s.core().doc().device(&strip).unwrap();
+        device.params.get("input.phase").copied().unwrap_or(0.0)
+    };
+    assert_eq!(phase(&s), 1.0);
+    s.execute(AppCommand::TogglePolarity);
+    assert_eq!(phase(&s), 0.0);
 }

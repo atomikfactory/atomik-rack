@@ -145,6 +145,12 @@ pub enum AppCommand {
     /// Mixer > Delete VCA: the group `id` (`mixer.delete_vca` with the id as its argument), or
     /// the groups the selected strips are in.
     DeleteVca(Option<u32>),
+    /// Mixer > Toggle Polarity: flips the input polarity of the selected strips (all inverted
+    /// switch back to normal, otherwise all are inverted).
+    TogglePolarity,
+    /// Mixer > Bypass All Inserts: bypasses the insert effects of the selected strips (all
+    /// bypassed switch back in, otherwise all are bypassed); each effect keeps its latency.
+    BypassAllInserts,
     /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
     CreateInstrument,
     /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
@@ -326,6 +332,8 @@ impl AppCommand {
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
             AppCommand::AddToVca(Some(_)) | AppCommand::DeleteVca(Some(_)) => return None,
             AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
+            AppCommand::TogglePolarity => ("mixer.toggle_polarity", None),
+            AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
@@ -466,6 +474,8 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::AddToVca(Some(id)));
             }
             ("mixer.remove_from_vca", None) => AppCommand::RemoveFromVca,
+            ("mixer.toggle_polarity", None) => AppCommand::TogglePolarity,
+            ("mixer.bypass_all_inserts", None) => AppCommand::BypassAllInserts,
             ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
             ("mixer.delete_vca", Some(id)) => {
                 return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
@@ -705,8 +715,19 @@ pub struct MenuState {
     pub audio: AudioMenu,
     /// What the selected strips allow for VCA groups (the Mixer menu).
     pub vca: VcaMenu,
+    /// What the selected strips allow for polarity and insert bypass (the Mixer menu).
+    pub strip: StripMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
     pub freeze: FreezeMenu,
+}
+
+/// What the Mixer menu needs to know to flip the polarity and bypass the inserts of strips.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StripMenu {
+    /// Some channel or bus is selected: Toggle Polarity works.
+    pub can_polarity: bool,
+    /// A selected strip has an insert effect that can be bypassed: Bypass All Inserts works.
+    pub can_bypass: bool,
 }
 
 /// What the Mixer menu needs to know to make, fill, empty and delete VCA groups.
@@ -1021,6 +1042,17 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     "Delete VCA",
                     AppCommand::DeleteVca(None),
                     state.vca.can_delete,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Toggle Polarity",
+                    AppCommand::TogglePolarity,
+                    state.strip.can_polarity,
+                ),
+                enabled(
+                    "Bypass All Inserts",
+                    AppCommand::BypassAllInserts,
+                    state.strip.can_bypass,
                 ),
                 MenuEntry::Separator,
                 check(
@@ -1354,6 +1386,7 @@ mod tests {
             org: OrgMenu::default(),
             audio: AudioMenu::default(),
             vca: VcaMenu::default(),
+            strip: StripMenu::default(),
             freeze: FreezeMenu::default(),
         }
     }
@@ -1414,6 +1447,8 @@ mod tests {
             AppCommand::AddToVca(None),
             AppCommand::RemoveFromVca,
             AppCommand::DeleteVca(None),
+            AppCommand::TogglePolarity,
+            AppCommand::BypassAllInserts,
             AppCommand::ToggleCompensation,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
@@ -1869,6 +1904,8 @@ mod tests {
                 "Add to VCA",
                 "Remove from VCA",
                 "Delete VCA",
+                "Toggle Polarity",
+                "Bypass All Inserts",
                 "Delay Compensation"
             ]
         );
@@ -1990,6 +2027,7 @@ mod tests {
                 org: OrgMenu::default(),
                 audio: AudioMenu::default(),
                 vca: VcaMenu::default(),
+                strip: StripMenu::default(),
                 freeze: FreezeMenu {
                     tail: true,
                     ..FreezeMenu::default()
