@@ -361,7 +361,7 @@ fn load_rejects_bad_projects_with_paths() {
             "atomik-project",
         ),
         (
-            Box::new(|v| v["version"] = json!(20)),
+            Box::new(|v| v["version"] = json!(21)),
             "version".into(),
             "unsupported version",
         ),

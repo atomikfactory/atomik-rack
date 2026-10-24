@@ -363,7 +363,7 @@ fn steps_are_unknown_before_version_7() {
             "v{version}: {e}"
         );
     }
-    let text = edited(&good, |v| v["version"] = json!(20));
+    let text = edited(&good, |v| v["version"] = json!(21));
     assert!(
         load_project(&text, &r)
             .unwrap_err()
