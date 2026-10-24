@@ -404,3 +404,28 @@ fn the_notes_menu_with_the_scale_submenus_open_matches_golden() {
     );
     golden("piano_roll_context_menu_scale", s.context_menu().unwrap());
 }
+
+#[test]
+fn the_cursor_follows_the_piano_roll_and_goes_back_to_the_arrow_elsewhere() {
+    let (mut s, _) = roll_shell(None);
+    assert_eq!(s.cursor(), CursorHint::Default);
+    let r = s.core().piano_roll().note_rect(0).expect("a note");
+    let edge = atomik_ui::kurbo::Point::new(r.x1 - 2.0, r.center().y);
+    s.handle(&UiEvent::PointerMove {
+        pos: edge,
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(s.cursor(), CursorHint::ResizeHorizontal);
+    let body = r.center();
+    s.handle(&UiEvent::PointerMove {
+        pos: body,
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(s.cursor(), CursorHint::Move);
+    // Over another pane the roll gets a PointerLeave and the arrow comes back.
+    s.handle(&UiEvent::PointerMove {
+        pos: atomik_ui::kurbo::Point::new(5.0, 5.0),
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(s.cursor(), CursorHint::Default);
+}

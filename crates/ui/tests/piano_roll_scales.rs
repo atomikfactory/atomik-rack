@@ -15,7 +15,7 @@ use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::piano_roll::ScaleBarField;
 use atomik_ui::timeline::Snap;
-use atomik_ui::{ContextTarget, DisplayList, Modifiers, PianoRollView, UiAction};
+use atomik_ui::{ContextTarget, DisplayList, Modifiers, PianoRollView, Tool, UiAction};
 use support::song::*;
 use support::*;
 
@@ -367,6 +367,7 @@ fn fold_with_nothing_to_fold_to_shows_every_key() {
 #[test]
 fn the_pencil_draws_on_the_row_it_clicks_in_a_folded_roll() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 60), n(PPQ, PPQ, 67)], Some(c_major()));
+    v.set_tool(Tool::Pencil);
     v.set_fold(Fold::Scale);
     click_draw(&mut v, &mut d, &reg, 8 * PPQ, 64);
     let drawn: Vec<u8> = notes_of(&d)
@@ -392,6 +393,7 @@ fn the_pencil_draws_on_the_row_it_clicks_in_a_folded_roll() {
 #[test]
 fn in_a_used_fold_the_pencil_can_only_draw_on_used_keys() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 36), n(PPQ, PPQ, 43)], None);
+    v.set_tool(Tool::Pencil);
     v.set_fold(Fold::Used);
     // Clicking the row of 43, in an empty stretch.
     let p = Point::new(v.tick_to_x(8 * PPQ + 100), v.key_center_y(43));
@@ -425,7 +427,7 @@ fn dragging_notes_in_a_folded_roll_moves_them_by_rows() {
     let h = v.key_height();
     // Grab the 36 note (the last row) and pull it up two rows: it lands on 43.
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let a = run(
         |e| v.handle(e, d.doc(), &reg),
         &[
@@ -458,7 +460,7 @@ fn a_group_dragged_past_the_last_row_keeps_its_shape() {
     let h = v.key_height();
     v.set_selected_notes(&[0, 1]);
     let r = v.note_rect(1).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     // Up by 50 rows: the pair stops with its top note on the top row (41 -> 60 would be three
     // rows up, so 36 -> 43 and 41 -> 60? the bottom one limits: the move is cut to the rows).
     let to = p + Vec2::new(0.0, -50.0 * h);
@@ -562,6 +564,7 @@ fn a_fold_to_scale_follows_a_scale_change_made_afterwards() {
 #[test]
 fn the_pencil_snaps_to_the_scale_with_ties_going_down() {
     let (mut v, mut d, reg) = setup(Vec::new(), Some(c_major()));
+    v.set_tool(Tool::Pencil);
     v.set_snap_to_scale(true);
     click_draw(&mut v, &mut d, &reg, 0, 61);
     click_draw(&mut v, &mut d, &reg, 4 * PPQ, 63);
@@ -577,6 +580,7 @@ fn the_pencil_snaps_to_the_scale_with_ties_going_down() {
 #[test]
 fn snap_to_scale_without_a_scale_or_with_a_chromatic_one_changes_nothing() {
     let (mut v, mut d, reg) = setup(Vec::new(), None);
+    v.set_tool(Tool::Pencil);
     v.set_snap_to_scale(true);
     click_draw(&mut v, &mut d, &reg, 0, 61);
     assert_eq!(keys(&notes_of(&d)), [61]);
@@ -585,6 +589,7 @@ fn snap_to_scale_without_a_scale_or_with_a_chromatic_one_changes_nothing() {
 #[test]
 fn the_audition_of_a_snapped_note_plays_the_key_it_lands_on() {
     let (mut v, d, reg) = setup(Vec::new(), Some(c_major()));
+    v.set_tool(Tool::Pencil);
     v.set_snap_to_scale(true);
     let p = at(&v, 100, 61);
     let a = v.handle(&down(p), d.doc(), &reg);
@@ -597,7 +602,7 @@ fn dragging_a_group_vertically_with_snap_to_scale_moves_it_by_degrees() {
     v.set_snap_to_scale(true);
     v.set_selected_notes(&[0, 1]);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     // The pointer is two semitones up: the grabbed note goes to D, one degree, so E goes to F.
     let to = Point::new(p.x, p.y - 2.0 * v.key_height());
     let a = run(
@@ -611,7 +616,7 @@ fn dragging_a_group_vertically_with_snap_to_scale_moves_it_by_degrees() {
     v.set_snap_to_scale(true);
     v.set_selected_notes(&[0, 1]);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let to = Point::new(p.x, p.y - v.key_height());
     let a = run(
         |e| v.handle(e, d.doc(), &reg),
@@ -624,7 +629,7 @@ fn dragging_a_group_vertically_with_snap_to_scale_moves_it_by_degrees() {
     v.set_snap_to_scale(true);
     v.set_selected_notes(&[0]);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let to = Point::new(p.x, p.y - 3.0 * v.key_height());
     let a = run(
         |e| v.handle(e, d.doc(), &reg),
@@ -639,7 +644,7 @@ fn the_same_drag_without_snap_to_scale_moves_by_semitones() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 60), n(PPQ, PPQ, 64)], Some(c_major()));
     v.set_selected_notes(&[0, 1]);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let to = Point::new(p.x, p.y - 2.0 * v.key_height());
     let a = run(
         |e| v.handle(e, d.doc(), &reg),
@@ -654,7 +659,7 @@ fn a_snapped_drag_is_one_merge_group_and_one_undo_step() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 60)], Some(c_major()));
     v.set_snap_to_scale(true);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let mut all = Vec::new();
     let mut events = vec![down(p)];
     events.extend([-1.0, -12.0, -24.0, -48.0, -60.0].map(|dy| mv(Point::new(p.x, p.y + dy))));
@@ -778,6 +783,7 @@ fn conform_merges_notes_that_land_on_the_same_key_and_start() {
 #[test]
 fn the_pencil_drops_the_whole_chord_and_auditions_it() {
     let (mut v, mut d, reg) = setup(Vec::new(), None);
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Chord(ChordKind::Major));
     let p = at(&v, 2 * PPQ + 100, 60);
     let a = v.handle(&down(p), d.doc(), &reg);
@@ -805,6 +811,7 @@ fn the_pencil_drops_the_whole_chord_and_auditions_it() {
 #[test]
 fn dragging_while_stamping_sets_the_length_of_every_note_in_one_undo_step() {
     let (mut v, mut d, reg) = setup(Vec::new(), None);
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Chord(ChordKind::Minor));
     v.set_snap(Snap::Beat);
     let p = at(&v, 4 * PPQ + 100, 57);
@@ -835,6 +842,7 @@ fn dragging_while_stamping_sets_the_length_of_every_note_in_one_undo_step() {
 #[test]
 fn a_stamp_with_an_inversion_and_a_diatonic_stamp_build_their_chords() {
     let (mut v, d, reg) = setup(Vec::new(), Some(c_major()));
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Chord(ChordKind::Major));
     v.set_inversion(1);
     let a = v.handle(&down(at(&v, 100, 60)), d.doc(), &reg);
@@ -855,6 +863,7 @@ fn a_stamp_with_an_inversion_and_a_diatonic_stamp_build_their_chords() {
 #[test]
 fn a_diatonic_stamp_without_a_scale_draws_a_single_note() {
     let (mut v, d, reg) = setup(Vec::new(), None);
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Diatonic(DiatonicSize::Triad));
     let a = v.handle(&down(at(&v, 100, 60)), d.doc(), &reg);
     assert_eq!(keys(&emitted(&a)[0].0), [60]);
@@ -863,6 +872,7 @@ fn a_diatonic_stamp_without_a_scale_draws_a_single_note() {
 #[test]
 fn a_chord_on_top_of_existing_notes_does_not_double_them() {
     let (mut v, mut d, reg) = setup(vec![n(4 * PPQ, PPQ / 2, 64)], None);
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Chord(ChordKind::Major));
     click_draw(&mut v, &mut d, &reg, 4 * PPQ, 60);
     let list = notes_of(&d);
@@ -873,6 +883,7 @@ fn a_chord_on_top_of_existing_notes_does_not_double_them() {
 #[test]
 fn escape_during_a_stamp_drag_removes_the_chord_and_silences_it() {
     let (mut v, mut d, reg) = setup(vec![n(0, PPQ, 50)], None);
+    v.set_tool(Tool::Pencil);
     v.set_stamp(Stamp::Chord(ChordKind::Major));
     let p = at(&v, 8 * PPQ + 100, 60);
     let a = v.handle(&down(p), d.doc(), &reg);

@@ -128,6 +128,7 @@ use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
 use atomik_ui::ContextTarget;
+use atomik_ui::CursorHint;
 use atomik_ui::browser::CreateKind;
 use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
@@ -3502,6 +3503,17 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         changed
+    }
+
+    /// The mouse cursor to show: the piano roll's while it is the visible song pane (its hover
+    /// is cleared by the `PointerLeave` the shell sends when the pointer moves to another
+    /// pane), the arrow elsewhere.
+    pub fn cursor(&self) -> CursorHint {
+        if self.ui.show_song && self.song_pane() == Pane::PianoRoll {
+            self.core.piano_roll().cursor()
+        } else {
+            CursorHint::Default
+        }
     }
 
     /// Whether anything must be repainted.

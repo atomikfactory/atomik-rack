@@ -256,6 +256,10 @@ Hand checks, not automated (they need your ears and real music):
 - Bypass both while playing: the audio does not change, the panels freeze with BYPASSED and wake up again; fold and unfold the panels, resize the window, switch between the dark and light themes and read the plots and the numbers.
 - Open a project saved before the devices existed and bounce it: the bytes of the bounce are the same as before.
 
+## Piano roll tools and cursor
+
+`crates/ui/tests/piano_roll_tools.rs` checks the tool gating (a click, a drag and a double click on the empty grid draw nothing with Select and clear the selection, the pencil still draws), the rubber band (a plain band replaces the selection, Shift and Ctrl add), a selected group moving together in one merge group, an unselected note being selected alone by a drag, both edges resizing every selected note by the same delta, and the cursor hint over an edge, a body and the grid with each tool and during a drag; `seq_edit.rs` tests `hit_span_edges` and `resize_notes_start`. In `atomik-app`, `shell_scale_tests.rs` checks that `Shell::cursor` follows the roll and falls back to the arrow over another pane, and `translate.rs` the hint-to-icon mapping. The window cursor itself is a hand check: in the piano roll with Select, hover the left and right end of a note (a horizontal resize cursor), its middle (a move cursor) and the empty grid (the arrow); with the pencil the grid shows a crosshair; drag an edge of one of several selected notes and all of them change length; drag the selection by one note and all move in time and pitch, then undo once.
+
 ## Hardware and manual tests
 
 Tests that need real hardware or a plugin installed on your machine are `#[ignore]`d and never run in CI. Run them by hand, one binary at a time, on a machine where playing sound is acceptable:

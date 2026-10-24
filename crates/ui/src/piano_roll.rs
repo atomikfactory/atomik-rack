@@ -17,6 +17,7 @@ use crate::chord_edit::{
 use crate::controller_lane::{
     self as cl, CTL_AREA_HEIGHT, CTL_HEADER_HEIGHT, CTL_PAD, Chip, LaneEditor, Part,
 };
+use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::key_rows::{Fold, KeyRows};
 use crate::keymap::{CommandOutcome, ROOT_ARGS, Roles};
@@ -198,6 +199,17 @@ enum Drag {
         reselect: Option<usize>,
     },
     Resize {
+        start: Point,
+        originals: Vec<Note>,
+        sel: BTreeSet<usize>,
+        grabbed: usize,
+        merge: u64,
+        moved: bool,
+        emitted: bool,
+        last: Vec<Note>,
+    },
+    /// The left edge: the starts move, the ends stay.
+    ResizeStart {
         start: Point,
         originals: Vec<Note>,
         sel: BTreeSet<usize>,
@@ -423,6 +435,28 @@ impl PianoRollView {
     pub fn set_snap(&mut self, snap: Snap) {
         self.snap = snap;
         self.repaint = true;
+    }
+
+    /// The mouse cursor to show: a horizontal resize cursor over a note's edge (and during an
+    /// edge drag), a move cursor over a note body with Select (and during a move), a crosshair
+    /// for the pencil over the grid (and while drawing or banding).
+    pub fn cursor(&self) -> CursorHint {
+        match &self.drag {
+            Drag::Resize { .. } | Drag::ResizeStart { .. } => return CursorHint::ResizeHorizontal,
+            Drag::Move { .. } => return CursorHint::Move,
+            Drag::Draw { .. } | Drag::Band { .. } => return CursorHint::Crosshair,
+            Drag::None => {}
+            _ => return CursorHint::Default,
+        }
+        let tool = self.shown_tool();
+        match self.hover {
+            Hit::Note(_, SpanPart::Start | SpanPart::End) if tool == Tool::Select => {
+                CursorHint::ResizeHorizontal
+            }
+            Hit::Note(_, SpanPart::Body) if tool == Tool::Select => CursorHint::Move,
+            Hit::Grid if tool == Tool::Pencil => CursorHint::Crosshair,
+            _ => CursorHint::Default,
+        }
     }
 
     /// The active tool.
@@ -1038,7 +1072,8 @@ impl PianoRollView {
             let r = self.rect_of(n);
             if pos.y >= r.y0
                 && pos.y < r.y1
-                && let Some(part) = seq_edit::hit_span(pos.x, r.x0, r.x1.max(r.x0 + 3.0), EDGE_PX)
+                && let Some(part) =
+                    seq_edit::hit_span_edges(pos.x, r.x0, r.x1.max(r.x0 + 3.0), EDGE_PX)
             {
                 return Hit::Note(i, part);
             }
@@ -1285,20 +1320,22 @@ impl PianoRollView {
             Hit::Note(..) if primary && tool == Tool::Pencil => {}
             Hit::Note(i, part) if primary => self.note_down(i, part, pos, modifiers, out),
             Hit::Grid if primary && matches!(tool, Tool::Razor | Tool::Eraser) => {}
+            // Select never draws: a press on the empty grid starts a rubber band (Shift or Ctrl
+            // keeps the selection and adds to it, a plain press replaces it, so a click clears).
+            Hit::Grid if primary && tool == Tool::Select => {
+                let base = if modifiers.shift || modifiers.command() {
+                    self.selection.items().clone()
+                } else {
+                    self.selection.clear();
+                    BTreeSet::new()
+                };
+                self.drag = Drag::Band {
+                    start: pos,
+                    pos,
+                    base,
+                };
+            }
             Hit::Grid if primary => {
-                if tool == Tool::Select && (modifiers.shift || modifiers.command()) {
-                    let base = if modifiers.command() {
-                        self.selection.items().clone()
-                    } else {
-                        BTreeSet::new()
-                    };
-                    self.drag = Drag::Band {
-                        start: pos,
-                        pos,
-                        base,
-                    };
-                    return;
-                }
                 let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
                 let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
                 let key = self.drawn_key(self.key_at(pos.y));
@@ -1397,6 +1434,18 @@ impl PianoRollView {
         let merge = self.merge_id();
         let key = originals[i].key;
         match part {
+            SpanPart::Start => {
+                self.drag = Drag::ResizeStart {
+                    start: pos,
+                    last: originals.clone(),
+                    originals,
+                    sel,
+                    grabbed: i,
+                    merge,
+                    moved: false,
+                    emitted: false,
+                };
+            }
             SpanPart::End => {
                 self.drag = Drag::Resize {
                     start: pos,
@@ -1743,6 +1792,32 @@ impl PianoRollView {
                 }
                 self.last_length = Some(len);
             }
+            Drag::ResizeStart {
+                start,
+                originals,
+                sel,
+                grabbed,
+                merge,
+                moved,
+                emitted,
+                last,
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if !*moved {
+                    return;
+                }
+                let g = originals[*grabbed];
+                let delta = axis.dx_to_ticks(pos.x - start.x);
+                let dt = seq_edit::drag_start(g.tick, delta, step) - g.tick;
+                let resized = seq_edit::resize_notes_start(originals, sel, dt, min);
+                let (list, new) = seq_edit::normalize_notes(resized, sel);
+                if list != *last {
+                    out.extend(content(list.clone(), *merge));
+                    *last = list;
+                    *emitted = true;
+                    new_sel = Some(new);
+                }
+            }
             Drag::Velocity {
                 originals,
                 sel,
@@ -1790,7 +1865,7 @@ impl PianoRollView {
                     self.selection.select_only(i);
                 }
             }
-            Drag::Resize { emitted, .. } => {
+            Drag::Resize { emitted, .. } | Drag::ResizeStart { emitted, .. } => {
                 if emitted {
                     out.push(UiAction::EndMerge);
                 }
@@ -2210,6 +2285,13 @@ impl PianoRollView {
                 }
             }
             Drag::Resize {
+                originals,
+                sel,
+                merge,
+                emitted: true,
+                ..
+            }
+            | Drag::ResizeStart {
                 originals,
                 sel,
                 merge,
