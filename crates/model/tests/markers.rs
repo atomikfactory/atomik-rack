@@ -320,7 +320,7 @@ fn markers_and_ranges_round_trip_canonically() {
     let d = with_marks(&reg);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 26);
+    assert_eq!(v["version"], 27);
     assert_eq!(
         v["song"]["markers"],
         json!([

@@ -247,7 +247,7 @@ fn checked_strips(console: &Console, strips: &[DeviceKey]) -> Result<Vec<DeviceK
 }
 
 /// Puts the members of every group in console order.
-fn canonical(console: &Console, groups: &mut [VcaGroup]) {
+pub(crate) fn canonical(console: &Console, groups: &mut [VcaGroup]) {
     let order: Vec<&DeviceKey> = console.strip_keys().collect();
     for g in groups {
         g.members

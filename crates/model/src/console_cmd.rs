@@ -731,6 +731,14 @@ pub(crate) fn plan(
         | ConsoleCommand::SetVcaSolo { .. }
         | ConsoleCommand::AssignToVca { .. }
         | ConsoleCommand::DeleteVca { .. }) => crate::console_vca::plan(&mut p, vca_command)?,
+        snapshot_command @ (ConsoleCommand::StoreSnapshot { .. }
+        | ConsoleCommand::UpdateSnapshot { .. }
+        | ConsoleCommand::RecallSnapshot { .. }
+        | ConsoleCommand::RenameSnapshot { .. }
+        | ConsoleCommand::DeleteSnapshot { .. }
+        | ConsoleCommand::MoveSnapshot { .. }
+        | ConsoleCommand::Compare { .. }
+        | ConsoleCommand::EndCompare) => crate::console_snapshot::plan(&mut p, snapshot_command)?,
     }
     // `ClearSolos` with nothing to clear is an empty (but valid) step.
     Ok(p.finish())
