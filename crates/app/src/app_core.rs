@@ -1920,6 +1920,10 @@ mod clipboard_ops;
 mod quantize_ops;
 pub use quantize_ops::QuantizeTarget;
 
+#[path = "app_core_midi.rs"]
+mod midi_ops;
+pub use midi_ops::{IMPORT_INSTRUMENT, MidiExport};
+
 #[path = "app_core_create.rs"]
 mod create_ops;
 

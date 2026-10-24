@@ -7,6 +7,7 @@ use crate::rpc::{Server, Tool};
 use crate::tier1::{self, bounce_json};
 use crate::tool::{Args, ToolOutput, definition};
 use atomik_app::AppCore;
+use atomik_app::app_core::MidiExport;
 use atomik_app::commands::AppCommand;
 use atomik_app::session::{LiveSession, SystemBackend};
 use atomik_app::settings::AudioSettings;
@@ -75,6 +76,11 @@ pub const TOOLS: &[Tool] = &[
         name: "session_relink",
         definition: relink_def,
         run: relink,
+    },
+    Tool {
+        name: "session_midi",
+        definition: midi_def,
+        run: midi,
     },
     Tool {
         name: "session_bounce",
@@ -212,6 +218,10 @@ fn request_json(r: ShellRequest) -> Value {
         ShellRequest::PickSaveFile | ShellRequest::PickExportFile => (
             "pick_save_file",
             "a file dialog: use session_save with a path",
+        ),
+        ShellRequest::PickImportMidi { .. } | ShellRequest::PickExportMidi(_) => (
+            "pick_midi_file",
+            "a file dialog: a headless session cannot show it (the MIDI file import and export are covered by the app tests)",
         ),
         _ => (
             "dialog",
@@ -863,6 +873,73 @@ fn save(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "bytes": std::fs::metadata(&path).map(|m| m.len()).ok(),
         "status_text": session.shell().status_text(),
         "dirty": session.shell().core().is_dirty(),
+    })))
+}
+
+// ---------------------------------------------------------------- session_midi
+
+fn midi_def() -> Value {
+    definition(
+        "session_midi",
+        "Imports or exports a Standard MIDI File, answering the dialogs of File > Import MIDI... and File > Export MIDI... (session_command file.import_midi, file.import_midi_song, file.export_midi_clip, file.export_midi_track and file.export_midi_song raise native dialogs). `action: import` reads `file`: one clip on the selected note track, or new tracks when none is selected; with `as_song` always new tracks from the start plus the file's tempo map, meter and markers. `action: export` writes `file` for `scope` (clip: the selected note clip, track: the selected note track, song: every note track as a type 1 file). One undo step per import. Returns `message` (the toast), `document_changed`, `can_undo`, and for an export the bytes written.",
+        &[
+            ("action", "string", "import or export."),
+            ("file", "string", "The MIDI file to read, or to write."),
+            (
+                "scope",
+                "string",
+                "Export: clip, track or song (default song).",
+            ),
+            (
+                "as_song",
+                "boolean",
+                "Import: new tracks from the start with the tempo, meter and markers.",
+            ),
+        ],
+        &["action", "file"],
+    )
+}
+
+fn midi(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let action = args.str("action")?;
+    let file = args.str("file")?;
+    let as_song = args.opt_bool("as_song")?.unwrap_or(false);
+    let scope = match args.opt_str("scope")?.unwrap_or("song") {
+        "clip" => MidiExport::Clip,
+        "track" => MidiExport::Track,
+        "song" => MidiExport::Song,
+        other => return Err(format!("scope {other:?} is not clip, track or song")),
+    };
+    let path = match action {
+        "import" => {
+            let path = server.paths().read(file)?;
+            if !path.is_file() {
+                return Err(format!("{file}: not a file"));
+            }
+            path
+        }
+        "export" => server.paths().write(file)?,
+        other => return Err(format!("action {other:?} is not import or export")),
+    };
+    let session = server.require_session()?;
+    let before = session.shell().core().doc().clone();
+    if action == "import" {
+        session.shell_mut().import_midi(&path, as_song);
+    } else {
+        session.shell_mut().export_midi_to(scope, &path);
+    }
+    session.shell_mut().frame();
+    let core = session.shell().core();
+    Ok(ToolOutput::json(&json!({
+        "action": action,
+        "path": path.to_string_lossy(),
+        "bytes": (action == "export").then(|| std::fs::metadata(&path).map(|m| m.len()).ok()).flatten(),
+        "message": core.last_rejection(),
+        "document_changed": core.doc() != &before,
+        "tracks": core.doc().song.tracks.len(),
+        "status_text": session.shell().status_text(),
+        "dirty": core.is_dirty(),
+        "can_undo": core.document().can_undo(),
     })))
 }
 
