@@ -381,3 +381,45 @@ fn the_painted_area_names_the_lane_and_draws_its_points() {
     assert!(closed.texts().len() < texts.len());
     assert!(!closed.texts().contains(&"CTRL"));
 }
+
+/// Writes `target/preview/piano_roll_controllers.png`: the roll with a pitch bend lane (a ramp, a
+/// hold and a return) and a mod wheel lane, the first shown with a point selected.
+#[test]
+#[ignore = "writes preview images; run explicitly"]
+fn preview_controllers_png() {
+    use atomik_ui::TextEngine;
+    use support::cpu::CpuCanvas;
+    let lane = ControllerLane::new(
+        BEND,
+        vec![
+            pt(0, 0.0, Curve::Linear),
+            pt(PPQ, 0.6, Curve::Linear),
+            pt(2 * PPQ, -0.3, Curve::Step),
+            pt(3 * PPQ, 0.0, Curve::Step),
+        ],
+    );
+    let wheel = ControllerLane::new(
+        MOD,
+        vec![pt(PPQ, 0.25, Curve::Linear), pt(3 * PPQ, 1.0, Curve::Step)],
+    );
+    let (mut v, mut d, reg) = setup(vec![lane, wheel]);
+    v.set_controller_kind(BEND);
+    let p = at(&v, BEND, PPQ, 0.6);
+    gesture(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    let scale = 1.5;
+    v.set_scale(scale);
+    let b = v.bounds();
+    let mut text = TextEngine::new();
+    let mut canvas = CpuCanvas::new(
+        (b.width() * scale) as u16,
+        (b.height() * scale) as u16,
+        &mut text,
+    );
+    v.paint(&mut canvas, d.doc(), &reg);
+    let png = canvas.finish().into_png().expect("png");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/preview")
+        .join("piano_roll_controllers.png");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, png).unwrap();
+}
