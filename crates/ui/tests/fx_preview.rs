@@ -35,6 +35,11 @@ fn preview_pngs() {
         let _ = v.handle(&UiEvent::Resize(Size::new(820.0, h)), &doc, &reg);
         let _ = v.handle(&UiEvent::ScaleChanged(SCALE), &doc, &reg);
         v.set_device_meter_values(&key("fx"), &raw_meters(kind));
+        match kind {
+            FxKind::Spectrum => v.set_analyser(&key("fx"), &spectrum_data(false)),
+            FxKind::PhaseMeter => v.set_analyser(&key("fx"), &scope_data()),
+            _ => {}
+        }
         let slug = &kind.type_id()["atomik.".len()..];
         for (flip, suffix) in [(Flip::Front, ""), (Flip::Back, "_back")] {
             v.set_flip(flip);

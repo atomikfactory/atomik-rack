@@ -210,6 +210,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
             plot: screen,
             meters: bars,
             readout: Rect::ZERO,
+            aux: Rect::ZERO,
             button: None,
             character: Some(geom),
         }),

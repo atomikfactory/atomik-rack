@@ -273,6 +273,9 @@ pub struct PanelInfo<'a> {
     /// Effect panels: the display meter values ([`crate::fx::update_display`]); empty without
     /// a feed.
     pub fx_meters: &'a [f32],
+    /// Spectrum and phase meter panels: what the app fed from the device's scope tap (empty
+    /// without a feed).
+    pub analyser: &'a crate::analyser::AnalyserData,
     /// Compressor panel: the name of the device cabled to its sidechain input, if any.
     pub sc_source: Option<&'a str>,
     /// Character panel: whether the Transform and the Dry/Wet CV inputs have a cable.
@@ -334,7 +337,7 @@ fn strip_bypass(info: &PanelInfo<'_>) -> bool {
 }
 
 /// Whether the effect of `info` is bypassed (its `bypass` param is on).
-fn bypassed(info: &PanelInfo<'_>) -> bool {
+pub(crate) fn bypassed(info: &PanelInfo<'_>) -> bool {
     strip_bypass(info)
         && info
             .device

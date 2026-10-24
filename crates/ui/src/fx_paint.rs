@@ -174,6 +174,29 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),
         FxKind::Character => crate::character_panel::paint_front(c, theme, &fx, info),
+        FxKind::Spectrum => crate::analyser_paint::spectrum(
+            c,
+            theme,
+            fx,
+            info,
+            crate::analyser_paint::SpectrumLook {
+                range_db: p.get("range").clamp(30.0, 120.0),
+                hold: p.get("hold") > 0.0,
+                bypassed: crate::paint::bypassed(info),
+            },
+        ),
+        FxKind::PhaseMeter => crate::analyser_paint::phase_meter(
+            c,
+            theme,
+            fx,
+            info,
+            crate::analyser_paint::PhaseLook {
+                mode: crate::analyser::ScopeMode::of_choice(p.get("scope")),
+                gain_db: p.get("scope_gain"),
+                loudness: p.on("loudness"),
+                bypassed: crate::paint::bypassed(info),
+            },
+        ),
     }
 }
 
