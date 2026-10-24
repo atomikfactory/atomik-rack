@@ -8,7 +8,7 @@ use atomik_model::{ClipContent, ClipId, Command, Note, SongCommand};
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
 use atomik_ui::{
-    Key, Modifiers, PianoRollView, PointerButton, QuantizeAction, TransportAction, UiAction,
+    Key, Modifiers, PianoRollView, PointerButton, QuantizeAction, Tool, TransportAction, UiAction,
 };
 use proptest::prelude::*;
 use support::song::*;
@@ -91,6 +91,7 @@ fn opens_on_a_note_clip_and_fits_it() {
 fn clicking_empty_space_draws_a_snapped_note_and_auditions_it() {
     let (doc, reg) = (song_doc(), registry());
     let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Pencil);
     v.set_snap(Snap::Sixteenth);
     let p = grid_point(&v, 2 * PPQ + PPQ / 4 + 300, 50);
     let a = v.handle(&down(p), &doc, &reg);
@@ -113,6 +114,7 @@ fn clicking_empty_space_draws_a_snapped_note_and_auditions_it() {
 fn dragging_while_drawing_sets_the_length() {
     let (doc, reg) = (song_doc(), registry());
     let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Pencil);
     v.set_snap(Snap::Sixteenth);
     let p = grid_point(&v, 8 * PPQ + 10, 52);
     let beat_px = v.tick_to_x(PPQ) - v.tick_to_x(0);
@@ -133,7 +135,7 @@ fn dragging_a_note_moves_it_in_time_and_key_with_audition() {
     let mut v = piano_roll(&doc, &reg);
     v.set_snap(Snap::Beat);
     let r = v.note_rect(0).unwrap();
-    let p = Point::new(r.x0 + 4.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let beat_px = v.tick_to_x(PPQ) - v.tick_to_x(0);
     let to = Point::new(p.x + beat_px * 4.2, v.key_center_y(38));
     let a = run(
@@ -164,7 +166,7 @@ fn a_selected_group_moves_together_and_keeps_its_shape_at_the_key_limit() {
     let mut v = piano_roll(&doc, &reg);
     v.set_selected_notes(&(0..16).collect::<Vec<_>>());
     let r = v.note_rect(5).unwrap();
-    let p = Point::new(r.x0 + 3.0, r.center().y);
+    let p = Point::new(r.center().x, r.center().y);
     let a = run(
         |e| v.handle(e, &doc, &reg),
         &[down(p), mv(Point::new(p.x, p.y + 4000.0))],

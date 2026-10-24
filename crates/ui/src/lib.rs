@@ -298,6 +298,7 @@ pub mod context_menu;
 pub mod controller_lane;
 #[cfg(feature = "cpu-canvas")]
 pub mod cpu_canvas;
+pub mod cursor;
 pub mod display_list;
 pub mod event;
 pub mod file_browser;
@@ -354,6 +355,7 @@ pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;
 pub use container_editor::{ContainerEditorView, ContainerTab};
+pub use cursor::CursorHint;
 pub use display_list::{DisplayList, Op};
 pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
