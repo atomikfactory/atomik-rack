@@ -112,6 +112,30 @@ pub fn assert_console_invariants(doc: &RackDoc) {
         assert!(!names.contains(&name), "{:?} used twice", b.name);
         names.push(name);
     }
+    let mut grouped = Vec::new();
+    let mut vca_ids = Vec::new();
+    let mut vca_names = Vec::new();
+    for v in &console.vcas {
+        assert!(v.id >= 1 && !vca_ids.contains(&v.id), "VCA id {}", v.id);
+        vca_ids.push(v.id);
+        assert!(
+            !v.name.trim().is_empty() && v.name.trim() == v.name,
+            "{:?}",
+            v.name
+        );
+        let name = v.name.to_lowercase();
+        assert!(!vca_names.contains(&name), "{:?} used twice", v.name);
+        vca_names.push(name);
+        assert!((-60.0..=12.0).contains(&v.level_db), "{}", v.level_db);
+        for m in &v.members {
+            assert!(
+                console.channel_index(m).is_some() || console.bus_index(m).is_some(),
+                "VCA member {m} is not a strip"
+            );
+            assert!(!grouped.contains(m), "{m} is in two VCA groups");
+            grouped.push(m.clone());
+        }
+    }
     if let Some(m) = &console.master {
         assert_eq!(type_of(m), MASTER);
     } else {

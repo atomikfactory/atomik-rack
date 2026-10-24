@@ -1964,6 +1964,7 @@ pub fn console_doc() -> RackDoc {
         master: Some(key("master")),
         returns,
         compensation: true,
+        ..Console::default()
     };
     doc
 }

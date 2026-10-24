@@ -1777,3 +1777,86 @@ fn session_meters_follows_the_stereo_image_and_refuses_bad_arguments() {
     }
     ok(&mut s, "session_close", json!({}));
 }
+
+#[test]
+fn vca_groups_are_made_filled_and_deleted_with_menu_commands_and_a_group_id() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "view.toggle_console"}),
+    );
+    let vcas = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        v["document"]["console"]["vcas"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    // The four commands are in the Mixer menu; nothing selected, nothing to make.
+    for id in [
+        "mixer.create_vca",
+        "mixer.add_to_vca",
+        "mixer.remove_from_vca",
+        "mixer.delete_vca",
+    ] {
+        let row = command_row(&mut s, id);
+        assert_eq!(row["menu"], "Mixer", "{id}");
+        assert_eq!(row["shortcut"], Value::Null, "{id}");
+        assert_eq!(row["enabled"], false, "{id}");
+    }
+    assert!(vcas(&mut s).is_empty());
+    // A click on a channel's name plate selects it, and the group is made from it.
+    let plate = |s: &mut Server, caption: &str| {
+        let (x, y) = text_pos(s, caption);
+        ok(
+            s,
+            "session_pointer",
+            json!({"action": "click", "x": x + 20.0, "y": y - 12.0}),
+        );
+    };
+    plate(&mut s, "CH 1");
+    assert_eq!(command_row(&mut s, "mixer.create_vca")["enabled"], true);
+    ok(&mut s, "session_command", json!({"id": "mixer.create_vca"}));
+    let groups = vcas(&mut s);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["name"], "VCA 1");
+    assert_eq!(groups[0]["id"], 1);
+    assert_eq!(groups[0]["level_db"], 0.0);
+    assert_eq!(groups[0]["members"][0]["strip"], "channel");
+    assert!(groups[0]["color"].as_str().unwrap().starts_with('#'));
+    // The second channel joins by the group's id, and leaves with Remove from VCA.
+    plate(&mut s, "CH 2");
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.add_to_vca", "arg": "1"}),
+    );
+    assert_eq!(vcas(&mut s)[0]["members"].as_array().unwrap().len(), 2);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.remove_from_vca"}),
+    );
+    assert_eq!(vcas(&mut s)[0]["members"].as_array().unwrap().len(), 1);
+    // A bad argument is an error, and delete by id removes the group; undo brings it back.
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.add_to_vca", "arg": "x"}),
+    );
+    assert!(r.is_error, "{}", r.first_text());
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.delete_vca", "arg": "1"}),
+    );
+    assert!(vcas(&mut s).is_empty());
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(vcas(&mut s).len(), 1);
+}

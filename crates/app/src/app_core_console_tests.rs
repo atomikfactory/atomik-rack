@@ -5,7 +5,7 @@
 use super::*;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_engine::MeterReading;
-use atomik_model::console::SOLO_SILENCE_PARAM;
+use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::{Command, ConsoleCommand, DeviceKey};
 
 const SYNTH: &str = "atomik.poly-synth";
@@ -478,4 +478,247 @@ fn a_rejected_console_command_is_shown_in_the_console_too() {
     );
     let notice = c.console().notice().expect("a console notice").to_string();
     assert!(notice.contains("already called"), "{notice}");
+}
+
+// ---- VCA groups ----------------------------------------------------------------------------
+
+fn vca_calls(
+    c: &AppCore<RecordingSink>,
+    calls: &[SinkCall],
+    param: &str,
+) -> Vec<(DeviceInstanceId, f32)> {
+    let p = pid(c, CHANNEL_TYPE, param);
+    calls
+        .iter()
+        .filter_map(|call| match call {
+            SinkCall::Param { id, param, plain } if *param == p => Some((*id, *plain)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn vca(c: &mut AppCore<RecordingSink>, command: ConsoleCommand) {
+    c.apply_command(Command::Console(command))
+        .expect("VCA command applied");
+}
+
+fn create_vca(c: &mut AppCore<RecordingSink>, members: &[&DeviceKey]) {
+    vca(
+        c,
+        ConsoleCommand::CreateVca {
+            name: "Group".into(),
+            members: members.iter().map(|k| (*k).clone()).collect(),
+        },
+    );
+}
+
+#[test]
+fn a_group_level_reaches_only_its_members_through_the_engine_only() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&a]);
+    let calls = c.sink_mut().take();
+    assert!(
+        vca_calls(&c, &calls, VCA_DB_PARAM).is_empty(),
+        "a group at 0 dB sends nothing: {calls:?}"
+    );
+    vca(
+        &mut c,
+        ConsoleCommand::SetVcaLevel {
+            vca: 1,
+            db: -6.0,
+            merge: None,
+        },
+    );
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -6.0)]);
+    // Never stored in the document.
+    assert!(
+        c.doc()
+            .devices
+            .iter()
+            .all(|d| { d.params.keys().all(|k| !k.starts_with("internal.")) })
+    );
+    // A drag is one param per move, the other strip is left alone.
+    for db in [-7.0, -8.0] {
+        vca(
+            &mut c,
+            ConsoleCommand::SetVcaLevel {
+                vca: 1,
+                db,
+                merge: Some(1),
+            },
+        );
+    }
+    let calls = c.sink_mut().take();
+    assert_eq!(
+        vca_calls(&c, &calls, VCA_DB_PARAM),
+        vec![(ia, -7.0), (ia, -8.0)]
+    );
+    // Undo puts the strip back to the start of the drag, and a removal from the group resets it.
+    assert!(c.undo());
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -6.0)]);
+    vca(
+        &mut c,
+        ConsoleCommand::AssignToVca {
+            vca: None,
+            strips: vec![a.clone()],
+        },
+    );
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, 0.0)]);
+    assert!(vca_calls(&c, &calls, VCA_MUTE_PARAM).is_empty());
+    let _ = b;
+}
+
+#[test]
+fn a_group_mute_and_solo_reach_the_members_and_the_solo_silences_the_others() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&a]);
+    c.sink_mut().take();
+    let (ia, ib) = (c.device_id(&a).unwrap(), c.device_id(&b).unwrap());
+    vca(&mut c, ConsoleCommand::SetVcaMute { vca: 1, on: true });
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_MUTE_PARAM), vec![(ia, 1.0)]);
+    vca(&mut c, ConsoleCommand::SetVcaSolo { vca: 1, on: true });
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_SOLO_PARAM), vec![(ia, 1.0)]);
+    assert_eq!(silence_calls(&c, &calls), vec![(ia, 0.0), (ib, 1.0)]);
+    // Clearing the solos clears the group's solo too.
+    vca(&mut c, ConsoleCommand::ClearSolos);
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_SOLO_PARAM), vec![(ia, 0.0)]);
+    assert_eq!(silence_calls(&c, &calls), vec![(ia, 0.0), (ib, 0.0)]);
+}
+
+#[test]
+fn a_rebuilt_engine_and_a_restored_strip_get_the_feed_again() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    create_vca(&mut c, &[&a]);
+    vca(
+        &mut c,
+        ConsoleCommand::SetVcaLevel {
+            vca: 1,
+            db: -3.0,
+            merge: None,
+        },
+    );
+    c.sink_mut().take();
+    c.rebuild_engine();
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -3.0)]);
+    // Removing the instrument removes its channel and its membership; undo brings the
+    // strip back as a new engine device that must get the offset again.
+    c.apply_command(Command::Workflow(
+        atomik_model::WorkflowCommand::RemoveDevices {
+            keys: vec![key("a")],
+        },
+    ))
+    .unwrap();
+    assert!(c.doc().console.vca(1).unwrap().members.is_empty());
+    c.sink_mut().take();
+    assert!(c.undo());
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -3.0)]);
+}
+
+#[test]
+fn create_vca_from_selection_uses_the_focused_selection_in_one_undo_step() {
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    // The console's selection wins when the console has the focus.
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&kb));
+    assert!(c.create_vca_from_selection(Pane::Console));
+    let g = c.doc().console.vca(1).expect("a group");
+    assert_eq!(
+        (g.name.as_str(), g.members.clone()),
+        ("VCA 1", vec![kb.clone()])
+    );
+    assert!(c.undo());
+    assert!(c.doc().console.vcas.is_empty(), "one undo step");
+    // From the rack, an instrument stands for its channel, and strips leave their groups.
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.create_vca_from_selection(Pane::Rack));
+    assert_eq!(c.doc().console.vca(1).unwrap().members, vec![ka, kb]);
+    assert_eq!(c.doc().console.default_vca_name(), "VCA 2");
+}
+
+#[test]
+fn the_vca_commands_say_what_to_select_and_what_is_missing() {
+    let mut c = two_channels();
+    c.view_mut().set_selection(&[], None);
+    assert!(!c.create_vca_from_selection(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("Select"));
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(!c.add_selection_to_vca(Pane::Rack, None));
+    assert!(c.last_rejection().unwrap().contains("no VCA group"));
+    assert!(
+        !c.remove_selection_from_vca(Pane::Rack),
+        "a strip in no group changes nothing"
+    );
+    assert!(!c.delete_vca(Pane::Rack, None));
+    assert!(c.last_rejection().unwrap().contains("Select a channel"));
+    assert!(!c.vca_menu(Pane::Rack).can_add && c.vca_menu(Pane::Rack).can_create);
+    assert!(!c.vca_menu(Pane::Rack).can_delete);
+}
+
+#[test]
+fn add_remove_and_delete_follow_the_selection_and_the_named_group() {
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&ka]);
+    vca(
+        &mut c,
+        ConsoleCommand::CreateVca {
+            name: "Other".into(),
+            members: Vec::new(),
+        },
+    );
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    let menu = c.vca_menu(Pane::Rack);
+    assert!(menu.can_create && menu.can_add && menu.can_delete && !menu.can_remove);
+    // No id: the last group; a named group: that one.
+    assert!(c.add_selection_to_vca(Pane::Rack, None));
+    assert_eq!(c.doc().console.vca(2).unwrap().members, vec![kb.clone()]);
+    assert!(c.add_selection_to_vca(Pane::Rack, Some(1)));
+    assert_eq!(
+        c.doc().console.vca(1).unwrap().members,
+        vec![ka.clone(), kb.clone()]
+    );
+    assert!(c.vca_menu(Pane::Rack).can_remove);
+    assert!(c.remove_selection_from_vca(Pane::Rack));
+    assert!(c.doc().console.vca_of(&kb).is_none());
+    // Delete takes the groups of the selection, or the named one.
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.delete_vca(Pane::Rack, None));
+    assert!(c.doc().console.vca(1).is_none() && c.doc().console.vca(2).is_some());
+    assert!(c.delete_vca(Pane::Rack, Some(2)));
+    assert!(c.doc().console.vcas.is_empty());
+    assert!(!c.delete_vca(Pane::Rack, Some(2)), "gone");
+}
+
+#[test]
+fn the_arrangement_selection_is_used_through_its_tracks_channels() {
+    let mut c = two_channels();
+    for k in ["a", "b"] {
+        c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+            device: key(k),
+        }))
+        .unwrap();
+    }
+    c.arrangement_mut().set_selected_track(Some(key("b")));
+    assert!(c.create_vca_from_selection(Pane::Arrangement));
+    assert_eq!(
+        c.doc().console.vca(1).unwrap().members,
+        vec![channel_of(&c, "b")]
+    );
 }

@@ -2,7 +2,7 @@
 //! perform it again or invert it; undo performs the inverse.
 
 use crate::WriteMode;
-use crate::console::{ConsoleBus, ConsoleChannel};
+use crate::console::{ConsoleBus, ConsoleChannel, VcaGroup};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::freeze::Frozen;
 use crate::groove::Groove;
@@ -197,6 +197,11 @@ pub(crate) enum Edit {
     ConsoleBusMove {
         from: usize,
         to: usize,
+    },
+    /// The console's whole VCA group list.
+    ConsoleVcas {
+        old: Vec<VcaGroup>,
+        new: Vec<VcaGroup>,
     },
     /// The console master.
     ConsoleMaster {
@@ -533,6 +538,7 @@ impl Edit {
                 new: old,
             },
             Edit::ConsoleBusMove { from, to } => Edit::ConsoleBusMove { from: to, to: from },
+            Edit::ConsoleVcas { old, new } => Edit::ConsoleVcas { old: new, new: old },
             Edit::ConsoleMaster { old, new } => Edit::ConsoleMaster { old: new, new: old },
             Edit::ConsoleReturn { slot, old, new } => Edit::ConsoleReturn {
                 slot,
@@ -908,6 +914,10 @@ impl Edit {
                 if let Some(new) = new {
                     buses.insert(*index, new.clone());
                 }
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleVcas { new, .. } => {
+                doc.console.vcas.clone_from(new);
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleBusMove { from, to } => {

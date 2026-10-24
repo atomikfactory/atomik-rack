@@ -499,6 +499,9 @@ pub struct ArrangementView {
     song: Song,
     synced: bool,
     device_sig: Vec<(DeviceKey, String, String, Option<[u8; 3]>)>,
+    /// The colour chip of each track whose console channel is in a VCA group (the group's colour,
+    /// a neutral grey when it has none).
+    vca_chips: BTreeMap<DeviceKey, Color>,
     rows: Vec<Row>,
     content_height: f64,
     lane_params: Vec<Vec<Option<ParamDescriptor>>>,
@@ -586,6 +589,7 @@ impl ArrangementView {
             song,
             synced: false,
             device_sig: Vec::new(),
+            vca_chips: BTreeMap::new(),
             rows: Vec::new(),
             content_height: 0.0,
             lane_params: Vec::new(),
@@ -1146,8 +1150,21 @@ impl ArrangementView {
                     .map_or(MONITOR_AUTO, |v| v.round().clamp(0.0, 2.0) as u8),
             })
             .collect();
+        let neutral = self.st.base.text_muted;
+        let chips: BTreeMap<DeviceKey, Color> = doc
+            .song
+            .tracks
+            .iter()
+            .filter_map(|t| {
+                let channel = doc.console.channel_of(&t.device)?;
+                let group = doc.console.vca_of(&channel.channel)?;
+                let color = group.color.map_or(neutral, crate::console_vca::color_of);
+                Some((t.device.clone(), color))
+            })
+            .collect();
         if self.synced
             && self.song == doc.song
+            && self.vca_chips == chips
             && self.device_sig == sig
             && self.assets == doc.assets
             && self.input_channels == doc.input_channels
@@ -1168,6 +1185,7 @@ impl ArrangementView {
         self.assets.clone_from(&doc.assets);
         self.input_channels = doc.input_channels;
         self.device_sig = sig;
+        self.vca_chips = chips;
         self.synced = true;
         self.rebuild(doc, registry);
         self.repaint = true;
