@@ -114,13 +114,17 @@ These are the QA steps this project expects for a change, in the order to do the
 1. `session_open` the project that shows it (or the starter project).
 2. Reach the state: `session_command` for menu commands, `session_pointer` and `session_key` for gestures and chords.
 3. Read the screen with `session_texts` (cheap, exact) and look at `session_screenshot` for layout, overlap and clipping. Save a screenshot with `save_to` when it belongs in the PR.
-4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
+4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`, and a folder, colour or comment when it has one), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
 5. If the edit should change the sound (or must not), `session_bounce` with `reference` set to the bounce of the file you opened.
 6. Turn what you proved into a headless test (`crates/app/src/shell_*_tests.rs`, `crates/ui/tests/workflow_*.rs`) before the PR is done.
 
 **Note chase**
 
 Chase Notes (`sequencer.toggle_chase`) is an item of the track header's context menu, not of the menu bar, so `session_commands` does not list it. Reach it with `session_pointer`: right-click the track's header, then click Chase Notes. `session_status` shows the track's `chase` flag (on by default; a project file stores `"no_chase": true` for a track that does not chase).
+
+**Track organisation**
+
+The Track menu (`session_commands` with `menu: "Track"`) holds Group Tracks (`sequencer.group_tracks`), Ungroup, Collapse or Expand Folder (`sequencer.toggle_folder`), Rename Folder, Move Track Up and Down, Track Comment, Fold and Unfold Automation Lanes (`sequencer.fold_lanes:fold`, `:unfold`) and Track Height (`sequencer.track_height:small`, `:medium`, `:large`, `:fit`). They work on the selection, which is the pointer's: click a track header (shift-click adds one) or a folder row's name, then run the command; a disabled one says so. Track Colour (`sequencer.track_color`) is in the context menus only: right-click a header and choose from its Colour submenu. The typed edits (a folder name, a track comment) are text: `session_command` opens the field, then `session_key` with `text` types it and `Enter` commits. `session_status` and `project_inspect` list the song's `folders` (id, name, parent, collapsed, colour, the devices inside) and, per track, `folder`, `color` and `comment`, per automation lane `folded` and per take group `open`; each only when there is one. `crates/model/tests/golden/organised_project.json` is a small project that has all of them.
 
 **Automation recording**
 
