@@ -696,3 +696,65 @@ fn project_inspect_lists_the_audio_clips_with_their_editing() {
     assert_eq!(c["crossfade"], "off");
     assert!(c.get("crossfade_ticks").is_none());
 }
+
+#[test]
+fn project_inspect_lists_the_warp_of_an_audio_clip() {
+    use atomik_model::{
+        AudioClipContent, ClipContent, Command, Document, SongCommand, WarpMarker, WarpMode,
+        WarpSettings,
+    };
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/audio-demo.atomik")).unwrap();
+    let mut d = Document::new(atomik_model::load_project(&text, &reg).unwrap());
+    let (device, clip) = {
+        let t = d.doc().song.tracks.iter().find(|t| t.is_audio()).unwrap();
+        (t.device.clone(), t.lanes[0].clips[0].clone())
+    };
+    let ClipContent::Audio(a) = clip.content.clone() else {
+        panic!("an audio clip")
+    };
+    let lane_of = |s: &mut _, d: &Document, name: &str| {
+        let path = tmp(name);
+        std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+        let v = call(s, "project_inspect", json!({"path": path})).parsed();
+        v["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["device"] == device.as_str())
+            .unwrap()["lanes"][0]
+            .clone()
+    };
+    // No warp, no field.
+    let lane = lane_of(&mut s, &d, "warp-none.atomik");
+    assert!(lane["audio_clips"][0].get("warp").is_none());
+    d.apply(
+        Command::Song(SongCommand::SetAudioClip {
+            id: clip.id,
+            start: clip.start,
+            length: clip.length,
+            muted: false,
+            content: AudioClipContent {
+                warp: WarpSettings {
+                    enabled: true,
+                    mode: WarpMode::Tonal,
+                    source_bpm: 96.5,
+                    transpose_cents: -300,
+                    markers: vec![WarpMarker { tick: 0, source: 0 }],
+                },
+                ..a
+            },
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let lane = lane_of(&mut s, &d, "warp-on.atomik");
+    let w = &lane["audio_clips"][0]["warp"];
+    assert_eq!(w["enabled"], true);
+    assert_eq!(w["mode"], "tonal");
+    assert_eq!(w["bpm"], 96.5);
+    assert_eq!(w["transpose_cents"], -300);
+    assert_eq!(w["markers"], 1);
+}
