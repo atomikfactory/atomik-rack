@@ -1188,7 +1188,11 @@ impl<S: EngineSink> AppCore<S> {
                 continue;
             };
             let changes = [
-                (VCA_DB_PARAM, feed.db, sent.db != feed.db),
+                (
+                    VCA_DB_PARAM,
+                    feed.db,
+                    sent.db.to_bits() != feed.db.to_bits(),
+                ),
                 (
                     VCA_MUTE_PARAM,
                     f32::from(u8::from(feed.mute)),
