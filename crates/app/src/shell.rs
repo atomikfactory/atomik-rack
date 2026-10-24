@@ -115,7 +115,7 @@
 //! What needs the platform (file dialogs, confirmation, quit) is returned as
 //! [`ShellRequest`]s.
 
-use crate::app_core::{AppCore, AppError, Pane};
+use crate::app_core::{AppCore, AppError, MidiExport, Pane};
 use crate::commands::{AppCommand, Menu, MenuState, menus};
 use crate::context_menus::{self, MenuEnable};
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -172,6 +172,15 @@ pub enum ShellRequest {
     /// Show a multi-select open dialog for audio files (`audio_import::AUDIO_EXTENSIONS`),
     /// then call [`Shell::import_files`] with the picked paths.
     PickImportFiles,
+    /// Show an open dialog for a MIDI file (File > Import MIDI), then call
+    /// [`Shell::import_midi`] with the picked path.
+    PickImportMidi {
+        /// Import as a song: new tracks from the start, with the tempo, meter and markers.
+        as_song: bool,
+    },
+    /// Show a save dialog for a MIDI file (File > Export MIDI), then call
+    /// [`Shell::export_midi_to`] with the scope and the path.
+    PickExportMidi(MidiExport),
     /// Show a multi-select open dialog for audio files (the sample editor's Load button), then
     /// call [`Shell::load_samples`] with the picked paths.
     PickLoadSamples,
@@ -1051,6 +1060,9 @@ impl<B: AudioBackend> Shell<B> {
             editor: !self.ui.show_console
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
             missing_audio: !self.core.missing_assets().is_empty(),
+            midi_clip: self.core.can_export_midi(MidiExport::Clip),
+            midi_track: self.core.can_export_midi(MidiExport::Track),
+            midi_song: self.core.can_export_midi(MidiExport::Song),
         }
     }
 
@@ -1400,7 +1412,27 @@ impl<B: AudioBackend> Shell<B> {
                     self.forward(pane, event);
                 }
             }
-            UiEvent::FileDrop { paths, .. } => {
+            UiEvent::FileDrop { pos, paths } => {
+                // MIDI files import as File > Import MIDI does, wherever they land; the audio
+                // files among them go on to the pane under the pointer.
+                let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = paths
+                    .iter()
+                    .cloned()
+                    .partition(|p| crate::midi_file::is_midi_path(p));
+                for path in &midi {
+                    self.core.import_midi_tracks(path);
+                }
+                if rest.is_empty() {
+                    if let Some(pane) = target {
+                        self.forward(pane, &UiEvent::FileHoverCancel);
+                    }
+                    return;
+                }
+                let paths = &rest;
+                let event = &UiEvent::FileDrop {
+                    pos: *pos,
+                    paths: rest.clone(),
+                };
                 let taken = target.is_some_and(|pane| {
                     let actions = self.forward(pane, event);
                     pane != Pane::Rack
@@ -2509,6 +2541,11 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::SaveAs => vec![ShellRequest::PickSaveFile],
             AppCommand::ExportPatch => vec![ShellRequest::PickExportFile],
             AppCommand::ImportAudio => vec![ShellRequest::PickImportFiles],
+            AppCommand::ImportMidi => vec![ShellRequest::PickImportMidi { as_song: false }],
+            AppCommand::ImportMidiSong => vec![ShellRequest::PickImportMidi { as_song: true }],
+            AppCommand::ExportMidiClip => self.export_midi_request(MidiExport::Clip),
+            AppCommand::ExportMidiTrack => self.export_midi_request(MidiExport::Track),
+            AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
@@ -2878,6 +2915,34 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
+    /// Imports the MIDI file picked in the Import MIDI dialog (see [`AppCore::import_midi`]).
+    pub fn import_midi(&mut self, path: &Path, as_song: bool) {
+        self.core.import_midi(path, as_song);
+        self.repaint = true;
+    }
+
+    /// Writes the MIDI file for `what` to `path` (the answer is shown in the view).
+    pub fn export_midi_to(&mut self, what: MidiExport, path: &Path) {
+        self.core.export_midi(what, path);
+        self.repaint = true;
+    }
+
+    /// The file name (without extension) the Export MIDI dialog offers.
+    pub fn midi_export_name(&self, what: MidiExport) -> String {
+        self.core.midi_export_name(what)
+    }
+
+    /// File > Export MIDI: the save dialog, or what to select first when there is nothing to
+    /// write.
+    fn export_midi_request(&mut self, what: MidiExport) -> Vec<ShellRequest> {
+        if self.core.can_export_midi(what) {
+            vec![ShellRequest::PickExportMidi(what)]
+        } else {
+            self.notify(what.needs());
+            Vec::new()
+        }
+    }
+
     /// Shows a message in the view until the next click.
     pub fn notify(&mut self, message: impl Into<String>) {
         self.core.report(message);
@@ -3191,6 +3256,10 @@ mod relink_tests;
 #[cfg(test)]
 #[path = "shell_quantize_tests.rs"]
 mod quantize_tests;
+
+#[cfg(test)]
+#[path = "shell_midi_tests.rs"]
+mod midi_tests;
 
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]

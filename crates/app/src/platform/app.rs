@@ -429,6 +429,36 @@ impl App {
                         self.shell.import_files(paths);
                     }
                 }
+                ShellRequest::PickImportMidi { as_song } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(if as_song {
+                            "Import MIDI as song"
+                        } else {
+                            "Import MIDI"
+                        })
+                        .add_filter("MIDI files", &crate::midi_file::MIDI_EXTENSIONS);
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_midi(&path, as_song);
+                    }
+                }
+                ShellRequest::PickExportMidi(what) => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(format!("Export MIDI {}", what.word()))
+                        .add_filter("MIDI file", &["mid"])
+                        .set_file_name(format!("{}.mid", self.shell.midi_export_name(what)));
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("mid");
+                        }
+                        self.shell.export_midi_to(what, &path);
+                    }
+                }
                 ShellRequest::PickLoadSamples => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Load samples")

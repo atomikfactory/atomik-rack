@@ -15,8 +15,9 @@
 //! - *Import MIDI as Song* always makes new tracks, from tick 0, and also takes the file's
 //!   tempo map and meter map (they replace the song's) and its markers (added to the song's).
 //!
-//! Both are one undo step and select the new clips. A file that cannot be read is reported by
-//! name; nothing changes then.
+//! A MIDI file dropped on the window always makes new tracks at the playhead (the selection does
+//! not matter). All three are one undo step and select the new clips. A file that cannot be read
+//! is reported by name; nothing changes then.
 
 use super::*;
 use crate::midi_file::{self, MidiSong, MidiTrack};
@@ -40,6 +41,15 @@ pub enum MidiExport {
 }
 
 impl MidiExport {
+    /// What the user has to do first when there is nothing to export.
+    pub fn needs(self) -> &'static str {
+        match self {
+            MidiExport::Clip => "select a note clip to export",
+            MidiExport::Track => "select a note track to export",
+            MidiExport::Song => "the song has no note tracks to export",
+        }
+    }
+
     /// The word for messages and file names.
     pub fn word(self) -> &'static str {
         match self {
@@ -48,6 +58,17 @@ impl MidiExport {
             MidiExport::Song => "song",
         }
     }
+}
+
+/// Where an import puts the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportMode {
+    /// One clip on the selected note track, else new tracks.
+    Auto,
+    /// New tracks at the playhead.
+    Tracks,
+    /// New tracks from the start, with the tempo map, meter map and markers.
+    Song,
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -143,9 +164,7 @@ impl<S: EngineSink> AppCore<S> {
         let song = &self.doc().song;
         match what {
             MidiExport::Clip => {
-                let id = self
-                    .midi_clip_source()
-                    .ok_or("select a note clip to export")?;
+                let id = self.midi_clip_source().ok_or(what.needs())?;
                 let (track, _, clip) = song.clip(id).ok_or("the clip is gone")?;
                 Ok(midi_file::clip_file(
                     song,
@@ -154,9 +173,7 @@ impl<S: EngineSink> AppCore<S> {
                 ))
             }
             MidiExport::Track => {
-                let device = self
-                    .midi_track_source()
-                    .ok_or("select a note track to export")?;
+                let device = self.midi_track_source().ok_or(what.needs())?;
                 let track = song.track(&device).ok_or("the track is gone")?;
                 Ok(midi_file::track_file(
                     song,
@@ -166,7 +183,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             MidiExport::Song => {
                 if !self.can_export_midi(MidiExport::Song) {
-                    return Err("the song has no note tracks to export".to_owned());
+                    return Err(what.needs().to_owned());
                 }
                 Ok(midi_file::song_file(song, &self.project_name(), &|k| {
                     self.device_name(k)
@@ -196,22 +213,38 @@ impl<S: EngineSink> AppCore<S> {
     /// Reads the file at `path` and imports it (see the module docs): `as_song` also takes the
     /// tempo map, the meter map and the markers and always makes new tracks.
     pub fn import_midi(&mut self, path: &Path, as_song: bool) {
+        let mode = if as_song {
+            ImportMode::Song
+        } else {
+            ImportMode::Auto
+        };
+        self.import_midi_as(path, mode);
+    }
+
+    /// Reads the file at `path` and always makes new tracks from it, at the snapped playhead,
+    /// whatever is selected (what a MIDI file dropped on the window does).
+    pub fn import_midi_tracks(&mut self, path: &Path) {
+        self.import_midi_as(path, ImportMode::Tracks);
+    }
+
+    fn import_midi_as(&mut self, path: &Path, mode: ImportMode) {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        let result = read_midi(path).and_then(|song| self.apply_midi(song, as_song, &name));
+        let result = read_midi(path).and_then(|song| self.apply_midi(song, mode, &name));
         if let Err(e) = result {
             self.report(format!("{name}: {e}"));
         }
     }
 
-    fn apply_midi(&mut self, midi: MidiSong, as_song: bool, name: &str) -> Result<(), String> {
+    fn apply_midi(&mut self, midi: MidiSong, mode: ImportMode, name: &str) -> Result<(), String> {
+        let as_song = mode == ImportMode::Song;
         let playhead = self.snapped_playhead();
-        let target = if as_song {
-            None
-        } else {
+        let target = if mode == ImportMode::Auto {
             self.midi_track_source()
+        } else {
+            None
         };
         let notes: usize = midi.tracks.iter().map(|t| t.notes.len()).sum();
         let left_out = match midi.skipped {

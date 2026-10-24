@@ -23,11 +23,23 @@ pub enum AppCommand {
     /// File ▸ Import Audio…: pick audio files for new tracks or the selected
     /// audio track.
     ImportAudio,
+    /// File ▸ Import MIDI…: a MIDI file as one clip on the selected note track, or as new
+    /// tracks when none is selected.
+    ImportMidi,
+    /// File ▸ Import MIDI as Song…: a MIDI file as new tracks from the start, with its tempo map,
+    /// meter and markers.
+    ImportMidiSong,
     /// File ▸ Relink Missing Audio…: list the project's missing audio files and find them
     /// (a file each, or a folder search). Only enabled while some are missing.
     RelinkAudio,
     /// File ▸ Export Patch… (the rack as patch v2, without the song).
     ExportPatch,
+    /// File ▸ Export MIDI Clip…: the selected note clip as a MIDI file.
+    ExportMidiClip,
+    /// File ▸ Export MIDI Track…: the selected note track as a MIDI file.
+    ExportMidiTrack,
+    /// File ▸ Export MIDI Song…: every note track as a type 1 MIDI file.
+    ExportMidiSong,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
     StressRack,
     /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
@@ -152,8 +164,13 @@ impl AppCommand {
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
             AppCommand::ImportAudio => ("file.import_audio", None),
+            AppCommand::ImportMidi => ("file.import_midi", None),
+            AppCommand::ImportMidiSong => ("file.import_midi_song", None),
             AppCommand::RelinkAudio => ("file.relink_audio", None),
             AppCommand::ExportPatch => ("file.export_patch", None),
+            AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
+            AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
+            AppCommand::ExportMidiSong => ("file.export_midi_song", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
             AppCommand::Quit => ("file.quit", None),
@@ -235,8 +252,13 @@ impl AppCommand {
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
             ("file.import_audio", None) => AppCommand::ImportAudio,
+            ("file.import_midi", None) => AppCommand::ImportMidi,
+            ("file.import_midi_song", None) => AppCommand::ImportMidiSong,
             ("file.relink_audio", None) => AppCommand::RelinkAudio,
             ("file.export_patch", None) => AppCommand::ExportPatch,
+            ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
+            ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
+            ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
             ("file.quit", None) => AppCommand::Quit,
@@ -389,6 +411,12 @@ pub struct MenuState {
     pub editor: bool,
     /// Audio files of the project are missing (File > Relink Missing Audio is available).
     pub missing_audio: bool,
+    /// A note clip is selected or open (File > Export MIDI Clip is available).
+    pub midi_clip: bool,
+    /// A note track is selected (File > Export MIDI Track is available).
+    pub midi_track: bool,
+    /// The song has a note track (File > Export MIDI Song is available).
+    pub midi_song: bool,
 }
 
 /// One menu item.
@@ -462,12 +490,29 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
+                item("Import MIDI\u{2026}", AppCommand::ImportMidi),
+                item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
                 enabled(
                     "Relink Missing Audio\u{2026}",
                     AppCommand::RelinkAudio,
                     state.missing_audio,
                 ),
                 item("Export Patch\u{2026}", AppCommand::ExportPatch),
+                enabled(
+                    "Export MIDI Clip\u{2026}",
+                    AppCommand::ExportMidiClip,
+                    state.midi_clip,
+                ),
+                enabled(
+                    "Export MIDI Track\u{2026}",
+                    AppCommand::ExportMidiTrack,
+                    state.midi_track,
+                ),
+                enabled(
+                    "Export MIDI Song\u{2026}",
+                    AppCommand::ExportMidiSong,
+                    state.midi_song,
+                ),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
                 item("Stress Song", AppCommand::StressSong),
@@ -692,6 +737,9 @@ mod tests {
             sequencer_only: false,
             editor: false,
             missing_audio: false,
+            midi_clip: false,
+            midi_track: false,
+            midi_song: false,
         }
     }
 
@@ -703,8 +751,13 @@ mod tests {
             AppCommand::Save,
             AppCommand::SaveAs,
             AppCommand::ImportAudio,
+            AppCommand::ImportMidi,
+            AppCommand::ImportMidiSong,
             AppCommand::RelinkAudio,
             AppCommand::ExportPatch,
+            AppCommand::ExportMidiClip,
+            AppCommand::ExportMidiTrack,
+            AppCommand::ExportMidiSong,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -1067,8 +1120,13 @@ mod tests {
                 "Save",
                 "Save As\u{2026}",
                 "Import Audio\u{2026}",
+                "Import MIDI\u{2026}",
+                "Import MIDI as Song\u{2026}",
                 "Relink Missing Audio\u{2026}",
                 "Export Patch\u{2026}",
+                "Export MIDI Clip\u{2026}",
+                "Export MIDI Track\u{2026}",
+                "Export MIDI Song\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -1178,6 +1236,9 @@ mod tests {
                 sequencer_only: false,
                 editor: false,
                 missing_audio: true,
+                midi_clip: true,
+                midi_track: false,
+                midi_song: true,
             },
             &keymap,
         );
