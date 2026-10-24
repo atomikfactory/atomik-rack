@@ -59,6 +59,18 @@ impl Modifiers {
     pub fn command(self) -> bool {
         self.ctrl || self.meta
     }
+
+    /// The wheel zooms the rows (tracks, piano roll keys) instead of the time axis: Alt, or
+    /// Ctrl+Shift (Ctrl alone is the time zoom).
+    pub fn zooms_vertically(self) -> bool {
+        (self.alt && !self.command()) || (self.command() && self.shift)
+    }
+}
+
+/// The wheel amount of a zoom gesture. Some systems turn the wheel into sideways scrolling
+/// while Shift is held (the amount arrives as `dx`), so the vertical amount falls back to it.
+pub fn zoom_wheel_amount(dx: f64, dy: f64) -> f64 {
+    if dy.abs() < 1e-9 { dx } else { dy }
 }
 
 /// A key, independent of the window system.

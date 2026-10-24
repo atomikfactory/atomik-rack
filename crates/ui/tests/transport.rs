@@ -1,9 +1,9 @@
-//! TransportBar behaviour (UI): buttons, readouts through the tempo map, tempo typing,
-//! and the shared transport shortcuts.
+//! TransportBar behaviour (UI): buttons, readouts through the tempo map, tempo and meter
+//! typing, and the shared transport shortcuts.
 
 mod support;
 
-use atomik_model::{SongCommand, TempoEvent};
+use atomik_model::{MeterEvent, SongCommand, TempoEvent};
 use atomik_ui::kurbo::Vec2;
 use atomik_ui::{
     DisplayList, Key, Modifiers, TransportAction, TransportButton, TransportState, UiAction,
@@ -129,6 +129,141 @@ fn tempo_entry_clamps_cancels_and_ignores_no_ops() {
         &reg,
     );
     assert!((tempo_maps(&a)[0][0].bpm - 120.1).abs() < 1e-9);
+}
+
+fn meter_maps(actions: &[UiAction]) -> Vec<Vec<MeterEvent>> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Command(atomik_model::Command::Song(SongCommand::SetMeterMap(m))) => {
+                Some(m.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn type_meter(
+    v: &mut atomik_ui::TransportBar,
+    doc: &atomik_model::RackDoc,
+    reg: &atomik_device_sdk::Registry,
+    text: &str,
+    end: Key,
+) -> Vec<UiAction> {
+    let c = v.meter_center();
+    let mut ev = vec![down_mods(c, Modifiers::NONE, 2), up(c)];
+    ev.extend(text.chars().map(|ch| press(Key::Char(ch), Modifiers::NONE)));
+    ev.push(press(end, Modifiers::NONE));
+    run(|e| v.handle(e, doc, reg), &ev)
+}
+
+#[test]
+fn double_click_types_a_signature_and_keeps_later_changes() {
+    let (mut doc, reg) = (song_doc(), registry());
+    doc.song.meter.push(MeterEvent {
+        bar: 5,
+        num: 7,
+        den: 8,
+    });
+    let mut v = transport_bar(&doc, &reg);
+    let c = v.meter_center();
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_mods(c, Modifiers::NONE, 2), up(c)],
+    );
+    assert!(a.is_empty() && v.is_editing_meter() && !v.is_editing_tempo());
+    assert_eq!(v.meter_text(), Some("4/4"));
+    let typed: Vec<UiEvent> = "3/4"
+        .chars()
+        .map(|c| press(Key::Char(c), Modifiers::NONE))
+        .collect();
+    let a = run(|e| v.handle(e, &doc, &reg), &typed);
+    assert!(a.is_empty(), "typing is local");
+    assert_eq!(v.meter_text(), Some("3/4"));
+    let a = v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg);
+    assert_eq!(
+        meter_maps(&a),
+        vec![vec![
+            MeterEvent {
+                bar: 1,
+                num: 3,
+                den: 4
+            },
+            MeterEvent {
+                bar: 5,
+                num: 7,
+                den: 8
+            }
+        ]]
+    );
+    assert!(!v.is_editing_meter());
+}
+
+#[test]
+fn the_signature_typed_goes_to_the_change_at_the_playhead() {
+    let (mut doc, reg) = (song_doc(), registry());
+    doc.song.meter.push(MeterEvent {
+        bar: 5,
+        num: 7,
+        den: 8,
+    });
+    let mut v = transport_bar(&doc, &reg);
+    v.set_state(TransportState {
+        position: 5 * BAR,
+        ..TransportState::default()
+    });
+    let a = type_meter(&mut v, &doc, &reg, "5/16", Key::Enter);
+    let maps = meter_maps(&a);
+    assert_eq!(maps.len(), 1);
+    assert_eq!((maps[0][0].num, maps[0][0].den), (4, 4));
+    assert_eq!(
+        maps[0][1],
+        MeterEvent {
+            bar: 5,
+            num: 5,
+            den: 16
+        }
+    );
+}
+
+#[test]
+fn signature_entry_rejects_bad_values_cancels_and_ignores_no_ops() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    for bad in ["0/4", "33/4", "4/3", "4/", "/4", "//", "4/32"] {
+        let a = type_meter(&mut v, &doc, &reg, bad, Key::Enter);
+        assert!(a.is_empty(), "{bad:?}");
+        assert!(!v.is_editing_meter());
+    }
+    let a = type_meter(&mut v, &doc, &reg, "6/8", Key::Escape);
+    assert!(a.is_empty() && !v.is_editing_meter());
+    let a = type_meter(&mut v, &doc, &reg, "4/4", Key::Enter);
+    assert!(a.is_empty(), "same signature: no command");
+    // A bare number keeps the beat unit.
+    let a = type_meter(&mut v, &doc, &reg, "5", Key::Enter);
+    assert_eq!(meter_maps(&a)[0][0].num, 5);
+    assert_eq!(meter_maps(&a)[0][0].den, 4);
+    // Letters and Space are not typed and do not leak to the transport.
+    let a = type_meter(&mut v, &doc, &reg, "3x/4 ", Key::Enter);
+    assert_eq!(meter_maps(&a)[0][0].num, 3);
+}
+
+#[test]
+fn the_signature_being_typed_is_painted() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    let c = v.meter_center();
+    let _ = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down_mods(c, Modifiers::NONE, 2),
+            up(c),
+            press(Key::Char('6'), Modifiers::NONE),
+        ],
+    );
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert!(dl.texts().contains(&"6_"), "{:?}", dl.texts());
 }
 
 #[test]

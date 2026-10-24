@@ -265,6 +265,53 @@ pub(crate) enum Edit {
 }
 
 impl Edit {
+    /// Folds `next`, the next clip edit of a drag-merge group, into this one (the last undo
+    /// step of the group), so the group stays one step. A clip edit on the lane of an earlier
+    /// edit of the same clip updates it in place (a drag keeps one edit per clip, not one per
+    /// move); any other edit is appended and undone first.
+    pub(crate) fn fold_clip_edit(&mut self, next: Edit) {
+        let mut parts = match std::mem::replace(self, Edit::Compound(Vec::new())) {
+            Edit::Compound(parts) => parts,
+            one => vec![one],
+        };
+        let incoming = match next {
+            Edit::Compound(more) => more,
+            one => vec![one],
+        };
+        for edit in incoming {
+            let Edit::Clip {
+                device,
+                lane,
+                old: Some(old),
+                new,
+            } = &edit
+            else {
+                parts.push(edit);
+                continue;
+            };
+            // The latest earlier edit that touches this clip, when it left the clip on this lane.
+            let at = parts.iter().rposition(|p| match p {
+                Edit::Clip { old: o, new: n, .. } => {
+                    [o, n].into_iter().flatten().any(|c| c.id == old.id)
+                }
+                _ => false,
+            });
+            match at.map(|i| (i, &mut parts[i])) {
+                Some((
+                    _,
+                    Edit::Clip {
+                        device: d,
+                        lane: l,
+                        new: slot @ Some(_),
+                        ..
+                    },
+                )) if d == device && l == lane => slot.clone_from(new),
+                _ => parts.push(edit),
+            }
+        }
+        *self = Edit::Compound(parts);
+    }
+
     /// Adds the asset ids of the audio clips and zones this edit holds (both sides) to `out`.
     pub(crate) fn collect_assets(&self, out: &mut BTreeSet<String>) {
         let clip = |c: &Clip, out: &mut BTreeSet<String>| {

@@ -1520,7 +1520,9 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Rack, event);
                 return Vec::new();
             }
-            if self.core.transport_bar().is_editing_tempo() {
+            if self.core.transport_bar().is_editing_tempo()
+                || self.core.transport_bar().is_editing_meter()
+            {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
@@ -1890,7 +1892,9 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
-            if pane == Pane::Console && self.core.take_rack_focus_request() {
+            if matches!(pane, Pane::Console | Pane::Arrangement)
+                && self.core.take_rack_focus_request()
+            {
                 self.set_focus(Pane::Rack);
             }
             if pane == Pane::FileBrowser {

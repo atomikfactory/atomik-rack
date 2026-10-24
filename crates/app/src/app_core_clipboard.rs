@@ -512,6 +512,14 @@ impl<S: EngineSink> AppCore<S> {
                 let n = ids.iter().collect::<BTreeSet<_>>().len();
                 self.select_new_clips(pre.next_clip, n);
             }
+            WorkflowCommand::MoveClips { moves, copy, .. } => {
+                // A copy takes the selection; a move keeps it (the ids stay).
+                if *copy {
+                    self.select_new_clips(pre.next_clip, moves.len());
+                } else {
+                    self.after_view_change();
+                }
+            }
             WorkflowCommand::JoinClips { ids } => {
                 // The earliest clip keeps its id and now spans the others.
                 let song = &self.doc().song;

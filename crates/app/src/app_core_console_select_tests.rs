@@ -160,3 +160,44 @@ fn arming_by_selection_is_one_undo_step() {
     assert!(c.undo());
     assert_eq!(armed(&c), vec![second.0.clone()]);
 }
+
+/// Clicks a track header in the arrangement, as the shell forwards it.
+fn click_header(c: &mut AppCore<RecordingSink>, track: &DeviceKey) {
+    let doc = c.doc().clone();
+    c.arrangement_mut()
+        .set_bounds(Rect::new(0.0, 0.0, 1100.0, 600.0));
+    c.arrangement_mut().sync(&doc, &default_registry());
+    let p = c
+        .arrangement()
+        .track_header_center(track)
+        .expect("header shown");
+    for event in [
+        UiEvent::PointerDown {
+            pos: p,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        UiEvent::PointerUp {
+            pos: p,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        },
+    ] {
+        c.handle_pane_event(Pane::Arrangement, &event);
+    }
+}
+
+#[test]
+fn clicking_a_track_header_acts_like_clicking_its_channel_strip() {
+    let mut c = core();
+    let first = instrument(&mut c);
+    let second = instrument(&mut c);
+    assert_eq!(armed(&c), vec![second.0.clone()]);
+    click_header(&mut c, &first);
+    assert_eq!(armed(&c), vec![first.0.clone()]);
+    assert_eq!(c.view().selected(), Some(&first));
+    assert_eq!(c.console().selected_strips(), vec![channel_of(&c, &first)]);
+    assert_eq!(c.notes_target_device().map(|d| d.key.clone()), Some(first));
+    assert!(c.take_rack_focus_request(), "the keys go to the rack");
+}

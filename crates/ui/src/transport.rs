@@ -1,7 +1,8 @@
 //! The transport bar (UI): return-to-zero, stop, play, record, loop and metronome
 //! buttons, the position in bars.beats.ticks and mm:ss.mmm (through the song's tempo map),
-//! an editable tempo readout and the meter. The tempo and the meter shown are those at the
-//! playhead; typing a tempo changes the tempo event in effect there.
+//! an editable tempo readout and an editable meter readout. The tempo and the meter shown are
+//! those at the playhead; typing a tempo changes the tempo event in effect there, typing a
+//! signature (`3/4`) changes the meter change in effect there (the first one before bar 2).
 //!
 //! The app owns the transport: it passes the state in with [`TransportBar::set_state`] and
 //! maps the emitted [`TransportAction`]s to engine calls (no time source here).
@@ -14,7 +15,7 @@ use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
 use atomik_core::{TempoPoint, TempoTable};
 use atomik_device_sdk::Registry;
-use atomik_model::{Command, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
+use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
@@ -23,6 +24,8 @@ pub const TRANSPORT_HEIGHT: f64 = 44.0;
 const BUTTON_W: f64 = 34.0;
 const BUTTON_H: f64 = 26.0;
 const TEMPO_TEXT_MAX: usize = 7;
+/// `32/16`.
+const METER_TEXT_MAX: usize = 5;
 
 /// The transport state shown by the bar (owned by the app).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,11 +90,16 @@ pub struct TransportBar {
     scale: f64,
     state: TransportState,
     tempo: Vec<TempoEvent>,
+    meter: Vec<MeterEvent>,
     bars: Bars,
     loop_enabled: bool,
     editing: Option<(String, bool)>,
     /// The tempo event the typed value goes to (fixed when the entry starts).
     edit_event: usize,
+    /// The signature being typed (`3/4`) and whether the text is still the untouched original.
+    meter_editing: Option<(String, bool)>,
+    /// The meter change the typed signature goes to (fixed when the entry starts).
+    meter_edit_event: usize,
     hover: Option<TransportButton>,
     focused: bool,
     repaint: bool,
@@ -106,10 +114,17 @@ impl TransportBar {
             scale: 1.0,
             state: TransportState::default(),
             tempo: vec![TempoEvent::step(0, 120.0)],
+            meter: vec![MeterEvent {
+                bar: 1,
+                num: 4,
+                den: 4,
+            }],
             bars: Bars::default(),
             loop_enabled: false,
             editing: None,
             edit_event: 0,
+            meter_editing: None,
+            meter_edit_event: 0,
             hover: None,
             focused: false,
             repaint: true,
@@ -161,6 +176,16 @@ impl TransportBar {
         self.editing.is_some()
     }
 
+    /// True while the signature is being typed: route every key event here.
+    pub fn is_editing_meter(&self) -> bool {
+        self.meter_editing.is_some()
+    }
+
+    /// The signature text being typed.
+    pub fn meter_text(&self) -> Option<&str> {
+        self.meter_editing.as_ref().map(|(s, _)| s.as_str())
+    }
+
     /// The tempo text being typed.
     pub fn tempo_text(&self) -> Option<&str> {
         self.editing.as_ref().map(|(s, _)| s.as_str())
@@ -186,6 +211,11 @@ impl TransportBar {
         self.lcd_rects()[2].center()
     }
 
+    /// Centre of the meter readout (double-click to type a signature).
+    pub fn meter_center(&self) -> Point {
+        self.lcd_rects()[3].center()
+    }
+
     /// The position readouts: (bars.beats.ticks, mm:ss.mmm).
     pub fn position_text(&self) -> (String, String) {
         let p = self.state.position;
@@ -199,10 +229,12 @@ impl TransportBar {
     pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
         let bars = Bars::of(&doc.song);
         if self.tempo != doc.song.tempo
+            || self.meter != doc.song.meter
             || self.bars != bars
             || self.loop_enabled != doc.song.loop_enabled
         {
             self.tempo.clone_from(&doc.song.tempo);
+            self.meter.clone_from(&doc.song.meter);
             self.bars = bars;
             self.loop_enabled = doc.song.loop_enabled;
             self.repaint = true;
@@ -249,6 +281,29 @@ impl TransportBar {
         self.repaint = true;
     }
 
+    /// The index of the meter change in effect at the playhead.
+    fn meter_event_at_playhead(&self) -> usize {
+        let at = self.state.position.max(0);
+        self.bars
+            .segments()
+            .partition_point(|s| s.tick <= at)
+            .saturating_sub(1)
+    }
+
+    /// Starts typing a signature for the meter change in effect at the playhead. The text
+    /// field shows it; Enter changes that change.
+    pub fn begin_meter_edit(&mut self) {
+        self.meter_edit_event = self
+            .meter_event_at_playhead()
+            .min(self.meter.len().saturating_sub(1));
+        let (num, den) = self
+            .meter
+            .get(self.meter_edit_event)
+            .map_or((4, 4), |e| (e.num, e.den));
+        self.meter_editing = Some((format!("{num}/{den}"), true));
+        self.repaint = true;
+    }
+
     fn button_rect(&self, b: TransportButton) -> Rect {
         let i = BUTTONS.iter().position(|x| *x == b).unwrap_or(0) as f64;
         let gap = if i >= 4.0 { 14.0 } else { 0.0 };
@@ -284,6 +339,32 @@ impl TransportBar {
         Some(UiAction::Command(Command::Song(SongCommand::SetTempoMap(
             map,
         ))))
+    }
+
+    /// The command that sets the signature of meter change `event` to `text` (`3/4`, or `3`
+    /// to keep the beat unit); `None` when it does not parse, is not a valid signature or
+    /// changes nothing.
+    fn meter_cmd(&self, event: usize, text: &str) -> Option<UiAction> {
+        let (n, d) = match text.trim().split_once('/') {
+            Some((n, d)) => (n, Some(d)),
+            None => (text.trim(), None),
+        };
+        let num: u8 = n.parse().ok()?;
+        let den: u8 = match d {
+            Some(d) => d.parse().ok()?,
+            None => self.meter.get(event)?.den,
+        };
+        let map = crate::tempo_lane::set_meter(&self.meter, event, num, den)?;
+        (map != self.meter).then_some(UiAction::Command(Command::Song(SongCommand::SetMeterMap(
+            map,
+        ))))
+    }
+
+    fn commit_meter(&mut self, out: &mut Vec<UiAction>) {
+        if let Some((text, _)) = self.meter_editing.take() {
+            out.extend(self.meter_cmd(self.meter_edit_event, &text));
+        }
+        self.repaint = true;
     }
 
     fn commit(&mut self, out: &mut Vec<UiAction>) {
@@ -324,6 +405,9 @@ impl TransportBar {
                 if self.editing.is_some() {
                     self.commit(&mut out);
                 }
+                if self.meter_editing.is_some() {
+                    self.commit_meter(&mut out);
+                }
                 if let Some(b) = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos))
@@ -338,6 +422,8 @@ impl TransportBar {
                     }));
                 } else if *clicks >= 2 && self.lcd_rects()[2].contains(*pos) {
                     self.begin_tempo_edit(None);
+                } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
+                    self.begin_meter_edit();
                 }
                 self.repaint = true;
             }
@@ -362,6 +448,28 @@ impl TransportBar {
     }
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        if let Some((text, fresh)) = &mut self.meter_editing {
+            match key {
+                Key::Char(c) if c.is_ascii_digit() || *c == '/' => {
+                    if *fresh {
+                        text.clear();
+                        *fresh = false;
+                    }
+                    if text.len() < METER_TEXT_MAX {
+                        text.push(*c);
+                    }
+                }
+                Key::Backspace => {
+                    *fresh = false;
+                    text.pop();
+                }
+                Key::Enter => self.commit_meter(out),
+                Key::Escape => self.meter_editing = None,
+                _ => {}
+            }
+            self.repaint = true;
+            return;
+        }
         if let Some((text, fresh)) = &mut self.editing {
             match key {
                 Key::Char(c) if c.is_ascii_digit() || *c == '.' => {
@@ -480,10 +588,15 @@ impl TransportBar {
             .weight(600)
             .align(Align::End),
         );
-        sp::lcd(c, st, meter_r, None);
+        let meter_edit = self.meter_editing.as_ref();
+        sp::lcd(c, st, meter_r, meter_edit.map(|_| t.focus));
+        let meter_text = match meter_edit {
+            Some((s, _)) => format!("{s}_"),
+            None => self.bars.meter_at(self.state.position).label(),
+        };
         c.text(
             &TextRun::new(
-                self.bars.meter_at(self.state.position).label(),
+                meter_text,
                 pt(meter_r.center().x, meter_r.y1 - 9.0),
                 12.0,
                 lcd_text,
