@@ -51,6 +51,10 @@ fn every_session_tool_needs_an_open_session() {
         ("session_screenshot", json!({})),
         ("session_save", json!({"path": "target/tmp/never.atomik"})),
         ("session_relink", json!({"folder": "examples"})),
+        (
+            "session_midi",
+            json!({"action": "export", "file": "target/tmp/never.mid"}),
+        ),
         ("session_bounce", json!({})),
     ] {
         let r = call(&mut s, tool, args);
@@ -570,6 +574,85 @@ fn save_writes_a_project_the_stateless_tools_read_back() {
         json!({"path": std::env::temp_dir().join("atomik-mcp-x.atomik").to_string_lossy()}),
     );
     assert!(outside.is_error);
+}
+
+#[test]
+fn midi_files_export_from_one_session_and_import_into_another() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let out = tmp("demo.mid");
+    let exported = ok(
+        &mut s,
+        "session_midi",
+        json!({"action": "export", "file": out, "scope": "song"}),
+    );
+    assert!(exported["bytes"].as_u64().unwrap() > 40);
+    assert!(
+        exported["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Exported the song"),
+        "{exported}"
+    );
+    // A clip needs a selection, the song does not.
+    let clip = call(
+        &mut s,
+        "session_midi",
+        json!({"action": "export", "file": tmp("clip.mid"), "scope": "clip"}),
+    );
+    assert_eq!(
+        clip.parsed()["message"],
+        "select a note clip to export",
+        "nothing is written without a selection"
+    );
+    assert!(clip.parsed()["bytes"].is_null() || clip.parsed()["bytes"] == 0);
+    let tracks = ok(&mut s, "session_status", json!({}))["document"]["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .len();
+
+    // The starter project takes the file as a song: new tracks, tempo and markers, one undo.
+    ok(&mut s, "session_open", json!({}));
+    let imported = ok(
+        &mut s,
+        "session_midi",
+        json!({"action": "import", "file": out, "as_song": true}),
+    );
+    assert_eq!(imported["document_changed"], true);
+    assert_eq!(imported["can_undo"], true);
+    assert!(imported["tracks"].as_u64().unwrap() >= 1);
+    assert!(imported["tracks"].as_u64().unwrap() as usize <= tracks);
+    assert!(
+        imported["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Imported"),
+        "{imported}"
+    );
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    let after = ok(&mut s, "session_status", json!({}));
+    assert_eq!(
+        after["document"]["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    // Errors: a missing file, a bad action, a scope that does not exist.
+    for args in [
+        json!({"action": "import", "file": "examples/none.mid"}),
+        json!({"action": "import", "file": "README.md"}),
+        json!({"action": "sing", "file": out}),
+        json!({"action": "export", "file": out, "scope": "bar"}),
+    ] {
+        let r = call(&mut s, "session_midi", args);
+        assert!(r.is_error || r.parsed()["document_changed"] == false);
+    }
 }
 
 #[test]
