@@ -291,6 +291,7 @@ pub mod chord_edit;
 pub mod console;
 pub mod console_layout;
 pub mod console_meter;
+mod console_vca;
 pub mod container_edit;
 pub mod container_editor;
 pub mod container_panel;
@@ -354,6 +355,7 @@ pub use arrangement::{
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;
+pub use console_vca::VcaPart;
 pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
 pub use display_list::{DisplayList, Op};

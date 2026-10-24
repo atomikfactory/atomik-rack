@@ -36,6 +36,17 @@
 //! name is typed (double-click, or [`ConsoleView::begin_rename`]) the view is the one text owner
 //! ([`ConsoleView::is_text_owner`]): one buffer, Enter commits, Esc cancels, a chord is not typed.
 //!
+//! VCA groups: after the buses come the VCA strips (one slot each, [`crate::console_vca`]): a tall
+//! fader strip in the group's colour with the name, the member count, M and S (the group's mute
+//! and solo, `SetVcaMute` / `SetVcaSolo`) and the offset fader (`SetVcaLevel`, drags carry a merge
+//! id like a fader; a double-click resets to 0 dB; the wheel steps). A click on the plate selects
+//! the members, a double-click renames (`RenameVca`), a right-click opens Rename, Colour, Select
+//! members and Delete. A member's name plate shows the group's colour as a chip, its fader keeps
+//! its own position with a marker at the level it plays at, and its readout shows that level.
+//! Dragging a name plate onto a VCA strip assigns the strip (the selection, when the strip is in
+//! it) to the group; a right-click on a channel or bus plate offers New VCA, Add to VCA and Remove
+//! from VCA (`CreateVca`, `AssignToVca`).
+//!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
@@ -47,6 +58,7 @@ use crate::console_layout::{
     StripLayout,
 };
 use crate::console_meter::{ChannelMeters, GR_MAX_DB, MeterBallistics, meter_norm};
+use crate::console_vca::{self as cv, VCA_LEVEL, VcaPart, VcaView};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
@@ -183,6 +195,17 @@ pub fn fader_text(p: &ParamDescriptor, plain: f32) -> String {
     }
 }
 
+/// A level in dB as the fader readout writes it.
+fn db_text(db: f32) -> String {
+    if db == f32::NEG_INFINITY {
+        "-inf dB".into()
+    } else if db > 0.05 {
+        format!("+{db:.1} dB")
+    } else {
+        format!("{:.1} dB", db + 0.0)
+    }
+}
+
 /// Whether `device` is part of the console (a channel strip, a bus strip or the master): referenced by the
 /// document's console section, or of a console device type. Unknown types count only when
 /// referenced; known types must be [`DeviceKind::Mixer`].
@@ -213,6 +236,8 @@ enum Hit {
     Name(usize),
     /// A strip's output selector.
     OutputSel(usize),
+    /// A part of VCA strip `i`.
+    Vca(usize, VcaPart),
     Picker(usize),
     /// An insert chain slot (name or "+ add").
     Insert(Target, usize),
@@ -239,6 +264,18 @@ enum MenuItem {
     RenameBus(DeviceKey),
     /// Delete this bus.
     DeleteBus(DeviceKey),
+    /// Put the menu's strips in this VCA group, or (`None`) take them out of any.
+    AssignVca(Option<u32>),
+    /// "New VCA...": a group named after the menu's `new_vca_name` over the menu's strips.
+    NewVca,
+    /// Edit this group's name in place.
+    RenameVca(u32),
+    /// Delete this group.
+    DeleteVca(u32),
+    /// Give this group a colour (`None` clears it).
+    VcaColor(u32, Option<[u8; 3]>),
+    /// Select the members of this group in the console.
+    SelectVca(u32),
     Disabled,
 }
 
@@ -254,6 +291,10 @@ struct Menu {
     strip: Option<DeviceKey>,
     /// The name "New bus..." gives the bus.
     new_bus_name: String,
+    /// The strips a VCA entry acts on (the selection when the clicked strip is in it).
+    targets: Vec<DeviceKey>,
+    /// The name "New VCA..." gives the group.
+    new_vca_name: String,
     /// The item that is the strip's current destination (marked with a dot).
     current: Option<usize>,
     /// Menu width.
@@ -274,6 +315,8 @@ impl Menu {
             choice: None,
             strip: None,
             new_bus_name: String::new(),
+            targets: Vec::new(),
+            new_vca_name: String::new(),
             current: None,
             width: MENU_W,
             top: 0,
@@ -330,6 +373,14 @@ enum Drag {
     Pan {
         last: Point,
     },
+    /// The fader of VCA strip `index`.
+    VcaFader {
+        index: usize,
+        drag: ValueDrag,
+        merge: u64,
+        last: Point,
+        value: f32,
+    },
 }
 
 /// What a strip's cached lists depend on (besides the layout generation).
@@ -363,6 +414,10 @@ struct StripView {
     output: String,
     /// Selected in the console (outlined name plate).
     selected: bool,
+    /// The VCA group the strip is in: its colour and offset in dB.
+    vca: Option<(Color, f32)>,
+    /// The id of that group.
+    vca_id: Option<u32>,
     cache_id: u64,
     revision: u64,
     sig: Option<Sig>,
@@ -384,6 +439,8 @@ impl StripView {
             caption: String::new(),
             output: String::new(),
             selected: false,
+            vca: None,
+            vca_id: None,
             cache_id,
             revision: 0,
             sig: None,
@@ -482,6 +539,8 @@ struct RenameState {
     target: DeviceKey,
     /// A bus (`RenameBus`) rather than a channel (`Rename` of the device).
     bus: bool,
+    /// A VCA group (`RenameVca`); `strip` and `target` are then empty.
+    vca: Option<u32>,
     text: String,
 }
 
@@ -499,6 +558,8 @@ pub struct ConsoleView {
     strips: Vec<StripView>,
     n_channels: usize,
     master: Option<StripView>,
+    /// The VCA strips, in group order, after the buses.
+    vcas: Vec<VcaView>,
     return_names: Vec<String>,
     layouts: Vec<(&'static str, StripLayout)>,
     master_layout: Option<MasterLayout>,
@@ -544,6 +605,7 @@ impl ConsoleView {
             strips: Vec::new(),
             n_channels: 0,
             master: None,
+            vcas: Vec::new(),
             return_names: Vec::new(),
             layouts: Vec::new(),
             master_layout: None,
@@ -861,6 +923,38 @@ impl ConsoleView {
         self.repaint = true;
     }
 
+    /// The ids of the VCA groups shown, in strip order (after the buses).
+    pub fn vca_ids(&self) -> Vec<u32> {
+        self.vcas.iter().map(|v| v.id).collect()
+    }
+
+    /// The rectangle of the strip of VCA group `id` (logical window coordinates).
+    pub fn vca_rect(&self, id: u32) -> Option<Rect> {
+        let i = self.vcas.iter().position(|v| v.id == id)?;
+        let x = self.vca_x(i);
+        Some(Rect::new(
+            x,
+            self.area_top(),
+            x + STRIP_W,
+            self.area_top() + self.area_height(),
+        ))
+    }
+
+    /// The centre of a part of the strip of VCA group `id`, if a click there reaches it.
+    pub fn vca_center(&self, id: u32, part: VcaPart) -> Option<Point> {
+        let i = self.vcas.iter().position(|v| v.id == id)?;
+        let l = cv::vca_layout(self.area_height());
+        let r = match part {
+            VcaPart::Plate => l.plate,
+            VcaPart::Mute => l.mute,
+            VcaPart::Solo => l.solo,
+            VcaPart::Readout => l.lcd,
+            VcaPart::Fader => l.fader,
+        };
+        let p = r.center() + Vec2::new(self.vca_x(i), self.area_top());
+        (self.hit(p) == Hit::Vca(i, part)).then_some(p)
+    }
+
     /// Whether a channel is silenced by another channel's solo.
     pub fn solo_silenced(&self, channel: &DeviceKey) -> bool {
         self.strips
@@ -911,6 +1005,19 @@ impl ConsoleView {
         self.slot_x(self.slot(i))
     }
 
+    /// Left edge of VCA strip `v`: the VCA strips follow the buses, one slot each.
+    fn vca_x(&self, v: usize) -> f64 {
+        self.slot_x(self.strips.len() + 1 + v)
+    }
+
+    /// The VCA strip under window x `x`.
+    fn vca_at_x(&self, x: f64) -> Option<usize> {
+        (0..self.vcas.len()).find(|v| {
+            let sx = self.vca_x(*v);
+            x >= sx && x < sx + STRIP_W
+        })
+    }
+
     /// x just right of the last strip.
     fn strips_end_x(&self) -> f64 {
         self.slot_x(self.strips.len() + usize::from(self.strips.len() > self.n_channels))
@@ -926,7 +1033,7 @@ impl ConsoleView {
     }
 
     fn content_width(&self) -> f64 {
-        LEFT_PAD * 2.0 + (self.strips.len() + 1) as f64 * (STRIP_W + STRIP_GAP)
+        LEFT_PAD * 2.0 + (self.strips.len() + 1 + self.vcas.len()) as f64 * (STRIP_W + STRIP_GAP)
     }
 
     /// The "add channel" placeholder after the last strip.
@@ -1260,6 +1367,12 @@ impl ConsoleView {
         if self.placeholder_rect().contains(p) {
             return Hit::Button(ConsoleButton::AddChannel);
         }
+        if let Some(v) = self.vca_at_x(p.x) {
+            let lp = Point::new(p.x - self.vca_x(v), p.y - top);
+            return cv::vca_layout(self.area_height())
+                .part(lp)
+                .map_or(Hit::Empty, |part| Hit::Vca(v, part));
+        }
         for (i, s) in self.strips.iter().enumerate() {
             let x = self.strip_x(i);
             if p.x < x || p.x >= x + STRIP_W {
@@ -1384,13 +1497,32 @@ impl ConsoleView {
             if self
                 .rename
                 .as_ref()
-                .is_some_and(|r| !order.contains(&&r.strip))
+                .is_some_and(|r| r.vca.is_none() && !order.contains(&&r.strip))
             {
                 self.rename = None;
             }
             self.drag = Drag::None;
             self.focus = None;
             self.rename = None;
+            self.repaint = true;
+        }
+        // The VCA strips (one per group), and the strip a rename or selection named going away.
+        let neutral = self.st.base.text_muted;
+        let vcas: Vec<VcaView> = console
+            .vcas
+            .iter()
+            .map(|g| VcaView::of(g, neutral))
+            .collect();
+        if vcas != self.vcas {
+            self.vcas = vcas;
+            if self
+                .rename
+                .as_ref()
+                .and_then(|r| r.vca)
+                .is_some_and(|id| !self.vcas.iter().any(|v| v.id == id))
+            {
+                self.rename = None;
+            }
             self.repaint = true;
         }
         let generation = self.generation;
@@ -1417,6 +1549,10 @@ impl ConsoleView {
                 s.caption = format!("BUS {}", i - n_channels + 1);
             }
             s.output = output_label(doc, &key);
+            s.vca_id = console.vca_of(&key).map(|g| g.id);
+            s.vca = console
+                .vca_of(&key)
+                .map(|g| (g.color.map_or(neutral, cv::color_of), g.level_db));
             s.selected = self.selection.contains(&key);
             s.latency = self.latencies.get(&key).copied();
             s.device = device;
@@ -1426,6 +1562,7 @@ impl ConsoleView {
                 s.caption.clone(),
                 s.output.clone(),
                 format!("{}", s.selected),
+                format!("{:?}", s.vca),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -1654,6 +1791,12 @@ impl ConsoleView {
             if editing.is_some() && hit == Hit::Name(editing.unwrap_or(0)) {
                 return;
             }
+            let group = r
+                .vca
+                .and_then(|id| self.vcas.iter().position(|v| v.id == id));
+            if group.is_some_and(|g| hit == Hit::Vca(g, VcaPart::Plate)) {
+                return;
+            }
             self.finish_rename(true, out);
         }
         if button == PointerButton::Middle {
@@ -1679,9 +1822,9 @@ impl ConsoleView {
                     x: pos.x,
                 };
             }
-            (Hit::Name(i), PointerButton::Secondary) if i >= self.n_channels => {
-                self.open_bus_menu(i, pos);
-            }
+            (Hit::Name(i), PointerButton::Secondary) => self.open_strip_menu(i, pos, doc),
+            (Hit::Vca(i, VcaPart::Plate), PointerButton::Secondary) => self.open_vca_menu(i, pos),
+            (Hit::Vca(i, part), PointerButton::Primary) => self.vca_down(i, part, clicks, out),
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
             (Hit::Insert(t, slot), PointerButton::Primary) => {
                 self.insert_click(t, slot, pos, doc, registry, out)
@@ -1904,6 +2047,7 @@ impl ConsoleView {
             (m.slot, m.insert.clone(), m.choice.clone(), m.strip.clone());
         let is_current = m.current == Some(m.top + i);
         let new_bus_name = m.new_bus_name.clone();
+        let (targets, new_vca_name) = (m.targets.clone(), m.new_vca_name.clone());
         if let (MenuItem::Choice(value), Some((key, param))) = (&item, &choice) {
             out.push(UiAction::Command(Command::SetParam {
                 key: key.clone(),
@@ -1937,6 +2081,31 @@ impl ConsoleView {
                 return;
             }
             (MenuItem::DeleteBus(bus), _) => ConsoleCommand::DeleteBus { bus: bus.clone() },
+            (MenuItem::AssignVca(vca), _) => ConsoleCommand::AssignToVca {
+                vca: *vca,
+                strips: targets,
+            },
+            (MenuItem::NewVca, _) => ConsoleCommand::CreateVca {
+                name: new_vca_name,
+                members: targets,
+            },
+            (MenuItem::RenameVca(id), _) => {
+                if let Some(i) = self.vcas.iter().position(|v| v.id == *id) {
+                    self.menu = None;
+                    self.begin_rename_vca(i);
+                }
+                return;
+            }
+            (MenuItem::DeleteVca(id), _) => ConsoleCommand::DeleteVca { vca: *id },
+            (MenuItem::VcaColor(id, color), _) => ConsoleCommand::SetVcaColor {
+                vca: *id,
+                color: *color,
+            },
+            (MenuItem::SelectVca(id), _) => {
+                self.menu = None;
+                self.select_vca_members(*id);
+                return;
+            }
             (MenuItem::NewEffect(t), _) if insert.is_some() => {
                 let (channel, slot) = insert.expect("checked");
                 ConsoleCommand::SetInsert {
@@ -1963,15 +2132,134 @@ impl ConsoleView {
         out.push(UiAction::Command(Command::Console(cmd)));
     }
 
-    /// The right-click menu of a bus name plate.
-    fn open_bus_menu(&mut self, i: usize, pos: Point) {
+    /// The right-click menu of a strip's name plate: a bus has Rename and Delete bus first; every
+    /// strip has the VCA entries, acting on the selection when the strip is in it (New VCA, Add to
+    /// each group that would take a strip, Remove from VCA when one is in a group).
+    fn open_strip_menu(&mut self, i: usize, pos: Point, doc: &RackDoc) {
         let key = self.strips[i].key.clone();
-        let items = vec![
-            ("Rename".to_string(), MenuItem::RenameBus(key.clone())),
-            ("Delete bus".to_string(), MenuItem::DeleteBus(key)),
+        let targets: Vec<DeviceKey> = if self.selection.contains(&key) {
+            self.selected_strips()
+        } else {
+            vec![key.clone()]
+        };
+        let mut items: Vec<(String, MenuItem)> = Vec::new();
+        if i >= self.n_channels {
+            items.push(("Rename".to_string(), MenuItem::RenameBus(key.clone())));
+            items.push(("Delete bus".to_string(), MenuItem::DeleteBus(key)));
+        }
+        items.push(("New VCA...".to_string(), MenuItem::NewVca));
+        for g in &doc.console.vcas {
+            if targets.iter().any(|t| !g.members.contains(t)) {
+                items.push((
+                    format!("Add to VCA {}", g.name),
+                    MenuItem::AssignVca(Some(g.id)),
+                ));
+            }
+        }
+        if targets.iter().any(|t| doc.console.vca_of(t).is_some()) {
+            items.push(("Remove from VCA".to_string(), MenuItem::AssignVca(None)));
+        }
+        let origin = self.menu_origin(pos, items.len());
+        self.menu = Some(Menu {
+            targets,
+            new_vca_name: doc.console.default_vca_name(),
+            ..Menu::plain(items, origin)
+        });
+    }
+
+    /// The right-click menu of a VCA plate.
+    fn open_vca_menu(&mut self, i: usize, pos: Point) {
+        let Some(id) = self.vcas.get(i).map(|v| v.id) else {
+            return;
+        };
+        let mut items: Vec<(String, MenuItem)> = vec![
+            ("Rename".to_string(), MenuItem::RenameVca(id)),
+            ("Select members".to_string(), MenuItem::SelectVca(id)),
         ];
+        for (name, color) in crate::marker_edit::PALETTE {
+            items.push((
+                format!("Colour: {name}"),
+                MenuItem::VcaColor(id, Some(color)),
+            ));
+        }
+        items.push(("Colour: none".to_string(), MenuItem::VcaColor(id, None)));
+        items.push(("Delete VCA".to_string(), MenuItem::DeleteVca(id)));
         let origin = self.menu_origin(pos, items.len());
         self.menu = Some(Menu::plain(items, origin));
+    }
+
+    /// A press on a part of VCA strip `i`.
+    fn vca_down(&mut self, i: usize, part: VcaPart, clicks: u8, out: &mut Vec<UiAction>) {
+        let Some(v) = self.vcas.get(i) else { return };
+        let (id, level) = (v.id, v.level_db);
+        let console = |c: ConsoleCommand| UiAction::Command(Command::Console(c));
+        match part {
+            VcaPart::Plate => {
+                if clicks >= 2 {
+                    self.begin_rename_vca(i);
+                } else {
+                    self.select_vca_members(id);
+                }
+            }
+            VcaPart::Mute => out.push(console(ConsoleCommand::SetVcaMute {
+                vca: id,
+                on: !v.mute,
+            })),
+            VcaPart::Solo => out.push(console(ConsoleCommand::SetVcaSolo {
+                vca: id,
+                on: !v.solo,
+            })),
+            VcaPart::Readout | VcaPart::Fader if clicks >= 2 => {
+                if level != 0.0 {
+                    out.push(console(ConsoleCommand::SetVcaLevel {
+                        vca: id,
+                        db: 0.0,
+                        merge: None,
+                    }));
+                }
+            }
+            VcaPart::Readout => {}
+            VcaPart::Fader => {
+                let ppr = (cv::vca_layout(self.area_height()).fader.height() - 16.0).max(20.0);
+                let merge = self.next_merge;
+                self.next_merge += 1;
+                self.drag = Drag::VcaFader {
+                    index: i,
+                    drag: ValueDrag::new(&VCA_LEVEL, level, ppr),
+                    merge,
+                    last: self.pointer,
+                    value: level,
+                };
+            }
+        }
+    }
+
+    /// Selects the member strips of group `id` (view state, like a click on a plate).
+    fn select_vca_members(&mut self, id: u32) {
+        let members: BTreeSet<DeviceKey> = self
+            .strips
+            .iter()
+            .filter(|s| s.vca_id == Some(id))
+            .map(|s| s.key.clone())
+            .collect();
+        self.anchor = members.iter().next().cloned();
+        self.selection = members;
+        self.mark_selection();
+    }
+
+    /// Starts editing the name of VCA strip `i` in place.
+    fn begin_rename_vca(&mut self, i: usize) {
+        let Some(v) = self.vcas.get(i) else { return };
+        self.rename = Some(RenameState {
+            strip: DeviceKey(String::new()),
+            target: DeviceKey(String::new()),
+            bus: false,
+            vca: Some(v.id),
+            text: v.name.clone(),
+        });
+        self.drag = Drag::None;
+        self.menu = None;
+        self.repaint = true;
     }
 
     /// The output selector of strip `i`: Master, each bus that would not loop, the Audio I/O
@@ -2065,6 +2353,7 @@ impl ConsoleView {
             strip: s.key.clone(),
             target: s.name_device.clone(),
             bus: i >= self.n_channels,
+            vca: None,
             text: s.name.clone(),
         });
         self.drag = Drag::None;
@@ -2082,6 +2371,22 @@ impl ConsoleView {
             return;
         }
         let name = r.text.trim();
+        if let Some(id) = r.vca {
+            let current = self
+                .vcas
+                .iter()
+                .find(|v| v.id == id)
+                .map(|v| v.name.as_str());
+            if !name.is_empty() && current.is_some_and(|c| c != name) {
+                out.push(UiAction::Command(Command::Console(
+                    ConsoleCommand::RenameVca {
+                        vca: id,
+                        name: name.to_string(),
+                    },
+                )));
+            }
+            return;
+        }
         let current = self
             .strips
             .iter()
@@ -2255,6 +2560,36 @@ impl ConsoleView {
                 self.clamp_scroll();
                 self.repaint = true;
             }
+            Drag::VcaFader {
+                index,
+                mut drag,
+                merge,
+                last,
+                value,
+            } => {
+                let Some(v) = self.vcas.get(index) else {
+                    return;
+                };
+                let id = v.id;
+                let new = drag.update(&VCA_LEVEL, last.y - pos.y, modifiers.shift);
+                if new.to_bits() != value.to_bits() {
+                    out.push(UiAction::Command(Command::Console(
+                        ConsoleCommand::SetVcaLevel {
+                            vca: id,
+                            db: new,
+                            merge: Some(merge),
+                        },
+                    )));
+                }
+                self.drag = Drag::VcaFader {
+                    index,
+                    drag,
+                    merge,
+                    last: pos,
+                    value: new,
+                };
+                self.repaint = true;
+            }
             Drag::None => {
                 if let Some(m) = &mut self.menu {
                     let hover =
@@ -2271,8 +2606,33 @@ impl ConsoleView {
     fn pointer_up(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         self.pointer = pos;
         match std::mem::replace(&mut self.drag, Drag::None) {
-            Drag::Value { .. } => out.push(UiAction::EndMerge),
+            Drag::Value { .. } | Drag::VcaFader { .. } => out.push(UiAction::EndMerge),
             Drag::Move { strip, start_x, x } if (x - start_x).abs() > MOVE_THRESHOLD => {
+                // Dropped on a VCA strip: the strip (the selection, when it is in it) joins the
+                // group, unless all of them are in it already.
+                if let Some(v) = self.vca_at_x(x) {
+                    let key = self.strips[strip].key.clone();
+                    let strips = if self.selection.contains(&key) {
+                        self.selected_strips()
+                    } else {
+                        vec![key]
+                    };
+                    let id = self.vcas[v].id;
+                    if strips.iter().any(|k| {
+                        self.strips
+                            .iter()
+                            .any(|s| &s.key == k && s.vca_id != Some(id))
+                    }) {
+                        out.push(UiAction::Command(Command::Console(
+                            ConsoleCommand::AssignToVca {
+                                vca: Some(id),
+                                strips,
+                            },
+                        )));
+                    }
+                    self.repaint = true;
+                    return;
+                }
                 // Channels move among the channels, buses among the buses.
                 let to = self.drop_index(strip, x);
                 let command = if strip < self.n_channels {
@@ -2340,6 +2700,24 @@ impl ConsoleView {
             && !modifiers.command()
         {
             out.extend(self.step(t, c, delta.y.signum(), modifiers.shift));
+            return;
+        }
+        if matches!(self.drag, Drag::None)
+            && let Hit::Vca(i, VcaPart::Fader | VcaPart::Readout) = hit
+            && !modifiers.command()
+            && let Some(v) = self.vcas.get(i)
+        {
+            let next =
+                widget::wheel_value(&VCA_LEVEL, v.level_db, delta.y.signum(), modifiers.shift);
+            if next.to_bits() != v.level_db.to_bits() {
+                out.push(UiAction::Command(Command::Console(
+                    ConsoleCommand::SetVcaLevel {
+                        vca: v.id,
+                        db: next,
+                        merge: None,
+                    },
+                )));
+            }
             return;
         }
         let horizontal = modifiers.shift || delta.x.abs() > delta.y.abs();
@@ -2663,8 +3041,45 @@ impl ConsoleView {
             );
             sp::line(c, x0, y - 0.5, x1, y - 0.5, t.bevel_dark);
         }
+        for (i, v) in self.vcas.iter().enumerate() {
+            let x = self.vca_x(i);
+            if x + STRIP_W < sr.x0 || x > sr.x1 {
+                continue;
+            }
+            let dropping = matches!(&self.drag, Drag::Move { start_x, x: mx, .. }
+                if (mx - start_x).abs() > MOVE_THRESHOLD && self.vca_at_x(*mx) == Some(i));
+            let members_selected = v.members > 0
+                && self
+                    .strips
+                    .iter()
+                    .filter(|s| s.vca_id == Some(v.id))
+                    .count()
+                    == v.members
+                && self
+                    .strips
+                    .iter()
+                    .filter(|s| s.vca_id == Some(v.id))
+                    .all(|s| s.selected);
+            let rename = self
+                .rename
+                .as_ref()
+                .filter(|r| r.vca == Some(v.id))
+                .map(|r| r.text.as_str());
+            cv::paint_strip(
+                c,
+                &self.st,
+                x,
+                sr.y0,
+                sr.height(),
+                v,
+                rename,
+                dropping,
+                members_selected,
+            );
+        }
         if let Drag::Move { strip, start_x, x } = &self.drag
             && (x - start_x).abs() > MOVE_THRESHOLD
+            && self.vca_at_x(*x).is_none()
         {
             let sx = self.strip_x(*strip);
             sp::rect(
@@ -2934,7 +3349,7 @@ fn v_scrollbar(
     );
 }
 
-fn strip_background(c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
+pub(crate) fn strip_background(c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
     let t = &st.base;
     c.fill(
         &r.into(),
@@ -2948,7 +3363,7 @@ fn strip_background(c: &mut dyn Canvas, st: &SeqTheme, r: Rect) {
 }
 
 /// A small latching button: label inside, lit with `lit` when active, dimmed when disabled.
-fn small_button(
+pub(crate) fn small_button(
     c: &mut dyn Canvas,
     st: &SeqTheme,
     r: Rect,
@@ -2995,7 +3410,14 @@ fn small_button(
     );
 }
 
-fn lcd_text(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, text: &str, color: Color, size: f32) {
+pub(crate) fn lcd_text(
+    c: &mut dyn Canvas,
+    st: &SeqTheme,
+    r: Rect,
+    text: &str,
+    color: Color,
+    size: f32,
+) {
     sp::lcd(c, st, r, None);
     let text = fit_label(text, r.width() - 6.0, size);
     c.text(
@@ -3176,7 +3598,14 @@ fn control(
     }
 }
 
-fn fader(c: &mut dyn Canvas, st: &SeqTheme, r: Rect, p: &ParamDescriptor, v: f32, accent: Color) {
+pub(crate) fn fader(
+    c: &mut dyn Canvas,
+    st: &SeqTheme,
+    r: Rect,
+    p: &ParamDescriptor,
+    v: f32,
+    accent: Color,
+) {
     let t = &st.base;
     let x = r.x0 + 13.0;
     let (top, bottom) = (r.y0 + 8.0, r.y1 - 8.0);
@@ -3400,9 +3829,30 @@ fn record_strip(
             let hollow = (pc.param == "mute" && s.silenced)
                 || (pc.kind == CtrlKind::Slider && !send_on(s, pc.param));
             control(c, st, pc, p, v, s.accent, enabled, hollow);
+            // A member of a VCA keeps its own fader position; a marker shows where it plays.
+            if let (CtrlKind::Fader, Some((color, db))) = (pc.kind, s.vca)
+                && db != 0.0
+                && pc.param == "fader"
+            {
+                let pos = cv::pos_for_db(cv::effective_db(v, db));
+                cv::effective_marker(c, pc.rect, f64::from(pos), color);
+            }
         }
         if let (Some(r), Some(p)) = (l.fader_lcd, desc.param_by_key("fader")) {
-            lcd_text(pinned, st, r, &fader_text(p, s.value(p)), t.text, 7.5);
+            match s.vca {
+                Some((color, db)) if db != 0.0 => {
+                    let eff = cv::effective_db(s.value(p), db);
+                    lcd_text(
+                        pinned,
+                        st,
+                        r,
+                        &db_text(eff),
+                        mix(color, Color::WHITE, 0.35),
+                        7.5,
+                    );
+                }
+                _ => lcd_text(pinned, st, r, &fader_text(p, s.value(p)), t.text, 7.5),
+            }
         }
     }
     record_inserts(upper, st, &l.insert_slots, &s.inserts, s.accent);
@@ -3418,6 +3868,9 @@ fn record_strip(
     name_plate(
         pinned, st, l.name, &s.name, &s.caption, s.accent, s.silenced, s.selected,
     );
+    if let Some((color, _)) = s.vca {
+        cv::chip(pinned, l.name, color);
+    }
     // Latency by the name plate, only when there is some.
     if let (Some(r), Some(n)) = (l.latency, s.latency.filter(|n| *n > 0)) {
         pinned.text(

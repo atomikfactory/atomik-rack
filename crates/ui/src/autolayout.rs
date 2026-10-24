@@ -341,6 +341,10 @@ fn front_groups(desc: &DeviceDescriptor) -> Vec<Group> {
         if strip_bypass && p.key == BYPASS_KEY {
             continue;
         }
+        // `internal.*` params are set by the app (solo silence, the VCA feed), never by hand.
+        if atomik_model::console::is_internal_param(p.key) {
+            continue;
+        }
         let prefix = group_prefix(p.key);
         let (w, h) = cell_size(choose_widget(p));
         let item = (i, w, h);
