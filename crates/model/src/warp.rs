@@ -611,7 +611,11 @@ pub fn quantize_audio(
 /// clips and hidden spans leave none), keyed by [`WarpJob::key`] (equal jobs share one entry).
 pub fn warp_jobs(doc: &crate::RackDoc) -> BTreeMap<u64, WarpJob> {
     let mut out = BTreeMap::new();
+    // A frozen track plays its render, whatever its own clips would warp.
     for track in crate::song::effective_tracks(&doc.song) {
+        if track.frozen.is_some() {
+            continue;
+        }
         for region in crate::song::flatten_audio(track, &doc.song, doc.sample_rate) {
             if let Some(job) = region.warp {
                 out.insert(job.key(), (*job).clone());

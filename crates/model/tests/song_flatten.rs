@@ -24,6 +24,7 @@ fn track(note_clips: Vec<Clip>, auto: Vec<Clip>) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        frozen: None,
         lanes: vec![
             Lane {
                 kind: LaneKind::Notes,
@@ -433,6 +434,7 @@ fn flags(k: &str, muted: bool, solo: bool) -> Track {
         solo,
         armed: false,
         chase: true,
+        frozen: None,
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips: vec![],

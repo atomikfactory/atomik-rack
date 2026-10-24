@@ -56,6 +56,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        frozen: None,
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips: Vec::new(),
@@ -72,6 +73,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        frozen: None,
         lanes: vec![Lane {
             kind: LaneKind::Audio,
             clips: Vec::new(),
@@ -288,14 +290,14 @@ fn check_audio_shape(offset: i64, loop_length: Option<i64>) -> Result<(), ModelE
 }
 
 /// The audio lane of `device`'s track.
-fn audio_lane(doc: &RackDoc, device: &DeviceKey) -> Result<usize, ModelError> {
+pub(crate) fn audio_lane(doc: &RackDoc, device: &DeviceKey) -> Result<usize, ModelError> {
     doc.song.tracks[track_index(doc, device)?]
         .audio_lane()
         .ok_or_else(|| bad(format!("{device} is not an audio track")))
 }
 
 /// Plans `AddAudioTrack` (see the command docs).
-fn add_audio_track(
+pub(crate) fn add_audio_track(
     doc: &RackDoc,
     registry: &Registry,
     name: Option<String>,
@@ -516,7 +518,10 @@ pub(crate) fn check_end(end: i64) -> Result<(), String> {
 }
 
 /// The clip `id` with its track's device and lane index.
-fn find_clip(doc: &RackDoc, id: ClipId) -> Result<(DeviceKey, usize, &Clip), ModelError> {
+pub(crate) fn find_clip(
+    doc: &RackDoc,
+    id: ClipId,
+) -> Result<(DeviceKey, usize, &Clip), ModelError> {
     doc.song
         .clip(id)
         .map(|(t, lane, c)| (t.device.clone(), lane, c))
@@ -569,7 +574,7 @@ pub(crate) fn check_new_clip(
 }
 
 /// An insertion of `clip` under a freshly allocated id, plus the id bump.
-fn insert_new(
+pub(crate) fn insert_new(
     doc: &RackDoc,
     device: DeviceKey,
     lane: usize,
@@ -1075,6 +1080,44 @@ pub(crate) fn plan(
                 content: ClipContent::Audio(content),
             };
             let (edit, id) = insert_new(doc, device, lane, clip)?;
+            return Ok((edit, Some(id)));
+        }
+        SongCommand::FreezeTrack { device, frozen } => {
+            crate::freeze::plan_freeze(doc, registry, &device, frozen)?
+        }
+        SongCommand::UnfreezeTrack { device, keep_audio } => {
+            let unfreeze = crate::freeze::plan_unfreeze(doc, &device)?;
+            if !keep_audio {
+                unfreeze
+            } else {
+                let Edit::Frozen { old: Some(f), .. } = &unfreeze else {
+                    return Err(bad(format!("{device} is not frozen")));
+                };
+                let name = format!("{} (frozen)", rules::device(doc, &device)?.name);
+                let (add, id) = crate::freeze::plan_rendered_track(
+                    doc,
+                    registry,
+                    Some(name),
+                    (f.start, f.length, f.audio.clone()),
+                    &[],
+                )?;
+                return Ok((Edit::Compound(vec![unfreeze, add]), Some(id)));
+            }
+        }
+        SongCommand::AddRenderedTrack {
+            name,
+            start,
+            length,
+            audio,
+            mute,
+        } => {
+            let (edit, id) = crate::freeze::plan_rendered_track(
+                doc,
+                registry,
+                name,
+                (start, length, audio),
+                &mute,
+            )?;
             return Ok((edit, Some(id)));
         }
         SongCommand::SetAudioClip {

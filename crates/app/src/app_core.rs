@@ -971,6 +971,7 @@ impl<S: EngineSink> AppCore<S> {
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),
                 SyncOp::SongChanged => stale.0 = true,
+                SyncOp::FrozenChanged => {}
                 // A sampler inserted by this edit already got its map after the insert.
                 SyncOp::ZonesChanged(key) => {
                     if !inserted.contains(key) {

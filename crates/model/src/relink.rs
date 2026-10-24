@@ -25,6 +25,22 @@ pub(crate) fn plan(doc: &RackDoc, from: &str, to: &str) -> Result<Edit, ModelErr
         .ok_or_else(|| bad(format!("asset {to} is not in the pool (register it first)")))?;
     let mut edits = Vec::new();
     for track in &doc.song.tracks {
+        // The render of a frozen track.
+        if let Some(f) = track.frozen.as_ref().filter(|f| f.audio.asset == from) {
+            if f.audio.source_offset > target.frames {
+                return Err(bad(format!(
+                    "a frozen render starts {} frames into the asset but the replacement has {}",
+                    f.audio.source_offset, target.frames
+                )));
+            }
+            let mut new = f.clone();
+            new.audio.asset = to.to_owned();
+            edits.push(Edit::Frozen {
+                device: track.device.clone(),
+                old: Some(f.clone()),
+                new: Some(new),
+            });
+        }
         for (lane_index, lane) in track.lanes.iter().enumerate() {
             for clip in &lane.clips {
                 let ClipContent::Audio(a) = &clip.content else {
