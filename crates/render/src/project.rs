@@ -37,15 +37,17 @@ use atomik_device_sdk::{
 };
 use atomik_engine::{
     AssetId, DeviceInstanceId, EngineOptions, HotEdit, OfflineJob, SongAsset, SongAudioRegion,
-    SongAudioTrack, SongAutomation, SongCurve, SongFadeCurve, SongInput, SongNote, SongPoint,
-    SongSnapshot, SongTempo, SongTrack, TimedEdit, TransportCommand, WorkerConfig, compile_song,
-    new_engine_with_options,
+    SongAudioTrack, SongAutomation, SongController, SongControllerKind, SongCurve, SongFadeCurve,
+    SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
+    TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
 };
 use atomik_model::console::SOLO_SILENCE_PARAM;
-use atomik_model::song::{effective_tracks, flatten_audio, flatten_automation, flatten_notes};
+use atomik_model::song::{
+    effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_notes,
+};
 use atomik_model::{
-    AutomationPoint, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind, PROJECT_FORMAT, RackDoc,
-    expand_macro_lane, load_project,
+    AutomationPoint, ControllerKind, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind,
+    PROJECT_FORMAT, RackDoc, expand_macro_lane, load_project,
 };
 use atomik_plugin_host::InstantiateRequest;
 use std::collections::BTreeMap;
@@ -164,6 +166,7 @@ fn push_macro_lane(
             chase: true,
             notes: Vec::new(),
             automation: vec![lane],
+            controllers: Vec::new(),
         }),
     }
 }
@@ -266,12 +269,28 @@ pub fn song_input_with_assets(
                 .collect();
             automation.push(SongAutomation { param, points });
         }
+        let controllers = flatten_controllers(track)
+            .into_iter()
+            .map(|(kind, points)| SongController {
+                kind: match kind {
+                    ControllerKind::PitchBend => SongControllerKind::PitchBend,
+                    ControllerKind::ChannelPressure => SongControllerKind::ChannelPressure,
+                    ControllerKind::Cc(n) => SongControllerKind::Cc(n),
+                    ControllerKind::PolyPressure(k) => SongControllerKind::PolyPressure(k),
+                },
+                points: points
+                    .into_iter()
+                    .map(|(tick, value, curve)| song_point(tick, value, curve))
+                    .collect(),
+            })
+            .collect();
         tracks.push(SongTrack {
             device,
             notes_socket,
             chase: track.chase,
             notes,
             automation,
+            controllers,
         });
     }
     tracks.extend(macro_tracks);
@@ -841,6 +860,34 @@ mod tests {
         assert_eq!(chase(&doc), [true, true], "tracks chase by default");
         doc.song.tracks[1].chase = false;
         assert_eq!(chase(&doc), [true, false]);
+    }
+
+    #[test]
+    fn song_input_maps_controller_lanes_to_the_track() {
+        use atomik_model::{ControllerKind, ControllerLane};
+        let mut doc = doc();
+        let r = registry();
+        let ids = expanded_ids(&doc.expand(&r));
+        let point = |tick, value, curve| AutomationPoint { tick, value, curve };
+        doc.song.tracks[0].lanes[0].clips[0].controllers = vec![
+            ControllerLane::new(
+                ControllerKind::PitchBend,
+                vec![point(0, -0.5, Curve::Linear), point(PPQ, 0.5, Curve::Step)],
+            ),
+            ControllerLane::new(ControllerKind::Cc(1), vec![point(100, 1.0, Curve::Step)]),
+        ];
+        let input = song_input(&doc, &r, |k| ids.get(k).copied());
+        let lanes = &input.tracks[0].controllers;
+        assert_eq!(lanes.len(), 2);
+        assert_eq!(lanes[0].kind, SongControllerKind::PitchBend);
+        assert_eq!(lanes[1].kind, SongControllerKind::Cc(1));
+        // The clip starts at PPQ: the points are in song ticks, curves mapped.
+        let ticks: Vec<i64> = lanes[0].points.iter().map(|p| p.tick.0).collect();
+        assert_eq!(ticks, [PPQ, 2 * PPQ]);
+        assert_eq!(lanes[0].points[0].curve, SongCurve::Linear);
+        assert_eq!(lanes[1].points[0].tick, Ticks(PPQ + 100));
+        assert!(input.tracks[1].controllers.is_empty());
+        assert!(compile_song(&input).is_ok());
     }
 
     #[test]

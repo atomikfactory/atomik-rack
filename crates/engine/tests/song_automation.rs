@@ -71,6 +71,7 @@ fn ac_s4_automation_matches_the_curve_at_every_batch_start() {
         notes_socket: ParamLog::NOTES_IN,
         chase: true,
         notes: Vec::new(),
+        controllers: Vec::new(),
         automation: vec![
             SongAutomation {
                 param: ParamLog::A,

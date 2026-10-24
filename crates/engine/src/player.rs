@@ -42,6 +42,13 @@
 //!   compared through `F`, so the index holds ticks and survives any tempo map or sample rate.
 //!   A snapshot swap never chases: notes that newly cover the position (an edit under the
 //!   playhead) are not started.
+//! * **Controllers.** A track's pitch bend, aftertouch and CC lanes are expanded at compile time
+//!   into discrete events (`controllers.rs`) that sit in the track's event list: the walk sends
+//!   them at their frame like notes, with no state of its own. A seek also restores each lane's
+//!   value at the position (the last event strictly before it; before the first event zero for
+//!   pitch bend, aftertouch and the sustain pedal, nothing for other CCs), on every track whether
+//!   it chases notes or not, and Stop and a Locate while playing return those resetting lanes to
+//!   zero right after the `AllOff`.
 //! * **Merge order.** Song events are generated per segment in track order, then sorted by
 //!   (offset, generation order). The engine merges them with the scheduled and live queues by
 //!   frame; on equal frames: song, then scheduled, then live.
@@ -258,11 +265,16 @@ impl Emitter<'_> {
         }
     }
 
-    /// `AllOff` to every track input at offset 0.
+    /// `AllOff` to every track input at offset 0, then each resetting controller lane (pitch
+    /// bend, aftertouch, the sustain pedal) back to zero so a bend or a held pedal does not
+    /// stay on.
     fn all_off(&mut self, tracks: &[CompiledTrack], cursors: &mut [TrackCursor]) {
         for (t, c) in tracks.iter().zip(cursors) {
             if self.push(0, t.device, t.socket, NoteKind::AllOff) {
                 c.held = 0;
+            }
+            for lane in t.ctl.iter().filter(|l| l.kind.resets()) {
+                self.push(0, t.device, t.socket, lane.kind.note(0.0));
             }
         }
     }
@@ -312,10 +324,34 @@ fn covering(
     keys
 }
 
+/// Sends each controller lane of `t` its value at song frame `pos` at batch offset `offset`: the
+/// last value set strictly before `pos` (one set at `pos` is played by the normal walk), and
+/// before a lane's first point zero for the controllers that reset (pitch bend, aftertouch, the
+/// sustain pedal) and nothing for the rest. No allocation.
+fn chase_controllers(
+    map: TempoMap<'_>,
+    sr: f64,
+    t: &CompiledTrack,
+    pos: u64,
+    offset: usize,
+    em: &mut Emitter<'_>,
+) {
+    for lane in &t.ctl {
+        let n = lane.ticks.partition_point(|&k| map.song_frame(k, sr) < pos);
+        let value = match n.checked_sub(1) {
+            Some(i) => lane.values[i],
+            None if lane.kind.resets() => 0.0,
+            None => continue,
+        };
+        em.push(offset, t.device, t.socket, lane.kind.note(value));
+    }
+}
+
 /// Starts the notes spanning song frame `pos` on every chasing track: an `On` at batch offset
 /// `offset` per covered key (ascending keys, tracks in order) with the note's own velocity,
-/// setting the key's held bit so the note's regular `Off` releases it. Call after the seek
-/// (and after the releases of a wrap), so these `On`s sort after them.
+/// setting the key's held bit so the note's regular `Off` releases it. Every track first gets
+/// its controller values ([`chase_controllers`]), chasing or not. Call after the seek (and after
+/// the releases of a wrap), so these events sort after them.
 fn chase(
     map: TempoMap<'_>,
     sr: f64,
@@ -327,6 +363,7 @@ fn chase(
 ) {
     let mut velocity = [0.0f32; 128];
     for (t, c) in tracks.iter().zip(cursors) {
+        chase_controllers(map, sr, t, pos, offset, em);
         if !t.chase {
             continue;
         }
@@ -393,14 +430,15 @@ fn emit_notes(
                         c.held &= !bit;
                     }
                 }
-                // Song tracks only hold On and Off; the channel kinds of plugin notes never come
-                // from a clip.
-                NoteKind::AllOff
-                | NoteKind::PitchBend { .. }
+                // The controller lanes: sent as they come, they hold no state in the cursor.
+                NoteKind::PitchBend { .. }
                 | NoteKind::Cc { .. }
                 | NoteKind::ChannelPressure { .. }
-                | NoteKind::PolyPressure { .. }
-                | NoteKind::NoteExpr { .. } => {}
+                | NoteKind::PolyPressure { .. } => {
+                    em.push(offset, t.device, t.socket, ev.kind);
+                }
+                // A song track never holds `AllOff` or per-note expressions.
+                NoteKind::AllOff | NoteKind::NoteExpr { .. } => {}
             }
             c.next += 1;
         }

@@ -40,6 +40,7 @@ fn a_held_lane_is_skipped_and_the_others_play_until_it_is_released() {
             notes_socket: ParamLog::NOTES_IN,
             chase: true,
             notes: Vec::new(),
+            controllers: Vec::new(),
             automation: vec![lane(ParamLog::A, 0.1, 0.9), lane(ParamLog::B, -4.0, 4.0)],
         }],
         tempo: tempo(&[(0, 120.0)]),

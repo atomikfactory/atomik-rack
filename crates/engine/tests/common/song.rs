@@ -41,6 +41,7 @@ pub fn strack(device: DeviceInstanceId, notes: Vec<SongNote>) -> SongTrack {
         notes_socket: NoteLog::NOTES_IN,
         chase: true,
         notes,
+        controllers: Vec::new(),
         automation: Vec::new(),
     }
 }
