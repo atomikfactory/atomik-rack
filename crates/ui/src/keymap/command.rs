@@ -448,8 +448,37 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "file.export_midi_clip",
+        "Export MIDI Clip",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_midi_song",
+        "Export MIDI Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_midi_track",
+        "Export MIDI Track",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.export_patch", "Export Patch", G::Global, C::Global).menu(),
     cmd("file.import_audio", "Import Audio", G::Global, C::Global).menu(),
+    cmd("file.import_midi", "Import MIDI", G::Global, C::Global).menu(),
+    cmd(
+        "file.import_midi_song",
+        "Import MIDI as Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
     cmd("file.open", "Open", G::Global, C::Global).menu(),
     cmd("file.quit", "Quit", G::Global, C::Global).menu(),
