@@ -1170,3 +1170,40 @@ fn the_audio_editing_commands_are_menu_commands_that_need_an_audio_clip() {
     );
     assert!(r.is_error && r.first_text().contains("Reverse Audio"));
 }
+
+#[test]
+fn the_warp_commands_are_menu_commands_that_need_an_audio_clip() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({}));
+    let edit = ok(&mut s, "session_commands", json!({"menu": "edit"}));
+    let quantize = edit["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "sequencer.audio_quantize")
+        .expect("Quantize Audio in the Edit menu");
+    assert_eq!(quantize["enabled"], false);
+    let audio = ok(&mut s, "session_commands", json!({"menu": "audio"}));
+    let rows = audio["commands"].as_array().unwrap();
+    for id in [
+        "sequencer.audio_warp",
+        "sequencer.audio_warp_tempo",
+        "sequencer.audio_warp_panel",
+        "sequencer.audio_warp_mode:tonal",
+        "sequencer.audio_warp_bars:4",
+        "sequencer.audio_transpose:up",
+        "sequencer.audio_transpose:octave_down",
+    ] {
+        let row = rows
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap_or_else(|| panic!("{id} in the Audio menu"));
+        assert_eq!(row["enabled"], false, "{id} needs an audio clip");
+    }
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.audio_warp"}),
+    );
+    assert!(r.is_error && r.first_text().contains("Warp Audio"));
+}

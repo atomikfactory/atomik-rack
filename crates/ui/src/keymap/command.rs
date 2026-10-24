@@ -235,6 +235,12 @@ pub const FADE_SHAPE_ARGS: &[&str] = &["linear", "equal_power", "exponential", "
 pub const CROSSFADE_ARGS: &[&str] = &["off", "linear", "equal_power", "exponential", "s_curve"];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
+/// The values of `sequencer.audio_transpose`.
+pub const AUDIO_TRANSPOSE_ARGS: &[&str] = &["up", "down", "octave_up", "octave_down", "reset"];
+/// The values of `sequencer.audio_warp_mode`.
+pub const AUDIO_WARP_MODE_ARGS: &[&str] = &["beats", "tonal", "repitch"];
+/// The values of `sequencer.audio_warp_bars`: the bars the selected loop lasts.
+pub const AUDIO_WARP_BARS_ARGS: &[&str] = &["1", "2", "4", "8", "16"];
 /// The values of `sequencer.audio_fades`.
 pub const AUDIO_FADES_ARGS: &[&str] = &["declick", "clear"];
 /// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
@@ -697,6 +703,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.audio_quantize",
+        "Quantize Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_reverse",
         "Reverse Audio",
         G::Sequencer,
@@ -707,6 +721,58 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.audio_strip_silence",
         "Strip Silence",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_transpose",
+        "Transpose Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_TRANSPOSE_ARGS)
+    .menu()
+    .decline()
+    .rep(),
+    cmd(
+        "sequencer.audio_warp",
+        "Warp Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_warp_bars",
+        "Warp Loop as Bars",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_WARP_BARS_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_warp_mode",
+        "Warp Mode",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_WARP_MODE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_warp_panel",
+        "Warp Settings",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_warp_tempo",
+        "Warp to Song Tempo",
         G::Sequencer,
         C::Sequencer,
     )

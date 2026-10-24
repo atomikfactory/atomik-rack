@@ -12,6 +12,7 @@ use crate::groove::{Groove, QuantizeParams, builtin_groove};
 use crate::organise::Organisation;
 use crate::takes::TakeGroup;
 use crate::theory::Scale;
+use crate::warp::WarpSettings;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
 use std::collections::BTreeMap;
@@ -149,7 +150,8 @@ pub const MAX_GAIN_POINTS: usize = 512;
 /// What an audio clip plays.
 ///
 /// The clip's `start` and `length` stay in ticks; playback runs from `source_offset` for the
-/// clip's duration in real time (no stretch), cut at the clip end or the asset end. The
+/// clip's duration in real time (no stretch unless [`AudioClipContent::warp`] says so), cut at
+/// the clip end or the asset end. The
 /// clip's own `offset` is always 0 and its `loop_length` always `None`.
 ///
 /// The fades, the gain envelope and the reverse flag all work in *clip time* (frames from the
@@ -179,6 +181,10 @@ pub struct AudioClipContent {
     /// The crossfade this clip makes with the clip it overlaps at its start (see
     /// [`flatten_audio`]): `Some(curve)` crossfades, `None` is a hard cut.
     pub xfade: Option<FadeCurve>,
+    /// Warp: follow the song tempo and transpose without changing length (see
+    /// [`crate::warp`]). The default plays the asset in real time. A reversed clip cannot be
+    /// warped.
+    pub warp: WarpSettings,
 }
 
 impl AudioClipContent {
@@ -195,6 +201,7 @@ impl AudioClipContent {
             reverse: false,
             envelope: Vec::new(),
             xfade: Some(FadeCurve::EqualPower),
+            warp: WarpSettings::default(),
         }
     }
 

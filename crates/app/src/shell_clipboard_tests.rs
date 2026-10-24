@@ -589,6 +589,12 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.audio_reverse",
             "sequencer.audio_normalise",
             "sequencer.audio_strip_silence",
+            "sequencer.audio_quantize",
+            "sequencer.audio_warp",
+            "sequencer.audio_warp_tempo",
+            "sequencer.audio_warp_panel",
+            "sequencer.audio_transpose",
+            "sequencer.audio_transpose",
         ]
     );
     let enabled = |id: &str| items.iter().find(|(c, _, _)| c == id).unwrap().2;

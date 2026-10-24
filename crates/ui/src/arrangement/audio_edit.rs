@@ -51,6 +51,10 @@ pub struct AudioMenu {
     pub reversed: bool,
     /// A selected audio clip has a gain envelope.
     pub envelope: bool,
+    /// Every selected audio clip is warped (the Warp item is checked).
+    pub warped: bool,
+    /// A selected audio clip can be warped or transposed (it is not reversed).
+    pub can_warp: bool,
 }
 
 /// The view state of audio editing.
@@ -80,6 +84,8 @@ impl ArrangementView {
             can_edit: !clips.is_empty(),
             reversed: !clips.is_empty() && clips.iter().all(|(_, a)| a.reverse),
             envelope: clips.iter().any(|(_, a)| !a.envelope.is_empty()),
+            warped: !clips.is_empty() && clips.iter().all(|(_, a)| a.warp.enabled),
+            can_warp: clips.iter().any(|(_, a)| !a.reverse),
         }
     }
 
@@ -325,6 +331,40 @@ impl ArrangementView {
                 }
             }
         }
+        for m in &a.warp.markers {
+            let x = self.x_of_tick((clip.start + m.tick) as f64);
+            if x > vis.x0 && x < vis.x1 {
+                sp::line(c, x, r.y0 + CLIP_HEADER, x, r.y1, st.handle.with_alpha(0.6));
+            }
+        }
+        if a.warp.active() {
+            let mut mark = if a.warp.enabled {
+                "W".to_owned()
+            } else {
+                String::new()
+            };
+            let cents = a.warp.effective_cents();
+            if cents != 0 {
+                if !mark.is_empty() {
+                    mark.push(' ');
+                }
+                if cents % 100 == 0 {
+                    mark.push_str(&format!("{:+}", cents / 100));
+                } else {
+                    mark.push_str(&format!("{:+.1}", f64::from(cents) / 100.0));
+                }
+            }
+            sp::label(
+                c,
+                &mark,
+                (vis.x1 - super::AUDIO_HANDLE_INSET - 22.0 - 6.0 * (mark.len() as f64 - 1.0))
+                    .max(vis.x0 + 4.0),
+                r.y0 + CLIP_HEADER - 3.0,
+                8.5,
+                st.base.text.with_alpha(0.85),
+                crate::canvas::Align::Start,
+            );
+        }
         if a.reverse {
             sp::label(
                 c,
@@ -407,6 +447,51 @@ impl ArrangementView {
                         fade_in: n,
                         fade_out: n,
                         ..a.clone()
+                    })
+                })
+            }
+            "sequencer.audio_warp" => {
+                let to = !self.audio_menu().warped;
+                Box::new(move |_, a, _| {
+                    (a.warp.enabled != to && !a.reverse).then(|| {
+                        let mut c = a.clone();
+                        c.warp.enabled = to;
+                        c
+                    })
+                })
+            }
+            "sequencer.audio_warp_mode" => {
+                let mode = atomik_model::WarpMode::from_id(arg?)?;
+                Box::new(move |_, a, _| {
+                    (a.warp.mode != mode && !(a.reverse && a.warp.transpose_cents != 0)).then(
+                        || {
+                            let mut c = a.clone();
+                            c.warp.mode = mode;
+                            c
+                        },
+                    )
+                })
+            }
+            "sequencer.audio_transpose" => {
+                let step = match arg? {
+                    "up" => Some(100),
+                    "down" => Some(-100),
+                    "octave_up" => Some(1200),
+                    "octave_down" => Some(-1200),
+                    "reset" => None,
+                    _ => return Some(CommandOutcome::Declined),
+                };
+                Box::new(move |_, a, _| {
+                    let cents = step.map_or(0, |s| {
+                        (a.warp.transpose_cents + s).clamp(
+                            -atomik_model::WARP_TRANSPOSE_MAX_CENTS,
+                            atomik_model::WARP_TRANSPOSE_MAX_CENTS,
+                        )
+                    });
+                    (cents != a.warp.transpose_cents && !a.reverse).then(|| {
+                        let mut c = a.clone();
+                        c.warp.transpose_cents = cents;
+                        c
                     })
                 })
             }

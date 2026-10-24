@@ -587,7 +587,7 @@ The player device of an audio track. It has no sound of its own: the engine rend
 - **Output.** `out = playback + input × monitor_gain`, per channel. Without playback (transport stopped, or no song) only the monitored input is heard.
 - **Monitoring.** `monitor_gain` is 1 when `monitor` is on, or when it is auto and `internal.monitor_live` is 1; otherwise 0. With off the input never passes, even while armed.
 - **Smoothing.** A change of the monitor gain is a 5 ms linear crossfade. The first batch after the device is prepared or reset snaps without a ramp.
-- **Clips.** Clip audio is not stretched when the tempo changes; a clip's start follows the tempo map and its audio plays in real time. Fades are linear or equal power; mono assets play on both channels, and for more than two channels the first two are played.
+- **Clips.** Clip audio is not stretched when the tempo changes unless the clip is warped (Audio > Warp, see ARCHITECTURE.md 2.18); a clip's start follows the tempo map and an unwarped clip's audio plays in real time. Fades are linear or equal power; mono assets play on both channels, and for more than two channels the first two are played.
 - **Latency.** None (a single stage). The 64-frame engine FIFO and the interface latencies are accounted for by recording, not by the device.
 
 ---

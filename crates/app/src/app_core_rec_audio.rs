@@ -334,6 +334,7 @@ impl<S: EngineSink> AppCore<S> {
             reverse: false,
             envelope: Vec::new(),
             xfade: None,
+            warp: Default::default(),
         };
         let command = if let [(start, length, asset, source_offset)] = laps.as_slice() {
             SongCommand::AddAudioClip {

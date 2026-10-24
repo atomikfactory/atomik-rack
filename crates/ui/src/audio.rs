@@ -8,8 +8,8 @@ use atomik_audio_file::Peaks;
 use atomik_core::{Tempo, TempoPoint, TempoTable};
 use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
 use atomik_model::{
-    Cable, Command, DeviceKey, GainPoint, INTERFACE_KEY, MAX_GAIN_POINTS, SocketRef, TempoEvent,
-    slice_envelope,
+    AudioClipContent, Cable, Command, DeviceKey, GainPoint, INTERFACE_KEY, MAX_GAIN_POINTS,
+    SocketRef, TempoEvent, WarpMarker, WarpSettings, slice_envelope,
 };
 
 /// The song tempo map (steps and ramps) for fractional tick / frame conversions, the maths of
@@ -89,6 +89,64 @@ pub fn source_frame(
 ) -> f64 {
     source_offset as f64 + map.frame_at_tick(tick, sample_rate)
         - map.frame_at_tick(clip_start as f64, sample_rate)
+}
+
+/// The asset frame that plays at a (fractional) song tick for a warped clip (warp enabled) that
+/// starts at `clip_start` and plays from `source_offset`: the offset plus the time map of the
+/// clip's warp settings (see [`atomik_model::warp`]).
+pub fn warped_source(
+    warp: &WarpSettings,
+    sample_rate: u32,
+    clip_start: i64,
+    source_offset: u64,
+    tick: f64,
+) -> f64 {
+    source_offset as f64 + warp.source_frames_at(sample_rate, tick - clip_start as f64)
+}
+
+/// The song tick (fractional) at which a warped clip plays asset frame `frame`: the inverse of
+/// [`warped_source`].
+pub fn warped_tick(
+    warp: &WarpSettings,
+    sample_rate: u32,
+    clip_start: i64,
+    source_offset: u64,
+    frame: f64,
+) -> f64 {
+    clip_start as f64 + warp.ticks_at_source(sample_rate, frame - source_offset as f64)
+}
+
+/// [`trim_left`] for a warped clip (warp enabled): the offset becomes the asset frame the time
+/// map plays at the new start, so the audio stays where it is in time, and the warp markers are
+/// re-based (see [`WarpSettings::markers_after`]). The start is limited to tick 0, to the
+/// earliest tick that still reads frame 0 of the asset, to the latest tick inside the asset and
+/// to `min_len` before the end.
+pub fn trim_left_warped(
+    sample_rate: u32,
+    (start, length, content): (i64, i64, &AudioClipContent),
+    asset_frames: u64,
+    wanted_start: i64,
+    min_len: i64,
+) -> (Trim, Vec<WarpMarker>) {
+    let w = &content.warp;
+    let end = start + length;
+    let offset = content.source_offset;
+    let tick_of = |frame: f64| warped_tick(w, sample_rate, start, offset, frame);
+    let lo = (tick_of(0.0).ceil() as i64).max(0).min(start);
+    let latest = tick_of(asset_frames as f64).floor() as i64;
+    let hi = latest.min(end - min_len).max(lo);
+    let new_start = wanted_start.clamp(lo, hi);
+    let at = warped_source(w, sample_rate, start, offset, new_start as f64);
+    let new_offset = (at.round().max(0.0) as u64).min(asset_frames);
+    let markers = w.markers_after(new_start - start, offset, new_offset);
+    (
+        Trim {
+            start: new_start,
+            length: end - new_start,
+            source_offset: new_offset,
+        },
+        markers,
+    )
 }
 
 /// Min / max of one waveform pixel column: the peaks of `channel` over the source frames

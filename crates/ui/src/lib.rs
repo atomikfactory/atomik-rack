@@ -248,6 +248,9 @@
 //! - **Strip silence.** [`SilenceView`] is the modal panel of threshold, minimum silence, padding
 //!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
 //!   with [`SilenceView::set_target`].
+//! - **Warp.** [`WarpView`] is the modal panel of warp on or off, mode, source tempo and
+//!   transposition; it emits [`UiAction::Warp`] (`APPLY`, `DETECT TEMPO`, `CLOSE`) and the app feeds
+//!   it with [`WarpView::set_target`] and [`WarpView::set_values`].
 //!
 //! # Backends
 //! - [`SceneCanvas`]: vello GPU scene (text shaped with parley, system fonts via fontique).
@@ -317,6 +320,7 @@ pub mod timeline;
 pub mod transport;
 pub mod tree;
 pub mod viewport;
+pub mod warp_panel;
 pub mod wave_paint;
 pub mod widget;
 pub mod zone_edit;
@@ -359,3 +363,4 @@ pub use transport::{TransportBar, TransportButton, TransportState, transport_sho
 pub use vello;
 pub use vello::{kurbo, peniko};
 pub use viewport::{Tool, ViewportState};
+pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};

@@ -238,6 +238,10 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
             )));
         }
     }
+    a.warp.validate().map_err(range)?;
+    if a.reverse && a.warp.active() {
+        return Err(range("a reversed clip cannot be warped or transposed"));
+    }
     check_envelope(&a.envelope)
 }
 
@@ -655,11 +659,13 @@ fn strip_silence_edit(
         let from = song.frame_at(start, sr) - clip_start;
         let to = song.frame_at(end, sr) - clip_start;
         let mut content = a.clone();
-        content.source_offset = if a.reverse {
-            (a.source_offset + (clip_frames - to)).min(asset_frames)
+        if a.reverse {
+            content.source_offset = (a.source_offset + (clip_frames - to)).min(asset_frames);
         } else {
-            (a.source_offset + from).min(asset_frames)
-        };
+            let (offset, markers) = a.piece_from(song, sr, c.start, start, from, asset_frames);
+            content.source_offset = offset;
+            content.warp.markers = markers;
+        }
         content.envelope = slice_envelope(&a.envelope, from, to);
         if from != 0 {
             content.fade_in = fade.min(to - from);
@@ -994,7 +1000,10 @@ pub(crate) fn plan(
                             .min(asset_frames);
                     }
                 } else {
-                    r.source_offset = a.source_offset.saturating_add(delta).min(asset_frames);
+                    let (offset, markers) =
+                        a.piece_from(song, doc.sample_rate, c.start, at, delta, asset_frames);
+                    r.source_offset = offset;
+                    r.warp.markers = markers;
                 }
                 let (right_envelope, left_envelope) = split_envelope(&a.envelope, left_frames);
                 r.envelope = right_envelope;
@@ -1050,6 +1059,7 @@ pub(crate) fn plan(
                 reverse: false,
                 envelope: Vec::new(),
                 xfade: Some(FadeCurve::EqualPower),
+                warp: crate::warp::WarpSettings::default(),
             };
             check_audio(doc, &content)?;
             let clip = Clip {

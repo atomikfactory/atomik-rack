@@ -231,10 +231,13 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
             let frames = song.frame_at(b, rate) - song.frame_at(a, rate);
             let (cut_in, cut_out) = (a > take.start, b < take.end());
             let cap = (frames / 2).max(1);
+            let (source_offset, markers) =
+                src.piece_from(song, rate, take.start, a, delta, asset_frames);
             let mut audio = AudioClipContent {
-                source_offset: src.source_offset.saturating_add(delta).min(asset_frames),
+                source_offset,
                 ..src.clone()
             };
+            audio.warp.markers = markers;
             if cut_in {
                 audio.fade_in = COMP_FADE_FRAMES.min(cap);
             }

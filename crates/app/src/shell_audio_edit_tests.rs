@@ -43,7 +43,13 @@ fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) {
 
 /// Three bursts of 0.5 in silence: 48 000 frames, mono.
 fn imported(s: &mut Shell<NullBackend>) -> ClipId {
-    let dir = std::env::temp_dir().join(format!("atomik-shell-audio-edit-{}", std::process::id()));
+    // One folder per call: the tests run in parallel and each removes its own.
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "atomik-shell-audio-edit-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     let data: Vec<f32> = (0..48_000)
         .map(|i| {

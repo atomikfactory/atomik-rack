@@ -19,7 +19,7 @@ use atomik_model::{
     RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, empty_doc, load_project, new_project_doc,
     register_stand_ins, save_patch,
 };
-use atomik_render::project::song_input_with_assets;
+use atomik_render::project::song_input_with_warps;
 use atomik_ui::{
     ArrangementView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView, PianoRollView,
     PluginParamsView, RackView, SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView,
@@ -1032,12 +1032,15 @@ impl<S: EngineSink> AppCore<S> {
     /// Builds, compiles and submits the song; then syncs the engine loop (always when
     /// `tempo_changed`, else only when the song loop differs from what was sent).
     fn submit_song(&mut self, tempo_changed: bool) {
+        // Warped clips play their rendered buffers: start what is missing, drop what is stale.
+        self.sync_warps();
         let ids = &self.ids;
-        let input = song_input_with_assets(
+        let input = song_input_with_warps(
             self.document.doc(),
             &self.registry,
             |k| ids.get(k).copied(),
             self.audio.assets(),
+            &self.audio.warps,
         );
         match compile_song(&input) {
             Ok(snapshot) => {
@@ -1920,6 +1923,10 @@ mod clipboard_ops;
 mod audio_edit_ops;
 pub use audio_edit_ops::NORMALISE_TARGET_DB;
 
+#[path = "app_core_warp.rs"]
+mod warp;
+pub use warp::WARP_CACHE_BYTES;
+
 #[path = "app_core_quantize.rs"]
 mod quantize_ops;
 pub use quantize_ops::QuantizeTarget;
@@ -2048,3 +2055,7 @@ mod marker_tests;
 #[cfg(test)]
 #[path = "app_core_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "app_core_warp_tests.rs"]
+mod warp_tests;

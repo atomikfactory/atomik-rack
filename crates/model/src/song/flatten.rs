@@ -44,7 +44,9 @@ use super::{
     Song, Track,
 };
 use crate::controller::{ControllerKind, value_at as lane_value_at};
+use crate::warp::{WarpJob, warp_job};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The audible spans `(clip, start, end)` of a lane's clips, sorted by start (rules in
 /// the module docs). The UI can draw the hidden parts of a clip from it.
@@ -293,6 +295,11 @@ pub struct AudioRegion {
     pub x_out: u64,
     /// Shape of the crossfade (the later clip's `xfade`).
     pub x_curve: FadeCurve,
+    /// For a warped clip: the render that replaces the asset. The player then reads that
+    /// buffer (the clip's whole span, so frame `clip_pos + i` for region frame `i`) instead of
+    /// the asset; `asset` and `source_offset` are what the clip plays without it (the same
+    /// frames in real time) while the buffer is not ready.
+    pub warp: Option<Arc<WarpJob>>,
 }
 
 impl AudioRegion {
@@ -412,11 +419,13 @@ pub fn crossfades(lane: &Lane) -> Vec<Crossfade> {
 /// - Ticks become frames with the song's tempo map and `sample_rate` ([`Song::frame_at`]):
 ///   a span `[a, b)` is `[frame_at(a), frame_at(b))`; spans that round to no frame are
 ///   dropped. Neighbouring spans share their boundary frame, so no frame is lost or doubled.
-/// - Audio does not stretch: the source offset advances one asset frame per song frame
-///   from the clip start, so a region that starts `d` frames into its clip reads from
-///   `source_offset + d`. A reversed clip of `n` frames plays the asset frames
+/// - Audio does not stretch unless the clip is warped: the source offset advances one asset
+///   frame per song frame from the clip start, so a region that starts `d` frames into its clip
+///   reads from `source_offset + d`. A reversed clip of `n` frames plays the asset frames
 ///   `source_offset .. source_offset + n` backwards, so its region that starts `d` frames in
-///   starts at `source_offset + n - 1 - d` and counts down.
+///   starts at `source_offset + n - 1 - d` and counts down. A warped clip (see [`crate::warp`])
+///   carries a [`WarpJob`] on each region: the player reads the rendered buffer at frame
+///   `clip_pos + i`, and the fields above are the real-time reading it falls back to.
 /// - `gain` is `db_to_gain(gain_db)`; fades and the envelope are the original clip's (see
 ///   [`AudioRegion`]).
 /// - **Crossfades.** A clip `B` with `xfade: Some(curve)` whose first audible span begins at
@@ -469,6 +478,11 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             x_in: 0,
             x_out: 0,
             x_curve: FadeCurve::EqualPower,
+            warp: if audio.reverse {
+                None
+            } else {
+                warp_job(song, sample_rate, clip.start, clip.length, audio).map(Arc::new)
+            },
         }
     };
     let zones = crossfades(lane);

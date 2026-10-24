@@ -450,6 +450,18 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.audio_reverse", e.audio.can_edit),
                 item("sequencer.audio_normalise", e.audio.can_edit),
                 item("sequencer.audio_strip_silence", e.audio.can_edit),
+                item("sequencer.audio_quantize", e.audio.can_warp),
+                item("sequencer.audio_warp", e.audio.can_warp),
+                item("sequencer.audio_warp_tempo", e.audio.can_warp),
+                item("sequencer.audio_warp_panel", e.audio.can_edit),
+                meter_item("sequencer.audio_transpose", "up", "Transpose Up a Semitone")
+                    .enabled(e.audio.can_warp),
+                meter_item(
+                    "sequencer.audio_transpose",
+                    "down",
+                    "Transpose Down a Semitone",
+                )
+                .enabled(e.audio.can_warp),
                 Spec::submenu(
                     "Audio Fade Shape",
                     FADE_SHAPES

@@ -117,6 +117,10 @@ struct Batch {
 pub(super) struct AudioState {
     bundle: Option<ProjectBundle>,
     pub(super) assets: BTreeMap<String, SongAsset>,
+    /// The rendered buffers of warped clips by job key, and the workers making more
+    /// ([`super::warp`]).
+    pub(super) warps: atomik_render::warp::WarpStore,
+    pub(super) warp_work: super::warp::WarpWork,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// Whole-asset RAM buffers for samplers: shared with the memory assets of
     /// audio tracks where those exist, loaded by a worker for streamed ones. Keeping the
@@ -156,6 +160,8 @@ impl AudioState {
         Self {
             bundle: None,
             assets: BTreeMap::new(),
+            warps: atomik_render::warp::WarpStore::new(),
+            warp_work: super::warp::WarpWork::default(),
             peaks: BTreeMap::new(),
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
@@ -412,6 +418,15 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_sliced(job, result),
+                Msg::Warped {
+                    generation,
+                    key,
+                    result,
+                } if generation == current => {
+                    if self.apply_warped(key, result) {
+                        resubmit = true;
+                    }
+                }
                 Msg::Scanned {
                     generation,
                     root,
@@ -444,6 +459,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Loaded { .. }
                 | Msg::Sampled { .. }
                 | Msg::Sliced { .. }
+                | Msg::Warped { .. }
                 | Msg::Scanned { .. } => {}
             }
         }
@@ -800,6 +816,8 @@ impl<S: EngineSink> AppCore<S> {
             self.forget_asset(&hash);
         }
         self.audio.assets.clear();
+        self.audio.warps.clear();
+        self.audio.warp_work.reset();
         self.audio.buffers.clear();
         self.audio.ram_pending.clear();
         self.audio.missing.clear();

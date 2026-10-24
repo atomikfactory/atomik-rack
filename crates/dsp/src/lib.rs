@@ -8,7 +8,7 @@
 //! [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
 //! (flat-sum 24 dB/oct split), [`phaser`], [`chorus`], [`echo`], [`comb`], [`room`] (small box
 //! and large room on [`Fdn8`]), [`ringmod`], [`bitcrush`], [`noise`] (white, pink, rumble,
-//! crackle, presence gate), [`spectral`] (STFT stage), [`modal`], [`wobble`] and [`smoother2`].
+//! crackle, presence gate), [`spectral`] (STFT stage), [`modal`], [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift).
 //! They are all deterministic (see [`exp2_det`] and the module docs), allocation-free
 //! in `process`, and offer a per-sample call plus a block call that is bit-identical for any
 //! chunking.
@@ -54,6 +54,7 @@ pub mod shaper;
 mod smoother;
 pub mod smoother2;
 pub mod spectral;
+pub mod stretch;
 mod svf;
 pub mod wobble;
 

@@ -30,6 +30,7 @@ use crate::build::{BuildOptions, SuppliedDevices, build_with_devices};
 use crate::patch::Warning;
 use crate::plugins::{MissingPlugins, PluginHost};
 use crate::samples::{build_sample_map, song_asset_buffer};
+use crate::warp::WarpStore;
 use crate::{RenderError, Rendered};
 use atomik_core::{BATCH, PPQ, Tempo, Ticks};
 use atomik_device_sdk::{
@@ -198,6 +199,21 @@ pub fn song_input_with_assets(
     id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
     assets: &BTreeMap<String, SongAsset>,
 ) -> SongInput {
+    song_input_with_warps(doc, registry, id_of, assets, &WarpStore::new())
+}
+
+/// [`song_input_with_assets`] with the rendered buffers of the warped clips (see
+/// [`crate::warp`]). A region of a warped clip whose buffer is in `warps` plays that buffer (the
+/// pool gets the buffer instead of the asset, and the region reads it from the clip's own
+/// frame); without it the region plays the asset in real time. A document without warped clips
+/// gives exactly what [`song_input_with_assets`] always gave.
+pub fn song_input_with_warps(
+    doc: &RackDoc,
+    registry: &Registry,
+    id_of: impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    assets: &BTreeMap<String, SongAsset>,
+    warps: &WarpStore,
+) -> SongInput {
     let song = &doc.song;
     // Containers: a track on a container plays through its `~split` device, and a
     // lane on one of its `macroN` params expands into one engine lane per macro target.
@@ -307,7 +323,7 @@ pub fn song_input_with_assets(
             })
         })
         .collect();
-    let mut used: BTreeMap<&str, AssetId> = BTreeMap::new();
+    let mut used: BTreeMap<String, AssetId> = BTreeMap::new();
     let mut pool: Vec<SongAsset> = Vec::new();
     let audio = effective_tracks(song)
         .into_iter()
@@ -319,8 +335,19 @@ pub fn song_input_with_assets(
             let regions: Vec<SongAudioRegion> = flatten_audio(track, song, doc.sample_rate)
                 .into_iter()
                 .filter_map(|r| {
-                    let (key, asset) = assets.get_key_value(r.asset.as_str())?;
-                    let asset_id = *used.entry(key.as_str()).or_insert_with(|| {
+                    // A warped clip plays its rendered buffer from the clip's own frame.
+                    let rendered = r
+                        .warp
+                        .as_ref()
+                        .and_then(|job| warps.get(&job.key()).map(|b| (job.key(), b)));
+                    let (key, asset, source_offset, reverse) = match rendered {
+                        Some((k, buffer)) => (crate::warp::pool_key(k), buffer, r.clip_pos, false),
+                        None => {
+                            let (key, asset) = assets.get_key_value(r.asset.as_str())?;
+                            (key.clone(), asset, r.source_offset, r.reverse)
+                        }
+                    };
+                    let asset_id = *used.entry(key).or_insert_with(|| {
                         pool.push(asset.clone());
                         AssetId(u32::try_from(pool.len() - 1).unwrap_or(u32::MAX))
                     });
@@ -339,7 +366,7 @@ pub fn song_input_with_assets(
                     Some(SongAudioRegion {
                         asset: asset_id,
                         song_start_frame: r.song_start_frame,
-                        source_offset: r.source_offset,
+                        source_offset,
                         frames: r.frames,
                         gain: r.gain,
                         fade_in: r.fade_in,
@@ -347,7 +374,7 @@ pub fn song_input_with_assets(
                         fade_curve: song_fade_curve(r.fade_curve),
                         clip_pos: r.clip_pos,
                         clip_frames: r.clip_frames,
-                        reverse: r.reverse,
+                        reverse,
                         env,
                         x_in: r.x_in,
                         x_out: r.x_out,
@@ -612,6 +639,9 @@ pub fn render_doc_with(
     let bundle = bundle_root.and_then(|root| atomik_audio_file::Bundle::open(root).ok());
     let assets =
         crate::bundle::load_song_assets(doc, bundle.as_ref()).map_err(RenderError::Project)?;
+    // Warped clips: every buffer is rendered before the song is built, so a bounce never plays
+    // a clip dry and its bits do not depend on timing.
+    let warps = crate::warp::render_warps(doc, &assets);
     // Containers are compiled away first: the engine graph is the expanded rack.
     let expanded = doc.expand(registry);
     let (patch, patch_ids) = crate::flat::expanded_patch(doc, &expanded);
@@ -640,7 +670,7 @@ pub fn render_doc_with(
     let mut warnings = std::mem::take(&mut built.warnings);
     warnings.extend(sampler_warnings);
     let ids = expanded_ids(&expanded);
-    let input = song_input_with_assets(doc, registry, |k| ids.get(k).copied(), &assets);
+    let input = song_input_with_warps(doc, registry, |k| ids.get(k).copied(), &assets, &warps);
     let snapshot = compile_song(&input).map_err(|e| RenderError::Project(e.to_string()))?;
     let plan = bounce_plan(doc, &snapshot, options.loop_count);
     let engine_options = EngineOptions {

@@ -71,6 +71,7 @@ pub fn audio_clip(
             reverse: false,
             envelope: Vec::new(),
             xfade: None,
+            warp: Default::default(),
         }),
     }
 }
