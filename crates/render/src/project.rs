@@ -47,7 +47,7 @@ use atomik_engine::{
     SongInput, SongNote, SongPoint, SongSnapshot, SongTempo, SongTrack, TimedEdit,
     TransportCommand, WorkerConfig, compile_song, new_engine_with_options,
 };
-use atomik_model::console::SOLO_SILENCE_PARAM;
+use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
     effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_notes,
 };
@@ -484,8 +484,10 @@ pub fn bounce_plan(doc: &RackDoc, snapshot: &SongSnapshot, loop_count: Option<u3
     }
 }
 
-/// The build settings a document's console implies: its compensation switch, and
-/// `internal.solo_silence = 1` on every channel [`RackDoc::solo_silence`] silences. Phase
+/// The build settings a document's console implies: its compensation switch,
+/// `internal.solo_silence = 1` on every channel [`RackDoc::solo_silence`] silences, and the VCA
+/// feed of every strip in a group that is not the default (`internal.vca_db`, `internal.vca_mute`,
+/// `internal.vca_solo`, from [`RackDoc::vca_feeds`]), so a project without groups sets none. Phase
 /// The interface also gets the document's input channels (`interface:in_k`), which a
 /// bounce feeds with silence, so the audio tracks' input cables resolve.
 pub fn console_options(doc: &RackDoc, registry: &Registry) -> BuildOptions {
@@ -497,11 +499,29 @@ pub fn console_options(doc: &RackDoc, registry: &Registry) -> BuildOptions {
             .into_iter()
             .filter(|(_, silent)| *silent)
             .map(|(k, _)| (k.0, SOLO_SILENCE_PARAM.to_string(), 1.0))
+            .chain(vca_params(doc))
             .collect(),
         samples: Vec::new(),
         player_data: Vec::new(),
         omit: Vec::new(),
     }
+}
+
+/// The `internal.vca_*` params of the strips whose VCA feed is not the default.
+fn vca_params(doc: &RackDoc) -> Vec<(String, String, f32)> {
+    let mut out = Vec::new();
+    for (key, feed) in doc.vca_feeds() {
+        if feed.db != 0.0 {
+            out.push((key.0.clone(), VCA_DB_PARAM.to_string(), feed.db));
+        }
+        if feed.mute {
+            out.push((key.0.clone(), VCA_MUTE_PARAM.to_string(), 1.0));
+        }
+        if feed.solo {
+            out.push((key.0, VCA_SOLO_PARAM.to_string(), 1.0));
+        }
+    }
+    out
 }
 
 /// The pattern data of every device of `doc` that takes it (the step sequencers), as

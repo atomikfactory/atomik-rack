@@ -56,6 +56,12 @@ pub const BUS_TYPE: &str = "atomik.bus";
 pub const MAX_BUS_NAME_CHARS: usize = 32;
 /// The channel param the app sets from [`crate::RackDoc::solo_silence`]; never stored.
 pub const SOLO_SILENCE_PARAM: &str = "internal.solo_silence";
+/// The channel params the app sets from [`crate::RackDoc::vca_feeds`]; never stored.
+pub const VCA_DB_PARAM: &str = "internal.vca_db";
+/// See [`VCA_DB_PARAM`].
+pub const VCA_MUTE_PARAM: &str = "internal.vca_mute";
+/// See [`VCA_DB_PARAM`].
+pub const VCA_SOLO_PARAM: &str = "internal.vca_solo";
 /// Params with this key prefix are set by the app, never by the user: they are not stored in
 /// documents, not saved, not undoable and cannot be automated.
 pub const INTERNAL_PARAM_PREFIX: &str = "internal.";
