@@ -19,7 +19,7 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
-const EFFECTS: [&str; 8] = [
+const EFFECTS: [&str; 10] = [
     "atomik.reverb",
     "atomik.compressor",
     "atomik.eq",
@@ -28,6 +28,8 @@ const EFFECTS: [&str; 8] = [
     "atomik.mastering",
     "atomik.character",
     "atomik.stereo-delay",
+    "atomik.spectrum",
+    "atomik.phase-meter",
 ];
 
 fn one_device(type_id: &str) -> Option<Document> {
@@ -87,7 +89,7 @@ fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
 }
 
 #[test]
-fn only_the_eight_builtin_effects_have_the_switch() {
+fn only_the_ten_builtin_effects_have_the_switch() {
     let reg = registry();
     let mut with: Vec<&str> = Vec::new();
     for type_id in reg.type_ids() {

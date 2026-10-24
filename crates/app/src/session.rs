@@ -613,6 +613,16 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         self.running.as_ref()?.meters.device_values(id, out)
     }
 
+    fn read_device_scope(
+        &self,
+        id: DeviceInstanceId,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Option<(usize, u64)> {
+        let tap = self.running.as_ref()?.meters.scope_tap(id)?;
+        Some(tap.read_latest(left, right))
+    }
+
     fn start_audio_record(
         &mut self,
         channels: &[usize],

@@ -210,6 +210,8 @@ pub struct AppCore<S: EngineSink> {
     macro_sent: BTreeMap<(DeviceKey, String), f32>,
     /// The flat devices whose published meter values feed the views (metered effects, players).
     meter_devices: Vec<DeviceKey>,
+    /// The spectrum and phase meter devices of the flat rack and their analysis state.
+    analysers: analysers::Analysers,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: Option<atomik_model::PatternDoc>,
     transport_bar: TransportBar,
@@ -366,6 +368,7 @@ impl<S: EngineSink> AppCore<S> {
             split_sent: BTreeMap::new(),
             macro_sent: BTreeMap::new(),
             meter_devices: Vec::new(),
+            analysers: analysers::Analysers::default(),
             pattern_clip_seen: None,
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
@@ -816,12 +819,15 @@ impl<S: EngineSink> AppCore<S> {
         self.ids.clear();
         self.split_sent.clear();
         self.fx_meter_seq.clear();
+        self.analysers.restart();
         self.next_id = 1;
         self.sent_loop = None;
         // Containers are compiled away: the engine gets the expanded rack.
         let expanded = self.doc().expand(&self.registry);
         self.macro_sent = containers::macro_values(&expanded);
         self.meter_devices = plugins::metered_with_plugins(&expanded);
+        self.analysers
+            .set_devices(analysers::analyser_keys(&expanded));
         for device in &expanded.devices {
             // A frozen device keeps its place in the id order but is not built.
             if device.frozen {
@@ -859,6 +865,7 @@ impl<S: EngineSink> AppCore<S> {
         self.feed_take(&state);
         self.show_transport();
         self.feed_device_meters();
+        self.feed_device_scopes();
         self.sync_io_host();
         self.feed_io_meters();
         self.browser_frame();
@@ -1014,6 +1021,7 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(exp) = &expanded {
             self.macro_sent = containers::macro_values(exp);
             self.meter_devices = plugins::metered_with_plugins(exp);
+            self.analysers.set_devices(analysers::analyser_keys(exp));
         }
         self.flush_song(&mut stale);
         if restart || self.doc().input_channels != self.engine_inputs {
@@ -1916,6 +1924,10 @@ mod slicer;
 #[path = "app_core_players.rs"]
 mod players;
 
+#[path = "app_core_analysers.rs"]
+mod analysers;
+pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
+
 #[path = "app_core_containers.rs"]
 mod containers;
 
@@ -2032,6 +2044,10 @@ mod slicer_tests;
 #[cfg(test)]
 #[path = "app_core_fx_tests.rs"]
 mod fx_tests;
+
+#[cfg(test)]
+#[path = "app_core_analyser_tests.rs"]
+mod analyser_tests;
 
 #[cfg(test)]
 #[path = "app_core_players_tests.rs"]

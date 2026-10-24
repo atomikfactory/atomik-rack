@@ -232,6 +232,8 @@ struct DeviceView {
     meters: Vec<f32>,
     /// Mod Source panel: the scope history fed from the published meter values.
     scope: crate::modsrc_panel::Scope,
+    /// Spectrum and phase meter panels: what the app fed from the device's scope tap.
+    analyser: crate::analyser::AnalyserData,
     /// Master panel: the effect on each return and the key-in state.
     master: crate::master_panel::MasterData,
     /// Compressor panel: the name of the device cabled to the sidechain input.
@@ -1004,6 +1006,7 @@ impl RackView {
             fx: None,
             meters: Vec::new(),
             scope: crate::modsrc_panel::Scope::new(),
+            analyser: Default::default(),
             master: Default::default(),
             sc: None,
             cv: [false; 2],
@@ -1084,6 +1087,10 @@ impl RackView {
                 .as_mut()
                 .map(|p| std::mem::take(&mut p.scope))
                 .unwrap_or_default();
+            let analyser = prev
+                .as_mut()
+                .map(|p| std::mem::take(&mut p.analyser))
+                .unwrap_or_default();
             let cv = if fx == Some(FxKind::Character) {
                 cv_cabled_of(&d.key, &doc.cables)
             } else {
@@ -1131,6 +1138,7 @@ impl RackView {
                 fx,
                 meters,
                 scope,
+                analyser,
                 master,
                 sc,
                 cv,
@@ -1180,6 +1188,7 @@ impl RackView {
                 fx: None,
                 meters: Vec::new(),
                 scope: crate::modsrc_panel::Scope::new(),
+                analyser: Default::default(),
                 master: Default::default(),
                 sc: None,
                 cv: [false; 2],
@@ -3427,6 +3436,7 @@ impl RackView {
                     pad_cabled: d.pad_cabled[usize::from(d.pad - 1)],
                     sensitivity: d.sens,
                     fx_meters: &d.meters,
+                    analyser: &d.analyser,
                     sc_source: d.sc.as_deref(),
                     fx_cv: d.cv,
                     fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,

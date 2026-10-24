@@ -10,6 +10,8 @@
 //! | modulation | LFO sketch (left and right) | left, 196 wide | LFO, VOICE, OUTPUT |
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
+//! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
+//! | phase meter | goniometer, correlation, balance and width bars, level bars, loudness readouts | across the top, 148 high | STEREO, LEVEL, SCOPE, LOUDNESS |
 //!
 //! The height is the smallest whole number of rack units where the front (visual and sections)
 //! and the back (every socket) fit; the tests pin the units per effect. Every param is placed
@@ -32,6 +34,8 @@ const LEFT_MODULATION: f64 = 196.0;
 /// Height (title included) of the visual placed above the sections.
 const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
+const TOP_SPECTRUM: f64 = 200.0;
+const TOP_PHASE: f64 = 148.0;
 
 type Def = &'static [(&'static str, &'static [&'static str])];
 
@@ -123,6 +127,17 @@ fn sections(kind: FxKind) -> Def {
         ],
         // Laid out by `character_panel::character_layout`, not by these sections.
         FxKind::Character => &[],
+        FxKind::Spectrum => &[
+            ("ANALYSIS", &["size", "window", "channel", "mode"]),
+            ("SMOOTHING", &["averaging", "hold", "decay"]),
+            ("DISPLAY", &["range", "tilt"]),
+        ],
+        FxKind::PhaseMeter => &[
+            ("STEREO", &["corr_time"]),
+            ("LEVEL", &["hold", "meter.reset"]),
+            ("SCOPE", &["scope", "scope_gain"]),
+            ("LOUDNESS", &["loudness"]),
+        ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -175,6 +190,8 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Modulation => "LFO",
         FxKind::Mastering => "LOUDNESS AND BANDS",
         FxKind::Character => "SCREEN",
+        FxKind::Spectrum => "SPECTRUM",
+        FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
     }
 }
 
@@ -188,6 +205,8 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::Modulation => (LEFT_MODULATION, 0.0),
         FxKind::Mastering => (0.0, TOP_MASTERING),
         FxKind::Character => (0.0, 0.0),
+        FxKind::Spectrum => (0.0, TOP_SPECTRUM),
+        FxKind::PhaseMeter => (0.0, TOP_PHASE),
     }
 }
 
@@ -283,6 +302,7 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
 
 fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
     let empty = Rect::ZERO;
+    let mut aux = empty;
     let (plot, meters, readout, button) = match kind {
         FxKind::Reverb => (
             Rect::new(v.x0, v.y0 + 1.0, v.x1 - 52.0, v.y1 - 1.0),
@@ -330,6 +350,21 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         ),
         // `character_layout` builds its own geometry.
         FxKind::Character => (v, v, empty, None),
+        FxKind::Spectrum => (
+            Rect::new(v.x0 + 26.0, v.y0 + 1.0, v.x1 - 40.0, v.y1 - 12.0),
+            Rect::new(v.x1 - 32.0, v.y0 + 1.0, v.x1, v.y1 - 12.0),
+            Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
+            None,
+        ),
+        FxKind::PhaseMeter => {
+            // Goniometer square, stereo bars, level bars with their scale, loudness readouts.
+            let s = (v.height() - 2.0).clamp(80.0, 140.0);
+            let plot = Rect::new(v.x0, v.y0 + 1.0, v.x0 + s, v.y0 + 1.0 + s);
+            let stereo = Rect::new(plot.x1 + 12.0, plot.y0, plot.x1 + 12.0 + 214.0, plot.y1);
+            let levels = Rect::new(stereo.x1 + 12.0, plot.y0, stereo.x1 + 12.0 + 76.0, plot.y1);
+            aux = Rect::new(levels.x1 + 12.0, plot.y0, v.x1, plot.y1);
+            (plot, levels, stereo, None)
+        }
     };
     FxPanel {
         kind,
@@ -337,6 +372,7 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
         plot,
         meters,
         readout,
+        aux,
         button,
         character: None,
     }
@@ -407,6 +443,8 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "release" => "Release".to_string(),
         "early" => "Early/late".to_string(),
         "meter.reset" => "Reset".to_string(),
+        "corr_time" => "Corr. time".to_string(),
+        "scope_gain" => "Gain".to_string(),
         "transform_cv_trim" | "mix_cv_trim" | "drive_cv_trim" | "feedback_cv_trim"
         | "band2.gain_cv_trim" | "band3.gain_cv_trim" | "band4.gain_cv_trim"
         | "band5.gain_cv_trim" => "CV trim".to_string(),

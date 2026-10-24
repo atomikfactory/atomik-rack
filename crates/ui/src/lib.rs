@@ -187,6 +187,18 @@
 //! browser lists the two players together as the "Players" group
 //! ([`browser::PLAYER_TYPE_IDS`]).
 //!
+//! # Analysers
+//!
+//! The spectrum and phase meter devices (`atomik.spectrum`, `atomik.phase-meter`, effect panels
+//! like the others, [`fx::FxKind::Spectrum`] and [`fx::FxKind::PhaseMeter`]) show more than 32
+//! published numbers: the app analyses the frames of the device's scope tap (FFT, decimation)
+//! and passes the result with [`RackView::set_analyser`] ([`analyser::AnalyserData`]: the spectrum
+//! trace, its held peaks and the loudest bin, and the decimated scope frames), next to the
+//! ordinary [`RackView::set_device_meter_values`] (peaks, correlation, loudness). A panel
+//! repaints only when its data changed and it is on screen; a bypassed device keeps its last
+//! picture and says `BYPASSED`. The pure maths (axes, goniometer mapping, texts) is in
+//! [`analyser`].
+//!
 //! # Containers
 //!
 //! A container is a device with a rack inside. [`RackView`] shows the inside of one when its
@@ -263,6 +275,8 @@
 //!   `cpu-canvas`).
 
 pub mod action;
+pub mod analyser;
+mod analyser_paint;
 pub mod arp_panel;
 pub mod arrangement;
 pub mod audio;

@@ -10,6 +10,7 @@ mod player;
 mod plugin;
 mod registry;
 mod samples;
+mod scope;
 
 pub use context::ProcessContext;
 pub use descriptor::{
@@ -31,8 +32,10 @@ pub use samples::{
     LoopMode, SampleBuffer, SampleMap, SampleMapError, SampleMapRef, TriggerMode, ZONE_GAIN_RANGE,
     ZONE_TRANSPOSE_RANGE, ZONE_TUNE_RANGE, Zone, velocity_to_7bit,
 };
+pub use scope::{SCOPE_FRAMES, ScopeTap};
 
 use atomik_core::{ParamId, SampleRate};
+use std::sync::Arc;
 
 /// Maximum number of values a device can publish through [`Device::meter_values`].
 pub const MAX_METER_VALUES: usize = 32;
@@ -105,6 +108,14 @@ pub trait Device: Send + 'static {
     /// allocate, lock or block.
     fn meter_values(&self, _out: &mut [f32]) -> usize {
         0
+    }
+
+    /// Opt-in to a [`ScopeTap`]: the ring of recent stereo frames the UI analyses (spectrum,
+    /// goniometer). Read once by the engine, when the device is inserted or its plan is
+    /// submitted, and handed to the UI through the meter bank; the device keeps its own clone
+    /// and pushes every batch it processes. Non-RT; the default is no tap.
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        None
     }
 
     /// Processing latency in frames introduced by this device.

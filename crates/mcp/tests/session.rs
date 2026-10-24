@@ -56,6 +56,7 @@ fn every_session_tool_needs_an_open_session() {
             json!({"action": "export", "file": "target/tmp/never.mid"}),
         ),
         ("session_audio_notes", json!({})),
+        ("session_meters", json!({})),
         ("session_bounce", json!({})),
     ] {
         let r = call(&mut s, tool, args);
@@ -1571,5 +1572,208 @@ fn audio_to_notes_validates_its_arguments_and_reports_nothing_found() {
         json!({"mode": "drums", "grid": 16}),
     );
     assert_eq!(r["started"], true);
+    ok(&mut s, "session_close", json!({}));
+}
+
+/// A saved project with one audio track playing a generated 1 kHz stereo sine at -23 dBFS (the
+/// level of the loudness reference) for three seconds, with a phase meter and a spectrum on its
+/// channel's inserts, and the project file's path.
+fn meter_project(tag: &str, right_gain: f32) -> String {
+    use atomik_app::AppCore;
+    use atomik_app::session::{LiveSession, NullBackend};
+    use atomik_app::settings::AudioSettings;
+    use atomik_model::{Command, ConsoleCommand, InsertEffect};
+    use atomik_render::wav::{SampleFormat, write_wav_file};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("mcp-meters-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("source")).unwrap();
+    let mut core = AppCore::with_doc(
+        LiveSession::new(NullBackend, AudioSettings::default(), false),
+        atomik_model::empty_doc(),
+        None,
+    );
+    let amp = 10f64.powf(-23.0 / 20.0);
+    let left: Vec<f32> = (0..48_000 * 3)
+        .map(|i| (amp * (std::f64::consts::TAU * 1000.0 * i as f64 / 48_000.0).sin()) as f32)
+        .collect();
+    let right: Vec<f32> = left.iter().map(|v| v * right_gain).collect();
+    let file = dir.join("source").join("tone.wav");
+    write_wav_file(&file, &[left, right], 48_000, SampleFormat::F32).unwrap();
+    core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
+    core.wait_background();
+    let track = core.doc().song.tracks[0].device.clone();
+    let channel = core
+        .doc()
+        .console
+        .channel_of(&track)
+        .unwrap()
+        .channel
+        .clone();
+    for (slot, type_id) in ["atomik.phase-meter", "atomik.spectrum"]
+        .into_iter()
+        .enumerate()
+    {
+        core.apply_command(Command::Console(ConsoleCommand::SetInsert {
+            channel: channel.clone(),
+            slot,
+            effect: Some(InsertEffect::New {
+                type_id: type_id.into(),
+            }),
+        }))
+        .unwrap();
+    }
+    core.save_as(&dir.join("song.atomik")).unwrap();
+    dir.join("song")
+        .join("song.atomik")
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn device_of<'a>(v: &'a Value, type_id: &str) -> &'a Value {
+    v["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["type"] == type_id)
+        .unwrap_or_else(|| panic!("no {type_id} in {v}"))
+}
+
+#[test]
+fn session_meters_reads_the_reference_tone_without_an_audio_stream() {
+    let mut s = server();
+    // Nothing to read on the starter project.
+    ok(&mut s, "session_open", json!({}));
+    let r = call(&mut s, "session_meters", json!({}));
+    assert!(r.is_error);
+    assert!(
+        r.first_text().contains("no spectrum or phase meter"),
+        "{}",
+        r.first_text()
+    );
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": meter_project("a", 1.0), "height": 3600}),
+    );
+    let v = ok(&mut s, "session_meters", json!({"at_s": 2.9}));
+    assert_eq!(v["frames"], 139_200);
+    assert_eq!(v["devices"].as_array().unwrap().len(), 2);
+    // The phase meter: a stereo sine at -23 dBFS reads -23 LUFS, mono, centred, narrow.
+    let p = &device_of(&v, "atomik.phase-meter")["values"];
+    let num = |name: &str| p[name].as_f64().unwrap_or_else(|| panic!("{name} in {p}"));
+    assert!((num("momentary_lufs") + 23.0).abs() < 0.2, "{p}");
+    // The 3 s window holds 2.9 s of tone: 0.15 dB under the level.
+    assert!((num("short_term_lufs") + 23.15).abs() < 0.2, "{p}");
+    assert!((num("integrated_lufs") + 23.0).abs() < 0.2, "{p}");
+    assert!(num("correlation") > 0.999, "{p}");
+    assert!(num("balance").abs() < 0.001 && num("width") < 0.001, "{p}");
+    assert!((num("sample_peak_dbfs") + 23.0).abs() < 0.1, "{p}");
+    assert!(
+        (num("rms_l") - 10f64.powf(-23.0 / 20.0) / 2f64.sqrt()).abs() < 0.002,
+        "{p}"
+    );
+    // The spectrum: a 1 kHz line at -23 dB, in the 1 kHz band.
+    let sp = device_of(&v, "atomik.spectrum");
+    let hz = sp["values"]["peak_hz"].as_f64().unwrap();
+    assert!((hz - 1000.0).abs() < 12.0, "{hz}");
+    assert!((sp["values"]["peak_db"].as_f64().unwrap() + 23.0).abs() < 1.5);
+    let bands = sp["bands"].as_array().unwrap();
+    assert_eq!(bands.len(), 31);
+    let loudest = bands
+        .iter()
+        .max_by(|a, b| a[1].as_f64().unwrap().total_cmp(&b[1].as_f64().unwrap()))
+        .unwrap();
+    assert!(
+        (loudest[0].as_f64().unwrap() - 1000.0).abs() < 1.0,
+        "{loudest}"
+    );
+    assert!(
+        (loudest[1].as_f64().unwrap() + 23.0).abs() < 1.0,
+        "{loudest}"
+    );
+    // The panels show the readings: the texts the UI draws carry them.
+    let t = ok(
+        &mut s,
+        "session_texts",
+        json!({"contains": "LUFS", "limit": 100}),
+    );
+    assert!(!t["texts"].as_array().unwrap().is_empty(), "{t}");
+    for want in ["CORRELATION", "+1.00", "MOMENTARY", "TRUE PEAK"] {
+        let t = ok(
+            &mut s,
+            "session_texts",
+            json!({"contains": want, "limit": 100}),
+        );
+        assert!(
+            t["texts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["text"] == want),
+            "{want}: {t}"
+        );
+    }
+    let t = ok(
+        &mut s,
+        "session_texts",
+        json!({"contains": " dB", "limit": 100}),
+    );
+    assert!(
+        t["texts"].as_array().unwrap().iter().any(|x| {
+            x["text"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("PEAK ") && s.contains("Hz") && s.ends_with("dB"))
+        }),
+        "the spectrum's readout of the loudest bin: {t}"
+    );
+    // The same call gives the same numbers, and a filter and a position are honoured.
+    let again = ok(&mut s, "session_meters", json!({"at_s": 2.9}));
+    assert_eq!(v, again);
+    let one = ok(
+        &mut s,
+        "session_meters",
+        json!({"at_s": 0.5, "device": device_of(&v, "atomik.phase-meter")["key"]}),
+    );
+    assert_eq!(one["devices"].as_array().unwrap().len(), 1);
+    // At half a second the 3 s window is mostly empty: the short-term loudness is far lower.
+    assert!(
+        one["devices"][0]["values"]["short_term_lufs"]
+            .as_f64()
+            .unwrap()
+            < -28.0
+    );
+    ok(&mut s, "session_close", json!({}));
+}
+
+#[test]
+fn session_meters_follows_the_stereo_image_and_refuses_bad_arguments() {
+    let mut s = server();
+    // The right channel inverted and half as loud.
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": meter_project("b", -0.5)}),
+    );
+    let v = ok(&mut s, "session_meters", json!({"at_s": 2.0}));
+    let p = &device_of(&v, "atomik.phase-meter")["values"];
+    assert!(
+        (p["correlation"].as_f64().unwrap() + 1.0).abs() < 0.001,
+        "{p}"
+    );
+    assert!(
+        p["balance"].as_f64().unwrap() < -0.3,
+        "louder on the left: {p}"
+    );
+    assert!(p["width"].as_f64().unwrap() > 0.7, "{p}");
+    for args in [
+        json!({"at_s": -1}),
+        json!({"at_s": 99999}),
+        json!({"at_s": "soon"}),
+        json!({"device": "nope"}),
+        json!({"device": 3}),
+    ] {
+        let r = call(&mut s, "session_meters", args.clone());
+        assert!(r.is_error, "{args}");
+    }
     ok(&mut s, "session_close", json!({}));
 }

@@ -686,6 +686,9 @@ pub(crate) struct Extra<'a> {
     /// Devices (flat keys) whose latency, as the engine published it when the render ended, is
     /// reported in [`Core::latencies`].
     pub probes: Vec<DeviceKey>,
+    /// Devices (flat keys) whose published meter values and scope frames are read when the
+    /// render ends ([`Core::meters`], [`probe_devices`]).
+    pub meter_probes: Vec<DeviceKey>,
     /// Progress and cancel.
     pub control: crate::plugin_pass::RenderControl<'a>,
 }
@@ -696,6 +699,60 @@ pub(crate) struct Core {
     pub rendered: Rendered,
     /// The latency in frames of each of `Extra::probes` (0 for a device that is not built).
     pub latencies: Vec<u32>,
+    /// What each of `Extra::meter_probes` showed when the render ended (devices that are not
+    /// built are left out).
+    pub meters: Vec<DeviceProbe>,
+}
+
+/// Frames of a device's scope tap kept by a probe (the largest analysis window).
+const PROBE_FRAMES: usize = 8192;
+
+/// What a metering device showed when an offline render ended: its published meter values
+/// (`Device::meter_values`) and the newest frames of its scope tap (`Device::scope_tap`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceProbe {
+    /// The device's flat key.
+    pub key: DeviceKey,
+    /// The last published meter values (empty for a device that publishes none).
+    pub values: Vec<f32>,
+    /// The newest frames of the tap's left channel, oldest first (at most 8192; empty without a
+    /// tap).
+    pub left: Vec<f32>,
+    /// The right channel of the same frames.
+    pub right: Vec<f32>,
+    /// The tap's write position: the number of frames the device processed.
+    pub head: u64,
+}
+
+/// Renders `doc` offline for `frames` frames (a bounce that stops early: the same code, so the
+/// devices see exactly the audio of the bounce) and returns what each of the devices `keys`
+/// (flat keys; those that are not built are left out) showed at the end. Nothing in the render
+/// depends on the probe. A project with plugins is refused.
+///
+/// # Errors
+/// [`RenderError`] as for [`render_doc_in`].
+pub fn probe_devices(
+    doc: &RackDoc,
+    registry: &Registry,
+    options: &ProjectOptions,
+    bundle_root: Option<&Path>,
+    frames: usize,
+    keys: &[DeviceKey],
+) -> Result<Vec<DeviceProbe>, RenderError> {
+    let extra = Extra {
+        frames: Some(frames),
+        meter_probes: keys.to_vec(),
+        ..Extra::default()
+    };
+    let core = render_core(
+        doc,
+        registry,
+        (options, bundle_root),
+        &mut PluginBounce::default(),
+        &extra,
+    )?;
+    core.map(|c| c.meters)
+        .ok_or_else(|| RenderError::Project("the render was cancelled".to_string()))
 }
 
 /// The bounce of [`render_doc_with`], with the additions of `extra`. `None` when `extra.control`
@@ -827,6 +884,30 @@ pub(crate) fn render_core(
                 .unwrap_or(0)
         })
         .collect();
+    let meters = extra
+        .meter_probes
+        .iter()
+        .filter_map(|k| {
+            let id = *ids.get(k)?;
+            let mut values = [0.0f32; atomik_engine::MAX_METER_VALUES];
+            let published = handle.device_meter_values(id, &mut values);
+            let tap = handle.device_scope_tap(id);
+            if published.is_none() && tap.is_none() {
+                return None;
+            }
+            let (mut left, mut right) = (vec![0.0; PROBE_FRAMES], vec![0.0; PROBE_FRAMES]);
+            let (n, head) = tap.map_or((0, 0), |t| t.read_latest(&mut left, &mut right));
+            left.truncate(n);
+            right.truncate(n);
+            Some(DeviceProbe {
+                key: k.clone(),
+                values: values[..published.map_or(0, |(n, _)| n)].to_vec(),
+                left,
+                right,
+                head,
+            })
+        })
+        .collect();
     // The devices go away with the engine; the plugins are destroyed on this (the main) thread.
     drop(engine);
     drop(handle);
@@ -841,6 +922,7 @@ pub(crate) fn render_core(
             plugins: plugin_count,
         },
         latencies,
+        meters,
     }))
 }
 

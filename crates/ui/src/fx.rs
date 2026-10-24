@@ -1,4 +1,4 @@
-//! The effect panels' pure maths (adds Character): which device types have a visual, the
+//! The effect panels' pure maths (adds Character, Spectrum and Phase Meter): which device types have a visual, the
 //! compressor transfer curve, the EQ magnitude response, the distortion transfer function, the
 //! reverb decay sketch, the LFO sketch and the conversion of published meter values into what
 //! the panels draw. Nothing here touches a canvas, a clock or the document, so every formula is
@@ -10,7 +10,7 @@ use atomik_device_sdk::DeviceDescriptor;
 use atomik_model::RackDevice;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
-/// The seven effects with a hand-made panel and visual.
+/// The nine effects with a hand-made panel and visual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FxKind {
     /// `atomik.reverb`.
@@ -27,11 +27,15 @@ pub enum FxKind {
     Mastering,
     /// `atomik.character`: the 4 x 4 preset matrix, a screen and a peak meter.
     Character,
+    /// `atomik.spectrum`: the spectrum analyser (fed by the app from the device's scope tap).
+    Spectrum,
+    /// `atomik.phase-meter`: goniometer, correlation, balance, width, levels and loudness.
+    PhaseMeter,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 7] = [
+    pub const ALL: [FxKind; 9] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -39,6 +43,8 @@ impl FxKind {
         FxKind::Modulation,
         FxKind::Mastering,
         FxKind::Character,
+        FxKind::Spectrum,
+        FxKind::PhaseMeter,
     ];
 
     /// The kind of a device type id.
@@ -56,6 +62,8 @@ impl FxKind {
             FxKind::Modulation => "atomik.modulation",
             FxKind::Mastering => "atomik.mastering",
             FxKind::Character => "atomik.character",
+            FxKind::Spectrum => "atomik.spectrum",
+            FxKind::PhaseMeter => "atomik.phase-meter",
         }
     }
 
@@ -69,6 +77,8 @@ impl FxKind {
             FxKind::Modulation => 0,
             FxKind::Mastering => 8,
             FxKind::Character => CHARACTER_METERS,
+            FxKind::Spectrum => SPECTRUM_METERS,
+            FxKind::PhaseMeter => phase::COUNT,
         }
     }
 }
@@ -92,6 +102,48 @@ pub const BAND_FALL_DB: f32 = 2.0;
 pub const GR_SCALE_DB: f32 = 24.0;
 /// Character publishes `[in peak, out peak, transform_eff, activity]`.
 pub const CHARACTER_METERS: usize = 4;
+/// The spectrum analyser publishes the recent peaks of its two inputs.
+pub const SPECTRUM_METERS: usize = 2;
+
+/// The phase meter's published values (`atomik_devices::phase_meter::value`; a test pins the
+/// two together): which index holds what.
+pub mod phase {
+    /// Number of values.
+    pub const COUNT: usize = 16;
+    /// Recent peak, left (linear).
+    pub const PEAK_L: usize = 0;
+    /// Recent peak, right.
+    pub const PEAK_R: usize = 1;
+    /// Held peak, left.
+    pub const HOLD_L: usize = 2;
+    /// Held peak, right.
+    pub const HOLD_R: usize = 3;
+    /// RMS, left (linear).
+    pub const RMS_L: usize = 4;
+    /// RMS, right.
+    pub const RMS_R: usize = 5;
+    /// Sample peak since reset, dBFS.
+    pub const SAMPLE_PEAK_DB: usize = 6;
+    /// True peak since reset, dBTP.
+    pub const TRUE_PEAK_DB: usize = 7;
+    /// Correlation, -1..=1.
+    pub const CORRELATION: usize = 8;
+    /// Balance, -1 (left) to +1 (right).
+    pub const BALANCE: usize = 9;
+    /// Width, 0 to 1.
+    pub const WIDTH: usize = 10;
+    /// Mid RMS (linear).
+    pub const MID_RMS: usize = 11;
+    /// Side RMS (linear).
+    pub const SIDE_RMS: usize = 12;
+    /// Momentary loudness, LUFS.
+    pub const MOMENTARY: usize = 13;
+    /// Short-term loudness, LUFS.
+    pub const SHORT_TERM: usize = 14;
+    /// Integrated loudness, LUFS.
+    pub const INTEGRATED: usize = 15;
+}
+
 /// The activity value (0..1) falls by this much per feed: about 0.4 s from full to nothing at
 /// 60 feeds per second, long enough for the screen to ease out instead of freezing.
 pub const ACTIVITY_FALL: f32 = 0.04;
@@ -110,6 +162,9 @@ enum Slot {
     Unit,
     /// A value 0..1 with a linear release (Character's preset activity).
     Activity,
+    /// A value -1..1 shown as published (the phase meter's correlation and balance, which the
+    /// device already averages), no release.
+    Signed,
 }
 
 fn slot(kind: FxKind, i: usize) -> Slot {
@@ -120,6 +175,10 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::Mastering, _) => Slot::Gr,
         (FxKind::Character, 2) => Slot::Unit,
         (FxKind::Character, 3) => Slot::Activity,
+        (FxKind::PhaseMeter, phase::SAMPLE_PEAK_DB | phase::TRUE_PEAK_DB) => Slot::Raw,
+        (FxKind::PhaseMeter, phase::MOMENTARY..=phase::INTEGRATED) => Slot::Raw,
+        (FxKind::PhaseMeter, phase::CORRELATION | phase::BALANCE) => Slot::Signed,
+        (FxKind::PhaseMeter, phase::WIDTH) => Slot::Unit,
         _ => Slot::Peak,
     }
 }
@@ -142,7 +201,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             match slot(kind, i) {
                 Slot::Gr => *v = 0.0,
                 Slot::Raw => *v = -120.0,
-                Slot::Unit | Slot::Activity => *v = 0.0,
+                Slot::Unit | Slot::Activity | Slot::Signed => *v = 0.0,
                 _ => {}
             }
         }
@@ -159,6 +218,7 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
             // Hundredths, as a fraction so a value like 0.7 stays the nearest float to 0.7.
             Slot::Unit => (r.clamp(0.0, 1.0), f32::INFINITY, 0.01, 0.0),
             Slot::Activity => (r.clamp(0.0, 1.0), ACTIVITY_FALL, 0.02, 0.0),
+            Slot::Signed => (r.clamp(-1.0, 1.0), f32::INFINITY, 0.01, -1.0),
         };
         let old = *cell;
         let v = if new >= old {
@@ -166,9 +226,11 @@ pub fn update_display(kind: FxKind, raw: &[f32], shown: &mut Vec<f32>) -> bool {
         } else {
             (old - fall).max(new)
         };
-        let v = if matches!(slot(kind, i), Slot::Unit | Slot::Activity) {
+        let v = if matches!(slot(kind, i), Slot::Unit | Slot::Activity | Slot::Signed) {
             let n = (1.0f32 / step).round();
-            (v.max(floor) * n).round() / n
+            // `+ 0.0` turns a negative zero into a zero, so a value that hovers around nothing
+            // does not read as a change.
+            (v.max(floor) * n).round() / n + 0.0
         } else {
             quantise(v.max(floor), step)
         };

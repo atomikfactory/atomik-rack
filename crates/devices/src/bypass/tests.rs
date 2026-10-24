@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 8, "{ids:?}");
+    assert_eq!(ids.len(), 10, "{ids:?}");
     ids
 }
 
@@ -34,7 +34,9 @@ fn wrapped(type_id: &str) -> DeviceHarness {
 
 fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
-    use crate::{character, compressor, distortion, eq, mastering, modulation, reverb};
+    use crate::{
+        character, compressor, distortion, eq, mastering, modulation, phase_meter, reverb, spectrum,
+    };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
         "atomik.compressor" => Box::new(compressor::Compressor::new()),
@@ -44,6 +46,8 @@ fn raw(type_id: &str) -> DeviceHarness {
         "atomik.mastering" => Box::new(mastering::Mastering::new()),
         "atomik.character" => Box::new(character::Character::new()),
         "atomik.stereo-delay" => Box::new(stereo_delay::StereoDelay::new()),
+        "atomik.spectrum" => Box::new(spectrum::Spectrum::new()),
+        "atomik.phase-meter" => Box::new(phase_meter::PhaseMeter::new()),
         other => panic!("{other}"),
     };
     DeviceHarness::new(d, SR)

@@ -243,6 +243,16 @@ impl EngineSink for OfflineSink {
         self.meters.as_ref()?.device_values(id, out)
     }
 
+    fn read_device_scope(
+        &self,
+        id: DeviceInstanceId,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Option<(usize, u64)> {
+        let tap = self.meters.as_ref()?.scope_tap(id)?;
+        Some(tap.read_latest(left, right))
+    }
+
     fn start_audio_record(
         &mut self,
         channels: &[usize],

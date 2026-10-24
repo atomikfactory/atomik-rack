@@ -68,6 +68,40 @@ impl RackView {
         }
     }
 
+    /// Feeds the analysis of a spectrum or phase meter device (`AppCore::feed_device_scopes`):
+    /// the spectrum trace and peaks, the loudest bin and the decimated scope frames, in
+    /// [`AnalyserData`](crate::analyser::AnalyserData). The panel is re-recorded and a repaint
+    /// requested only when the data changed and the panel is on screen. Devices that are not
+    /// analysers are ignored; the stored buffers are reused.
+    pub fn set_analyser(&mut self, key: &DeviceKey, data: &crate::analyser::AnalyserData) {
+        let Some(i) = self.device_index(key) else {
+            return;
+        };
+        if !matches!(
+            self.devices[i].fx,
+            Some(FxKind::Spectrum | FxKind::PhaseMeter)
+        ) || self.devices[i].analyser == *data
+        {
+            return;
+        }
+        self.devices[i].analyser.clone_from(data);
+        self.devices[i].revision += 1;
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, 0.0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        let d = &self.devices[i];
+        if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
+            self.repaint = true;
+        }
+    }
+
+    /// The analyser data of a spectrum or phase meter panel (`None` for other devices).
+    pub fn analyser_data(&self, key: &DeviceKey) -> Option<&crate::analyser::AnalyserData> {
+        let d = &self.devices[self.device_index(key)?];
+        matches!(d.fx, Some(FxKind::Spectrum | FxKind::PhaseMeter)).then_some(&d.analyser)
+    }
+
     /// Folds a Mod Source meter frame into the scope ring buffer (no allocation after the
     /// first feed) and repaints the visible panel when a point or the live marker moved.
     fn modsrc_meter_feed(&mut self, i: usize, values: &[f32]) {

@@ -90,6 +90,11 @@ pub const TOOLS: &[Tool] = &[
         run: audio_notes,
     },
     Tool {
+        name: "session_meters",
+        definition: meters_def,
+        run: meters,
+    },
+    Tool {
         name: "session_bounce",
         definition: bounce_def,
         run: bounce,
@@ -1100,6 +1105,83 @@ fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "notes": notes,
         "dirty": core.is_dirty(),
         "can_undo": core.document().can_undo(),
+    })))
+}
+
+// -------------------------------------------------------------- session_meters
+
+fn meters_def() -> Value {
+    definition(
+        "session_meters",
+        "Reads what the spectrum and phase meter devices of the open project show at a position of the song, without an audio stream: the document is rendered offline up to `at_s` seconds (the code of session_bounce, so the devices see the bounce's audio), then the panels are filled with the readings (session_texts and session_screenshot show them) and the numbers are returned. Phase meter: `peak_l`, `peak_r`, `hold_l`, `hold_r`, `rms_l`, `rms_r` (linear), `sample_peak_dbfs`, `true_peak_dbtp`, `correlation` (-1 to 1), `balance` (-1 left to 1 right), `width` (0 mono, 0.5 unrelated, 1 opposite polarity), `mid_rms`, `side_rms` (linear), `momentary_lufs`, `short_term_lufs`, `integrated_lufs` (BS.1770; -120 for silence or loudness off). Spectrum: `peak_hz` and `peak_db` of the loudest bin with the device's settings, and `bands`, the 31 one-third-octave levels as `[centre Hz, dB]` (a full-scale sine reads 0 dB; -200 for silence). A project that uses third-party plugins is refused.",
+        &[
+            (
+                "at_s",
+                "number",
+                "Position in seconds from the song start (default 1.0).",
+            ),
+            (
+                "device",
+                "string",
+                "Only this device (its key; a container's inner device has its path key). Default: every spectrum and phase meter.",
+            ),
+        ],
+        &[],
+    )
+}
+
+/// A value for JSON: dB floors at -240 like the audio reports, and a non-finite number is null.
+fn json_level(v: f32) -> Value {
+    if v.is_finite() {
+        json!((f64::from(v).max(-240.0) * 1000.0).round() / 1000.0)
+    } else {
+        Value::Null
+    }
+}
+
+fn meters(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let at_s = args.opt_f64("at_s")?.unwrap_or(1.0);
+    if !(0.0..=3_600.0).contains(&at_s) {
+        return Err("at_s must be 0 to 3600 seconds".to_owned());
+    }
+    let only = args
+        .opt_str("device")?
+        .map(|k| atomik_model::DeviceKey(k.to_owned()));
+    let session = server.require_session()?;
+    let core = session.shell_mut().core_mut();
+    core.wait_background();
+    let sample_rate = f64::from(core.doc().sample_rate);
+    let frames = ((at_s * sample_rate).round() as usize).max(64);
+    let readouts = core.probe_meters(frames, only.as_ref())?;
+    // The panels show the readings: lay them out and paint once.
+    session.shell_mut().frame();
+    let devices: Vec<Value> = readouts
+        .iter()
+        .map(|r| {
+            let values: serde_json::Map<String, Value> = r
+                .values
+                .iter()
+                .map(|(name, v)| ((*name).to_owned(), json_level(*v)))
+                .collect();
+            let mut d = json!({"key": r.key.0, "type": r.type_id, "values": values});
+            if !r.bands.is_empty() {
+                d["bands"] = Value::Array(
+                    r.bands
+                        .iter()
+                        .map(|(hz, db)| {
+                            json!([(f64::from(*hz) * 100.0).round() / 100.0, json_level(*db)])
+                        })
+                        .collect(),
+                );
+            }
+            d
+        })
+        .collect();
+    Ok(ToolOutput::json(&json!({
+        "at_s": at_s,
+        "frames": frames,
+        "sample_rate": sample_rate,
+        "devices": devices,
     })))
 }
 

@@ -45,6 +45,8 @@
 
 use crate::graph::Endpoint;
 use atomik_core::{BATCH, Batch};
+use atomik_device_sdk::ScopeTap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Maximum automatic compensation delay (decision: 10 s at the session rate).
@@ -92,6 +94,9 @@ struct MeterSlot {
 pub struct Meters {
     slots: Box<[MeterSlot]>,
     devices: Box<[DeviceValueSlot]>,
+    /// The scope taps of the arena devices that have one (`Device::scope_tap`). Only the control
+    /// side (insert, remove, plan submit) and readers lock it; the audio thread never does.
+    scopes: std::sync::Mutex<Vec<(crate::DeviceInstanceId, Arc<ScopeTap>)>>,
 }
 
 /// Published `Device::meter_values` of the device in one arena slot. `owner` is the device id
@@ -147,7 +152,40 @@ impl Meters {
         Self {
             slots: (0..METER_CAPACITY).map(|_| MeterSlot::default()).collect(),
             devices: (0..arena_slots).map(|_| DeviceValueSlot::new()).collect(),
+            scopes: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Non-RT. Registers the scope tap of device `id` (replacing an earlier one of that id).
+    pub(crate) fn register_scope(&self, id: crate::DeviceInstanceId, tap: Arc<ScopeTap>) {
+        if let Ok(mut scopes) = self.scopes.lock() {
+            scopes.retain(|(i, _)| *i != id);
+            scopes.push((id, tap));
+        }
+    }
+
+    /// Non-RT. Forgets the scope tap of device `id`.
+    pub(crate) fn unregister_scope(&self, id: crate::DeviceInstanceId) {
+        if let Ok(mut scopes) = self.scopes.lock() {
+            scopes.retain(|(i, _)| *i != id);
+        }
+    }
+
+    /// Non-RT. Forgets every scope tap (a plan replaced the whole arena).
+    pub(crate) fn clear_scopes(&self) {
+        if let Ok(mut scopes) = self.scopes.lock() {
+            scopes.clear();
+        }
+    }
+
+    /// The scope tap of device `id` (`Device::scope_tap`), if it has one and is in the engine.
+    /// Read it with [`ScopeTap::read_latest`]: lock-free, the engine never waits for the reader.
+    pub fn scope_tap(&self, id: crate::DeviceInstanceId) -> Option<Arc<ScopeTap>> {
+        let scopes = self.scopes.lock().ok()?;
+        scopes
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, tap)| Arc::clone(tap))
     }
 
     /// Reads the values device `id` last published through `Device::meter_values` into `out`

@@ -65,6 +65,7 @@ The trait is in [crates/device-sdk/src/lib.rs](../crates/device-sdk/src/lib.rs).
 | `fn set_param(&mut self, id: ParamId, plain: f32)` | RT | no | `plain` is already clamped (and rounded if discrete) by the engine |
 | `fn process(&mut self, ctx: &mut ProcessContext<'_>)` | RT | no | Processes exactly one batch of 64 frames |
 | `fn latency_frames(&self) -> u32` | any | no | Default 0. The engine does not compensate it yet. |
+| `fn scope_tap(&self) -> Option<Arc<ScopeTap>>` | any | no | Default `None`. Opt-in to a ring of the recent stereo frames for the UI (see below). |
 
 ### `prepare` is the only allocating method
 
@@ -82,6 +83,10 @@ In particular:
 - **No hash-ordered collections or time sources.** `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now` are banned by [clippy.toml](../clippy.toml).
 
 A device instance is constructed by its factory (`create: fn() -> Box<dyn Device>`) on the non-RT side. Construction may allocate, but `prepare` must still be correct when it is called again.
+
+### Showing more than 32 numbers: the scope tap
+
+`Device::meter_values` publishes up to 32 floats per batch, enough for a level, a gain reduction or a correlation. A device that wants the UI to draw something from the samples themselves (a spectrum, a goniometer) returns a [`ScopeTap`](../crates/device-sdk/src/scope.rs) from `scope_tap`: create it in the constructor (`Arc::new(ScopeTap::new())`, which allocates), keep a clone, and in `process` call `tap.push(&left, &right)` with the 64 frames of the batch. The push is relaxed atomic stores and one release store, so it is real-time safe; the engine registers the tap when the device is inserted, and the app reads the newest frames each UI frame and does the analysis (FFT, decimation, drawing) on its own thread. `atomik.spectrum` and `atomik.phase-meter` are the examples; see [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
 
 ### Output zeroing contract
 

@@ -105,6 +105,8 @@ pub struct FxPanel {
     pub meters: Rect,
     /// A numeric readout area (mastering loudness), empty otherwise.
     pub readout: Rect,
+    /// A second readout area (the phase meter's loudness), empty otherwise.
+    pub aux: Rect,
     /// The compressor's "SC from" dropdown button.
     pub button: Option<Rect>,
     /// The Character panel's matrix, screen, badge and meter strip.

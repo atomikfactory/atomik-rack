@@ -87,6 +87,8 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Modulation), 2);
     assert_eq!(units(FxKind::Mastering), 4);
     assert_eq!(units(FxKind::Character), 3);
+    assert_eq!(units(FxKind::Spectrum), 4);
+    assert_eq!(units(FxKind::PhaseMeter), 3);
 }
 
 fn overlaps(a: &Rect, b: &Rect) -> bool {
