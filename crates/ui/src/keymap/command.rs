@@ -727,6 +727,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.audio_to_notes",
+        "Audio to Notes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_transpose",
         "Transpose Audio",
         G::Sequencer,
