@@ -225,6 +225,10 @@ pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
+/// The values of `sequencer.track_height`: the height presets.
+pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit"];
+/// The values of `sequencer.fold_lanes`.
+pub const LANE_FOLD_ARGS: &[&str] = &["fold", "unfold"];
 /// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
 pub const METER_ARGS: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"];
 
@@ -633,11 +637,28 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "sequencer.fold_lanes",
+        "Fold Automation Lanes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(LANE_FOLD_ARGS)
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.follow",
         "Follow Playhead",
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.group_tracks",
+        "Group Tracks",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd("sequencer.join", "Join", G::Sequencer, C::Sequencer),
     cmd(
         "sequencer.marker_add_here",
@@ -713,11 +734,37 @@ const COMMANDS: &[CommandDef] = &[
     .arg(METER_ARGS)
     .decline(),
     cmd(
+        "sequencer.move_track_down",
+        "Move Track Down",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.move_track_up",
+        "Move Track Up",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.open_clip",
         "Open Clip",
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.rename_folder",
+        "Rename Folder...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
     .decline(),
     cmd(
         "sequencer.select_next_clip",
@@ -796,11 +843,51 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "sequencer.toggle_folder",
+        "Collapse or Expand Folder",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.toggle_mute",
         "Mute Clips",
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.track_color",
+        "Track Colour",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(MARKER_COLOR_ARGS)
+    .decline(),
+    cmd(
+        "sequencer.track_comment",
+        "Track Comment...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.track_height",
+        "Track Height",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(TRACK_HEIGHT_ARGS)
+    .menu(),
+    cmd(
+        "sequencer.ungroup_tracks",
+        "Ungroup",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.zoom_selection",
         "Zoom to Selection",

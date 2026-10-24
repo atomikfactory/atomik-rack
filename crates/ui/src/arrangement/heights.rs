@@ -145,7 +145,6 @@ impl ArrangementView {
 
     /// Lays the rows out again with the current heights (the zoom changed).
     pub(super) fn relayout(&mut self) {
-        let lane_h = self.lane_row_height();
         let heights: Vec<f64> = self
             .rows
             .iter()
@@ -154,7 +153,8 @@ impl ArrangementView {
                     || self.default_row_height(),
                     |t| self.track_row_height(&t.device),
                 ),
-                RowKind::Lane { .. } => lane_h,
+                RowKind::Lane { track, lane } => self.lane_height_of(*track, *lane),
+                RowKind::Folder { .. } => super::FOLDER_ROW_HEIGHT,
                 RowKind::AddTrack(_) | RowKind::AddAudio => ADD_ROW_HEIGHT,
                 RowKind::TakeGroup { .. } => super::TAKE_GROUP_HEIGHT,
                 RowKind::Take { .. } => super::TAKE_ROW_HEIGHT,

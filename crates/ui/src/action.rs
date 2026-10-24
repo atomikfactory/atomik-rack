@@ -317,6 +317,8 @@ pub enum ContextTarget {
     Rack,
     /// A track header in the arrangement.
     TrackHeader,
+    /// A folder row in the arrangement.
+    Folder,
     /// A clip in the arrangement.
     Clip,
     /// An empty stretch of a lane in the arrangement.

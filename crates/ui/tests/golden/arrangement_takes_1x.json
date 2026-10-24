@@ -1038,6 +1038,7 @@
 {"stroke":{"line":[176.00,112.50,192.00,112.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},
 {"stroke":{"rrect":[174.50,112.50,193.50,127.50,3.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"text":"W","at":[184.00,123.50],"size":9.50,"weight":700,"align":"center","color":"#ece8e1ff"},
+{"fill":{"path":"M5.50 118.00 L12.50 118.00 L9.00 122.50 Z"},"brush":"#8f96a0ff"},
 {"stroke":{"line":[0.00,145.50,208.00,145.50]},"width":1.00,"cap":"round","join":"round","brush":"#0000008c"},
 {"fill":{"rect":[0.00,146.00,208.00,206.00]},"brush":"#23262bff"},
 {"stroke":{"line":[0.00,146.50,208.00,146.50]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff24"},

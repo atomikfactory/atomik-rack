@@ -210,11 +210,12 @@ impl ArrangementView {
     }
 
     /// Whether the view owns the keyboard as a text field: a marker or range name is being
-    /// typed (double-click on a label, [`Self::begin_marker_rename`]). The shell then reports
+    /// typed (double-click on a label, [`Self::begin_marker_rename`]), or a folder name or a
+    /// track comment is (see [`Self::org_edit_text`]). The shell then reports
     /// the `Text` context over `Sequencer`, so plain keys reach [`Self::handle`] instead of
     /// commands.
     pub fn is_text_owner(&self) -> bool {
-        self.mk.rename.is_some()
+        self.mk.rename.is_some() || self.org_editing()
     }
 
     /// The name being typed, if an edit is open.
@@ -1400,7 +1401,7 @@ impl ArrangementView {
 
 /// The text field drawn over a label while its name is typed: the end of the text that fits,
 /// and a caret.
-fn name_field(c: &mut dyn Canvas, st: &sp::SeqTheme, r: Rect, text: &str) {
+pub(super) fn name_field(c: &mut dyn Canvas, st: &sp::SeqTheme, r: Rect, text: &str) {
     let t = &st.base;
     c.fill_with(RoundedRect::from_rect(r, 2.0), t.lcd);
     c.stroke_with(RoundedRect::from_rect(r, 2.0), 1.2, t.focus);

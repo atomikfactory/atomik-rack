@@ -74,7 +74,10 @@ rack.select_next | rack | Down
 rack.select_prev | rack | Up
 sequencer.follow | sequencer | F
 sequencer.follow | editor | F
+sequencer.group_tracks | sequencer | Cmd+Shift+G
 sequencer.join | sequencer | Cmd+J
+sequencer.move_track_down | sequencer | Opt+Down
+sequencer.move_track_up | sequencer | Opt+Up
 sequencer.open_clip | sequencer | Enter
 sequencer.select_next_clip | sequencer | Right
 sequencer.select_next_track | sequencer | Down
