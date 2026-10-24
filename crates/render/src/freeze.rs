@@ -170,6 +170,7 @@ pub fn render_freeze(
             usize::try_from(end_frame + tail + LATENCY_MARGIN).map_err(|e| fail(e.to_string()))?,
         ),
         probes,
+        meter_probes: Vec::new(),
         control,
     };
     let Some(Core {
@@ -180,6 +181,7 @@ pub fn render_freeze(
                 ..
             },
         latencies,
+        ..
     }) = render_core(
         &rendered_doc,
         registry,
