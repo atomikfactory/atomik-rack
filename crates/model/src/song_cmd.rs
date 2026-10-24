@@ -2,6 +2,7 @@
 
 use crate::WriteMode;
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
+use crate::controller::{canonical, check_lanes};
 use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
@@ -636,6 +637,11 @@ pub(crate) fn plan(
             if clip.scale.is_some() && !kind.is_notes() {
                 return Err(bad("only a note clip can have a scale"));
             }
+            if !clip.controllers.is_empty() && !kind.is_notes() {
+                return Err(bad("only a note clip can have controller lanes"));
+            }
+            let controllers = canonical(clip.controllers.clone());
+            check_lanes(&controllers, MAX_TICK).map_err(range)?;
             if kind.is_audio() {
                 check_audio_shape(clip.offset, clip.loop_length)?;
             }
@@ -648,6 +654,7 @@ pub(crate) fn plan(
                 Clip {
                     content,
                     scale,
+                    controllers,
                     ..clip
                 },
             )?;
@@ -721,6 +728,26 @@ pub(crate) fn plan(
                 lane,
                 old: Some(c.clone()),
                 new: Some(Clip { grid, ..c.clone() }),
+            }
+        }
+        SongCommand::SetClipControllers { clip, lanes, .. } => {
+            let (device, lane, c) = find_clip(doc, clip)?;
+            if !c.content.is_notes() && !lanes.is_empty() {
+                return Err(bad(format!(
+                    "clip {} is not a note clip, so it has no controller lanes",
+                    clip.0
+                )));
+            }
+            let controllers = canonical(lanes);
+            check_lanes(&controllers, MAX_TICK).map_err(range)?;
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
+                    controllers,
+                    ..c.clone()
+                }),
             }
         }
         SongCommand::SetClipScale { clip, scale } => {
@@ -831,6 +858,7 @@ pub(crate) fn plan(
                 muted: false,
                 grid: None,
                 scale: None,
+                controllers: Vec::new(),
                 content: ClipContent::Audio(content),
             };
             let (edit, id) = insert_new(doc, device, lane, clip)?;

@@ -12,6 +12,7 @@
 use crate::console::{MASTER_TYPE, is_console_type};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::container::{SPLIT_TYPE, split_path};
+use crate::controller::{ControllerKind, ControllerLane, canonical, window_points};
 use crate::history::Edit;
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
 use crate::rack_columns::{self, Placement};
@@ -1135,6 +1136,27 @@ fn set_clips_muted(doc: &RackDoc, ids: &[ClipId], muted: bool) -> Result<Edit, M
     Ok(Edit::Compound(edits))
 }
 
+/// The controller lanes of the clips of a join: each clip's window of every lane, later clips
+/// hiding the earlier points they overlap, relative to the joined clip's `start`.
+fn joined_controllers(clips: &[(DeviceKey, usize, &Clip)], start: i64) -> Vec<ControllerLane> {
+    let mut by_kind: BTreeMap<ControllerKind, Vec<AutomationPoint>> = BTreeMap::new();
+    for (_, _, c) in clips {
+        let shift = c.start - start;
+        for lane in &c.controllers {
+            let pts = window_points(lane, c.offset, c.offset + c.length, shift);
+            let all = by_kind.entry(lane.kind).or_default();
+            all.retain(|p| p.tick < shift);
+            all.extend(pts);
+        }
+    }
+    canonical(
+        by_kind
+            .into_iter()
+            .map(|(kind, points)| ControllerLane::new(kind, points))
+            .collect(),
+    )
+}
+
 fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), ModelError> {
     let wanted: BTreeSet<ClipId> = ids.iter().copied().collect();
     let mut clips = Vec::new();
@@ -1199,6 +1221,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         }
     };
     check_geometry(start, end - start, 0, None).map_err(ModelError::OutOfRange)?;
+    let controllers = joined_controllers(&clips, start);
     let first = clips[0].2;
     let joined = Clip {
         id: first.id,
@@ -1209,6 +1232,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         muted: clips.iter().all(|(_, _, c)| c.muted),
         grid: first.grid,
         scale: first.scale,
+        controllers,
         content,
     };
     let mut edits: Vec<Edit> = clips[1..]

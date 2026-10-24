@@ -124,6 +124,7 @@ fn click_doc(effect: (&str, &[(&str, f32)])) -> RackDoc {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Notes(notes),
             },

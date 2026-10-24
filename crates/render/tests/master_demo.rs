@@ -76,6 +76,7 @@ fn clip(notes: Vec<(i64, i64, u8)>, velocity: f32) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content: ClipContent::Notes(
             notes
@@ -250,7 +251,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
     assert!(
-        text.contains("\"version\": 18"),
+        text.contains("\"version\": 19"),
         "saved in the current format"
     );
 }

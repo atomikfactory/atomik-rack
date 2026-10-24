@@ -352,6 +352,7 @@ impl Take {
                     loop_length: None,
                     muted: false,
                     scale: None,
+                    controllers: Vec::new(),
                     grid: None,
                     content: ClipContent::Notes(content),
                 },

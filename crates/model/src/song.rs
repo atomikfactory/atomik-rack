@@ -7,6 +7,7 @@
 
 use crate::DeviceKey;
 use crate::automation_rec::WriteMode;
+use crate::controller::ControllerLane;
 use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
@@ -128,6 +129,10 @@ pub struct Clip {
     /// The scale the note editors highlight and snap to: `Some` only on a note clip and never
     /// chromatic (no scale is `None`). It never changes the clip's notes or how they play.
     pub scale: Option<Scale>,
+    /// Pitch bend, aftertouch and controller lanes, in content ticks: non-empty only on a note
+    /// clip (see [`crate::controller`]). Sorted by kind, one lane per kind. They follow the
+    /// clip's offset, loop and audible span like its notes do.
+    pub controllers: Vec<ControllerLane>,
     /// Content.
     pub content: ClipContent,
 }
@@ -532,6 +537,20 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Replace a note clip's controller lanes (pitch bend, aftertouch, CC; see
+    /// [`crate::controller`]). The clip must be a note clip (an empty list is allowed on any
+    /// clip and a no-op there); the lanes are validated: sorted by kind, unique, points sorted by
+    /// tick in `0..=MAX_TICK`, values in the kind's range. Lanes without points are dropped.
+    /// `merge` groups drags into one undo step, in the same group as the other clip edits.
+    /// Reports [`crate::SyncOp::SongChanged`].
+    SetClipControllers {
+        /// Clip id.
+        clip: ClipId,
+        /// The clip's whole controller data after the edit.
+        lanes: Vec<ControllerLane>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Set or clear a note clip's scale (what the piano roll highlights and snaps to). The clip
     /// must be a note clip. `None` and a chromatic scale both clear it (a chromatic scale is
     /// stored as no scale). The notes and the engine's view of the clip do not change. One undo
@@ -618,7 +637,8 @@ pub fn empty_song(bpm: f64) -> Song {
 mod flatten;
 
 pub use flatten::{
-    AudioRegion, audible_spans, effective_tracks, flatten_audio, flatten_automation, flatten_notes,
+    AudioRegion, audible_spans, effective_tracks, flatten_audio, flatten_automation,
+    flatten_controllers, flatten_notes,
 };
 
 /// Lowest accepted audio clip gain in dB.

@@ -93,6 +93,7 @@ fn clip(length: i64, content: ClipContent) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content,
     }

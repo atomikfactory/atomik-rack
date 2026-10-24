@@ -97,6 +97,7 @@ fn notes_clip(notes: Vec<Note>, length: i64) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content: ClipContent::Notes(notes),
     }

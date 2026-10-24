@@ -336,6 +336,7 @@ fn overwrite_replaces_the_whole_pass_from_the_value_it_started_with() {
             muted: false,
             grid: None,
             scale: None,
+            controllers: Vec::new(),
             content: ClipContent::Automation(vec![AutomationPoint {
                 tick: 0,
                 value: 500.0,

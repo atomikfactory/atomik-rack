@@ -81,6 +81,7 @@ fn note_clip(start: i64, length: i64, notes: &[(i64, u8)]) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content: ClipContent::Notes(
             notes
@@ -552,6 +553,7 @@ fn with_automation() -> AppCore<RecordingSink> {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Automation(points),
             },

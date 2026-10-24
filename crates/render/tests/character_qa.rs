@@ -86,7 +86,7 @@ fn a_project_with_every_preset_round_trips_save_load_save_byte_identically() {
     }
     // The preset is a plain numeric param, so no new project field appeared.
     assert!(
-        first.contains("\"version\": 18"),
+        first.contains("\"version\": 19"),
         "saved in the current format"
     );
 }
@@ -104,6 +104,7 @@ fn clip(content: ClipContent) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content,
     }
