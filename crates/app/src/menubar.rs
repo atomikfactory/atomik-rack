@@ -363,6 +363,7 @@ mod tests {
             midi_track: false,
             midi_song: false,
             org: atomik_ui::arrangement::OrgMenu::default(),
+            audio: atomik_ui::arrangement::AudioMenu::default(),
         }
     }
 

@@ -1916,6 +1916,10 @@ mod workflow;
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
+#[path = "app_core_audio_edit.rs"]
+mod audio_edit_ops;
+pub use audio_edit_ops::NORMALISE_TARGET_DB;
+
 #[path = "app_core_quantize.rs"]
 mod quantize_ops;
 pub use quantize_ops::QuantizeTarget;
@@ -2040,3 +2044,7 @@ mod tempo_tests;
 #[cfg(test)]
 #[path = "app_core_marker_tests.rs"]
 mod marker_tests;
+
+#[cfg(test)]
+#[path = "app_core_audio_edit_tests.rs"]
+mod audio_edit_tests;

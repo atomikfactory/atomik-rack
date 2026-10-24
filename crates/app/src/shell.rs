@@ -138,8 +138,8 @@ use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
     NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
-    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, TextRun, UiAction,
-    UiEvent,
+    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction,
+    SilenceValues, SilenceView, TextRun, UiAction, UiEvent,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -300,6 +300,10 @@ pub struct Shell<B: AudioBackend> {
     quantize: Option<QuantizeView>,
     /// The panel's settings, kept between openings (view state, not in the project).
     quantize_values: QuantizeValues,
+    /// The strip silence panel (Edit > Strip Silence) while it is open.
+    silence: Option<SilenceView>,
+    /// Its settings, kept between openings.
+    silence_values: SilenceValues,
     /// The missing asset the open file dialog is for (LOCATE...).
     relink_target: Option<String>,
     /// The key router: the keymap and the held keys.
@@ -425,6 +429,8 @@ impl<B: AudioBackend> Shell<B> {
             relink: None,
             quantize: None,
             quantize_values: QuantizeValues::default(),
+            silence: None,
+            silence_values: SilenceValues::default(),
             relink_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
@@ -543,6 +549,23 @@ impl<B: AudioBackend> Shell<B> {
             .map_or(&self.quantize_values, QuantizeView::values)
     }
 
+    /// Whether the strip silence panel is open.
+    pub fn silence_open(&self) -> bool {
+        self.silence.is_some()
+    }
+
+    /// The strip silence panel, while it is open.
+    pub fn silence_view(&self) -> Option<&SilenceView> {
+        self.silence.as_ref()
+    }
+
+    /// The strip silence panel's settings (those of the open panel, else the last ones).
+    pub fn silence_values(&self) -> &SilenceValues {
+        self.silence
+            .as_ref()
+            .map_or(&self.silence_values, SilenceView::values)
+    }
+
     /// The relink panel, while it is open.
     pub fn relink_view(&self) -> Option<&RelinkView> {
         self.relink.as_ref()
@@ -589,6 +612,64 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.arrangement().is_text_owner() {
             self.set_focus(Pane::Arrangement);
         }
+        self.repaint = true;
+    }
+
+    /// Runs an audio clip command of the Edit and Audio menus in the arrangement (the
+    /// commands that need no samples), whatever pane has the focus.
+    fn audio_command(&mut self, command: AppCommand) {
+        let Some((id, arg)) = command.command_id() else {
+            return;
+        };
+        match self.core.pane_command(Pane::Arrangement, id, arg) {
+            Some(actions) => self.pane_actions(&actions),
+            None => self.core.report("Select an audio clip first"),
+        }
+        self.repaint = true;
+    }
+
+    /// Opens the strip silence panel with the settings of the last time.
+    fn open_silence(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = SilenceView::new(theme, self.silence_values.clone());
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        self.silence = Some(view);
+        self.sync_silence();
+    }
+
+    /// Closes the strip silence panel, keeping its settings for the next time.
+    fn close_silence(&mut self) {
+        if let Some(view) = self.silence.take() {
+            self.silence_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the strip silence panel what it applies to.
+    fn sync_silence(&mut self) {
+        if self.silence.is_none() {
+            return;
+        }
+        let (text, can_apply) = self.core.strip_silence_target();
+        if let Some(view) = &mut self.silence {
+            view.set_target(text, can_apply);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the strip silence panel asked for.
+    fn silence_action(&mut self, action: SilenceAction) {
+        match action {
+            SilenceAction::Close => self.close_silence(),
+            SilenceAction::Apply => {
+                let values = self.silence_values().clone();
+                self.core.strip_silence(&values);
+            }
+        }
+        self.sync_silence();
         self.repaint = true;
     }
 
@@ -1079,6 +1160,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
             org: self.core.arrangement().org_menu(),
+            audio: self.core.arrangement().audio_menu(),
         }
     }
 
@@ -1259,6 +1341,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.quantize.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.quantize {
+                v.set_bounds(rect);
+            }
+        }
+        if self.silence.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.silence {
                 v.set_bounds(rect);
             }
         }
@@ -1562,6 +1650,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.quantize {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.silence {
+                    v.set_scale(*scale);
+                }
                 self.core.transport_bar_mut().set_scale(*scale);
                 self.core.console_mut().set_scale(*scale);
                 self.core.file_browser_mut().set_scale(*scale);
@@ -1636,6 +1727,31 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return requests;
+        }
+        if self.silence.is_some() {
+            // The strip silence panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_silence();
+                return Vec::new();
+            }
+            let actions = self
+                .silence
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::StripSilence(a) = action {
+                    self.silence_action(a);
+                }
+            }
+            self.sync_silence();
+            return Vec::new();
         }
         if self.quantize.is_some() {
             // The quantize panel takes every event; Esc closes it.
@@ -1842,6 +1958,8 @@ impl<B: AudioBackend> Shell<B> {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
             }
+            ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
+            ("sequencer.audio_strip_silence", None) => self.open_silence(),
             ("transport.stop", None) => self.core.stop_or_rewind(),
             ("transport.rewind_bar" | "transport.bar_back", None) => self.core.locate_bars(-1),
             ("transport.forward_bar" | "transport.bar_forward", None) => self.core.locate_bars(1),
@@ -2188,6 +2306,7 @@ impl<B: AudioBackend> Shell<B> {
             track_can_chase: core.arrangement().chase_menu().0,
             track_chase: core.arrangement().chase_menu().1,
             org: core.arrangement().org_menu(),
+            audio: core.arrangement().audio_menu(),
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
@@ -2585,6 +2704,26 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_) => {
                 self.track_command(command);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioReverse
+            | AppCommand::AudioGain(_)
+            | AppCommand::AudioFadeShape(_)
+            | AppCommand::AudioCrossfade(_)
+            | AppCommand::AudioFades(_)
+            | AppCommand::AudioClearEnvelope => {
+                self.audio_command(command);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioNormalise => {
+                self.core.normalise_audio();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioStripSilence => {
+                self.open_silence();
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -3127,6 +3266,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.quantize {
             view.paint(canvas);
         }
+        if let Some(view) = &self.silence {
+            view.paint(canvas);
+        }
         let theme = self.core.view().theme().clone();
         canvas.push_transform(Affine::scale(scale));
         if let Some(d) = l.divider {
@@ -3367,3 +3509,7 @@ mod scale_tests;
 #[cfg(test)]
 #[path = "shell_organise_tests.rs"]
 mod organise_tests;
+
+#[cfg(test)]
+#[path = "shell_audio_edit_tests.rs"]
+mod audio_edit_tests;

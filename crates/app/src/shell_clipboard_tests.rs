@@ -586,11 +586,18 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.join",
             "sequencer.toggle_mute",
             "edit.quantize_options",
+            "sequencer.audio_reverse",
+            "sequencer.audio_normalise",
+            "sequencer.audio_strip_silence",
         ]
     );
     let enabled = |id: &str| items.iter().find(|(c, _, _)| c == id).unwrap().2;
     assert!(enabled("sequencer.open_clip"), "a note clip");
     assert!(!enabled("sequencer.join"), "one clip");
+    assert!(
+        !enabled("sequencer.audio_reverse") && !enabled("sequencer.audio_normalise"),
+        "a note clip is not audio"
+    );
     assert_eq!(s.core().arrangement().selected_clips(), vec![ClipId(1)]);
     // Duplicate from the menu.
     let at = s
