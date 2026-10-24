@@ -367,7 +367,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .rep(),
-    cmd("editor.quantize", "Quantize", G::Editor, C::Editor),
+    cmd("editor.quantize", "Quantize", G::Editor, C::Editor).menu(),
     cmd(
         "editor.scale_snap_toggle",
         "Snap to Scale",

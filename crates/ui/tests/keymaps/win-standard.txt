@@ -25,6 +25,7 @@ editor.nudge_right_beat | editor | Ctrl+Shift+Right
 editor.nudge_right_tick | editor | Ctrl+Alt+Right
 editor.octave_down | editor | Ctrl+Shift+Down
 editor.octave_up | editor | Ctrl+Shift+Up
+editor.quantize | sequencer | Ctrl+K
 editor.quantize | editor | Ctrl+K
 editor.scale_snap_toggle | editor | Shift+S
 editor.toggle_note_mute | editor | M

@@ -7,7 +7,9 @@ mod support;
 use atomik_model::{ClipContent, ClipId, Command, Note, SongCommand};
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
-use atomik_ui::{Key, Modifiers, PianoRollView, TransportAction, UiAction};
+use atomik_ui::{
+    Key, Modifiers, PianoRollView, PointerButton, QuantizeAction, TransportAction, UiAction,
+};
 use proptest::prelude::*;
 use support::song::*;
 use support::*;
@@ -265,27 +267,32 @@ fn off_grid_doc() -> atomik_model::RackDoc {
 }
 
 #[test]
-fn quantize_moves_the_selection_to_the_grid_with_strength() {
+fn quantize_asks_the_app_for_the_panels_last_settings() {
     let (doc, reg) = (off_grid_doc(), registry());
     let mut v = piano_roll(&doc, &reg);
-    v.set_snap(Snap::Beat);
-    v.set_selected_notes(&[0, 1]);
+    let apply = UiAction::Quantize(QuantizeAction::ApplyLast);
+    // The key and the button say the same thing; the app owns the settings and the notes.
     let a = v.command("editor.quantize", None, &doc, &reg);
-    let c = contents(a.actions());
-    assert_eq!(c[0].1, None);
-    let ticks: Vec<i64> = c[0].0.iter().map(|n| n.tick).collect();
-    assert_eq!(ticks, vec![0, PPQ, 2 * PPQ + 1000]);
-    v.set_quantize_strength(0.5);
-    let a = v.command("editor.quantize", None, &doc, &reg);
-    let ticks: Vec<i64> = contents(a.actions())[0].0.iter().map(|n| n.tick).collect();
-    assert_eq!(ticks, vec![50, PPQ - 100, 2 * PPQ + 1000]);
-    // Nothing selected: quantize everything, via the button.
-    v.set_selected_notes(&[]);
-    v.set_quantize_strength(1.0);
+    assert_eq!(a.actions(), std::slice::from_ref(&apply));
     let q = v.quantize_button_center();
     let a = run(|e| v.handle(e, &doc, &reg), &[down(q), up(q)]);
-    let ticks: Vec<i64> = contents(&a)[0].0.iter().map(|n| n.tick).collect();
-    assert_eq!(ticks, vec![0, PPQ, 2 * PPQ]);
+    assert_eq!(a, vec![apply]);
+}
+
+#[test]
+fn quantize_options_open_from_the_neighbour_button_and_a_right_click() {
+    let (doc, reg) = (off_grid_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    let options = UiAction::Quantize(QuantizeAction::Options);
+    let o = v.quantize_options_button_center();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(o), up(o)]);
+    assert_eq!(a, vec![options.clone()]);
+    let q = v.quantize_button_center();
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_with(q, PointerButton::Secondary, 1)],
+    );
+    assert_eq!(a, vec![options]);
 }
 
 #[test]

@@ -21,6 +21,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::key_rows::{Fold, KeyRows};
 use crate::keymap::{CommandOutcome, ROOT_ARGS, Roles};
 use crate::paint::fit_label;
+use crate::quantize_panel::QuantizeAction;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
@@ -73,6 +74,7 @@ const MIN_TICKS: i64 = PPQ / 16;
 enum TopItem {
     Snap,
     Quantize,
+    QuantizeOptions,
     Close,
     Tool(Tool),
     // The scale bar.
@@ -261,7 +263,6 @@ pub struct PianoRollView {
     strum: StrumOptions,
     snap: Snap,
     vp: ViewportState,
-    strength: f32,
     clip_id: Option<ClipId>,
     clip: Option<Clip>,
     device: Option<DeviceKey>,
@@ -307,7 +308,6 @@ impl PianoRollView {
             strum: StrumOptions::default(),
             snap: Snap::default(),
             vp: ViewportState::new(),
-            strength: 1.0,
             clip_id: None,
             clip: None,
             device: None,
@@ -469,21 +469,6 @@ impl PianoRollView {
     /// Centre of a toolbar button in the top bar.
     pub fn tool_button_center(&self, tool: Tool) -> Point {
         self.top_rect(TopItem::Tool(tool)).center()
-    }
-
-    /// Quantize strength (0..=1, default 1).
-    pub fn quantize_strength(&self) -> f32 {
-        self.strength
-    }
-
-    /// Sets the quantize strength (clamped to 0..=1).
-    pub fn set_quantize_strength(&mut self, strength: f32) {
-        self.strength = if strength.is_nan() {
-            1.0
-        } else {
-            strength.clamp(0.0, 1.0)
-        };
-        self.repaint = true;
     }
 
     /// Zoom, logical pixels per tick.
@@ -679,6 +664,11 @@ impl PianoRollView {
     /// Centre of the quantize button.
     pub fn quantize_button_center(&self) -> Point {
         self.top_rect(TopItem::Quantize).center()
+    }
+
+    /// Centre of the quantize options button.
+    pub fn quantize_options_button_center(&self) -> Point {
+        self.top_rect(TopItem::QuantizeOptions).center()
     }
 
     /// Centre of the snap selector.
@@ -956,7 +946,8 @@ impl PianoRollView {
         let y = b.y0 + 5.0;
         match item {
             TopItem::Close => Rect::new(b.x1 - 30.0, y, b.x1 - 8.0, y + 18.0),
-            TopItem::Quantize => Rect::new(b.x1 - 118.0, y, b.x1 - 40.0, y + 18.0),
+            TopItem::Quantize => Rect::new(b.x1 - 118.0, y, b.x1 - 66.0, y + 18.0),
+            TopItem::QuantizeOptions => Rect::new(b.x1 - 62.0, y, b.x1 - 40.0, y + 18.0),
             TopItem::Snap => Rect::new(b.x1 - 186.0, y, b.x1 - 132.0, y + 18.0),
             TopItem::Tool(t) => {
                 let i = Tool::ALL.iter().position(|x| *x == t).unwrap_or(0) as f64;
@@ -1004,11 +995,16 @@ impl PianoRollView {
             return Hit::None;
         }
         if pos.y < b.y0 + HEADER_HEIGHT {
-            let item = [TopItem::Snap, TopItem::Quantize, TopItem::Close]
-                .into_iter()
-                .chain(Tool::ALL.into_iter().map(TopItem::Tool))
-                .chain(TopItem::SCALE_BAR)
-                .find(|i| self.top_rect(*i).contains(pos));
+            let item = [
+                TopItem::Snap,
+                TopItem::Quantize,
+                TopItem::QuantizeOptions,
+                TopItem::Close,
+            ]
+            .into_iter()
+            .chain(Tool::ALL.into_iter().map(TopItem::Tool))
+            .chain(TopItem::SCALE_BAR)
+            .find(|i| self.top_rect(*i).contains(pos));
             return Hit::Top(item);
         }
         let g = self.grid_rect();
@@ -1229,7 +1225,12 @@ impl PianoRollView {
         match self.hit(pos) {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
             Hit::Top(Some(TopItem::Snap)) => self.snap = self.snap.cycle(primary),
+            // The same settings as Cmd+K: the quantize panel's last ones. A right click (or the
+            // neighbouring button) opens that panel.
             Hit::Top(Some(TopItem::Quantize)) if primary => self.quantize(out),
+            Hit::Top(Some(TopItem::Quantize | TopItem::QuantizeOptions)) => {
+                out.push(UiAction::Quantize(QuantizeAction::Options));
+            }
             Hit::Top(Some(TopItem::Close)) if primary => out.push(UiAction::ClosePianoRoll),
             Hit::Top(Some(TopItem::ScaleRoot)) if primary => {
                 out.push(self.bar_menu(TopItem::ScaleRoot, ContextTarget::PianoScaleRoot));
@@ -1800,27 +1801,12 @@ impl PianoRollView {
         }
     }
 
-    fn quantize(&mut self, out: &mut Vec<UiAction>) {
-        let notes = self.notes().to_vec();
-        if notes.is_empty() {
-            return;
-        }
-        let sel: BTreeSet<usize> = if self.selection.is_empty() {
-            (0..notes.len()).collect()
-        } else {
-            self.selection.items().clone()
-        };
-        let step = self
-            .snap
-            .step_zoomed(self.meter, self.axis.px_per_tick)
-            .or(Some(OFF_LENGTH));
-        let q = seq_edit::quantize_notes(&notes, &sel, step, self.strength);
-        let (list, new) = seq_edit::normalize_notes(q, &sel);
-        if list != notes {
-            if !self.selection.is_empty() {
-                self.selection.set(new);
-            }
-            out.extend(self.content(list, None));
+    /// Asks the app to quantize with the quantize panel's last settings (the grid, strength,
+    /// swing, groove and humanize it holds, not the roll's snap): the app owns them and
+    /// applies them to the selected notes, all the notes of the clip when none is selected.
+    fn quantize(&self, out: &mut Vec<UiAction>) {
+        if !self.notes().is_empty() {
+            out.push(UiAction::Quantize(QuantizeAction::ApplyLast));
         }
     }
 
@@ -3025,12 +3011,29 @@ impl PianoRollView {
             None,
             self.hover == Hit::Top(Some(TopItem::Quantize)),
         );
-        let q = format!("QUANT {:.0}%", self.strength * 100.0);
         sp::label(
             c,
-            &q,
+            "QUANT",
             qr.center().x,
             qr.center().y + 3.5,
+            9.0,
+            t.text,
+            Align::Center,
+        );
+        let or = self.top_rect(TopItem::QuantizeOptions);
+        sp::button(
+            c,
+            st,
+            or,
+            "",
+            None,
+            self.hover == Hit::Top(Some(TopItem::QuantizeOptions)),
+        );
+        sp::label(
+            c,
+            "...",
+            or.center().x,
+            or.center().y + 3.5,
             9.0,
             t.text,
             Align::Center,
