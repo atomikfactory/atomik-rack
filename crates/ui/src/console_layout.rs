@@ -3,7 +3,7 @@
 //!
 //! # Strip layout rules
 //! - A strip is [`STRIP_W`] wide; the height is the console's strip area.
-//! - **Sections**, top to bottom (order): Input, Filters, Dynamics, EQ, Inserts, Sends,
+//! - **Sections**, top to bottom (order): Input, Filters, Dynamics, Parallel, EQ, Inserts, Sends,
 //!   CV trim (the fader, pan and send-level CV amounts), More (params this table does not know), then Pan/Width, Fader + meters, Mute/Solo and
 //!   the Name plate. Each section has a [`HEADER_H`] header with a fold chevron; a folded
 //!   section is just its header. The name plate cannot fold.
@@ -20,7 +20,9 @@
 //!   ([`PAD`] on each side). Cell heights: knob [`KNOB_H`] (label below), button/choice
 //!   [`BUTTON_H`]; a row is as tall as its tallest cell and shorter cells are centred.
 //!   Sends are 8 rows of [`SEND_ROW_H`]: on (with the send number), a level slider, pre.
-//!   Dynamics has a gain-reduction bar row; Inserts holds the latency-adjust knob.
+//!   Dynamics has a gain-reduction bar row; Inserts holds the latency-adjust knob. Parallel is
+//!   the enable button over three knobs (threshold, ratio, mix); its attack, release and makeup
+//!   are in the rack's channel panel only.
 //! - The fader body is `clamp(0.42·height, FADER_MIN_H, FADER_MAX_H)` (less in short
 //!   panes, see above), with a dB readout ([`LCD_H`]) above it and the stereo meter beside
 //!   it. The per-channel latency readout sits in the name plate, right of the caption.
@@ -116,6 +118,8 @@ pub enum SectionId {
     Filters,
     /// Compressor, gate/expander, key.
     Dynamics,
+    /// The parallel compressor: enable, threshold, ratio and mix (the rest is in the rack panel).
+    Parallel,
     /// 4-band EQ.
     Eq,
     /// Insert bypass, routing switches, latency.
@@ -145,10 +149,11 @@ pub enum SectionId {
 }
 
 /// The sections of a channel strip, top to bottom.
-pub const STRIP_SECTIONS: [SectionId; 12] = [
+pub const STRIP_SECTIONS: [SectionId; 13] = [
     SectionId::Input,
     SectionId::Filters,
     SectionId::Dynamics,
+    SectionId::Parallel,
     SectionId::Eq,
     SectionId::Inserts,
     SectionId::Sends,
@@ -167,6 +172,7 @@ impl SectionId {
             SectionId::Input => "INPUT",
             SectionId::Filters => "FILTERS",
             SectionId::Dynamics => "DYNAMICS",
+            SectionId::Parallel => "PARALLEL",
             SectionId::Eq => "EQ",
             SectionId::Inserts => "INSERTS",
             SectionId::Sends => "SENDS",
@@ -436,6 +442,19 @@ const DYNAMICS: &[Row] = &[
     ]),
     Row::Grid(&[k("gate.release", "REL"), b("key.on", "KEY"), None]),
 ];
+const PARALLEL: &[Row] = &[
+    Row::Grid(&[b("pcomp.on", "PAR COMP"), None, None]),
+    Row::Grid(&[
+        k("pcomp.threshold", "THR"),
+        k("pcomp.ratio", "RATIO"),
+        k("pcomp.mix", "MIX"),
+    ]),
+];
+
+/// Params of the strip's descriptor that the console does not place (they are in the rack's
+/// channel panel) and that the MORE section must not pick up either.
+const RACK_ONLY: [&str; 3] = ["pcomp.attack", "pcomp.release", "pcomp.makeup"];
+
 const EQ: &[Row] = &[
     Row::Grid(&[b("eq.on", "EQ"), None, None]),
     Row::Grid(&[
@@ -462,7 +481,7 @@ const EQ: &[Row] = &[
 const INSERTS: &[Row] = &[
     Row::Chain,
     Row::Grid(&[
-        b("insert.bypass", "BYPASS"),
+        b("insert.bypass", "BYP ALL"),
         b("route.insert_pre", "INS PRE"),
     ]),
     Row::Grid(&[
@@ -535,6 +554,7 @@ fn strip_rows(id: SectionId) -> &'static [Row] {
         SectionId::Input => INPUT,
         SectionId::Filters => FILTERS,
         SectionId::Dynamics => DYNAMICS,
+        SectionId::Parallel => PARALLEL,
         SectionId::Eq => EQ,
         SectionId::Inserts => INSERTS,
         SectionId::Sends => SENDS,
@@ -891,6 +911,7 @@ pub fn strip_layout(desc: &DeviceDescriptor, folds: Folds, height: f64) -> Strip
         known.extend(table_keys(strip_rows(id)));
     }
     known.push("fader".into());
+    known.extend(RACK_ONLY.iter().map(|k| (*k).to_owned()));
 
     let mut sections = Vec::new();
     let mut controls = Vec::new();

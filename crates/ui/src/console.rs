@@ -71,7 +71,8 @@ use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Registry};
 use atomik_model::console::{MAX_BUS_NAME_CHARS, OutputAvail, output_options};
 use atomik_model::{
     Command, ConsoleCommand, DeviceKey, FX_SLOTS, INSERT_SLOTS, INTERFACE_KEY, InsertEffect,
-    OutputDest, RackDevice, RackDoc, insert_chain, output_dest,
+    OutputDest, RackDevice, RackDoc, bypass_inserts_commands, insert_bypass_states, insert_chain,
+    inserts_bypassed, output_dest,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -243,6 +244,8 @@ enum Hit {
     Insert(Target, usize),
     /// The remove (x) part of a filled insert slot.
     InsertRemove(Target, usize),
+    /// The bypass (B) part of a filled insert slot whose effect has a bypass.
+    InsertBypass(Target, usize),
     Menu(usize),
     MenuArea,
     Empty,
@@ -408,6 +411,10 @@ struct StripView {
     silenced: bool,
     /// The insert chain (effect device, display name), in signal order.
     inserts: Vec<(DeviceKey, String)>,
+    /// Per slot of the chain: whether its effect is bypassed, `None` when it has no bypass.
+    insert_bypass: Vec<Option<bool>>,
+    /// The state of the strip's bypass-all switch (see `atomik_model::inserts_bypassed`).
+    bypass_all: Option<bool>,
     /// The name plate caption ("CH 1", "BUS 1").
     caption: String,
     /// Where the output goes, as the selector reads it.
@@ -436,6 +443,8 @@ impl StripView {
             latency: None,
             silenced: false,
             inserts: Vec::new(),
+            insert_bypass: Vec::new(),
+            bypass_all: None,
             caption: String::new(),
             output: String::new(),
             selected: false,
@@ -452,6 +461,21 @@ impl StripView {
         self.device
             .as_ref()
             .map_or(p.clamp(p.default), |d| widget::current_value(d, p))
+    }
+
+    /// The value a control shows: the bypass-all switch reads the state of the chain (every
+    /// effect bypassed) when there is one, any other control its param.
+    fn shown_value(&self, param: &str, p: &ParamDescriptor) -> f32 {
+        match (param, self.bypass_all) {
+            ("insert.bypass", Some(on)) => {
+                if on {
+                    p.max
+                } else {
+                    p.min
+                }
+            }
+            _ => self.value(p),
+        }
     }
 
     fn on(&self, key: &str) -> bool {
@@ -481,6 +505,21 @@ fn chain_names(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Vec<(D
         .collect()
 }
 
+/// The bypass state of each effect of a chain and of the whole chain, for a strip's view.
+fn bypass_view(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    chain: &[(DeviceKey, String)],
+) -> (Vec<Option<bool>>, Option<bool>) {
+    let states = insert_bypass_states(doc, registry, device);
+    let per_slot = chain
+        .iter()
+        .map(|(k, _)| states.iter().find(|(s, _)| s == k).map(|(_, on)| *on))
+        .collect();
+    (per_slot, inserts_bypassed(doc, registry, device))
+}
+
 /// Width of the remove (x) hotspot at the right end of a filled insert slot.
 const INSERT_X_W: f64 = 14.0;
 
@@ -488,15 +527,38 @@ fn insert_x_rect(r: Rect) -> Rect {
     Rect::new(r.x1 - INSERT_X_W, r.y0, r.x1, r.y1)
 }
 
+/// Width of the bypass (B) hotspot left of the remove (x) of a slot.
+const INSERT_B_W: f64 = 12.0;
+
+fn insert_b_rect(r: Rect) -> Rect {
+    Rect::new(
+        r.x1 - INSERT_X_W - INSERT_B_W,
+        r.y0,
+        r.x1 - INSERT_X_W,
+        r.y1,
+    )
+}
+
 /// The insert slot hit by `p` (in the section's coordinates): a filled slot or the first
 /// empty one ("+ add"); later empty slots are inert.
-fn insert_hit(slots: &[Rect], used: usize, p: Point, target: Target) -> Option<Hit> {
+fn insert_hit(
+    slots: &[Rect],
+    bypass: &[Option<bool>],
+    used: usize,
+    p: Point,
+    target: Target,
+) -> Option<Hit> {
     let slot = slots.iter().position(|r| r.contains(p))?;
     if slot > used {
         return None;
     }
     Some(if slot < used && insert_x_rect(slots[slot]).contains(p) {
         Hit::InsertRemove(target, slot)
+    } else if slot < used
+        && bypass.get(slot).is_some_and(Option::is_some)
+        && insert_b_rect(slots[slot]).contains(p)
+    {
+        Hit::InsertBypass(target, slot)
     } else {
         Hit::Insert(target, slot)
     })
@@ -1278,6 +1340,13 @@ impl ConsoleView {
         matches!(self.hit(p), Hit::InsertRemove(..)).then_some(p)
     }
 
+    /// Centre of the bypass (B) of insert slot `slot`, when the slot is filled with an effect
+    /// that has a bypass and is in view.
+    pub fn insert_bypass_center(&self, device: &DeviceKey, slot: usize) -> Option<Point> {
+        let p = insert_b_rect(self.insert_rect(device, slot)?).center();
+        matches!(self.hit(p), Hit::InsertBypass(..)).then_some(p)
+    }
+
     /// The open menu's rows (empty when closed).
     pub fn menu_items(&self) -> Vec<String> {
         self.menu
@@ -1345,6 +1414,7 @@ impl ConsoleView {
             }
             if let Some(h) = insert_hit(
                 &l.insert_slots,
+                self.master.as_ref().map_or(&[][..], |m| &m.insert_bypass),
                 self.master.as_ref().map_or(0, |m| m.inserts.len()),
                 up,
                 Target::Master,
@@ -1403,7 +1473,13 @@ impl ConsoleView {
                 }
             }
             if !pinned
-                && let Some(h) = insert_hit(&l.insert_slots, s.inserts.len(), q, Target::Strip(i))
+                && let Some(h) = insert_hit(
+                    &l.insert_slots,
+                    &s.insert_bypass,
+                    s.inserts.len(),
+                    q,
+                    Target::Strip(i),
+                )
             {
                 return h;
             }
@@ -1558,11 +1634,13 @@ impl ConsoleView {
             s.device = device;
             s.silenced = silence.get(&key).copied().unwrap_or(false);
             s.inserts = chain_names(doc, registry, &key);
+            (s.insert_bypass, s.bypass_all) = bypass_view(doc, registry, &key, &s.inserts);
             let mut extra = vec![
                 s.caption.clone(),
                 s.output.clone(),
                 format!("{}", s.selected),
                 format!("{:?}", s.vca),
+                format!("{:?} {:?}", s.insert_bypass, s.bypass_all),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -1607,7 +1685,9 @@ impl ConsoleView {
                     m.name = "MASTER".into();
                     m.accent = accent;
                     m.inserts = chain_names(doc, registry, k);
+                    (m.insert_bypass, m.bypass_all) = bypass_view(doc, registry, k, &m.inserts);
                     let mut extra = names.clone();
+                    extra.push(format!("{:?} {:?}", m.insert_bypass, m.bypass_all));
                     extra.extend(flags);
                     extra.extend(chain_sig(&m.inserts));
                     let sig = Sig {
@@ -1843,8 +1923,59 @@ impl ConsoleView {
             (Hit::Picker(slot), PointerButton::Primary) => {
                 self.open_return_menu(slot, pos, doc, registry);
             }
+            (Hit::InsertBypass(t, slot), PointerButton::Primary) => {
+                if let Some(v) = self.view_of(t)
+                    && let Some((effect, _)) = v.inserts.get(slot)
+                    && let Some(Some(on)) = v.insert_bypass.get(slot)
+                {
+                    out.push(UiAction::Command(Command::SetParam {
+                        key: effect.clone(),
+                        param: "bypass".into(),
+                        value: if *on { 0.0 } else { 1.0 },
+                        merge: None,
+                    }));
+                }
+            }
+            (Hit::Ctrl(t, c), PointerButton::Primary) if self.is_bypass_all(t, c) => {
+                self.press_bypass_all(t, c, doc, registry, out);
+            }
             (Hit::Ctrl(t, c), _) => self.ctrl_down(t, c, button, clicks, out),
             _ => {}
+        }
+    }
+
+    /// Whether control `c` of `t` is the bypass-all switch of the inserts.
+    fn is_bypass_all(&self, t: Target, c: usize) -> bool {
+        self.ctrl_of(t, c)
+            .is_some_and(|(pc, _, _)| pc.param == "insert.bypass")
+    }
+
+    /// The bypass-all switch: bypasses every effect of the chain (each keeps its delay
+    /// compensation), or restores them all, in one undo step. Without a chain to bypass it is
+    /// the strip's own `insert.bypass` param, as before.
+    fn press_bypass_all(
+        &mut self,
+        t: Target,
+        c: usize,
+        doc: &RackDoc,
+        registry: &Registry,
+        out: &mut Vec<UiAction>,
+    ) {
+        let Some(key) = self.view_of(t).map(|v| v.key.clone()) else {
+            return;
+        };
+        let Some(state) = inserts_bypassed(doc, registry, &key) else {
+            if let Some((_, p, value)) = self.ctrl_of(t, c) {
+                let next = widget::toggled(p, value);
+                out.extend(self.set_param(t, "insert.bypass", next, None));
+            }
+            return;
+        };
+        let mut commands = bypass_inserts_commands(doc, registry, &key, !state);
+        match commands.len() {
+            0 => {}
+            1 => out.push(UiAction::Command(commands.remove(0))),
+            _ => out.push(UiAction::Command(Command::Batch(commands))),
         }
     }
 
@@ -3824,7 +3955,7 @@ fn record_strip(
             } else {
                 upper
             };
-            let v = s.value(p);
+            let v = s.shown_value(pc.param, p);
             let enabled = !(pc.param == "mute" && soloed);
             let hollow = (pc.param == "mute" && s.silenced)
                 || (pc.kind == CtrlKind::Slider && !send_on(s, pc.param));
@@ -3855,7 +3986,14 @@ fn record_strip(
             }
         }
     }
-    record_inserts(upper, st, &l.insert_slots, &s.inserts, s.accent);
+    record_inserts(
+        upper,
+        st,
+        &l.insert_slots,
+        &s.inserts,
+        &s.insert_bypass,
+        s.accent,
+    );
     if let Some(r) = l.gr_meter {
         gr_trough(upper, st, r);
     }
@@ -3886,21 +4024,46 @@ fn record_strip(
     }
 }
 
-/// Draws an insert chain: one row per slot, a filled slot with its effect name and an x, the
-/// first empty slot as "+ add", the rest dim and empty.
+/// Draws an insert chain: one row per slot, a filled slot with its effect name, a B that is lit
+/// while the effect is bypassed (when it has a bypass) and an x, the first empty slot as
+/// "+ add", the rest dim and empty.
 fn record_inserts(
     c: &mut dyn Canvas,
     st: &SeqTheme,
     slots: &[Rect],
     inserts: &[(DeviceKey, String)],
+    bypass: &[Option<bool>],
     accent: Color,
 ) {
     let t = &st.base;
     for (i, r) in slots.iter().enumerate() {
         match inserts.get(i) {
             Some((_, name)) => {
-                let body = Rect::new(r.x0, r.y0, r.x1 - INSERT_X_W, r.y1);
-                lcd_text(c, st, body, name, mix(accent, Color::WHITE, 0.3), 7.0);
+                let state = bypass.get(i).copied().flatten();
+                let right = if state.is_some() {
+                    INSERT_X_W + INSERT_B_W
+                } else {
+                    INSERT_X_W
+                };
+                let body = Rect::new(r.x0, r.y0, r.x1 - right, r.y1);
+                let color = mix(accent, Color::WHITE, 0.3);
+                let color = if state == Some(true) {
+                    t.text_muted.with_alpha(0.6)
+                } else {
+                    color
+                };
+                lcd_text(c, st, body, name, color, 7.0);
+                if let Some(on) = state {
+                    small_button(
+                        c,
+                        st,
+                        insert_b_rect(*r).inset((-1.0, -1.0)),
+                        "B",
+                        on.then_some(st.mute),
+                        true,
+                        6.0,
+                    );
+                }
                 let x = insert_x_rect(*r);
                 lcd_text(c, st, x.inset((-1.0, 0.0)), "x", t.text_muted, 7.0);
             }
@@ -4074,13 +4237,29 @@ fn record_master(
             } else {
                 t.highlight
             };
-            control(c, st, pc, p, m.value(p), accent, true, false);
+            control(
+                c,
+                st,
+                pc,
+                p,
+                m.shown_value(pc.param, p),
+                accent,
+                true,
+                false,
+            );
         }
         if let (Some(r), Some(p)) = (l.fader_lcd, desc.param_by_key("fader")) {
             lcd_text(pinned, st, r, &fader_text(p, m.value(p)), t.text, 7.5);
         }
     }
-    record_inserts(upper, st, &l.insert_slots, &m.inserts, t.highlight);
+    record_inserts(
+        upper,
+        st,
+        &l.insert_slots,
+        &m.inserts,
+        &m.insert_bypass,
+        t.highlight,
+    );
     if let Some(r) = l.gr_meter {
         gr_trough(upper, st, r);
     }

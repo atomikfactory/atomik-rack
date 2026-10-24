@@ -1885,6 +1885,22 @@ pub fn console_registry() -> Registry {
     r
 }
 
+/// [`console_registry`] with the real `atomik.channel` in place of the stub (the real param
+/// table, with the parallel compressor and the other params the contract stub lacks).
+pub fn console_registry_real_channel() -> Registry {
+    let mut r = Registry::new();
+    r.register(atomik_devices::poly_synth::factory()).unwrap();
+    r.register(atomik_devices::stereo_delay::factory()).unwrap();
+    r.register(atomik_devices::line_mixer::factory()).unwrap();
+    r.register(atomik_devices::channel::factory()).unwrap();
+    r.register(DeviceFactory {
+        descriptor: &MASTER,
+        create: || Box::new(Stub(&MASTER)),
+    })
+    .unwrap();
+    r
+}
+
 pub fn chan(k: &str, source: Option<&str>) -> ConsoleChannel {
     ConsoleChannel {
         channel: key(k),
