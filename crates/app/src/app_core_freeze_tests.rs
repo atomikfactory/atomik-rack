@@ -4,7 +4,7 @@
 //! state. The fixtures are procedural projects in a scratch bundle.
 
 use super::*;
-use crate::sink::{RecordingSink, SinkCall};
+use crate::sink::{RecordingSink, SinkCall, assert_new_devices_routed};
 use atomik_core::PPQ;
 use atomik_model::{
     Clip, ClipContent, ConsoleCommand, CreateOptions, CreateSource, InsertEffect, Note,
@@ -256,8 +256,8 @@ fn unfreeze_and_keep_the_audio_leaves_the_render_on_a_new_track() {
     c.unfreeze_tracks(true);
     assert!(frozen(&c, "lead").is_none());
     assert_eq!(c.doc().song.tracks.len(), tracks + 1);
-    let kept = c.doc().song.tracks.last().unwrap();
-    assert!(kept.is_audio());
+    let kept = &c.doc().song.tracks[1];
+    assert!(kept.is_audio(), "right after the unfrozen track");
     assert!(matches!(&kept.lanes[0].clips[0].content, ClipContent::Audio(a) if a.asset == asset));
     c.undo();
     assert_eq!(c.doc().song.tracks.len(), tracks);
@@ -482,8 +482,8 @@ fn bounce_in_place_adds_a_new_track_and_leaves_the_originals() {
     );
     c.wait_background();
     assert_eq!(c.doc().song.tracks.len(), tracks + 1);
-    let new = c.doc().song.tracks.last().unwrap();
-    assert!(new.is_audio() && new.frozen.is_none());
+    let new = &c.doc().song.tracks[1];
+    assert!(new.is_audio() && new.frozen.is_none(), "right after Lead");
     assert_eq!(c.doc().device(&new.device).unwrap().name, "Lead (bounce)");
     let clip = &new.lanes[0].clips[0];
     assert_eq!(clip.start, 0);
@@ -542,7 +542,7 @@ fn bounce_in_place_takes_the_clips_of_each_track_into_one_clip_per_track() {
         tracks + 2,
         "a new track for each source track"
     );
-    let first = &c.doc().song.tracks[tracks];
+    let first = c.doc().song.tracks.iter().find(|t| t.is_audio()).unwrap();
     let clip = &first.lanes[0].clips[0];
     assert_eq!(clip.start, 0, "from the first clip of the track");
     assert!(
@@ -593,4 +593,73 @@ fn opening_another_project_drops_the_render() {
     c.wait_background();
     assert!(!c.freeze_busy());
     assert!(c.doc().song.tracks.iter().all(|t| t.frozen.is_none()));
+}
+
+#[test]
+fn a_normally_added_audio_track_is_routed_after_its_devices_arrive() {
+    let mut c = core_with(0);
+    c.sink_mut().take();
+    c.add_audio_track();
+    assert_new_devices_routed(&c.sink_mut().take());
+}
+
+#[test]
+fn a_bounced_track_is_connected_to_the_engine_and_heard_alone() {
+    let mut c = core_with(1);
+    let lead_clip = c.doc().song.track(&key("lead")).unwrap().lanes[0].clips[0].id;
+    c.arrangement_mut().set_selected_clips(&[lead_clip]);
+    c.sink_mut().take();
+    c.bounce_in_place(true);
+    c.wait_background();
+    assert_new_devices_routed(&c.sink_mut().take());
+    // Right after its source, named and routed like any audio track.
+    let order: Vec<_> = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.clone())
+        .collect();
+    assert_eq!(order[0], key("lead"));
+    let new = order[1].clone();
+    assert!(c.doc().song.track(&new).unwrap().is_audio());
+    assert!(c.doc().console.channel_of(&new).is_some());
+    assert_eq!(c.doc().device(&new).unwrap().name, "Lead (bounce)");
+    // The original is muted: the first bar is the bounce alone, and it is not silent.
+    let out = atomik_render::project::render_doc_in(
+        c.doc(),
+        c.registry(),
+        &atomik_render::project::ProjectOptions::default(),
+        c.bundle_root(),
+    )
+    .unwrap();
+    let bar = c.doc().sample_rate as usize * 2;
+    let peak = out.channels[0][..bar]
+        .iter()
+        .fold(0.0_f32, |a, x| a.max(x.abs()));
+    assert!(peak > 0.05, "the bounce is audible in the project: {peak}");
+    c.undo();
+    assert_eq!(c.doc().song.tracks.len(), 2);
+    assert!(
+        c.doc().console.channel_of(&new).is_none(),
+        "undo removes the channel too"
+    );
+}
+
+#[test]
+fn unfreeze_and_keep_the_audio_connects_the_new_track_to_the_engine() {
+    let mut c = core_with(0);
+    freeze(&mut c, "lead", FreezeThrough::Track);
+    c.sink_mut().take();
+    c.unfreeze_tracks(true);
+    assert_new_devices_routed(&c.sink_mut().take());
+    let order: Vec<_> = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.clone())
+        .collect();
+    assert_eq!(order[0], key("lead"));
+    assert!(c.doc().song.track(&order[1]).unwrap().is_audio());
 }

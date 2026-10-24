@@ -250,7 +250,9 @@ fn import_midi_without_a_selected_track_makes_tracks_at_the_playhead_and_leaves_
     let mut c = core();
     c.locate_bars(2);
     let tempo = c.doc().song.tempo.clone();
+    c.sink_mut().take();
     c.import_midi(&tmp.path("song.mid"), false);
+    crate::sink::assert_new_devices_routed(&c.sink_mut().take());
     assert_eq!(
         c.doc().song.tempo,
         tempo,

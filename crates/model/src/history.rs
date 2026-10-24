@@ -1070,7 +1070,12 @@ impl Edit {
             }
             Edit::Compound(edits) => {
                 let mut ops = CompoundOps::default();
-                for edit in edits {
+                // A compound inside a compound (a planned track inside a bounce) is folded in:
+                // its inserts must still count as inserts, or the routing would come before
+                // the devices it names.
+                let mut flat = Vec::new();
+                flatten(edits, &mut flat);
+                for edit in flat {
                     let inserted = matches!(edit, Edit::Insert { .. } | Edit::InnerInsert { .. });
                     for op in edit.perform(doc) {
                         ops.push(op, inserted);
@@ -1078,6 +1083,16 @@ impl Edit {
                 }
                 ops.finish()
             }
+        }
+    }
+}
+
+/// The leaf edits of `edits` in order, nested compounds opened.
+fn flatten<'e>(edits: &'e [Edit], out: &mut Vec<&'e Edit>) {
+    for edit in edits {
+        match edit {
+            Edit::Compound(inner) => flatten(inner, out),
+            leaf => out.push(leaf),
         }
     }
 }

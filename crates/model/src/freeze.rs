@@ -495,13 +495,15 @@ pub(crate) fn plan_unfreeze(doc: &RackDoc, device: &DeviceKey) -> Result<Edit, M
     })
 }
 
-/// Plans a new audio track with one clip of rendered audio `(start, length, audio)`, and the
+/// Plans a new audio track (right after the track of `after`, else last) with one clip of
+/// rendered audio `(start, length, audio)`, and the
 /// originals in `mute` muted: the new track's edits, the clip's, then one per muted clip.
 /// Returns the edit and the new clip's id.
 pub(crate) fn plan_rendered_track(
     doc: &RackDoc,
     registry: &Registry,
     name: Option<String>,
+    after: Option<&DeviceKey>,
     (start, length, audio): (i64, i64, AudioClipContent),
     mute: &[ClipId],
 ) -> Result<(Edit, ClipId), ModelError> {
@@ -510,15 +512,18 @@ pub(crate) fn plan_rendered_track(
     if audio.reverse || audio.warp.active() {
         return Err(bad("a rendered clip is plain audio: no reverse, no warp"));
     }
-    let track = add_audio_track(doc, registry, name)?;
+    let track = add_audio_track(doc, registry, name, after)?;
     let mut scratch = doc.clone();
     track.perform(&mut scratch);
     let device = scratch
         .song
         .tracks
-        .last()
+        .iter()
+        .find(|t| doc.song.track(&t.device).is_none())
         .map(|t| t.device.clone())
         .ok_or_else(|| bad("the new audio track is missing"))?;
+    // Next to its source the new track is in the same folder and shows the same colour.
+    let join = after.and_then(|source| crate::organise_cmd::join_track(&scratch, &device, source));
     let lane = audio_lane(&scratch, &device)?;
     let clip = Clip {
         id: ClipId(0),
@@ -533,7 +538,9 @@ pub(crate) fn plan_rendered_track(
         content: ClipContent::Audio(audio),
     };
     let (insert, id) = insert_new(&scratch, device, lane, clip)?;
-    let mut edits = vec![track, insert];
+    let mut edits = vec![track];
+    edits.extend(join);
+    edits.push(insert);
     for &original in mute {
         let (device, lane, c) = find_clip(doc, original)?;
         if !c.muted {
