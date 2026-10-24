@@ -119,9 +119,13 @@ fn group(d: &Document) -> atomik_model::TakeGroup {
 fn open(d: &Document, reg: &atomik_device_sdk::Registry, v: &mut ArrangementView) {
     let toggle = v.take_group_toggle_center(1).expect("a strip");
     let actions = click(d, reg, v, toggle);
-    assert!(
-        actions.is_empty(),
-        "opening is view state only: {actions:?}"
+    assert_eq!(
+        song_commands(&actions),
+        [SongCommand::SetTakesOpen {
+            take_group: 1,
+            open: true
+        }],
+        "opening shows the rows at once and asks the song to keep it"
     );
     assert!(v.takes_open(1));
 }

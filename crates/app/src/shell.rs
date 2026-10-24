@@ -577,6 +577,21 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_relink();
     }
 
+    /// Runs a Track menu command in the arrangement. Typing a folder name or a comment moves the
+    /// focus there, so the keys reach it.
+    fn track_command(&mut self, command: AppCommand) {
+        let Some((id, arg)) = command.command_id() else {
+            return;
+        };
+        if let Some(actions) = self.core.pane_command(Pane::Arrangement, id, arg) {
+            self.pane_actions(&actions);
+        }
+        if self.core.arrangement().is_text_owner() {
+            self.set_focus(Pane::Arrangement);
+        }
+        self.repaint = true;
+    }
+
     /// Opens the quantize panel with the settings of the last time.
     fn open_quantize(&mut self) {
         let theme = self.core.view().theme().clone();
@@ -1063,6 +1078,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
+            org: self.core.arrangement().org_menu(),
         }
     }
 
@@ -2171,6 +2187,7 @@ impl<B: AudioBackend> Shell<B> {
             columns: doc.columns,
             track_can_chase: core.arrangement().chase_menu().0,
             track_chase: core.arrangement().chase_menu().1,
+            org: core.arrangement().org_menu(),
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
@@ -2554,6 +2571,20 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::QuantizeOptions => {
                 self.open_quantize();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            // The Track menu: the arrangement's commands, whatever pane has the focus.
+            AppCommand::GroupTracks
+            | AppCommand::UngroupTracks
+            | AppCommand::ToggleFolder
+            | AppCommand::RenameFolder
+            | AppCommand::MoveTrackUp
+            | AppCommand::MoveTrackDown
+            | AppCommand::TrackComment
+            | AppCommand::FoldLanes(_)
+            | AppCommand::TrackHeight(_) => {
+                self.track_command(command);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -3332,3 +3363,7 @@ mod marker_tests;
 #[cfg(test)]
 #[path = "shell_scale_tests.rs"]
 mod scale_tests;
+
+#[cfg(test)]
+#[path = "shell_organise_tests.rs"]
+mod organise_tests;

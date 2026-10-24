@@ -217,7 +217,7 @@ fn controller_summary(lane: &Lane) -> Vec<Value> {
 /// The take groups of a lane: id, number of takes, range, the comp as `{take, start, end}`
 /// (takes are 0-based), the take that plays alone when the comp is one whole pick, and the ids of
 /// the lane clips the comp compiles to. Empty for a lane without groups.
-fn take_summary(lane: &Lane) -> Vec<Value> {
+fn take_summary(lane: &Lane, open: &std::collections::BTreeSet<u32>) -> Vec<Value> {
     lane.take_groups
         .iter()
         .map(|g| {
@@ -227,7 +227,7 @@ fn take_summary(lane: &Lane) -> Vec<Value> {
                 .iter()
                 .map(|s| json!({"take": s.take, "start": s.start, "end": s.end}))
                 .collect();
-            json!({
+            let mut v = json!({
                 "id": g.id,
                 "takes": g.takes.len(),
                 "start": start,
@@ -235,7 +235,39 @@ fn take_summary(lane: &Lane) -> Vec<Value> {
                 "comp": comp,
                 "picked": g.picked(),
                 "clips": g.clips.iter().map(|c| c.0).collect::<Vec<_>>(),
-            })
+            });
+            if open.contains(&g.id) {
+                v["open"] = json!(true);
+            }
+            v
+        })
+        .collect()
+}
+
+/// The song's folders of tracks, in display order: id, name, parent, collapsed, colour and the
+/// devices of the tracks inside (sub-folders included). Empty for a song without folders.
+fn folder_summary(doc: &RackDoc) -> Vec<Value> {
+    use atomik_model::OutlineKind;
+    doc.song
+        .outline()
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            OutlineKind::Folder(id) => doc.song.org.group(id).map(|g| {
+                let mut v = json!({
+                    "id": g.id, "name": g.name, "collapsed": g.collapsed,
+                    "tracks": doc.song.group_tracks(id).into_iter()
+                        .map(|i| doc.song.tracks[i].device.as_str().to_owned())
+                        .collect::<Vec<_>>(),
+                });
+                if let Some(p) = e.parent {
+                    v["parent"] = json!(p);
+                }
+                if let Some([r, gr, b]) = g.color {
+                    v["color"] = json!(format!("#{r:02x}{gr:02x}{b:02x}"));
+                }
+                v
+            }),
+            OutlineKind::Track(_) => None,
         })
         .collect()
 }
@@ -324,24 +356,39 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);
                     }
-                    let groups = take_summary(l);
+                    let groups = take_summary(l, &doc.song.org.open_takes);
                     if !groups.is_empty() {
                         lane["take_groups"] = Value::Array(groups);
                     }
                     if let LaneKind::Automation(p) = &l.kind {
                         lane["write"] = json!(doc.song.write_mode(&t.device, p).name());
+                        if doc.song.lane_folded(&t.device, p) {
+                            lane["folded"] = json!(true);
+                        }
                     }
                     lane
                 })
                 .collect();
-            json!({
+            let mut track = json!({
                 "device": t.device.as_str(), "muted": t.muted, "solo": t.solo,
                 "armed": t.armed, "chase": t.chase, "lanes": lanes,
-            })
+            });
+            if let Some(g) = doc.song.track_group(&t.device) {
+                track["folder"] = json!(g);
+            }
+            if let Some([r, g, b]) = doc.song.track_color(&t.device) {
+                track["color"] = json!(format!("#{r:02x}{g:02x}{b:02x}"));
+            }
+            let comment = doc.song.track_comment(&t.device);
+            if !comment.is_empty() {
+                track["comment"] = json!(comment);
+            }
+            track
         })
         .collect();
     let ppq = atomik_core::PPQ;
     let grooves = groove_summary(doc);
+    let folders = folder_summary(doc);
     let mut out = json!({
         "sample_rate": doc.sample_rate,
         "tempo_bpm": doc.tempo_bpm,
@@ -374,6 +421,9 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     });
     if !grooves.is_empty() {
         out["song"]["grooves"] = Value::Array(grooves);
+    }
+    if !folders.is_empty() {
+        out["song"]["folders"] = Value::Array(folders);
     }
     out
 }

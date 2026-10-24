@@ -577,3 +577,46 @@ fn project_inspect_lists_the_groove_library_of_a_song() {
     .parsed();
     assert!(plain["song"].get("grooves").is_none());
 }
+
+#[test]
+fn project_inspect_lists_the_folders_colours_comments_and_folds() {
+    let mut s = server();
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(
+        plain["song"].get("folders").is_none(),
+        "a song without folders lists none"
+    );
+    for t in plain["song"]["tracks"].as_array().unwrap() {
+        assert!(
+            t.get("folder").is_none() && t.get("color").is_none() && t.get("comment").is_none()
+        );
+    }
+    let v = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "crates/model/tests/golden/organised_project.json"}),
+    )
+    .parsed();
+    assert_eq!(
+        v["song"]["folders"],
+        json!([
+            {"id": 1, "name": "Band", "collapsed": false, "tracks": ["synth", "lead", "a"],
+             "color": "#ff8000"},
+            {"id": 2, "name": "Rhythm \"main\"", "collapsed": true, "tracks": ["lead", "a"],
+             "parent": 1}
+        ])
+    );
+    let tracks = v["song"]["tracks"].as_array().unwrap();
+    assert_eq!(tracks[0]["folder"], 1);
+    assert_eq!(tracks[1]["folder"], 2);
+    assert_eq!(tracks[1]["comment"], "Line one\nLine \"two\"");
+    assert_eq!(tracks[3]["color"], "#12abef");
+    assert!(tracks[4].get("folder").is_none());
+    assert_eq!(tracks[1]["lanes"][1]["folded"], true);
+    assert_eq!(tracks[1]["lanes"][0]["take_groups"][0]["open"], true);
+}

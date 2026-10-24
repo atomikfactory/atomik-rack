@@ -179,6 +179,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             "Transport",
             "Mixer",
             "Create",
+            "Track",
             "Audio"
         ]
     );

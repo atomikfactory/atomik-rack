@@ -635,6 +635,17 @@ pub(crate) fn plan(
         | SongCommand::SetCompSegment { .. }
         | SongCommand::DeleteTake { .. }
         | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
+        SongCommand::GroupTracks { .. }
+        | SongCommand::Ungroup { .. }
+        | SongCommand::RenameGroup { .. }
+        | SongCommand::SetGroupCollapsed { .. }
+        | SongCommand::SetGroupColor { .. }
+        | SongCommand::MoveTrack { .. }
+        | SongCommand::MoveGroup { .. }
+        | SongCommand::SetTrackColor { .. }
+        | SongCommand::SetTrackComment { .. }
+        | SongCommand::SetLaneFolded { .. }
+        | SongCommand::SetTakesOpen { .. } => crate::organise_cmd::plan(doc, command)?,
         SongCommand::ApplyQuantize { .. }
         | SongCommand::QuantizeNotes { .. }
         | SongCommand::SetGroove(_)

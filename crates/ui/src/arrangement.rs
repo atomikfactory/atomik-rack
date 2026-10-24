@@ -16,6 +16,9 @@
 //! ([`ArrangementView::audio_handle_center`]) and trim edges. Audio track headers carry the
 //! arm button, an input selector (cable commands) and a monitor button. File drops
 //! ([`UiEvent::FileDrop`]) become [`UiAction::ImportAudio`].
+//!
+//! Track organisation (folders, track colours and comments, folded automation lanes, the
+//! height presets) is in the `organise` submodule.
 
 use crate::action::{ContextTarget, ImportTarget, TransportAction, UiAction};
 use crate::audio::{self, InputSel, TempoMap};
@@ -46,6 +49,7 @@ use vello::peniko::Color;
 
 mod heights;
 mod markers;
+mod organise;
 mod takes;
 mod tempo;
 
@@ -54,6 +58,10 @@ pub use heights::{
     clamp_track_zoom, scaled_height,
 };
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
+pub use organise::{
+    FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
+    OrgMenu,
+};
 pub use takes::{TAKE_GROUP_HEIGHT, TAKE_ROW_HEIGHT, take_color};
 pub use tempo::TempoMenu;
 
@@ -154,6 +162,8 @@ pub enum TrackButton {
 /// A control in the header of an automation lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneButton {
+    /// Fold the lane to a thin strip, or unfold it (the chevron at the left of the header).
+    Fold,
     /// Arm the lane for automation recording.
     Arm,
     /// Cycle the write mode: Overwrite, Touch, Latch.
@@ -165,6 +175,10 @@ enum RowKind {
     Lane {
         track: usize,
         lane: usize,
+    },
+    /// The header row of folder `group`, above its first track.
+    Folder {
+        group: u32,
     },
     AddTrack(DeviceKey),
     AddAudio,
@@ -226,6 +240,14 @@ enum Hit {
     Range(u32, RangePart),
     /// The marker list.
     Panel(markers::ListHit),
+    /// The chevron of a folder row.
+    FolderToggle(u32),
+    /// A button of a folder row.
+    FolderButton(u32, FolderButton),
+    /// A folder row away from its controls (the name; the timeline part).
+    Folder(u32),
+    /// The note mark of the header of a track with a comment.
+    Comment(usize),
     Button(usize, TrackButton),
     /// A control in the header of automation lane `lane` of track `track`.
     LaneButton(usize, usize, LaneButton),
@@ -502,6 +524,8 @@ pub struct ArrangementView {
     mk: markers::MarkerUi,
     /// Vertical zoom and the track height drag.
     th: heights::HeightUi,
+    /// Folders, the selection of several tracks and the text being typed in the track list.
+    og: organise::OrgUi,
     /// Which take groups are open.
     tk: takes::TakesUi,
     /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
@@ -574,6 +598,7 @@ impl ArrangementView {
             ctx_meter: None,
             mk: markers::MarkerUi::default(),
             th: heights::HeightUi::default(),
+            og: organise::OrgUi::default(),
             tk: takes::TakesUi::default(),
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
@@ -661,6 +686,7 @@ impl ArrangementView {
     fn lane_button_rect(&self, row: Rect, button: LaneButton) -> Rect {
         let (x, cy) = (self.bounds.x0, row.y0 + row.height() / 2.0);
         match button {
+            LaneButton::Fold => Rect::new(x + 3.0, cy - 7.0, x + 15.0, cy + 7.0),
             LaneButton::Mode => Rect::new(x + 134.0, cy - 8.0, x + 168.0, cy + 8.0),
             LaneButton::Arm => Rect::new(x + 174.0, cy - 8.0, x + 194.0, cy + 8.0),
         }
@@ -833,6 +859,8 @@ impl ArrangementView {
         if device.is_some() {
             self.selection.clear();
             self.point_sel = None;
+            self.og.group = None;
+            self.og.extra.clear();
         }
         self.selected_track = device;
         self.repaint = true;
@@ -1109,7 +1137,12 @@ impl ArrangementView {
             return;
         }
         self.audio_headers = headers;
+        let takes_changed = self.song.org.open_takes != doc.song.org.open_takes;
         self.song = doc.song.clone();
+        if takes_changed {
+            // Loaded, undone or redone: the take rows follow the document.
+            self.tk.open.clone_from(&self.song.org.open_takes);
+        }
         self.tempo = TempoMap::new(&self.song.tempo);
         self.bars = Bars::of(&self.song);
         self.assets.clone_from(&doc.assets);
@@ -1139,8 +1172,24 @@ impl ArrangementView {
                     .collect()
             })
             .collect();
-        let lane_h = self.lane_row_height();
-        for (ti, t) in self.song.tracks.iter().enumerate() {
+        self.org_shape();
+        for e in self.song.outline() {
+            if e.hidden {
+                continue;
+            }
+            let ti = match e.kind {
+                atomik_model::OutlineKind::Folder(group) => {
+                    rows.push(Row {
+                        kind: RowKind::Folder { group },
+                        y,
+                        h: FOLDER_ROW_HEIGHT,
+                    });
+                    y += FOLDER_ROW_HEIGHT;
+                    continue;
+                }
+                atomik_model::OutlineKind::Track(ti) => ti,
+            };
+            let t = &self.song.tracks[ti];
             let h = self.track_row_height(&t.device);
             rows.push(Row {
                 kind: RowKind::Lane { track: ti, lane: 0 },
@@ -1154,6 +1203,7 @@ impl ArrangementView {
             }
             if !self.collapsed.contains(&t.device) {
                 for li in 1..t.lanes.len() {
+                    let lane_h = self.lane_height_of(ti, li);
                     rows.push(Row {
                         kind: RowKind::Lane {
                             track: ti,
@@ -1215,6 +1265,7 @@ impl ArrangementView {
         self.meter_sel = self.meter_sel.filter(|i| *i < meters);
         self.marker_sync();
         self.takes_sync();
+        self.org_sync();
         self.clamp_scroll();
     }
 
@@ -1517,6 +1568,13 @@ impl ArrangementView {
             kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
                 self.takes_hit(kind, rr, pos).unwrap_or(Hit::Empty)
             }
+            RowKind::Folder { group } => {
+                if pos.x < tl.x0 {
+                    self.folder_hit(*group, rr, pos)
+                } else {
+                    Hit::Folder(*group)
+                }
+            }
             RowKind::AddTrack(d) => {
                 if pos.x < tl.x0 {
                     Hit::AddTrack(d.clone())
@@ -1543,14 +1601,27 @@ impl ArrangementView {
                                 return Hit::Button(track, b);
                             }
                         }
+                        if let Some(h) = self.comment_hit(rr, track, pos) {
+                            return h;
+                        }
                     } else if self.is_automation_lane(track, lane) {
-                        for b in [LaneButton::Arm, LaneButton::Mode] {
+                        let folded = self.is_lane_folded(track, lane);
+                        let buttons: &[LaneButton] = if folded {
+                            &[LaneButton::Fold]
+                        } else {
+                            &[LaneButton::Fold, LaneButton::Arm, LaneButton::Mode]
+                        };
+                        for &b in buttons {
                             if self.lane_button_rect(rr, b).contains(pos) {
                                 return Hit::LaneButton(track, lane, b);
                             }
                         }
                     }
                     return Hit::Header(track);
+                }
+                if self.is_lane_folded(track, lane) {
+                    // A folded lane is a strip to look at: nothing in it can be edited.
+                    return Hit::Empty;
                 }
                 let Some(l) = self.song.tracks.get(track).and_then(|t| t.lanes.get(lane)) else {
                     return Hit::Empty;
@@ -1740,6 +1811,9 @@ impl ArrangementView {
         if self.rename_press(pos, out) {
             return;
         }
+        if self.org_edit_press(pos, out) {
+            return;
+        }
         if let Some(m) = self.menu.take() {
             if let Hit::Menu(i) = hit
                 && button == PointerButton::Primary
@@ -1824,6 +1898,9 @@ impl ArrangementView {
                 self.selected_track = None;
                 self.takes_down(&hit, pos, modifiers, doc, registry, out);
             }
+            Hit::FolderToggle(_) | Hit::FolderButton(..) | Hit::Folder(_) | Hit::Comment(_) => {
+                self.folder_down(&hit, pos, button, clicks, out);
+            }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::AddTrack(device) if primary => {
@@ -1841,6 +1918,11 @@ impl ArrangementView {
             Hit::Header(track) => {
                 // A click on a track header selects the track (the clip selection gives way).
                 let device = self.song.tracks[track].device.clone();
+                if primary && (modifiers.shift || modifiers.command()) {
+                    // Shift or Ctrl adds the track to the selection.
+                    self.toggle_selected_track(&device);
+                    return;
+                }
                 self.set_selected_track(Some(device));
                 if button == PointerButton::Secondary {
                     out.push(UiAction::ContextMenu {
@@ -1951,6 +2033,14 @@ impl ArrangementView {
             return;
         };
         match b {
+            LaneButton::Fold => {
+                let folded = !self.song.lane_folded(&device, &param);
+                out.push(song_cmd(SongCommand::SetLaneFolded {
+                    device,
+                    param,
+                    folded,
+                }));
+            }
             LaneButton::Arm => out.push(UiAction::ToggleLaneArm { device, param }),
             LaneButton::Mode => {
                 let mode = self.song.write_mode(&device, &param).next();
@@ -2820,6 +2910,10 @@ impl ArrangementView {
             self.rename_key(key, modifiers, out);
             return;
         }
+        if self.og.edit.is_some() {
+            self.org_edit_key(key, modifiers, out);
+            return;
+        }
         if modifiers.command() {
             return;
         }
@@ -2837,6 +2931,8 @@ impl ArrangementView {
                     self.tempo_sel = None;
                     self.meter_sel = None;
                     self.mk.sel = None;
+                    self.og.group = None;
+                    self.og.extra.clear();
                 }
             }
             Key::Home => {
@@ -2879,11 +2975,15 @@ impl ArrangementView {
         if let Some(outcome) = self.marker_command(id, arg) {
             return outcome;
         }
+        if let Some(outcome) = self.org_command(id, arg) {
+            return outcome;
+        }
         match id {
             "edit.select_all" => {
                 let all: Vec<ClipId> = self.song_clips().map(|c| c.id).collect();
                 self.selection.set(all);
                 self.selected_track = None;
+                self.og.group = None;
                 self.point_sel = None;
                 self.tempo_sel = None;
                 self.meter_sel = None;
@@ -2925,14 +3025,22 @@ impl ArrangementView {
                 }
                 let ids: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
                 match ids.as_slice() {
-                    [] => match self.selected_track.take() {
-                        Some(device) => {
-                            CommandOutcome::Handled(vec![song_cmd(SongCommand::RemoveTrack {
-                                device,
-                            })])
+                    [] => {
+                        // A selected folder is dissolved, not deleted: its tracks stay.
+                        if let Some(group) = self.og.group.take() {
+                            return CommandOutcome::Handled(vec![song_cmd(SongCommand::Ungroup {
+                                group,
+                            })]);
                         }
-                        None => CommandOutcome::Declined,
-                    },
+                        match self.selected_track.take() {
+                            Some(device) => {
+                                CommandOutcome::Handled(vec![song_cmd(SongCommand::RemoveTrack {
+                                    device,
+                                })])
+                            }
+                            None => CommandOutcome::Declined,
+                        }
+                    }
                     [id] => {
                         CommandOutcome::Handled(vec![song_cmd(SongCommand::RemoveClip { id: *id })])
                     }
@@ -3095,8 +3203,11 @@ impl ArrangementView {
     /// selected clip). With nothing selected Down starts at the first track and Up at the last.
     /// The clip selection gives way to the track selection.
     fn select_track(&mut self, delta: i64) -> CommandOutcome {
-        let n = self.song.tracks.len();
-        if n == 0 {
+        // The tracks in a collapsed folder are skipped: they are not shown.
+        let visible: Vec<usize> = (0..self.song.tracks.len())
+            .filter(|i| !self.og.shape.get(*i).is_some_and(|s| s.1))
+            .collect();
+        if visible.is_empty() {
             return CommandOutcome::Declined;
         }
         let of_clip = self
@@ -3107,13 +3218,14 @@ impl ArrangementView {
             .selected_track
             .as_ref()
             .and_then(|d| self.song.tracks.iter().position(|t| &t.device == d))
-            .or(of_clip);
+            .or(of_clip)
+            .and_then(|i| visible.iter().position(|v| *v == i));
         let to = match from {
-            Some(i) => (i as i64 + delta).clamp(0, n as i64 - 1) as usize,
+            Some(p) => (p as i64 + delta).clamp(0, visible.len() as i64 - 1) as usize,
             None if delta > 0 => 0,
-            None => n - 1,
+            None => visible.len() - 1,
         };
-        let device = self.song.tracks[to].device.clone();
+        let device = self.song.tracks[visible[to]].device.clone();
         self.set_selected_track(Some(device));
         CommandOutcome::Handled(Vec::new())
     }
@@ -3354,6 +3466,7 @@ impl ArrangementView {
         sp::line(canvas, tl.x0 - 0.5, b.y0, tl.x0 - 0.5, b.y1, sep);
         sp::line(canvas, b.x0, tl.y0 - 0.5, b.x1, tl.y0 - 0.5, sep);
         self.paint_marker_list(canvas);
+        self.paint_org_overlay(canvas);
         if let Some(m) = &self.menu {
             paint_menu(canvas, &self.st, m);
         }
@@ -3399,6 +3512,7 @@ impl ArrangementView {
                     sp::grid(c, st, &self.axis, lr, &self.bars);
                 }
                 RowKind::AddTrack(_) | RowKind::AddAudio => sp::rect(c, lr, st.background),
+                RowKind::Folder { group } => self.paint_folder_lane(c, doc, lr, *group),
                 kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
                     self.paint_take_lane(c, kind, lr);
                     sp::grid(c, st, &self.axis, lr, &self.bars);
@@ -3425,7 +3539,11 @@ impl ArrangementView {
                 continue;
             };
             let t = &self.song.tracks[track];
-            let accent = sp::device_accent(&st.base, doc, &t.device);
+            let accent = self.track_accent(doc, track);
+            if self.is_lane_folded(track, lane) {
+                self.paint_folded_lane(c, rr, track, lane, accent);
+                continue;
+            }
             let name = sp::track_name(doc, &t.device);
             let param = self.param_of(track, lane);
             for clip in &t.lanes[lane].clips {
@@ -4124,11 +4242,14 @@ impl ArrangementView {
                 kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
                     self.paint_take_header(c, kind, hr);
                 }
+                RowKind::Folder { group } => self.paint_folder_header(c, hr, *group),
                 RowKind::Lane { track, lane } => {
-                    let tr = &self.song.tracks[*track];
-                    let accent = sp::device_accent(t, doc, &tr.device);
+                    let accent = self.track_accent(doc, *track);
                     if *lane == 0 {
                         self.paint_track_header(c, doc, hr, *track, accent);
+                        self.paint_track_marks(c, hr, *track);
+                    } else if self.is_lane_folded(*track, *lane) {
+                        self.paint_folded_lane_header(c, hr, *track, *lane, accent);
                     } else {
                         sp::rect(c, hr, st.header_lane);
                         sp::rect(
@@ -4162,6 +4283,7 @@ impl ArrangementView {
                             Align::Start,
                         );
                         self.paint_lane_buttons(c, hr, *track, *lane);
+                        self.paint_lane_fold(c, hr, *track, *lane);
                     }
                 }
             }
@@ -4254,10 +4376,13 @@ impl ArrangementView {
         chev.close_path();
         c.fill_with(chev, col);
         let compact = hr.height() < COMPACT_BELOW;
+        let has_comment = !self.song.track_comment(&tr.device).is_empty();
         let name = fit_label(
             &sp::track_name(doc, &tr.device),
             if compact {
                 76.0
+            } else if has_comment {
+                TRACK_LIST_WIDTH - 62.0
             } else {
                 TRACK_LIST_WIDTH - 44.0
             },

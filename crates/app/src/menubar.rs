@@ -362,6 +362,7 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            org: atomik_ui::arrangement::OrgMenu::default(),
         }
     }
 

@@ -12,8 +12,9 @@
 //!   release becomes that take's part of the comp (`SetCompSegment`), one undo step; a click
 //!   without a drag in the row picks the whole take. Escape cancels a drag.
 //!
-//! Which groups are open is view state (not saved). The rows are laid out below the lane row
-//! (lane 0, the notes or audio lane) of their track, before its automation lanes.
+//! Which groups are open is saved with the project (`SetTakesOpen`; the view shows a click at
+//! once). The rows are laid out below the lane row (lane 0, the notes or audio lane) of their
+//! track, before its automation lanes.
 
 use super::{ArrangementView, Drag, Hit, Rect, Row, RowKind, TRACK_LIST_WIDTH, song_cmd};
 use crate::canvas::{Align, Canvas, CanvasExt, pt};
@@ -226,7 +227,10 @@ impl ArrangementView {
             } else {
                 Hit::TakeSpan(*group, *take)
             }),
-            RowKind::Lane { .. } | RowKind::AddTrack(_) | RowKind::AddAudio => None,
+            RowKind::Lane { .. }
+            | RowKind::Folder { .. }
+            | RowKind::AddTrack(_)
+            | RowKind::AddAudio => None,
         }
     }
 
@@ -247,6 +251,11 @@ impl ArrangementView {
                 let open = !self.tk.open.contains(group);
                 self.set_takes_open(*group, open);
                 self.sync(doc, registry);
+                // The rows open at once; the song keeps the state for the file and for undo.
+                out.push(song_cmd(SongCommand::SetTakesOpen {
+                    take_group: *group,
+                    open,
+                }));
             }
             Hit::TakeFlatten(group) => {
                 out.push(song_cmd(SongCommand::FlattenTakes { group: *group }));
@@ -390,7 +399,10 @@ impl ArrangementView {
                     c.stroke_with(r, 1.0, st.selection);
                 }
             }
-            RowKind::Lane { .. } | RowKind::AddTrack(_) | RowKind::AddAudio => {}
+            RowKind::Lane { .. }
+            | RowKind::Folder { .. }
+            | RowKind::AddTrack(_)
+            | RowKind::AddAudio => {}
         }
     }
 
@@ -497,7 +509,10 @@ impl ArrangementView {
                 let hovered = self.hover == Some(Hit::TakeDelete(*group, *take));
                 sp::button(c, st, r, "x", None, hovered);
             }
-            RowKind::Lane { .. } | RowKind::AddTrack(_) | RowKind::AddAudio => {}
+            RowKind::Lane { .. }
+            | RowKind::Folder { .. }
+            | RowKind::AddTrack(_)
+            | RowKind::AddAudio => {}
         }
     }
 }
