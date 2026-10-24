@@ -169,6 +169,7 @@ fn legacy_does_not_know_the_new_keys() {
     };
     none("F8", &[Context::Global]);
     none("Cmd+K", &[Context::Editor]);
+    none("Cmd+K", &[Context::Sequencer]);
     none("Alt+X", &[Context::Sequencer]);
     none("Cmd+T", &[Context::Global]);
     none("Numpad0", &[Context::Global]);
@@ -275,6 +276,7 @@ fn reference_default_table_of_the_plan() {
         ),
         ("P", &[Context::Sequencer], "transport.loop_and_play", None),
         ("Cmd+K", &[Context::Editor], "editor.quantize", None),
+        ("Cmd+K", &[Context::Sequencer], "editor.quantize", None),
         ("Cmd+Up", &[Context::Editor], "editor.transpose_up", None),
         ("Cmd+Shift+Up", &[Context::Editor], "editor.octave_up", None),
         ("Cmd+Left", &[Context::Editor], "editor.nudge_left", None),
@@ -808,6 +810,7 @@ fn reference_keys_hold_on_linux_and_mac_with_only_the_listed_exceptions() {
             "sequencer.split_at_playhead",
         ),
         ("Cmd+K", &[Context::Editor], "editor.quantize"),
+        ("Cmd+K", &[Context::Sequencer], "editor.quantize"),
         ("Cmd+Up", &[Context::Editor], "editor.transpose_up"),
         ("Cmd+Shift+Down", &[Context::Editor], "editor.octave_down"),
         ("Return", &[Context::Sequencer], "sequencer.open_clip"),

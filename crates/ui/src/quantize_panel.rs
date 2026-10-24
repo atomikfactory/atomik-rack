@@ -30,6 +30,10 @@
 //! * `DELETE` on a groove row emits [`QuantizeAction::Delete`].
 //! * `CLOSE` emits [`QuantizeAction::Close`].
 //!
+//! The piano roll's QUANT button and the quantize key emit [`QuantizeAction::ApplyLast`] (apply
+//! the last settings without the panel); its `...` button and a right click on QUANT emit
+//! [`QuantizeAction::Options`] (open the panel).
+//!
 //! Every value has a `-` and a `+` button and answers the wheel. The settings live in
 //! [`QuantizeValues`], which the app keeps between openings. The groove row cycles through
 //! "None", the built-in grooves and the song's; a groove sets the grid, so the grid row is dimmed
@@ -177,6 +181,11 @@ pub struct GrooveEntry {
 pub enum QuantizeAction {
     /// Quantize the target with the panel's settings.
     Apply,
+    /// Quantize with the settings the panel last had (from the piano roll's QUANT button and
+    /// the quantize key, not from the open panel).
+    ApplyLast,
+    /// Open the panel (from the piano roll's options button or a right click on QUANT).
+    Options,
     /// Measure a groove from the clip and add it to the song.
     Extract,
     /// Remove the song's groove of this name.

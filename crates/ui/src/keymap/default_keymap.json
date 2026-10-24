@@ -94,6 +94,7 @@
         { "command": "tool.eraser", "context": "editor", "chords": ["E"] },
         { "command": "tool.razor", "context": "editor", "chords": ["R"] },
         { "command": "editor.quantize", "context": "editor", "chords": ["Cmd+K"] },
+        { "command": "editor.quantize", "context": "sequencer", "chords": ["Cmd+K"] },
         { "command": "editor.transpose_up", "context": "editor", "chords": ["Cmd+Up"] },
         { "command": "editor.transpose_down", "context": "editor", "chords": ["Cmd+Down"] },
         { "command": "editor.octave_up", "context": "editor", "chords": ["Cmd+Shift+Up"] },

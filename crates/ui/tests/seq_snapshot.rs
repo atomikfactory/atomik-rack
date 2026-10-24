@@ -198,7 +198,7 @@ fn recordings_are_deterministic_and_complete() {
     let p = record_piano_roll();
     assert_eq!(p.to_json(), record_piano_roll().to_json());
     let texts = p.texts();
-    for t in ["PIANO ROLL", "VEL", "C2", "C3", "1/16", "QUANT 100%"] {
+    for t in ["PIANO ROLL", "VEL", "C2", "C3", "1/16", "QUANT", "..."] {
         assert!(texts.contains(&t), "piano roll is missing {t:?}: {texts:?}");
     }
     let t = record_transport();

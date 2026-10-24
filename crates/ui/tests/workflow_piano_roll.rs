@@ -7,7 +7,7 @@ use atomik_model::{ClipContent, ClipId, Note, SongCommand};
 use atomik_ui::keymap::{CommandOutcome, Os, Roles};
 use atomik_ui::kurbo::Point;
 use atomik_ui::timeline::Snap;
-use atomik_ui::{DisplayList, Modifiers, PianoRollView, Tool, UiAction, UiEvent};
+use atomik_ui::{DisplayList, Modifiers, PianoRollView, QuantizeAction, Tool, UiAction, UiEvent};
 use support::song::*;
 use support::*;
 
@@ -90,16 +90,12 @@ fn select_all_delete_and_the_selection_rules() {
 fn quantize_transpose_octave_and_nudge_are_commands() {
     let (doc, reg) = (off_grid_doc(), registry());
     let mut v = piano_roll(&doc, &reg);
-    v.set_snap(Snap::Beat);
+    // Quantize is the app's: with or without a selection it asks for the panel's last settings.
+    let apply = CommandOutcome::Handled(vec![UiAction::Quantize(QuantizeAction::ApplyLast)]);
     v.set_selected_notes(&[0, 1]);
-    let a = v.command("editor.quantize", None, &doc, &reg);
-    let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
-    assert_eq!(ticks, vec![0, PPQ, 2 * PPQ + 1000]);
-    // Nothing selected: everything.
+    assert_eq!(v.command("editor.quantize", None, &doc, &reg), apply);
     v.set_selected_notes(&[]);
-    let a = v.command("editor.quantize", None, &doc, &reg);
-    let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
-    assert_eq!(ticks, vec![0, PPQ, 2 * PPQ]);
+    assert_eq!(v.command("editor.quantize", None, &doc, &reg), apply);
 
     let (doc, reg) = (song_doc(), registry());
     let mut v = piano_roll(&doc, &reg);
@@ -485,37 +481,4 @@ fn toggle_note_mute_unmutes_a_muted_selection_and_is_quiet_without_one() {
     v.set_selected_notes(&[]);
     let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
     assert_eq!(out, CommandOutcome::Handled(vec![]));
-}
-
-#[test]
-fn quantize_takes_the_triplet_and_fine_snaps() {
-    let (doc, reg) = (off_grid_doc(), registry());
-    let mut v = piano_roll(&doc, &reg);
-    for (arg, want) in [
-        ("eighth_triplet", vec![0, PPQ, 30_720]),
-        ("sixteenth_triplet", vec![0, PPQ, 30_720]),
-        ("thirtysecond", vec![0, PPQ, 32_640]),
-    ] {
-        assert!(
-            v.command("sequencer.set_snap", Some(arg), &doc, &reg)
-                .is_taken()
-        );
-        v.set_selected_notes(&[]);
-        let a = v.command("editor.quantize", None, &doc, &reg);
-        let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
-        assert_eq!(ticks, want, "{arg}");
-    }
-}
-
-#[test]
-fn quantize_to_the_grid_snap_uses_the_visible_grid() {
-    let (doc, reg) = (off_grid_doc(), registry());
-    let mut v = piano_roll(&doc, &reg);
-    v.command("sequencer.set_snap", Some("grid"), &doc, &reg);
-    let a = v.command("editor.quantize", None, &doc, &reg);
-    let step = Snap::Grid
-        .step_zoomed(Default::default(), v.px_per_tick())
-        .unwrap();
-    let ticks: Vec<i64> = notes_of(a.actions())[0].iter().map(|n| n.tick).collect();
-    assert!(ticks.iter().all(|t| t % step == 0), "{ticks:?} on {step}");
 }
