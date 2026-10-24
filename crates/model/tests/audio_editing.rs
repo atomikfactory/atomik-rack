@@ -5,9 +5,9 @@ mod common;
 
 use atomik_model::song::{AudioRegion, flatten_audio};
 use atomik_model::{
-    AudioClipContent, ClipContent, Document, FadeCurve, GainPoint, ModelError, PROJECT_VERSION,
-    SongCommand, StripParams, load_project, normalise_gain_db, peak, save_project, slice_envelope,
-    split_envelope, strip_silence,
+    AudioClipContent, ClipContent, Command, Document, FadeCurve, GainPoint, ModelError,
+    PROJECT_VERSION, SongCommand, StripParams, load_project, normalise_gain_db, peak, save_project,
+    slice_envelope, split_envelope, strip_silence,
 };
 use common::audio::*;
 use common::song::*;
@@ -730,4 +730,51 @@ fn crossfades_lists_the_overlaps_the_regions_mix() {
     let r = flat(&d);
     let xin = r.iter().find(|r| r.x_in > 0).unwrap();
     assert_eq!((xin.song_start_frame, xin.x_in), (BEAT_F, BEAT_F));
+}
+
+#[test]
+fn audio_edits_batch_into_one_undo_step_with_consecutive_clip_ids() {
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 4 * PPQ, audio(1));
+    let b = put(&mut d, &reg, 8 * PPQ, 4 * PPQ, audio(2));
+    let before = d.doc().clone();
+    let next = before.song.next_clip_id;
+    let mut gain = audio_of(&d, b);
+    gain.gain_db = -4.0;
+    let (cb, lb) = {
+        let c = doc_clip(d.doc(), b);
+        (c.start, c.length)
+    };
+    d.apply(
+        Command::Batch(vec![
+            sc(SongCommand::StripSilence {
+                id: a,
+                pieces: vec![(0, BEAT_F), (2 * BEAT_F, 3 * BEAT_F)],
+                fade: 0,
+            }),
+            sc(SongCommand::SetAudioClip {
+                id: b,
+                start: cb,
+                length: lb,
+                muted: false,
+                content: gain,
+                merge: None,
+            }),
+            sc(SongCommand::StripSilence {
+                id: b,
+                pieces: vec![(BEAT_F, 2 * BEAT_F), (3 * BEAT_F, 4 * BEAT_F)],
+                fade: 0,
+            }),
+        ]),
+        &reg,
+    )
+    .unwrap();
+    let lane = &d.doc().song.tracks[0].lanes[0];
+    assert_eq!(lane.clips.len(), 4);
+    let mut ids: Vec<u64> = lane.clips.iter().map(|c| c.id.0).collect();
+    ids.sort();
+    assert_eq!(ids, [a.0, b.0, next, next + 1], "ids follow one another");
+    assert_eq!(d.doc().song.next_clip_id, next + 2);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before, "the whole batch is one undo step");
 }

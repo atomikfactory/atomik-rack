@@ -485,7 +485,7 @@ pub enum Command {
 /// | move, fold, rename, colour | `ViewChanged` |
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
 /// | `SetInputChannels` | `RoutingChanged` |
-/// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits) |
+/// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
 /// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
@@ -969,12 +969,14 @@ impl Document {
                                     | SongCommand::SetClipControllers { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
+                                    | SongCommand::SetAudioClip { .. }
+                                    | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetLaneFolded { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
