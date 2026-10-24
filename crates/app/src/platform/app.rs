@@ -21,7 +21,7 @@ use atomik_model::DeviceKey;
 use atomik_ui::TransportAction;
 use atomik_ui::keymap::Os;
 use atomik_ui::kurbo::Point;
-use atomik_ui::{Modifiers, SceneCache, SceneCanvas, TextEngine, UiEvent};
+use atomik_ui::{CursorHint, Modifiers, SceneCache, SceneCanvas, TextEngine, UiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -254,6 +254,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         buttons: translate::PointerMap::default(),
         os: Os::host(),
         pointer: Point::ZERO,
+        cursor: CursorHint::Default,
         clicks: ClickCounter::new(),
         drag: FileDrag::new(),
         epoch: now,
@@ -292,6 +293,8 @@ struct App {
     /// The OS whose keys apply.
     os: Os,
     pointer: Point,
+    /// The cursor last set on the window.
+    cursor: CursorHint,
     clicks: ClickCounter,
     drag: FileDrag,
     epoch: Instant,
@@ -391,6 +394,7 @@ impl App {
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
         self.handle_requests(event_loop, requests);
         self.update_title();
+        self.update_cursor();
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native {
             native.update(&self.shell.menu_model());
@@ -399,6 +403,17 @@ impl App {
             && let Some(w) = &self.window
         {
             w.request_redraw();
+        }
+    }
+
+    /// Shows the cursor the shell asks for (set only when it changes).
+    fn update_cursor(&mut self) {
+        let hint = self.shell.cursor();
+        if hint != self.cursor
+            && let Some(w) = &self.window
+        {
+            w.set_cursor(translate::cursor_icon(hint));
+            self.cursor = hint;
         }
     }
 

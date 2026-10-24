@@ -12,7 +12,7 @@ use crate::timeline::{Meter, Snap};
 /// The tools of the tool palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tool {
-    /// Select: the modeless gestures (drag on an empty lane draws, click selects, band select).
+    /// Select: the modeless gestures (click selects, drag moves or resizes, band select); it never draws.
     #[default]
     Select,
     /// Pencil: a click draws.

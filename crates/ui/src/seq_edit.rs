@@ -69,6 +69,8 @@ pub enum SpanPart {
     Body,
     /// The right edge (resize).
     End,
+    /// The left edge (resize from the start); only [`hit_span_edges`] reports it.
+    Start,
 }
 
 /// Hit-tests `x` against the span `[x0, x1)`. The right edge zone is `edge_px` wide inside
@@ -79,6 +81,23 @@ pub fn hit_span(x: f64, x0: f64, x1: f64, edge_px: f64) -> Option<SpanPart> {
     }
     let edge = edge_px.min((x1 - x0) / 3.0);
     Some(if x >= x1 - edge {
+        SpanPart::End
+    } else {
+        SpanPart::Body
+    })
+}
+
+/// Hit-tests `x` against the span `[x0, x1)` with an edge zone at both ends: the left edge is
+/// [`SpanPart::Start`], the right edge [`SpanPart::End`]. Each zone is `edge_px` wide, shrunk
+/// to a third of the span for narrow spans so the body stays grabbable.
+pub fn hit_span_edges(x: f64, x0: f64, x1: f64, edge_px: f64) -> Option<SpanPart> {
+    if !(x0..x1).contains(&x) {
+        return None;
+    }
+    let edge = edge_px.min((x1 - x0) / 3.0);
+    Some(if x < x0 + edge {
+        SpanPart::Start
+    } else if x >= x1 - edge {
         SpanPart::End
     } else {
         SpanPart::Body
@@ -292,6 +311,38 @@ pub fn move_notes(notes: &[Note], sel: &BTreeSet<usize>, dt: i64, dkey: i32) -> 
 pub fn resize_notes(notes: &[Note], sel: &BTreeSet<usize>, dlen: i64, min_len: i64) -> Vec<Note> {
     map_selected(notes, sel, |n| Note {
         length: (n.length + dlen).max(min_len.max(1)),
+        ..*n
+    })
+}
+
+/// Moves the starts of the `sel` notes by `dt` ticks with their ends fixed (the left-edge
+/// resize). `dt` is limited so every selected note keeps at least `min_len` and stays at
+/// tick >= 0: the group changes by the same delta.
+pub fn resize_notes_start(
+    notes: &[Note],
+    sel: &BTreeSet<usize>,
+    dt: i64,
+    min_len: i64,
+) -> Vec<Note> {
+    let min_len = min_len.max(1);
+    let mut lo = i64::MIN;
+    let mut hi = i64::MAX;
+    for n in notes
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| sel.contains(i))
+        .map(|(_, n)| n)
+    {
+        lo = lo.max(-n.tick);
+        hi = hi.min(n.length - min_len);
+    }
+    if lo > hi {
+        return notes.to_vec();
+    }
+    let dt = dt.clamp(lo, hi);
+    map_selected(notes, sel, |n| Note {
+        tick: n.tick + dt,
+        length: n.length - dt,
         ..*n
     })
 }
@@ -542,6 +593,38 @@ mod tests {
         // A 9 px span: the edge zone shrinks to 3 px.
         assert_eq!(hit_span(5.0, 0.0, 9.0, 6.0), Some(SpanPart::Body));
         assert_eq!(hit_span(7.0, 0.0, 9.0, 6.0), Some(SpanPart::End));
+    }
+
+    #[test]
+    fn span_edges_hit_both_ends() {
+        assert_eq!(hit_span_edges(2.0, 0.0, 100.0, 6.0), Some(SpanPart::Start));
+        assert_eq!(hit_span_edges(50.0, 0.0, 100.0, 6.0), Some(SpanPart::Body));
+        assert_eq!(hit_span_edges(96.0, 0.0, 100.0, 6.0), Some(SpanPart::End));
+        assert_eq!(hit_span_edges(100.0, 0.0, 100.0, 6.0), None);
+        // A 9 px span: both zones shrink to 3 px, the body keeps the middle.
+        assert_eq!(hit_span_edges(2.0, 0.0, 9.0, 6.0), Some(SpanPart::Start));
+        assert_eq!(hit_span_edges(5.0, 0.0, 9.0, 6.0), Some(SpanPart::Body));
+    }
+
+    #[test]
+    fn start_resize_moves_every_selected_start_by_one_limited_delta() {
+        let notes = [
+            Note::new(100, 400, 60, 1.0),
+            Note::new(300, 100, 62, 1.0),
+            Note::new(0, 50, 64, 1.0),
+        ];
+        let sel = set(&[0, 1]);
+        let r = resize_notes_start(&notes, &sel, 50, 10);
+        assert_eq!((r[0].tick, r[0].length), (150, 350));
+        assert_eq!((r[1].tick, r[1].length), (350, 50));
+        assert_eq!(r[2], notes[2]);
+        // The shortest note limits the group (min 10): 90 at most.
+        let r = resize_notes_start(&notes, &sel, 500, 10);
+        assert_eq!((r[0].tick, r[1].tick), (190, 390));
+        // Extending is limited by the earliest start.
+        let r = resize_notes_start(&notes, &sel, -500, 10);
+        assert_eq!((r[0].tick, r[0].length), (0, 500));
+        assert_eq!((r[1].tick, r[1].length), (200, 200));
     }
 
     #[test]
