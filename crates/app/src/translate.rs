@@ -2,11 +2,12 @@
 
 use atomik_ui::keymap::Os;
 use atomik_ui::kurbo::{Point, Vec2};
-use atomik_ui::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
+use atomik_ui::{CursorHint, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 use std::path::PathBuf;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{MouseButton, MouseScrollDelta};
 use winit::keyboard::{Key as WinitKey, KeyCode, ModifiersState, NamedKey, PhysicalKey};
+use winit::window::CursorIcon;
 
 /// Pixels of a touchpad (pixel) scroll per wheel notch.
 pub const PIXELS_PER_NOTCH: f64 = 40.0;
@@ -18,6 +19,16 @@ pub fn modifiers(state: ModifiersState) -> Modifiers {
         ctrl: state.control_key(),
         alt: state.alt_key(),
         meta: state.super_key(),
+    }
+}
+
+/// The winit cursor icon for a view's cursor hint.
+pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
+    match hint {
+        CursorHint::Default => CursorIcon::Default,
+        CursorHint::ResizeHorizontal => CursorIcon::EwResize,
+        CursorHint::Move => CursorIcon::Move,
+        CursorHint::Crosshair => CursorIcon::Crosshair,
     }
 }
 
@@ -348,6 +359,17 @@ mod tests {
         assert!(modifiers(ModifiersState::SUPER).command());
         assert!(modifiers(ModifiersState::ALT).alt);
         assert_eq!(modifiers(ModifiersState::empty()), Modifiers::NONE);
+    }
+
+    #[test]
+    fn cursor_hints_map_to_icons() {
+        assert_eq!(cursor_icon(CursorHint::Default), CursorIcon::Default);
+        assert_eq!(
+            cursor_icon(CursorHint::ResizeHorizontal),
+            CursorIcon::EwResize
+        );
+        assert_eq!(cursor_icon(CursorHint::Move), CursorIcon::Move);
+        assert_eq!(cursor_icon(CursorHint::Crosshair), CursorIcon::Crosshair);
     }
 
     #[test]
