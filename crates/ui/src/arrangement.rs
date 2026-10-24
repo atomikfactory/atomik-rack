@@ -69,6 +69,13 @@ pub use tempo::TempoMenu;
 
 /// Width of the track list.
 pub const TRACK_LIST_WIDTH: f64 = 208.0;
+
+/// The id of the clip a frozen track plays as ([`atomik_model::Frozen::clip`]): no lane has a
+/// clip with it, so it is never selected, hit or edited.
+const FROZEN_CLIP: ClipId = ClipId(0);
+
+/// The ice blue of everything frozen: the snowflake in the header and the render's clip.
+pub(crate) const ICE: Color = Color::new([0.55, 0.82, 0.97, 1.0]);
 /// Height of the ruler (bar labels above the loop band).
 pub const RULER_HEIGHT: f64 = 34.0;
 const LABEL_BAND: f64 = 18.0;
@@ -1639,6 +1646,10 @@ impl ArrangementView {
                 let Some(l) = self.song.tracks.get(track).and_then(|t| t.lanes.get(lane)) else {
                     return Hit::Empty;
                 };
+                // The clips of a frozen track are hidden behind its render: nothing to grab.
+                if lane == 0 && self.song.tracks[track].frozen.is_some() {
+                    return Hit::Lane { track, lane };
+                }
                 for clip in l.clips.iter().rev() {
                     let r = self.clip_rect_in(rr, clip);
                     if !(r.contains(pos)) {
@@ -3662,6 +3673,17 @@ impl ArrangementView {
             }
             let name = sp::track_name(doc, &t.device);
             let param = self.param_of(track, lane);
+            // A frozen track shows its render in place of its own clips (they are still there).
+            if lane == 0
+                && let Some(frozen) = &t.frozen
+            {
+                let clip = frozen.clip();
+                let r = self.clip_rect_in(rr, &clip);
+                if r.x1 >= tl.x0 - 2.0 && r.x0 <= tl.x1 + 2.0 {
+                    self.paint_clip(c, r, &clip, ICE, &name, &param, false, t.muted, tl);
+                }
+                continue;
+            }
             for clip in &t.lanes[lane].clips {
                 let r = self.clip_rect_in(rr, clip);
                 if r.x1 < tl.x0 - 2.0 || r.x0 > tl.x1 + 2.0 {
@@ -4031,6 +4053,10 @@ impl ArrangementView {
                 &st.base.text.with_alpha(0.7).into(),
             );
         }
+        if clip.id == FROZEN_CLIP {
+            // A render has no fades, gain or envelope to grab.
+            return;
+        }
         self.paint_audio_edits(c, r, vis, clip, a, &g);
         let hover = match &self.hover {
             Some(Hit::Clip { id, part, .. }) if *id == clip.id => Some(*part),
@@ -4197,17 +4223,37 @@ impl ArrangementView {
                 c.fill_with(notch, st.base.plate);
             }
         }
-        let button = mute_button_rect(r, tl, matches!(clip.content, ClipContent::Audio(_)));
+        let frozen = clip.id == FROZEN_CLIP;
+        let button = if frozen {
+            None
+        } else {
+            mute_button_rect(r, tl, matches!(clip.content, ClipContent::Audio(_)))
+        };
+        if frozen && vis.width() > 34.0 {
+            sp::snowflake(
+                c,
+                pt(vis.x0.max(tl.x0) + 9.0, vis.y0 + 6.5),
+                3.5,
+                st.base.plate,
+            );
+        }
         if vis.width() > 34.0 {
             // Audio clips keep the label clear of the fade-in handle.
             let x = vis.x0.max(tl.x0)
-                + if matches!(clip.content, ClipContent::Audio(_)) {
+                + if frozen {
+                    17.0
+                } else if matches!(clip.content, ClipContent::Audio(_)) {
                     14.0
                 } else {
                     4.0
                 };
+            let frozen_name;
             let label = match &clip.content {
                 ClipContent::Automation(_) => param.name,
+                ClipContent::Audio(_) if frozen => {
+                    frozen_name = format!("{name} (frozen)");
+                    &frozen_name
+                }
                 ClipContent::Notes(_) | ClipContent::Audio(_) => name,
             };
             let right = button.map_or(vis.x1, |b| b.x0);
@@ -4224,6 +4270,8 @@ impl ArrangementView {
         c.pop_clip();
         let (w, col) = if selected {
             (1.5, st.selection)
+        } else if frozen {
+            (1.0, ICE.with_alpha(0.85))
         } else {
             (1.0, st.base.bevel_dark)
         };
@@ -4543,23 +4591,26 @@ impl ArrangementView {
         c.fill_with(chev, col);
         let compact = hr.height() < COMPACT_BELOW;
         let has_comment = !self.song.track_comment(&tr.device).is_empty();
-        let name = fit_label(
-            &sp::track_name(doc, &tr.device),
-            if compact {
-                76.0
-            } else if has_comment {
-                TRACK_LIST_WIDTH - 62.0
-            } else {
-                TRACK_LIST_WIDTH - 44.0
-            },
-            11.5,
-        );
+        let frozen = tr.frozen.is_some();
+        let name_width = if compact {
+            76.0
+        } else if has_comment {
+            TRACK_LIST_WIDTH - 62.0
+        } else {
+            TRACK_LIST_WIDTH - 44.0
+        } - if frozen { 16.0 } else { 0.0 };
+        let name = fit_label(&sp::track_name(doc, &tr.device), name_width, 11.5);
         let name_y = if compact {
             hr.y0 + hr.height() / 2.0 + 4.0
         } else {
             hr.y0 + 21.0
         };
         c.text(&TextRun::new(name, pt(hr.x0 + 30.0, name_y), 11.5, t.text).weight(600));
+        if frozen {
+            // The ice mark after the name: the track plays its render.
+            let x = hr.x0 + 30.0 + name_width + 7.0;
+            sp::snowflake(c, pt(x, name_y - 4.0), 5.0, ICE);
+        }
         let hovered = |b| self.hover == Some(Hit::Button(track, b));
         for (b, label, on, lit) in [
             (TrackButton::Mute, "M", tr.muted, st.mute),

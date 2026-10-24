@@ -4,6 +4,7 @@
 use crate::WriteMode;
 use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
+use crate::freeze::Frozen;
 use crate::groove::Groove;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
@@ -98,6 +99,12 @@ pub(crate) enum Edit {
         param: String,
         old: Option<WriteMode>,
         new: Option<WriteMode>,
+    },
+    /// A track's frozen state (see [`crate::freeze`]).
+    Frozen {
+        device: DeviceKey,
+        old: Option<Frozen>,
+        new: Option<Frozen>,
     },
     /// Insert or remove lane `index` of a track.
     Lane {
@@ -361,7 +368,11 @@ impl Edit {
             Edit::Track { old, new, .. } => {
                 for t in old.iter().chain(new) {
                     t.lanes.iter().for_each(|l| lane(l, out));
+                    out.extend(t.frozen.iter().map(|f| f.audio.asset.clone()));
                 }
+            }
+            Edit::Frozen { old, new, .. } => {
+                out.extend(old.iter().chain(new).map(|f| f.audio.asset.clone()));
             }
             Edit::Lane { old, new, .. } => old.iter().chain(new).for_each(|l| lane(l, out)),
             Edit::Clip { old, new, .. } => old.iter().chain(new).for_each(|c| clip(c, out)),
@@ -447,6 +458,11 @@ impl Edit {
                 new: old,
             },
             Edit::TrackChase { device, old, new } => Edit::TrackChase {
+                device,
+                old: new,
+                new: old,
+            },
+            Edit::Frozen { device, old, new } => Edit::Frozen {
                 device,
                 old: new,
                 new: old,
@@ -750,6 +766,10 @@ impl Edit {
             Edit::TrackChase { device, new, .. } => {
                 track_mut(doc, device).chase = *new;
                 vec![SyncOp::SongChanged]
+            }
+            Edit::Frozen { device, new, .. } => {
+                track_mut(doc, device).frozen.clone_from(new);
+                vec![SyncOp::SongChanged, SyncOp::FrozenChanged]
             }
             Edit::LaneWrite {
                 device, param, new, ..

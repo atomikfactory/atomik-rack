@@ -779,6 +779,22 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.bounce_in_place",
+        "Bounce in Place",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.bounce_in_place_mute",
+        "Bounce in Place and Mute Originals",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
         G::Sequencer,
@@ -793,6 +809,38 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.freeze_cancel",
+        "Cancel Freeze",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.freeze_tail",
+        "Freeze with Tail",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.freeze_track",
+        "Freeze Track",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.freeze_track_to_device",
+        "Freeze Track up to Selected Device",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.group_tracks",
         "Group Tracks",
@@ -1022,6 +1070,22 @@ const COMMANDS: &[CommandDef] = &[
     )
     .arg(TRACK_HEIGHT_ARGS)
     .menu(),
+    cmd(
+        "sequencer.unfreeze_track",
+        "Unfreeze Track",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.unfreeze_track_keep",
+        "Unfreeze Track and Keep Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.ungroup_tracks",
         "Ungroup",

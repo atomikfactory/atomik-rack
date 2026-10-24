@@ -100,6 +100,11 @@ pub struct BuildOptions {
     /// Pattern data installed before the compile, as `(device id, data)`: the step sequencers
     /// of a project.
     pub player_data: Vec<(String, atomik_device_sdk::PlayerDataRef)>,
+    /// Devices that keep their instance id but leave the graph before the compile, as patch
+    /// device ids: the devices of frozen tracks. The id stays taken (ids are never reused), so
+    /// every other device gets the id, and so the prepare seed, it would have had without them;
+    /// an omitted device is never processed.
+    pub omit: Vec<String>,
 }
 
 impl Default for BuildOptions {
@@ -110,6 +115,7 @@ impl Default for BuildOptions {
             params: Vec::new(),
             samples: Vec::new(),
             player_data: Vec::new(),
+            omit: Vec::new(),
         }
     }
 }
@@ -162,6 +168,7 @@ pub fn build_with_devices(
     };
     b.ids.insert(INTERFACE_ID, Graph::INTERFACE);
     b.add_devices(patch, registry, &root.field("devices"))?;
+    b.omit_devices(&options.omit, &root.field("options"))?;
     b.connect_cables(patch, &root.field("cables"))?;
     b.apply_options(options, &JsonPath::root().field("options"))?;
     let frames = patch.total_frames();
@@ -247,6 +254,19 @@ impl<'p> Builder<'p> {
                     .set_param(id, param.id, plain)
                     .map_err(|e| err(&param_path, BuildErrorKind::Graph(e), e))?;
             }
+        }
+        Ok(())
+    }
+
+    /// Takes the devices in `omit` out of the graph again, keeping their ids taken.
+    fn omit_devices(&mut self, omit: &[String], path: &JsonPath) -> Result<(), BuildError> {
+        for (i, name) in omit.iter().enumerate() {
+            let path = path.field("omit").index(i);
+            let id = self.device(name, &path)?;
+            self.graph
+                .remove_device(id)
+                .map_err(|e| err(&path, BuildErrorKind::Graph(e), e))?;
+            self.ids.remove(name.as_str());
         }
         Ok(())
     }

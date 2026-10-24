@@ -56,6 +56,10 @@ pub struct ExpandedDevice {
     /// A plugin device's document: the app and the bounce build the real
     /// plugin (or its stand-in) from it. `None` for every other device.
     pub plugin: Option<Box<PluginDoc>>,
+    /// The device belongs to a frozen track (see [`crate::freeze`]): it keeps its place in the
+    /// list, and so its engine id, but the engine neither builds nor processes it, and no cable
+    /// touches it. `false` for every device of a document without a frozen track.
+    pub frozen: bool,
 }
 
 /// A macro target with the value the macro currently gives it.
@@ -227,8 +231,12 @@ const MAX_HOPS: usize = 4096;
 impl RackDoc {
     /// Flattens the containers (see the module documentation of `crate::expand`). Pure and
     /// deterministic; a document without containers expands to its own device and cable lists.
+    /// The frozen tracks of the document are applied last (see [`crate::freeze`]): their devices
+    /// are flagged and unplugged and a `<track>/~freeze` player takes their place.
     pub fn expand(&self, registry: &Registry) -> ExpandedRack {
-        expand_with_loops(&self.devices, &self.cables, registry).0
+        let mut expanded = expand_with_loops(&self.devices, &self.cables, registry).0;
+        crate::freeze::apply(self, &mut expanded);
+        expanded
     }
 }
 
@@ -325,6 +333,7 @@ impl<'a> Builder<'a> {
                     zones: d.zones.clone(),
                     steps: d.steps.clone(),
                     plugin: d.plugin.clone(),
+                    frozen: false,
                 });
                 continue;
             };
@@ -341,6 +350,7 @@ impl<'a> Builder<'a> {
                 zones: Vec::new(),
                 steps: None,
                 plugin: None,
+                frozen: false,
             });
             let child = self.scopes[scope].children[&d.key];
             self.emit_devices(child);

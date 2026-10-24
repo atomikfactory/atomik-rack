@@ -8,6 +8,7 @@
 use crate::DeviceKey;
 use crate::automation_rec::WriteMode;
 use crate::controller::ControllerLane;
+use crate::freeze::Frozen;
 use crate::groove::{Groove, QuantizeParams, builtin_groove};
 use crate::organise::Organisation;
 use crate::takes::TakeGroup;
@@ -393,6 +394,10 @@ pub struct Track {
     /// Notes that span the play position start sounding on play, locate and loop wrap. On by
     /// default; a track that plays only from its note starts turns it off.
     pub chase: bool,
+    /// The track is frozen: its instrument and the first effects of its channel's insert chain
+    /// are rendered to the audio held here, which plays instead of them (see
+    /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
+    pub frozen: Option<Frozen>,
     /// Lanes: index 0 is the note lane, or the audio lane of an audio track.
     pub lanes: Vec<Lane>,
 }
@@ -956,6 +961,43 @@ pub enum SongCommand {
         pieces: Vec<(u64, u64)>,
         /// Fade frames at the cut edges.
         fade: u64,
+    },
+    /// Freezes the track of `device` (one undo step): the instrument and the effects named in
+    /// `frozen` are replaced, as far as the engine goes, by the audio in `frozen` (see
+    /// [`crate::freeze`]). The track must not be frozen, `device` needs a console channel it is
+    /// cabled to, `frozen.effects` must be the first effects of that channel's insert chain, and
+    /// the audio must be in the pool and plain (no reverse, no warp). Reports
+    /// [`crate::SyncOp::SongChanged`] and [`crate::SyncOp::FrozenChanged`].
+    FreezeTrack {
+        /// The frozen track's device.
+        device: DeviceKey,
+        /// The render and what it includes.
+        frozen: Frozen,
+    },
+    /// Unfreezes the track of `device` (one undo step): the track, its clips, its instrument and
+    /// its effects are exactly as they were before the freeze. With `keep_audio` the render also
+    /// becomes the clip of a new audio track (in the same step). The render's asset stays in the
+    /// pool while undo can bring it back, and goes at the next save otherwise.
+    UnfreezeTrack {
+        /// The track's device.
+        device: DeviceKey,
+        /// Keep the render as a clip on a new audio track.
+        keep_audio: bool,
+    },
+    /// Adds a new audio track with one clip of rendered audio (bounce in place), and mutes the
+    /// clips listed in `mute` (one undo step, new track first). The track is wired like
+    /// [`SongCommand::AddAudioTrack`]'s.
+    AddRenderedTrack {
+        /// The name of the new track, or `None` for the default.
+        name: Option<String>,
+        /// Song tick where the clip starts.
+        start: i64,
+        /// Clip length in ticks.
+        length: i64,
+        /// The rendered audio (a plain clip: no reverse, no warp).
+        audio: AudioClipContent,
+        /// Clips to mute (the originals), by id.
+        mute: Vec<ClipId>,
     },
 }
 

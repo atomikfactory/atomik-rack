@@ -16,6 +16,7 @@ mod container_cmd;
 mod container_io;
 pub mod controller;
 mod expand;
+pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 mod history;
@@ -57,6 +58,10 @@ pub use container::{
     boundary_sockets, scoped_cable, split_path,
 };
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
+pub use freeze::{
+    FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
+    ticks_for_frames, track_chain,
+};
 pub use midi_import::{ImportedTrack, MidiImport};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
@@ -548,6 +553,10 @@ pub enum SyncOp {
     /// The song changed (tracks, clips, tempo map, meter, loop); the app recompiles and
     /// submits the engine song snapshot.
     SongChanged,
+    /// A track was frozen or unfrozen (see [`crate::freeze`]): the engine graph changes (the
+    /// frozen devices leave it and a player takes their place), so the app restarts its
+    /// engine. [`SyncOp::SongChanged`] comes with it.
+    FrozenChanged,
     /// The console changed: channels, their order, the master, returns or
     /// compensation, or a console channel's `solo` param. The app re-reads
     /// [`RackDoc::console`], refreshes the console view, pushes
@@ -657,6 +666,10 @@ pub enum ModelError {
     /// pins, an incompatible relink...).
     #[error("plugin: {0}")]
     BadPlugin(String),
+    /// A frozen track, or a device it freezes, was asked to change (see [`crate::freeze`]): the
+    /// message names the track and says to unfreeze it.
+    #[error("{0}")]
+    Frozen(String),
     /// Patch file could not be parsed.
     #[error("patch file: {0}")]
     Patch(String),
@@ -938,6 +951,7 @@ impl Document {
         command: Command,
         registry: &Registry,
     ) -> Result<(Edit, Option<ClipId>), ModelError> {
+        freeze::guard(doc, &command)?;
         let edit = match command {
             Command::Batch(commands) => {
                 if commands.is_empty() {
@@ -1286,6 +1300,13 @@ impl RackDoc {
                 ClipContent::Audio(a) => Some(a.asset.clone()),
                 _ => None,
             })
+            // The render of a frozen track.
+            .chain(
+                self.song
+                    .tracks
+                    .iter()
+                    .filter_map(|t| t.frozen.as_ref().map(|f| f.audio.asset.clone())),
+            )
             .collect::<BTreeSet<String>>()
             .into_iter()
             .chain({

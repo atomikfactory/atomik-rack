@@ -19,6 +19,11 @@
 //!    the engine's latency epoch followed after each batch
 //!    ([`crate::plugin_pass::render_song_following_latency`]).
 //!
+//! **Frozen tracks** ([`atomik_model::freeze`]) bounce as the app plays them: their devices keep
+//! their ids but are left out of the graph (`BuildOptions::omit`, so they are neither built nor
+//! processed, and a frozen plugin is not instantiated), and the track's `~freeze` player plays
+//! the render ([`song_input_with_warps`]).
+//!
 //! The song's loop is **disabled** for bounces unless [`ProjectOptions::loop_count`] asks for
 //! `n` passes: then pass 1 runs from tick 0 to the loop end, passes 2…n repeat the loop, and
 //! the song stops at the end of the last pass, followed by the two-beat tail.
@@ -221,6 +226,10 @@ pub fn song_input_with_warps(
     let mut macro_tracks: Vec<SongTrack> = Vec::new();
     let mut tracks: Vec<SongTrack> = Vec::new();
     for track in effective_tracks(song) {
+        // A frozen track plays its render through its player (below), not its own devices.
+        if track.frozen.is_some() {
+            continue;
+        }
         let is_container = doc.device(&track.device).is_some_and(|d| d.inner.is_some());
         let (flat, type_id) = match (&expanded, is_container) {
             (Some(exp), true) => {
@@ -325,11 +334,24 @@ pub fn song_input_with_warps(
         .collect();
     let mut used: BTreeMap<String, AssetId> = BTreeMap::new();
     let mut pool: Vec<SongAsset> = Vec::new();
-    let audio = effective_tracks(song)
-        .into_iter()
-        .filter(|track| track.is_audio())
-        .filter_map(|track| {
-            let device = id_of(&track.device)?;
+    // Audio tracks, and the frozen tracks as audio tracks of their render on their player.
+    let sources: Vec<(std::borrow::Cow<'_, atomik_model::song::Track>, DeviceKey)> =
+        effective_tracks(song)
+            .into_iter()
+            .filter_map(|track| match track.frozen_playback() {
+                Some(playback) => Some((
+                    std::borrow::Cow::Owned(playback),
+                    atomik_model::freeze_key(&track.device),
+                )),
+                None => track
+                    .is_audio()
+                    .then(|| (std::borrow::Cow::Borrowed(track), track.device.clone())),
+            })
+            .collect();
+    let audio = sources
+        .iter()
+        .filter_map(|(track, flat)| {
+            let device = id_of(flat)?;
             // Gain envelopes are shared between the regions of one clip (they carry equal lists).
             let mut envelopes: Vec<Vec<(u64, f32)>> = Vec::new();
             let regions: Vec<SongAudioRegion> = flatten_audio(track, song, doc.sample_rate)
@@ -478,6 +500,7 @@ pub fn console_options(doc: &RackDoc, registry: &Registry) -> BuildOptions {
             .collect(),
         samples: Vec::new(),
         player_data: Vec::new(),
+        omit: Vec::new(),
     }
 }
 
@@ -495,6 +518,7 @@ pub fn player_data_maps(
     expanded
         .devices
         .iter()
+        .filter(|e| !e.frozen)
         .filter_map(|e| {
             let d = doc.resolve(&e.key)?;
             Some((e.key.0.clone(), atomik_model::player_data_for(d, registry)?))
@@ -514,7 +538,7 @@ pub fn sampler_maps(
         BTreeMap::new();
     let (mut maps, mut warnings) = (Vec::new(), Vec::new());
     for device in &expanded.devices {
-        if device.zones.is_empty() || !registry.takes_samples(&device.type_id) {
+        if device.frozen || device.zones.is_empty() || !registry.takes_samples(&device.type_id) {
             continue;
         }
         let built = build_sample_map(&device.zones, |asset| {
@@ -636,6 +660,54 @@ pub fn render_doc_with(
     bundle_root: Option<&Path>,
     plugins: &mut PluginBounce<'_>,
 ) -> Result<Rendered, RenderError> {
+    let rendered = render_core(
+        doc,
+        registry,
+        (options, bundle_root),
+        plugins,
+        &Extra::default(),
+    )?;
+    // Without a control that can stop it, the render always finishes.
+    rendered
+        .map(|core| core.rendered)
+        .ok_or_else(|| RenderError::Project("the render was cancelled".to_string()))
+}
+
+/// What a render adds to a project bounce: taps on the flat rack, a length of its own and a
+/// control (the freeze render, [`crate::freeze`]).
+#[derive(Debug, Default)]
+pub(crate) struct Extra<'a> {
+    /// Outputs of the flat rack to capture, each as a stereo pair: tap `k` is cabled to the
+    /// interface outputs `n + 2k + 1` and `n + 2k + 2`, where `n` is the document's
+    /// `output_channels`, and comes back as those channels of the result.
+    pub taps: Vec<[atomik_model::SocketRef; 2]>,
+    /// Frames to render instead of the song's length and tail.
+    pub frames: Option<usize>,
+    /// Devices (flat keys) whose latency, as the engine published it when the render ended, is
+    /// reported in [`Core::latencies`].
+    pub probes: Vec<DeviceKey>,
+    /// Progress and cancel.
+    pub control: crate::plugin_pass::RenderControl<'a>,
+}
+
+/// A finished [`render_core`].
+pub(crate) struct Core {
+    /// The audio, with every tap's channels after the document's.
+    pub rendered: Rendered,
+    /// The latency in frames of each of `Extra::probes` (0 for a device that is not built).
+    pub latencies: Vec<u32>,
+}
+
+/// The bounce of [`render_doc_with`], with the additions of `extra`. `None` when `extra.control`
+/// stopped it. The documented determinism holds: nothing in `extra` changes a sample of what the
+/// document renders (a tap is one more cable from an output).
+pub(crate) fn render_core(
+    doc: &RackDoc,
+    registry: &Registry,
+    (options, bundle_root): (&ProjectOptions, Option<&Path>),
+    plugins: &mut PluginBounce<'_>,
+    extra: &Extra<'_>,
+) -> Result<Option<Core>, RenderError> {
     let bundle = bundle_root.and_then(|root| atomik_audio_file::Bundle::open(root).ok());
     let assets =
         crate::bundle::load_song_assets(doc, bundle.as_ref()).map_err(RenderError::Project)?;
@@ -643,8 +715,10 @@ pub fn render_doc_with(
     // a clip dry and its bits do not depend on timing.
     let warps = crate::warp::render_warps(doc, &assets);
     // Containers are compiled away first: the engine graph is the expanded rack.
-    let expanded = doc.expand(registry);
-    let (patch, patch_ids) = crate::flat::expanded_patch(doc, &expanded);
+    let mut expanded = doc.expand(registry);
+    let output_channels = tap_cables(doc, &mut expanded, &extra.taps);
+    let (mut patch, patch_ids) = crate::flat::expanded_patch(doc, &expanded);
+    patch.output_channels = output_channels;
     let patch_id = |key: String| {
         patch_ids
             .get(&DeviceKey(key.clone()))
@@ -652,6 +726,13 @@ pub fn render_doc_with(
             .unwrap_or(key)
     };
     let mut build_options = console_options(doc, registry);
+    // The devices of frozen tracks keep their ids but are never built into the graph.
+    build_options.omit = expanded
+        .devices
+        .iter()
+        .filter(|d| d.frozen)
+        .map(|d| patch_id(d.key.0.clone()))
+        .collect();
     let (maps, sampler_warnings) = sampler_maps(&expanded, registry, &assets);
     build_options.samples = maps.into_iter().map(|(k, m)| (patch_id(k), m)).collect();
     build_options.player_data = player_data_maps(doc, registry, &expanded)
@@ -672,7 +753,10 @@ pub fn render_doc_with(
     let ids = expanded_ids(&expanded);
     let input = song_input_with_warps(doc, registry, |k| ids.get(k).copied(), &assets, &warps);
     let snapshot = compile_song(&input).map_err(|e| RenderError::Project(e.to_string()))?;
-    let plan = bounce_plan(doc, &snapshot, options.loop_count);
+    let mut plan = bounce_plan(doc, &snapshot, options.loop_count);
+    if let Some(frames) = extra.frames {
+        plan.frames = frames;
+    }
     let engine_options = EngineOptions {
         workers: WorkerConfig {
             threads: options.workers,
@@ -715,6 +799,7 @@ pub fn render_doc_with(
                 snapshot,
                 edits,
                 &mut pass,
+                &extra.control,
             );
             warnings.append(&mut pass.warnings);
             channels
@@ -730,20 +815,56 @@ pub fn render_doc_with(
             edits,
             topology,
             &mut warnings,
+            &extra.control,
         ),
     };
+    let latencies = extra
+        .probes
+        .iter()
+        .map(|k| {
+            ids.get(k)
+                .and_then(|id| handle.device_latency(*id))
+                .unwrap_or(0)
+        })
+        .collect();
     // The devices go away with the engine; the plugins are destroyed on this (the main) thread.
     drop(engine);
     drop(handle);
     if let Some(host) = plugins.host.as_deref_mut() {
         host.poll();
     }
-    Ok(Rendered {
-        channels,
-        sample_rate: doc.sample_rate,
-        warnings,
-        plugins: plugin_count,
-    })
+    Ok(channels.map(|channels| Core {
+        rendered: Rendered {
+            channels,
+            sample_rate: doc.sample_rate,
+            warnings,
+            plugins: plugin_count,
+        },
+        latencies,
+    }))
+}
+
+/// Cables each tap of `taps` to its own pair of interface outputs, after the document's, and
+/// returns the number of output channels the render needs (the document's when there is no tap).
+fn tap_cables(
+    doc: &RackDoc,
+    expanded: &mut ExpandedRack,
+    taps: &[[atomik_model::SocketRef; 2]],
+) -> u16 {
+    let base = doc.output_channels;
+    for (k, tap) in taps.iter().enumerate() {
+        for (side, from) in tap.iter().enumerate() {
+            let out = usize::from(base) + 2 * k + side + 1;
+            expanded.cables.push(atomik_model::Cable {
+                from: from.clone(),
+                to: atomik_model::SocketRef {
+                    device: DeviceKey(atomik_model::INTERFACE_KEY.to_owned()),
+                    socket: format!("out_{out}"),
+                },
+            });
+        }
+    }
+    base.saturating_add(u16::try_from(2 * taps.len()).unwrap_or(u16::MAX))
 }
 
 /// The plugin devices of the expansion, by patch id, and how many plugin devices there are.
@@ -758,7 +879,8 @@ fn build_plugin_devices(
     let mut count = 0;
     let mut missing: Vec<String> = Vec::new();
     for e in &expanded.devices {
-        let Some(pd) = &e.plugin else {
+        // A frozen plugin is not built: its track plays the render.
+        let Some(pd) = e.plugin.as_ref().filter(|_| !e.frozen) else {
             continue;
         };
         count += 1;
@@ -807,7 +929,7 @@ fn build_plugin_devices(
         let unregistered = expanded
             .devices
             .iter()
-            .any(|d| d.plugin.is_some() && registry.get(&d.type_id).is_none());
+            .any(|d| d.plugin.is_some() && !d.frozen && registry.get(&d.type_id).is_none());
         if unregistered {
             return Err(RenderError::Project(
                 "a plugin device type is not registered (call register_stand_ins after loading the project)"

@@ -823,6 +823,11 @@ impl<S: EngineSink> AppCore<S> {
         self.macro_sent = containers::macro_values(&expanded);
         self.meter_devices = plugins::metered_with_plugins(&expanded);
         for device in &expanded.devices {
+            // A frozen device keeps its place in the id order but is not built.
+            if device.frozen {
+                self.next_id += 1;
+                continue;
+            }
             self.insert_flat(device);
         }
         self.plugins_after_rebuild();
@@ -904,6 +909,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut expanded: Option<ExpandedRack> = None;
         // (song stale, tempo changed): flushed before device and routing ops, and at the end.
         let mut stale = (false, false);
+        let mut restart = false;
         for op in ops {
             if matches!(
                 op,
@@ -971,6 +977,8 @@ impl<S: EngineSink> AppCore<S> {
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),
                 SyncOp::SongChanged => stale.0 = true,
+                // The graph changes (devices leave, a player comes): a new engine.
+                SyncOp::FrozenChanged => restart = true,
                 // A sampler inserted by this edit already got its map after the insert.
                 SyncOp::ZonesChanged(key) => {
                     if !inserted.contains(key) {
@@ -1008,8 +1016,9 @@ impl<S: EngineSink> AppCore<S> {
             self.meter_devices = plugins::metered_with_plugins(exp);
         }
         self.flush_song(&mut stale);
-        if self.doc().input_channels != self.engine_inputs {
-            // The host stream opens the document's input count: restart it (and the engine).
+        if restart || self.doc().input_channels != self.engine_inputs {
+            // The host stream opens the document's input count, or a track was frozen or
+            // unfrozen: restart the engine.
             self.rebuild_engine();
             return;
         }
@@ -1927,6 +1936,10 @@ pub use audio_edit_ops::NORMALISE_TARGET_DB;
 mod warp;
 pub use warp::WARP_CACHE_BYTES;
 
+#[path = "app_core_freeze.rs"]
+mod freeze;
+pub use freeze::{FREEZE_TAIL_SECONDS, FreezeThrough};
+
 #[path = "app_core_quantize.rs"]
 mod quantize_ops;
 pub use quantize_ops::QuantizeTarget;
@@ -1952,6 +1965,10 @@ pub use plugins::{
 #[cfg(test)]
 #[path = "app_core_rec_audio_tests.rs"]
 mod rec_audio_tests;
+
+#[cfg(test)]
+#[path = "app_core_freeze_tests.rs"]
+mod freeze_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugins_tests.rs"]

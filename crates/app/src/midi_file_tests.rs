@@ -41,6 +41,7 @@ fn track(device: &str, clips: Vec<Clip>) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        frozen: None,
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips,

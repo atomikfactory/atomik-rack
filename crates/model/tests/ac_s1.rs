@@ -70,7 +70,8 @@ impl Mirror {
                 | SyncOp::PatternsChanged { .. }
                 | SyncOp::MacrosChanged { .. }
                 | SyncOp::PluginChanged { .. }
-                | SyncOp::SplitsChanged { .. } => {}
+                | SyncOp::SplitsChanged { .. }
+                | SyncOp::FrozenChanged => {}
             }
         }
     }

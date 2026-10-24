@@ -3,6 +3,7 @@
 //! widget takes the label from the registry and the shortcut from the active keymap, so a key
 //! and a menu item cannot differ.
 
+use crate::commands::FreezeMenu;
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
 use atomik_ui::arrangement::{AudioMenu, OrgMenu};
@@ -46,6 +47,8 @@ pub struct MenuEnable {
     pub org: OrgMenu,
     /// Clip: what the selected audio clips allow.
     pub audio: AudioMenu,
+    /// Track header and clip: what freezing, unfreezing and bouncing allow.
+    pub freeze: FreezeMenu,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -395,6 +398,9 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     checked: Some(e.track_chase),
                 },
                 Spec::Separator,
+                item("sequencer.freeze_track", e.freeze.can_freeze),
+                item("sequencer.unfreeze_track", e.freeze.can_unfreeze),
+                Spec::Separator,
                 item("sequencer.group_tracks", e.org.can_group),
                 item("sequencer.ungroup_tracks", e.org.in_folder),
                 item("sequencer.move_track_up", e.org.can_move_up),
@@ -446,6 +452,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     "Mute"
                 }),
                 item("edit.quantize_options", e.selection),
+                item("sequencer.bounce_in_place", e.freeze.can_bounce),
                 Spec::Separator,
                 item("sequencer.audio_reverse", e.audio.can_edit),
                 item("sequencer.audio_normalise", e.audio.can_edit),
@@ -728,6 +735,8 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
+                None,
+                None,
                 None,
                 None,
                 None,

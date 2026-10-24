@@ -14,7 +14,6 @@ use atomik_audio_file::{AssetInfo, Bundle, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::Song;
-use atomik_model::song::MAX_TICK;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -34,28 +33,9 @@ pub fn is_audio_path(path: &Path) -> bool {
 /// The length in ticks of a clip that plays `frames` frames starting at `start_tick`: the
 /// smallest whole number of ticks whose span, through the song's tempo map
 /// ([`Song::frame_at`]), is at least `frames` (audio is not stretched). At least 1, at
-/// most [`MAX_TICK`].
+/// most [`atomik_model::song::MAX_TICK`].
 pub fn ticks_for_frames(song: &Song, start_tick: i64, frames: u64, sample_rate: u32) -> i64 {
-    let base = song.frame_at(start_tick, sample_rate);
-    let covers = |len: i64| song.frame_at(start_tick + len, sample_rate) - base >= frames;
-    // Grow until it covers, then bisect: `frame_at` never decreases with the tick.
-    let (mut lo, mut hi) = (0_i64, 1_i64);
-    while !covers(hi) {
-        if hi >= MAX_TICK {
-            return MAX_TICK;
-        }
-        lo = hi;
-        hi = (hi * 2).min(MAX_TICK);
-    }
-    while hi - lo > 1 {
-        let mid = lo + (hi - lo) / 2;
-        if covers(mid) {
-            hi = mid;
-        } else {
-            lo = mid;
-        }
-    }
-    hi
+    atomik_model::ticks_for_frames(song, start_tick, frames, sample_rate)
 }
 
 /// A decoded asset ready for the engine and the view.
@@ -117,6 +97,13 @@ pub(crate) enum Msg {
         generation: u64,
         key: u64,
         result: Option<SongAsset>,
+    },
+    /// A freeze or bounce render finished, stored in the bundle (`Ok(None)`: it was cancelled), or
+    /// failed: see [`crate::freeze_worker`].
+    Frozen {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<crate::freeze_worker::Done>, String>>,
     },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
@@ -411,6 +398,7 @@ pub(crate) fn spawn_sample_load(
 mod tests {
     use super::*;
     use atomik_core::PPQ;
+    use atomik_model::song::MAX_TICK;
     use atomik_model::{TempoEvent, empty_song};
 
     fn song_at(bpm: f64) -> Song {
