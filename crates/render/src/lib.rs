@@ -3,6 +3,7 @@
 //! - [`patch`]: the serde model of the patch file, its validation and JSON-path errors.
 //! - [`build`]: resolves a [`patch::Patch`] against a device [`Registry`] into a compiled plan.
 //! - [`flat`]: the expanded rack (containers compiled away) as a patch.
+//! - [`freeze`]: a track's chain rendered to audio (freeze and bounce in place).
 //! - [`bundle`]: project folder bundles (layout rules and asset loading for bounces).
 //! - [`plugin_pass`]: the bounce loop for projects with plugins (pre-roll, restarts, latency).
 //! - [`project`]: `.atomik` projects: the song as engine input and the song bounce.
@@ -24,6 +25,7 @@ pub mod build;
 pub mod bundle;
 pub mod cli;
 pub mod flat;
+pub mod freeze;
 pub mod patch;
 pub mod plugin_pass;
 pub mod plugins;

@@ -33,6 +33,7 @@ use atomik_engine::{
     Engine, EngineHandle, OfflineJob, SongSnapshot, TimedEdit, Topology, TransportCommand,
 };
 use atomik_plugin_host::ManagerEvent;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Batches in a row without a restart or a latency change that end the pre-roll (a restart takes
 /// about four batches from the request to the aligned routing).
@@ -40,6 +41,36 @@ pub const QUIET_BATCHES: usize = 8;
 
 /// The most batches the pre-roll runs (a plugin that restarts forever must not hang the bounce).
 pub const MAX_PREROLL_BATCHES: usize = 256;
+
+/// How a caller watches and stops a long render: a flag the loop reads once per batch (the
+/// render then ends early and returns `None`) and a callback that gets the fraction done every
+/// so many batches. Neither changes a sample of the output.
+#[derive(Clone, Copy, Default)]
+pub struct RenderControl<'a> {
+    /// Stops the render when it reads `true`.
+    pub cancel: Option<&'a AtomicBool>,
+    /// Told how far the render is, `0.0..=1.0`, about every [`PROGRESS_BATCHES`] batches.
+    pub progress: Option<&'a (dyn Fn(f32) + Sync)>,
+}
+
+impl std::fmt::Debug for RenderControl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderControl")
+            .field("cancel", &self.cancel.is_some())
+            .field("progress", &self.progress.is_some())
+            .finish()
+    }
+}
+
+impl RenderControl<'_> {
+    /// True once the caller asked to stop.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+/// Batches between two progress reports (about a quarter of a second of audio at 48 kHz).
+pub const PROGRESS_BATCHES: usize = 192;
 
 /// What the loop needs besides the engine: the plugin host to poll and the routing model to
 /// recompile.
@@ -149,6 +180,9 @@ fn digest(events: Vec<ManagerEvent>, warnings: &mut Vec<Warning>) -> bool {
 /// the per-batch plugin step of the module docs. The transport commands that precede the song
 /// (loop, metronome) are queued by the caller before this call.
 ///
+/// `control` can end the render early (the result is then `None`); the pre-roll is short and
+/// is not interrupted.
+///
 /// # Panics
 /// If the engine has already rendered, or if the song, an edit or a note cannot be queued.
 pub fn render_song_with_plugins(
@@ -158,7 +192,8 @@ pub fn render_song_with_plugins(
     song: SongSnapshot,
     edits: Vec<TimedEdit>,
     pass: &mut PluginPass<'_>,
-) -> Vec<Vec<f32>> {
+    control: &RenderControl<'_>,
+) -> Option<Vec<Vec<f32>>> {
     assert_eq!(
         engine.host_frames(),
         0,
@@ -188,7 +223,7 @@ pub fn render_song_with_plugins(
     }
 
     // 2. The song, one batch at a time.
-    song_in_batches(engine, handle, job, song, edits, |handle| {
+    song_in_batches(engine, handle, job, song, edits, control, |handle| {
         pass.after_batch(handle);
     })
 }
@@ -207,9 +242,15 @@ pub fn render_song_with_plugins(
 /// `topology` is the routing model of the engine's plan (`Graph::topology`), whose epoch is read
 /// before the first batch. Problems are returned as warnings.
 ///
+/// `control` can end the render early (the result is then `None`).
+///
 /// # Panics
 /// As [`render_song_with_plugins`]: if the engine has already rendered, or if the song or an
 /// edit cannot be queued.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the engine and its handle, the job, and what the loop follows and reports"
+)]
 pub fn render_song_following_latency(
     engine: &mut Engine,
     handle: &mut EngineHandle,
@@ -218,29 +259,31 @@ pub fn render_song_following_latency(
     edits: Vec<TimedEdit>,
     mut topology: Topology,
     warnings: &mut Vec<Warning>,
-) -> Vec<Vec<f32>> {
+    control: &RenderControl<'_>,
+) -> Option<Vec<Vec<f32>>> {
     assert_eq!(
         engine.host_frames(),
         0,
         "render_song_following_latency: the engine must be fresh"
     );
     let mut epoch = handle.latency_epoch();
-    song_in_batches(engine, handle, job, song, edits, |handle| {
+    song_in_batches(engine, handle, job, song, edits, control, |handle| {
         follow_latency(handle, &mut topology, &mut epoch, warnings);
     })
 }
 
 /// The song loop of the two bounces above: queues the song and `Play`, then renders in
 /// [`BATCH`]-frame blocks and calls `after_batch` once after each batch (and its garbage
-/// collection), before the next one.
+/// collection), before the next one. `None` when `control` stopped it.
 fn song_in_batches(
     engine: &mut Engine,
     handle: &mut EngineHandle,
     job: &OfflineJob<'_>,
     song: SongSnapshot,
     mut edits: Vec<TimedEdit>,
+    control: &RenderControl<'_>,
     mut after_batch: impl FnMut(&mut EngineHandle),
-) -> Vec<Vec<f32>> {
+) -> Option<Vec<Vec<f32>>> {
     let channels = engine.output_channels();
     let inputs = engine.input_channels();
     handle
@@ -259,7 +302,17 @@ fn song_in_batches(
     let mut block_in = vec![vec![0.0f32; BATCH]; inputs];
     let mut next_note = 0;
     let mut pos = 0;
+    let mut batches = 0usize;
     while pos < total {
+        if control.cancelled() {
+            return None;
+        }
+        if batches.is_multiple_of(PROGRESS_BATCHES)
+            && let Some(progress) = control.progress
+        {
+            progress(pos as f32 / total as f32);
+        }
+        batches += 1;
         let n = BATCH.min(total - pos);
         let end = (pos + n) as u64;
         while let Some(edit) = edits.next_if(|e| e.frame < end) {
@@ -287,10 +340,13 @@ fn song_in_batches(
         after_batch(handle);
         pos += n;
     }
+    if let Some(progress) = control.progress {
+        progress(1.0);
+    }
     for channel in &mut out {
         channel.drain(..latency);
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]
