@@ -101,7 +101,7 @@ pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use automation_rec::WriteMode;
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
-    MAX_VCA_NAME_CHARS, MAX_VCAS, VcaFeed, VcaGroup, clamp_vca_db,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;

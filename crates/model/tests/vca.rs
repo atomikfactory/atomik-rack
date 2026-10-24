@@ -6,7 +6,7 @@ mod common;
 
 use atomik_core::{VCA_MAX_DB, VCA_MIN_DB};
 use atomik_device_sdk::Registry;
-use atomik_model::console::{MAX_VCA_NAME_CHARS, MAX_VCAS, OutputDest, VcaFeed};
+use atomik_model::console::{MAX_VCA_NAME_CHARS, MAX_VCAS, OutputDest, VCA_PALETTE, VcaFeed};
 use atomik_model::{
     Command, ConsoleCommand, Document, PROJECT_VERSION, SyncOp, WorkflowCommand, load_project,
     new_project_doc, save_project,
@@ -110,10 +110,11 @@ fn creating_a_group_is_one_undo_step_with_the_members_in_console_order() {
     let g = d.doc().console.vca(1).unwrap();
     assert_eq!(
         (g.name.as_str(), g.level_db, g.mute, g.solo, g.color),
-        ("Drums", 0.0, false, false, None)
+        ("Drums", 0.0, false, false, Some(VCA_PALETTE[0]))
     );
     // The next group counts on; an empty group is allowed.
     d.apply(create("Empty", &[]), &r).unwrap();
+    assert_eq!(d.doc().console.vca(2).unwrap().color, Some(VCA_PALETTE[1]));
     assert_eq!(
         d.doc()
             .console

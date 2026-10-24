@@ -39,6 +39,17 @@ pub const MAX_VCA_NAME_CHARS: usize = 32;
 /// Most VCA groups in a console.
 pub const MAX_VCAS: usize = 64;
 
+/// The colours new groups take in turn (group `id` takes entry `(id - 1) % 6`), the palette of the
+/// markers and tracks: red, orange, yellow, green, blue, purple.
+pub const VCA_PALETTE: [[u8; 3]; 6] = [
+    [0xe0, 0x5a, 0x4f],
+    [0xe8, 0x9a, 0x3c],
+    [0xe0, 0xc8, 0x4a],
+    [0x5a, 0xb8, 0x6a],
+    [0x3f, 0x8f, 0xd2],
+    [0x9a, 0x6a, 0xd0],
+];
+
 /// One VCA group.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VcaGroup {
@@ -285,7 +296,7 @@ pub(crate) fn plan(p: &mut Planner<'_>, command: ConsoleCommand) -> Result<(), M
                 groups.push(VcaGroup {
                     id,
                     name,
-                    color: None,
+                    color: Some(VCA_PALETTE[(id as usize - 1) % VCA_PALETTE.len()]),
                     level_db: 0.0,
                     mute: false,
                     solo: false,

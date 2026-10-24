@@ -31,7 +31,9 @@
 //! moving a channel changes no audio (summing is deterministic either way).
 
 pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
-pub use crate::console_vca::{MAX_VCA_NAME_CHARS, MAX_VCAS, VcaFeed, VcaGroup, clamp_vca_db};
+pub use crate::console_vca::{
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+};
 use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
 
 /// The key the next bus device gets (`bus`, `bus-2`, ...): what `CreateBus` and `RouteToNewBus`
@@ -517,7 +519,7 @@ pub enum ConsoleCommand {
     /// Create a VCA group called `name` over `members` (console channels and buses; a member
     /// leaves the group it was in), in one undo step. The name is trimmed; empty, over
     /// [`MAX_VCA_NAME_CHARS`] or taken (ignoring case) is rejected, so is a member that is not
-    /// a console strip. The group starts at 0 dB, unmuted, unsoloed, without a colour; its id is
+    /// a console strip. The group starts at 0 dB, unmuted, unsoloed, with the colour [`VCA_PALETTE`] gives its id; its id is
     /// [`Console::next_vca_id`] computed before the command.
     CreateVca {
         /// The group name.
