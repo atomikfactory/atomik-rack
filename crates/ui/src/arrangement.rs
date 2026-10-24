@@ -46,6 +46,7 @@ use vello::peniko::Color;
 
 mod heights;
 mod markers;
+mod takes;
 mod tempo;
 
 pub use heights::{
@@ -53,6 +54,7 @@ pub use heights::{
     clamp_track_zoom, scaled_height,
 };
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
+pub use takes::{TAKE_GROUP_HEIGHT, TAKE_ROW_HEIGHT, take_color};
 pub use tempo::TempoMenu;
 
 /// Width of the track list.
@@ -160,9 +162,23 @@ pub enum LaneButton {
 
 #[derive(Debug, Clone, PartialEq)]
 enum RowKind {
-    Lane { track: usize, lane: usize },
+    Lane {
+        track: usize,
+        lane: usize,
+    },
     AddTrack(DeviceKey),
     AddAudio,
+    /// The comp strip of take group `group` under lane 0 of track `track`.
+    TakeGroup {
+        track: usize,
+        group: u32,
+    },
+    /// The row of take `take` of an open group.
+    Take {
+        track: usize,
+        group: u32,
+        take: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +244,18 @@ enum Hit {
         track: usize,
         lane: usize,
     },
+    /// The chevron of a take group's strip (opens or closes its take rows).
+    TakeToggle(u32),
+    /// The FLATTEN button of a take group.
+    TakeFlatten(u32),
+    /// The name of a take: a click picks it.
+    TakePick(u32, usize),
+    /// The cross of a take.
+    TakeDelete(u32, usize),
+    /// A take row's timeline part: a drag comps a range from the take.
+    TakeSpan(u32, usize),
+    /// A group's comp strip.
+    TakeStrip(u32),
     Empty,
 }
 
@@ -383,6 +411,15 @@ enum Drag {
     Pan {
         last: Point,
     },
+    /// Comping a range from a take: a drag across a take row (see `takes`).
+    Comp {
+        start: Point,
+        group: u32,
+        take: usize,
+        t0: i64,
+        t1: i64,
+        moved: bool,
+    },
     /// Dragging the horizontal scrollbar thumb; `grab` is the x offset inside the thumb.
     HScroll {
         grab: f64,
@@ -465,6 +502,8 @@ pub struct ArrangementView {
     mk: markers::MarkerUi,
     /// Vertical zoom and the track height drag.
     th: heights::HeightUi,
+    /// Which take groups are open.
+    tk: takes::TakesUi,
     /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
     /// docked at the right edge.
     outer: Rect,
@@ -535,6 +574,7 @@ impl ArrangementView {
             ctx_meter: None,
             mk: markers::MarkerUi::default(),
             th: heights::HeightUi::default(),
+            tk: takes::TakesUi::default(),
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
             audio_headers: Vec::new(),
@@ -1108,6 +1148,10 @@ impl ArrangementView {
                 h,
             });
             y += h;
+            for (kind, h) in self.take_rows(ti) {
+                rows.push(Row { kind, y, h });
+                y += h;
+            }
             if !self.collapsed.contains(&t.device) {
                 for li in 1..t.lanes.len() {
                     rows.push(Row {
@@ -1170,6 +1214,7 @@ impl ArrangementView {
         self.tempo_sel = self.tempo_sel.filter(|i| *i < tempos);
         self.meter_sel = self.meter_sel.filter(|i| *i < meters);
         self.marker_sync();
+        self.takes_sync();
         self.clamp_scroll();
     }
 
@@ -1469,6 +1514,9 @@ impl ArrangementView {
         };
         let rr = self.row_rect(row);
         match &row.kind {
+            kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
+                self.takes_hit(kind, rr, pos).unwrap_or(Hit::Empty)
+            }
             RowKind::AddTrack(d) => {
                 if pos.x < tl.x0 {
                     Hit::AddTrack(d.clone())
@@ -1764,6 +1812,17 @@ impl ArrangementView {
                     moved: false,
                     modifiers,
                 };
+            }
+            Hit::TakeToggle(_)
+            | Hit::TakeFlatten(_)
+            | Hit::TakePick(..)
+            | Hit::TakeDelete(..)
+            | Hit::TakeSpan(..)
+            | Hit::TakeStrip(_)
+                if primary =>
+            {
+                self.selected_track = None;
+                self.takes_down(&hit, pos, modifiers, doc, registry, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
@@ -2360,6 +2419,10 @@ impl ArrangementView {
             self.marquee_move(pos);
             return;
         }
+        if matches!(self.drag, Drag::Comp { .. }) {
+            self.comp_move(pos, modifiers);
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
@@ -2376,6 +2439,7 @@ impl ArrangementView {
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::Meter { .. }
+            | Drag::Comp { .. }
             | Drag::Mark => {}
             Drag::Move {
                 start,
@@ -2587,6 +2651,14 @@ impl ArrangementView {
             Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } => {}
             Drag::Mark => self.marker_drag_up(out),
             Drag::Height => self.height_up(out),
+            Drag::Comp {
+                group,
+                take,
+                t0,
+                t1,
+                moved,
+                ..
+            } => self.comp_up(group, take, (t0, t1), moved, out),
             Drag::Move {
                 originals,
                 merge,
@@ -3327,6 +3399,10 @@ impl ArrangementView {
                     sp::grid(c, st, &self.axis, lr, &self.bars);
                 }
                 RowKind::AddTrack(_) | RowKind::AddAudio => sp::rect(c, lr, st.background),
+                kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
+                    self.paint_take_lane(c, kind, lr);
+                    sp::grid(c, st, &self.axis, lr, &self.bars);
+                }
             }
             sp::line(c, lr.x0, lr.y1 - 0.5, lr.x1, lr.y1 - 0.5, st.separator);
         }
@@ -4044,6 +4120,9 @@ impl ArrangementView {
                         col,
                         Align::Start,
                     );
+                }
+                kind @ (RowKind::TakeGroup { .. } | RowKind::Take { .. }) => {
+                    self.paint_take_header(c, kind, hr);
                 }
                 RowKind::Lane { track, lane } => {
                     let tr = &self.song.tracks[*track];

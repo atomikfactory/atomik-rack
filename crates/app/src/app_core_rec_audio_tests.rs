@@ -64,6 +64,13 @@ fn clips(core: &AppCore<impl EngineSink>, key: &DeviceKey) -> Vec<atomik_model::
     core.doc().song.track(key).unwrap().lanes[0].clips.clone()
 }
 
+/// The takes of the one take group on the track's lane.
+fn takes(core: &AppCore<impl EngineSink>, key: &DeviceKey) -> Vec<atomik_model::Clip> {
+    let groups = &core.doc().song.track(key).unwrap().lanes[0].take_groups;
+    assert_eq!(groups.len(), 1, "one group per recording pass");
+    groups[0].takes.clone()
+}
+
 fn asset_of(c: &atomik_model::Clip) -> (&str, u64) {
     match &c.content {
         ClipContent::Audio(a) => (a.asset.as_str(), a.source_offset),
@@ -168,7 +175,7 @@ fn the_compensation_follows_the_sign_convention_a_positive_value_moves_the_audio
 }
 
 #[test]
-fn each_loop_pass_becomes_one_take_and_each_take_is_one_undo_step() {
+fn each_loop_pass_becomes_one_take_of_one_group_and_the_group_is_one_undo_step() {
     let mut core = core_with(2);
     core.sink_mut().compensation = 200;
     let key = add_audio_track(&mut core, "Voice");
@@ -188,7 +195,7 @@ fn each_loop_pass_becomes_one_take_and_each_take_is_one_undo_step() {
     pump(&mut core, 4_800, 480);
     core.wait_background();
 
-    let list = clips(&core, &key);
+    let list = takes(&core, &key);
     assert_eq!(list.len(), 3, "passes 0, 1 and 2");
     let loop_frames = 24_000u64;
     for (lap, clip) in list.iter().enumerate() {
@@ -211,12 +218,23 @@ fn each_loop_pass_becomes_one_take_and_each_take_is_one_undo_step() {
             assert_eq!(clip.length, PPQ, "a whole pass is the loop length");
         }
     }
-    // Later takes lie on top: the clips are in take order.
-    // One undo step per take: three undos empty the lane, the fourth undoes the arm.
-    for _ in 0..3 {
-        assert!(core.undo());
-    }
+    // The last pass plays where it has audio and the pass before it for the rest of the loop:
+    // two compiled clips on the lane, the takes themselves are not there.
+    let group = &core.doc().song.track(&key).unwrap().lanes[0].take_groups[0];
+    assert_eq!(group.comp.len(), 2);
+    assert_eq!((group.comp[0].take, group.comp[1].take), (2, 1));
+    let lane = clips(&core, &key);
+    assert_eq!(lane.len(), 2);
+    assert_eq!((lane[0].start, lane[0].length), (0, group.comp[0].end));
+    assert_eq!((lane[1].start, lane[1].end()), (group.comp[1].start, PPQ));
+    // One undo step for the whole pass: the group and its clips go, the arm is a step of its own.
+    assert!(core.undo());
     assert!(clips(&core, &key).is_empty());
+    assert!(
+        core.doc().song.track(&key).unwrap().lanes[0]
+            .take_groups
+            .is_empty()
+    );
     assert!(
         core.doc().song.track(&key).unwrap().armed,
         "the arm is a step of its own"

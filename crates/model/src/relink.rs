@@ -50,6 +50,33 @@ pub(crate) fn plan(doc: &RackDoc, from: &str, to: &str) -> Result<Edit, ModelErr
                     new: Some(new),
                 });
             }
+            if lane
+                .take_groups
+                .iter()
+                .flat_map(|g| &g.takes)
+                .any(|c| matches!(&c.content, ClipContent::Audio(a) if a.asset == from))
+            {
+                let mut groups = lane.take_groups.clone();
+                for c in groups.iter_mut().flat_map(|g| &mut g.takes) {
+                    if let ClipContent::Audio(a) = &mut c.content
+                        && a.asset == from
+                    {
+                        if a.source_offset > target.frames {
+                            return Err(bad(format!(
+                                "a take starts {} frames into the asset but the replacement has {}",
+                                a.source_offset, target.frames
+                            )));
+                        }
+                        a.asset = to.to_owned();
+                    }
+                }
+                edits.push(Edit::TakeGroups {
+                    device: track.device.clone(),
+                    lane: lane_index,
+                    old: lane.take_groups.clone(),
+                    new: groups,
+                });
+            }
         }
     }
     let mut zone_edits = Vec::new();

@@ -12,12 +12,13 @@
 //!   with [`atomik_engine::SongSnapshot::position_at`] and the latest published
 //!   [`TransportState`] (exact in song frames, including loop wraps). Events that arrive
 //!   before the engine reports `playing` wait for the first playing state.
-//! - **Loop wraps: one clip per pass.** Each loop pass (`loop_count` since the take began) is
-//!   its own *lap*. A note still held when the loop wraps is closed at the loop end of its lap;
-//!   its later note-off is ignored. On stop, every lap with notes becomes one new clip on the
-//!   track's note lane, so each pass lies on top of the previous ones (later clips win,
-//!   the older clips stay underneath). Each clip is one `AddClip`, so each lap is one undo
-//!   step.
+//! - **Loop wraps: one clip per pass, stacked as takes.** Each loop pass (`loop_count` since
+//!   the take began) is its own *lap*. A note still held when the loop wraps is closed at the
+//!   loop end of its lap; its later note-off is ignored. On stop, every lap with notes becomes
+//!   one clip, in lap order. The app puts a track's clips on its note lane as one take group
+//!   (`SongCommand::NewTakeGroup`, one undo step) when there are several, so the passes are
+//!   stacked takes and the last one plays until the user picks or comps another; a single clip
+//!   (no loop, or the loop never wrapped) is a plain `AddClip` as before.
 //! - **Clip range.** A lap covers the recorded time (lap 0: from the take's start to the loop
 //!   end or the stop; later laps: from the loop start), widened to its notes, rounded out to
 //!   whole bars. Notes are relative to the clip start, sorted by `(tick, key)`, without

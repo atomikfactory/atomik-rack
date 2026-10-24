@@ -140,6 +140,7 @@ pub fn song_doc() -> RackDoc {
         vec![Lane {
             kind: LaneKind::Notes,
             clips: vec![lead],
+            take_groups: Vec::new(),
         }],
     );
     lead_track.muted = true;
@@ -148,6 +149,7 @@ pub fn song_doc() -> RackDoc {
         vec![Lane {
             kind: LaneKind::Notes,
             clips: vec![keys_clip],
+            take_groups: Vec::new(),
         }],
     );
     keys_track.solo = true;
@@ -159,10 +161,12 @@ pub fn song_doc() -> RackDoc {
                 Lane {
                     kind: LaneKind::Notes,
                     clips: vec![notes_clip(1, 0, 4 * BAR, bass_line()), looped],
+                    take_groups: Vec::new(),
                 },
                 Lane {
                     kind: LaneKind::Automation("filter.cutoff".into()),
                     clips: vec![cutoff],
+                    take_groups: Vec::new(),
                 },
             ],
         ),

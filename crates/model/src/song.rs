@@ -8,6 +8,7 @@
 use crate::DeviceKey;
 use crate::automation_rec::WriteMode;
 use crate::controller::ControllerLane;
+use crate::takes::TakeGroup;
 use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
@@ -232,6 +233,9 @@ pub struct Lane {
     pub kind: LaneKind,
     /// Clips, sorted by (start, id).
     pub clips: Vec<Clip>,
+    /// Stacked takes and their comps (notes and audio lanes only; see [`crate::takes`]). Each
+    /// group's compiled comp clips are in `clips`; its takes are not.
+    pub take_groups: Vec<TakeGroup>,
 }
 
 /// A track bound to one rack device.
@@ -593,6 +597,54 @@ pub enum SongCommand {
         /// Fade shape.
         fade_curve: FadeCurve,
     },
+    /// Make a take group on a notes or audio lane from stacked takes (a loop recording's laps):
+    /// every clip is validated like `AddClip` (ids ignored and allocated), none goes on the lane,
+    /// and the group's comp is the takes layered in order (a later take hides an earlier one
+    /// where both have content, as stacked clips play), compiled to plain lane clips in the same
+    /// undo step. See [`crate::takes`]. Reports [`crate::SyncOp::SongChanged`]; the new group is
+    /// the last one with the highest id ([`Song::take_group`]).
+    NewTakeGroup {
+        /// Device (track).
+        device: DeviceKey,
+        /// Lane index (a notes or audio lane).
+        lane: usize,
+        /// The takes, bottom to top (at least one).
+        takes: Vec<Clip>,
+    },
+    /// Make one take play the whole range of its group (the others stay, silent). One undo step.
+    PickTake {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+    },
+    /// Make `[start, end)` play from a take (a comp edit: the range is cut out of whatever played
+    /// there, neighbours of the same take join). `start < end` within the group's range. One undo
+    /// step.
+    SetCompSegment {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+        /// First tick.
+        start: i64,
+        /// End tick (exclusive).
+        end: i64,
+    },
+    /// Delete a take: the ranges it played go to the take below it (above it for the bottom
+    /// take). Deleting the last take removes the group and its clips. One undo step.
+    DeleteTake {
+        /// Group id.
+        group: u32,
+        /// Take index.
+        take: usize,
+    },
+    /// Dissolve a group: its comp clips stay on the lane as plain clips, the takes are dropped.
+    /// One undo step.
+    FlattenTakes {
+        /// Group id.
+        group: u32,
+    },
     /// Change an audio clip's start, length, mute and content in one undo step (a
     /// trim moves the start and the source offset together). `merge` groups drags, as
     /// `SetClipGeometry` does.
@@ -681,6 +733,36 @@ impl Song {
                 .enumerate()
                 .find_map(|(lane, l)| l.clips.iter().find(|c| c.id == id).map(|c| (t, lane, c)))
         })
+    }
+
+    /// A take group by id, with its track and lane index.
+    pub fn take_group(&self, id: u32) -> Option<(&Track, usize, &TakeGroup)> {
+        self.tracks.iter().find_map(|t| {
+            t.lanes.iter().enumerate().find_map(|(lane, l)| {
+                l.take_groups
+                    .iter()
+                    .find(|g| g.id == id)
+                    .map(|g| (t, lane, g))
+            })
+        })
+    }
+
+    /// Every take group in track, lane and list order, with its device and lane index.
+    pub fn take_groups(&self) -> impl Iterator<Item = (&DeviceKey, usize, &TakeGroup)> {
+        self.tracks.iter().flat_map(|t| {
+            t.lanes
+                .iter()
+                .enumerate()
+                .flat_map(move |(i, l)| l.take_groups.iter().map(move |g| (&t.device, i, g)))
+        })
+    }
+
+    /// The first free take group id (above every id in use).
+    pub fn next_take_group_id(&self) -> u32 {
+        self.take_groups()
+            .map(|(_, _, g)| g.id)
+            .max()
+            .map_or(1, |m| m + 1)
     }
 
     /// The first free marker id (above every id in use).

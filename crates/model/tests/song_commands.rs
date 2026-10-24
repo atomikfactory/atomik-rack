@@ -58,7 +58,8 @@ fn add_track_creates_note_lane() {
         t[0].lanes,
         [Lane {
             kind: LaneKind::Notes,
-            clips: vec![]
+            clips: vec![],
+            take_groups: vec![]
         }]
     );
     assert_eq!(
