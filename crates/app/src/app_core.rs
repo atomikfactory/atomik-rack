@@ -1502,6 +1502,125 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    // ------------------------------------------------------------------ VCA groups
+
+    /// The console strips the VCA commands act on, by what has the focus: the console's selection
+    /// (when it has one), the arrangement's selected tracks (each as its console channel, a
+    /// selected folder standing for its tracks), else the rack's selection as for
+    /// [`Self::strips_to_route`].
+    pub fn strips_for_vca(&self, pane: Pane) -> Vec<DeviceKey> {
+        if pane == Pane::Arrangement {
+            let console = &self.doc().console;
+            let mut strips: Vec<DeviceKey> = Vec::new();
+            for track in self.arrangement().selected_tracks() {
+                if let Some(c) = console.channel_of(&track)
+                    && !strips.contains(&c.channel)
+                {
+                    strips.push(c.channel.clone());
+                }
+            }
+            if !strips.is_empty() {
+                return strips;
+            }
+        }
+        self.strips_to_route(pane == Pane::Console)
+    }
+
+    /// What the Mixer menu's VCA items can do with the selection `pane` has.
+    pub fn vca_menu(&self, pane: Pane) -> crate::commands::VcaMenu {
+        let strips = self.strips_for_vca(pane);
+        let console = &self.doc().console;
+        crate::commands::VcaMenu {
+            can_create: !strips.is_empty(),
+            can_add: !strips.is_empty() && !console.vcas.is_empty(),
+            can_remove: strips.iter().any(|s| console.vca_of(s).is_some()),
+            can_delete: !console.vcas.is_empty(),
+        }
+    }
+
+    /// Mixer > Create VCA from Selection: a group named `VCA n` over the selected strips (they
+    /// leave the groups they were in), in one undo step. False, with a message, when nothing is
+    /// selected or the model refuses.
+    pub fn create_vca_from_selection(&mut self, pane: Pane) -> bool {
+        let members = self.strips_for_vca(pane);
+        if members.is_empty() {
+            self.reject("Select one or more channels or tracks to make a VCA from".into());
+            return false;
+        }
+        let name = self.doc().console.default_vca_name();
+        let command = Command::Console(atomik_model::ConsoleCommand::CreateVca {
+            name,
+            members: members.clone(),
+        });
+        if self.apply_command(command).is_err() {
+            return false;
+        }
+        self.console.set_selected_strips(&members);
+        self.after_view_change();
+        true
+    }
+
+    /// Mixer > Add to VCA: the selected strips join group `vca`, or the last group when none is
+    /// named, in one undo step. False, with a message, when there is nothing to add or no group.
+    pub fn add_selection_to_vca(&mut self, pane: Pane, vca: Option<u32>) -> bool {
+        let strips = self.strips_for_vca(pane);
+        if strips.is_empty() {
+            self.reject("Select one or more channels or tracks to add to a VCA".into());
+            return false;
+        }
+        let Some(id) = vca.or_else(|| self.doc().console.vcas.last().map(|v| v.id)) else {
+            self.reject("There is no VCA group yet: use Create VCA from Selection".into());
+            return false;
+        };
+        let command = Command::Console(atomik_model::ConsoleCommand::AssignToVca {
+            vca: Some(id),
+            strips,
+        });
+        self.apply_command(command).is_ok()
+    }
+
+    /// Mixer > Remove from VCA: the selected strips leave their groups, in one undo step.
+    pub fn remove_selection_from_vca(&mut self, pane: Pane) -> bool {
+        let strips = self.strips_for_vca(pane);
+        if strips.is_empty() {
+            self.reject("Select one or more channels or tracks to take out of their VCAs".into());
+            return false;
+        }
+        let command =
+            Command::Console(atomik_model::ConsoleCommand::AssignToVca { vca: None, strips });
+        self.apply_command(command).is_ok()
+    }
+
+    /// Mixer > Delete VCA: group `vca`, or else the groups the selected strips are in (each one
+    /// undo step; the members keep their faders). False, with a message, when no group matches.
+    pub fn delete_vca(&mut self, pane: Pane, vca: Option<u32>) -> bool {
+        let ids: Vec<u32> = match vca {
+            Some(id) => vec![id],
+            None => {
+                let console = &self.doc().console;
+                let mut ids: Vec<u32> = Vec::new();
+                for s in self.strips_for_vca(pane) {
+                    if let Some(g) = console.vca_of(&s)
+                        && !ids.contains(&g.id)
+                    {
+                        ids.push(g.id);
+                    }
+                }
+                ids
+            }
+        };
+        if ids.is_empty() {
+            self.reject("Select a channel in a VCA group to delete it".into());
+            return false;
+        }
+        ids.into_iter().all(|id| {
+            self.apply_command(Command::Console(atomik_model::ConsoleCommand::DeleteVca {
+                vca: id,
+            }))
+            .is_ok()
+        })
+    }
+
     // ------------------------------------------------------------------ live notes
 
     /// The notes input of device `key` in the engine, if it has one.

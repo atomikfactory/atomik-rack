@@ -134,6 +134,17 @@ pub enum AppCommand {
     ToggleCompensation,
     /// Mixer > Route to New Output Bus (Ctrl/Cmd+G): a new bus for the selected channels.
     RouteToNewBus,
+    /// Mixer > Create VCA from Selection: a VCA group over the selected channels (the console's
+    /// selection, the arrangement's tracks or the rack's devices, whichever has the focus).
+    CreateVca,
+    /// Mixer > Add to VCA: the selected strips join the VCA group `id` (`mixer.add_to_vca` with
+    /// the id as its argument), or the last group when there is none.
+    AddToVca(Option<u32>),
+    /// Mixer > Remove from VCA: the selected strips leave their groups.
+    RemoveFromVca,
+    /// Mixer > Delete VCA: the group `id` (`mixer.delete_vca` with the id as its argument), or
+    /// the groups the selected strips are in.
+    DeleteVca(Option<u32>),
     /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
     CreateInstrument,
     /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
@@ -236,7 +247,9 @@ pub enum AppCommand {
 
 impl AppCommand {
     /// The registry command id and argument of this command, `None` only for
-    /// `Transport(Locate(_))`, a pointer action that is not a command.
+    /// `Transport(Locate(_))`, a pointer action that is not a command, and for the VCA commands
+    /// that name a group (`AddToVca(Some(_))`, `DeleteVca(Some(_))`: their id is a runtime number,
+    /// given as the argument of `mixer.add_to_vca` and `mixer.delete_vca`).
     pub fn command_id(&self) -> Option<(&'static str, Option<&'static str>)> {
         Some(match self {
             AppCommand::New => ("file.new", None),
@@ -308,6 +321,11 @@ impl AppCommand {
             AppCommand::MaximiseConsole => ("view.maximise_console", None),
             AppCommand::AddChannel => ("mixer.add_channel", None),
             AppCommand::RouteToNewBus => ("mixer.route_to_new_bus", None),
+            AppCommand::CreateVca => ("mixer.create_vca", None),
+            AppCommand::AddToVca(None) => ("mixer.add_to_vca", None),
+            AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
+            AppCommand::AddToVca(Some(_)) | AppCommand::DeleteVca(Some(_)) => return None,
+            AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
@@ -442,6 +460,16 @@ impl AppCommand {
             ("view.maximise_console", None) => AppCommand::MaximiseConsole,
             ("mixer.add_channel", None) => AppCommand::AddChannel,
             ("mixer.route_to_new_bus", None) => AppCommand::RouteToNewBus,
+            ("mixer.create_vca", None) => AppCommand::CreateVca,
+            ("mixer.add_to_vca", None) => AppCommand::AddToVca(None),
+            ("mixer.add_to_vca", Some(id)) => {
+                return id.parse().ok().map(|id| AppCommand::AddToVca(Some(id)));
+            }
+            ("mixer.remove_from_vca", None) => AppCommand::RemoveFromVca,
+            ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
+            ("mixer.delete_vca", Some(id)) => {
+                return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
+            }
             ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
             ("create.instrument", None) => AppCommand::CreateInstrument,
             ("create.effect", None) => AppCommand::CreateEffect,
@@ -675,8 +703,23 @@ pub struct MenuState {
     pub org: OrgMenu,
     /// What the selected audio clips allow (the audio items of the Edit and Audio menus).
     pub audio: AudioMenu,
+    /// What the selected strips allow for VCA groups (the Mixer menu).
+    pub vca: VcaMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
     pub freeze: FreezeMenu,
+}
+
+/// What the Mixer menu needs to know to make, fill, empty and delete VCA groups.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VcaMenu {
+    /// Some channel or bus is selected: Create VCA from Selection works.
+    pub can_create: bool,
+    /// Some strip is selected and a group exists: Add to VCA works.
+    pub can_add: bool,
+    /// A selected strip is in a group: Remove from VCA works.
+    pub can_remove: bool,
+    /// A group exists: Delete VCA works (on the selected strips' groups, or the last one).
+    pub can_delete: bool,
 }
 
 /// What the Track menu and the context menus need to know to freeze, unfreeze and bounce.
@@ -962,6 +1005,23 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 MenuEntry::Separator,
                 item("Add Channel\u{2026}", AppCommand::AddChannel),
                 item("Route to New Output Bus", AppCommand::RouteToNewBus),
+                MenuEntry::Separator,
+                enabled(
+                    "Create VCA from Selection",
+                    AppCommand::CreateVca,
+                    state.vca.can_create,
+                ),
+                enabled("Add to VCA", AppCommand::AddToVca(None), state.vca.can_add),
+                enabled(
+                    "Remove from VCA",
+                    AppCommand::RemoveFromVca,
+                    state.vca.can_remove,
+                ),
+                enabled(
+                    "Delete VCA",
+                    AppCommand::DeleteVca(None),
+                    state.vca.can_delete,
+                ),
                 MenuEntry::Separator,
                 check(
                     "Delay Compensation",
@@ -1293,6 +1353,7 @@ mod tests {
             midi_song: false,
             org: OrgMenu::default(),
             audio: AudioMenu::default(),
+            vca: VcaMenu::default(),
             freeze: FreezeMenu::default(),
         }
     }
@@ -1349,6 +1410,10 @@ mod tests {
             AppCommand::MaximiseConsole,
             AppCommand::AddChannel,
             AppCommand::RouteToNewBus,
+            AppCommand::CreateVca,
+            AppCommand::AddToVca(None),
+            AppCommand::RemoveFromVca,
+            AppCommand::DeleteVca(None),
             AppCommand::ToggleCompensation,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
@@ -1800,6 +1865,10 @@ mod tests {
                 "Maximise Console",
                 "Add Channel\u{2026}",
                 "Route to New Output Bus",
+                "Create VCA from Selection",
+                "Add to VCA",
+                "Remove from VCA",
+                "Delete VCA",
                 "Delay Compensation"
             ]
         );
@@ -1920,6 +1989,7 @@ mod tests {
                 midi_song: true,
                 org: OrgMenu::default(),
                 audio: AudioMenu::default(),
+                vca: VcaMenu::default(),
                 freeze: FreezeMenu {
                     tail: true,
                     ..FreezeMenu::default()

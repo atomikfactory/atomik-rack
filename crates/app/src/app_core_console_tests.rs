@@ -627,3 +627,98 @@ fn a_rebuilt_engine_and_a_restored_strip_get_the_feed_again() {
     let ia = c.device_id(&a).unwrap();
     assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -3.0)]);
 }
+
+#[test]
+fn create_vca_from_selection_uses_the_focused_selection_in_one_undo_step() {
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    // The console's selection wins when the console has the focus.
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    c.console_mut()
+        .set_selected_strips(std::slice::from_ref(&kb));
+    assert!(c.create_vca_from_selection(Pane::Console));
+    let g = c.doc().console.vca(1).expect("a group");
+    assert_eq!(
+        (g.name.as_str(), g.members.clone()),
+        ("VCA 1", vec![kb.clone()])
+    );
+    assert!(c.undo());
+    assert!(c.doc().console.vcas.is_empty(), "one undo step");
+    // From the rack, an instrument stands for its channel, and strips leave their groups.
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.create_vca_from_selection(Pane::Rack));
+    assert_eq!(c.doc().console.vca(1).unwrap().members, vec![ka, kb]);
+    assert_eq!(c.doc().console.default_vca_name(), "VCA 2");
+}
+
+#[test]
+fn the_vca_commands_say_what_to_select_and_what_is_missing() {
+    let mut c = two_channels();
+    c.view_mut().set_selection(&[], None);
+    assert!(!c.create_vca_from_selection(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("Select"));
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(!c.add_selection_to_vca(Pane::Rack, None));
+    assert!(c.last_rejection().unwrap().contains("no VCA group"));
+    assert!(
+        !c.remove_selection_from_vca(Pane::Rack),
+        "a strip in no group changes nothing"
+    );
+    assert!(!c.delete_vca(Pane::Rack, None));
+    assert!(c.last_rejection().unwrap().contains("Select a channel"));
+    assert!(!c.vca_menu(Pane::Rack).can_add && c.vca_menu(Pane::Rack).can_create);
+    assert!(!c.vca_menu(Pane::Rack).can_delete);
+}
+
+#[test]
+fn add_remove_and_delete_follow_the_selection_and_the_named_group() {
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&ka]);
+    vca(
+        &mut c,
+        ConsoleCommand::CreateVca {
+            name: "Other".into(),
+            members: Vec::new(),
+        },
+    );
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    let menu = c.vca_menu(Pane::Rack);
+    assert!(menu.can_create && menu.can_add && menu.can_delete && !menu.can_remove);
+    // No id: the last group; a named group: that one.
+    assert!(c.add_selection_to_vca(Pane::Rack, None));
+    assert_eq!(c.doc().console.vca(2).unwrap().members, vec![kb.clone()]);
+    assert!(c.add_selection_to_vca(Pane::Rack, Some(1)));
+    assert_eq!(
+        c.doc().console.vca(1).unwrap().members,
+        vec![ka.clone(), kb.clone()]
+    );
+    assert!(c.vca_menu(Pane::Rack).can_remove);
+    assert!(c.remove_selection_from_vca(Pane::Rack));
+    assert!(c.doc().console.vca_of(&kb).is_none());
+    // Delete takes the groups of the selection, or the named one.
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.delete_vca(Pane::Rack, None));
+    assert!(c.doc().console.vca(1).is_none() && c.doc().console.vca(2).is_some());
+    assert!(c.delete_vca(Pane::Rack, Some(2)));
+    assert!(c.doc().console.vcas.is_empty());
+    assert!(!c.delete_vca(Pane::Rack, Some(2)), "gone");
+}
+
+#[test]
+fn the_arrangement_selection_is_used_through_its_tracks_channels() {
+    let mut c = two_channels();
+    for k in ["a", "b"] {
+        c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+            device: key(k),
+        }))
+        .unwrap();
+    }
+    c.arrangement_mut().set_selected_track(Some(key("b")));
+    assert!(c.create_vca_from_selection(Pane::Arrangement));
+    assert_eq!(
+        c.doc().console.vca(1).unwrap().members,
+        vec![channel_of(&c, "b")]
+    );
+}

@@ -1325,6 +1325,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_song: self.core.can_export_midi(MidiExport::Song),
             org: self.core.arrangement().org_menu(),
             audio: self.core.arrangement().audio_menu(),
+            vca: self.core.vca_menu(self.live_pane(self.focus)),
             freeze: self.core.freeze_menu(),
         }
     }
@@ -3288,6 +3289,26 @@ impl<B: AudioBackend> Shell<B> {
                 // A refusal is already reported (rack and console).
                 let console_focus = self.live_pane(self.focus) == Pane::Console;
                 self.core.route_selection_to_new_bus(console_focus);
+                Vec::new()
+            }
+            AppCommand::CreateVca => {
+                // A refusal is already reported (rack and console).
+                self.core
+                    .create_vca_from_selection(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::AddToVca(id) => {
+                self.core
+                    .add_selection_to_vca(self.live_pane(self.focus), id);
+                Vec::new()
+            }
+            AppCommand::RemoveFromVca => {
+                self.core
+                    .remove_selection_from_vca(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::DeleteVca(id) => {
+                self.core.delete_vca(self.live_pane(self.focus), id);
                 Vec::new()
             }
             AppCommand::ToggleCompensation => {

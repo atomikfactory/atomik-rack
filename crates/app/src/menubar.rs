@@ -364,6 +364,7 @@ mod tests {
             midi_song: false,
             org: atomik_ui::arrangement::OrgMenu::default(),
             audio: atomik_ui::arrangement::AudioMenu::default(),
+            vca: crate::commands::VcaMenu::default(),
             freeze: crate::commands::FreezeMenu::default(),
         }
     }
