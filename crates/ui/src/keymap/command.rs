@@ -229,6 +229,14 @@ pub const MARKER_COLOR_ARGS: &[&str] =
 pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit"];
 /// The values of `sequencer.fold_lanes`.
 pub const LANE_FOLD_ARGS: &[&str] = &["fold", "unfold"];
+/// The values of `sequencer.audio_fade_shape`.
+pub const FADE_SHAPE_ARGS: &[&str] = &["linear", "equal_power", "exponential", "s_curve"];
+/// The values of `sequencer.audio_crossfade`.
+pub const CROSSFADE_ARGS: &[&str] = &["off", "linear", "equal_power", "exponential", "s_curve"];
+/// The values of `sequencer.audio_gain`.
+pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
+/// The values of `sequencer.audio_fades`.
+pub const AUDIO_FADES_ARGS: &[&str] = &["declick", "clear"];
 /// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
 pub const METER_ARGS: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"];
 
@@ -636,6 +644,74 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     )
     .rep(),
+    cmd(
+        "sequencer.audio_crossfade",
+        "Audio Crossfade",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CROSSFADE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_envelope_clear",
+        "Clear Gain Envelope",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_fade_shape",
+        "Audio Fade Shape",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(FADE_SHAPE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_fades",
+        "Audio Fades",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_FADES_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_gain",
+        "Audio Clip Gain",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(AUDIO_GAIN_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_normalise",
+        "Normalise Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_reverse",
+        "Reverse Audio",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.audio_strip_silence",
+        "Strip Silence",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
     cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",

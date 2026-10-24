@@ -1,13 +1,15 @@
 //! Validation of song commands and their translation into reversible edits.
 
 use crate::WriteMode;
+use crate::audio_edit::{slice_envelope, split_envelope};
 use crate::console_cmd::{Planner, add_channel, console_available, is_instrument};
 use crate::controller::{canonical, check_lanes};
 use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
-    ClipContent, ClipId, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR, MAX_LOOP_REPEATS,
-    MAX_MARKER_NAME, MAX_TICK, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent, Track,
+    ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
+    MAX_GAIN_POINTS, MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_TICK, Marker, MeterEvent, RangeMarker,
+    SongCommand, TempoEvent, Track,
 };
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, TEMPO_MAX,
@@ -233,6 +235,38 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
         if frames > MAX_AUDIO_FRAMES {
             return Err(range(format!(
                 "{name} of {frames} frames is above {MAX_AUDIO_FRAMES}"
+            )));
+        }
+    }
+    check_envelope(&a.envelope)
+}
+
+/// Checks a gain envelope: at most [`MAX_GAIN_POINTS`] points, strictly increasing frames
+/// within [`MAX_AUDIO_FRAMES`], finite gains in range.
+pub(crate) fn check_envelope(points: &[GainPoint]) -> Result<(), ModelError> {
+    if points.len() > MAX_GAIN_POINTS {
+        return Err(range(format!(
+            "{} envelope points is above the {MAX_GAIN_POINTS} allowed",
+            points.len()
+        )));
+    }
+    for (i, p) in points.iter().enumerate() {
+        if p.frame > MAX_AUDIO_FRAMES {
+            return Err(range(format!(
+                "envelope point {i} at frame {} is above {MAX_AUDIO_FRAMES}",
+                p.frame
+            )));
+        }
+        if !(AUDIO_GAIN_DB_MIN..=AUDIO_GAIN_DB_MAX).contains(&p.gain_db) {
+            return Err(range(format!(
+                "envelope point {i} gain {} dB is outside {AUDIO_GAIN_DB_MIN}..={AUDIO_GAIN_DB_MAX}",
+                p.gain_db
+            )));
+        }
+        if i > 0 && points[i - 1].frame >= p.frame {
+            return Err(range(format!(
+                "envelope point {i} is not after point {}",
+                i - 1
             )));
         }
     }
@@ -556,6 +590,124 @@ fn insert_new(
     ))
 }
 
+/// Plans `StripSilence` (see the command docs).
+fn strip_silence_edit(
+    doc: &RackDoc,
+    id: ClipId,
+    pieces: &[(u64, u64)],
+    fade: u64,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    let song = &doc.song;
+    let (device, lane, c) = find_clip(doc, id)?;
+    let ClipContent::Audio(a) = &c.content else {
+        return Err(bad(format!("clip {} is not an audio clip", id.0)));
+    };
+    let sr = doc.sample_rate;
+    let clip_start = song.frame_at(c.start, sr);
+    let clip_frames = song.frame_at(c.end(), sr) - clip_start;
+    if pieces.is_empty() {
+        return Err(bad("strip silence needs at least one piece to keep"));
+    }
+    let mut prev_end = 0u64;
+    for &(s, e) in pieces {
+        if !(s < e && e <= clip_frames && s >= prev_end) {
+            return Err(range(format!(
+                "piece [{s}, {e}) is not ascending, disjoint and inside the clip's {clip_frames} frames"
+            )));
+        }
+        prev_end = e;
+    }
+    if fade > MAX_AUDIO_FRAMES {
+        return Err(range(format!(
+            "fade of {fade} frames is above {MAX_AUDIO_FRAMES}"
+        )));
+    }
+    let table = song.tempo_table();
+    let map = table.map();
+    let tick_of = |frame: u64| map.tick((clip_start + frame) as f64, f64::from(sr)).round() as i64;
+    let asset_frames = doc.assets.get(&a.asset).map_or(u64::MAX, |m| m.frames);
+    // Snap each piece to ticks, keeping them inside the clip and apart.
+    let mut cuts: Vec<(i64, i64)> = Vec::new();
+    for (k, &(s, e)) in pieces.iter().enumerate() {
+        let first = k == 0 && s == 0;
+        let last = k + 1 == pieces.len() && e == clip_frames;
+        let start = if first {
+            c.start
+        } else {
+            tick_of(s).max(cuts.last().map_or(c.start, |p| p.1))
+        };
+        let end = if last {
+            c.end()
+        } else {
+            tick_of(e).min(c.end())
+        };
+        if end > start {
+            cuts.push((start, end));
+        }
+    }
+    if cuts.is_empty() {
+        return Err(bad("every piece is shorter than a tick"));
+    }
+    let next = song.next_clip_id;
+    let mut edits = Vec::new();
+    let mut last_id = None;
+    for (k, &(start, end)) in cuts.iter().enumerate() {
+        let from = song.frame_at(start, sr) - clip_start;
+        let to = song.frame_at(end, sr) - clip_start;
+        let mut content = a.clone();
+        content.source_offset = if a.reverse {
+            (a.source_offset + (clip_frames - to)).min(asset_frames)
+        } else {
+            (a.source_offset + from).min(asset_frames)
+        };
+        content.envelope = slice_envelope(&a.envelope, from, to);
+        if from != 0 {
+            content.fade_in = fade.min(to - from);
+        }
+        if to != clip_frames {
+            content.fade_out = fade.min(to - from);
+        }
+        content.fade_in = content.fade_in.min(to - from);
+        content.fade_out = content.fade_out.min(to - from);
+        let piece = Clip {
+            start,
+            length: end - start,
+            content: ClipContent::Audio(content),
+            ..c.clone()
+        };
+        if k == 0 {
+            edits.push(Edit::Clip {
+                device: device.clone(),
+                lane,
+                old: Some(c.clone()),
+                new: Some(piece),
+            });
+        } else {
+            let new_id = ClipId(next + (k as u64 - 1));
+            last_id = Some(new_id);
+            edits.push(Edit::Clip {
+                device: device.clone(),
+                lane,
+                old: None,
+                new: Some(Clip {
+                    id: new_id,
+                    ..piece
+                }),
+            });
+        }
+    }
+    if cuts.len() > 1 {
+        let added = cuts.len() as u64 - 1;
+        edits.push(Edit::NextClipId {
+            old: next,
+            new: next
+                .checked_add(added)
+                .ok_or_else(|| bad("clip ids are exhausted"))?,
+        });
+    }
+    Ok((Edit::Compound(edits), last_id))
+}
+
 /// Validates a song command against `doc` and turns it into an edit, with the clip id it
 /// allocates (if any).
 pub(crate) fn plan(
@@ -829,12 +981,28 @@ pub(crate) fn plan(
                     song.frame_at(at, doc.sample_rate) - song.frame_at(c.start, doc.sample_rate);
                 let asset_frames = doc.assets.get(&a.asset).map_or(u64::MAX, |m| m.frames);
                 let mut r = a.clone();
-                r.source_offset = a.source_offset.saturating_add(delta).min(asset_frames);
                 r.fade_in = 0;
+                let left_frames = delta;
+                if a.reverse {
+                    // Backwards, the left half plays the upper part of the span.
+                    let right_frames = song.frame_at(c.end(), doc.sample_rate)
+                        - song.frame_at(at, doc.sample_rate);
+                    if let ClipContent::Audio(l) = &mut left.content {
+                        l.source_offset = a
+                            .source_offset
+                            .saturating_add(right_frames)
+                            .min(asset_frames);
+                    }
+                } else {
+                    r.source_offset = a.source_offset.saturating_add(delta).min(asset_frames);
+                }
+                let (right_envelope, left_envelope) = split_envelope(&a.envelope, left_frames);
+                r.envelope = right_envelope;
                 right.content = ClipContent::Audio(r);
                 right.offset = 0;
                 if let ClipContent::Audio(l) = &mut left.content {
                     l.fade_out = 0;
+                    l.envelope = left_envelope;
                 }
             }
             check_geometry(right.start, right.length, right.offset, right.loop_length)
@@ -879,6 +1047,9 @@ pub(crate) fn plan(
                 fade_in,
                 fade_out,
                 fade_curve,
+                reverse: false,
+                envelope: Vec::new(),
+                xfade: Some(FadeCurve::EqualPower),
             };
             check_audio(doc, &content)?;
             let clip = Clip {
@@ -922,6 +1093,9 @@ pub(crate) fn plan(
                     ..c.clone()
                 }),
             }
+        }
+        SongCommand::StripSilence { id, pieces, fade } => {
+            return strip_silence_edit(doc, id, &pieces, fade);
         }
         SongCommand::SetTempoMap(map) | SongCommand::DragTempoMap { map, .. } => {
             check_tempo_map(&map).map_err(range)?;

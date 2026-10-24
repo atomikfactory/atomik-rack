@@ -66,6 +66,8 @@ fn reference_fade(curve: SongFadeCurve, i: usize) -> f64 {
     let curve = |t: f64| match curve {
         SongFadeCurve::Linear => t,
         SongFadeCurve::EqualPower => (t * std::f64::consts::FRAC_PI_2).sin(),
+        SongFadeCurve::Exponential => t * t,
+        SongFadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
     };
     let (len, fin, fout) = (2_000usize, 300usize, 400usize);
     let mut g = 1.0;

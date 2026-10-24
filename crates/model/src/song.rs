@@ -68,7 +68,10 @@ pub struct AutomationPoint {
     pub curve: Curve,
 }
 
-/// The shape of an audio fade.
+/// The shape of an audio fade (and of a crossfade).
+///
+/// `eval(t)` is the gain of a fade-in at position `t` in `[0, 1]` (0 at its start, 1 at its
+/// end); a fade-out mirrors it (`eval(1 - t)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FadeCurve {
     /// Gain ramps linearly with position.
@@ -76,18 +79,88 @@ pub enum FadeCurve {
     /// Gain follows a quarter sine (`sin(t * pi / 2)` in, mirrored out), so two crossfading
     /// clips keep constant power.
     EqualPower,
+    /// Gain follows `t * t`: a slow start and a fast finish in, the natural decay out.
+    Exponential,
+    /// Gain follows `t * t * (3 - 2 * t)`: slow at both ends, fastest in the middle.
+    SCurve,
 }
+
+impl FadeCurve {
+    /// Every curve, in menu order.
+    pub const ALL: [FadeCurve; 4] = [
+        FadeCurve::Linear,
+        FadeCurve::EqualPower,
+        FadeCurve::Exponential,
+        FadeCurve::SCurve,
+    ];
+
+    /// The reference gain at position `t` (clamped to `[0, 1]`). The engine evaluates the same
+    /// curves with platform-independent arithmetic (`sin_quarter` for the quarter sine), so it
+    /// differs from this only in the last bit of an equal-power fade.
+    pub fn eval(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            FadeCurve::Linear => t,
+            FadeCurve::EqualPower => (t * std::f64::consts::FRAC_PI_2).sin(),
+            FadeCurve::Exponential => t * t,
+            FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
+        }
+    }
+
+    /// The name used in the project file and by the commands.
+    pub fn id(self) -> &'static str {
+        match self {
+            FadeCurve::Linear => "linear",
+            FadeCurve::EqualPower => "equal_power",
+            FadeCurve::Exponential => "exponential",
+            FadeCurve::SCurve => "s_curve",
+        }
+    }
+
+    /// The curve called `id` (see [`FadeCurve::id`]).
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    /// A short label for menus and the inspector.
+    pub fn label(self) -> &'static str {
+        match self {
+            FadeCurve::Linear => "Linear",
+            FadeCurve::EqualPower => "Equal power",
+            FadeCurve::Exponential => "Exponential",
+            FadeCurve::SCurve => "S-curve",
+        }
+    }
+}
+
+/// One breakpoint of a clip's gain envelope.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GainPoint {
+    /// Frames from the clip start (audio does not stretch, so it is a time, like a fade).
+    pub frame: u64,
+    /// Gain in dB at that frame ([`AUDIO_GAIN_DB_MIN`]..=[`AUDIO_GAIN_DB_MAX`]); it multiplies
+    /// the clip gain and the fades.
+    pub gain_db: f32,
+}
+
+/// Most breakpoints of one gain envelope.
+pub const MAX_GAIN_POINTS: usize = 512;
 
 /// What an audio clip plays.
 ///
 /// The clip's `start` and `length` stay in ticks; playback runs from `source_offset` for the
 /// clip's duration in real time (no stretch), cut at the clip end or the asset end. The
 /// clip's own `offset` is always 0 and its `loop_length` always `None`.
+///
+/// The fades, the gain envelope and the reverse flag all work in *clip time* (frames from the
+/// clip start), so reversing a clip leaves its fades and envelope where they are.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioClipContent {
     /// Asset id in [`crate::RackDoc::assets`] (64 lowercase hex digits).
     pub asset: String,
-    /// First asset frame played (`<=` the asset's frame count).
+    /// First asset frame played (`<=` the asset's frame count); with `reverse` the lowest
+    /// frame played (the clip plays the frames from here up to `source_offset + length`
+    /// backwards).
     pub source_offset: u64,
     /// Clip gain in dB (finite, [`AUDIO_GAIN_DB_MIN`]..=[`AUDIO_GAIN_DB_MAX`]).
     pub gain_db: f32,
@@ -97,6 +170,65 @@ pub struct AudioClipContent {
     pub fade_out: u64,
     /// Shape of both fades.
     pub fade_curve: FadeCurve,
+    /// Plays the clip's span of the asset backwards.
+    pub reverse: bool,
+    /// Gain breakpoints in clip time: strictly increasing frames, at most
+    /// [`MAX_GAIN_POINTS`]; empty means no envelope. Linear between points, held before the
+    /// first and after the last.
+    pub envelope: Vec<GainPoint>,
+    /// The crossfade this clip makes with the clip it overlaps at its start (see
+    /// [`flatten_audio`]): `Some(curve)` crossfades, `None` is a hard cut.
+    pub xfade: Option<FadeCurve>,
+}
+
+impl AudioClipContent {
+    /// A plain clip of `asset` from `source_offset`: no gain, fades, envelope or reverse, and
+    /// an equal-power crossfade where it overlaps an earlier clip.
+    pub fn new(asset: impl Into<String>, source_offset: u64) -> Self {
+        Self {
+            asset: asset.into(),
+            source_offset,
+            gain_db: 0.0,
+            fade_in: 0,
+            fade_out: 0,
+            fade_curve: FadeCurve::Linear,
+            reverse: false,
+            envelope: Vec::new(),
+            xfade: Some(FadeCurve::EqualPower),
+        }
+    }
+
+    /// The envelope's linear gain at clip frame `n`, or `None` without an envelope. This is
+    /// the reference the engine follows: the points' dB values become amplitudes and the
+    /// gain ramps linearly in amplitude between them (a drawn dB curve bends a little between
+    /// two points for that reason), held before the first and after the last.
+    pub fn envelope_gain_at(&self, n: u64) -> Option<f32> {
+        envelope_gain(&self.envelope_linear(), n)
+    }
+
+    /// The envelope as `(frame, linear gain)` pairs.
+    pub fn envelope_linear(&self) -> Vec<(u64, f32)> {
+        self.envelope
+            .iter()
+            .map(|p| (p.frame, atomik_core::db_to_gain(p.gain_db)))
+            .collect()
+    }
+}
+
+/// The reference value of a gain envelope given as `(frame, linear gain)` pairs at frame `n`
+/// (see [`AudioClipContent::envelope_gain_at`]); evaluated in `f64`, rounded to `f32`.
+pub fn envelope_gain(points: &[(u64, f32)], n: u64) -> Option<f32> {
+    let first = points.first()?;
+    let k = points.partition_point(|q| q.0 <= n);
+    if k == 0 {
+        return Some(first.1);
+    }
+    let a = points[k - 1];
+    let Some(b) = points.get(k) else {
+        return Some(a.1);
+    };
+    let t = (n - a.0) as f64 / (b.0 - a.0) as f64;
+    Some((f64::from(a.1) + (f64::from(b.1) - f64::from(a.1)) * t) as f32)
 }
 
 /// What a clip contains.
@@ -800,6 +932,24 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Strip silence from an audio clip in one undo step: the clip becomes the given pieces
+    /// of itself, each a separate clip, and the parts between them are gone. `pieces` are
+    /// frame ranges `[start, end)` from the clip start (see [`crate::strip_silence`] for the
+    /// detector), non-empty, ascending, disjoint and inside the clip. The first piece keeps the
+    /// clip's id; the others get the next ids (the last is reported by
+    /// `Document::last_clip_id()`). Every piece keeps the clip's gain, curve, reverse and
+    /// crossfade, takes its slice of the envelope and gets `fade` frames of fade at each cut
+    /// edge (a piece that begins or ends where the clip does keeps the clip's own fade there).
+    /// Piece edges land on ticks; a piece's source offset follows the tick, so the sound stays
+    /// where it was to the frame. Positions in a tempo-ramped song round to a tick.
+    StripSilence {
+        /// Clip id.
+        id: ClipId,
+        /// Frame ranges to keep.
+        pieces: Vec<(u64, u64)>,
+        /// Fade frames at the cut edges.
+        fade: u64,
+    },
 }
 
 /// An empty song at the given tempo, 4/4, loop bars 1–5 disabled, end at bar 17.
@@ -829,8 +979,8 @@ pub fn empty_song(bpm: f64) -> Song {
 mod flatten;
 
 pub use flatten::{
-    AudioRegion, audible_spans, effective_tracks, flatten_audio, flatten_automation,
-    flatten_controllers, flatten_notes,
+    AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
+    flatten_automation, flatten_controllers, flatten_notes,
 };
 
 /// Lowest accepted audio clip gain in dB.

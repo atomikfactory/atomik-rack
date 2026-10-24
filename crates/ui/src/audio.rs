@@ -6,7 +6,11 @@
 
 use atomik_audio_file::Peaks;
 use atomik_core::{Tempo, TempoPoint, TempoTable};
-use atomik_model::{Cable, Command, DeviceKey, INTERFACE_KEY, SocketRef, TempoEvent};
+use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
+use atomik_model::{
+    Cable, Command, DeviceKey, GainPoint, INTERFACE_KEY, MAX_GAIN_POINTS, SocketRef, TempoEvent,
+    slice_envelope,
+};
 
 /// The song tempo map (steps and ramps) for fractional tick / frame conversions, the maths of
 /// [`atomik_core::TempoMap`]. Positions are fixed in time: a tick maps to `seconds * sample_rate`
@@ -223,6 +227,135 @@ pub fn trim_left(
         length: end - new_start,
         source_offset: offset,
     }
+}
+
+/// The gain in dB at a y on the handle scale (the inverse of [`gain_to_y`]), rounded to
+/// 0.1 dB and clamped to [`GAIN_MIN_DB`]..=[`GAIN_MAX_DB`].
+pub fn y_to_gain(y: f64, top: f64, bottom: f64) -> f32 {
+    if bottom <= top {
+        return 0.0;
+    }
+    let range = f64::from(GAIN_MAX_DB - GAIN_MIN_DB);
+    let n = ((y - top) / (bottom - top)).clamp(0.0, 1.0);
+    let db = f64::from(GAIN_MAX_DB) - n * range;
+    ((db * 10.0).round() / 10.0) as f32
+}
+
+/// The envelope after adding a point at `frame` with `gain_db` (a point already at that frame
+/// takes the new gain), and the position of the new point. Full envelopes ([`MAX_GAIN_POINTS`])
+/// are returned unchanged with the nearest point's position.
+pub fn envelope_insert(points: &[GainPoint], frame: u64, gain_db: f32) -> (Vec<GainPoint>, usize) {
+    let gain_db = gain_db.clamp(AUDIO_GAIN_DB_MIN, AUDIO_GAIN_DB_MAX);
+    let mut list = points.to_vec();
+    let at = list.partition_point(|p| p.frame < frame);
+    if list.get(at).is_some_and(|p| p.frame == frame) {
+        list[at].gain_db = gain_db;
+    } else if list.len() < MAX_GAIN_POINTS {
+        list.insert(at, GainPoint { frame, gain_db });
+    } else {
+        return (list, at.min(points.len().saturating_sub(1)));
+    }
+    (list, at)
+}
+
+/// The envelope after moving point `index` to `frame` and `gain_db`: the frame stays strictly
+/// between its neighbours (and at least 0), the gain inside the handle scale.
+pub fn envelope_move(
+    points: &[GainPoint],
+    index: usize,
+    frame: i64,
+    gain_db: f32,
+) -> Vec<GainPoint> {
+    let mut list = points.to_vec();
+    let Some(p) = list.get_mut(index) else {
+        return list;
+    };
+    let lo = if index == 0 {
+        0
+    } else {
+        points[index - 1].frame.saturating_add(1)
+    };
+    let hi = points
+        .get(index + 1)
+        .map_or(u64::MAX >> 24, |n| n.frame.saturating_sub(1))
+        .max(lo);
+    p.frame = frame.clamp(lo as i64, hi as i64) as u64;
+    p.gain_db = gain_db.clamp(GAIN_MIN_DB, GAIN_MAX_DB);
+    list
+}
+
+/// The envelope without point `index`.
+pub fn envelope_remove(points: &[GainPoint], index: usize) -> Vec<GainPoint> {
+    let mut list = points.to_vec();
+    if index < list.len() {
+        list.remove(index);
+    }
+    list
+}
+
+/// The envelope after the clip's start moved `moved` frames later (earlier when negative) with
+/// the audio staying where it is: the points move the other way, so each still sits on the same
+/// sound. The part of the envelope before the new start is cut and the value at the new start
+/// becomes the first point.
+pub fn envelope_after_trim(points: &[GainPoint], moved: i64) -> Vec<GainPoint> {
+    if moved > 0 {
+        slice_envelope(points, moved as u64, u64::MAX)
+    } else {
+        points
+            .iter()
+            .map(|p| GainPoint {
+                frame: p.frame + moved.unsigned_abs(),
+                gain_db: p.gain_db,
+            })
+            .collect()
+    }
+}
+
+/// Trims the left edge of a *reversed* clip `(start, length, source_offset)` to `wanted_start`
+/// (already snapped). A reversed clip plays the asset frames from `source_offset` up to
+/// `source_offset + frames` backwards, so moving the start only cuts or restores the top of
+/// that span: the source offset stays and the clip can grow no longer than the asset
+/// allows (`asset_frames - source_offset` frames). The start is limited to tick 0 and to
+/// `min_len` before the end.
+pub fn trim_left_reversed(
+    map: &TempoMap,
+    sample_rate: u32,
+    (start, length, source_offset): (i64, i64, u64),
+    asset_frames: u64,
+    wanted_start: i64,
+    min_len: i64,
+) -> Trim {
+    let end = start + length;
+    let end_frame = map.frame_at(end, sample_rate);
+    // The longest clip the asset holds above the offset, as the earliest start tick.
+    let longest = asset_frames.saturating_sub(source_offset);
+    let earliest = end_frame.saturating_sub(longest);
+    let tick_of = |frame: u64| map.tick_at_frame(frame as f64, sample_rate).round() as i64;
+    let mut lo = tick_of(earliest);
+    while lo > 0 && map.frame_at(lo - 1, sample_rate) >= earliest {
+        lo -= 1;
+    }
+    while map.frame_at(lo, sample_rate) < earliest {
+        lo += 1;
+    }
+    let lo = lo.max(0);
+    let hi = (end - min_len).max(lo);
+    let new_start = wanted_start.clamp(lo, hi);
+    Trim {
+        start: new_start,
+        length: end - new_start,
+        source_offset,
+    }
+}
+
+/// The source offset of a *reversed* clip after its end moved so it lasts `new_frames` instead
+/// of `old_frames`: the end of a reversed clip is the *low* end of its source span, so the offset
+/// moves by what was cut (and can go no lower than frame 0, which also limits how long
+/// the clip can grow). Returns the new offset and the frames the clip can last.
+pub fn reversed_end_resize(source_offset: u64, old_frames: u64, new_frames: u64) -> (u64, u64) {
+    let frames = new_frames.min(old_frames.saturating_add(source_offset));
+    let offset = i128::from(source_offset) + i128::from(old_frames) - i128::from(frames);
+    (offset.max(0) as u64, frames)
 }
 
 /// Vertical bands `(centre y, half height)` of the waveform channels in `top..bottom`: one

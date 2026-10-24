@@ -214,6 +214,41 @@ fn controller_summary(lane: &Lane) -> Vec<Value> {
         .collect()
 }
 
+/// The audio clips of an audio lane, in lane order: id, start and length in ticks, the asset
+/// (its first 8 hex digits), the source offset, the clip gain in dB, the fades, and what audio
+/// editing added when it is in use: `reverse`, the number of `envelope` points and the
+/// crossfade shape (`crossfade`, `off` for a hard cut) when the clip has a crossfade zone over
+/// an earlier clip, with the zone's length in ticks. Empty for lanes of other kinds.
+fn audio_summary(lane: &Lane) -> Vec<Value> {
+    let zones = atomik_model::song::crossfades(lane);
+    lane.clips
+        .iter()
+        .filter_map(|c| {
+            let ClipContent::Audio(a) = &c.content else {
+                return None;
+            };
+            let mut v = json!({
+                "id": c.id.0, "start": c.start, "length": c.length, "muted": c.muted,
+                "asset": a.asset.chars().take(8).collect::<String>(),
+                "source_offset": a.source_offset, "gain_db": a.gain_db,
+                "fade_in": a.fade_in, "fade_out": a.fade_out,
+                "fade_curve": a.fade_curve.id(),
+                "crossfade": a.xfade.map_or("off", atomik_model::FadeCurve::id),
+            });
+            if a.reverse {
+                v["reverse"] = json!(true);
+            }
+            if !a.envelope.is_empty() {
+                v["envelope"] = json!(a.envelope.len());
+            }
+            if let Some(z) = zones.iter().find(|z| z.later == c.id) {
+                v["crossfade_ticks"] = json!(z.end - z.start);
+            }
+            Some(v)
+        })
+        .collect()
+}
+
 /// The take groups of a lane: id, number of takes, range, the comp as `{take, start, end}`
 /// (takes are 0-based), the take that plays alone when the comp is one whole pick, and the ids of
 /// the lane clips the comp compiles to. Empty for a lane without groups.
@@ -355,6 +390,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);
+                    }
+                    let audio = audio_summary(l);
+                    if !audio.is_empty() {
+                        lane["audio_clips"] = Value::Array(audio);
                     }
                     let groups = take_summary(l, &doc.song.org.open_takes);
                     if !groups.is_empty() {

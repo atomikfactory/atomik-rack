@@ -245,6 +245,9 @@
 //!   settings and the groove library; it emits [`UiAction::Quantize`] (`APPLY`, `EXTRACT GROOVE FROM
 //!   CLIP`, `DELETE`, `CLOSE`) and the app feeds it with [`QuantizeView::set_target`] and
 //!   [`QuantizeView::set_grooves`].
+//! - **Strip silence.** [`SilenceView`] is the modal panel of threshold, minimum silence, padding
+//!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
+//!   with [`SilenceView::set_target`].
 //!
 //! # Backends
 //! - [`SceneCanvas`]: vello GPU scene (text shaped with parley, system fonts via fontique).
@@ -304,6 +307,7 @@ pub mod seq_editor;
 pub mod seq_paint;
 pub mod seq_panel;
 pub mod sidechain;
+pub mod silence_panel;
 pub mod slice_editor;
 pub mod step_editor;
 pub mod tempo_lane;
@@ -346,6 +350,7 @@ pub use scene_canvas::{SceneCache, SceneCanvas};
 pub use seq_editor::SeqEditorView;
 pub use seq_paint::SeqTheme;
 pub use seq_panel::SeqButton;
+pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
 pub use step_editor::{StepEditorView, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, TextEngine};

@@ -6,6 +6,7 @@
 //!
 //! Public signatures are a stable contract: changes need review.
 
+mod audio_edit;
 pub mod automation_rec;
 mod console_bus;
 mod console_cmd;
@@ -85,6 +86,9 @@ pub use zones::{
 };
 
 use atomik_device_sdk::Registry;
+pub use audio_edit::{
+    StripParams, normalise_gain_db, peak, slice_envelope, split_envelope, strip_silence,
+};
 pub use automation_rec::WriteMode;
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
@@ -99,11 +103,12 @@ pub use organise::{
     OutlineKind, TrackGroup,
 };
 use rack_columns::Placement;
+pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
-    DEFAULT_TRACK_HEIGHT, FadeCurve, Lane, LaneKind, MAX_MARKER_NAME, MAX_TICK, MAX_TRACK_HEIGHT,
-    MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song, SongCommand, StepGrid,
-    StepResolution, TempoEvent, Track, empty_song,
+    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_GAIN_POINTS, MAX_MARKER_NAME,
+    MAX_TICK, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song,
+    SongCommand, StepGrid, StepResolution, TempoEvent, Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub use takes::{CompSegment, TakeGroup};
@@ -480,7 +485,7 @@ pub enum Command {
 /// | move, fold, rename, colour | `ViewChanged` |
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
 /// | `SetInputChannels` | `RoutingChanged` |
-/// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits) |
+/// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
 /// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
@@ -964,12 +969,14 @@ impl Document {
                                     | SongCommand::SetClipControllers { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
+                                    | SongCommand::SetAudioClip { .. }
+                                    | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetLaneFolded { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

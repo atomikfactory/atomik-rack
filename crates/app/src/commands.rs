@@ -6,7 +6,8 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::record::InputQuantize;
-use atomik_ui::arrangement::{HeightPreset, OrgMenu};
+use atomik_model::FadeCurve;
+use atomik_ui::arrangement::{AudioMenu, HeightPreset, OrgMenu};
 use atomik_ui::keymap::Keymap;
 use atomik_ui::{CableVisibility, Flip, TransportAction};
 
@@ -167,6 +168,25 @@ pub enum AppCommand {
     FoldLanes(bool),
     /// Track ▸ Track Height: Small, Medium, Large or Fit, for the selected tracks or every track.
     TrackHeight(HeightPreset),
+    /// Edit ▸ Reverse Audio: the selected audio clips play backwards (forwards again when they
+    /// all do).
+    AudioReverse,
+    /// Edit ▸ Normalise Audio: the clip gain that brings the peak of each selected audio clip to
+    /// 0 dBFS.
+    AudioNormalise,
+    /// Edit ▸ Strip Silence…: the panel that cuts the quiet parts out of the selected audio clips.
+    AudioStripSilence,
+    /// Audio ▸ Clip Gain: a step up or down in dB, or back to 0 dB.
+    AudioGain(GainStep),
+    /// Audio ▸ Fade Shape: the curve of the fades of the selected audio clips.
+    AudioFadeShape(FadeCurve),
+    /// Audio ▸ Crossfade: the shape of the crossfade where a selected audio clip starts over an
+    /// earlier one (`None`: a hard cut).
+    AudioCrossfade(Option<FadeCurve>),
+    /// Audio ▸ Fades: a 5 ms fade in and out on the selected audio clips (`true`), or no fades.
+    AudioFades(bool),
+    /// Audio ▸ Clear Gain Envelope.
+    AudioClearEnvelope,
     /// Audio ▸ Settings….
     AudioSettings,
     /// Audio ▸ Plugins…: the third-party plugin settings, scan and list.
@@ -268,6 +288,18 @@ impl AppCommand {
             AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
             AppCommand::TrackHeight(p) => ("sequencer.track_height", Some(p.arg())),
+            AppCommand::AudioReverse => ("sequencer.audio_reverse", None),
+            AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
+            AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
+            AppCommand::AudioGain(step) => ("sequencer.audio_gain", Some(step.arg())),
+            AppCommand::AudioFadeShape(curve) => ("sequencer.audio_fade_shape", Some(curve.id())),
+            AppCommand::AudioCrossfade(curve) => (
+                "sequencer.audio_crossfade",
+                Some(curve.map_or("off", FadeCurve::id)),
+            ),
+            AppCommand::AudioFades(true) => ("sequencer.audio_fades", Some("declick")),
+            AppCommand::AudioFades(false) => ("sequencer.audio_fades", Some("clear")),
+            AppCommand::AudioClearEnvelope => ("sequencer.audio_envelope_clear", None),
             AppCommand::AudioSettings => ("audio.settings", None),
             AppCommand::PluginSettings => ("audio.plugins", None),
             AppCommand::RestartAudio => ("audio.restart", None),
@@ -367,6 +399,22 @@ impl AppCommand {
             ("sequencer.track_height", Some(arg)) => {
                 return HeightPreset::from_arg(arg).map(AppCommand::TrackHeight);
             }
+            ("sequencer.audio_reverse", None) => AppCommand::AudioReverse,
+            ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
+            ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
+            ("sequencer.audio_gain", Some(arg)) => {
+                return GainStep::from_arg(arg).map(AppCommand::AudioGain);
+            }
+            ("sequencer.audio_fade_shape", Some(arg)) => {
+                return FadeCurve::from_id(arg).map(AppCommand::AudioFadeShape);
+            }
+            ("sequencer.audio_crossfade", Some("off")) => AppCommand::AudioCrossfade(None),
+            ("sequencer.audio_crossfade", Some(arg)) => {
+                return FadeCurve::from_id(arg).map(|c| AppCommand::AudioCrossfade(Some(c)));
+            }
+            ("sequencer.audio_fades", Some("declick")) => AppCommand::AudioFades(true),
+            ("sequencer.audio_fades", Some("clear")) => AppCommand::AudioFades(false),
+            ("sequencer.audio_envelope_clear", None) => AppCommand::AudioClearEnvelope,
             ("audio.settings", None) => AppCommand::AudioSettings,
             ("audio.plugins", None) => AppCommand::PluginSettings,
             ("audio.restart", None) => AppCommand::RestartAudio,
@@ -387,6 +435,38 @@ impl AppCommand {
 pub fn native_accelerator_text(shortcut: &str) -> Option<String> {
     let rest = shortcut.strip_prefix("Cmd+")?;
     Some(format!("CmdOrCtrl+{}", rest.replace("Opt+", "Alt+")))
+}
+
+/// What Audio ▸ Clip Gain does to the gain of the selected audio clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GainStep {
+    /// 1 dB louder.
+    Up,
+    /// 1 dB quieter.
+    Down,
+    /// Back to 0 dB.
+    Reset,
+}
+
+impl GainStep {
+    /// The registry argument of `sequencer.audio_gain`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            GainStep::Up => "up",
+            GainStep::Down => "down",
+            GainStep::Reset => "reset",
+        }
+    }
+
+    /// The step of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        match arg {
+            "up" => Some(GainStep::Up),
+            "down" => Some(GainStep::Down),
+            "reset" => Some(GainStep::Reset),
+            _ => None,
+        }
+    }
 }
 
 /// What the menus show as checked or enabled.
@@ -462,6 +542,8 @@ pub struct MenuState {
     pub midi_song: bool,
     /// What the selected tracks and folder allow (the Track menu).
     pub org: OrgMenu,
+    /// What the selected audio clips allow (the audio items of the Edit and Audio menus).
+    pub audio: AudioMenu,
 }
 
 /// One menu item.
@@ -581,6 +663,22 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 MenuEntry::Separator,
                 enabled("Quantize", AppCommand::QuantizeApply, state.can_edit),
                 item("Quantize Options\u{2026}", AppCommand::QuantizeOptions),
+                MenuEntry::Separator,
+                enabled(
+                    "Reverse Audio",
+                    AppCommand::AudioReverse,
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Normalise Audio",
+                    AppCommand::AudioNormalise,
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Strip Silence\u{2026}",
+                    AppCommand::AudioStripSilence,
+                    state.audio.can_edit,
+                ),
             ],
         },
         Menu {
@@ -792,6 +890,85 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 item("Settings\u{2026}", AppCommand::AudioSettings),
                 item("Plugins\u{2026}", AppCommand::PluginSettings),
                 item("Restart Audio", AppCommand::RestartAudio),
+                MenuEntry::Separator,
+                enabled(
+                    "Clip Gain: Up 1 dB",
+                    AppCommand::AudioGain(GainStep::Up),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Clip Gain: Down 1 dB",
+                    AppCommand::AudioGain(GainStep::Down),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Clip Gain: Reset",
+                    AppCommand::AudioGain(GainStep::Reset),
+                    state.audio.can_edit,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Fades: 5 ms Declick",
+                    AppCommand::AudioFades(true),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Fades: None",
+                    AppCommand::AudioFades(false),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Clear Gain Envelope",
+                    AppCommand::AudioClearEnvelope,
+                    state.audio.envelope,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Fade Shape: Linear",
+                    AppCommand::AudioFadeShape(FadeCurve::Linear),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Fade Shape: Equal Power",
+                    AppCommand::AudioFadeShape(FadeCurve::EqualPower),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Fade Shape: Exponential",
+                    AppCommand::AudioFadeShape(FadeCurve::Exponential),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Fade Shape: S-curve",
+                    AppCommand::AudioFadeShape(FadeCurve::SCurve),
+                    state.audio.can_edit,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Crossfade: Off",
+                    AppCommand::AudioCrossfade(None),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Crossfade: Linear",
+                    AppCommand::AudioCrossfade(Some(FadeCurve::Linear)),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Crossfade: Equal Power",
+                    AppCommand::AudioCrossfade(Some(FadeCurve::EqualPower)),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Crossfade: Exponential",
+                    AppCommand::AudioCrossfade(Some(FadeCurve::Exponential)),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Crossfade: S-curve",
+                    AppCommand::AudioCrossfade(Some(FadeCurve::SCurve)),
+                    state.audio.can_edit,
+                ),
             ],
         },
     ]
@@ -843,6 +1020,7 @@ mod tests {
             midi_track: false,
             midi_song: false,
             org: OrgMenu::default(),
+            audio: AudioMenu::default(),
         }
     }
 
@@ -916,10 +1094,24 @@ mod tests {
             AppCommand::TrackComment,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
+            AppCommand::AudioReverse,
+            AppCommand::AudioNormalise,
+            AppCommand::AudioStripSilence,
+            AppCommand::AudioFades(true),
+            AppCommand::AudioFades(false),
+            AppCommand::AudioClearEnvelope,
             AppCommand::AudioSettings,
             AppCommand::PluginSettings,
             AppCommand::RestartAudio,
         ];
+        for step in [GainStep::Up, GainStep::Down, GainStep::Reset] {
+            v.push(AppCommand::AudioGain(step));
+        }
+        for curve in FadeCurve::ALL {
+            v.push(AppCommand::AudioFadeShape(curve));
+            v.push(AppCommand::AudioCrossfade(Some(curve)));
+        }
+        v.push(AppCommand::AudioCrossfade(None));
         for p in [
             HeightPreset::Small,
             HeightPreset::Medium,
@@ -1265,7 +1457,10 @@ mod tests {
                 "Delete",
                 "Select All",
                 "Quantize",
-                "Quantize Options\u{2026}"
+                "Quantize Options\u{2026}",
+                "Reverse Audio",
+                "Normalise Audio",
+                "Strip Silence\u{2026}"
             ]
         );
         assert_eq!(
@@ -1335,7 +1530,26 @@ mod tests {
         );
         assert_eq!(
             labels(7),
-            ["Settings\u{2026}", "Plugins\u{2026}", "Restart Audio"]
+            [
+                "Settings\u{2026}",
+                "Plugins\u{2026}",
+                "Restart Audio",
+                "Clip Gain: Up 1 dB",
+                "Clip Gain: Down 1 dB",
+                "Clip Gain: Reset",
+                "Fades: 5 ms Declick",
+                "Fades: None",
+                "Clear Gain Envelope",
+                "Fade Shape: Linear",
+                "Fade Shape: Equal Power",
+                "Fade Shape: Exponential",
+                "Fade Shape: S-curve",
+                "Crossfade: Off",
+                "Crossfade: Linear",
+                "Crossfade: Equal Power",
+                "Crossfade: Exponential",
+                "Crossfade: S-curve"
+            ]
         );
     }
 
@@ -1379,6 +1593,7 @@ mod tests {
                 midi_track: false,
                 midi_song: true,
                 org: OrgMenu::default(),
+                audio: AudioMenu::default(),
             },
             &keymap,
         );

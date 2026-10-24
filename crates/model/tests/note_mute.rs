@@ -73,7 +73,7 @@ fn flatten_notes_skips_muted_notes() {
 
 #[test]
 fn the_project_version_is_eleven() {
-    assert_eq!(PROJECT_VERSION, 22);
+    assert_eq!(PROJECT_VERSION, 23);
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn only_muted_notes_get_a_fifth_element_and_it_round_trips_byte_for_byte() {
     let r = registry();
     let d = doc_with_muted_note(&r);
     let text = save_project(d.doc());
-    assert!(text.contains("\"version\": 22"));
+    assert!(text.contains("\"version\": 23"));
     assert!(
         text.contains(&format!("[0, {PPQ}, 60, 0.7, true]")),
         "{text}"
@@ -114,7 +114,7 @@ fn versions_before_ten_refuse_a_five_element_note_and_name_the_version() {
     let r = registry();
     let text = save_project(doc_with_muted_note(&r).doc());
     for v in 3..=9 {
-        let old = text.replace("\"version\": 22", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 23", &format!("\"version\": {v}"));
         let e = load_project(&old, &r).unwrap_err().to_string();
         assert!(e.contains(&format!("version {v}")), "v{v}: {e}");
     }
@@ -138,9 +138,9 @@ fn a_v9_project_loads_with_every_note_unmuted_and_saves_as_v11() {
 #[test]
 fn a_version_above_the_current_one_is_refused() {
     let r = registry();
-    let text = save_project(&empty_doc()).replace("\"version\": 22", "\"version\": 23");
+    let text = save_project(&empty_doc()).replace("\"version\": 23", "\"version\": 24");
     let e = load_project(&text, &r).unwrap_err().to_string();
-    assert!(e.contains("unsupported version 23"), "{e}");
+    assert!(e.contains("unsupported version 24"), "{e}");
 }
 
 // ---- SetClipsMuted ----------------------------------------------------------------------

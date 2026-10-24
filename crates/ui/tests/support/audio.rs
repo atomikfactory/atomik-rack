@@ -68,6 +68,9 @@ pub fn audio_clip(
             fade_in,
             fade_out,
             fade_curve: FadeCurve::Linear,
+            reverse: false,
+            envelope: Vec::new(),
+            xfade: None,
         }),
     }
 }

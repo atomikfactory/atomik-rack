@@ -292,6 +292,9 @@ pub enum UiAction {
     /// The quantize panel ([`crate::QuantizeView`]) asks for something: apply its settings, measure
     /// a groove from a clip, delete one, or close.
     Quantize(crate::quantize_panel::QuantizeAction),
+    /// The strip silence panel ([`crate::SilenceView`]) asks for something: strip the silence of
+    /// the selected audio clips with its settings, or close.
+    StripSilence(crate::silence_panel::SilenceAction),
     /// The parameter pane needs the display text of these params (plugin param id and the
     /// plain value to format): the visible rows that have no fresh text. Answer with
     /// [`crate::PluginParamsView::set_texts`] from `PluginManager::param_text`. Emitted by

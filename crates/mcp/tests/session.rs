@@ -1127,3 +1127,46 @@ fn a_folder_is_selected_collapsed_and_ungrouped_with_the_pointer_and_commands() 
     );
     assert_eq!(v["document"]["song"]["tracks"].as_array().unwrap().len(), 6);
 }
+
+#[test]
+fn the_audio_editing_commands_are_menu_commands_that_need_an_audio_clip() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({}));
+    let edit = ok(&mut s, "session_commands", json!({"menu": "edit"}));
+    let rows = edit["commands"].as_array().unwrap();
+    let row = |id: &str| {
+        rows.iter()
+            .find(|c| c["id"] == id)
+            .unwrap_or_else(|| panic!("{id} in the Edit menu"))
+    };
+    for id in [
+        "sequencer.audio_reverse",
+        "sequencer.audio_normalise",
+        "sequencer.audio_strip_silence",
+    ] {
+        assert_eq!(row(id)["enabled"], false, "{id} needs an audio clip");
+    }
+    let audio = ok(&mut s, "session_commands", json!({"menu": "audio"}));
+    let ids: Vec<&str> = audio["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    for id in [
+        "sequencer.audio_gain:up",
+        "sequencer.audio_fade_shape:s_curve",
+        "sequencer.audio_crossfade:off",
+        "sequencer.audio_fades:declick",
+        "sequencer.audio_envelope_clear",
+    ] {
+        assert!(ids.contains(&id), "{id} in {ids:?}");
+    }
+    // A disabled command is refused with its label.
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.audio_reverse"}),
+    );
+    assert!(r.is_error && r.first_text().contains("Reverse Audio"));
+}

@@ -5,7 +5,7 @@
 
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
-use atomik_ui::arrangement::OrgMenu;
+use atomik_ui::arrangement::{AudioMenu, OrgMenu};
 use atomik_ui::chord_edit::{
     ARP_GATES, ARP_OCTAVES, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection, strum_ticks,
 };
@@ -44,6 +44,8 @@ pub struct MenuEnable {
     pub track_chase: bool,
     /// Track header and folder row: what the selected tracks and folder allow.
     pub org: OrgMenu,
+    /// Clip: what the selected audio clips allow.
+    pub audio: AudioMenu,
     /// Tempo point: "Ramp to Next" can be switched (the point is not the last).
     pub tempo_can_ramp: bool,
     /// Tempo point: it ramps to the next point (the item is checked).
@@ -93,6 +95,23 @@ const TRACK_HEIGHTS: [(&str, &str); 4] = [
     ("medium", "Medium"),
     ("large", "Large"),
     ("fit", "Fit the View"),
+];
+
+/// The fade shapes of the audio clip menu: the command argument and the label.
+const FADE_SHAPES: [(&str, &str); 4] = [
+    ("linear", "Linear"),
+    ("equal_power", "Equal Power"),
+    ("exponential", "Exponential"),
+    ("s_curve", "S-curve"),
+];
+
+/// The crossfade shapes of the audio clip menu: the command argument and the label.
+const CROSSFADES: [(&str, &str); 5] = [
+    ("off", "Off (hard cut)"),
+    ("linear", "Linear"),
+    ("equal_power", "Equal Power"),
+    ("exponential", "Exponential"),
+    ("s_curve", "S-curve"),
 ];
 
 /// The organisation items shared by the track header menu and the folder menu: the two
@@ -427,6 +446,30 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     "Mute"
                 }),
                 item("edit.quantize_options", e.selection),
+                Spec::Separator,
+                item("sequencer.audio_reverse", e.audio.can_edit),
+                item("sequencer.audio_normalise", e.audio.can_edit),
+                item("sequencer.audio_strip_silence", e.audio.can_edit),
+                Spec::submenu(
+                    "Audio Fade Shape",
+                    FADE_SHAPES
+                        .iter()
+                        .map(|(arg, label)| {
+                            meter_item("sequencer.audio_fade_shape", arg, label)
+                                .enabled(e.audio.can_edit)
+                        })
+                        .collect(),
+                ),
+                Spec::submenu(
+                    "Audio Crossfade",
+                    CROSSFADES
+                        .iter()
+                        .map(|(arg, label)| {
+                            meter_item("sequencer.audio_crossfade", arg, label)
+                                .enabled(e.audio.can_edit)
+                        })
+                        .collect(),
+                ),
             ]);
             v
         }

@@ -38,7 +38,8 @@
 //!                                                  | "points": [[tick, value, "linear"|"step"]…]
 //!                                                  | "audio": { "asset", "offset" (frames),
 //!                                                      "gain_db", "fade_in", "fade_out" (frames),
-//!                                                      "fade_curve": "linear"|"equal_power" }
+//!                                                      "fade_curve": "linear"|"equal_power"|…,
+//!                                                      "reverse"?, "envelope"?, "xfade"? (v23) }
 //!                                               }…] }…] }…] } }
 //! ```
 //!
@@ -108,7 +109,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). **Version 20** files have no groove library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth" | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the name of a built-in groove; a groove has 1 to 32 slots, each an `offset` in steps (`-0.5..=0.5`) and a velocity scale (`0..=2`); at most 64 grooves; the field is omitted when the song has none. **Version 21** files have no track organisation: from version 22 a song may carry `"groups"` (folders: `"id"` from 1, unique; a trimmed `"name"` of 1 to 64 characters; an optional `"parent"` folder, at most 8 levels deep and no loops; `"collapsed": true`; an optional `"#rrggbb"` `"color"`; at most 256, written sorted by id) after its `"grooves"`, and a track may carry `"group"` (its innermost folder), `"color"` and `"comment"` (trimmed, 1 to 1000 characters, newlines allowed) after its `"no_chase"`, an automation lane `"folded": true` after its `"write"`, and a take group `"open": true` after its `"clips"` (its take rows are shown). Every folder has at least one track, and the tracks of a folder, with those of its sub-folders, follow each other (see [`crate::organise`]); a file that breaks either is refused. All of it is omitted when there is none. Saving always writes version 22.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). **Version 20** files have no groove library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth" | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the name of a built-in groove; a groove has 1 to 32 slots, each an `offset` in steps (`-0.5..=0.5`) and a velocity scale (`0..=2`); at most 64 grooves; the field is omitted when the song has none. **Version 21** files have no track organisation: from version 22 a song may carry `"groups"` (folders: `"id"` from 1, unique; a trimmed `"name"` of 1 to 64 characters; an optional `"parent"` folder, at most 8 levels deep and no loops; `"collapsed": true`; an optional `"#rrggbb"` `"color"`; at most 256, written sorted by id) after its `"grooves"`, and a track may carry `"group"` (its innermost folder), `"color"` and `"comment"` (trimmed, 1 to 1000 characters, newlines allowed) after its `"no_chase"`, an automation lane `"folded": true` after its `"write"`, and a take group `"open": true` after its `"clips"` (its take rows are shown). Every folder has at least one track, and the tracks of a folder, with those of its sub-folders, follow each other (see [`crate::organise`]); a file that breaks either is refused. All of it is omitted when there is none. **Version 22** files have no audio editing: from version 23 the `"audio"` object of an audio clip may carry `"reverse": true` (it plays its span of the asset backwards), `"envelope": [[frame, gain_db]…]` (gain breakpoints in frames from the clip start, strictly increasing, at most 512, each `gain_db` in `-120..=24`) and `"xfade": "off" | "linear" | "equal_power" | "exponential" | "s_curve"` (the crossfade with the clip it overlaps at its start); `"fade_curve"` also takes `"exponential"` and `"s_curve"`. `reverse` and `envelope` are omitted when unused; a file of version 23 or later without `"xfade"` crossfades with `"equal_power"` (the default of a new clip), while an older file loads with every clip at `"off"`, so a project written before crossfades keeps its hard cuts and its bounce. Saving always writes version 23.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -127,9 +128,9 @@ use crate::patch::{
 };
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AudioClipContent, AutomationPoint, Clip, ClipContent,
-    ClipId, Curve, FadeCurve, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_LOOP_REPEATS, MAX_MARKER_NAME,
-    MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song, StepGrid,
-    StepResolution, TempoEvent, Track,
+    ClipId, Curve, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_GAIN_POINTS,
+    MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MeterEvent,
+    Note, RangeMarker, Song, StepGrid, StepResolution, TempoEvent, Track,
 };
 use crate::song_cmd::{
     check_end, check_loop, check_meter, check_meter_map, check_note, has_notes_input,
@@ -156,8 +157,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
-/// track heights) and 15 (no clip scales) and 21 (no track organisation).
-pub const PROJECT_VERSION: u32 = 22;
+/// track heights) and 15 (no clip scales) and 21 (no track organisation) and 22 (no audio editing).
+pub const PROJECT_VERSION: u32 = 23;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -301,6 +302,17 @@ const AUDIO_FIELDS: &[&str] = &[
     "fade_in",
     "fade_out",
     "fade_curve",
+];
+const AUDIO_FIELDS_V23: &[&str] = &[
+    "asset",
+    "offset",
+    "gain_db",
+    "fade_in",
+    "fade_out",
+    "fade_curve",
+    "reverse",
+    "envelope",
+    "xfade",
 ];
 const CONSOLE_FIELDS: &[&str] = &["channels", "master", "returns", "compensation"];
 const CONSOLE_FIELDS_V12: &[&str] = &["channels", "buses", "master", "returns", "compensation"];
@@ -553,7 +565,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=22 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=23 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1939,7 +1951,7 @@ fn load_clip(
     let muted = flag(obj, path, "muted")?;
     let content_path = path.field(content_field);
     if kind.is_audio() {
-        let audio = load_audio(&obj["audio"], &content_path, doc)?;
+        let audio = load_audio(&obj["audio"], &content_path, doc, version)?;
         return Ok(Clip {
             id: ClipId(id),
             start,
@@ -2139,8 +2151,18 @@ fn load_scale(v: &Value, path: &JsonPath) -> Result<Scale, ModelError> {
 }
 
 /// Reads and validates an audio clip's `"audio"` object against the pool.
-fn load_audio(v: &Value, path: &JsonPath, doc: &RackDoc) -> Result<AudioClipContent, ModelError> {
-    let a = object(v, path, AUDIO_FIELDS, &["asset", "offset"])?;
+fn load_audio(
+    v: &Value,
+    path: &JsonPath,
+    doc: &RackDoc,
+    version: u64,
+) -> Result<AudioClipContent, ModelError> {
+    let fields = if version >= 23 {
+        AUDIO_FIELDS_V23
+    } else {
+        AUDIO_FIELDS
+    };
+    let a = object(v, path, fields, &["asset", "offset"])?;
     let asset_path = path.field("asset");
     let asset = string(&a["asset"], &asset_path)?;
     let meta = doc
@@ -2172,18 +2194,72 @@ fn load_audio(v: &Value, path: &JsonPath, doc: &RackDoc) -> Result<AudioClipCont
         a.get(name)
             .map_or(Ok(0), |v| uint(v, &path.field(name), MAX_AUDIO_FRAMES))
     };
-    let fade_curve = match a.get("fade_curve") {
-        None => FadeCurve::Linear,
-        Some(c) => {
-            let cp = path.field("fade_curve");
-            match string(c, &cp)? {
-                "linear" => FadeCurve::Linear,
-                "equal_power" => FadeCurve::EqualPower,
-                other => {
-                    return Err(cp.error(format!(
-                        "expected \"linear\" or \"equal_power\", found {other:?}"
+    let curve = |name: &str| -> Result<FadeCurve, ModelError> {
+        let cp = path.field(name);
+        let id = string(&a[name], &cp)?;
+        FadeCurve::from_id(id).ok_or_else(|| {
+            cp.error(format!(
+                "expected \"linear\", \"equal_power\", \"exponential\" or \"s_curve\", found {id:?}"
+            ))
+        })
+    };
+    let fade_curve = if a.contains_key("fade_curve") {
+        let c = curve("fade_curve")?;
+        if version < 23 && !matches!(c, FadeCurve::Linear | FadeCurve::EqualPower) {
+            return Err(path
+                .field("fade_curve")
+                .error(format!("{:?} needs version 23 or later", c.id())));
+        }
+        c
+    } else {
+        FadeCurve::Linear
+    };
+    let reverse = match a.get("reverse") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(path.field("reverse").error("expected true or false")),
+    };
+    let envelope = match a.get("envelope") {
+        None => Vec::new(),
+        Some(e) => {
+            let ep = path.field("envelope");
+            let items = array(e, &ep)?;
+            if items.len() > MAX_GAIN_POINTS {
+                return Err(ep.error(format!(
+                    "{} points is above the {MAX_GAIN_POINTS} allowed",
+                    items.len()
+                )));
+            }
+            let mut points: Vec<GainPoint> = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                let ip = ep.index(i);
+                let t = tuple(item, &ip, 2, "a point [frame, gain_db]")?;
+                let frame = uint(&t[0], &ip.index(0), MAX_AUDIO_FRAMES)?;
+                let gp = ip.index(1);
+                let gain_db = number(&t[1], &gp)? as f32;
+                if !(AUDIO_GAIN_DB_MIN..=AUDIO_GAIN_DB_MAX).contains(&gain_db) {
+                    return Err(gp.error(format!(
+                        "{gain_db} dB is outside {AUDIO_GAIN_DB_MIN}..={AUDIO_GAIN_DB_MAX}"
                     )));
                 }
+                if points.last().is_some_and(|p| p.frame >= frame) {
+                    return Err(ip
+                        .index(0)
+                        .error("envelope frames must be strictly increasing"));
+                }
+                points.push(GainPoint { frame, gain_db });
+            }
+            points
+        }
+    };
+    let xfade = match a.get("xfade") {
+        None if version >= 23 => Some(FadeCurve::EqualPower),
+        None => None,
+        Some(x) => {
+            if string(x, &path.field("xfade"))? == "off" {
+                None
+            } else {
+                Some(curve("xfade")?)
             }
         }
     };
@@ -2194,6 +2270,9 @@ fn load_audio(v: &Value, path: &JsonPath, doc: &RackDoc) -> Result<AudioClipCont
         fade_in: frames("fade_in")?,
         fade_out: frames("fade_out")?,
         fade_curve,
+        reverse,
+        envelope,
+        xfade,
     })
 }
 
@@ -2237,18 +2316,34 @@ fn write_clip(w: &mut String, c: &Clip, sep: &str) {
     let indent = "                ";
     match &c.content {
         ClipContent::Audio(a) => {
-            let curve = match a.fade_curve {
-                FadeCurve::Linear => "linear",
-                FadeCurve::EqualPower => "equal_power",
-            };
+            let mut extra = String::new();
+            if a.reverse {
+                extra.push_str(", \"reverse\": true");
+            }
+            if !a.envelope.is_empty() {
+                let points: Vec<String> = a
+                    .envelope
+                    .iter()
+                    .map(|p| format!("[{}, {}]", p.frame, f32_text(p.gain_db)))
+                    .collect();
+                let _ = write!(extra, ", \"envelope\": [{}]", points.join(", "));
+            }
+            if a.xfade != Some(FadeCurve::EqualPower) {
+                let _ = write!(
+                    extra,
+                    ", \"xfade\": \"{}\"",
+                    a.xfade.map_or("off", FadeCurve::id)
+                );
+            }
             let _ = write!(
                 w,
-                "{indent}\"audio\": {{\"asset\": {}, \"offset\": {}, \"gain_db\": {}, \"fade_in\": {}, \"fade_out\": {}, \"fade_curve\": \"{curve}\"}}",
+                "{indent}\"audio\": {{\"asset\": {}, \"offset\": {}, \"gain_db\": {}, \"fade_in\": {}, \"fade_out\": {}, \"fade_curve\": \"{}\"{extra}}}",
                 json_str(&a.asset),
                 a.source_offset,
                 f32_text(a.gain_db),
                 a.fade_in,
-                a.fade_out
+                a.fade_out,
+                a.fade_curve.id()
             );
         }
         ClipContent::Notes(notes) => {

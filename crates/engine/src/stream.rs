@@ -10,8 +10,9 @@
 //!   read-ahead is always kept ahead) whose consumer travels inside the snapshot to the audio
 //!   thread and whose producer goes to the streamer together with the track's immutable region
 //!   list (an `Arc`, shared with the snapshot).
-//! * **Playback order.** The ring carries the track's *streamed regions' raw samples in playback
-//!   order*: chunk `k` holds the frames `seq0..seq0 + len` counted from the start of the current
+//! * **Playback order.** The ring carries the track's *streamed regions' finished output in
+//!   playback order* (clip gain, fades, gain envelope and crossfades applied, two overlapping
+//!   regions mixed, a reversed region read backwards; see `audio.rs`): chunk `k` holds the frames `seq0..seq0 + len` counted from the start of the current
 //!   *epoch*, where the streamer follows exactly the player's loop rule (at song frame `le` it
 //!   continues at `ls`; a start beyond `le` plays on linearly). Frames outside streamed regions
 //!   (gaps, memory regions) are zeros. Because chunks are tagged by playback index instead of
@@ -31,7 +32,8 @@
 //!   that lacked data; nothing ever blocks. Late chunks are skipped to the current playback
 //!   index.
 //! * **Determinism.** Offline bounces use `Memory` assets only. With a streamer that keeps up,
-//!   the audio equals the `Memory` output bit for bit (same samples, same gain/fade code).
+//!   the audio equals the `Memory` output bit for bit (same samples, same gain code, the same
+//!   assign-then-add order where two regions overlap).
 //! * **Streamer.** One thread, spawned lazily by the first `submit_song` with a streamed
 //!   asset, joined when the handle is dropped. It polls (1 ms) requests and lane commands and
 //!   fills each active lane round-robin, a few chunks at a time, so a slow source delays other
@@ -321,11 +323,14 @@ impl LaneFill {
         did
     }
 
-    /// Reads the streamed regions' samples of song frames `a..a + len` into `chunk`.
+    /// Renders the streamed regions of song frames `a..a + len` into `chunk`: the samples
+    /// times the region gain, the first region over a frame assigns and a second one (a
+    /// crossfade) adds, as the audio thread does for memory regions.
     fn render(&mut self, a: u64, len: usize, chunk: &mut Chunk) {
         let b = a + len as u64;
         let data = Arc::clone(&self.data);
         let first = data.regions.partition_point(|r| r.end() <= a);
+        let mut written = a;
         for r in &data.regions[first..] {
             if r.song_start_frame >= b {
                 break;
@@ -340,22 +345,56 @@ impl LaneFill {
             };
             let lo = a.max(r.song_start_frame);
             let hi = b.min(r.end());
-            let src0 = r.source_offset + (lo - r.song_start_frame);
-            let n = ((hi - lo).min(frames.saturating_sub(src0))) as usize;
-            if n == 0 {
-                continue;
+            let n = (hi - lo) as usize;
+            let i0 = lo - r.song_start_frame;
+            // The region frames `k0..k1` that read inside the asset; `src_lo` is the lowest
+            // asset frame wanted and `m` how many to read.
+            let (k0, k1, src_lo) = if r.reverse {
+                let s0 = r.source_offset - i0;
+                let lead = if *frames == 0 {
+                    n as u64
+                } else {
+                    s0.saturating_sub(frames - 1).min(n as u64)
+                } as usize;
+                (lead, n, (s0 + 1).saturating_sub(n as u64))
+            } else {
+                let src0 = r.source_offset + i0;
+                let valid = (n as u64).min(frames.saturating_sub(src0)) as usize;
+                (0, valid, src0)
+            };
+            let m = k1.saturating_sub(k0);
+            if m > 0 {
+                let channels = usize::from(*channels);
+                self.scratch.resize_with(channels, Vec::new);
+                for c in &mut self.scratch {
+                    c.clear();
+                    c.resize(m, 0.0);
+                }
+                let read = source.read(src_lo, &mut self.scratch).min(m);
+                let second = channels.min(2) - 1;
+                let mut g = [0.0f32; CHUNK];
+                r.gains(data.envelope(r), i0 + k0 as u64, &mut g[..m]);
+                let at = (lo - a) as usize;
+                let added = (written.saturating_sub(lo)).min(n as u64) as usize;
+                for k in k0..k1 {
+                    // Scratch holds ascending asset frames; a reversed region walks it down.
+                    let j = if r.reverse { k1 - 1 - k } else { k - k0 };
+                    let (vl, vr) = if j < read {
+                        let gk = g[k - k0];
+                        (self.scratch[0][j] * gk, self.scratch[second][j] * gk)
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    if k < added {
+                        chunk.data[0][at + k] += vl;
+                        chunk.data[1][at + k] += vr;
+                    } else {
+                        chunk.data[0][at + k] = vl;
+                        chunk.data[1][at + k] = vr;
+                    }
+                }
             }
-            let channels = usize::from(*channels);
-            self.scratch.resize_with(channels, Vec::new);
-            for c in &mut self.scratch {
-                c.clear();
-                c.resize(n, 0.0);
-            }
-            let read = source.read(src0, &mut self.scratch).min(n);
-            let at = (lo - a) as usize;
-            chunk.data[0][at..at + read].copy_from_slice(&self.scratch[0][..read]);
-            let second = &self.scratch[channels.min(2) - 1];
-            chunk.data[1][at..at + read].copy_from_slice(&second[..read]);
+            written = written.max(hi);
         }
     }
 }
