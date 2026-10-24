@@ -8,6 +8,7 @@
 use crate::DeviceKey;
 use crate::automation_rec::WriteMode;
 use crate::controller::ControllerLane;
+use crate::groove::{Groove, QuantizeParams, builtin_groove};
 use crate::takes::TakeGroup;
 use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
@@ -309,6 +310,9 @@ pub struct Song {
     /// into it. A lane without an entry has the default mode, [`WriteMode::Touch`] (an entry
     /// never holds the default). Entries of lanes that do not exist are dropped when saving.
     pub lane_write: BTreeMap<(DeviceKey, String), WriteMode>,
+    /// The song's groove templates, shared by every track (see [`crate::groove`]); the built-in
+    /// grooves are not stored here. Names are unique and never a built-in name.
+    pub grooves: Vec<Groove>,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -645,6 +649,47 @@ pub enum SongCommand {
         /// Group id.
         group: u32,
     },
+    /// Quantize the notes of these clips (swing, groove and humanize as well) in one undo step:
+    /// see [`crate::groove`]. Clips that are not plain note clips (audio, automation, the takes
+    /// of a take group) are skipped; an error when no note changes. Reports
+    /// [`crate::SyncOp::SongChanged`].
+    ApplyQuantize {
+        /// The clips, in any order.
+        clips: Vec<ClipId>,
+        /// What to do.
+        quantize: QuantizeParams,
+    },
+    /// Quantize some notes of one clip (by index in its sorted note list), as `ApplyQuantize`
+    /// does; one undo step. Notes out of range are an error.
+    QuantizeNotes {
+        /// The clip.
+        clip: ClipId,
+        /// Indices into the clip's notes.
+        notes: Vec<usize>,
+        /// What to do.
+        quantize: QuantizeParams,
+    },
+    /// Add a groove to the song's library, or replace the one with the same name. One undo step;
+    /// reports [`crate::SyncOp::ViewChanged`] (a groove changes nothing until it is applied).
+    SetGroove(Groove),
+    /// Remove a groove from the song's library by name (not a built-in one). One undo step.
+    DeleteGroove {
+        /// The groove's name.
+        name: String,
+    },
+    /// Measure the groove of a note clip against the grid of `resolution` and store it in the
+    /// library under `name` (replacing a groove of that name): see [`crate::groove::extract_groove`].
+    /// One undo step.
+    ExtractGroove {
+        /// The clip to measure.
+        clip: ClipId,
+        /// The new groove's name.
+        name: String,
+        /// The step the slots are measured against.
+        resolution: StepResolution,
+        /// Slots, `1..=`[`crate::groove::MAX_GROOVE_SLOTS`].
+        slots: usize,
+    },
     /// Change an audio clip's start, length, mute and content in one undo step (a
     /// trim moves the start and the source offset together). `merge` groups drags, as
     /// `SetClipGeometry` does.
@@ -683,6 +728,7 @@ pub fn empty_song(bpm: f64) -> Song {
         ranges: Vec::new(),
         track_heights: BTreeMap::new(),
         lane_write: BTreeMap::new(),
+        grooves: Vec::new(),
     }
 }
 
@@ -712,6 +758,15 @@ pub const MAX_TICK: i64 = 1 << 40;
 pub const MAX_LOOP_REPEATS: i64 = 4096;
 
 impl Song {
+    /// The groove called `name`: one of the song's, else a built-in one.
+    pub fn groove(&self, name: &str) -> Option<Groove> {
+        self.grooves
+            .iter()
+            .find(|g| g.name == name)
+            .cloned()
+            .or_else(|| builtin_groove(name))
+    }
+
     /// The track of `device`, if any.
     pub fn track(&self, device: &DeviceKey) -> Option<&Track> {
         self.tracks.iter().find(|t| &t.device == device)

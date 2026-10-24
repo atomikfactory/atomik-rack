@@ -635,6 +635,11 @@ pub(crate) fn plan(
         | SongCommand::SetCompSegment { .. }
         | SongCommand::DeleteTake { .. }
         | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
+        SongCommand::ApplyQuantize { .. }
+        | SongCommand::QuantizeNotes { .. }
+        | SongCommand::SetGroove(_)
+        | SongCommand::DeleteGroove { .. }
+        | SongCommand::ExtractGroove { .. } => crate::groove_cmd::plan(doc, command)?,
         SongCommand::AddAutomationLane { device, param } => {
             let desc = device_descriptor(doc, registry, &device)?;
             if desc.param_by_key(&param).is_none() || crate::console::is_internal_param(&param) {
