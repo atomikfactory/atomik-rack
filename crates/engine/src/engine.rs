@@ -574,8 +574,12 @@ impl EngineHandle {
             return Err(EngineError::QueueFull);
         }
         let RenderPlan { routing, nodes } = plan;
+        self.meters.clear_scopes();
         for (k, node) in nodes.iter().enumerate() {
             self.latencies.publish(k, node.device.latency_frames());
+            if let (Some(tap), Some(routed)) = (node.device.scope_tap(), routing.devices.get(k)) {
+                self.meters.register_scope(routed.id, tap);
+            }
         }
         let devices: BTreeMap<_, _> = routing
             .devices
@@ -920,6 +924,14 @@ impl EngineHandle {
         self.meters.device_values(id, out)
     }
 
+    /// The scope tap of device `id` (see [`Meters::scope_tap`]); `None` for a device without one.
+    pub fn device_scope_tap(
+        &self,
+        id: crate::DeviceInstanceId,
+    ) -> Option<std::sync::Arc<atomik_device_sdk::ScopeTap>> {
+        self.meters.scope_tap(id)
+    }
+
     /// The latest known `Device::latency_frames()` of arena device `id`:
     /// read on this side when the device is inserted (after `prepare` and its params), then
     /// re-published by the engine at every batch boundary, after params and automation. So a
@@ -1014,6 +1026,9 @@ impl EngineHandle {
             }
         }
         let latency = device.latency_frames();
+        if let Some(tap) = device.scope_tap() {
+            self.meters.register_scope(id, tap);
+        }
         let node = Box::new(Node::new(device));
         self.push(frame, ControlOp::Insert { id, slot, node })?;
         self.latencies.publish(slot, latency);
@@ -1032,6 +1047,7 @@ impl EngineHandle {
             return Err(EngineError::DeviceInUse);
         }
         self.push(frame, ControlOp::Remove(id))?;
+        self.meters.unregister_scope(id);
         self.mirror.devices.remove(&id);
         self.mirror.free.insert(slot);
         Ok(())

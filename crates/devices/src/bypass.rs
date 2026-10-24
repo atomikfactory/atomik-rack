@@ -229,6 +229,10 @@ impl<D: Device> Device for Bypassable<D> {
         self.inner.meter_values(out)
     }
 
+    fn scope_tap(&self) -> Option<std::sync::Arc<atomik_device_sdk::ScopeTap>> {
+        self.inner.scope_tap()
+    }
+
     fn latency_frames(&self) -> u32 {
         self.inner.latency_frames()
     }
