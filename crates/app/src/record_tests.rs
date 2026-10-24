@@ -321,6 +321,155 @@ fn a_take_without_notes_makes_no_clip() {
     );
 }
 
+fn ctl(kind: NoteKind, frame: u64) -> RecordedNote {
+    RecordedNote {
+        device: DEV,
+        kind,
+        frame,
+    }
+}
+
+fn cc(controller: u8, value: f32) -> NoteKind {
+    NoteKind::Cc { controller, value }
+}
+
+fn lane(clip: &Clip, kind: ControllerKind) -> &ControllerLane {
+    clip.controllers
+        .iter()
+        .find(|l| l.kind == kind)
+        .unwrap_or_else(|| panic!("no {kind:?} lane in {:?}", clip.controllers))
+}
+
+#[test]
+fn controller_events_become_step_lanes_next_to_the_notes() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    let events = [
+        on(60, at(PPQ)),
+        ctl(NoteKind::PitchBend { value: -0.5 }, at(PPQ)),
+        ctl(cc(1, 0.25), at(PPQ + 5000)),
+        ctl(cc(1, 0.5), at(2 * PPQ)),
+        ctl(NoteKind::ChannelPressure { value: 1.0 }, at(2 * PPQ)),
+        ctl(
+            NoteKind::PolyPressure {
+                key: 60,
+                value: 0.5,
+            },
+            at(2 * PPQ),
+        ),
+        off(60, at(3 * PPQ)),
+    ];
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::Off);
+    assert_eq!(clips.len(), 1);
+    let clip = &clips[0].1;
+    let kinds: Vec<_> = clip.controllers.iter().map(|l| l.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            ControllerKind::PitchBend,
+            ControllerKind::ChannelPressure,
+            ControllerKind::Cc(1),
+            ControllerKind::PolyPressure(60)
+        ],
+        "sorted by kind"
+    );
+    let cc1 = lane(clip, ControllerKind::Cc(1));
+    assert_eq!(cc1.points.len(), 2);
+    assert!(near(cc1.points[0].tick, PPQ + 5000));
+    assert_eq!(cc1.points[0].value, 0.25);
+    assert!(near(cc1.points[1].tick, 2 * PPQ));
+    assert_eq!(cc1.points[1].value, 0.5);
+    assert!(cc1.points.iter().all(|p| p.curve == Curve::Step));
+    let bend = lane(clip, ControllerKind::PitchBend);
+    assert!(near(bend.points[0].tick, PPQ));
+    assert_eq!(bend.points[0].value, -0.5);
+    assert_eq!(notes(clip).len(), 1);
+}
+
+#[test]
+fn a_burst_keeps_its_last_value_and_repeats_are_dropped() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    // A sweep of ten events 10 ticks apart (well inside the coalescing window), then the same
+    // value again later, then a new one.
+    let mut events: Vec<RecordedNote> = (0..10)
+        .map(|i| ctl(cc(11, i as f32 / 10.0), at(PPQ + i * 10)))
+        .collect();
+    events.push(ctl(cc(11, 0.9), at(2 * PPQ)));
+    events.push(ctl(cc(11, 0.2), at(3 * PPQ)));
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::Off);
+    let pts = &lane(&clips[0].1, ControllerKind::Cc(11)).points;
+    let values: Vec<f32> = pts.iter().map(|p| p.value).collect();
+    assert_eq!(
+        values,
+        [0.9, 0.2],
+        "the burst ends on 0.9; the repeat is dropped"
+    );
+    assert!(near(pts[0].tick, PPQ) && near(pts[1].tick, 3 * PPQ));
+}
+
+#[test]
+fn a_take_with_only_controllers_makes_a_clip_without_notes() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    feed(&mut t, &snap, &st, &[ctl(cc(64, 1.0), at(BAR + PPQ))]);
+    let clips = t.finish(stop(&snap, &st, at(BAR + 2 * PPQ)), InputQuantize::Off);
+    assert_eq!(clips.len(), 1);
+    let clip = &clips[0].1;
+    assert!(notes(clip).is_empty());
+    assert_eq!((clip.start, clip.length), (0, 2 * BAR));
+    assert_eq!(lane(clip, ControllerKind::Cc(64)).points.len(), 1);
+}
+
+#[test]
+fn controllers_follow_the_loop_laps_and_other_devices_are_ignored() {
+    let snap = snapshot(120.0);
+    let lap = 2 * BAR;
+    let st = state(Some((0, lap)));
+    let mut t = take(Some((0, lap)));
+    let events = [
+        ctl(cc(1, 0.5), frame_at(&snap, PPQ, 0, lap)),
+        ctl(cc(1, 0.75), frame_at(&snap, 2 * PPQ, 1, lap)),
+        RecordedNote {
+            device: OTHER,
+            kind: cc(1, 1.0),
+            frame: frame_at(&snap, 2 * PPQ, 1, lap),
+        },
+    ];
+    feed(&mut t, &snap, &st, &events);
+    let end = stop(&snap, &st, frame_at(&snap, BAR, 1, lap));
+    let clips = t.finish(end, InputQuantize::Off);
+    assert_eq!(clips.len(), 2, "one clip per pass");
+    let v = |i: usize| lane(&clips[i].1, ControllerKind::Cc(1)).points[0].value;
+    assert_eq!((v(0), v(1)), (0.5, 0.75));
+}
+
+#[test]
+fn recorded_clips_pass_the_models_validation() {
+    // Out-of-range values never reach the clip: they are clamped on capture.
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    let at = |tick| frame_at(&snap, tick, 0, 0);
+    let events = [
+        ctl(NoteKind::PitchBend { value: 3.0 }, at(PPQ)),
+        ctl(cc(7, -2.0), at(2 * PPQ)),
+    ];
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(stop(&snap, &st, at(BAR)), InputQuantize::Off);
+    let clip = &clips[0].1;
+    assert_eq!(lane(clip, ControllerKind::PitchBend).points[0].value, 1.0);
+    assert_eq!(lane(clip, ControllerKind::Cc(7)).points[0].value, 0.0);
+}
+
 fn scheduled(device: u32, kind: NoteKind, frame: u64) -> ScheduledNote {
     ScheduledNote {
         frame,
