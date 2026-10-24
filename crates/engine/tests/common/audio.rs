@@ -6,7 +6,7 @@ use super::{cfg, engine_with};
 use atomik_devices::audio_track;
 use atomik_engine::{
     AssetId, DeviceInstanceId, HotEdit, OfflineJob, SongAsset, SongAudioRegion, SongAudioTrack,
-    SongFadeCurve, SongInput, TimedEdit, TransportCommand, compile_song, render_offline_song,
+    SongInput, TimedEdit, TransportCommand, compile_song, render_offline_song,
 };
 use atomik_testkit::no_alloc::assert_no_alloc;
 use std::sync::Arc;
@@ -32,18 +32,7 @@ pub fn asset(channels: usize, frames: usize) -> SongAsset {
 
 /// A plain region of asset 0: no gain change, no fades, a clip equal to the region.
 pub fn region(start: u64, offset: u64, frames: u64) -> SongAudioRegion {
-    SongAudioRegion {
-        asset: AssetId(0),
-        song_start_frame: start,
-        source_offset: offset,
-        frames,
-        gain: 1.0,
-        fade_in: 0,
-        fade_out: 0,
-        fade_curve: SongFadeCurve::Linear,
-        clip_pos: 0,
-        clip_frames: frames,
-    }
+    SongAudioRegion::plain(AssetId(0), start, offset, frames)
 }
 
 /// Song input in 4/4 at 120 BPM (1 tick = 1.5625 frames at 48 kHz) with audio tracks.
@@ -133,6 +122,7 @@ pub fn audio_track_of(id: u32, regions: Vec<SongAudioRegion>) -> SongAudioTrack 
     SongAudioTrack {
         device: DeviceInstanceId(id),
         regions,
+        envelopes: Vec::new(),
     }
 }
 
