@@ -234,3 +234,114 @@ fn strip_with_one_insert_matches_golden() {
 fn strip_with_three_inserts_matches_golden() {
     check("console_inserts3_1x.json", &golden(3));
 }
+
+// ------------------------------------------------------------------ bypassing the inserts
+
+fn set_param_cmds(actions: &[UiAction]) -> Vec<(String, String, f32)> {
+    commands(actions)
+        .into_iter()
+        .flat_map(|c| match c {
+            Command::Batch(all) => all,
+            c => vec![c],
+        })
+        .filter_map(|c| match c {
+            Command::SetParam {
+                key, param, value, ..
+            } => Some((key.0, param, value)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn with_bypass(mut doc: RackDoc, bypassed: &[&str]) -> RackDoc {
+    for d in &mut doc.devices {
+        if bypassed.contains(&d.key.0.as_str()) {
+            d.params.insert("bypass".into(), 1.0);
+        }
+    }
+    doc
+}
+
+#[test]
+fn the_b_of_a_filled_slot_toggles_the_bypass_of_its_effect() {
+    let (doc, reg) = (doc_with(2), console_registry());
+    let mut v = view(&doc, &reg);
+    let ch = key("ch-bass");
+    let b = v.insert_bypass_center(&ch, 1).expect("B on a filled slot");
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, b)),
+        [("fx2".to_string(), "bypass".to_string(), 1.0)]
+    );
+    // Bypassed it is switched back in by the same click.
+    let doc = with_bypass(doc, &["fx2"]);
+    let mut v = view(&doc, &reg);
+    let b = v.insert_bypass_center(&ch, 1).unwrap();
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, b)),
+        [("fx2".to_string(), "bypass".to_string(), 0.0)]
+    );
+    // An empty slot has no B, and neither does the "+ add" row.
+    let v = view(&doc, &reg);
+    assert!(v.insert_bypass_center(&ch, 2).is_none());
+    assert!(v.insert_bypass_center(&ch, 3).is_none());
+}
+
+#[test]
+fn the_bypass_all_button_bypasses_every_effect_or_restores_them_in_one_command() {
+    let (doc, reg) = (doc_with(3), console_registry());
+    let ch = key("ch-bass");
+    let mut v = view(&doc, &reg);
+    v.scroll_to_control(&ch, "insert.bypass");
+    let p = v.control_center(&ch, "insert.bypass").unwrap();
+    let cmds = commands(&click(&mut v, &doc, &reg, p));
+    assert_eq!(cmds.len(), 1, "one command, so one undo step");
+    assert!(matches!(&cmds[0], Command::Batch(b) if b.len() == 3));
+    assert_eq!(
+        set_param_cmds(&[UiAction::Command(cmds[0].clone())]),
+        [
+            ("echo".to_string(), "bypass".to_string(), 1.0),
+            ("fx2".to_string(), "bypass".to_string(), 1.0),
+            ("fx3".to_string(), "bypass".to_string(), 1.0),
+        ]
+    );
+    // With one still playing, the click bypasses the rest; all bypassed, it restores all.
+    let doc = with_bypass(doc, &["echo", "fx3"]);
+    let mut v = view(&doc, &reg);
+    v.scroll_to_control(&ch, "insert.bypass");
+    let p = v.control_center(&ch, "insert.bypass").unwrap();
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, p)),
+        [("fx2".to_string(), "bypass".to_string(), 1.0)]
+    );
+    let doc = with_bypass(doc, &["fx2"]);
+    let mut v = view(&doc, &reg);
+    v.scroll_to_control(&ch, "insert.bypass");
+    let p = v.control_center(&ch, "insert.bypass").unwrap();
+    assert_eq!(set_param_cmds(&click(&mut v, &doc, &reg, p)).len(), 3);
+    assert!(
+        set_param_cmds(&click(&mut v, &doc, &reg, p))
+            .iter()
+            .all(|(_, param, value)| param == "bypass" && *value == 0.0)
+    );
+}
+
+#[test]
+fn without_a_chain_the_bypass_all_button_is_the_strips_own_switch() {
+    let (doc, reg) = (doc_with(0), console_registry());
+    let ch = key("ch-bass");
+    let mut v = view(&doc, &reg);
+    v.scroll_to_control(&ch, "insert.bypass");
+    let p = v.control_center(&ch, "insert.bypass").unwrap();
+    assert_eq!(
+        set_param_cmds(&click(&mut v, &doc, &reg, p)),
+        [("ch-bass".to_string(), "insert.bypass".to_string(), 1.0)]
+    );
+}
+
+#[test]
+fn the_chain_draws_a_b_per_effect_and_the_button_reads_bypass_all() {
+    let (doc, reg) = (doc_with(2), console_registry());
+    let t = texts(&doc, &reg);
+    assert_eq!(t.iter().filter(|s| *s == "B").count(), 2, "{t:?}");
+    assert!(t.iter().any(|s| s == "BYP ALL"));
+}

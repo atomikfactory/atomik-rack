@@ -534,6 +534,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),
     cmd(
+        "mixer.bypass_all_inserts",
+        "Bypass All Inserts",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.create_vca",
         "Create VCA from Selection",
         G::Mixer,
@@ -584,6 +591,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.toggle_compensation",
         "Delay Compensation",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.toggle_polarity",
+        "Toggle Polarity",
         G::Mixer,
         C::Global,
     )

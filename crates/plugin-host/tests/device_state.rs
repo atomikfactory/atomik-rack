@@ -77,6 +77,82 @@ fn bypass_is_a_five_millisecond_linear_crossfade_to_the_dry_main_input() {
     assert_eq!(shared.calls(), 11);
 }
 
+/// The bypassed output of an effect whose input is a unit impulse at `at` (after the fade has
+/// finished): the frames of both channels, `batches` batches long.
+fn bypassed_impulse(latency: u32, at: usize, batches: usize) -> (Vec<f32>, Vec<f32>) {
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Constant(0.5));
+    let (mut h, r) = harness(rig("st.bypass-latent", &fx_layout(), Box::new(probe)));
+    assert!(!r.manager.slot().set_latency(latency, SR));
+    h.set_param("bypass", 1.0);
+    for _ in 0..4 {
+        h.process();
+    }
+    let (mut l, mut rr) = (Vec::new(), Vec::new());
+    for b in 0..batches {
+        let mut x = [0.0; BATCH];
+        if (b * BATCH..(b + 1) * BATCH).contains(&at) {
+            x[at - b * BATCH] = 1.0;
+        }
+        *h.input_mut("in_l") = x;
+        *h.input_mut("in_r") = x.map(|s| -s);
+        h.process();
+        l.extend_from_slice(h.output("out_l"));
+        rr.extend_from_slice(h.output("out_r"));
+    }
+    (l, rr)
+}
+
+#[test]
+fn a_bypassed_latent_effect_still_delays_the_dry_signal_by_its_latency() {
+    for latency in [0u32, 1, 63, 64, 300, 1000] {
+        let at = 70;
+        let (l, r) = bypassed_impulse(latency, at, 24);
+        let want = at + latency as usize;
+        let hits: Vec<usize> = l
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| **s != 0.0)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(hits, [want], "latency {latency}: one impulse, delayed");
+        assert_eq!(l[want], 1.0);
+        assert_eq!(r[want], -1.0, "the right channel is delayed alike");
+    }
+}
+
+#[test]
+fn the_wet_and_the_delayed_dry_cross_fade_without_a_jump_at_a_toggle() {
+    // A latent effect that passes the signal through (the probe's unit gain, no delay of its own)
+    // is the worst case for a jump: the dry signal is a constant, so any mismatch of the two
+    // paths shows as a step. With a constant input the delayed dry equals the wet after the
+    // ring has filled.
+    let (probe, shared) = Probe::new();
+    shared.set_out(ProbeOut::Gain(1.0));
+    let (mut h, r) = harness(rig("st.bypass-xfade", &fx_layout(), Box::new(probe)));
+    assert!(!r.manager.slot().set_latency(100, SR));
+    *h.input_mut("in_l") = [0.25; BATCH];
+    *h.input_mut("in_r") = [0.25; BATCH];
+    for _ in 0..4 {
+        h.process();
+    }
+    h.set_param("bypass", 1.0);
+    let mut l = Vec::new();
+    for _ in 0..6 {
+        h.process();
+        l.extend_from_slice(h.output("out_l"));
+    }
+    assert!(
+        l.iter().all(|s| *s == 0.25),
+        "no step while the paths are aligned"
+    );
+    h.set_param("bypass", 0.0);
+    for _ in 0..6 {
+        h.process();
+        assert!(h.output("out_l").iter().all(|s| *s == 0.25));
+    }
+}
+
 #[test]
 fn a_bypassed_instrument_fades_to_silence_and_holds_new_notes_back() {
     let (probe, shared) = Probe::new();

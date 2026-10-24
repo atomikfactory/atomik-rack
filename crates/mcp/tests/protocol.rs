@@ -41,6 +41,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "session_relink",
     "session_midi",
     "session_audio_notes",
+    "session_set_param",
     "session_meters",
     "session_bounce",
     "session_close",

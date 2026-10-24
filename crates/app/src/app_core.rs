@@ -1625,6 +1625,87 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
+    // ------------------------------------------------------------------ channel strip upgrades
+
+    /// What the Mixer menu's polarity and insert bypass items can do with the selection `pane`
+    /// has.
+    pub fn strip_menu(&self, pane: Pane) -> crate::commands::StripMenu {
+        let strips = self.strips_for_vca(pane);
+        let doc = self.doc();
+        crate::commands::StripMenu {
+            can_polarity: !strips.is_empty(),
+            can_bypass: strips
+                .iter()
+                .any(|s| atomik_model::inserts_bypassed(doc, &self.registry, s).is_some()),
+        }
+    }
+
+    /// Mixer > Toggle Polarity: the selected strips' `input.phase`, in one undo step: all
+    /// inverted switch back to normal, otherwise every strip is inverted. False, with a message,
+    /// when nothing is selected.
+    pub fn toggle_polarity(&mut self, pane: Pane) -> bool {
+        let strips = self.strips_for_vca(pane);
+        if strips.is_empty() {
+            self.reject("Select one or more channels or tracks to flip the polarity of".into());
+            return false;
+        }
+        let inverted = |core: &Self, s: &DeviceKey| {
+            core.doc()
+                .device(s)
+                .and_then(|d| d.params.get("input.phase"))
+                .is_some_and(|v| *v >= 0.5)
+        };
+        let all = strips.iter().all(|s| inverted(self, s));
+        let commands: Vec<Command> = strips
+            .iter()
+            .filter(|s| inverted(self, s) == all)
+            .map(|s| Command::SetParam {
+                key: s.clone(),
+                param: "input.phase".into(),
+                value: if all { 0.0 } else { 1.0 },
+                merge: None,
+            })
+            .collect();
+        self.apply_batch(commands)
+    }
+
+    /// Mixer > Bypass All Inserts: the insert effects of the selected strips, in one undo step:
+    /// when every effect that can be bypassed already is, they switch back in, otherwise all are
+    /// bypassed. Each effect keeps its delay compensation. False, with a message, when nothing
+    /// is selected or the strips have nothing to bypass.
+    pub fn bypass_all_inserts(&mut self, pane: Pane) -> bool {
+        let strips = self.strips_for_vca(pane);
+        if strips.is_empty() {
+            self.reject("Select one or more channels or tracks to bypass the inserts of".into());
+            return false;
+        }
+        let doc = self.doc();
+        let states: Vec<bool> = strips
+            .iter()
+            .filter_map(|s| atomik_model::inserts_bypassed(doc, &self.registry, s))
+            .collect();
+        if states.is_empty() {
+            self.reject("The selected strips have no insert effects to bypass".into());
+            return false;
+        }
+        let bypass = !states.iter().all(|on| *on);
+        let commands: Vec<Command> = strips
+            .iter()
+            .flat_map(|s| atomik_model::bypass_inserts_commands(doc, &self.registry, s, bypass))
+            .collect();
+        self.apply_batch(commands)
+    }
+
+    /// Applies `commands` as one undo step (a single command as itself); true when the step
+    /// was made or there was nothing to change.
+    fn apply_batch(&mut self, mut commands: Vec<Command>) -> bool {
+        match commands.len() {
+            0 => true,
+            1 => self.apply_command(commands.remove(0)).is_ok(),
+            _ => self.apply_command(Command::Batch(commands)).is_ok(),
+        }
+    }
+
     // ------------------------------------------------------------------ live notes
 
     /// The notes input of device `key` in the engine, if it has one.

@@ -1326,6 +1326,7 @@ impl<B: AudioBackend> Shell<B> {
             org: self.core.arrangement().org_menu(),
             audio: self.core.arrangement().audio_menu(),
             vca: self.core.vca_menu(self.live_pane(self.focus)),
+            strip: self.core.strip_menu(self.live_pane(self.focus)),
             freeze: self.core.freeze_menu(),
         }
     }
@@ -3309,6 +3310,14 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::DeleteVca(id) => {
                 self.core.delete_vca(self.live_pane(self.focus), id);
+                Vec::new()
+            }
+            AppCommand::TogglePolarity => {
+                self.core.toggle_polarity(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::BypassAllInserts => {
+                self.core.bypass_all_inserts(self.live_pane(self.focus));
                 Vec::new()
             }
             AppCommand::ToggleCompensation => {

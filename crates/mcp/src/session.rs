@@ -90,6 +90,11 @@ pub const TOOLS: &[Tool] = &[
         run: audio_notes,
     },
     Tool {
+        name: "session_set_param",
+        definition: set_param_def,
+        run: set_param,
+    },
+    Tool {
         name: "session_meters",
         definition: meters_def,
         run: meters,
@@ -890,6 +895,77 @@ fn screenshot(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "saved_to": save_to.map(|p| p.to_string_lossy().into_owned()),
     }))
     .with_png(png))
+}
+
+// ---------------------------------------------------------------- session_set_param
+
+fn set_param_def() -> Value {
+    definition(
+        "session_set_param",
+        "Sets a param of a device in the session's document, as turning its knob does: one undo step, clamped to the param's range. For the channel strip it is how a headless session sets the input trim (`input.gain`, dB), the polarity (`input.phase`, 0 or 1), the parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`, `pcomp.release`, `pcomp.makeup`, `pcomp.mix`) or the bypass of an insert effect (`bypass`, 0 or 1). `list_devices` with a `type_id` lists the keys and ranges; `session_status` names the device keys. Returns the value the param has now.",
+        &[
+            (
+                "device",
+                "string",
+                "The device key (a channel strip's key is under console in session_status).",
+            ),
+            (
+                "param",
+                "string",
+                "The param key, as `list_devices` shows it.",
+            ),
+            (
+                "value",
+                "number",
+                "The plain value (dB, ms, 0 or 1 for a switch).",
+            ),
+        ],
+        &["device", "param", "value"],
+    )
+}
+
+fn set_param(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let device = args.str("device")?.to_owned();
+    let param = args.str("param")?.to_owned();
+    let value = args.f64("value")?;
+    if !value.is_finite() {
+        return Err("`value` must be a finite number".into());
+    }
+    let session = server.require_session()?;
+    let key = atomik_model::DeviceKey(device.clone());
+    let core = session.shell_mut().core_mut();
+    let known = core.doc().device(&key).is_some_and(|d| {
+        core.registry()
+            .get(&d.type_id)
+            .is_some_and(|f| f.descriptor.param_by_key(&param).is_some())
+    });
+    if !known {
+        return Err(format!("no param `{param}` on a device `{device}`"));
+    }
+    core.apply_command(atomik_model::Command::SetParam {
+        key: key.clone(),
+        param: param.clone(),
+        value: value as f32,
+        merge: None,
+    })
+    .map_err(|e| e.to_string())?;
+    session.shell_mut().frame();
+    let core = session.shell().core();
+    // An unset param (or one set back to its default) has the descriptor's default.
+    let now = core.doc().device(&key).and_then(|d| {
+        let p = core
+            .registry()
+            .get(&d.type_id)?
+            .descriptor
+            .param_by_key(&param)?;
+        Some(p.clamp(d.params.get(&param).copied().unwrap_or(p.default)))
+    });
+    Ok(ToolOutput::json(&json!({
+        "device": device,
+        "param": param,
+        "value": now,
+        "can_undo": core.document().can_undo(),
+    })))
 }
 
 // ---------------------------------------------------------------- session_save

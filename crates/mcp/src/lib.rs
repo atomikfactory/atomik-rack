@@ -10,8 +10,8 @@
 //!   `analyze_audio`, `compare_audio`, `list_plugins`.
 //! - [`session`]: the stateful tools over one headless [`atomik_app::shell::Shell`]:
 //!   `session_open`, `session_commands`, `session_command`, `session_pointer`, `session_key`,
-//!   `session_texts`, `session_screenshot`, `session_status`, `session_save`, `session_meters`,
-//!   `session_bounce`, `session_close`.
+//!   `session_texts`, `session_screenshot`, `session_status`, `session_save`, `session_set_param`,
+//!   `session_meters`, `session_bounce`, `session_close`.
 //! - [`analysis`]: the audio measurements behind `analyze_audio` and `compare_audio`.
 //!
 //! `docs/MCP.md` is the reference and the QA recipes.

@@ -5,7 +5,8 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Cable, Command, ConsoleCommand, Document, INSERT_SLOTS, InsertEffect, ModelError, insert_chain,
+    Cable, Command, ConsoleCommand, Document, INSERT_SLOTS, InsertEffect, ModelError,
+    bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
 };
 use common::*;
 
@@ -316,4 +317,97 @@ fn the_chain_is_read_back_from_hand_cabled_loops() {
     assert_eq!(chain_of(&d, &reg, "channel"), ["delay", "eq"]);
     d.apply(set("channel", 2, existing("comp")), &reg).unwrap();
     assert_eq!(chain_of(&d, &reg, "channel"), ["delay", "eq", "comp"]);
+}
+
+// ------------------------------------------------------------------ bypassing the inserts
+
+fn bypass_of(d: &Document, dev: &str) -> f32 {
+    d.doc()
+        .device(&key(dev))
+        .unwrap()
+        .params
+        .get("bypass")
+        .copied()
+        .unwrap_or(0.0)
+}
+
+fn two_inserts(reg: &Registry) -> Document {
+    let mut d = rack(reg);
+    d.apply(set("channel", 0, existing("comp")), reg).unwrap();
+    d.apply(set("channel", 1, existing("eq")), reg).unwrap();
+    d
+}
+
+#[test]
+fn a_chain_reports_its_bypass_state_and_nothing_to_bypass_without_effects() {
+    let reg = console_registry();
+    let mut d = two_inserts(&reg);
+    let chain = chain_of(&d, &reg, "channel");
+    assert_eq!(chain, ["comp", "eq"]);
+    assert_eq!(
+        inserts_bypassed(d.doc(), &reg, &key("channel")),
+        Some(false)
+    );
+    d.apply(set_param("comp", "bypass", 1.0), &reg).unwrap();
+    assert_eq!(
+        inserts_bypassed(d.doc(), &reg, &key("channel")),
+        Some(false),
+        "one still plays"
+    );
+    d.apply(set_param("eq", "bypass", 1.0), &reg).unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &key("channel")), Some(true));
+    let states = insert_bypass_states(d.doc(), &reg, &key("channel"));
+    assert_eq!(states, [(key("comp"), true), (key("eq"), true)]);
+    // A strip without a chain has nothing to bypass.
+    let d = rack(&reg);
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &key("channel")), None);
+    assert!(bypass_inserts_commands(d.doc(), &reg, &key("channel"), true).is_empty());
+}
+
+#[test]
+fn bypass_all_is_one_undo_step_that_sets_every_effect_and_restores_them() {
+    let reg = console_registry();
+    let mut d = two_inserts(&reg);
+    d.apply(set_param("eq", "bypass", 1.0), &reg).unwrap();
+    // Only what changes: the eq is already bypassed.
+    let on = bypass_inserts_commands(d.doc(), &reg, &key("channel"), true);
+    assert_eq!(on.len(), 1);
+    d.apply(Command::Batch(on), &reg).unwrap();
+    assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (1.0, 1.0));
+    assert!(bypass_inserts_commands(d.doc(), &reg, &key("channel"), true).is_empty());
+    let off = bypass_inserts_commands(d.doc(), &reg, &key("channel"), false);
+    assert_eq!(off.len(), 2);
+    d.apply(Command::Batch(off), &reg).unwrap();
+    assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (0.0, 0.0));
+    assert_eq!(
+        inserts_bypassed(d.doc(), &reg, &key("channel")),
+        Some(false)
+    );
+    // Each batch is one undo step, and redo walks forward again.
+    d.undo(&reg).unwrap();
+    assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (1.0, 1.0));
+    d.undo(&reg).unwrap();
+    assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (0.0, 1.0));
+    d.redo(&reg).unwrap();
+    assert_eq!((bypass_of(&d, "comp"), bypass_of(&d, "eq")), (1.0, 1.0));
+}
+
+#[test]
+fn the_legacy_strip_bypass_counts_as_bypassed_and_is_cleared_on_restore() {
+    let reg = console_registry();
+    let mut d = two_inserts(&reg);
+    d.apply(set_param("channel", "insert.bypass", 1.0), &reg)
+        .unwrap();
+    assert_eq!(inserts_bypassed(d.doc(), &reg, &key("channel")), Some(true));
+    let restore = bypass_inserts_commands(d.doc(), &reg, &key("channel"), false);
+    assert_eq!(
+        restore.len(),
+        1,
+        "the effects are not bypassed, the strip switch is"
+    );
+    d.apply(Command::Batch(restore), &reg).unwrap();
+    assert_eq!(
+        inserts_bypassed(d.doc(), &reg, &key("channel")),
+        Some(false)
+    );
 }

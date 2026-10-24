@@ -20,7 +20,7 @@ validate, bounce (project or patch to WAV, with the audio report), analyze_audio
 (against a reference render), list_plugins. Stateful (one headless app at a time): session_open, \
 then session_commands / session_command (menu commands), session_pointer and session_key (input), \
 session_texts (every text the UI draws, with positions), session_screenshot (PNG), session_status, \
-session_meters (what the spectrum and phase meter devices show at a position), session_bounce (render what the session holds), session_save, session_close. The session has no \
+session_set_param (turn a device's knob: a channel strip's trim, polarity, parallel compressor or an insert's bypass), session_meters (what the spectrum and phase meter devices show at a position), session_bounce (render what the session holds), session_save, session_close. The session has no \
 audio device: it checks the model, the UI and the bounce, not live playback. Paths are relative to \
 the server's working directory and must lie inside its allowed folders.";
 

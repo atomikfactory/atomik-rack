@@ -9,10 +9,16 @@
 //!
 //! Commands re-cable the whole chain in order (`send → fx1 → … → return`) in one undo step
 //! on a scratch copy of the document, so a rejection changes nothing.
+//!
+//! **Bypass** is the `bypass` param of each effect, not a switch of the strip: a bypassed effect
+//! keeps its own delay compensation (a built-in effect delays its dry signal by its latency, a
+//! plugin device does the same), so the strip stays time aligned with the other channels.
+//! [`inserts_bypassed`] reads the state of a chain and [`bypass_inserts_commands`] builds the
+//! commands of the strip's "bypass all inserts" switch.
 
 use crate::console::{INSERT_SLOTS, InsertEffect, is_console_type};
 use crate::console_cmd::{Planner, at, bad, wire};
-use crate::{Cable, DeviceKey, ModelError, RackDoc, rules};
+use crate::{Cable, Command, DeviceKey, ModelError, RackDoc, rules};
 use atomik_device_sdk::{DeviceKind, Direction, Registry, SocketKind};
 
 /// Longest chain read back from cables (a guard; edits allow [`INSERT_SLOTS`]).
@@ -54,6 +60,74 @@ pub fn insert_chain(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> V
         sockets = OUT;
     }
     chain
+}
+
+/// The key of the bypass param of an effect (host-style, on every built-in effect and plugin).
+const BYPASS: &str = "bypass";
+
+/// The strip's own, legacy `insert.bypass` param (not delay compensated; see `atomik.channel`).
+const STRIP_BYPASS: &str = "insert.bypass";
+
+/// Whether `param` of `key` is on (set to 0.5 or more), the descriptor default when unset.
+fn param_on(doc: &RackDoc, registry: &Registry, key: &DeviceKey, param: &str) -> Option<bool> {
+    let device = doc.device(key)?;
+    let desc = registry.get(&device.type_id)?.descriptor;
+    let p = desc.param_by_key(param)?;
+    Some(p.clamp(device.params.get(param).copied().unwrap_or(p.default)) >= 0.5)
+}
+
+/// The effects of `device`'s insert chain that can be bypassed, in signal order, each with
+/// whether it is bypassed now.
+pub fn insert_bypass_states(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Vec<(DeviceKey, bool)> {
+    insert_chain(doc, registry, device)
+        .into_iter()
+        .filter_map(|k| param_on(doc, registry, &k, BYPASS).map(|on| (k, on)))
+        .collect()
+}
+
+/// Whether `device`'s inserts are bypassed: `Some(true)` when every effect that can be
+/// bypassed is (or the strip's legacy `insert.bypass` is on), `Some(false)` when one plays, and
+/// `None` when there is nothing to bypass (no chain, or only effects without a bypass).
+pub fn inserts_bypassed(doc: &RackDoc, registry: &Registry, device: &DeviceKey) -> Option<bool> {
+    let legacy = param_on(doc, registry, device, STRIP_BYPASS).unwrap_or(false);
+    let states = insert_bypass_states(doc, registry, device);
+    if legacy {
+        return Some(true);
+    }
+    if states.is_empty() {
+        return None;
+    }
+    Some(states.iter().all(|(_, on)| *on))
+}
+
+/// The commands that bypass (`bypass` true) or restore every effect of `device`'s insert chain
+/// that can be bypassed, for one `Command::Batch` (one undo step). Restoring also clears the
+/// strip's legacy `insert.bypass`. Only what changes is included; empty when nothing does.
+pub fn bypass_inserts_commands(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    bypass: bool,
+) -> Vec<Command> {
+    let set = |key: &DeviceKey, param: &str, on: bool| Command::SetParam {
+        key: key.clone(),
+        param: param.to_owned(),
+        value: if on { 1.0 } else { 0.0 },
+        merge: None,
+    };
+    let mut commands: Vec<Command> = insert_bypass_states(doc, registry, device)
+        .into_iter()
+        .filter(|(_, on)| *on != bypass)
+        .map(|(k, _)| set(&k, BYPASS, bypass))
+        .collect();
+    if !bypass && param_on(doc, registry, device, STRIP_BYPASS) == Some(true) {
+        commands.push(set(device, STRIP_BYPASS, false));
+    }
+    commands
 }
 
 /// True for an effect device with stereo audio `in_l/in_r` and `out_l/out_r`.

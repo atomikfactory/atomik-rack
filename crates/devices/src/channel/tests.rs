@@ -106,6 +106,18 @@ fn descriptor_keys_match_contract_exactly() {
         "internal.vca_mute".into(),
         "internal.vca_solo".into(),
     ]);
+    params.extend(
+        [
+            "on",
+            "threshold",
+            "ratio",
+            "attack",
+            "release",
+            "makeup",
+            "mix",
+        ]
+        .map(|p| format!("pcomp.{p}")),
+    );
     let mut sockets: Vec<String> = [
         "in_l",
         "in_r",
@@ -1222,4 +1234,262 @@ fn cv_inputs_are_allocation_free_and_finite() {
         "{o:?}"
     );
     assert!(approx(o[2], 0.3, 1e-5), "{o:?}");
+}
+
+// ------------------------------------------------------------------ input trim and polarity
+
+/// A program with loud and quiet passages: a 220 Hz sine whose level steps every 0.1 s.
+fn program(n: usize) -> f32 {
+    let level = if (n / 4_800).is_multiple_of(2) {
+        0.9
+    } else {
+        0.05
+    };
+    sine(220.0, level)(n)
+}
+
+/// `out_l` of a strip with the left pan and `setup` applied before the first batch.
+fn program_out(batches: usize, setup: impl FnOnce(&mut DeviceHarness)) -> Vec<f32> {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    setup(&mut h);
+    run_signal(&mut h, &["in_l", "in_r"], program, batches, &["out_l"]).remove(0)
+}
+
+#[test]
+fn polarity_inverts_the_strip_and_nulls_against_the_inverted_copy() {
+    let normal = program_out(200, |_| {});
+    let flipped = program_out(200, |h| h.set_param("input.phase", 1.0));
+    assert!(normal.iter().any(|s| s.abs() > 0.5), "it sounds");
+    for (a, b) in normal.iter().zip(&flipped) {
+        assert_eq!(
+            (a + 0.0).to_bits(),
+            (-b + 0.0).to_bits(),
+            "an exact sign flip"
+        );
+        assert!((a + b).abs() == 0.0, "the sum of the pair is silence");
+    }
+    // Flipped back it is the normal strip again, after the ramp.
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("input.phase", 1.0);
+    run_signal(&mut h, &["in_l", "in_r"], program, 20, &["out_l"]);
+    h.set_param("input.phase", 0.0);
+    let tail = run_signal(&mut h, &["in_l", "in_r"], program, 40, &["out_l"]).remove(0);
+    assert!(tail.iter().any(|s| s.abs() > 0.5));
+}
+
+#[test]
+fn polarity_flips_through_the_ramp_without_a_click() {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    dc(&mut h, "in_l", 0.5);
+    settled(&mut h, &["out_l"]);
+    h.set_param("input.phase", 1.0);
+    let ramp = h.render(8, &["out_l"]).remove(0);
+    assert!(
+        max_step(&ramp) < 0.5 * 2.0 / 200.0,
+        "a flip crosses zero over about 5 ms, not in one sample: {}",
+        max_step(&ramp)
+    );
+    assert!(approx(*ramp.last().unwrap(), -0.5, 1e-6));
+}
+
+#[test]
+fn input_trim_is_the_db_gain_over_the_whole_range() {
+    for db in [-24.0f32, -12.0, -1.5, 0.0, 3.0, 12.0, 24.0] {
+        let got = program_out(8, |h| h.set_param("input.gain", db));
+        let plain = program_out(8, |_| {});
+        let want = 10f32.powf(db / 20.0);
+        for (g, p) in got.iter().zip(&plain).skip(20) {
+            assert!(
+                approx(*g, *p * want, 1e-5 * want.max(1.0)),
+                "{db} dB: {g} vs {}",
+                p * want
+            );
+        }
+    }
+    // Beyond the range it is clamped by the descriptor, not by the DSP: +24 is the top.
+    assert!(
+        approx(PARAMS[P_INPUT_GAIN].max, 24.0, 0.0) && approx(PARAMS[P_INPUT_GAIN].min, -24.0, 0.0)
+    );
+}
+
+// ------------------------------------------------------------------ the parallel compressor
+
+fn pcomp_params() -> [(&'static str, f32); 5] {
+    [
+        ("pcomp.threshold", -30.0),
+        ("pcomp.ratio", 8.0),
+        ("pcomp.attack", 10.0),
+        ("pcomp.release", 150.0),
+        ("pcomp.makeup", 6.0),
+    ]
+}
+
+#[test]
+fn the_parallel_compressor_is_off_by_default_and_costs_the_signal_nothing() {
+    let d = |k: &str| DESCRIPTOR.param_by_key(k).unwrap().default;
+    assert_eq!(d("pcomp.on"), 0.0);
+    assert!(approx(d("pcomp.mix"), 0.5, 0.0));
+    let base = program_out(200, |_| {});
+    // Off with the mix up, on with the mix at 0: both are the untouched strip, bit for bit.
+    let off = program_out(200, |h| h.set_param("pcomp.mix", 1.0));
+    let zero = program_out(200, |h| {
+        h.set_param("pcomp.on", 1.0);
+        h.set_param("pcomp.mix", 0.0);
+    });
+    let set_all = program_out(200, |h| {
+        for (k, v) in pcomp_params() {
+            h.set_param(k, v);
+        }
+    });
+    for other in [&off, &zero, &set_all] {
+        assert!(
+            base.iter()
+                .zip(other.iter())
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+    }
+}
+
+#[test]
+fn the_parallel_compressor_at_mix_one_is_the_standalone_compressor_with_its_makeup() {
+    let got = program_out(200, |h| {
+        h.set_param("pcomp.on", 1.0);
+        h.set_param("pcomp.mix", 1.0);
+        for (k, v) in pcomp_params() {
+            h.set_param(k, v);
+        }
+    });
+    let mut c = Compressor::new(SR as f32);
+    c.set_threshold_db(-30.0);
+    c.set_ratio(8.0);
+    c.set_attack_ms(10.0);
+    c.set_release_ms(150.0);
+    let makeup = db_to_gain(6.0);
+    let mut worst = 0.0f32;
+    let mut squashed = false;
+    for (n, y) in got.iter().enumerate() {
+        let x = program(n);
+        let g = c.process(x, x) * makeup;
+        // Pan hard left, unity fader and full width leave the left channel as it is.
+        worst = worst.max((y - x * g).abs());
+        squashed |= g < 0.5;
+    }
+    assert!(squashed, "the loud passages are really compressed");
+    assert!(
+        worst < 1e-5,
+        "a standalone compressor render differs by {worst}"
+    );
+    // The compressed strip is clearly not the dry one.
+    let dry = program_out(200, |_| {});
+    assert!(got.iter().zip(&dry).any(|(a, b)| (a - b).abs() > 0.05));
+}
+
+#[test]
+fn the_parallel_blend_is_linear_between_the_dry_and_the_compressed_signal() {
+    let set = |mix: f32| {
+        program_out(200, move |h| {
+            h.set_param("pcomp.on", 1.0);
+            h.set_param("pcomp.mix", mix);
+            for (k, v) in pcomp_params() {
+                h.set_param(k, v);
+            }
+        })
+    };
+    let (dry, half, wet) = (program_out(200, |_| {}), set(0.5), set(1.0));
+    for n in 0..dry.len() {
+        let want = 0.5 * dry[n] + 0.5 * wet[n];
+        assert!(approx(half[n], want, 1e-5), "{n}: {} vs {want}", half[n]);
+    }
+}
+
+#[test]
+fn the_parallel_compressor_adds_no_latency_and_keeps_the_dry_path_aligned() {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("pcomp.on", 1.0);
+    h.set_param("pcomp.mix", 1.0);
+    for (k, v) in pcomp_params() {
+        h.set_param(k, v);
+    }
+    assert_eq!(h.device().latency_frames(), 0, "nothing is reported");
+    // A unit impulse stays at its frame (the compressor has no lookahead) at any mix.
+    for mix in [0.0f32, 0.3, 1.0] {
+        h.set_param("pcomp.mix", mix);
+        assert_eq!(impulse_position(&mut h), 0, "mix {mix}");
+    }
+    // With a latency adjust the pair moves together: still one impulse, not two.
+    h.set_param("latency.adjust", 100.0);
+    h.set_param("pcomp.mix", 0.5);
+    h.device_mut().reset();
+    let y = run_signal(
+        &mut h,
+        &["in_l"],
+        |n| if n == 0 { 1.0 } else { 0.0 },
+        8,
+        &["out_l"],
+    );
+    let hits: Vec<usize> = y[0]
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.abs() > 1e-3)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(hits, [100]);
+}
+
+#[test]
+fn switching_the_parallel_compressor_on_and_off_ramps_without_a_click() {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    for (k, v) in pcomp_params() {
+        h.set_param(k, v);
+    }
+    h.set_param("pcomp.mix", 1.0);
+    dc(&mut h, "in_l", 0.5);
+    dc(&mut h, "in_r", 0.5);
+    settled(&mut h, &["out_l"]);
+    h.set_param("pcomp.on", 1.0);
+    let up = h.render(6, &["out_l"]).remove(0);
+    assert!(max_step(&up) < 0.05, "on: {}", max_step(&up));
+    h.set_param("pcomp.on", 0.0);
+    let down = h.render(60, &["out_l"]).remove(0);
+    assert!(max_step(&down) < 0.05, "off: {}", max_step(&down));
+    assert!(
+        approx(*down.last().unwrap(), 0.5, 1e-6),
+        "back to the dry level"
+    );
+    // Switched off and settled the section does not run: a fresh strip agrees bit for bit.
+    let plain = {
+        let mut p = channel();
+        p.set_param("pan", -1.0);
+        dc(&mut p, "in_l", 0.5);
+        dc(&mut p, "in_r", 0.5);
+        settled(&mut p, &["out_l"])[0]
+    };
+    assert_eq!(down.last().unwrap().to_bits(), plain.to_bits());
+}
+
+#[test]
+fn the_parallel_compressor_taps_the_signal_after_the_insert_return() {
+    // The return replaces the signal, so the compressor listens to the return: a loud return
+    // is squashed even though the input is quiet.
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    h.set_param("pcomp.on", 1.0);
+    h.set_param("pcomp.mix", 1.0);
+    h.set_param("pcomp.makeup", 0.0);
+    h.set_param("pcomp.threshold", -40.0);
+    h.set_param("pcomp.ratio", 20.0);
+    h.set_param("pcomp.attack", 0.1);
+    dc(&mut h, "in_l", 0.001);
+    dc(&mut h, "insert_return_l", 0.8);
+    let o = settled(&mut h, &["out_l"]);
+    assert!(
+        o[0] < 0.4 && o[0] > 0.0,
+        "the return {} is compressed",
+        o[0]
+    );
 }

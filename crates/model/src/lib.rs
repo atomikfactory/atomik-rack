@@ -104,7 +104,9 @@ pub use console::{
     MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
-pub use console_insert::insert_chain;
+pub use console_insert::{
+    bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
+};
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 use history::Edit;

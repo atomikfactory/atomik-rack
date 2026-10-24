@@ -722,3 +722,131 @@ fn the_arrangement_selection_is_used_through_its_tracks_channels() {
         vec![channel_of(&c, "b")]
     );
 }
+
+// ------------------------------------------------------------------ channel strip upgrades
+
+fn phase_of(c: &AppCore<RecordingSink>, strip: &DeviceKey) -> f32 {
+    c.doc()
+        .device(strip)
+        .and_then(|d| d.params.get("input.phase").copied())
+        .unwrap_or(0.0)
+}
+
+#[test]
+fn toggle_polarity_flips_the_selected_strips_in_one_undo_step() {
+    let mut c = two_channels();
+    let (ka, kb) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.strip_menu(Pane::Rack).can_polarity);
+    assert!(c.toggle_polarity(Pane::Rack));
+    assert_eq!((phase_of(&c, &ka), phase_of(&c, &kb)), (1.0, 1.0));
+    assert!(c.undo());
+    assert_eq!(
+        (phase_of(&c, &ka), phase_of(&c, &kb)),
+        (0.0, 0.0),
+        "both strips in one step"
+    );
+    assert!(c.redo());
+    // All inverted: back to normal. Mixed: all become inverted.
+    assert!(c.toggle_polarity(Pane::Rack));
+    assert_eq!((phase_of(&c, &ka), phase_of(&c, &kb)), (0.0, 0.0));
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.toggle_polarity(Pane::Rack));
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.toggle_polarity(Pane::Rack));
+    assert_eq!((phase_of(&c, &ka), phase_of(&c, &kb)), (1.0, 1.0));
+}
+
+#[test]
+fn toggle_polarity_reaches_the_engine_and_says_what_to_select() {
+    let mut c = two_channels();
+    c.view_mut().set_selection(&[], None);
+    assert!(!c.strip_menu(Pane::Rack).can_polarity);
+    assert!(!c.toggle_polarity(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("Select"));
+    let ka = channel_of(&c, "a");
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    c.sink_mut().take();
+    assert!(c.toggle_polarity(Pane::Rack));
+    let calls = c.sink_mut().take();
+    let id = c.device_id(&ka).unwrap();
+    assert_eq!(vca_calls(&c, &calls, "input.phase"), vec![(id, 1.0)]);
+}
+
+/// `a`'s channel with two reverbs as inserts.
+fn with_two_inserts() -> (AppCore<RecordingSink>, DeviceKey) {
+    let mut c = two_channels();
+    for k in ["fx1", "fx2"] {
+        c.apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.reverb".into(),
+            key: Some(key(k)),
+        })
+        .unwrap();
+    }
+    let ka = channel_of(&c, "a");
+    for (slot, k) in ["fx1", "fx2"].into_iter().enumerate() {
+        c.apply_command(Command::Console(ConsoleCommand::SetInsert {
+            channel: ka.clone(),
+            slot,
+            effect: Some(atomik_model::InsertEffect::Existing(key(k))),
+        }))
+        .unwrap();
+    }
+    (c, ka)
+}
+
+fn bypass_of(c: &AppCore<RecordingSink>, effect: &str) -> f32 {
+    c.doc()
+        .device(&key(effect))
+        .and_then(|d| d.params.get("bypass").copied())
+        .unwrap_or(0.0)
+}
+
+#[test]
+fn bypass_all_inserts_bypasses_every_effect_and_restores_them_in_one_undo_step() {
+    let (mut c, _) = with_two_inserts();
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.strip_menu(Pane::Rack).can_bypass);
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!((bypass_of(&c, "fx1"), bypass_of(&c, "fx2")), (1.0, 1.0));
+    assert!(c.undo());
+    assert_eq!(
+        (bypass_of(&c, "fx1"), bypass_of(&c, "fx2")),
+        (0.0, 0.0),
+        "one undo step"
+    );
+    assert!(c.redo());
+    // With one playing again, the command bypasses the rest; with all bypassed it restores.
+    c.apply_command(Command::SetParam {
+        key: key("fx1"),
+        param: "bypass".into(),
+        value: 0.0,
+        merge: None,
+    })
+    .unwrap();
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!((bypass_of(&c, "fx1"), bypass_of(&c, "fx2")), (1.0, 1.0));
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!((bypass_of(&c, "fx1"), bypass_of(&c, "fx2")), (0.0, 0.0));
+}
+
+#[test]
+fn bypass_all_inserts_needs_a_strip_with_inserts() {
+    let (mut c, _) = with_two_inserts();
+    c.view_mut().set_selection(&[], None);
+    assert!(!c.bypass_all_inserts(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("Select"));
+    // `b` has no insert effects.
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    assert!(!c.strip_menu(Pane::Rack).can_bypass);
+    assert!(!c.bypass_all_inserts(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("no insert effects"));
+    // With both selected only the chain of `a` is touched.
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.bypass_all_inserts(Pane::Rack));
+    assert_eq!(bypass_of(&c, "fx1"), 1.0);
+}

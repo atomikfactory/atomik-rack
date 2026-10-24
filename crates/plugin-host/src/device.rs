@@ -13,6 +13,12 @@
 //!    is gone and the device is CRASHED for good),
 //! 5. writes the outputs through the 5 ms bypass crossfade and forwards a note effect's notes.
 //!
+//! **Bypass keeps the delay compensation.** An effect's dry signal is the main input delayed by
+//! the plugin's reported latency (a ring of 100 ms, written every sample), so a bypassed latent
+//! plugin still lands where the engine's plugin delay compensation expects it, the crossfade
+//! between the wet and the dry signal is phase aligned, and a toggle does not move the timing of
+//! the channel. With no latency the delayed dry signal is the input bit for bit.
+//!
 //! Nothing in `process` allocates, locks or blocks; everything it needs is sized in `new`.
 //! What the plugin itself does inside `process` is its own business.
 
@@ -47,6 +53,12 @@ const EVENT_CAPACITY: usize = 4 * MAX_EVENTS_PER_BATCH + 256;
 
 /// Length of the bypass crossfade.
 const BYPASS_FADE_SECONDS: f64 = 0.005;
+
+/// Length of the dry ring of an effect in seconds (rounded up to a power of two frames).
+const DRY_RING_SECONDS: f64 = 0.1;
+
+/// Smallest dry ring in frames.
+const MIN_DRY_RING: usize = 8192;
 
 /// "No note open on this key."
 const CLOSED: i32 = -1;
@@ -96,6 +108,11 @@ pub struct PluginDevice {
     bypass: bool,
     bypass_mix: f32,
     fade_step: f32,
+    /// The main input of an effect, written every sample, read `latency` frames late: the dry
+    /// signal of the bypass. Empty for a device that is not an effect.
+    dry_ring: [Vec<f32>; 2],
+    dry_mask: usize,
+    dry_write: usize,
 
     sample_rate: f64,
     activation_rate: f64,
@@ -125,6 +142,13 @@ fn idle_batches_for(sample_rate: f64) -> u32 {
 fn fade_step_for(sample_rate: f64) -> f32 {
     let frames = (sample_rate * BYPASS_FADE_SECONDS).round().max(1.0);
     (1.0 / frames) as f32
+}
+
+/// Frames of the dry ring for `sample_rate`.
+fn dry_ring_len(sample_rate: f64) -> usize {
+    ((sample_rate * DRY_RING_SECONDS).ceil() as usize)
+        .max(MIN_DRY_RING)
+        .next_power_of_two()
 }
 
 fn channel_count(c: Option<Channels>) -> usize {
@@ -186,6 +210,11 @@ impl PluginDevice {
         );
         let ids = param_ids(descriptor);
         let n = ids.len() + 1;
+        let dry_len = if descriptor.kind == DeviceKind::Effect {
+            dry_ring_len(activation_rate)
+        } else {
+            0
+        };
         let DeviceEnd {
             slot,
             to_manager,
@@ -217,6 +246,9 @@ impl PluginDevice {
             bypass: false,
             bypass_mix: 0.0,
             fade_step: fade_step_for(activation_rate),
+            dry_ring: [vec![0.0; dry_len], vec![0.0; dry_len]],
+            dry_mask: dry_len.saturating_sub(1),
+            dry_write: 0,
             sample_rate: activation_rate,
             activation_rate,
             restart_posted: false,
@@ -734,6 +766,26 @@ impl PluginDevice {
         }
     }
 
+    /// Writes `raw` into the dry ring and returns it delayed by the plugin's latency (the
+    /// input itself at zero latency). Silence for a device without a ring (not an effect).
+    fn delayed_dry(&mut self, raw: &[Batch; 2]) -> [Batch; 2] {
+        if self.dry_ring[0].is_empty() {
+            return [SILENCE; 2];
+        }
+        let latency = (self.slot.latency() as usize).min(self.dry_mask);
+        let mut out = [SILENCE; 2];
+        for i in 0..BATCH {
+            let w = self.dry_write;
+            self.dry_ring[0][w & self.dry_mask] = raw[0][i];
+            self.dry_ring[1][w & self.dry_mask] = raw[1][i];
+            let r = w.wrapping_sub(latency) & self.dry_mask;
+            out[0][i] = self.dry_ring[0][r];
+            out[1][i] = self.dry_ring[1][r];
+            self.dry_write = w.wrapping_add(1);
+        }
+        out
+    }
+
     /// Writes the main outputs: the wet signal through the bypass crossfade, or (when there is
     /// no valid wet signal) the dry input for effects and silence for the rest.
     fn write_outputs(
@@ -788,6 +840,14 @@ impl Device for PluginDevice {
         self.sample_rate = info.sample_rate.hz();
         self.fade_step = fade_step_for(self.sample_rate);
         self.idle_batches = idle_batches_for(self.sample_rate);
+        if !self.dry_ring[0].is_empty() {
+            let len = dry_ring_len(self.sample_rate);
+            if len != self.dry_ring[0].len() {
+                self.dry_ring = [vec![0.0; len], vec![0.0; len]];
+                self.dry_mask = len - 1;
+                self.dry_write = 0;
+            }
+        }
         if (self.sample_rate - self.activation_rate).abs() > 0.5 && !self.restart_posted {
             self.restart_posted = true;
             self.messenger.post(PluginMessage::RequestRestart);
@@ -798,6 +858,10 @@ impl Device for PluginDevice {
         self.close_all_notes();
         self.sleeping = false;
         self.quiet_batches = 0;
+        for ring in &mut self.dry_ring {
+            ring.fill(0.0);
+        }
+        self.dry_write = 0;
         self.bypass_mix = if self.bypass || !self.slot.powered() {
             1.0
         } else {
@@ -834,8 +898,10 @@ impl Device for PluginDevice {
             input_copy(ctx, self.sockets.in_r),
         ];
         self.in_peak = peak(&raw[0], &raw[1]);
+        // The dry signal of the bypass and of a failed device: the input, delayed by the
+        // latency the engine compensates for (an effect only).
         let dry = if self.descriptor.kind == DeviceKind::Effect {
-            raw
+            self.delayed_dry(&raw)
         } else {
             [SILENCE; 2]
         };
