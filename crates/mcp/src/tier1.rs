@@ -240,6 +240,29 @@ fn take_summary(lane: &Lane) -> Vec<Value> {
         .collect()
 }
 
+/// The song's groove library: name, step (`1/8`, `1/16`, `1/32`) and the slots as
+/// `[offset in steps, velocity scale]`. Empty for a song without grooves (the built-in ones are
+/// not listed).
+fn groove_summary(doc: &RackDoc) -> Vec<Value> {
+    doc.song
+        .grooves
+        .iter()
+        .map(|g| {
+            let step = match g.step {
+                atomik_model::StepResolution::Eighth => "1/8",
+                atomik_model::StepResolution::Sixteenth => "1/16",
+                atomik_model::StepResolution::ThirtySecond => "1/32",
+            };
+            let slots: Vec<Value> = g
+                .slots
+                .iter()
+                .map(|s| json!([s.offset, s.velocity]))
+                .collect();
+            json!({"name": g.name, "step": step, "slots": slots})
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -318,7 +341,8 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
         })
         .collect();
     let ppq = atomik_core::PPQ;
-    json!({
+    let grooves = groove_summary(doc);
+    let mut out = json!({
         "sample_rate": doc.sample_rate,
         "tempo_bpm": doc.tempo_bpm,
         "output_channels": doc.output_channels,
@@ -347,7 +371,11 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             "tracks": tracks,
         },
         "console": { "master": doc.console.master.is_some() },
-    })
+    });
+    if !grooves.is_empty() {
+        out["song"]["grooves"] = Value::Array(grooves);
+    }
+    out
 }
 
 fn project_inspect(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {

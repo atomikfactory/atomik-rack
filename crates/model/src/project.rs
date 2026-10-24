@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 20,
+//! { "format": "atomik-project", "version": 21,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -19,6 +19,8 @@
 //!             "markers"?: [{"tick", "name", "color"? ("#rrggbb")}…]   (v14; written only when non-empty),
 //!             "ranges"?: [{"start", "end", "name", "color"?}…]        (v14; written only when non-empty),
 //!             "track_heights"?: {"<device key>": 24..=400, …}         (v15; written only when non-empty),
+//!             "grooves"?: [{"name", "step", "slots": [[offset, velocity]…]}…]
+//!                                                                     (v21; written only when non-empty),
 //!             "tracks": [{ "device", "muted", "solo", "armed",
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio", "param"?,
 //!                                      "write"? (v18, automation lanes: "overwrite" | "latch"),
@@ -103,13 +105,14 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). Saving always writes version 20.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). **Version 20** files have no groove library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth" | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the name of a built-in groove; a groove has 1 to 32 slots, each an `offset` in steps (`-0.5..=0.5`) and a velocity scale (`0..=2`); at most 64 grooves; the field is omitted when the song has none. Saving always writes version 21.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
     MAX_BUS_NAME_CHARS, is_console_type,
 };
 use crate::controller::{ControllerKind, ControllerLane, check_lanes};
+use crate::groove::{Groove, GrooveSlot, MAX_GROOVES, builtin_groove};
 use crate::patch::{
     DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
     DEVICE_FIELDS_V11, DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str,
@@ -147,7 +150,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
 /// track heights) and 15 (no clip scales).
-pub const PROJECT_VERSION: u32 = 20;
+pub const PROJECT_VERSION: u32 = 21;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -318,6 +321,19 @@ const SONG_FIELDS_V15: &[&str] = &[
     "track_heights",
     "tracks",
 ];
+const SONG_FIELDS_V21: &[&str] = &[
+    "tempo",
+    "meter",
+    "loop",
+    "end",
+    "next_clip_id",
+    "markers",
+    "ranges",
+    "track_heights",
+    "grooves",
+    "tracks",
+];
+const GROOVE_FIELDS: &[&str] = &["name", "step", "slots"];
 const TRACK_FIELDS: &[&str] = &["device", "muted", "solo", "armed", "lanes"];
 const TRACK_FIELDS_V17: &[&str] = &["device", "muted", "solo", "armed", "no_chase", "lanes"];
 const NOTES_LANE_FIELDS: &[&str] = &["kind", "clips"];
@@ -511,7 +527,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=20 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=21 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1173,6 +1189,68 @@ fn load_track_heights(
     Ok(heights)
 }
 
+/// The optional `"grooves"` list, in file order.
+fn load_grooves(v: Option<&Value>, path: &JsonPath) -> Result<Vec<Groove>, ModelError> {
+    let Some(v) = v else {
+        return Ok(Vec::new());
+    };
+    let items = array(v, path)?;
+    if items.len() > MAX_GROOVES {
+        return Err(path.error(format!(
+            "{} grooves; a song holds at most {MAX_GROOVES}",
+            items.len()
+        )));
+    }
+    let mut grooves: Vec<Groove> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let p = path.index(i);
+        let e = object(item, &p, GROOVE_FIELDS, GROOVE_FIELDS)?;
+        let sp = p.field("step");
+        let step = match string(&e["step"], &sp)? {
+            "eighth" => StepResolution::Eighth,
+            "sixteenth" => StepResolution::Sixteenth,
+            "thirty_second" => StepResolution::ThirtySecond,
+            other => {
+                return Err(sp.error(format!(
+                    "expected \"eighth\", \"sixteenth\" or \"thirty_second\", found {other:?}"
+                )));
+            }
+        };
+        let slots_path = p.field("slots");
+        let mut slots = Vec::new();
+        for (j, slot) in array(&e["slots"], &slots_path)?.iter().enumerate() {
+            let sp = slots_path.index(j);
+            let pair = array(slot, &sp)?;
+            let [offset, velocity] = pair else {
+                return Err(sp.error(format!("expected a slot [offset, velocity], found {slot}")));
+            };
+            slots.push(GrooveSlot {
+                offset: number(offset, &sp.index(0))? as f32,
+                velocity: number(velocity, &sp.index(1))? as f32,
+            });
+        }
+        let groove = Groove {
+            name: string(&e["name"], &p.field("name"))?.to_string(),
+            step,
+            slots,
+        };
+        groove.validate().map_err(|m| p.error(m))?;
+        if builtin_groove(&groove.name).is_some() {
+            return Err(p.field("name").error(format!(
+                "{:?} is the name of a built-in groove",
+                groove.name
+            )));
+        }
+        if grooves.iter().any(|g| g.name == groove.name) {
+            return Err(p
+                .field("name")
+                .error(format!("a second groove named {:?}", groove.name)));
+        }
+        grooves.push(groove);
+    }
+    Ok(grooves)
+}
+
 /// The optional `"ranges"` list, loaded like the markers (sorted by start).
 fn load_ranges(v: Option<&Value>, path: &JsonPath) -> Result<Vec<RangeMarker>, ModelError> {
     let Some(v) = v else {
@@ -1233,7 +1311,9 @@ fn load_song(
     (doc, registry): (&RackDoc, &Registry),
     version: u64,
 ) -> Result<Song, ModelError> {
-    let allowed = if version >= 15 {
+    let allowed = if version >= 21 {
+        SONG_FIELDS_V21
+    } else if version >= 15 {
         SONG_FIELDS_V15
     } else if version >= 14 {
         SONG_FIELDS_V14
@@ -1325,6 +1405,7 @@ fn load_song(
         ranges: load_ranges(obj.get("ranges"), &path.field("ranges"))?,
         track_heights: BTreeMap::new(),
         lane_write: BTreeMap::new(),
+        grooves: load_grooves(obj.get("grooves"), &path.field("grooves"))?,
     };
     let tracks_path = path.field("tracks");
     let mut track_first: BTreeMap<DeviceKey, JsonPath> = BTreeMap::new();
@@ -2342,6 +2423,31 @@ fn write_song(w: &mut String, song: &Song) {
         .collect();
     if !heights.is_empty() {
         let _ = writeln!(w, "    \"track_heights\": {{{}}},", heights.join(", "));
+    }
+    if !song.grooves.is_empty() {
+        let _ = write!(w, "    \"grooves\": ");
+        list(
+            w,
+            "    ",
+            song.grooves.iter().map(|g| {
+                let step = match g.step {
+                    StepResolution::Eighth => "eighth",
+                    StepResolution::Sixteenth => "sixteenth",
+                    StepResolution::ThirtySecond => "thirty_second",
+                };
+                let slots: Vec<String> = g
+                    .slots
+                    .iter()
+                    .map(|s| format!("[{}, {}]", f32_text(s.offset), f32_text(s.velocity)))
+                    .collect();
+                format!(
+                    "{{\"name\": {}, \"step\": \"{step}\", \"slots\": [{}]}}",
+                    json_str(&g.name),
+                    slots.join(", ")
+                )
+            }),
+        );
+        let _ = writeln!(w, ",");
     }
     let _ = write!(w, "    \"tracks\": [");
     for (i, t) in song.tracks.iter().enumerate() {

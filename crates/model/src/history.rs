@@ -4,6 +4,7 @@
 use crate::WriteMode;
 use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
+use crate::groove::Groove;
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
 use crate::steps::StepSeqDoc;
@@ -140,6 +141,11 @@ pub(crate) enum Edit {
     Ranges {
         old: Vec<RangeMarker>,
         new: Vec<RangeMarker>,
+    },
+    /// The song's groove library.
+    Grooves {
+        old: Vec<Groove>,
+        new: Vec<Groove>,
     },
     /// The track heights.
     TrackHeights {
@@ -485,6 +491,7 @@ impl Edit {
             Edit::MeterMap { old, new } => Edit::MeterMap { old: new, new: old },
             Edit::Markers { old, new } => Edit::Markers { old: new, new: old },
             Edit::Ranges { old, new } => Edit::Ranges { old: new, new: old },
+            Edit::Grooves { old, new } => Edit::Grooves { old: new, new: old },
             Edit::TrackHeights { old, new } => Edit::TrackHeights { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
@@ -806,6 +813,10 @@ impl Edit {
             }
             Edit::Markers { new, .. } => {
                 doc.song.markers.clone_from(new);
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::Grooves { new, .. } => {
+                doc.song.grooves.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Ranges { new, .. } => {

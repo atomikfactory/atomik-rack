@@ -539,3 +539,41 @@ fn argument_types_are_checked() {
     );
     assert!(r.is_error);
 }
+
+#[test]
+fn project_inspect_lists_the_groove_library_of_a_song() {
+    use atomik_model::{Command, Document, Groove, GrooveSlot, SongCommand, StepResolution};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut d = Document::new(atomik_model::load_project(&text, &reg).unwrap());
+    let groove = Groove {
+        name: "Late 2nd".into(),
+        step: StepResolution::Sixteenth,
+        slots: vec![
+            GrooveSlot::STRAIGHT,
+            GrooveSlot {
+                offset: 0.125,
+                velocity: 0.5,
+            },
+        ],
+    };
+    d.apply(Command::Song(SongCommand::SetGroove(groove)), &reg)
+        .unwrap();
+    let path = tmp("grooves.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    assert_eq!(
+        r.parsed()["song"]["grooves"],
+        json!([{"name": "Late 2nd", "step": "1/16", "slots": [[0.0, 1.0], [0.125, 0.5]]}])
+    );
+    // A song without a library has no field.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(plain["song"].get("grooves").is_none());
+}

@@ -15,6 +15,8 @@ mod container_cmd;
 mod container_io;
 pub mod controller;
 mod expand;
+pub mod groove;
+mod groove_cmd;
 mod history;
 mod patch;
 mod plugin;
@@ -86,6 +88,7 @@ pub use console::{
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;
 pub use controller::{ControllerKind, ControllerLane};
+pub use groove::{Groove, GrooveSlot, QuantizeParams};
 use history::Edit;
 use rack_columns::Placement;
 pub use song::{
@@ -472,6 +475,8 @@ pub enum Command {
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
+/// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
+/// | the groove library (`SetGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
 /// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
