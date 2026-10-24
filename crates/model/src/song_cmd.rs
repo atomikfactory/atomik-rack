@@ -17,11 +17,11 @@ use atomik_core::compile_meter;
 use atomik_device_sdk::{DeviceDescriptor, Direction, Registry, SocketKind};
 use std::collections::BTreeMap;
 
-fn bad(message: impl Into<String>) -> ModelError {
+pub(crate) fn bad(message: impl Into<String>) -> ModelError {
     ModelError::BadSong(message.into())
 }
 
-fn range(message: impl Into<String>) -> ModelError {
+pub(crate) fn range(message: impl Into<String>) -> ModelError {
     ModelError::OutOfRange(message.into())
 }
 
@@ -38,7 +38,7 @@ pub(crate) fn is_audio_track_type(desc: &DeviceDescriptor) -> bool {
 }
 
 /// The descriptor of device `key`, which must exist.
-fn device_descriptor(
+pub(crate) fn device_descriptor(
     doc: &RackDoc,
     registry: &Registry,
     key: &DeviceKey,
@@ -57,6 +57,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips: Vec::new(),
+            take_groups: Vec::new(),
         }],
     }
 }
@@ -72,11 +73,12 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         lanes: vec![Lane {
             kind: LaneKind::Audio,
             clips: Vec::new(),
+            take_groups: Vec::new(),
         }],
     }
 }
 
-fn track_index(doc: &RackDoc, device: &DeviceKey) -> Result<usize, ModelError> {
+pub(crate) fn track_index(doc: &RackDoc, device: &DeviceKey) -> Result<usize, ModelError> {
     doc.song
         .tracks
         .iter()
@@ -483,6 +485,51 @@ fn find_clip(doc: &RackDoc, id: ClipId) -> Result<(DeviceKey, usize, &Clip), Mod
         .ok_or_else(|| ModelError::UnknownKey(format!("clip {}", id.0)))
 }
 
+/// Validates a clip about to be added to lane `lane` of `device`'s track (the checks of
+/// `AddClip`) and returns it normalised: canonical controllers, no chromatic scale, checked
+/// content. Its id is not looked at.
+pub(crate) fn check_new_clip(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    lane: usize,
+    clip: Clip,
+) -> Result<Clip, ModelError> {
+    let desc = device_descriptor(doc, registry, device)?;
+    let t = &doc.song.tracks[track_index(doc, device)?];
+    let kind = &t
+        .lanes
+        .get(lane)
+        .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?
+        .kind;
+    check_geometry(clip.start, clip.length, clip.offset, clip.loop_length).map_err(range)?;
+    if let Some(g) = &clip.grid {
+        if !kind.is_notes() {
+            return Err(bad("only a note clip can have a step grid"));
+        }
+        g.validate().map_err(range)?;
+    }
+    if clip.scale.is_some() && !kind.is_notes() {
+        return Err(bad("only a note clip can have a scale"));
+    }
+    if !clip.controllers.is_empty() && !kind.is_notes() {
+        return Err(bad("only a note clip can have controller lanes"));
+    }
+    let controllers = canonical(clip.controllers.clone());
+    check_lanes(&controllers, MAX_TICK).map_err(range)?;
+    if kind.is_audio() {
+        check_audio_shape(clip.offset, clip.loop_length)?;
+    }
+    let content = check_content(doc, clip.content, kind, desc)?;
+    let scale = clip.scale.filter(|s| !s.is_chromatic());
+    Ok(Clip {
+        content,
+        scale,
+        controllers,
+        ..clip
+    })
+}
+
 /// An insertion of `clip` under a freshly allocated id, plus the id bump.
 fn insert_new(
     doc: &RackDoc,
@@ -583,6 +630,11 @@ pub(crate) fn plan(
                 param,
             }
         }
+        SongCommand::NewTakeGroup { .. }
+        | SongCommand::PickTake { .. }
+        | SongCommand::SetCompSegment { .. }
+        | SongCommand::DeleteTake { .. }
+        | SongCommand::FlattenTakes { .. } => crate::takes_cmd::plan(doc, registry, command)?,
         SongCommand::AddAutomationLane { device, param } => {
             let desc = device_descriptor(doc, registry, &device)?;
             if desc.param_by_key(&param).is_none() || crate::console::is_internal_param(&param) {
@@ -596,6 +648,7 @@ pub(crate) fn plan(
             let lane = Lane {
                 kind: LaneKind::Automation(param.clone()),
                 clips: Vec::new(),
+                take_groups: Vec::new(),
             };
             match song.track(&device) {
                 Some(t) if t.automation_lane(&param).is_some() => {
@@ -619,45 +672,8 @@ pub(crate) fn plan(
             }
         }
         SongCommand::AddClip { device, lane, clip } => {
-            let desc = device_descriptor(doc, registry, &device)?;
-            let t = &song.tracks[track_index(doc, &device)?];
-            let kind = &t
-                .lanes
-                .get(lane)
-                .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?
-                .kind;
-            check_geometry(clip.start, clip.length, clip.offset, clip.loop_length)
-                .map_err(range)?;
-            if let Some(g) = &clip.grid {
-                if !kind.is_notes() {
-                    return Err(bad("only a note clip can have a step grid"));
-                }
-                g.validate().map_err(range)?;
-            }
-            if clip.scale.is_some() && !kind.is_notes() {
-                return Err(bad("only a note clip can have a scale"));
-            }
-            if !clip.controllers.is_empty() && !kind.is_notes() {
-                return Err(bad("only a note clip can have controller lanes"));
-            }
-            let controllers = canonical(clip.controllers.clone());
-            check_lanes(&controllers, MAX_TICK).map_err(range)?;
-            if kind.is_audio() {
-                check_audio_shape(clip.offset, clip.loop_length)?;
-            }
-            let content = check_content(doc, clip.content, kind, desc)?;
-            let scale = clip.scale.filter(|s| !s.is_chromatic());
-            let (edit, id) = insert_new(
-                doc,
-                device,
-                lane,
-                Clip {
-                    content,
-                    scale,
-                    controllers,
-                    ..clip
-                },
-            )?;
+            let clip = check_new_clip(doc, registry, &device, lane, clip)?;
+            let (edit, id) = insert_new(doc, device, lane, clip)?;
             return Ok((edit, Some(id)));
         }
         SongCommand::RemoveClip { id } => {

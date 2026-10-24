@@ -28,6 +28,8 @@ mod slices;
 mod song_cmd;
 mod steps;
 mod steps_cmd;
+pub mod takes;
+mod takes_cmd;
 pub mod theory;
 mod workflow;
 mod workflow_cmd;
@@ -93,6 +95,7 @@ pub use song::{
     StepResolution, TempoEvent, Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
+pub use takes::{CompSegment, TakeGroup};
 
 /// Most host input channels a document may ask for (the engine interface's limit).
 pub const MAX_INPUT_CHANNELS: u16 = 32;
@@ -1242,7 +1245,11 @@ impl RackDoc {
             .tracks
             .iter()
             .flat_map(|t| &t.lanes)
-            .flat_map(|l| &l.clips)
+            .flat_map(|l| {
+                l.clips
+                    .iter()
+                    .chain(l.take_groups.iter().flat_map(|g| &g.takes))
+            })
             .filter_map(|c| match &c.content {
                 ClipContent::Audio(a) => Some(a.asset.clone()),
                 _ => None,

@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 19,
+//! { "format": "atomik-project", "version": 20,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -22,6 +22,7 @@
 //!             "tracks": [{ "device", "muted", "solo", "armed",
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio", "param"?,
 //!                                      "write"? (v18, automation lanes: "overwrite" | "latch"),
+//!                                      "take_groups"? (v20, notes and audio lanes, after "clips"),
 //!                                      "clips": [{ "id", "start", "length", "offset",
 //!                                                  "loop_length" (int or null), "muted",
 //!                                                  "grid"? (v5, note clips only, see below),
@@ -102,7 +103,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. Saving always writes version 19.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). Saving always writes version 20.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -127,6 +128,8 @@ use crate::song_cmd::{
 use crate::steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
 };
+use crate::takes::{CompSegment, TakeGroup, check_comp};
+use crate::takes_cmd::MAX_TAKES;
 use crate::theory::{Scale, ScaleKind};
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
 use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, WriteMode, rules};
@@ -144,7 +147,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
 /// track heights) and 15 (no clip scales).
-pub const PROJECT_VERSION: u32 = 19;
+pub const PROJECT_VERSION: u32 = 20;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -271,6 +274,7 @@ const ZONE_FIELDS_V6: &[&str] = &[
 ];
 const ASSET_FIELDS: &[&str] = &["channels", "sample_rate", "frames", "name"];
 const AUDIO_LANE_FIELDS: &[&str] = &["kind", "clips"];
+const AUDIO_LANE_FIELDS_V20: &[&str] = &["kind", "clips", "take_groups"];
 const AUDIO_CLIP_FIELDS: &[&str] = &[
     "id",
     "start",
@@ -317,6 +321,8 @@ const SONG_FIELDS_V15: &[&str] = &[
 const TRACK_FIELDS: &[&str] = &["device", "muted", "solo", "armed", "lanes"];
 const TRACK_FIELDS_V17: &[&str] = &["device", "muted", "solo", "armed", "no_chase", "lanes"];
 const NOTES_LANE_FIELDS: &[&str] = &["kind", "clips"];
+const NOTES_LANE_FIELDS_V20: &[&str] = &["kind", "clips", "take_groups"];
+const TAKE_GROUP_FIELDS: &[&str] = &["takes", "comp", "clips"];
 const AUTOMATION_LANE_FIELDS: &[&str] = &["kind", "param", "clips"];
 const AUTOMATION_LANE_FIELDS_V18: &[&str] = &["kind", "param", "write", "clips"];
 const NOTE_CLIP_FIELDS: &[&str] = &[
@@ -505,7 +511,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=19 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=20 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1344,6 +1350,14 @@ fn load_song(
         song.tracks.push(track);
     }
     song.lane_write = lane_write;
+    let groups = song
+        .tracks
+        .iter_mut()
+        .flat_map(|t| &mut t.lanes)
+        .flat_map(|l| &mut l.take_groups);
+    for (id, group) in (1..).zip(groups) {
+        group.id = id;
+    }
     song.track_heights = load_track_heights(
         obj.get("track_heights"),
         &path.field("track_heights"),
@@ -1416,10 +1430,21 @@ fn load_track(
             }));
         }
         let (fields, clip_fields) = if audio_track {
-            (AUDIO_LANE_FIELDS, AUDIO_CLIP_FIELDS)
+            (
+                if version >= 20 {
+                    AUDIO_LANE_FIELDS_V20
+                } else {
+                    AUDIO_LANE_FIELDS
+                },
+                AUDIO_CLIP_FIELDS,
+            )
         } else if i == 0 {
             (
-                NOTES_LANE_FIELDS,
+                if version >= 20 {
+                    NOTES_LANE_FIELDS_V20
+                } else {
+                    NOTES_LANE_FIELDS
+                },
                 if version >= 19 {
                     NOTE_CLIP_FIELDS_V19
                 } else if version >= 16 {
@@ -1437,6 +1462,8 @@ fn load_track(
         };
         let required = if version >= 18 && fields == AUTOMATION_LANE_FIELDS_V18 {
             AUTOMATION_LANE_FIELDS
+        } else if fields == AUDIO_LANE_FIELDS_V20 || fields == NOTES_LANE_FIELDS_V20 {
+            AUDIO_LANE_FIELDS
         } else {
             fields
         };
@@ -1489,7 +1516,23 @@ fn load_track(
             clips.push(clip);
         }
         clips.sort_by_key(|c: &Clip| (c.start, c.id));
-        lanes.push(Lane { kind, clips });
+        let take_groups = match lane.get("take_groups") {
+            Some(v) => load_take_groups(
+                v,
+                &p.field("take_groups"),
+                (clip_fields, version),
+                &kind,
+                (doc, desc),
+                song,
+                (&clips, clip_first),
+            )?,
+            None => Vec::new(),
+        };
+        lanes.push(Lane {
+            kind,
+            clips,
+            take_groups,
+        });
     }
     if lanes.is_empty() {
         return Err(lanes_path.error("a track needs its note lane"));
@@ -1502,6 +1545,75 @@ fn load_track(
         chase: !flag(obj, path, "no_chase")?,
         lanes,
     })
+}
+
+/// Reads a lane's `"take_groups"` (ids are numbered later, in file order).
+fn load_take_groups(
+    v: &Value,
+    path: &JsonPath,
+    (clip_fields, version): (&[&str], u64),
+    kind: &LaneKind,
+    (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
+    song: &Song,
+    (lane_clips, clip_first): (&[Clip], &mut ClipFirst),
+) -> Result<Vec<TakeGroup>, ModelError> {
+    let mut claimed: BTreeMap<u64, JsonPath> = BTreeMap::new();
+    let mut groups = Vec::new();
+    for (g, item) in array(v, path)?.iter().enumerate() {
+        let gp = path.index(g);
+        let obj = object(item, &gp, TAKE_GROUP_FIELDS, TAKE_GROUP_FIELDS)?;
+        let takes_path = gp.field("takes");
+        let mut takes = Vec::new();
+        for (k, t) in array(&obj["takes"], &takes_path)?.iter().enumerate() {
+            let tp = takes_path.index(k);
+            let clip = load_clip(
+                t,
+                &tp,
+                (clip_fields, version),
+                kind,
+                (doc, desc),
+                song,
+                clip_first,
+            )?;
+            clip_first.insert(clip.id.0, tp.field("id"));
+            takes.push(clip);
+        }
+        if takes.is_empty() || takes.len() > MAX_TAKES {
+            return Err(takes_path.error(format!("a take group needs 1..={MAX_TAKES} takes")));
+        }
+        let mut group = TakeGroup {
+            id: 0,
+            takes,
+            comp: Vec::new(),
+            clips: Vec::new(),
+        };
+        let comp_path = gp.field("comp");
+        for (i, item) in array(&obj["comp"], &comp_path)?.iter().enumerate() {
+            let sp = comp_path.index(i);
+            let a = tuple(item, &sp, 3, "a segment [take, start, end]")?;
+            group.comp.push(CompSegment {
+                take: uint(&a[0], &sp.index(0), u64::from(u32::MAX))? as usize,
+                start: tick(&a[1], &sp.index(1))?,
+                end: tick(&a[2], &sp.index(2))?,
+            });
+        }
+        check_comp(&group.comp, group.takes.len(), group.range())
+            .map_err(|m| comp_path.error(m))?;
+        let ids_path = gp.field("clips");
+        for (i, item) in array(&obj["clips"], &ids_path)?.iter().enumerate() {
+            let ip = ids_path.index(i);
+            let id = uint(item, &ip, u64::MAX)?;
+            if !lane_clips.iter().any(|c| c.id.0 == id) {
+                return Err(ip.error(format!("clip {id} is not on this lane")));
+            }
+            if let Some(first) = claimed.insert(id, ip.clone()) {
+                return Err(ip.error(format!("clip {id} is already a comp clip ({first})")));
+            }
+            group.clips.push(ClipId(id));
+        }
+        groups.push(group);
+    }
+    Ok(groups)
 }
 
 fn load_clip(
@@ -1844,6 +1956,154 @@ pub(crate) fn save(doc: &RackDoc) -> String {
 }
 
 /// `items` joined as indented lines inside `[` … `]`, or `[]` when empty.
+/// Writes one clip object of a lane's `"clips"` (or of a take group's `"takes"`), after the
+/// separator `sep` of its list.
+fn write_clip(w: &mut String, c: &Clip, sep: &str) {
+    let loop_length = c.loop_length.map_or("null".to_owned(), |n| n.to_string());
+    let _ = write!(
+        w,
+        "{sep}\n              {{\n                \"id\": {}, \"start\": {}, \"length\": {}, \"offset\": {}, \"loop_length\": {}, \"muted\": {},\n",
+        c.id.0, c.start, c.length, c.offset, loop_length, c.muted
+    );
+    let indent = "                ";
+    match &c.content {
+        ClipContent::Audio(a) => {
+            let curve = match a.fade_curve {
+                FadeCurve::Linear => "linear",
+                FadeCurve::EqualPower => "equal_power",
+            };
+            let _ = write!(
+                w,
+                "{indent}\"audio\": {{\"asset\": {}, \"offset\": {}, \"gain_db\": {}, \"fade_in\": {}, \"fade_out\": {}, \"fade_curve\": \"{curve}\"}}",
+                json_str(&a.asset),
+                a.source_offset,
+                f32_text(a.gain_db),
+                a.fade_in,
+                a.fade_out
+            );
+        }
+        ClipContent::Notes(notes) => {
+            let _ = write!(w, "{indent}\"notes\": ");
+            list(
+                w,
+                indent,
+                notes.iter().map(|n| {
+                    format!(
+                        "[{}, {}, {}, {}{}]",
+                        n.tick,
+                        n.length,
+                        n.key,
+                        f32_text(n.velocity),
+                        if n.muted { ", true" } else { "" }
+                    )
+                }),
+            );
+            if let Some(g) = &c.grid {
+                let resolution = match g.resolution {
+                    StepResolution::Eighth => "eighth",
+                    StepResolution::Sixteenth => "sixteenth",
+                    StepResolution::ThirtySecond => "thirty_second",
+                };
+                let _ = write!(
+                    w,
+                    ",
+{indent}\"grid\": {{\"resolution\": \"{resolution}\", \"steps\": {}, \"swing\": {}}}",
+                    g.steps, g.swing
+                );
+            }
+            if let Some(s) = c.scale.filter(|s| !s.is_chromatic()) {
+                let _ = write!(
+                    w,
+                    ",
+{indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
+                    s.root,
+                    s.kind.id()
+                );
+            }
+            if !c.controllers.is_empty() {
+                let _ = write!(
+                    w,
+                    ",
+{indent}\"controllers\": ["
+                );
+                for (n, lane) in c.controllers.iter().enumerate() {
+                    let (kind, number) = match lane.kind {
+                        ControllerKind::PitchBend => ("pitch_bend", String::new()),
+                        ControllerKind::ChannelPressure => ("pressure", String::new()),
+                        ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
+                        ControllerKind::PolyPressure(k) => {
+                            ("poly_pressure", format!(", \"number\": {k}"))
+                        }
+                    };
+                    let sep = if n == 0 { "" } else { "," };
+                    let _ = write!(
+                        w,
+                        "{sep}
+{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
+                    );
+                    list(
+                        w,
+                        &format!("{indent}  "),
+                        lane.points.iter().map(|p| {
+                            let curve = match p.curve {
+                                Curve::Linear => "linear",
+                                Curve::Step => "step",
+                            };
+                            format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
+                        }),
+                    );
+                    let _ = write!(w, "}}");
+                }
+                let _ = write!(
+                    w,
+                    "
+{indent}]"
+                );
+            }
+        }
+        ClipContent::Automation(points) => {
+            let _ = write!(w, "{indent}\"points\": ");
+            list(
+                w,
+                indent,
+                points.iter().map(|p| {
+                    let curve = match p.curve {
+                        Curve::Linear => "linear",
+                        Curve::Step => "step",
+                    };
+                    format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
+                }),
+            );
+        }
+    }
+    let _ = write!(w, "\n              }}");
+}
+
+/// Writes a lane's `"take_groups"` field (see [`crate::takes`]) after its `"clips"`.
+fn write_take_groups(w: &mut String, groups: &[TakeGroup]) {
+    let _ = write!(w, ",\n            \"take_groups\": [");
+    for (g, group) in groups.iter().enumerate() {
+        let sep = if g == 0 { "" } else { "," };
+        let _ = write!(w, "{sep}\n              {{\n                \"takes\": [");
+        for (k, c) in group.takes.iter().enumerate() {
+            write_clip(w, c, if k == 0 { "" } else { "," });
+        }
+        let comp: Vec<String> = group
+            .comp
+            .iter()
+            .map(|s| format!("[{}, {}, {}]", s.take, s.start, s.end))
+            .collect();
+        let ids: Vec<String> = group.clips.iter().map(|c| c.0.to_string()).collect();
+        let _ = write!(
+            w,
+            "\n                ],\n                \"comp\": [{}],\n                \"clips\": [{}]\n              }}",
+            comp.join(", "),
+            ids.join(", ")
+        );
+    }
+    let _ = write!(w, "\n            ]");
+}
+
 fn list(w: &mut String, indent: &str, items: impl IntoIterator<Item = String>) {
     let mut any = false;
     for (i, item) in items.into_iter().enumerate() {
@@ -2116,135 +2376,21 @@ fn write_song(w: &mut String, song: &Song) {
                 "{sep}\n          {{\n            {kind},\n            \"clips\": ["
             );
             for (k, c) in lane.clips.iter().enumerate() {
-                let sep = if k == 0 { "" } else { "," };
-                let loop_length = c.loop_length.map_or("null".to_owned(), |n| n.to_string());
-                let _ = write!(
-                    w,
-                    "{sep}\n              {{\n                \"id\": {}, \"start\": {}, \"length\": {}, \"offset\": {}, \"loop_length\": {}, \"muted\": {},\n",
-                    c.id.0, c.start, c.length, c.offset, loop_length, c.muted
-                );
-                let indent = "                ";
-                match &c.content {
-                    ClipContent::Audio(a) => {
-                        let curve = match a.fade_curve {
-                            FadeCurve::Linear => "linear",
-                            FadeCurve::EqualPower => "equal_power",
-                        };
-                        let _ = write!(
-                            w,
-                            "{indent}\"audio\": {{\"asset\": {}, \"offset\": {}, \"gain_db\": {}, \"fade_in\": {}, \"fade_out\": {}, \"fade_curve\": \"{curve}\"}}",
-                            json_str(&a.asset),
-                            a.source_offset,
-                            f32_text(a.gain_db),
-                            a.fade_in,
-                            a.fade_out
-                        );
-                    }
-                    ClipContent::Notes(notes) => {
-                        let _ = write!(w, "{indent}\"notes\": ");
-                        list(
-                            w,
-                            indent,
-                            notes.iter().map(|n| {
-                                format!(
-                                    "[{}, {}, {}, {}{}]",
-                                    n.tick,
-                                    n.length,
-                                    n.key,
-                                    f32_text(n.velocity),
-                                    if n.muted { ", true" } else { "" }
-                                )
-                            }),
-                        );
-                        if let Some(g) = &c.grid {
-                            let resolution = match g.resolution {
-                                StepResolution::Eighth => "eighth",
-                                StepResolution::Sixteenth => "sixteenth",
-                                StepResolution::ThirtySecond => "thirty_second",
-                            };
-                            let _ = write!(
-                                w,
-                                ",
-{indent}\"grid\": {{\"resolution\": \"{resolution}\", \"steps\": {}, \"swing\": {}}}",
-                                g.steps, g.swing
-                            );
-                        }
-                        if let Some(s) = c.scale.filter(|s| !s.is_chromatic()) {
-                            let _ = write!(
-                                w,
-                                ",
-{indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
-                                s.root,
-                                s.kind.id()
-                            );
-                        }
-                        if !c.controllers.is_empty() {
-                            let _ = write!(
-                                w,
-                                ",
-{indent}\"controllers\": ["
-                            );
-                            for (n, lane) in c.controllers.iter().enumerate() {
-                                let (kind, number) = match lane.kind {
-                                    ControllerKind::PitchBend => ("pitch_bend", String::new()),
-                                    ControllerKind::ChannelPressure => ("pressure", String::new()),
-                                    ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
-                                    ControllerKind::PolyPressure(k) => {
-                                        ("poly_pressure", format!(", \"number\": {k}"))
-                                    }
-                                };
-                                let sep = if n == 0 { "" } else { "," };
-                                let _ = write!(
-                                    w,
-                                    "{sep}
-{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
-                                );
-                                list(
-                                    w,
-                                    &format!("{indent}  "),
-                                    lane.points.iter().map(|p| {
-                                        let curve = match p.curve {
-                                            Curve::Linear => "linear",
-                                            Curve::Step => "step",
-                                        };
-                                        format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
-                                    }),
-                                );
-                                let _ = write!(w, "}}");
-                            }
-                            let _ = write!(
-                                w,
-                                "
-{indent}]"
-                            );
-                        }
-                    }
-                    ClipContent::Automation(points) => {
-                        let _ = write!(w, "{indent}\"points\": ");
-                        list(
-                            w,
-                            indent,
-                            points.iter().map(|p| {
-                                let curve = match p.curve {
-                                    Curve::Linear => "linear",
-                                    Curve::Step => "step",
-                                };
-                                format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
-                            }),
-                        );
-                    }
-                }
-                let _ = write!(w, "\n              }}");
+                write_clip(w, c, if k == 0 { "" } else { "," });
             }
             let _ = write!(
                 w,
-                "{}]\n          }}",
+                "{}]",
                 if lane.clips.is_empty() {
                     ""
                 } else {
                     "\n            "
                 }
             );
+            if !lane.take_groups.is_empty() {
+                write_take_groups(w, &lane.take_groups);
+            }
+            let _ = write!(w, "\n          }}");
         }
         let _ = write!(
             w,

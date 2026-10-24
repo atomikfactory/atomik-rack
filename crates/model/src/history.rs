@@ -7,6 +7,7 @@ use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets,
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
 use crate::steps::StepSeqDoc;
+use crate::takes::TakeGroup;
 use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -107,6 +108,13 @@ pub(crate) enum Edit {
         lane: usize,
         old: Option<Clip>,
         new: Option<Clip>,
+    },
+    /// A lane's whole take group list.
+    TakeGroups {
+        device: DeviceKey,
+        lane: usize,
+        old: Vec<TakeGroup>,
+        new: Vec<TakeGroup>,
     },
     /// The song's next clip id.
     NextClipId {
@@ -327,7 +335,13 @@ impl Edit {
                 out.insert(a.asset.clone());
             }
         };
-        let lane = |l: &Lane, out: &mut BTreeSet<String>| l.clips.iter().for_each(|c| clip(c, out));
+        let lane = |l: &Lane, out: &mut BTreeSet<String>| {
+            l.clips.iter().for_each(|c| clip(c, out));
+            l.take_groups
+                .iter()
+                .flat_map(|g| &g.takes)
+                .for_each(|c| clip(c, out));
+        };
         match self {
             Edit::Track { old, new, .. } => {
                 for t in old.iter().chain(new) {
@@ -336,6 +350,11 @@ impl Edit {
             }
             Edit::Lane { old, new, .. } => old.iter().chain(new).for_each(|l| lane(l, out)),
             Edit::Clip { old, new, .. } => old.iter().chain(new).for_each(|c| clip(c, out)),
+            Edit::TakeGroups { old, new, .. } => old
+                .iter()
+                .chain(new)
+                .flat_map(|g| &g.takes)
+                .for_each(|c| clip(c, out)),
             Edit::Compound(edits) => edits.iter().for_each(|e| e.collect_assets(out)),
             Edit::Insert { device, .. }
             | Edit::Remove { device, .. }
@@ -445,6 +464,17 @@ impl Edit {
                 old,
                 new,
             } => Edit::Clip {
+                device,
+                lane,
+                old: new,
+                new: old,
+            },
+            Edit::TakeGroups {
+                device,
+                lane,
+                old,
+                new,
+            } => Edit::TakeGroups {
                 device,
                 lane,
                 old: new,
@@ -752,6 +782,14 @@ impl Edit {
                     clips.insert(at, new.clone());
                 }
                 vec![SyncOp::SongChanged]
+            }
+            Edit::TakeGroups {
+                device, lane, new, ..
+            } => {
+                track_mut(doc, device).lanes[*lane]
+                    .take_groups
+                    .clone_from(new);
+                vec![SyncOp::ViewChanged]
             }
             Edit::NextClipId { new, .. } => {
                 doc.song.next_clip_id = *new;

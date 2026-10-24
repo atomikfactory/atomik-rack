@@ -78,6 +78,7 @@ pub fn drum_doc_with(clip: Option<Clip>) -> RackDoc {
         vec![Lane {
             kind: LaneKind::Notes,
             clips,
+            take_groups: Vec::new(),
         }],
     ));
     doc.song.next_clip_id = 100;

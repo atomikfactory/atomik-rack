@@ -28,10 +28,12 @@ fn track(note_clips: Vec<Clip>, auto: Vec<Clip>) -> Track {
             Lane {
                 kind: LaneKind::Notes,
                 clips: note_clips,
+                take_groups: Vec::new(),
             },
             Lane {
                 kind: LaneKind::Automation("filter.cutoff".into()),
                 clips: auto,
+                take_groups: Vec::new(),
             },
         ],
     }
@@ -434,6 +436,7 @@ fn flags(k: &str, muted: bool, solo: bool) -> Track {
         lanes: vec![Lane {
             kind: LaneKind::Notes,
             clips: vec![],
+            take_groups: Vec::new(),
         }],
     }
 }

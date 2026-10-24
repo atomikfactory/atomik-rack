@@ -110,6 +110,7 @@ pub fn audio_doc() -> RackDoc {
         vec![Lane {
             kind: LaneKind::Audio,
             clips,
+            take_groups: Vec::new(),
         }]
     };
     doc.song.tracks = vec![
@@ -118,6 +119,7 @@ pub fn audio_doc() -> RackDoc {
             vec![Lane {
                 kind: LaneKind::Notes,
                 clips: vec![notes_clip(1, 0, 2 * BAR, bass_line())],
+                take_groups: Vec::new(),
             }],
         ),
         track(
