@@ -8,7 +8,9 @@
 //!   pre-resolved so the RT player only walks indices (no allocation, no sorting on RT).
 //! - Snapshots and transport commands travel through the ordered control queue.
 //!   A retired snapshot is handed back and dropped by `collect_garbage`.
-//! - Notes are sample-accurate; automation is applied once per 64-frame batch.
+//! - Notes are sample-accurate; automation is applied once per 64-frame batch. Controller lanes
+//!   (pitch bend, aftertouch, CC: [`SongController`](crate::SongController)) are expanded here into
+//!   discrete events that play like notes.
 //! - Transport state is published lock-free for the UI and for recording ([`TransportState`]).
 //! - Tempo: while a song is loaded its tempo map (steps and linear ramps, `atomik_core::TempoMap`)
 //!   drives the transport and `TimeInfo::tempo`; `EngineHandle::set_tempo` only matters for
@@ -256,7 +258,9 @@ impl std::fmt::Debug for SongSnapshot {
 /// automation points by tick (stable, so equal ticks keep their input order: a jump). Each
 /// track also gets a note index sorted by start tick (with a prefix maximum of the end ticks)
 /// that the player uses to chase notes spanning a position ([`SongTrack::chase`]); the chase
-/// flag is part of the track's content hash. Lanes without points are dropped. Device and param
+/// flag is part of the track's content hash. Controller lanes are validated and expanded into
+/// events of the track's list (the `controllers` module), one lane per kind. Lanes without points
+/// are dropped. Device and param
 /// ids are not checked here: the engine ignores unknown targets (notes to them are counted as
 /// dropped).
 pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
