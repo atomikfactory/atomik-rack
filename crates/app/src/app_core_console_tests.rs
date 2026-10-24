@@ -5,7 +5,7 @@
 use super::*;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_engine::MeterReading;
-use atomik_model::console::SOLO_SILENCE_PARAM;
+use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::{Command, ConsoleCommand, DeviceKey};
 
 const SYNTH: &str = "atomik.poly-synth";
@@ -478,4 +478,152 @@ fn a_rejected_console_command_is_shown_in_the_console_too() {
     );
     let notice = c.console().notice().expect("a console notice").to_string();
     assert!(notice.contains("already called"), "{notice}");
+}
+
+// ---- VCA groups ----------------------------------------------------------------------------
+
+fn vca_calls(
+    c: &AppCore<RecordingSink>,
+    calls: &[SinkCall],
+    param: &str,
+) -> Vec<(DeviceInstanceId, f32)> {
+    let p = pid(c, CHANNEL_TYPE, param);
+    calls
+        .iter()
+        .filter_map(|call| match call {
+            SinkCall::Param { id, param, plain } if *param == p => Some((*id, *plain)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn vca(c: &mut AppCore<RecordingSink>, command: ConsoleCommand) {
+    c.apply_command(Command::Console(command))
+        .expect("VCA command applied");
+}
+
+fn create_vca(c: &mut AppCore<RecordingSink>, members: &[&DeviceKey]) {
+    vca(
+        c,
+        ConsoleCommand::CreateVca {
+            name: "Group".into(),
+            members: members.iter().map(|k| (*k).clone()).collect(),
+        },
+    );
+}
+
+#[test]
+fn a_group_level_reaches_only_its_members_through_the_engine_only() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&a]);
+    let calls = c.sink_mut().take();
+    assert!(
+        vca_calls(&c, &calls, VCA_DB_PARAM).is_empty(),
+        "a group at 0 dB sends nothing: {calls:?}"
+    );
+    vca(
+        &mut c,
+        ConsoleCommand::SetVcaLevel {
+            vca: 1,
+            db: -6.0,
+            merge: None,
+        },
+    );
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -6.0)]);
+    // Never stored in the document.
+    assert!(
+        c.doc()
+            .devices
+            .iter()
+            .all(|d| { d.params.keys().all(|k| !k.starts_with("internal.")) })
+    );
+    // A drag is one param per move, the other strip is left alone.
+    for db in [-7.0, -8.0] {
+        vca(
+            &mut c,
+            ConsoleCommand::SetVcaLevel {
+                vca: 1,
+                db,
+                merge: Some(1),
+            },
+        );
+    }
+    let calls = c.sink_mut().take();
+    assert_eq!(
+        vca_calls(&c, &calls, VCA_DB_PARAM),
+        vec![(ia, -7.0), (ia, -8.0)]
+    );
+    // Undo puts the strip back to the start of the drag, and a removal from the group resets it.
+    assert!(c.undo());
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -6.0)]);
+    vca(
+        &mut c,
+        ConsoleCommand::AssignToVca {
+            vca: None,
+            strips: vec![a.clone()],
+        },
+    );
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, 0.0)]);
+    assert!(vca_calls(&c, &calls, VCA_MUTE_PARAM).is_empty());
+    let _ = b;
+}
+
+#[test]
+fn a_group_mute_and_solo_reach_the_members_and_the_solo_silences_the_others() {
+    let mut c = two_channels();
+    let (a, b) = (channel_of(&c, "a"), channel_of(&c, "b"));
+    create_vca(&mut c, &[&a]);
+    c.sink_mut().take();
+    let (ia, ib) = (c.device_id(&a).unwrap(), c.device_id(&b).unwrap());
+    vca(&mut c, ConsoleCommand::SetVcaMute { vca: 1, on: true });
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_MUTE_PARAM), vec![(ia, 1.0)]);
+    vca(&mut c, ConsoleCommand::SetVcaSolo { vca: 1, on: true });
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_SOLO_PARAM), vec![(ia, 1.0)]);
+    assert_eq!(silence_calls(&c, &calls), vec![(ia, 0.0), (ib, 1.0)]);
+    // Clearing the solos clears the group's solo too.
+    vca(&mut c, ConsoleCommand::ClearSolos);
+    let calls = c.sink_mut().take();
+    assert_eq!(vca_calls(&c, &calls, VCA_SOLO_PARAM), vec![(ia, 0.0)]);
+    assert_eq!(silence_calls(&c, &calls), vec![(ia, 0.0), (ib, 0.0)]);
+}
+
+#[test]
+fn a_rebuilt_engine_and_a_restored_strip_get_the_feed_again() {
+    let mut c = two_channels();
+    let a = channel_of(&c, "a");
+    create_vca(&mut c, &[&a]);
+    vca(
+        &mut c,
+        ConsoleCommand::SetVcaLevel {
+            vca: 1,
+            db: -3.0,
+            merge: None,
+        },
+    );
+    c.sink_mut().take();
+    c.rebuild_engine();
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -3.0)]);
+    // Removing the instrument removes its channel and its membership; undo brings the
+    // strip back as a new engine device that must get the offset again.
+    c.apply_command(Command::Workflow(
+        atomik_model::WorkflowCommand::RemoveDevices {
+            keys: vec![key("a")],
+        },
+    ))
+    .unwrap();
+    assert!(c.doc().console.vca(1).unwrap().members.is_empty());
+    c.sink_mut().take();
+    assert!(c.undo());
+    let calls = c.sink_mut().take();
+    let ia = c.device_id(&a).unwrap();
+    assert_eq!(vca_calls(&c, &calls, VCA_DB_PARAM), vec![(ia, -3.0)]);
 }

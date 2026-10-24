@@ -12,7 +12,8 @@ use atomik_engine::{
     TransportState, compile_song,
 };
 use atomik_model::console::{
-    BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, is_console_type,
+    BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM,
+    VCA_SOLO_PARAM, VcaFeed, is_console_type,
 };
 use atomik_model::{
     ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY, ModelError,
@@ -210,6 +211,9 @@ pub struct AppCore<S: EngineSink> {
     macro_sent: BTreeMap<(DeviceKey, String), f32>,
     /// The flat devices whose published meter values feed the views (metered effects, players).
     meter_devices: Vec<DeviceKey>,
+    /// The VCA feed last sent to each strip (a strip not listed has the default one), so only
+    /// a change reaches the engine; forgotten when the engine is rebuilt.
+    vca_sent: BTreeMap<DeviceKey, VcaFeed>,
     /// The spectrum and phase meter devices of the flat rack and their analysis state.
     analysers: analysers::Analysers,
     /// The pattern clipboard both sequencer views last agreed on.
@@ -368,6 +372,7 @@ impl<S: EngineSink> AppCore<S> {
             split_sent: BTreeMap::new(),
             macro_sent: BTreeMap::new(),
             meter_devices: Vec::new(),
+            vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
             pattern_clip_seen: None,
             transport_bar: TransportBar::new(theme.clone()),
@@ -818,6 +823,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_after_reset();
         self.ids.clear();
         self.split_sent.clear();
+        self.vca_sent.clear();
         self.fx_meter_seq.clear();
         self.analysers.restart();
         self.next_id = 1;
@@ -839,6 +845,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_after_rebuild();
         self.submit_routing_with(&expanded);
         self.push_solo_silence();
+        self.push_vca_feeds();
         self.push_monitor_live();
         self.submit_song(true);
         self.send_metronome();
@@ -938,6 +945,8 @@ impl<S: EngineSink> AppCore<S> {
                     }
                     self.fx_meter_seq.remove(key);
                     self.audio.monitor_sent.remove(key);
+                    // A new strip starts from the default feed.
+                    self.vca_sent.remove(key);
                     inserted.push(key.clone());
                 }
                 SyncOp::DeviceRemoved(key) => {
@@ -953,6 +962,7 @@ impl<S: EngineSink> AppCore<S> {
                     }
                     self.fx_meter_seq.remove(key);
                     self.audio.monitor_sent.remove(key);
+                    self.vca_sent.remove(key);
                 }
                 // A new input count needs a new engine: the restart below submits it.
                 SyncOp::RoutingChanged if self.doc().input_channels != self.engine_inputs => {}
@@ -1015,6 +1025,7 @@ impl<S: EngineSink> AppCore<S> {
                         self.submit_routing();
                     }
                     self.push_solo_silence();
+                    self.push_vca_feeds();
                 }
             }
         }
@@ -1156,6 +1167,58 @@ impl<S: EngineSink> AppCore<S> {
                 let value = if silent { 1.0 } else { 0.0 };
                 let result = self.sink.set_param(id, pid, value);
                 self.engine_result(result);
+            }
+        }
+    }
+
+    /// Pushes [`RackDoc::vca_feeds`] into the strips' `internal.vca_db`, `internal.vca_mute` and
+    /// `internal.vca_solo` params, through the engine only (like `internal.solo_silence`: never a
+    /// model command, not stored, saved or undoable). Only what changed since the last push is
+    /// sent, so a fader drag costs one param.
+    fn push_vca_feeds(&mut self) {
+        for (key, feed) in self.doc().vca_feeds() {
+            let sent = self.vca_sent.get(&key).copied().unwrap_or(VcaFeed::NONE);
+            if sent == feed {
+                continue;
+            }
+            let Some(id) = self.ids.get(&key).copied() else {
+                continue;
+            };
+            let Some(type_id) = self.doc().device(&key).map(|d| d.type_id.clone()) else {
+                continue;
+            };
+            let changes = [
+                (VCA_DB_PARAM, feed.db, sent.db != feed.db),
+                (
+                    VCA_MUTE_PARAM,
+                    f32::from(u8::from(feed.mute)),
+                    sent.mute != feed.mute,
+                ),
+                (
+                    VCA_SOLO_PARAM,
+                    f32::from(u8::from(feed.solo)),
+                    sent.solo != feed.solo,
+                ),
+            ];
+            for (param, value, changed) in changes {
+                if !changed {
+                    continue;
+                }
+                let Some(pid) = self
+                    .registry
+                    .get(&type_id)
+                    .and_then(|f| f.descriptor.param_by_key(param))
+                    .map(|p| p.id)
+                else {
+                    continue;
+                };
+                let result = self.sink.set_param(id, pid, value);
+                self.engine_result(result);
+            }
+            if feed.is_none() {
+                self.vca_sent.remove(&key);
+            } else {
+                self.vca_sent.insert(key, feed);
             }
         }
     }
