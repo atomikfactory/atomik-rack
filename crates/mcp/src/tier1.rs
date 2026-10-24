@@ -3,7 +3,9 @@
 use crate::analysis;
 use crate::rpc::{Server, Tool};
 use crate::tool::{Args, ToolOutput, definition};
-use atomik_model::{ClipContent, ControllerKind, Lane, LaneKind, RackDoc};
+use atomik_model::{
+    ClipContent, ControllerKind, Lane, LaneKind, RackDoc, insert_bypass_states, inserts_bypassed,
+};
 use atomik_render::project::{ProjectOptions, is_project, render_doc_in};
 use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
 use atomik_render::{default_registry, patch::Patch, render_built};
@@ -373,6 +375,72 @@ fn vca_summary(doc: &RackDoc) -> Vec<Value> {
         .collect()
 }
 
+/// The channel strips (and buses) that use the strip upgrades or have inserts: the input trim in
+/// dB, the polarity, the parallel compressor (when it is on or set), and the insert chain with
+/// the bypass of each effect (`null` for an effect without one) and of the whole chain. A strip
+/// with no trim, normal polarity, no parallel compression and no inserts is left out, so a
+/// project that does not use any of it reads as before.
+fn strip_summary(doc: &RackDoc) -> Vec<Value> {
+    let registry = default_registry();
+    let console = &doc.console;
+    console
+        .channels
+        .iter()
+        .map(|c| &c.channel)
+        .chain(console.buses.iter().map(|b| &b.bus))
+        .filter_map(|key| {
+            let device = doc.device(key)?;
+            let desc = registry.get(&device.type_id)?.descriptor;
+            let value = |k: &str| {
+                desc.param_by_key(k)
+                    .map(|p| p.clamp(device.params.get(k).copied().unwrap_or(p.default)))
+            };
+            let trim = value("input.gain").unwrap_or(0.0);
+            let inverted = value("input.phase").unwrap_or(0.0) >= 0.5;
+            let parallel_on = value("pcomp.on").unwrap_or(0.0) >= 0.5;
+            let parallel_set = parallel_on
+                || desc
+                    .params
+                    .iter()
+                    .filter(|p| p.key.starts_with("pcomp."))
+                    .any(|p| device.params.contains_key(p.key));
+            let inserts = insert_bypass_states(doc, &registry, key);
+            let chain = atomik_model::insert_chain(doc, &registry, key);
+            if trim == 0.0 && !inverted && !parallel_set && chain.is_empty() {
+                return None;
+            }
+            let mut v = json!({
+                "strip": key.as_str(),
+                "input_gain_db": trim,
+                "polarity_inverted": inverted,
+            });
+            if parallel_set {
+                v["parallel"] = json!({
+                    "on": parallel_on,
+                    "threshold_db": value("pcomp.threshold"),
+                    "ratio": value("pcomp.ratio"),
+                    "attack_ms": value("pcomp.attack"),
+                    "release_ms": value("pcomp.release"),
+                    "makeup_db": value("pcomp.makeup"),
+                    "mix": value("pcomp.mix"),
+                });
+            }
+            if !chain.is_empty() {
+                let effects: Vec<Value> = chain
+                    .iter()
+                    .map(|k| {
+                        let bypassed = inserts.iter().find(|(e, _)| e == k).map(|(_, on)| *on);
+                        json!({"device": k.as_str(), "bypassed": bypassed})
+                    })
+                    .collect();
+                v["inserts"] = Value::Array(effects);
+                v["inserts_bypassed"] = json!(inserts_bypassed(doc, &registry, key));
+            }
+            Some(v)
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -513,6 +581,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let vcas = vca_summary(doc);
     if !vcas.is_empty() {
         out["console"]["vcas"] = Value::Array(vcas);
+    }
+    let strips = strip_summary(doc);
+    if !strips.is_empty() {
+        out["console"]["strips"] = Value::Array(strips);
     }
     if !grooves.is_empty() {
         out["song"]["grooves"] = Value::Array(grooves);

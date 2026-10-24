@@ -56,6 +56,10 @@ fn every_session_tool_needs_an_open_session() {
             json!({"action": "export", "file": "target/tmp/never.mid"}),
         ),
         ("session_audio_notes", json!({})),
+        (
+            "session_set_param",
+            json!({"device": "channel", "param": "input.gain", "value": 1}),
+        ),
         ("session_meters", json!({})),
         ("session_bounce", json!({})),
     ] {
@@ -1859,4 +1863,143 @@ fn vca_groups_are_made_filled_and_deleted_with_menu_commands_and_a_group_id() {
     assert!(vcas(&mut s).is_empty());
     ok(&mut s, "session_command", json!({"id": "edit.undo"}));
     assert_eq!(vcas(&mut s).len(), 1);
+}
+
+#[test]
+fn session_set_param_sets_the_strip_upgrades_and_the_bounce_hears_them() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let strip = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        v["document"]["console"]["strips"]
+            .as_array()
+            .and_then(|all| all.iter().find(|x| x["strip"] == "channel"))
+            .cloned()
+    };
+    let reference = tmp("strip-reference.wav");
+    ok(&mut s, "session_bounce", json!({"output": reference}));
+    let bounce = |s: &mut Server, name: &str| {
+        ok(
+            s,
+            "session_bounce",
+            json!({"output": tmp(name), "reference": reference}),
+        )["comparison"]["bit_identical"]
+            .clone()
+    };
+    // The trim and the polarity, as the console's GAIN knob and the polarity button.
+    let r = ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "input.gain", "value": 6.0}),
+    );
+    assert_eq!(
+        (r["value"].as_f64(), r["can_undo"].as_bool()),
+        (Some(6.0), Some(true))
+    );
+    ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "input.phase", "value": 1}),
+    );
+    let v = strip(&mut s).expect("the strip is listed once it is not at its defaults");
+    assert_eq!(v["input_gain_db"], 6.0);
+    assert_eq!(v["polarity_inverted"], true);
+    assert_eq!(bounce(&mut s, "strip-trim.wav"), false);
+    // Back to the defaults the project bounces as it did, bit for bit.
+    ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "input.gain", "value": 0.0}),
+    );
+    ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "input.phase", "value": 0}),
+    );
+    assert_eq!(bounce(&mut s, "strip-default.wav"), true);
+    // The parallel compressor: at mix 0 (or off) it is bypassed bit for bit, at 1 it is heard.
+    for (param, value) in [
+        ("pcomp.on", 1.0),
+        ("pcomp.mix", 0.0),
+        ("pcomp.threshold", -50.0),
+        ("pcomp.ratio", 20.0),
+        ("pcomp.makeup", 0.0),
+    ] {
+        ok(
+            &mut s,
+            "session_set_param",
+            json!({"device": "channel", "param": param, "value": value}),
+        );
+    }
+    let v = strip(&mut s).expect("listed with the parallel compressor set");
+    assert_eq!(v["parallel"]["on"], true);
+    assert_eq!(v["parallel"]["mix"], 0.0);
+    assert_eq!(v["parallel"]["ratio"], 20.0);
+    assert_eq!(bounce(&mut s, "strip-mix0.wav"), true);
+    ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "pcomp.mix", "value": 1.0}),
+    );
+    assert_eq!(bounce(&mut s, "strip-mix1.wav"), false);
+    // One undo step per call, and what the call cannot do is an error.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(strip(&mut s).unwrap()["parallel"]["mix"], 0.0);
+    for args in [
+        json!({"device": "nothing", "param": "input.gain", "value": 1}),
+        json!({"device": "channel", "param": "nothing", "value": 1}),
+        json!({"device": "channel", "param": "input.gain"}),
+    ] {
+        assert!(call(&mut s, "session_set_param", args).is_error);
+    }
+}
+
+#[test]
+fn polarity_and_bypass_all_inserts_are_mixer_commands_of_the_session() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "view.toggle_console"}),
+    );
+    for id in ["mixer.toggle_polarity", "mixer.bypass_all_inserts"] {
+        let row = command_row(&mut s, id);
+        assert_eq!(row["menu"], "Mixer", "{id}");
+        assert_eq!(row["shortcut"], Value::Null, "{id}");
+        assert_eq!(row["enabled"], false, "{id}: nothing is selected");
+    }
+    let (x, y) = text_pos(&mut s, "CH 1");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x + 20.0, "y": y - 12.0}),
+    );
+    assert_eq!(
+        command_row(&mut s, "mixer.toggle_polarity")["enabled"],
+        true
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.toggle_polarity"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    let strips = v["document"]["console"]["strips"].as_array().unwrap();
+    assert_eq!(strips[0]["strip"], "channel");
+    assert_eq!(strips[0]["polarity_inverted"], true);
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    let v = ok(&mut s, "session_status", json!({}));
+    assert!(
+        v["document"]["console"]["strips"].is_null(),
+        "back to nothing to report"
+    );
 }
