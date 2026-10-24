@@ -860,3 +860,77 @@ fn relink_picks_the_asset_by_name_or_id_and_searches_a_folder() {
     assert_eq!(v["still_missing"], json!([]));
     assert_eq!(command_row(&mut s, "file.relink_audio")["enabled"], false);
 }
+
+/// The logical position of the first drawn text equal to `text`.
+fn text_pos(s: &mut Server, text: &str) -> (f64, f64) {
+    let v = ok(s, "session_texts", json!({"contains": text, "limit": 1000}));
+    let t = v["texts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["text"] == text)
+        .unwrap_or_else(|| panic!("no text {text:?} on screen: {v}"))
+        .clone();
+    (t["x"].as_f64().unwrap(), t["y"].as_f64().unwrap())
+}
+
+#[test]
+fn an_automation_lane_is_armed_and_its_write_mode_cycled_with_the_pointer() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let lane_write = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        let tracks = v["document"]["song"]["tracks"].as_array().unwrap().clone();
+        let lanes = tracks
+            .iter()
+            .flat_map(|t| t["lanes"].as_array().unwrap().clone())
+            .filter(|l| l["kind"] == "automation:filter.cutoff")
+            .collect::<Vec<_>>();
+        assert_eq!(lanes.len(), 1, "{v}");
+        (lanes[0]["write"].as_str().unwrap().to_string(), v)
+    };
+    let (mode, status) = lane_write(&mut s);
+    assert_eq!(mode, "touch");
+    assert_eq!(status["armed_lanes"].as_array().unwrap().len(), 0);
+    assert_eq!(status["recording"], false);
+
+    // The mode button shows TCH; a click makes it Latch, the next Overwrite, one undo step each.
+    let (x, y) = text_pos(&mut s, "TCH");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x, "y": y - 3.0}),
+    );
+    assert_eq!(lane_write(&mut s).0, "latch");
+    let (x, y) = text_pos(&mut s, "LTC");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x, "y": y - 3.0}),
+    );
+    assert_eq!(lane_write(&mut s).0, "overwrite");
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(lane_write(&mut s).0, "latch", "one step undoes one change");
+
+    // The arm button is session state: it shows in the status, is no undo step, and a take
+    // can start with nothing else armed.
+    let (x, y) = text_pos(&mut s, "W");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x, "y": y - 3.0}),
+    );
+    let (_, status) = lane_write(&mut s);
+    assert_eq!(
+        status["armed_lanes"][0]["param"], "filter.cutoff",
+        "{status}"
+    );
+    ok(&mut s, "session_command", json!({"id": "transport.record"}));
+    assert_eq!(ok(&mut s, "session_status", json!({}))["recording"], true);
+    ok(&mut s, "session_command", json!({"id": "transport.record"}));
+    assert_eq!(ok(&mut s, "session_status", json!({}))["recording"], false);
+}

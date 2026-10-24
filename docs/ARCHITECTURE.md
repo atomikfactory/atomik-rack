@@ -38,7 +38,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | The data behind the file browser, pure and headless: file kinds and rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v16), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v18), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | MIDI input and exact event timing |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins. No `unsafe` except `fpenv.rs` |
@@ -135,7 +135,7 @@ Messages carry a generation number, so work for a document that was replaced is 
    3. apply queued params
    4. song player: advance the transport (loop wraps, locates); derive the batch's TimeInfo
         (tick, ticks_per_frame, loop_wrap; song-less: a free-running tick at the engine tempo);
-        notes → per-device note events; automation → params;
+        notes → per-device note events; automation → params (lanes the recording hold names are skipped);
         audio regions → per-track playback batches   (Memory: read samples; Stream: pop the lane ring)
         publish each track's playback to its audio-track device
    5. deliver scheduled and live notes
@@ -181,6 +181,26 @@ Messages carry a generation number, so work for a document that was replaced is 
 ```
 
 `compensation = input_latency + output_latency + 64 + user_offset`; positive means the take is placed earlier.
+
+### 2.6a Automation recording
+
+```
+ arm button on an automation lane ─► AppCore (session set of (device, param); never saved)
+ ToggleRecord with a lane (or a track) armed ─► one PassRecorder per armed lane, at the position
+        │   (the lane's write mode from Song::lane_write: Overwrite, Touch, Latch)
+        ▼
+ UI thread, per applied command:  Command::SetParam ─► ParamChanged ─► the lane's recorder
+        (tick = the engine's last published transport tick; a drag-merge id = a held control;
+         UiAction::EndMerge = the release)          ─► EngineSink::hold_automation(lanes being written)
+        ▼  loop wrap (TransportState::loop_count moved): end the pass at the loop end, start the next
+ stop or locate ─► Segments ─► segment_clips + thin_points ─► one Command::Batch of AddClip
+```
+
+- **Model** ([automation_rec.rs](../crates/model/src/automation_rec.rs)). `WriteMode` (`Overwrite`, `Touch`, the default, and `Latch`) is stored per lane in `Song::lane_write` (`(device, param)` to mode; the default is never stored; `SetLaneWriteMode` is one undo step and reports `ViewChanged` only; project format 18 saves a non-default mode as `"write"` on the lane and older files load on Touch). `PassRecorder` is the pure state machine of one pass over one lane: Overwrite writes from the start of the pass (first point: the value the param had) to its end, Touch writes only while the control is held (each touch is its own stretch, an instant touch is one point), Latch writes from the first touch to the end of the pass. Its output is a list of `Segment`s (`[start, end)` in ticks and the points).
+- **Thinning.** `thin_points` is Ramer-Douglas-Peucker with the vertical distance in value (the error of the straight line between the kept neighbours at a dropped point's tick, in parameter units): the first and last points and every `Step` point stay, the rest go when within the tolerance. The app passes `AppCore::automation_thinning` (default 0.5 %, 0 keeps everything) times the parameter's range.
+- **A take is a Batch of `AddClip`.** Each segment becomes an automation clip on the lane (ticks relative to the clip start, `Linear` points), and a later clip hides an earlier one where they overlap, which is how Overwrite and Touch replace what was there without deleting it: the old clips stay under the new ones and one undo (the batch is one step) brings the old lane back whole. A loop recording lays one clip per pass, the later laps on top.
+- **The hold.** While a lane is being written the engine must not apply its old points, or they would overwrite the value being moved at every batch. `EngineHandle::hold_automation` names up to `HOLD_CAPACITY` (32) `(device, param)` lanes in a fixed array of atomics that the song player reads once per batch and skips (no queue message, no allocation, no lock; an empty set costs one load). A container's macro lane holds every target it expands to. Offline renders never set it, so bounces are unchanged.
+- **What is captured.** `ParamChanged` ops of commands that go through `AppCore::apply_command` while the take runs: knob drags, text entry, a plugin's own window, the MCP server. Undo and redo are not captured. There is no controller (MIDI CC) to parameter path in the app yet, so controller input cannot be recorded; this is on the roadmap. The tick of a move is the transport tick of the engine's latest batch, so it is at most one batch (1.3 ms at 48 kHz) early.
 
 ### 2.7 Save and bounce
 
@@ -528,6 +548,7 @@ The six effects (reverb, compressor, EQ, distortion, modulation, mastering) have
 | Overflowing note events are dropped and counted; a full record ring drops the batch and counts it; an empty stream ring is silence plus a counter | `deliver_note`, `TapRt::capture`, `StreamLaneRt::take` |
 | Retired plans, routings, songs, taps, sample maps (`ControlOp::Samples` hands the map a device returns from `swap_samples` to the queue) and devices go back through a queue and are dropped off the audio thread; a removed sampler takes its maps with it | `retire` in [engine.rs](../crates/engine/src/engine.rs), `collect_garbage` |
 | Device meter values go from `Device::meter_values` into a preallocated atomic bank in `Meters` (stack scratch, atomics only; only opted-in devices are called) | `Arena::publish_device_values`, `Meters::publish_device_values`; [meter_values.rs](../crates/engine/tests/meter_values.rs) |
+| The automation hold (the lanes a take is writing) is a fixed array of atomics the player loads once per batch; setting it is a few stores from the UI thread | `AutomationHold` in [player.rs](../crates/engine/src/player.rs); [song_automation_hold.rs](../crates/engine/tests/song_automation_hold.rs) runs it under the counting allocator |
 | Disk, decoding, hashing and WAV writing exist only in non-RT crates and threads | `atomik-audio-file`, the app workers, the streamer |
 | `unsafe` is denied workspace-wide; only the test allocator is exempt | root `Cargo.toml`; [crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) |
 | The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
@@ -586,6 +607,7 @@ This invariant is process, not code: contributions must be original work or comp
 - **Deep zoom of streamed audio.** An asset above the 64 MiB streaming threshold has no samples in the views, so below 256 frames per pixel its waveform stays at the finest peak level (blocky min/max) instead of reading the samples; the UI never reads the disk to paint.
 
 - **Params are quantised to batch boundaries.** A param message takes effect at the next 64-frame boundary; devices smooth audible params themselves. Notes are sample-accurate. Song automation is applied once per batch.
+- **Automation recording.** Only parameter changes that reach `AppCore::apply_command` are recorded; MIDI CC has no path to a parameter yet. A Touch starts at the first move of a control, not at the press (a press without a move is not seen), and an un-dragged change (a typed value, the MCP server) touches for one tick. Arming a lane takes effect at the next take. The thinning amount is not a preference yet. A recorded lane is held in the engine from the touch; between touches the lane plays as it was, with a jump back at the release.
 - **No time-stretch.** Audio clips keep their timing when the tempo changes.
 - **Tempo and meter.** Tempo ramps are linear in BPM only (no other curve shapes), meter changes only start on bar lines, and tempo-synced devices follow a ramp in steps of one 64-frame batch. The LFO of the modulation effects computes its synced phase from the absolute frame and the tempo of the batch (see DEVICES.md), so while the tempo ramps their phase moves with it; the delay, Mod Source, step sequencer and arpeggiator work from the tick and stay on the beat. The piano roll and the step editor count bars from the clip start under the meter in effect there.
 - **Relinking missing audio.** A missing file is reported and its clips play silence until it is relinked (File > Relink Missing Audio...). A relink keeps zone ranges and clip offsets as they are, so a replacement shorter than a zone or a clip offset needs is refused; the folder search matches by file name only (no content search), looks 8 levels deep and at 50 000 entries at most, and a bounce still stops with an error naming a missing asset.

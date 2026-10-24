@@ -215,6 +215,12 @@ impl EngineSink for OfflineSink {
 
     fn drain_recorded(&mut self, _out: &mut Vec<RecordedNote>) {}
 
+    fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {
+        if let Some(h) = &self.handle {
+            let _ = h.hold_automation(lanes);
+        }
+    }
+
     fn latency_epoch(&self) -> u64 {
         self.handle.as_ref().map_or(0, EngineHandle::latency_epoch)
     }

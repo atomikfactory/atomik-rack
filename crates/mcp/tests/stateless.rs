@@ -87,6 +87,22 @@ fn project_inspect_describes_a_project_and_a_patch() {
             .all(|t| t["chase"] == true),
         "every track reports its chase flag, on for a project that never set it"
     );
+    let lanes: Vec<&serde_json::Value> = v["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|t| t["lanes"].as_array().unwrap())
+        .filter(|l| l["kind"].as_str().unwrap().starts_with("automation:"))
+        .collect();
+    assert!(!lanes.is_empty());
+    assert!(
+        lanes.iter().all(|l| l["write"] == "touch"),
+        "an automation lane reports its write mode (touch unless the project says otherwise)"
+    );
+    assert!(
+        v["song"]["tracks"][0]["lanes"][0].get("write").is_none(),
+        "a note lane has no write mode"
+    );
     assert!(
         v["devices"]
             .as_array()

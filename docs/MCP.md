@@ -121,6 +121,10 @@ These are the QA steps this project expects for a change, in the order to do the
 
 Chase Notes (`sequencer.toggle_chase`) is an item of the track header's context menu, not of the menu bar, so `session_commands` does not list it. Reach it with `session_pointer`: right-click the track's header, then click Chase Notes. `session_status` shows the track's `chase` flag (on by default; a project file stores `"no_chase": true` for a track that does not chase).
 
+**Automation recording**
+
+An automation lane's header has a mode button (`OVR`, `TCH` or `LTC`: click to cycle, one undo step each) and a `W` arm button, so `session_texts` finds them by their text and `session_pointer` clicks them. `session_status` shows `armed_lanes` (session state, never saved, not an undo step), `recording`, and each automation lane's `write` mode in `document.song.tracks[].lanes[]` (`project_inspect` shows the same). With a lane armed, `session_command` `transport.record` starts a take without an armed track; a parameter change made while it runs (a knob drag with `session_pointer`) is written, and `transport.record` again (or stop) lands the take as automation clips, one undo step. The session has no audio device, so the transport does not advance: use the headless tests (`crates/app/src/app_core_autorec_tests.rs`) for the written ticks.
+
 **Missing audio and relink**
 
 `session_open` a bundle project whose `Audio/<hash>.wav` was deleted, `session_commands` with `query: relink` (the command is enabled only while audio is missing), `session_command` `file.relink_audio` and read the panel with `session_texts` or `session_screenshot`. Then `session_relink` with a `file` (different audio: one undo step, `document_changed` true) or the same audio (file moved or renamed: the file is restored, `document_changed` false) or a `folder`. `session_bounce` must now be audible and the same on every run; `edit.undo` brings the missing state back and enables the command again.

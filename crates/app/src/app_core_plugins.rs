@@ -1276,7 +1276,10 @@ impl<S: EngineSink> AppCore<S> {
                 UiAction::Command(c) => {
                     let _ = self.apply_command(c);
                 }
-                UiAction::EndMerge => self.document.end_merge(),
+                UiAction::EndMerge => {
+                    self.document.end_merge();
+                    self.release_automation();
+                }
                 _ => {}
             }
         }

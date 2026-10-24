@@ -70,6 +70,10 @@ pub trait EngineSink {
     fn set_recording(&mut self, devices: &[DeviceInstanceId]);
     /// Moves the captured live notes into `out` (oldest first).
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>);
+    /// [`atomik_engine::EngineHandle::hold_automation`]: the song player leaves these
+    /// `(device, param)` lanes alone (empty releases them). A take that writes automation
+    /// holds the lanes it writes. The default does nothing (no engine).
+    fn hold_automation(&mut self, _lanes: &[(DeviceInstanceId, ParamId)]) {}
     /// The live-notes target cell the sink's MIDI input reads, if it has one; the core
     /// publishes the target there. `None` (the default) makes the core create its own.
     fn note_target(&self) -> Option<Arc<NoteTarget>> {
@@ -190,6 +194,8 @@ pub enum SinkCall {
     Remove(DeviceInstanceId),
     /// [`EngineSink::submit_routing`]: the plan's processing order.
     Routing(Vec<DeviceInstanceId>),
+    /// [`EngineSink::hold_automation`].
+    Hold(Vec<(DeviceInstanceId, ParamId)>),
     /// [`EngineSink::set_param`].
     Param {
         /// Device.
@@ -400,6 +406,10 @@ impl EngineSink for RecordingSink {
 
     fn drain_recorded(&mut self, out: &mut Vec<RecordedNote>) {
         out.append(&mut self.recorded);
+    }
+
+    fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {
+        self.calls.push(SinkCall::Hold(lanes.to_vec()));
     }
 
     fn latency_epoch(&self) -> u64 {

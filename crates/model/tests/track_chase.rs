@@ -77,14 +77,14 @@ fn set_track_flags_leaves_chase_alone() {
 }
 
 #[test]
-fn save_project_chasing_track_writes_no_field_and_version_17() {
+fn save_project_chasing_track_writes_no_field() {
     let reg = registry();
     let d = doc(&reg);
     let text = save_project(d.doc());
     assert!(!text.contains("no_chase"));
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 17);
-    assert_eq!(PROJECT_VERSION, 17);
+    assert_eq!(v["version"], 18);
+    assert_eq!(PROJECT_VERSION, 18);
 }
 
 #[test]

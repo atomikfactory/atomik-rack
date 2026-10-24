@@ -221,6 +221,8 @@ pub struct AppCore<S: EngineSink> {
     metronome_gain: f32,
     quantize: InputQuantize,
     take: Option<Take>,
+    /// Automation recording: the armed lanes and the running take's lane recorders.
+    autorec: autorec::AutoRec,
     position: i64,
     recorded: Vec<RecordedNote>,
     console: ConsoleView,
@@ -392,6 +394,7 @@ impl<S: EngineSink> AppCore<S> {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             quantize: InputQuantize::Off,
             take: None,
+            autorec: autorec::AutoRec::new(),
             position: 0,
             recorded: Vec::new(),
         };
@@ -492,9 +495,11 @@ impl<S: EngineSink> AppCore<S> {
         };
         // A device that goes away takes its latest plugin state into the undo history.
         self.plugins_flush_dirty();
+        let merge = param_merge(&command);
         match self.document.apply(command, &self.registry) {
             Ok(ops) => {
                 self.sync_ops(&ops);
+                self.capture_automation(&ops, merge);
                 if let Some((w, pre)) = workflow {
                     self.workflow_post(&w, pre);
                 }
@@ -514,7 +519,13 @@ impl<S: EngineSink> AppCore<S> {
                 // A rejection is already reported to the view.
                 let _ = self.apply_command(c);
             }
-            UiAction::EndMerge => self.document.end_merge(),
+            UiAction::EndMerge => {
+                self.document.end_merge();
+                self.release_automation();
+            }
+            UiAction::ToggleLaneArm { device, param } => {
+                self.toggle_automation_arm(&device, &param);
+            }
             // "Set Tempo..." on a tempo point: the transport bar's tempo entry takes that event.
             UiAction::EditTempoPoint(i) => self.transport_bar.begin_tempo_edit(Some(i)),
             UiAction::Undo => {
@@ -792,6 +803,7 @@ impl<S: EngineSink> AppCore<S> {
         if self.take.take().is_some() {
             self.sink.set_recording(&[]);
         }
+        self.cancel_automation_take();
         self.cancel_audio_recording();
         self.playing = false;
         self.pending_play = None;
@@ -1699,10 +1711,9 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn start_recording(&mut self) {
-        let song = &self.doc().song;
-        if !song.tracks.iter().any(|t| t.armed) {
+        if !self.doc().song.tracks.iter().any(|t| t.armed) && !self.has_armed_lanes() {
             self.reject(
-                "recording needs an armed track: arm one with its R button in the arrangement"
+                "recording needs an armed track or automation lane: arm one with its R button in the arrangement"
                     .to_string(),
             );
             return;
@@ -1721,7 +1732,8 @@ impl<S: EngineSink> AppCore<S> {
         let loop_range = song.loop_enabled.then_some(song.loop_range);
         let meter = song.meter_table();
         let audio_started = !audio.is_empty() && self.start_audio_recording(&audio);
-        if tracks.is_empty() && !audio_started {
+        let automation_started = self.start_automation_take();
+        if tracks.is_empty() && !audio_started && !automation_started {
             // Nothing can record: the reason was reported.
             return;
         }
@@ -1736,6 +1748,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Converts newly captured notes with the latest transport state.
     fn feed_take(&mut self, state: &TransportState) {
         self.feed_audio_take(state);
+        self.advance_automation(state);
         let Some(take) = &mut self.take else {
             return;
         };
@@ -1761,6 +1774,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.sink.set_recording(&[]);
         self.finish_audio_take();
+        self.finish_automation_take(state);
         let stop = SongPosition {
             song_frame: state.song_frame,
             tick: Ticks(state.tick),
@@ -1786,6 +1800,7 @@ impl<S: EngineSink> AppCore<S> {
         self.piano_roll.set_playing(self.playing);
         self.arrangement.set_playhead(self.position);
         self.arrangement.set_recording(recording);
+        self.arrangement.set_armed_lanes(&self.autorec.armed);
         self.piano_roll.set_playhead(self.position);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,
@@ -1821,6 +1836,16 @@ impl<S: EngineSink> AppCore<S> {
     }
 }
 
+/// The drag-merge id of a parameter command (the first one inside a batch): `Some` means a
+/// control is being held.
+fn param_merge(command: &Command) -> Option<u64> {
+    match command {
+        Command::SetParam { merge, .. } => *merge,
+        Command::Batch(commands) => commands.iter().find_map(param_merge),
+        _ => None,
+    }
+}
+
 /// True if `path` has the project extension (`.atomik`, any case).
 pub fn is_project_path(path: &Path) -> bool {
     path.extension()
@@ -1846,6 +1871,9 @@ use audio::AudioState;
 
 #[path = "app_core_rec_audio.rs"]
 mod rec;
+
+#[path = "app_core_autorec.rs"]
+mod autorec;
 
 #[path = "app_core_samples.rs"]
 mod samples;
@@ -1920,6 +1948,10 @@ mod plugins_sandbox_tests;
 #[cfg(test)]
 #[path = "app_core_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "app_core_autorec_tests.rs"]
+mod autorec_tests;
 
 #[cfg(test)]
 #[path = "app_core_song_tests.rs"]

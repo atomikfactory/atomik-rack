@@ -6,6 +6,7 @@
 //!
 //! Public signatures are a stable contract: changes need review.
 
+pub mod automation_rec;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
@@ -75,6 +76,7 @@ pub use zones::{
 };
 
 use atomik_device_sdk::Registry;
+pub use automation_rec::WriteMode;
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
 };

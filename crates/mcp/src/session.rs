@@ -145,6 +145,14 @@ impl Session {
             "status_text": self.shell.status_text(),
             "focus": format!("{:?}", self.shell.focus()),
             "lower_pane": format!("{:?}", self.shell.lower_pane()),
+            "recording": self.shell.core().is_recording(),
+            "armed_lanes": self
+                .shell
+                .core()
+                .armed_automation_lanes()
+                .iter()
+                .map(|(device, param)| json!({"device": device.as_str(), "param": param}))
+                .collect::<Vec<_>>(),
             "can_undo": state.can_undo,
             "can_redo": state.can_redo,
             "settings_dialog_open": self.shell.dialog_open(),
@@ -283,7 +291,7 @@ fn status_def() -> Value {
     definition(
         "session_status",
         "The open session: title, unsaved changes, status line, focused pane, undo/redo \
-availability, window size, and the document (devices, cables, song).",
+availability, whether a take records, the automation lanes armed for recording, window size, and the document (devices, cables, song; automation lanes with their write mode).",
         &[(
             "include_params",
             "boolean",

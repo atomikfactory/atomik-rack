@@ -6,6 +6,7 @@
 //! Public types are a stable contract: changes need review.
 
 use crate::DeviceKey;
+use crate::automation_rec::WriteMode;
 use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
@@ -295,6 +296,10 @@ pub struct Song {
     /// state saved with the project): `MIN_TRACK_HEIGHT..=MAX_TRACK_HEIGHT`. A track without an
     /// entry has `DEFAULT_TRACK_HEIGHT`. Entries of devices without a track are dropped.
     pub track_heights: BTreeMap<DeviceKey, u16>,
+    /// The write mode of an automation lane, by `(device, param)`: how a recording pass writes
+    /// into it. A lane without an entry has the default mode, [`WriteMode::Touch`] (an entry
+    /// never holds the default). Entries of lanes that do not exist are dropped when saving.
+    pub lane_write: BTreeMap<(DeviceKey, String), WriteMode>,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -368,6 +373,17 @@ pub enum SongCommand {
         device: DeviceKey,
         /// Chase notes that span the play position.
         chase: bool,
+    },
+    /// Set the write mode of an automation lane (see [`Song::lane_write`]); the lane must
+    /// exist. One undo step. Reports [`crate::SyncOp::ViewChanged`] only: the engine never sees
+    /// it.
+    SetLaneWriteMode {
+        /// Device.
+        device: DeviceKey,
+        /// Param key of the lane.
+        param: String,
+        /// The mode.
+        mode: WriteMode,
     },
     /// Add an automation lane for a parameter (creates the track if needed).
     AddAutomationLane {
@@ -595,6 +611,7 @@ pub fn empty_song(bpm: f64) -> Song {
         markers: Vec::new(),
         ranges: Vec::new(),
         track_heights: BTreeMap::new(),
+        lane_write: BTreeMap::new(),
     }
 }
 
@@ -626,6 +643,14 @@ impl Song {
     /// The track of `device`, if any.
     pub fn track(&self, device: &DeviceKey) -> Option<&Track> {
         self.tracks.iter().find(|t| &t.device == device)
+    }
+
+    /// The write mode of the automation lane of `param` on `device`'s track.
+    pub fn write_mode(&self, device: &DeviceKey, param: &str) -> WriteMode {
+        self.lane_write
+            .get(&(device.clone(), param.to_owned()))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// A clip by id, with its track and lane index.

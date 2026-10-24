@@ -48,6 +48,10 @@
 //! * **Automation.** At each playing batch start (after a pending wrap), every lane is
 //!   evaluated at the exact fractional batch-start tick and applied with the clamping
 //!   `set_param`; nothing is applied while stopped.
+//! * **Automation hold.** While a take records automation, the app names the lanes it writes
+//!   ([`AutomationHold`], set through [`crate::EngineHandle::hold_automation`]): those lanes are
+//!   skipped, so the value the user is moving wins over the recorded lane. The hold is a few
+//!   atomics read once per batch; it is empty (and costs one load) the rest of the time.
 //! * **Metronome.** Beats are the beats of the meter map (a quarter note in 4/4, an eighth in 6/8;
 //!   the beat lines restart at every bar line), each at the frame of its tick, accented on the
 //!   first beat of a bar. A click is a 30 ms decaying sine burst from a table computed when the
@@ -67,12 +71,13 @@ use crate::seq::{
 };
 use crate::stream::{StreamRequest, StreamStats};
 use atomik_core::{
-    BATCH, Batch, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, Tempo, TempoMap, TempoSegment,
+    BATCH, Batch, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, ParamId, Tempo, TempoMap,
+    TempoSegment,
 };
 use atomik_device_sdk::SocketId;
 use rtrb::Producer;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 
 /// One song note event for the current batch.
 #[derive(Debug, Clone, Copy)]
@@ -83,6 +88,56 @@ pub(crate) struct SongEvent {
     pub(crate) device: DeviceInstanceId,
     pub(crate) socket: SocketId,
     pub(crate) kind: NoteKind,
+}
+
+/// Most lanes [`AutomationHold`] holds at once.
+pub const HOLD_CAPACITY: usize = 32;
+
+/// The automation lanes the player must leave alone (see the module docs): `(device, param)`
+/// pairs in a fixed array of atomics, written by the handle and read by the audio thread once
+/// per batch. No allocation, lock or wait on either side; a read that races a write sees the
+/// old or the new set of a lane, which only moves a lane's hold by one batch.
+#[derive(Debug)]
+pub(crate) struct AutomationHold {
+    count: AtomicU32,
+    slots: [AtomicU64; HOLD_CAPACITY],
+}
+
+impl AutomationHold {
+    const HELD: u64 = 1 << 63;
+
+    pub(crate) fn new() -> Self {
+        Self {
+            count: AtomicU32::new(0),
+            slots: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+
+    /// Replaces the held set (`None` when `lanes` does not fit).
+    pub(crate) fn set(&self, lanes: &[(DeviceInstanceId, ParamId)]) -> Option<()> {
+        if lanes.len() > HOLD_CAPACITY {
+            return None;
+        }
+        self.count.store(0, Ordering::Release);
+        for (slot, (device, param)) in self.slots.iter().zip(lanes) {
+            slot.store(
+                Self::HELD | u64::from(device.0) << 32 | u64::from(param.0),
+                Ordering::Relaxed,
+            );
+        }
+        self.count.store(lanes.len() as u32, Ordering::Release);
+        Some(())
+    }
+
+    /// Whether the lane of `param` on `device` is held (RT-safe).
+    fn holds(&self, device: DeviceInstanceId, param: ParamId) -> bool {
+        let n = self.count.load(Ordering::Acquire) as usize;
+        let want = Self::HELD | u64::from(device.0) << 32 | u64::from(param.0);
+        n > 0
+            && self.slots[..n]
+                .iter()
+                .any(|s| s.load(Ordering::Relaxed) == want)
+    }
 }
 
 /// Lock-free (seqlock) cell holding the latest [`TransportState`]; one writer (the audio
@@ -441,6 +496,8 @@ pub(crate) struct Player {
     accent: Box<[f32]>,
     beat: Box<[f32]>,
     shared: Arc<TransportCell>,
+    /// The lanes a take is writing; the player skips them.
+    hold: Arc<AutomationHold>,
     /// Refill requests to the streamer.
     requests: Producer<StreamRequest>,
     /// Stream counters shared with the handle.
@@ -474,9 +531,15 @@ impl Player {
             accent: click_table(sample_rate, 1760.0, 1.0),
             beat: click_table(sample_rate, 1320.0, 0.6),
             shared: Arc::new(TransportCell::default()),
+            hold: Arc::new(AutomationHold::new()),
             requests,
             stats,
         }
+    }
+
+    /// The hold the handle writes the lanes to skip to.
+    pub(crate) fn hold(&self) -> Arc<AutomationHold> {
+        Arc::clone(&self.hold)
     }
 
     /// The cell the handle reads the transport state from.
@@ -676,6 +739,7 @@ impl Player {
             requests,
             stats,
             free_tick,
+            hold,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
@@ -752,7 +816,9 @@ impl Player {
             return time;
         }
         for lane in lanes {
-            arena.set_param(lane.device, lane.param, lane_value(&lane.points, tick0));
+            if !hold.holds(lane.device, lane.param) {
+                arena.set_param(lane.device, lane.param, lane_value(&lane.points, tick0));
+            }
         }
         if let Some((_, rts)) = aud.as_mut() {
             for rt in rts.iter_mut() {

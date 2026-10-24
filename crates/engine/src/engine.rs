@@ -49,7 +49,7 @@ use crate::console::{Latencies, Meters};
 use crate::graph::{DeviceInstanceId, EngineConfig, Graph};
 use crate::live::LiveNoteSender;
 use crate::plan::{Node, RenderPlan, mix_seed};
-use crate::player::{Player, TransportCell};
+use crate::player::{AutomationHold, Player, TransportCell};
 use crate::record::{RecordTap, TapRt};
 use crate::stream::{REQUEST_CAPACITY, StreamControl, StreamStats};
 use crate::workers::Pool;
@@ -418,6 +418,8 @@ pub struct EngineHandle {
     mirror: Mirror,
     /// Published transport state.
     transport: Arc<TransportCell>,
+    /// The automation lanes the player leaves alone (a take is writing them).
+    hold: Arc<AutomationHold>,
     /// Meter bank.
     meters: Arc<Meters>,
     /// Device latencies per arena slot.
@@ -500,6 +502,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let stream_stats = Arc::new(StreamStats::default());
     let player = Player::new(cfg.sample_rate.hz(), request_tx, Arc::clone(&stream_stats));
     let transport = player.shared();
+    let hold = player.hold();
     let meters = Arc::new(Meters::new(caps.arena));
     let latencies = Arc::new(Latencies::new(caps.arena));
     let preview_active = Arc::new(AtomicBool::new(false));
@@ -543,6 +546,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         dropped,
         mirror: Mirror::new(caps.arena),
         transport,
+        hold,
         meters,
         latencies,
         streams: StreamControl::new(stream_stats, request_rx),
@@ -948,6 +952,21 @@ impl EngineHandle {
     /// before the first batch.
     pub fn transport_state(&self) -> crate::TransportState {
         self.transport.read()
+    }
+
+    /// Names the automation lanes the song player must not apply (`(device, param)` pairs; an
+    /// empty slice releases them all). A take that writes a lane holds it, so the value being
+    /// moved is not overwritten by the lane's old points at every batch. Takes effect within a
+    /// batch, needs no queue space and never blocks the audio thread.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`] when more than [`crate::HOLD_CAPACITY`] lanes are named (nothing
+    /// changes).
+    pub fn hold_automation(
+        &self,
+        lanes: &[(DeviceInstanceId, atomik_core::ParamId)],
+    ) -> Result<(), EngineError> {
+        self.hold.set(lanes).ok_or(EngineError::QueueFull)
     }
 
     /// The live note producer. Returns `Some` exactly once.

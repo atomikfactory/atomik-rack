@@ -583,6 +583,12 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         self.tap.drain(out);
     }
 
+    fn hold_automation(&mut self, lanes: &[(DeviceInstanceId, ParamId)]) {
+        if let Some(r) = &self.running {
+            let _ = r.handle.hold_automation(lanes);
+        }
+    }
+
     fn latency_epoch(&self) -> u64 {
         self.running
             .as_ref()

@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 17,
+//! { "format": "atomik-project", "version": 18,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -21,6 +21,7 @@
 //!             "track_heights"?: {"<device key>": 24..=400, …}         (v15; written only when non-empty),
 //!             "tracks": [{ "device", "muted", "solo", "armed",
 //!                          "lanes": [{ "kind": "notes" | "automation" | "audio", "param"?,
+//!                                      "write"? (v18, automation lanes: "overwrite" | "latch"),
 //!                                      "clips": [{ "id", "start", "length", "offset",
 //!                                                  "loop_length" (int or null), "muted",
 //!                                                  "grid"? (v5, note clips only, see below),
@@ -100,7 +101,7 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. Saving always writes version 17.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). Saving always writes version 18.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -126,7 +127,7 @@ use crate::steps::{
 };
 use crate::theory::{Scale, ScaleKind};
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
-use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, rules};
+use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, WriteMode, rules};
 use atomik_device_sdk::Registry;
 use atomik_device_sdk::{LoopMode, TriggerMode};
 use serde_json::Value;
@@ -141,7 +142,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
 /// track heights) and 15 (no clip scales).
-pub const PROJECT_VERSION: u32 = 17;
+pub const PROJECT_VERSION: u32 = 18;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -315,6 +316,7 @@ const TRACK_FIELDS: &[&str] = &["device", "muted", "solo", "armed", "lanes"];
 const TRACK_FIELDS_V17: &[&str] = &["device", "muted", "solo", "armed", "no_chase", "lanes"];
 const NOTES_LANE_FIELDS: &[&str] = &["kind", "clips"];
 const AUTOMATION_LANE_FIELDS: &[&str] = &["kind", "param", "clips"];
+const AUTOMATION_LANE_FIELDS_V18: &[&str] = &["kind", "param", "write", "clips"];
 const NOTE_CLIP_FIELDS: &[&str] = &[
     "id",
     "start",
@@ -488,7 +490,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=17 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=18 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1301,13 +1303,22 @@ fn load_song(
         markers: load_markers(obj.get("markers"), &path.field("markers"))?,
         ranges: load_ranges(obj.get("ranges"), &path.field("ranges"))?,
         track_heights: BTreeMap::new(),
+        lane_write: BTreeMap::new(),
     };
     let tracks_path = path.field("tracks");
     let mut track_first: BTreeMap<DeviceKey, JsonPath> = BTreeMap::new();
     let mut clip_first: BTreeMap<u64, JsonPath> = BTreeMap::new();
+    let mut lane_write: BTreeMap<(DeviceKey, String), WriteMode> = BTreeMap::new();
     for (i, item) in array(&obj["tracks"], &tracks_path)?.iter().enumerate() {
         let p = tracks_path.index(i);
-        let track = load_track(item, &p, (doc, registry), version, &song, &mut clip_first)?;
+        let track = load_track(
+            item,
+            &p,
+            (doc, registry),
+            version,
+            &song,
+            (&mut clip_first, &mut lane_write),
+        )?;
         if let Some(first) = track_first.get(&track.device) {
             return Err(p.field("device").error(format!(
                 "{:?} already has a track ({first})",
@@ -1317,6 +1328,7 @@ fn load_song(
         track_first.insert(track.device.clone(), p);
         song.tracks.push(track);
     }
+    song.lane_write = lane_write;
     song.track_heights = load_track_heights(
         obj.get("track_heights"),
         &path.field("track_heights"),
@@ -1325,13 +1337,18 @@ fn load_song(
     Ok(song)
 }
 
+/// Where each clip id was first seen, for duplicate messages.
+type ClipFirst = BTreeMap<u64, JsonPath>;
+/// The write modes found while loading tracks, by `(device, param)`.
+type LaneWrites = BTreeMap<(DeviceKey, String), WriteMode>;
+
 fn load_track(
     v: &Value,
     path: &JsonPath,
     (doc, registry): (&RackDoc, &Registry),
     version: u64,
     song: &Song,
-    clip_first: &mut BTreeMap<u64, JsonPath>,
+    (clip_first, lane_write): (&mut ClipFirst, &mut LaneWrites),
 ) -> Result<Track, ModelError> {
     let fields = if version >= 17 {
         TRACK_FIELDS_V17
@@ -1396,10 +1413,17 @@ fn load_track(
                     NOTE_CLIP_FIELDS
                 },
             )
+        } else if version >= 18 {
+            (AUTOMATION_LANE_FIELDS_V18, AUTOMATION_CLIP_FIELDS)
         } else {
             (AUTOMATION_LANE_FIELDS, AUTOMATION_CLIP_FIELDS)
         };
-        let lane = object(item, &p, fields, fields)?;
+        let required = if version >= 18 && fields == AUTOMATION_LANE_FIELDS_V18 {
+            AUTOMATION_LANE_FIELDS
+        } else {
+            fields
+        };
+        let lane = object(item, &p, fields, required)?;
         let kind = if audio_track {
             LaneKind::Audio
         } else if i == 0 {
@@ -1418,6 +1442,16 @@ fn load_track(
                 .any(|l| matches!(&l.kind, LaneKind::Automation(q) if q == param))
             {
                 return Err(param_path.error(format!("duplicate automation lane for {param:?}")));
+            }
+            if let Some(w) = lane.get("write") {
+                let write_path = p.field("write");
+                let mode = WriteMode::from_name(string(w, &write_path)?)
+                    .filter(|m| *m != WriteMode::default())
+                    .ok_or_else(|| {
+                        write_path
+                            .error("expected \"overwrite\" or \"latch\" (touch is the default)")
+                    })?;
+                lane_write.insert((device.clone(), param.to_owned()), mode);
             }
             LaneKind::Automation(param.to_owned())
         };
@@ -1990,7 +2024,14 @@ fn write_song(w: &mut String, song: &Song) {
                 LaneKind::Notes => "\"kind\": \"notes\"".to_owned(),
                 LaneKind::Audio => "\"kind\": \"audio\"".to_owned(),
                 LaneKind::Automation(p) => {
-                    format!("\"kind\": \"automation\", \"param\": {}", json_str(p))
+                    let write = match song.write_mode(&t.device, p) {
+                        WriteMode::Touch => String::new(),
+                        mode => format!(", \"write\": \"{}\"", mode.name()),
+                    };
+                    format!(
+                        "\"kind\": \"automation\", \"param\": {}{write}",
+                        json_str(p)
+                    )
                 }
             };
             let _ = write!(
