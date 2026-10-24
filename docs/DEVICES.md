@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-two original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-four original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -488,6 +488,73 @@ The param ids run in this order (`input` 0 … `meter.reset` 27); the band param
 
 ---
 
+## Spectrum: `atomik.spectrum` (Effect)
+
+A spectrum analyser that passes the audio through untouched. Source: [crates/devices/src/spectrum.rs](../crates/devices/src/spectrum.rs); the analysis is [crates/dsp/src/spectrum.rs](../crates/dsp/src/spectrum.rs), run by the app on the UI side ([crates/app/src/app_core_analysers.rs](../crates/app/src/app_core_analysers.rs)). It appears in the device browser with the effects.
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). An unconnected input reads silence.
+
+### Params
+
+All of them are display settings: the device stores them (they are saved with the project and can be automated or preset like any param) and the UI reads them from the document; none of them reaches the audio.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `size` | 0 to 3: 1024, 2048, 4096, 8192 points | 2 (4096) | choice | Linear | yes |
+| `window` | 0 to 1: Hann, B-Harris (Blackman-Harris) | 0 | choice | Linear | yes |
+| `channel` | 0 to 4: Left, Right, Mid, Side, Sum | 4 (Sum) | choice | Linear | yes |
+| `mode` | 0 to 1: Fine (log-frequency trace), 1/3 oct (31 bands) | 0 | choice | Linear | yes |
+| `averaging` | 0 to 2000 | 150 | ms | Linear | no |
+| `hold` | 0 to 5000 (0 = no peak hold) | 1000 | ms | Linear | no |
+| `decay` | 1 to 60 (how fast a released peak falls) | 15 | dB per second | Linear | no |
+| `range` | 30 to 120 (dB shown below 0 dB) | 90 | dB | Linear | no |
+| `tilt` | 0 to 2: 0 dB, 3 dB, 4.5 dB per octave about 1 kHz | 0 | choice | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Audio path.** Each batch the device copies `in_l`/`in_r` to `out_l`/`out_r` **bit for bit** (non-finite samples included), with **no latency**, and pushes the same 64 frames into its `ScopeTap` (`atomik_device_sdk::ScopeTap`): a lock-free ring of the last 32 768 stereo frames made of `AtomicU32`s, 128 relaxed stores and one release store per batch. It never allocates (the ring is made when the device is built), locks or computes a transform, and nothing in the output depends on a param, so a bounce with the device is bit-identical to a bounce without it. See [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
+- **Analysis (UI side).** Every UI frame the app reads the newest `size` frames from the tap and `atomik_dsp::spectrum` does the rest: a Hann or Blackman-Harris window, an FFT with the in-house radix-2 transform (deterministic twiddles), the power of `channel` (left, right, mid `(L+R)/2`, side `(L-R)/2`, or the mean of the two power spectra), a one-pole average of the bin power with the `averaging` time constant measured in frames of audio (not frames of the display), and the trace: 240 columns evenly spaced in log frequency from 20 Hz to 20 kHz (a column narrower than a bin interpolates in dB between bins, one wider shows its loudest bin), or the 31 one-third-octave bands 20 Hz to 20 kHz (exact centres `1 kHz * 10^((n - 30) / 10)`; each band is the bin power inside its edges, a straddling bin in proportion, divided by the window's noise bandwidth). Peaks keep each column's highest value for `hold` and then fall `decay` dB per second; `tilt` adds `tilt * log2(f / 1 kHz)` dB to the display.
+- **Calibration.** 0 dB is a full-scale sine; a sine on a bin reads its own level, a sine between bins reads up to 1.4 dB (Hann) or 0.8 dB (Blackman-Harris) low (scalloping), white noise reads 3 dB above its RMS (the sine convention). The loudest-bin readout (`PEAK 1.00 kHz  -20.1 dB`) is the maximum bin from 20 Hz to 20 kHz refined by a parabola through its neighbours in dB, so a tone is found within a small fraction of a bin. The lowest bands at 1024 points are narrower than a bin: they read the power density times their width, which under-reads a pure tone; use 4096 or 8192 for the bass.
+- **Bypass.** The `bypass` wrapper keeps the device's audio path (the dry path is the same signal). The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
+- **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear; the panel draws them as the two bars next to the plot.
+
+---
+
+## Phase Meter: `atomik.phase-meter` (Effect)
+
+A stereo and level meter that passes the audio through untouched: goniometer, correlation, balance, width, peak and RMS bars with hold, and BS.1770 loudness. Source: [crates/devices/src/phase_meter.rs](../crates/devices/src/phase_meter.rs), with [crates/dsp/src/stereo_meter.rs](../crates/dsp/src/stereo_meter.rs) and the loudness meter of `atomik.mastering` (`mastering/loudness.rs`).
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out).
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `corr_time` | 50 to 2000 (the correlation average) | 300 | ms | Exp | no |
+| `hold` | 0 to 4: Off, 1 s, 3 s, 10 s, Infinite | 1 (1 s) | choice | Linear | yes |
+| `scope` | 0 to 1: M/S (goniometer), L/R (Lissajous) | 0 | choice | Linear | yes |
+| `scope_gain` | -12 to 24 | 0 | dB | Linear | no |
+| `loudness` | 0 or 1 (K-weighted loudness and true peak) | 1 | toggle | Linear | yes |
+| `meter.reset` | momentary toggle: a rising edge clears the integrated loudness, the loudness windows, the peak maxima and the holds | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Audio path.** The outputs are the inputs, bit for bit, with no latency, and every batch also goes into the device's `ScopeTap` (as for the spectrum). The meters only read; everything is allocation-free after `prepare` and a bounce with the device equals a bounce without it (the render tests compare the bits).
+- **Levels.** The peak of the last 16 batches; a held peak that stays for `hold` and then drops to what is playing; RMS of each channel over 300 ms; the sample peak since the last reset in dBFS.
+- **Stereo image** (`atomik_dsp::stereo_meter`, one-pole averages of `L^2`, `R^2` and `L*R`): correlation `lr / sqrt(ll * rr)` over `corr_time` (+1 identical, -1 inverted, about 0 for unrelated noise or a quarter-cycle shift; 0 for silence or one silent channel); balance `(R_rms - L_rms) / (R_rms + L_rms)`; mid `(L+R)/2` and side `(L-R)/2` RMS; width `S_rms / (M_rms + S_rms)` (0 mono, 0.5 unrelated channels of equal level, 1 opposite polarity). Non-finite samples count as 0.
+- **Loudness** (`loudness` on): the BS.1770-4 / R128 meter of the mastering device (K-weighting designed for the actual sample rate, 100 ms sub-blocks, momentary 400 ms, short-term 3 s, integrated with the -70 LUFS and -10 LU gates over a fixed histogram), and the true peak (4x oversampled, unrefined, as in Annex 2) since the last reset in dBTP. A stereo 1 kHz sine at -23 dBFS peak reads -22.99 LUFS (tested to 0.15 dB, and through the headless meter probe). Off, they read -120 and cost nothing.
+- **Scope.** The panel draws the goniometer from the newest 2048 frames of the tap, every second one: mid up and side across (`M/S`: mono is a vertical line, the left channel alone a line up and to the left), or the plain Lissajous figure (`L/R`: left across, right up), `scope_gain` dB larger and clamped to the frame.
+- **Bypass.** As for the spectrum: the audio path stays, the panel freezes with `BYPASSED`.
+- **Meter values** (16, `atomik_devices::phase_meter::value`): `[recent peak L, recent peak R, held peak L, held peak R, RMS L, RMS R]` (linear), `[sample peak dBFS, true peak dBTP]`, `[correlation, balance, width]`, `[mid RMS, side RMS]` (linear), `[momentary, short-term, integrated LUFS]`; -120 for silence or loudness off.
+
+---
+
 ## Character: `atomik.character` (Effect)
 
 A stereo insert with 16 character presets in a 4 x 4 matrix, an input gain, a macro **Transform** morph, dry/wet and volume, and CV inputs with trims for Transform and Dry/Wet. An original design with its own preset names. Source: [crates/devices/src/character.rs](../crates/devices/src/character.rs) and its folder (`chain`, `rack`, `stages`, `voicing`, `row1` to `row4`); tables in [crates/devices/data](../crates/devices/data). All 16 presets are voiced; the voicing was set by ear and checked with analytic tests.
@@ -940,12 +1007,12 @@ VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe an
 
 ## Effect bypass
 
-Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, modulation, mastering and Character) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
+Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, modulation, mastering, Character, the spectrum and the phase meter) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
 
 - **Bypassed (>= 0.5).** `out_l` / `out_r` carry the main inputs `in_l` / `in_r` **delayed by the device's current `latency_frames()`**, bit for bit, so plugin delay compensation stays right and a bypassed latent effect (compressor lookahead, oversampled distortion and modulation, mastering, Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in `prepare`; a latency that changes at run time (Character across its two latency classes) moves the dry tap at the next batch boundary.
 - **The effect keeps running.** Its state and tail continue and every other output (the compressor's `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged; un-bypassing is seamless, and the CPU cost does not drop.
 - **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample, `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed input. The first batch after `prepare` or `reset` starts at the param's value without a fade, so a project saved bypassed opens bypassed.
-- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all eight effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
+- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all ten effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
 - **Console inserts.** A channel's insert slot has its own `insert.bypass` (a channel-level switch, see [ARCHITECTURE.md](ARCHITECTURE.md)); the two are independent.
 
 ## CV inputs: the trim convention
