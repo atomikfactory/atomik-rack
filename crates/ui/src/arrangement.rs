@@ -335,6 +335,9 @@ impl Menu {
     }
 }
 
+// One drag lives at a time and is rebuilt on every pointer event anyway: the audio variant holds
+// whole clips, and boxing them would only add an allocation per drag.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum Drag {
     None,
@@ -2737,7 +2740,18 @@ impl ArrangementView {
                         let wanted =
                             snap_round(clip.start + axis.dx_to_ticks(pos.x - start.x), step);
                         let orig = (clip.start, clip.length, content.source_offset);
-                        let t = if content.reverse {
+                        let mut markers = None;
+                        let t = if content.warp.enabled {
+                            let (t, m) = audio::trim_left_warped(
+                                *rate,
+                                (clip.start, clip.length, content),
+                                *asset_frames,
+                                wanted,
+                                min,
+                            );
+                            markers = Some(m);
+                            t
+                        } else if content.reverse {
                             audio::trim_left_reversed(
                                 tempo,
                                 *rate,
@@ -2755,6 +2769,10 @@ impl ArrangementView {
                         // The envelope stays on the sound it was drawn on.
                         let moved = i128::from(tempo.frame_at(t.start, *rate))
                             - i128::from(tempo.frame_at(clip.start, *rate));
+                        let mut trimmed = content.clone();
+                        if let Some(m) = markers {
+                            trimmed.warp.markers = m;
+                        }
                         new = (
                             t.start,
                             t.length,
@@ -2766,7 +2784,7 @@ impl ArrangementView {
                                     &content.envelope,
                                     moved.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
                                 ),
-                                ..content.clone()
+                                ..trimmed
                             },
                         );
                     }
@@ -3874,13 +3892,23 @@ impl ArrangementView {
         // Source frame under a logical x: the offset plus the real time since the clip start.
         let clip_len = self.clip_frames(clip, g.rate) as f64;
         let source = |x: f64| {
-            let forward = audio::source_frame(
-                &self.tempo,
-                g.rate,
-                clip.start,
-                a.source_offset,
-                self.tick_of_x(x),
-            );
+            let forward = if a.warp.enabled {
+                audio::warped_source(
+                    &a.warp,
+                    g.rate,
+                    clip.start,
+                    a.source_offset,
+                    self.tick_of_x(x),
+                )
+            } else {
+                audio::source_frame(
+                    &self.tempo,
+                    g.rate,
+                    clip.start,
+                    a.source_offset,
+                    self.tick_of_x(x),
+                )
+            };
             if a.reverse {
                 // Reversed: the clip plays its span of the asset from the top down.
                 2.0 * a.source_offset as f64 + clip_len - forward
@@ -3899,10 +3927,20 @@ impl ArrangementView {
                     c.fill_with(empty, st.outside);
                 }
             } else {
-                let end_x = self.x_of_tick(self.tempo.tick_at_frame(
-                    g.start_frame + meta.frames.saturating_sub(a.source_offset) as f64,
-                    g.rate,
-                ));
+                let end_x = self.x_of_tick(if a.warp.enabled {
+                    audio::warped_tick(
+                        &a.warp,
+                        g.rate,
+                        clip.start,
+                        a.source_offset,
+                        meta.frames as f64,
+                    )
+                } else {
+                    self.tempo.tick_at_frame(
+                        g.start_frame + meta.frames.saturating_sub(a.source_offset) as f64,
+                        g.rate,
+                    )
+                });
                 if end_x < vis.x1 {
                     let empty = Rect::new(end_x.max(vis.x0), body.y0, vis.x1, body.y1);
                     c.fill_with(empty, st.outside);
@@ -3919,6 +3957,15 @@ impl ArrangementView {
                 let columns = ((x_end - x_start).max(0.0) as usize).min(MAX_COLUMNS);
                 // A source frame back to its x: the inverse of `source`.
                 let frame_x = |f: f64| {
+                    if a.warp.enabled {
+                        return self.x_of_tick(audio::warped_tick(
+                            &a.warp,
+                            g.rate,
+                            clip.start,
+                            a.source_offset,
+                            f,
+                        ));
+                    }
                     let elapsed = if a.reverse {
                         a.source_offset as f64 + clip_len - f
                     } else {
