@@ -608,6 +608,15 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Quantizes what `pane` works on with the panel's settings of the last time (the open
+    /// panel's, while it is open), as the quantize key and the piano roll's QUANT button do.
+    fn apply_last_quantize(&mut self, pane: Pane) {
+        let params = self.quantize_values().params();
+        self.core.apply_quantize(pane, params);
+        self.sync_quantize();
+        self.repaint = true;
+    }
+
     /// What the quantize panel asked for.
     fn quantize_action(&mut self, action: QuantizeAction) {
         let pane = self.live_pane(self.focus);
@@ -618,6 +627,8 @@ impl<B: AudioBackend> Shell<B> {
         match action {
             QuantizeAction::Close => self.close_quantize(),
             QuantizeAction::Apply => self.core.apply_quantize(pane, params),
+            // Only the piano roll and the quantize key send these (see `pane_actions`).
+            QuantizeAction::ApplyLast | QuantizeAction::Options => {}
             QuantizeAction::Extract => {
                 if let Some(name) =
                     self.core
@@ -1778,6 +1789,11 @@ impl<B: AudioBackend> Shell<B> {
     /// The commands the shell itself runs (see [`Self::run_command`]).
     fn run_shell_command(&mut self, id: &str, arg: Option<&str>) -> Option<Vec<ShellRequest>> {
         match (id, arg) {
+            // The quantize key outside an editor: the selected clips of the arrangement.
+            ("editor.quantize", None) => {
+                let pane = self.live_pane(self.focus);
+                self.apply_last_quantize(pane);
+            }
             ("transport.stop", None) => self.core.stop_or_rewind(),
             ("transport.rewind_bar" | "transport.bar_back", None) => self.core.locate_bars(-1),
             ("transport.forward_bar" | "transport.bar_forward", None) => self.core.locate_bars(1),
@@ -2226,6 +2242,11 @@ impl<B: AudioBackend> Shell<B> {
                     self.execute(AppCommand::MaximiseConsole);
                 }
                 UiAction::ImportAudioDialog => self.pending.push(ShellRequest::PickImportFiles),
+                // The piano roll's QUANT button: the panel's last settings, on the roll.
+                UiAction::Quantize(QuantizeAction::ApplyLast) => {
+                    self.apply_last_quantize(Pane::PianoRoll);
+                }
+                UiAction::Quantize(QuantizeAction::Options) => self.open_quantize(),
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {

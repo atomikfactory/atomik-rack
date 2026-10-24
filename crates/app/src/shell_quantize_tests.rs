@@ -292,3 +292,114 @@ fn the_registry_command_reaches_the_panel() {
     assert!(taken.is_some());
     assert!(s.quantize_open());
 }
+
+fn tap(s: &mut Shell<NullBackend>, chord: &str) {
+    let (key, modifiers) = atomik_ui::keymap::script::event_for(Os::Windows, chord).unwrap();
+    for pressed in [true, false] {
+        s.handle(&UiEvent::Key {
+            key: key.clone(),
+            modifiers,
+            pressed,
+        });
+    }
+}
+
+/// Opens the panel, steps the grid down to 1/8 and closes it: the last settings are 1/8.
+fn last_settings_are_an_eighth(s: &mut Shell<NullBackend>) {
+    s.execute(AppCommand::QuantizeOptions);
+    step(s, QuantizeRow::Grid, false);
+    step(s, QuantizeRow::Grid, false);
+    let close = s.quantize_view().unwrap().close_rect().center();
+    click(s, close);
+    assert!(!s.quantize_open());
+    assert_eq!(s.quantize_values().params().grid, 2 * S);
+}
+
+/// How far each note is after the 1/8 line before it.
+fn off_eighth(s: &Shell<NullBackend>, id: ClipId) -> Vec<i64> {
+    let (_, _, c) = s.core().doc().song.clip(id).unwrap();
+    notes(s, id)
+        .iter()
+        .map(|n| (c.start - c.offset + n.tick).rem_euclid(2 * S))
+        .collect()
+}
+
+#[test]
+fn ctrl_k_quantizes_the_selected_clips_with_the_last_settings() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    last_settings_are_an_eighth(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    tap(&mut s, "Cmd+K");
+    assert_eq!(
+        off_eighth(&s, id),
+        [0, 0, 0],
+        "the panel's grid, not the snap"
+    );
+    assert!(!s.quantize_open(), "no panel for the key");
+    // One undo step.
+    s.core_mut().undo();
+    assert_ne!(off_eighth(&s, id), [0, 0, 0]);
+}
+
+#[test]
+fn ctrl_k_in_the_roll_quantizes_the_selected_notes_with_the_last_settings() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    last_settings_are_an_eighth(&mut s);
+    s.core_mut().open_piano_roll(id);
+    s.set_focus(Pane::PianoRoll);
+    let before = off_eighth(&s, id);
+    s.core_mut().piano_roll_mut().set_selected_notes(&[2]);
+    tap(&mut s, "Cmd+K");
+    assert_eq!(off_eighth(&s, id), [before[0], before[1], 0]);
+    // Nothing selected: every note of the clip.
+    s.core_mut().piano_roll_mut().set_selected_notes(&[]);
+    tap(&mut s, "Cmd+K");
+    assert_eq!(off_eighth(&s, id), [0, 0, 0]);
+}
+
+#[test]
+fn the_rolls_quant_button_applies_and_its_neighbour_opens_the_panel() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    last_settings_are_an_eighth(&mut s);
+    s.core_mut().open_piano_roll(id);
+    s.set_focus(Pane::PianoRoll);
+    s.frame();
+    let q = s.core().piano_roll().quantize_button_center();
+    click(&mut s, q);
+    assert_eq!(off_eighth(&s, id), [0, 0, 0]);
+    assert!(!s.quantize_open());
+    // The options button opens the panel with the same settings.
+    let o = s.core().piano_roll().quantize_options_button_center();
+    click(&mut s, o);
+    assert!(s.quantize_open());
+    assert_eq!(s.quantize_view().unwrap().params().grid, 2 * S);
+}
+
+#[test]
+fn a_collision_keeps_both_notes() {
+    // Two notes of one key that quantize onto the same tick both stay (the later one moves on).
+    let mut s = shell();
+    let id = loose(&mut s);
+    let (_, _, c) = s.core().doc().song.clip(id).unwrap();
+    let line = S * 8 - (c.start - c.offset).rem_euclid(S);
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::SetClipContent {
+            id,
+            content: ClipContent::Notes(vec![
+                Note::new(line + 100, S, 60, 0.8),
+                Note::new(line + 200, S, 60, 0.8),
+            ]),
+            merge: None,
+        }))
+        .unwrap();
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    tap(&mut s, "Cmd+K");
+    let n = notes(&s, id);
+    assert_eq!(n.len(), 2, "no note is lost");
+    assert_ne!(n[0].tick, n[1].tick);
+}

@@ -69,7 +69,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Nudge Right | `Right` (editor) | `Ctrl+Right` (editor) |
 | Nudge Right by Beat | `Shift+Right` (editor) | `Ctrl+Shift+Right` (editor) |
 | Nudge Right by Tick | `Alt+Right` (editor) | `Ctrl+Alt+Right` (editor) |
-| Quantize | `Q`, `Shift+Q` (editor) | `Ctrl+K` (editor) |
+| Quantize | `Q`, `Shift+Q` (editor) | `Ctrl+K` (sequencer, editor) |
 | Reset Key Height | - | `Shift+Z` (editor) |
 | Shorter Keys | - | `Shift+G` (editor) |
 | Snap to Scale | - | `Shift+S` (editor) |
@@ -210,6 +210,7 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Nudge Right | editor | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
 | Nudge Right by Beat | editor | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
 | Nudge Right by Tick | editor | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
+| Quantize | sequencer | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
 | Quantize | editor | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
 | Reset Key Height | editor | `Shift+Z` | `Shift+Z` | `Shift+Z` |
 | Shorter Keys | editor | `Shift+G` | `Shift+G` | `Shift+G` |
