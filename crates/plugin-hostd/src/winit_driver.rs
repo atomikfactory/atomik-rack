@@ -32,7 +32,7 @@ impl Post for EventLoopProxy<Event> {
 }
 
 /// What a Wayland session is told (neither CLAP nor VST3 embeds into a Wayland surface).
-const WAYLAND_MESSAGE: &str = "Wayland sessions cannot embed a plugin editor (CLAP and VST3 both need an X11 window); run Atomik under XWayland";
+const WAYLAND_MESSAGE: &str = "Wayland sessions cannot embed a plugin editor (CLAP and VST3 both need an X11 window) and no X11 display (DISPLAY, XWayland) is available";
 
 /// The handle a plugin embeds into, from a raw window handle.
 // Justification: an Xlib window is a `c_ulong`, which is 32 bits on Windows (where this cast is the
@@ -49,6 +49,12 @@ fn parent_from_raw(raw: RawWindowHandle) -> Result<NativeParent, String> {
             "this window system cannot embed a plugin editor ({other:?})"
         )),
     }
+}
+
+/// Whether the child should force the X11 backend: an X display is reachable (a Wayland session
+/// then gets it through XWayland, which is what lets a plugin embed its editor).
+fn prefers_x11(display: Option<&std::ffi::OsStr>) -> bool {
+    cfg!(all(unix, not(target_os = "macos"))) && display.is_some_and(|d| !d.is_empty())
 }
 
 /// A size in the plugin's units: pixels, or logical points on macOS.
@@ -204,7 +210,16 @@ impl ApplicationHandler<Event> for App {
 /// # Errors
 /// The control itself, untouched, when no event loop could be made.
 pub fn run(control: Control) -> Result<u8, Box<Control>> {
-    let event_loop = match EventLoop::<Event>::with_user_event().build() {
+    let mut builder = EventLoop::<Event>::with_user_event();
+    if prefers_x11(std::env::var_os("DISPLAY").as_deref()) {
+        // Editors are X11 windows the plugin embeds into; on a Wayland session that is XWayland.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+            builder.with_x11();
+        }
+    }
+    let event_loop = match builder.build() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("atomik-plugin-host: no window system, editors are unavailable: {e}");
@@ -276,6 +291,17 @@ mod tests {
         assert_eq!(
             parent_from_raw(RawWindowHandle::Xlib(XlibWindowHandle::new(0x00A1_1CE0))),
             Ok(NativeParent::X11(0x00A1_1CE0))
+        );
+    }
+
+    #[test]
+    fn x11_is_forced_only_when_a_display_is_set() {
+        use std::ffi::OsStr;
+        assert!(!prefers_x11(None));
+        assert!(!prefers_x11(Some(OsStr::new(""))));
+        assert_eq!(
+            prefers_x11(Some(OsStr::new(":0"))),
+            cfg!(all(unix, not(target_os = "macos")))
         );
     }
 
