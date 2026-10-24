@@ -1,0 +1,99 @@
+{
+  "format": "atomik-project",
+  "version": 22,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "audio-track", "type": "atomik.audio-track",
+      "name": "Audio Track", "folded": false
+    },
+    {
+      "id": "channel", "type": "atomik.channel",
+      "name": "Console Channel", "folded": false
+    },
+    {
+      "id": "master", "type": "atomik.master",
+      "name": "Console Master", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "audio-track:out_l", "to": "channel:in_l"},
+    {"from": "audio-track:out_r", "to": "channel:in_r"},
+    {"from": "channel:out_l", "to": "master:bus_l"},
+    {"from": "channel:out_r", "to": "master:bus_r"},
+    {"from": "channel:send1_l", "to": "master:send_bus1_l"},
+    {"from": "channel:send1_r", "to": "master:send_bus1_r"},
+    {"from": "channel:send2_l", "to": "master:send_bus2_l"},
+    {"from": "channel:send2_r", "to": "master:send_bus2_r"},
+    {"from": "channel:send3_l", "to": "master:send_bus3_l"},
+    {"from": "channel:send3_r", "to": "master:send_bus3_r"},
+    {"from": "channel:send4_l", "to": "master:send_bus4_l"},
+    {"from": "channel:send4_r", "to": "master:send_bus4_r"},
+    {"from": "channel:send5_l", "to": "master:send_bus5_l"},
+    {"from": "channel:send5_r", "to": "master:send_bus5_r"},
+    {"from": "channel:send6_l", "to": "master:send_bus6_l"},
+    {"from": "channel:send6_r", "to": "master:send_bus6_r"},
+    {"from": "channel:send7_l", "to": "master:send_bus7_l"},
+    {"from": "channel:send7_r", "to": "master:send_bus7_r"},
+    {"from": "channel:send8_l", "to": "master:send_bus8_l"},
+    {"from": "channel:send8_r", "to": "master:send_bus8_r"},
+    {"from": "interface:in_1", "to": "audio-track:in_l"},
+    {"from": "interface:in_2", "to": "audio-track:in_r"},
+    {"from": "master:main_l", "to": "interface:out_1"},
+    {"from": "master:main_r", "to": "interface:out_2"}
+  ],
+  "console": {
+    "channels": [
+      {"channel": "channel", "source": "audio-track"}
+    ],
+    "master": "master",
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {
+    "d5745abdec5bd27f862a47bc2aac55040a6e5a3af512f8684d8e4fb9cd6bb9de": {"channels": 2, "sample_rate": 48000, "frames": 96000, "name": "noise.wav"}
+  },
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 122880,
+    "next_clip_id": 5,
+    "tracks": [
+      {
+        "device": "audio-track", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "audio",
+            "clips": [
+              {
+                "id": 1, "start": 0, "length": 46080, "offset": 0, "loop_length": null, "muted": false,
+                "audio": {"asset": "d5745abdec5bd27f862a47bc2aac55040a6e5a3af512f8684d8e4fb9cd6bb9de", "offset": 1000, "gain_db": -3, "fade_in": 480, "fade_out": 2400, "fade_curve": "equal_power"}
+              },
+              {
+                "id": 2, "start": 30720, "length": 46080, "offset": 0, "loop_length": null, "muted": false,
+                "audio": {"asset": "d5745abdec5bd27f862a47bc2aac55040a6e5a3af512f8684d8e4fb9cd6bb9de", "offset": 20000, "gain_db": 0, "fade_in": 0, "fade_out": 4800, "fade_curve": "linear"}
+              },
+              {
+                "id": 3, "start": 46080, "length": 15360, "offset": 0, "loop_length": null, "muted": false,
+                "audio": {"asset": "d5745abdec5bd27f862a47bc2aac55040a6e5a3af512f8684d8e4fb9cd6bb9de", "offset": 50000, "gain_db": 2, "fade_in": 0, "fade_out": 0, "fade_curve": "linear"}
+              },
+              {
+                "id": 4, "start": 92160, "length": 30720, "offset": 0, "loop_length": null, "muted": false,
+                "audio": {"asset": "d5745abdec5bd27f862a47bc2aac55040a6e5a3af512f8684d8e4fb9cd6bb9de", "offset": 0, "gain_db": -6, "fade_in": 0, "fade_out": 0, "fade_curve": "linear"}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

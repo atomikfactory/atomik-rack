@@ -175,6 +175,8 @@ fn song_fade_curve(curve: FadeCurve) -> SongFadeCurve {
     match curve {
         FadeCurve::Linear => SongFadeCurve::Linear,
         FadeCurve::EqualPower => SongFadeCurve::EqualPower,
+        FadeCurve::Exponential => SongFadeCurve::Exponential,
+        FadeCurve::SCurve => SongFadeCurve::SCurve,
     }
 }
 
@@ -312,6 +314,8 @@ pub fn song_input_with_assets(
         .filter(|track| track.is_audio())
         .filter_map(|track| {
             let device = id_of(&track.device)?;
+            // Gain envelopes are shared between the regions of one clip (they carry equal lists).
+            let mut envelopes: Vec<Vec<(u64, f32)>> = Vec::new();
             let regions: Vec<SongAudioRegion> = flatten_audio(track, song, doc.sample_rate)
                 .into_iter()
                 .filter_map(|r| {
@@ -320,6 +324,18 @@ pub fn song_input_with_assets(
                         pool.push(asset.clone());
                         AssetId(u32::try_from(pool.len() - 1).unwrap_or(u32::MAX))
                     });
+                    let env = if r.envelope.is_empty() {
+                        None
+                    } else {
+                        let k = envelopes
+                            .iter()
+                            .position(|e| *e == r.envelope)
+                            .unwrap_or_else(|| {
+                                envelopes.push(r.envelope.clone());
+                                envelopes.len() - 1
+                            });
+                        Some(u32::try_from(k).unwrap_or(u32::MAX))
+                    };
                     Some(SongAudioRegion {
                         asset: asset_id,
                         song_start_frame: r.song_start_frame,
@@ -331,10 +347,19 @@ pub fn song_input_with_assets(
                         fade_curve: song_fade_curve(r.fade_curve),
                         clip_pos: r.clip_pos,
                         clip_frames: r.clip_frames,
+                        reverse: r.reverse,
+                        env,
+                        x_in: r.x_in,
+                        x_out: r.x_out,
+                        x_curve: song_fade_curve(r.x_curve),
                     })
                 })
                 .collect();
-            (!regions.is_empty()).then_some(SongAudioTrack { device, regions })
+            (!regions.is_empty()).then_some(SongAudioTrack {
+                device,
+                regions,
+                envelopes,
+            })
         })
         .collect();
     SongInput {
