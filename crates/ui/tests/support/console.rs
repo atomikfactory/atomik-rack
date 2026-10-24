@@ -2030,7 +2030,8 @@ pub fn bus_doc() -> RackDoc {
     doc
 }
 
-pub const CONSOLE_BOUNDS: Rect = Rect::new(0.0, 0.0, 1100.0, 760.0);
+/// 760 for the strips plus the snapshot bar.
+pub const CONSOLE_BOUNDS: Rect = Rect::new(0.0, 0.0, 1100.0, 784.0);
 
 /// A synced console view over `CONSOLE_BOUNDS` at 1x.
 pub fn console_view(doc: &RackDoc, reg: &Registry) -> ConsoleView {

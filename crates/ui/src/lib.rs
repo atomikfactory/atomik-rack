@@ -291,6 +291,7 @@ pub mod chord_edit;
 pub mod console;
 pub mod console_layout;
 pub mod console_meter;
+mod console_snapshots;
 mod console_vca;
 pub mod container_edit;
 pub mod container_editor;
