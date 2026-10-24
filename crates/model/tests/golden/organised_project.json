@@ -1,0 +1,161 @@
+{
+  "format": "atomik-project",
+  "version": 22,
+  "sample_rate": 48000,
+  "tempo_bpm": 120,
+  "seed": 0,
+  "output_channels": 2,
+  "input_channels": 2,
+  "devices": [
+    {
+      "id": "synth", "type": "atomik.poly-synth",
+      "name": "Poly Synth", "folded": false
+    },
+    {
+      "id": "delay", "type": "atomik.stereo-delay",
+      "name": "Stereo Delay", "folded": false
+    },
+    {
+      "id": "mixer", "type": "atomik.line-mixer",
+      "name": "Line Mixer", "folded": false
+    },
+    {
+      "id": "lead", "type": "atomik.poly-synth",
+      "name": "Poly Synth 2", "folded": false
+    },
+    {
+      "id": "a", "type": "atomik.poly-synth",
+      "name": "Poly Synth 3", "folded": false
+    },
+    {
+      "id": "b", "type": "atomik.poly-synth",
+      "name": "Poly Synth 4", "folded": false
+    },
+    {
+      "id": "c", "type": "atomik.poly-synth",
+      "name": "Poly Synth 5", "folded": false
+    },
+    {
+      "id": "d", "type": "atomik.poly-synth",
+      "name": "Poly Synth 6", "folded": false
+    }
+  ],
+  "cables": [
+    {"from": "delay:out_l", "to": "mixer:ch1_in_l"},
+    {"from": "delay:out_r", "to": "mixer:ch1_in_r"},
+    {"from": "mixer:master_l", "to": "interface:out_1"},
+    {"from": "mixer:master_r", "to": "interface:out_2"},
+    {"from": "synth:out_l", "to": "delay:in_l"},
+    {"from": "synth:out_r", "to": "delay:in_r"}
+  ],
+  "console": {
+    "channels": [],
+    "master": null,
+    "returns": [null, null, null, null, null, null, null, null],
+    "compensation": true
+  },
+  "assets": {},
+  "song": {
+    "tempo": [
+      {"tick": 0, "bpm": 120}
+    ],
+    "meter": [
+      {"bar": 1, "num": 4, "den": 4}
+    ],
+    "loop": {"start": 0, "end": 245760, "enabled": false},
+    "end": 983040,
+    "next_clip_id": 4,
+    "groups": [
+      {"id": 1, "name": "Band", "color": "#ff8000"},
+      {"id": 2, "name": "Rhythm \"main\"", "parent": 1, "collapsed": true}
+    ],
+    "tracks": [
+      {
+        "device": "synth", "muted": false, "solo": false, "armed": false, "group": 1,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          }
+        ]
+      },
+      {
+        "device": "lead", "muted": false, "solo": false, "armed": false, "group": 2, "comment": "Line one\nLine \"two\"",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": [
+              {
+                "id": 3, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15360, 62, 0.8]
+                ]
+              }
+            ],
+            "take_groups": [
+              {
+                "takes": [
+              {
+                "id": 1, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15360, 60, 0.8]
+                ]
+              },
+              {
+                "id": 2, "start": 0, "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+                "notes": [
+                  [0, 15360, 62, 0.8]
+                ]
+              }
+                ],
+                "comp": [[1, 0, 61440]],
+                "clips": [3],
+                "open": true
+              }
+            ]
+          },
+          {
+            "kind": "automation", "param": "filter.cutoff", "folded": true,
+            "clips": []
+          }
+        ]
+      },
+      {
+        "device": "a", "muted": false, "solo": false, "armed": false, "group": 2,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          }
+        ]
+      },
+      {
+        "device": "b", "muted": false, "solo": false, "armed": false, "color": "#12abef",
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          }
+        ]
+      },
+      {
+        "device": "c", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          }
+        ]
+      },
+      {
+        "device": "d", "muted": false, "solo": false, "armed": false,
+        "lanes": [
+          {
+            "kind": "notes",
+            "clips": []
+          }
+        ]
+      }
+    ]
+  }
+}

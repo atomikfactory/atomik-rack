@@ -9,6 +9,7 @@ use crate::DeviceKey;
 use crate::automation_rec::WriteMode;
 use crate::controller::ControllerLane;
 use crate::groove::{Groove, QuantizeParams, builtin_groove};
+use crate::organise::Organisation;
 use crate::takes::TakeGroup;
 use crate::theory::Scale;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
@@ -313,6 +314,8 @@ pub struct Song {
     /// The song's groove templates, shared by every track (see [`crate::groove`]); the built-in
     /// grooves are not stored here. Names are unique and never a built-in name.
     pub grooves: Vec<Groove>,
+    /// Folders of tracks, track colours and comments, folded lanes (see [`crate::organise`]).
+    pub org: Organisation,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -397,6 +400,96 @@ pub enum SongCommand {
         param: String,
         /// The mode.
         mode: WriteMode,
+    },
+    /// Put tracks in a new folder (see [`crate::organise`]). The tracks must exist, be listed
+    /// once each and share their innermost folder (or have none); the new folder goes inside
+    /// that one. They are moved next to each other at the place of the first of them (in track
+    /// order). The new folder's id is the highest one afterwards ([`Song::org`]). One undo
+    /// step. Reports [`crate::SyncOp::SongChanged`] when tracks move, else
+    /// [`crate::SyncOp::ViewChanged`].
+    GroupTracks {
+        /// The tracks.
+        devices: Vec<DeviceKey>,
+        /// The folder's name: trimmed, non-empty, at most [`crate::organise::MAX_GROUP_NAME`]
+        /// characters.
+        name: String,
+    },
+    /// Dissolve a folder: its tracks and sub-folders go into its parent (or the top level),
+    /// where they stand. No track is deleted. One undo step.
+    Ungroup {
+        /// Folder id.
+        group: u32,
+    },
+    /// Rename a folder (the name rules of [`SongCommand::GroupTracks`]).
+    RenameGroup {
+        /// Folder id.
+        group: u32,
+        /// New name.
+        name: String,
+    },
+    /// Collapse or expand a folder in the arrangement.
+    SetGroupCollapsed {
+        /// Folder id.
+        group: u32,
+        /// Hide the folder's tracks.
+        collapsed: bool,
+    },
+    /// Set or clear a folder's colour.
+    SetGroupColor {
+        /// Folder id.
+        group: u32,
+        /// The colour.
+        color: Option<[u8; 3]>,
+    },
+    /// Move a track one place up or down the track list. A track passes its neighbour; at the
+    /// edge of a folder it leaves the folder, and above or below a folder it enters it (as the
+    /// last or first track), so two keys reach every position. An error at the first and last
+    /// place of the top level. One undo step.
+    MoveTrack {
+        /// Device.
+        device: DeviceKey,
+        /// Down (later in the list) instead of up.
+        down: bool,
+    },
+    /// Move a folder, with everything in it, one place up or down among its neighbours (a
+    /// track, or a whole folder). A folder at the edge of its parent leaves it. An error at the
+    /// first and last place of the top level. One undo step.
+    MoveGroup {
+        /// Folder id.
+        group: u32,
+        /// Down instead of up.
+        down: bool,
+    },
+    /// Set or clear a track's colour (its clips are drawn in it).
+    SetTrackColor {
+        /// Device.
+        device: DeviceKey,
+        /// The colour, `None` for the device's own.
+        color: Option<[u8; 3]>,
+    },
+    /// Set a track's comment (blank clears it; otherwise at most
+    /// [`crate::organise::MAX_TRACK_COMMENT`] characters, newlines allowed).
+    SetTrackComment {
+        /// Device.
+        device: DeviceKey,
+        /// The text.
+        comment: String,
+    },
+    /// Fold or unfold an automation lane in the arrangement (the lane must exist).
+    SetLaneFolded {
+        /// Device.
+        device: DeviceKey,
+        /// Param key of the lane.
+        param: String,
+        /// Fold it to a thin strip.
+        folded: bool,
+    },
+    /// Show or hide the take rows of a take group (the group must exist).
+    SetTakesOpen {
+        /// Take group id.
+        take_group: u32,
+        /// Show the rows.
+        open: bool,
     },
     /// Add an automation lane for a parameter (creates the track if needed).
     AddAutomationLane {
@@ -729,6 +822,7 @@ pub fn empty_song(bpm: f64) -> Song {
         track_heights: BTreeMap::new(),
         lane_write: BTreeMap::new(),
         grooves: Vec::new(),
+        org: Organisation::default(),
     }
 }
 

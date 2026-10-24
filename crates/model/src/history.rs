@@ -5,6 +5,7 @@ use crate::WriteMode;
 use crate::console::{ConsoleBus, ConsoleChannel};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::groove::Groove;
+use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
 use crate::steps::StepSeqDoc;
@@ -151,6 +152,11 @@ pub(crate) enum Edit {
     TrackHeights {
         old: BTreeMap<DeviceKey, u16>,
         new: BTreeMap<DeviceKey, u16>,
+    },
+    /// The track order and the organisation (folders, colours, comments, folds).
+    Organise {
+        old: Box<TrackLayout>,
+        new: Box<TrackLayout>,
     },
     Loop {
         old: ((i64, i64), bool),
@@ -493,6 +499,7 @@ impl Edit {
             Edit::Ranges { old, new } => Edit::Ranges { old: new, new: old },
             Edit::Grooves { old, new } => Edit::Grooves { old: new, new: old },
             Edit::TrackHeights { old, new } => Edit::TrackHeights { old: new, new: old },
+            Edit::Organise { old, new } => Edit::Organise { old: new, new: old },
             Edit::Loop { old, new } => Edit::Loop { old: new, new: old },
             Edit::SongEnd { old, new } => Edit::SongEnd { old: new, new: old },
             Edit::ConsoleChannel { index, old, new } => Edit::ConsoleChannel {
@@ -826,6 +833,24 @@ impl Edit {
             Edit::TrackHeights { new, .. } => {
                 doc.song.track_heights.clone_from(new);
                 vec![SyncOp::ViewChanged]
+            }
+            Edit::Organise { new, .. } => {
+                let song = &mut doc.song;
+                let moved = song.tracks.iter().map(|t| &t.device).ne(new.order.iter());
+                if moved {
+                    song.tracks.sort_by_key(|t| {
+                        new.order
+                            .iter()
+                            .position(|d| d == &t.device)
+                            .unwrap_or(usize::MAX)
+                    });
+                }
+                song.org.clone_from(&new.org);
+                vec![if moved {
+                    SyncOp::SongChanged
+                } else {
+                    SyncOp::ViewChanged
+                }]
             }
             Edit::Loop { new, .. } => {
                 (doc.song.loop_range, doc.song.loop_enabled) = *new;

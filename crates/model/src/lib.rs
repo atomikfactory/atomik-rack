@@ -19,6 +19,8 @@ pub mod groove;
 mod groove_cmd;
 mod history;
 mod midi_import;
+pub mod organise;
+mod organise_cmd;
 mod patch;
 mod plugin;
 mod plugin_cmd;
@@ -92,6 +94,10 @@ pub use console_insert::insert_chain;
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 use history::Edit;
+pub use organise::{
+    MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
+    OutlineKind, TrackGroup,
+};
 use rack_columns::Placement;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
@@ -373,6 +379,9 @@ pub enum Command {
     /// (a new pattern on a device without a track is one step) and, later,
     /// `Command::Song(SongCommand::SetTrackFlags { .. })` (arming one track and disarming
     /// another is one step) and, later,
+    /// `Command::Song(SongCommand::SetTrackColor { .. })` and
+    /// `Command::Song(SongCommand::SetLaneFolded { .. })` (colouring or folding several at once is
+    /// one step) and, later,
     /// `Command::SetParam { .. }` and `Command::SetZones { .. }` (loading a loop into a slicer
     /// sets `loop.beats` and the slices as one step). The batch's last allocated
     /// clip id is [`Document::last_clip_id`] afterwards. A `merge` id inside a batched command
@@ -480,6 +489,7 @@ pub enum Command {
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
 /// | the groove library (`SetGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
+/// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveGroup`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |
 /// | `RemoveDevice` of a device with a track | `SongChanged`, `RoutingChanged`, `DeviceRemoved` |
 /// | console structure, compensation, a channel's `solo` | `ConsoleChanged` (after the `ParamChanged` for `solo`) |
 /// | `SetZones` (also undo/redo) | `ZonesChanged` |
@@ -954,10 +964,12 @@ impl Document {
                                     | SongCommand::SetClipControllers { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
+                                    | SongCommand::SetTrackColor { .. }
+                                    | SongCommand::SetLaneFolded { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry and SetTrackFlags can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
