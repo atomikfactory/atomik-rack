@@ -1,5 +1,6 @@
 //! Atomik Rack built-in devices: [`poly_synth`], [`sampler`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
-//! [`compressor`], [`eq`], [`distortion`], [`modulation`] and [`mastering`], and the
+//! [`compressor`], [`eq`], [`distortion`], [`modulation`] and [`mastering`], the analysers
+//! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
 //! The effects are wrapped in [`bypass::Bypassable`], which adds their `bypass` param.
@@ -29,9 +30,12 @@ pub mod mod_source;
 pub mod modulation;
 mod note_clock;
 pub mod note_split;
+pub mod phase_meter;
 pub mod poly_synth;
+mod recent_peak;
 pub mod reverb;
 pub mod sampler;
+pub mod spectrum;
 pub mod step_sequencer;
 pub mod stereo_delay;
 
@@ -96,10 +100,12 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(mod_source::factory())?;
     registry.register(modulation::factory())?;
     registry.register(note_split::factory())?;
+    registry.register(phase_meter::factory())?;
     registry.register(bus::factory())?;
     registry.register(channel::factory())?;
     registry.register(character::factory())?;
     registry.register(master::factory())?;
+    registry.register(spectrum::factory())?;
     Ok(())
 }
 
@@ -112,7 +118,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 22] = [
+    const TYPE_IDS: [&str; 24] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -130,15 +136,17 @@ mod tests {
         "atomik.mod-source",
         "atomik.modulation",
         "atomik.note-split",
+        "atomik.phase-meter",
         "atomik.poly-synth",
         "atomik.reverb",
         "atomik.sampler",
+        "atomik.spectrum",
         "atomik.step-sequencer",
         "atomik.stereo-delay",
     ];
 
     #[test]
-    // Name kept; it now covers all twenty-two devices.
+    // Name kept; it now covers all twenty-four devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();
