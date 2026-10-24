@@ -2509,6 +2509,12 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::SaveAs => vec![ShellRequest::PickSaveFile],
             AppCommand::ExportPatch => vec![ShellRequest::PickExportFile],
             AppCommand::ImportAudio => vec![ShellRequest::PickImportFiles],
+            AppCommand::QuantizeApply => {
+                let pane = self.live_pane(self.focus);
+                self.apply_last_quantize(pane);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::QuantizeOptions => {
                 self.open_quantize();
                 self.menubar.as_mut().map(MenuBar::close);

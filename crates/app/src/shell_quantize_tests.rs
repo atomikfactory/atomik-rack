@@ -403,3 +403,33 @@ fn a_collision_keeps_both_notes() {
     assert_eq!(n.len(), 2, "no note is lost");
     assert_ne!(n[0].tick, n[1].tick);
 }
+
+#[test]
+fn the_edit_menu_quantize_applies_the_last_settings_to_the_selection() {
+    let mut s = shell();
+    let id = loose(&mut s);
+    let find = |s: &Shell<NullBackend>| {
+        s.menu_model()
+            .iter()
+            .find(|m| m.title == "Edit")
+            .unwrap()
+            .items()
+            .find(|i| i.label == "Quantize")
+            .cloned()
+            .expect("Edit > Quantize")
+    };
+    let item = find(&s);
+    assert_eq!(item.command, AppCommand::QuantizeApply);
+    assert_eq!(item.command.command_id(), Some(("editor.quantize", None)));
+    assert_eq!(item.shortcut.as_deref(), Some("Ctrl+K"));
+    // Like Cut and Copy, it needs a selection.
+    s.core_mut().arrangement_mut().set_selected_clips(&[]);
+    assert!(!find(&s).enabled);
+    last_settings_are_an_eighth(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    assert!(find(&s).enabled);
+    assert!(s.execute(AppCommand::QuantizeApply).is_empty());
+    assert_eq!(off_eighth(&s, id), [0, 0, 0]);
+    assert!(!s.quantize_open(), "no panel for the menu item");
+}
