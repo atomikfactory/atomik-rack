@@ -1044,3 +1044,86 @@ fn the_quantize_panel_opens_by_command_and_closes_with_escape() {
     let t = ok(&mut s, "session_texts", json!({"contains": "APPLY"}));
     assert_eq!(t["total"], 0);
 }
+
+#[test]
+fn a_folder_is_selected_collapsed_and_ungrouped_with_the_pointer_and_commands() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "crates/model/tests/golden/organised_project.json"}),
+    );
+    let folders = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        v["document"]["song"]["folders"].as_array().unwrap().clone()
+    };
+    assert_eq!(folders(&mut s)[0]["name"], "Band");
+    assert_eq!(folders(&mut s)[0]["collapsed"], false);
+    // Nothing is selected: the folder commands are disabled.
+    assert_eq!(
+        command_row(&mut s, "sequencer.toggle_folder")["enabled"],
+        false
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.group_tracks")["enabled"],
+        false
+    );
+    // A click on the folder's name selects it; the Track menu follows.
+    let (x, y) = text_pos(&mut s, "Band");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": x, "y": y - 3.0}),
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.toggle_folder")["enabled"],
+        true
+    );
+    assert_eq!(
+        command_row(&mut s, "sequencer.toggle_folder")["menu"],
+        "Track"
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.toggle_folder"}),
+    );
+    assert_eq!(folders(&mut s)[0]["collapsed"], true);
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(folders(&mut s)[0]["collapsed"], false);
+    // The name is typed in place: the command opens the field, the keys fill it.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.rename_folder"}),
+    );
+    for _ in 0..4 {
+        ok(&mut s, "session_key", json!({"key": "Backspace"}));
+    }
+    ok(&mut s, "session_key", json!({"text": "Strings"}));
+    ok(&mut s, "session_key", json!({"key": "Enter"}));
+    assert_eq!(folders(&mut s)[0]["name"], "Strings");
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(folders(&mut s)[0]["name"], "Band");
+    // Heights go through the same menu with an argument, and Ungroup keeps the tracks.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.track_height:large"}),
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.ungroup_tracks"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    assert_eq!(
+        v["document"]["song"]["folders"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        v["document"]["song"]["folders"][0]["name"], "Rhythm \"main\"",
+        "the outer folder is gone, the inner one stays at the top level"
+    );
+    assert_eq!(v["document"]["song"]["tracks"].as_array().unwrap().len(), 6);
+}

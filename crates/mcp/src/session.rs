@@ -329,7 +329,7 @@ shortcut, checked state and whether it can be chosen now.",
             (
                 "menu",
                 "string",
-                "Only this menu (File, Edit, View, Transport, Mixer, Create, Audio ...).",
+                "Only this menu (File, Edit, View, Transport, Mixer, Create, Track, Audio ...).",
             ),
             (
                 "query",
