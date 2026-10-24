@@ -156,6 +156,8 @@ impl ArrangementView {
                 ),
                 RowKind::Lane { .. } => lane_h,
                 RowKind::AddTrack(_) | RowKind::AddAudio => ADD_ROW_HEIGHT,
+                RowKind::TakeGroup { .. } => super::TAKE_GROUP_HEIGHT,
+                RowKind::Take { .. } => super::TAKE_ROW_HEIGHT,
             })
             .collect();
         let mut y = 0.0;
