@@ -14,6 +14,9 @@ use crate::chord_edit::{
     self, ARP_GATES, ARP_OCTAVES, ArpOptions, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection,
     StrumOptions, strum_ticks,
 };
+use crate::controller_lane::{
+    self as cl, CTL_AREA_HEIGHT, CTL_HEADER_HEIGHT, CTL_PAD, Chip, LaneEditor, Part,
+};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::key_rows::{Fold, KeyRows};
 use crate::keymap::{CommandOutcome, ROOT_ARGS, Roles};
@@ -26,7 +29,8 @@ use crate::viewport::{Tool, ViewportState};
 use atomik_device_sdk::Registry;
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
 use atomik_model::{
-    Clip, ClipContent, ClipId, Command, DeviceKey, Note, RackDoc, SongCommand, WorkflowCommand,
+    Clip, ClipContent, ClipId, Command, ControllerKind, ControllerLane, Curve, DeviceKey, Note,
+    RackDoc, SongCommand, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{Affine, Point, Rect, RoundedRect};
@@ -79,11 +83,13 @@ enum TopItem {
     Fold,
     Chord,
     Inversion,
+    /// Shows or hides the controller area under the velocity lane.
+    Controllers,
 }
 
 impl TopItem {
     /// The items of the scale bar, left to right.
-    const SCALE_BAR: [TopItem; 7] = [
+    const SCALE_BAR: [TopItem; 8] = [
         TopItem::ScaleRoot,
         TopItem::ScaleKind,
         TopItem::ScaleDetect,
@@ -91,6 +97,7 @@ impl TopItem {
         TopItem::Fold,
         TopItem::Chord,
         TopItem::Inversion,
+        TopItem::Controllers,
     ];
 }
 
@@ -156,6 +163,10 @@ enum Hit {
     Note(usize, SpanPart),
     Grid,
     Velocity(Option<usize>),
+    /// A chip of the controller area's header row (with the stepper part under the pointer).
+    CtlChip(Chip, Part),
+    /// The controller lane's body.
+    CtlBody,
     None,
 }
 
@@ -206,6 +217,19 @@ enum Drag {
         pos: Point,
         base: BTreeSet<usize>,
     },
+    /// A point drag or a freehand draw in the controller lane (`grabbed` is the dragged point,
+    /// `None` when drawing).
+    Ctl {
+        /// The clip's lanes at the press (a point drag derives every step from them).
+        original: Vec<ControllerLane>,
+        /// The lanes as last sent.
+        current: Vec<ControllerLane>,
+        kind: ControllerKind,
+        grabbed: Option<usize>,
+        start: Point,
+        merge: u64,
+        moved: bool,
+    },
     Keys {
         key: u8,
     },
@@ -250,6 +274,9 @@ pub struct PianoRollView {
     selection: Selection<usize>,
     drag: Drag,
     hover: Hit,
+    /// The controller area: its state and the point selected in the lane being edited.
+    ctl: LaneEditor,
+    ctl_sel: Option<usize>,
     next_merge: u64,
     last_length: Option<i64>,
     playhead: i64,
@@ -292,6 +319,8 @@ impl PianoRollView {
             selection: Selection::new(),
             drag: Drag::None,
             hover: Hit::None,
+            ctl: LaneEditor::default(),
+            ctl_sel: None,
             next_merge: MERGE_BASE,
             last_length: None,
             playhead: 0,
@@ -553,7 +582,88 @@ impl PianoRollView {
     /// The velocity lane.
     pub fn velocity_rect(&self) -> Rect {
         let b = self.bounds;
-        Rect::new(self.axis.x0, (b.y1 - VELOCITY_HEIGHT).max(b.y0), b.x1, b.y1)
+        let y1 = (b.y1 - self.ctl_height()).max(b.y0);
+        Rect::new(self.axis.x0, (y1 - VELOCITY_HEIGHT).max(b.y0), b.x1, y1)
+    }
+
+    /// Whether the controller area (pitch bend, aftertouch and CC lanes) is shown.
+    pub fn controllers_open(&self) -> bool {
+        self.ctl.open
+    }
+
+    /// Shows or hides the controller area under the velocity lane.
+    pub fn set_controllers_open(&mut self, open: bool) {
+        if open != self.ctl.open {
+            self.ctl.open = open;
+            self.clamp_scroll();
+            self.repaint = true;
+        }
+    }
+
+    /// The controller being edited.
+    pub fn controller_kind(&self) -> ControllerKind {
+        self.ctl.kind
+    }
+
+    /// Chooses the controller to edit (the matching stepper follows the number).
+    pub fn set_controller_kind(&mut self, kind: ControllerKind) {
+        self.ctl.select(kind);
+        self.ctl_sel = None;
+        self.repaint = true;
+    }
+
+    /// The curve of the points the pencil adds.
+    pub fn controller_curve(&self) -> Curve {
+        self.ctl.curve
+    }
+
+    /// The selected point of the controller lane being edited.
+    pub fn controller_selection(&self) -> Option<usize> {
+        self.ctl_sel
+    }
+
+    /// Centre of a chip of the controller area's header row (tests click it).
+    pub fn controller_chip_center(&self, chip: Chip) -> Point {
+        cl::chip_rect(self.axis.x0, self.controller_area().y0, chip).center()
+    }
+
+    /// The point of the controller area at content `tick` and `value` of `kind`.
+    pub fn controller_point(&self, kind: ControllerKind, tick: i64, value: f32) -> Point {
+        let (top, h) = self.ctl_range();
+        Point::new(
+            self.axis.tick_to_x(tick),
+            cl::y_of_value(kind, value, top, h),
+        )
+    }
+
+    /// The height the controller area takes at the bottom of the roll (0 while it is hidden).
+    fn ctl_height(&self) -> f64 {
+        if self.ctl.open { CTL_AREA_HEIGHT } else { 0.0 }
+    }
+
+    /// The controller area: the chip row and the lane, with the side panel (an empty rectangle
+    /// while the area is hidden).
+    pub fn controller_area(&self) -> Rect {
+        let b = self.bounds;
+        let h = self.ctl_height();
+        Rect::new(b.x0, (b.y1 - h).max(b.y0), b.x1, b.y1)
+    }
+
+    /// The lane body of the controller area, on the roll's time axis.
+    pub fn controller_rect(&self) -> Rect {
+        let a = self.controller_area();
+        Rect::new(
+            self.axis.x0,
+            (a.y0 + CTL_HEADER_HEIGHT).min(a.y1),
+            a.x1,
+            a.y1,
+        )
+    }
+
+    /// `(top, height)` of the value range inside the lane body (the top is the highest value).
+    fn ctl_range(&self) -> (f64, f64) {
+        let r = self.controller_rect();
+        (r.y0 + CTL_PAD, (r.height() - 2.0 * CTL_PAD).max(1.0))
     }
 
     /// The y of the ruler (click to locate).
@@ -803,7 +913,7 @@ impl PianoRollView {
     fn grid_rect(&self) -> Rect {
         let b = self.bounds;
         let y0 = b.y0 + HEADER_HEIGHT + ROLL_RULER_HEIGHT;
-        let y1 = (b.y1 - VELOCITY_HEIGHT).max(y0);
+        let y1 = (b.y1 - self.ctl_height() - VELOCITY_HEIGHT).max(y0);
         Rect::new(self.axis.x0, y0, b.x1.max(self.axis.x0), y1)
     }
 
@@ -861,6 +971,7 @@ impl PianoRollView {
                     TopItem::ScaleSnap => (244.0, 300.0),
                     TopItem::Fold => (336.0, 386.0),
                     TopItem::Chord => (432.0, 502.0),
+                    TopItem::Controllers => (556.0, 646.0),
                     _ => (506.0, 548.0),
                 };
                 let y = b.y0 + TOP_BAR_HEIGHT + 3.0;
@@ -903,6 +1014,20 @@ impl PianoRollView {
         let g = self.grid_rect();
         if pos.y < g.y0 {
             return if pos.x >= g.x0 { Hit::Ruler } else { Hit::None };
+        }
+        if self.ctl.open && pos.y >= self.velocity_rect().y1 {
+            let a = self.controller_area();
+            if pos.y < a.y0 + CTL_HEADER_HEIGHT {
+                return match cl::chip_at(self.axis.x0, a.y0, pos.x, pos.y) {
+                    Some((chip, part)) => Hit::CtlChip(chip, part),
+                    None => Hit::None,
+                };
+            }
+            return if pos.x >= self.axis.x0 {
+                Hit::CtlBody
+            } else {
+                Hit::None
+            };
         }
         if pos.y >= g.y1 {
             if pos.x < g.x0 {
@@ -1115,6 +1240,14 @@ impl PianoRollView {
             Hit::Top(Some(TopItem::Chord)) if primary => {
                 out.push(self.bar_menu(TopItem::Chord, ContextTarget::PianoChord));
             }
+            Hit::Top(Some(TopItem::Controllers)) if primary => {
+                self.set_controllers_open(!self.ctl.open);
+            }
+            Hit::CtlChip(chip, part) if primary => {
+                self.ctl.press(chip, part);
+                self.ctl_sel = None;
+            }
+            Hit::CtlBody => self.ctl_down(pos, button, modifiers, tool, out),
             Hit::Top(Some(TopItem::ScaleDetect)) if primary => self.detect_scale(out),
             Hit::Top(Some(TopItem::ScaleSnap)) if primary => self.snap_scale = !self.snap_scale,
             Hit::Top(Some(TopItem::Fold)) => {
@@ -1295,6 +1428,154 @@ impl PianoRollView {
         }
     }
 
+    /// The content tick a controller point lands on at logical `x`: on the snap grid, or with
+    /// snap off a multiple of about three pixels (so a freehand stroke stays sparse).
+    fn ctl_tick(&self, x: f64, modifiers: Modifiers) -> i64 {
+        let raw = self.axis.x_to_tick(x);
+        let step = self.step(modifiers);
+        let t = match step {
+            Some(_) => snap_round(raw, step),
+            None => {
+                let grain = (3.0 / self.axis.px_per_tick).round().max(1.0) as i64;
+                (raw + grain / 2).div_euclid(grain) * grain
+            }
+        };
+        t.max(0)
+    }
+
+    /// One `SetClipControllers` for the open clip.
+    fn ctl_command(&self, lanes: Vec<ControllerLane>, merge: Option<u64>) -> Option<UiAction> {
+        Some(UiAction::Command(Command::Song(
+            SongCommand::SetClipControllers {
+                clip: self.clip_id?,
+                lanes,
+                merge,
+            },
+        )))
+    }
+
+    /// A press in the lane body (see the module docs of `controller_lane`).
+    fn ctl_down(
+        &mut self,
+        pos: Point,
+        button: PointerButton,
+        modifiers: Modifiers,
+        tool: Tool,
+        out: &mut Vec<UiAction>,
+    ) {
+        let primary = button == PointerButton::Primary;
+        let kind = self.ctl.kind;
+        let Some(lanes) = self.clip.as_ref().map(|c| c.controllers.clone()) else {
+            return;
+        };
+        let (top, h) = self.ctl_range();
+        let axis = self.axis;
+        let hit = cl::lane_of(&lanes, kind).and_then(|l| {
+            cl::nearest_point(
+                &l.points,
+                |p| {
+                    (
+                        axis.tick_to_x(p.tick),
+                        cl::y_of_value(kind, p.value, top, h),
+                    )
+                },
+                pos.x,
+                pos.y,
+            )
+        });
+        match hit {
+            Some(i) if !primary || tool == Tool::Eraser => {
+                self.ctl_sel = None;
+                out.extend(self.ctl_command(cl::remove_point(&lanes, kind, i), None));
+            }
+            Some(i) if modifiers.command() => {
+                self.ctl_sel = Some(i);
+                out.extend(self.ctl_command(cl::toggle_curve(&lanes, kind, i), None));
+            }
+            Some(i) => {
+                self.ctl_sel = Some(i);
+                let merge = self.merge_id();
+                self.drag = Drag::Ctl {
+                    current: lanes.clone(),
+                    original: lanes,
+                    kind,
+                    grabbed: Some(i),
+                    start: pos,
+                    merge,
+                    moved: false,
+                };
+            }
+            None if primary && matches!(tool, Tool::Select | Tool::Pencil) => {
+                let tick = self.ctl_tick(pos.x, modifiers);
+                let value = cl::value_at_y(kind, pos.y, top, h);
+                let (next, idx) = cl::set_point(&lanes, kind, tick, value, self.ctl.new_curve());
+                let merge = self.merge_id();
+                out.extend(self.ctl_command(next.clone(), Some(merge)));
+                self.ctl_sel = Some(idx);
+                self.drag = Drag::Ctl {
+                    original: lanes,
+                    current: next,
+                    kind,
+                    grabbed: None,
+                    start: pos,
+                    merge,
+                    moved: true,
+                };
+            }
+            None => {}
+        }
+    }
+
+    /// A pointer move during a controller drag: the grabbed point follows (time on the grid,
+    /// value at the MIDI resolution) or the stroke adds a point per grid step.
+    fn ctl_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        let tick = self.ctl_tick(pos.x, modifiers);
+        let (top, h) = self.ctl_range();
+        let curve = self.ctl.new_curve();
+        let id = self.clip_id;
+        let Drag::Ctl {
+            original,
+            current,
+            kind,
+            grabbed,
+            start,
+            merge,
+            moved,
+        } = &mut self.drag
+        else {
+            return;
+        };
+        let value = cl::value_at_y(*kind, pos.y, top, h);
+        let (next, idx) = match grabbed {
+            Some(g) => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if !*moved {
+                    return;
+                }
+                cl::move_point(original, *kind, *g, tick, value)
+            }
+            None => cl::set_point(current, *kind, tick, value, curve),
+        };
+        let mut sel = None;
+        if next != *current {
+            if let Some(id) = id {
+                out.push(UiAction::Command(Command::Song(
+                    SongCommand::SetClipControllers {
+                        clip: id,
+                        lanes: next.clone(),
+                        merge: Some(*merge),
+                    },
+                )));
+            }
+            *current = next;
+            sel = Some(idx);
+        }
+        if sel.is_some() {
+            self.ctl_sel = sel;
+        }
+        self.repaint = true;
+    }
+
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         if matches!(self.drag, Drag::None) {
             let h = self.hit(pos);
@@ -1302,6 +1583,10 @@ impl PianoRollView {
                 self.hover = h;
                 self.repaint = true;
             }
+            return;
+        }
+        if matches!(self.drag, Drag::Ctl { .. }) {
+            self.ctl_move(pos, modifiers, out);
             return;
         }
         let step = self.step(modifiers);
@@ -1337,7 +1622,7 @@ impl PianoRollView {
         self.repaint = true;
         let mut new_sel: Option<BTreeSet<usize>> = None;
         match &mut self.drag {
-            Drag::None => {}
+            Drag::None | Drag::Ctl { .. } => {}
             Drag::Pan { last } => {
                 let d = *last - pos;
                 *last = pos;
@@ -1510,6 +1795,8 @@ impl PianoRollView {
                 }
             }
             Drag::Velocity { .. } => out.push(UiAction::EndMerge),
+            Drag::Ctl { moved: true, .. } => out.push(UiAction::EndMerge),
+            Drag::Ctl { .. } => {}
         }
     }
 
@@ -1953,6 +2240,15 @@ impl PianoRollView {
                 out.extend(self.content(originals, Some(merge)));
                 out.push(UiAction::EndMerge);
             }
+            Drag::Ctl {
+                original,
+                merge,
+                moved: true,
+                ..
+            } => {
+                out.extend(self.ctl_command(original, Some(merge)));
+                out.push(UiAction::EndMerge);
+            }
             _ => {}
         }
     }
@@ -1972,6 +2268,9 @@ impl PianoRollView {
             self.paint_ruler(c);
             self.paint_keyboard(c);
             self.paint_velocity(c);
+            if self.ctl.open {
+                self.paint_controllers(c);
+            }
         } else {
             let t = &self.st.base;
             sp::label(
@@ -2277,6 +2576,232 @@ impl PianoRollView {
         sp::line(c, side.x0, vr.y0 + 0.5, side.x1, vr.y0 + 0.5, st.separator);
     }
 
+    /// The controller area: the chip row and the lane of the chosen controller.
+    fn paint_controllers(&self, c: &mut dyn Canvas) {
+        use vello::kurbo::BezPath;
+        let st = &self.st;
+        let t = &st.base;
+        let area = self.controller_area();
+        let body = self.controller_rect();
+        let (top, h) = self.ctl_range();
+        let kind = self.ctl.kind;
+        let lanes: &[ControllerLane] = self
+            .clip
+            .as_ref()
+            .map_or(&[], |clip| clip.controllers.as_slice());
+        // The chip row.
+        let header = Rect::new(area.x0, area.y0, area.x1, area.y0 + CTL_HEADER_HEIGHT);
+        sp::rect(c, header, st.header);
+        sp::line(
+            c,
+            header.x0,
+            header.y0 + 0.5,
+            header.x1,
+            header.y0 + 0.5,
+            st.separator,
+        );
+        c.text(
+            &TextRun::new(
+                "CTRL",
+                pt(area.x0 + 10.0, header.y0 + 14.0),
+                8.0,
+                t.text_muted,
+            )
+            .weight(700)
+            .spacing(1.0),
+        );
+        for chip in cl::chips() {
+            let r = cl::chip_rect(self.axis.x0, area.y0, chip);
+            let active = self.ctl.is_active(chip);
+            let hovered = matches!(self.hover, Hit::CtlChip(h, _) if h == chip);
+            let has_data = match chip {
+                Chip::Preset(i) => cl::PRESETS
+                    .get(i)
+                    .is_some_and(|k| cl::lane_of(lanes, *k).is_some()),
+                Chip::Cc => lanes.iter().any(|l| {
+                    l.kind == ControllerKind::Cc(self.ctl.cc) && !cl::PRESETS.contains(&l.kind)
+                }),
+                Chip::Poly => lanes
+                    .iter()
+                    .any(|l| matches!(l.kind, ControllerKind::PolyPressure(_))),
+                Chip::Curve => false,
+            };
+            sp::lcd(
+                c,
+                st,
+                r,
+                (hovered || active).then_some(if active { t.highlight } else { t.focus }),
+            );
+            let colour = if active {
+                t.highlight
+            } else if has_data {
+                t.text
+            } else {
+                t.text_muted
+            };
+            sp::label(
+                c,
+                &cl::chip_label(chip, &self.ctl),
+                r.center().x,
+                r.center().y + 3.5,
+                9.0,
+                colour,
+                Align::Center,
+            );
+            if has_data && !active {
+                sp::rect(
+                    c,
+                    Rect::new(r.x1 - 6.0, r.y0 + 2.0, r.x1 - 3.0, r.y0 + 5.0),
+                    self.accent,
+                );
+            }
+        }
+        // The side panel: the lane's name and its value range.
+        let side = Rect::new(area.x0, body.y0, body.x0, body.y1);
+        sp::rect(c, side, st.header);
+        let (lo, hi) = kind.range();
+        sp::label(
+            c,
+            &cl::value_text(kind, hi),
+            side.x1 - 5.0,
+            top + 7.0,
+            8.0,
+            t.text_muted,
+            Align::End,
+        );
+        sp::label(
+            c,
+            &cl::value_text(kind, lo),
+            side.x1 - 5.0,
+            top + h,
+            8.0,
+            t.text_muted,
+            Align::End,
+        );
+        sp::label(
+            c,
+            &cl::kind_name(kind),
+            side.x0 + 8.0,
+            side.center().y + 3.0,
+            8.0,
+            t.text,
+            Align::Start,
+        );
+        // The lane.
+        c.push_clip(&body.into());
+        sp::rect(c, body, st.lane_auto);
+        sp::grid(c, st, &self.axis, body, &self.bars);
+        for (i, f) in [0.0, 0.5, 1.0].into_iter().enumerate() {
+            let y = (top + f * h).round() + 0.5;
+            let col = if kind == ControllerKind::PitchBend && i == 1 {
+                st.grid_bar
+            } else {
+                st.grid_sub
+            };
+            sp::line(c, body.x0, y, body.x1, y, col);
+        }
+        let (a, z) = self.region();
+        let (xa, xz) = (self.axis.tick_to_x(a), self.axis.tick_to_x(z));
+        if xa > body.x0 {
+            sp::rect(
+                c,
+                Rect::new(body.x0, body.y0, xa.min(body.x1), body.y1),
+                st.outside,
+            );
+        }
+        if xz < body.x1 {
+            sp::rect(
+                c,
+                Rect::new(xz.max(body.x0), body.y0, body.x1, body.y1),
+                st.outside,
+            );
+        }
+        let points: &[atomik_model::AutomationPoint] =
+            cl::lane_of(lanes, kind).map_or(&[], |l| l.points.as_slice());
+        let xy = |p: &atomik_model::AutomationPoint| {
+            (
+                self.axis.tick_to_x(p.tick),
+                cl::y_of_value(kind, p.value, top, h),
+            )
+        };
+        if let (Some(first), Some(last)) = (points.first(), points.last()) {
+            // Held to the end of the clip's region after the last point.
+            let end = self.axis.tick_to_x(z).max(xy(last).0);
+            let mut path = BezPath::new();
+            let (x0, y0) = xy(first);
+            path.move_to(pt(x0, y0));
+            for (prev, next) in points.iter().zip(points.iter().skip(1)) {
+                let (nx, ny) = xy(next);
+                if prev.curve == Curve::Step {
+                    path.line_to(pt(nx, xy(prev).1));
+                }
+                path.line_to(pt(nx, ny));
+            }
+            path.line_to(pt(end, xy(last).1));
+            if kind != ControllerKind::PitchBend {
+                let mut fill = path.clone();
+                fill.line_to(pt(end, top + h));
+                fill.line_to(pt(x0, top + h));
+                fill.close_path();
+                c.fill_with(fill, self.accent.with_alpha(0.16));
+            }
+            c.stroke_with(path, 1.5, self.accent);
+        }
+        for (i, p) in points.iter().enumerate() {
+            let (x, y) = xy(p);
+            if x < body.x0 - 6.0 || x > body.x1 + 6.0 {
+                continue;
+            }
+            let selected = self.ctl_sel == Some(i);
+            let col = if selected { st.selection } else { self.accent };
+            let r = Rect::new(x - 3.0, y - 3.0, x + 3.0, y + 3.0);
+            if p.curve == Curve::Step {
+                c.fill_with(r, col);
+                c.stroke_with(r, 1.0, t.bevel_dark);
+            } else {
+                let rr = RoundedRect::from_rect(r, 3.0);
+                c.fill_with(rr, col);
+                c.stroke_with(rr, 1.0, t.bevel_dark);
+            }
+            if selected {
+                sp::label(
+                    c,
+                    &cl::value_text(kind, p.value),
+                    x,
+                    (y - 7.0).max(body.y0 + 9.0),
+                    9.0,
+                    t.text,
+                    Align::Center,
+                );
+            }
+        }
+        if let Some(tick) = self
+            .clip
+            .as_ref()
+            .and_then(|clip| seq_edit::song_to_content(clip, self.playhead))
+        {
+            let x = self.axis.tick_to_x(tick).round() + 0.5;
+            sp::line(c, x, body.y0, x, body.y1, st.playhead);
+        }
+        sp::line(
+            c,
+            body.x0,
+            body.y0 + 0.5,
+            body.x1,
+            body.y0 + 0.5,
+            st.separator,
+        );
+        c.pop_clip();
+        sp::line(
+            c,
+            side.x0,
+            body.y0 + 0.5,
+            side.x1,
+            body.y0 + 0.5,
+            st.separator,
+        );
+    }
+
     /// The scale bar: scale, detect, snap to scale, fold and chord stamp.
     fn paint_scale_bar(&self, c: &mut dyn Canvas) {
         let st = &self.st;
@@ -2373,6 +2898,17 @@ impl PianoRollView {
                 t.highlight
             },
             self.fold != Fold::Off,
+        );
+        field(
+            c,
+            TopItem::Controllers,
+            "CONTROLLERS",
+            if self.ctl.open {
+                t.highlight
+            } else {
+                t.text_muted
+            },
+            self.ctl.open,
         );
         caption(c, TopItem::Chord, "CHORD");
         let stamped = self.stamp.is_active(self.scale());
