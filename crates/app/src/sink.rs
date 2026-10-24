@@ -102,6 +102,18 @@ pub trait EngineSink {
     ) -> Option<(usize, u64)> {
         None
     }
+    /// [`atomik_engine::Meters::scope_tap`]: copies the newest frames of the scope tap of a
+    /// spectrum or phase meter device into `left` and `right` (oldest first, at most their
+    /// length) and returns `(frames copied, the tap's write position)`; `None` when the device
+    /// has no tap or no engine runs. Lock-free.
+    fn read_device_scope(
+        &self,
+        _id: DeviceInstanceId,
+        _left: &mut [f32],
+        _right: &mut [f32],
+    ) -> Option<(usize, u64)> {
+        None
+    }
     /// [`atomik_engine::EngineHandle::record_tap`]: starts copying the host input
     /// `channels` into a ring of `capacity_frames` for the audio recorder. `None` when no
     /// engine runs (the default).
@@ -281,6 +293,9 @@ pub struct RecordingSink {
     /// What [`EngineSink::read_device_meter_values`] returns per device: the values and the
     /// publish sequence.
     pub device_values: BTreeMap<DeviceInstanceId, (Vec<f32>, u64)>,
+    /// What [`EngineSink::read_device_scope`] returns per device: the frames (left, right) and
+    /// the tap's write position.
+    pub device_scopes: BTreeMap<DeviceInstanceId, (Vec<f32>, Vec<f32>, u64)>,
     /// The PDC report of the last submitted routing.
     pub pdc: Option<atomik_engine::PdcReport>,
     /// What [`EngineSink::stream_threshold_bytes`] returns.
@@ -442,6 +457,19 @@ impl EngineSink for RecordingSink {
         let n = values.len().min(out.len());
         out[..n].copy_from_slice(&values[..n]);
         Some((n, *seq))
+    }
+
+    fn read_device_scope(
+        &self,
+        id: DeviceInstanceId,
+        left: &mut [f32],
+        right: &mut [f32],
+    ) -> Option<(usize, u64)> {
+        let (l, r, head) = self.device_scopes.get(&id)?;
+        let n = l.len().min(r.len()).min(left.len()).min(right.len());
+        left[..n].copy_from_slice(&l[l.len() - n..]);
+        right[..n].copy_from_slice(&r[r.len() - n..]);
+        Some((n, *head))
     }
 
     fn stream_primed(&self) -> bool {
