@@ -28,7 +28,9 @@
 //!
 //! A clip holds at most one note per `(tick, key)`. Two notes of one key that quantize onto the
 //! same tick would collide, so the model keeps both and moves the later one forward by single
-//! ticks to the next free tick (never drops a note). Unselected notes keep their places.
+//! ticks to the next free tick (never drops a note). Unselected notes keep their places. (Reason's
+//! manual, as far as it could be read, does not say what its quantize does with two notes that land
+//! on one position and pitch; stacking them is not possible here, so the nudge stays.)
 //!
 //! # Not in here
 //!
