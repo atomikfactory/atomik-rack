@@ -11,7 +11,7 @@ use crate::timeline::{
 use atomik_core::{ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{Direction, Registry, SocketKind};
 use atomik_model::{DeviceKey, RackDoc};
-use vello::kurbo::{Line, Rect, RoundedRect};
+use vello::kurbo::{Line, Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
 /// Colour tokens of the sequencer views, derived from the rack theme.
@@ -347,4 +347,21 @@ pub fn playhead<C: Canvas + ?Sized>(c: &mut C, x: f64, top: f64, bottom: f64, co
     p.line_to(pt(x, top + 6.0));
     p.close_path();
     c.fill_with(p, color);
+}
+
+/// A snowflake of radius `r` at `center`: six spokes, each with a pair of barbs, in `color`. The
+/// mark of frozen things.
+pub fn snowflake<C: Canvas + ?Sized>(c: &mut C, center: Point, r: f64, color: Color) {
+    use std::f64::consts::PI;
+    for k in 0..6 {
+        let a = f64::from(k) * PI / 3.0;
+        let tip = pt(center.x + a.cos() * r, center.y + a.sin() * r);
+        c.stroke_with(Line::new(center, tip), 1.0, color);
+        let base = pt(center.x + a.cos() * r * 0.62, center.y + a.sin() * r * 0.62);
+        for side in [-0.9, 0.9] {
+            let b = a + side;
+            let end = pt(base.x + b.cos() * r * 0.38, base.y + b.sin() * r * 0.38);
+            c.stroke_with(Line::new(base, end), 1.0, color);
+        }
+    }
 }

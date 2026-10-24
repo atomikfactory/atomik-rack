@@ -223,6 +223,12 @@ impl ArrangementView {
             .collect()
     }
 
+    /// The tracks a command such as Group Tracks or Freeze Track works on: the selected tracks,
+    /// else the tracks of the selected clips, in track order.
+    pub fn command_tracks(&self) -> Vec<DeviceKey> {
+        self.group_candidates()
+    }
+
     /// What Group Tracks works on: the selected tracks, else the tracks of the selected clips.
     fn group_candidates(&self) -> Vec<DeviceKey> {
         let tracks = self.selected_tracks();
