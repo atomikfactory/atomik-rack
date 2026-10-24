@@ -26,7 +26,7 @@ const READ_CHUNK: u64 = 1 << 16;
 
 /// Calls `f` with the planar samples of the frames `[from, to)` of `asset` (clamped to its
 /// end), in chunks.
-fn for_each_chunk(asset: &SongAsset, from: u64, to: u64, mut f: impl FnMut(&[&[f32]])) {
+pub(super) fn for_each_chunk(asset: &SongAsset, from: u64, to: u64, mut f: impl FnMut(&[&[f32]])) {
     let to = to.min(asset.frames());
     let mut at = from;
     while at < to {
@@ -56,16 +56,32 @@ fn for_each_chunk(asset: &SongAsset, from: u64, to: u64, mut f: impl FnMut(&[&[f
 }
 
 /// One selected audio clip with what the operations need.
-struct Selected {
-    id: ClipId,
-    content: AudioClipContent,
+pub(super) struct Selected {
+    pub(super) id: ClipId,
+    pub(super) content: AudioClipContent,
     /// Frames the clip lasts at the project rate.
-    frames: u64,
+    pub(super) frames: u64,
+    /// The clip's length in ticks.
+    pub(super) length: i64,
+}
+
+impl Selected {
+    /// The asset frame after the last one the clip plays (the asset's own tempo map for a warped
+    /// clip), for the detectors that read the source.
+    pub(super) fn source_end(&self, rate: u32) -> u64 {
+        let from = self.content.source_offset;
+        if self.content.warp.enabled {
+            let span = self.content.warp.source_frames_at(rate, self.length as f64);
+            from + span.round().max(0.0) as u64
+        } else {
+            from + self.frames
+        }
+    }
 }
 
 impl<S: EngineSink> AppCore<S> {
     /// The selected audio clips, in song order.
-    fn selected_audio(&self) -> Vec<Selected> {
+    pub(super) fn selected_audio(&self) -> Vec<Selected> {
         let song = &self.doc().song;
         let rate = self.doc().sample_rate;
         let mut out: Vec<(i64, Selected)> = self
@@ -86,6 +102,7 @@ impl<S: EngineSink> AppCore<S> {
                         id,
                         content: a.clone(),
                         frames,
+                        length: clip.length,
                     },
                 ))
             })
@@ -104,7 +121,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The command for `commands`: itself for one, a batch (one undo step) for several.
-    fn one_step(mut commands: Vec<Command>) -> Option<Command> {
+    pub(super) fn one_step(mut commands: Vec<Command>) -> Option<Command> {
         match commands.len() {
             0 => None,
             1 => Some(commands.remove(0)),
@@ -129,9 +146,14 @@ impl<S: EngineSink> AppCore<S> {
             };
             let from = s.content.source_offset;
             let mut top = 0.0f32;
-            for_each_chunk(asset, from, from + s.frames, |planes| {
-                top = top.max(peak(planes, 0, u64::MAX));
-            });
+            for_each_chunk(
+                asset,
+                from,
+                s.source_end(self.doc().sample_rate),
+                |planes| {
+                    top = top.max(peak(planes, 0, u64::MAX));
+                },
+            );
             let Some(db) = normalise_gain_db(top, NORMALISE_TARGET_DB) else {
                 silent += 1;
                 continue;
@@ -176,11 +198,15 @@ impl<S: EngineSink> AppCore<S> {
         }
         let rate = self.doc().sample_rate;
         let ms = |v: u32| u64::from(v) * u64::from(rate) / 1000;
-        let (mut silent, mut clean, mut missing) = (0, 0, 0);
+        let (mut silent, mut clean, mut missing, mut warped) = (0, 0, 0, 0);
         let mut commands = Vec::new();
         let mut selection: Vec<ClipId> = Vec::new();
         let mut next = self.doc().song.next_clip_id;
         for s in &clips {
+            if s.content.warp.active() {
+                warped += 1;
+                continue;
+            }
             let Some(asset) = self.audio.assets.get(&s.content.asset) else {
                 missing += 1;
                 continue;
@@ -230,7 +256,9 @@ impl<S: EngineSink> AppCore<S> {
             }));
         }
         let Some(command) = Self::one_step(commands) else {
-            let message = if missing > 0 {
+            let message = if warped > 0 {
+                "Strip silence reads the audio as recorded: turn warp and transpose off first"
+            } else if missing > 0 {
                 "The audio file is missing"
             } else if clean > 0 {
                 "No silence to strip with these settings"

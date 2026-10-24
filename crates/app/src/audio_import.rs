@@ -111,6 +111,13 @@ pub(crate) enum Msg {
         found: Vec<(String, PathBuf)>,
         truncated: bool,
     },
+    /// A warp buffer was rendered (`None`: the job was cancelled): see [`crate::AppCore`]'s
+    /// warp cache.
+    Warped {
+        generation: u64,
+        key: u64,
+        result: Option<SongAsset>,
+    },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
         generation: u64,
@@ -171,6 +178,30 @@ pub(crate) fn spawn_onsets(
             let _ = tx.send(Msg::Sliced {
                 generation,
                 job,
+                result,
+            });
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that renders the warp buffer of `job` from `asset` and sends
+/// [`Msg::Warped`]; `cancel` stops it early (the result is then `None`).
+pub(crate) fn spawn_warp(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: atomik_model::WarpJob,
+    asset: SongAsset,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-warp".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let stop = || cancel.load(std::sync::atomic::Ordering::Relaxed);
+            let result = atomik_render::warp::render_warp(&job, &asset, &stop);
+            let _ = tx.send(Msg::Warped {
+                generation,
+                key: job.key(),
                 result,
             });
         })

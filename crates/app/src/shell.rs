@@ -139,7 +139,7 @@ use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
     NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
     QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction,
-    SilenceValues, SilenceView, TextRun, UiAction, UiEvent,
+    SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -302,6 +302,10 @@ pub struct Shell<B: AudioBackend> {
     quantize_values: QuantizeValues,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
+    /// The warp panel (Audio > Warp Settings) while it is open.
+    warp: Option<WarpView>,
+    /// The warp panel's last values, for the next time it opens without a clip to read.
+    warp_values: WarpValues,
     /// Its settings, kept between openings.
     silence_values: SilenceValues,
     /// The missing asset the open file dialog is for (LOCATE...).
@@ -430,6 +434,8 @@ impl<B: AudioBackend> Shell<B> {
             quantize: None,
             quantize_values: QuantizeValues::default(),
             silence: None,
+            warp: None,
+            warp_values: WarpValues::default(),
             silence_values: SilenceValues::default(),
             relink_target: None,
             router: Router::new(built.keymap),
@@ -566,6 +572,16 @@ impl<B: AudioBackend> Shell<B> {
             .map_or(&self.silence_values, SilenceView::values)
     }
 
+    /// Whether the warp panel is open.
+    pub fn warp_open(&self) -> bool {
+        self.warp.is_some()
+    }
+
+    /// The warp panel, while it is open.
+    pub fn warp_view(&self) -> Option<&WarpView> {
+        self.warp.as_ref()
+    }
+
     /// The relink panel, while it is open.
     pub fn relink_view(&self) -> Option<&RelinkView> {
         self.relink.as_ref()
@@ -670,6 +686,72 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         self.sync_silence();
+        self.repaint = true;
+    }
+
+    /// Opens the warp panel with the settings of the first selected audio clip.
+    fn open_warp(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let values = self
+            .core
+            .warp_values()
+            .unwrap_or_else(|| self.warp_values.clone());
+        let mut view = WarpView::new(theme, values);
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        self.warp = Some(view);
+        self.sync_warp();
+    }
+
+    /// Closes the warp panel, keeping its values for the next time.
+    fn close_warp(&mut self) {
+        if let Some(view) = self.warp.take() {
+            self.warp_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the warp panel what it applies to.
+    fn sync_warp(&mut self) {
+        if self.warp.is_none() {
+            return;
+        }
+        let (text, can_apply) = self.core.warp_target();
+        if let Some(view) = &mut self.warp {
+            view.set_target(text, can_apply);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the warp panel asked for.
+    fn warp_action(&mut self, action: WarpAction) {
+        match action {
+            WarpAction::Close => self.close_warp(),
+            WarpAction::Apply => {
+                if let Some(values) = self.warp.as_ref().map(|v| v.values().clone()) {
+                    self.core.apply_warp(&values);
+                }
+            }
+            WarpAction::Detect => {
+                if let Some(tenths) = self.core.detect_warp_tempo()
+                    && let Some(view) = &mut self.warp
+                {
+                    let mut values = view.values().clone();
+                    values.bpm_tenths = tenths;
+                    view.set_values(values);
+                }
+            }
+        }
+        self.sync_warp();
+        self.repaint = true;
+    }
+
+    /// Quantize Audio with the grid and strength of the quantize options.
+    fn quantize_audio(&mut self) {
+        let params = self.quantize_values().params();
+        self.core.quantize_audio_clips(params.grid, params.strength);
         self.repaint = true;
     }
 
@@ -1350,6 +1432,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.warp.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.warp {
+                v.set_bounds(rect);
+            }
+        }
         // Lights the console's MAX button (every pane change passes here: F5 / Shift+F5,
         // the Mixer menu, the ui-state restore and the CLI flags).
         let maximised = self.maximised();
@@ -1653,6 +1741,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.silence {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.warp {
+                    v.set_scale(*scale);
+                }
                 self.core.transport_bar_mut().set_scale(*scale);
                 self.core.console_mut().set_scale(*scale);
                 self.core.file_browser_mut().set_scale(*scale);
@@ -1727,6 +1818,31 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return requests;
+        }
+        if self.warp.is_some() {
+            // The warp panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_warp();
+                return Vec::new();
+            }
+            let actions = self
+                .warp
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Warp(a) = action {
+                    self.warp_action(a);
+                }
+            }
+            self.sync_warp();
+            return Vec::new();
         }
         if self.silence.is_some() {
             // The strip silence panel takes every event; Esc closes it.
@@ -1960,6 +2076,14 @@ impl<B: AudioBackend> Shell<B> {
             }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
+            ("sequencer.audio_quantize", None) => self.quantize_audio(),
+            ("sequencer.audio_warp_tempo", None) => self.core.warp_to_song_tempo(),
+            ("sequencer.audio_warp_bars", Some(bars)) => {
+                if let Ok(bars) = bars.parse() {
+                    self.core.warp_bars(bars);
+                }
+            }
+            ("sequencer.audio_warp_panel", None) => self.open_warp(),
             ("transport.stop", None) => self.core.stop_or_rewind(),
             ("transport.rewind_bar" | "transport.bar_back", None) => self.core.locate_bars(-1),
             ("transport.forward_bar" | "transport.bar_forward", None) => self.core.locate_bars(1),
@@ -2708,6 +2832,9 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::AudioReverse
+            | AppCommand::AudioWarp
+            | AppCommand::AudioWarpMode(_)
+            | AppCommand::AudioTranspose(_)
             | AppCommand::AudioGain(_)
             | AppCommand::AudioFadeShape(_)
             | AppCommand::AudioCrossfade(_)
@@ -2724,6 +2851,26 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::AudioStripSilence => {
                 self.open_silence();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioQuantize => {
+                self.quantize_audio();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioWarpTempo => {
+                self.core.warp_to_song_tempo();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioWarpBars(bars) => {
+                self.core.warp_bars(bars);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::AudioWarpPanel => {
+                self.open_warp();
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -3269,6 +3416,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.silence {
             view.paint(canvas);
         }
+        if let Some(view) = &self.warp {
+            view.paint(canvas);
+        }
         let theme = self.core.view().theme().clone();
         canvas.push_transform(Affine::scale(scale));
         if let Some(d) = l.divider {
@@ -3513,3 +3663,7 @@ mod organise_tests;
 #[cfg(test)]
 #[path = "shell_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "shell_warp_tests.rs"]
+mod warp_tests;

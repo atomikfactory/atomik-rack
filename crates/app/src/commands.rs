@@ -6,7 +6,7 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::record::InputQuantize;
-use atomik_model::FadeCurve;
+use atomik_model::{FadeCurve, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, OrgMenu};
 use atomik_ui::keymap::Keymap;
 use atomik_ui::{CableVisibility, Flip, TransportAction};
@@ -176,6 +176,24 @@ pub enum AppCommand {
     AudioNormalise,
     /// Edit ▸ Strip Silence…: the panel that cuts the quiet parts out of the selected audio clips.
     AudioStripSilence,
+    /// Edit ▸ Quantize Audio: the transients of the selected audio clips move to the grid (warp
+    /// markers), with the strength and grid of the quantize options.
+    AudioQuantize,
+    /// Audio ▸ Warp Audio: the selected audio clips follow the song tempo (off again when they
+    /// all do).
+    AudioWarp,
+    /// Audio ▸ Warp Mode: the stretch engine of the selected audio clips.
+    AudioWarpMode(WarpMode),
+    /// Audio ▸ Warp to Song Tempo: warp the selected audio clips at the tempo found in their
+    /// audio.
+    AudioWarpTempo,
+    /// Audio ▸ Warp Loop as Bars: the whole asset from the clip's start is this many bars; the
+    /// clip becomes that long and warps to the song tempo.
+    AudioWarpBars(u32),
+    /// Audio ▸ Warp Settings…: the panel of warp, mode, source tempo and transposition.
+    AudioWarpPanel,
+    /// Audio ▸ Transpose: the pitch of the selected audio clips, without changing their length.
+    AudioTranspose(TransposeStep),
     /// Audio ▸ Clip Gain: a step up or down in dB, or back to 0 dB.
     AudioGain(GainStep),
     /// Audio ▸ Fade Shape: the curve of the fades of the selected audio clips.
@@ -291,6 +309,22 @@ impl AppCommand {
             AppCommand::AudioReverse => ("sequencer.audio_reverse", None),
             AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
             AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
+            AppCommand::AudioQuantize => ("sequencer.audio_quantize", None),
+            AppCommand::AudioWarp => ("sequencer.audio_warp", None),
+            AppCommand::AudioWarpMode(mode) => ("sequencer.audio_warp_mode", Some(mode.id())),
+            AppCommand::AudioWarpTempo => ("sequencer.audio_warp_tempo", None),
+            AppCommand::AudioWarpBars(bars) => (
+                "sequencer.audio_warp_bars",
+                Some(match bars {
+                    1 => "1",
+                    2 => "2",
+                    4 => "4",
+                    8 => "8",
+                    _ => "16",
+                }),
+            ),
+            AppCommand::AudioWarpPanel => ("sequencer.audio_warp_panel", None),
+            AppCommand::AudioTranspose(step) => ("sequencer.audio_transpose", Some(step.arg())),
             AppCommand::AudioGain(step) => ("sequencer.audio_gain", Some(step.arg())),
             AppCommand::AudioFadeShape(curve) => ("sequencer.audio_fade_shape", Some(curve.id())),
             AppCommand::AudioCrossfade(curve) => (
@@ -402,6 +436,23 @@ impl AppCommand {
             ("sequencer.audio_reverse", None) => AppCommand::AudioReverse,
             ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
             ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
+            ("sequencer.audio_quantize", None) => AppCommand::AudioQuantize,
+            ("sequencer.audio_warp", None) => AppCommand::AudioWarp,
+            ("sequencer.audio_warp_mode", Some(arg)) => {
+                return WarpMode::from_id(arg).map(AppCommand::AudioWarpMode);
+            }
+            ("sequencer.audio_warp_tempo", None) => AppCommand::AudioWarpTempo,
+            ("sequencer.audio_warp_bars", Some(arg)) => {
+                return arg
+                    .parse()
+                    .ok()
+                    .filter(|b| [1, 2, 4, 8, 16].contains(b))
+                    .map(AppCommand::AudioWarpBars);
+            }
+            ("sequencer.audio_warp_panel", None) => AppCommand::AudioWarpPanel,
+            ("sequencer.audio_transpose", Some(arg)) => {
+                return TransposeStep::from_arg(arg).map(AppCommand::AudioTranspose);
+            }
             ("sequencer.audio_gain", Some(arg)) => {
                 return GainStep::from_arg(arg).map(AppCommand::AudioGain);
             }
@@ -466,6 +517,47 @@ impl GainStep {
             "reset" => Some(GainStep::Reset),
             _ => None,
         }
+    }
+}
+
+/// What Audio ▸ Transpose does to the pitch of the selected audio clips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransposeStep {
+    /// A semitone up.
+    Up,
+    /// A semitone down.
+    Down,
+    /// An octave up.
+    OctaveUp,
+    /// An octave down.
+    OctaveDown,
+    /// Back to the original pitch.
+    Reset,
+}
+
+impl TransposeStep {
+    /// The registry argument of `sequencer.audio_transpose`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            TransposeStep::Up => "up",
+            TransposeStep::Down => "down",
+            TransposeStep::OctaveUp => "octave_up",
+            TransposeStep::OctaveDown => "octave_down",
+            TransposeStep::Reset => "reset",
+        }
+    }
+
+    /// The step of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        [
+            TransposeStep::Up,
+            TransposeStep::Down,
+            TransposeStep::OctaveUp,
+            TransposeStep::OctaveDown,
+            TransposeStep::Reset,
+        ]
+        .into_iter()
+        .find(|s| s.arg() == arg)
     }
 }
 
@@ -678,6 +770,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     "Strip Silence\u{2026}",
                     AppCommand::AudioStripSilence,
                     state.audio.can_edit,
+                ),
+                enabled(
+                    "Quantize Audio",
+                    AppCommand::AudioQuantize,
+                    state.audio.can_warp,
                 ),
             ],
         },
@@ -969,6 +1066,79 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::AudioCrossfade(Some(FadeCurve::SCurve)),
                     state.audio.can_edit,
                 ),
+                MenuEntry::Separator,
+                enabled("Warp Audio", AppCommand::AudioWarp, state.audio.can_warp),
+                enabled(
+                    "Warp to Song Tempo",
+                    AppCommand::AudioWarpTempo,
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Warp Settings\u{2026}",
+                    AppCommand::AudioWarpPanel,
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Warp Mode: Beats",
+                    AppCommand::AudioWarpMode(WarpMode::Beats),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Warp Mode: Tonal",
+                    AppCommand::AudioWarpMode(WarpMode::Tonal),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Warp Mode: Repitch",
+                    AppCommand::AudioWarpMode(WarpMode::Repitch),
+                    state.audio.can_edit,
+                ),
+                enabled(
+                    "Warp Loop as 1 Bar",
+                    AppCommand::AudioWarpBars(1),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Warp Loop as 2 Bars",
+                    AppCommand::AudioWarpBars(2),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Warp Loop as 4 Bars",
+                    AppCommand::AudioWarpBars(4),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Warp Loop as 8 Bars",
+                    AppCommand::AudioWarpBars(8),
+                    state.audio.can_warp,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Transpose: Up a Semitone",
+                    AppCommand::AudioTranspose(TransposeStep::Up),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Transpose: Down a Semitone",
+                    AppCommand::AudioTranspose(TransposeStep::Down),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Transpose: Up an Octave",
+                    AppCommand::AudioTranspose(TransposeStep::OctaveUp),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Transpose: Down an Octave",
+                    AppCommand::AudioTranspose(TransposeStep::OctaveDown),
+                    state.audio.can_warp,
+                ),
+                enabled(
+                    "Transpose: Reset",
+                    AppCommand::AudioTranspose(TransposeStep::Reset),
+                    state.audio.can_warp,
+                ),
             ],
         },
     ]
@@ -1097,6 +1267,10 @@ mod tests {
             AppCommand::AudioReverse,
             AppCommand::AudioNormalise,
             AppCommand::AudioStripSilence,
+            AppCommand::AudioQuantize,
+            AppCommand::AudioWarp,
+            AppCommand::AudioWarpTempo,
+            AppCommand::AudioWarpPanel,
             AppCommand::AudioFades(true),
             AppCommand::AudioFades(false),
             AppCommand::AudioClearEnvelope,
@@ -1106,6 +1280,21 @@ mod tests {
         ];
         for step in [GainStep::Up, GainStep::Down, GainStep::Reset] {
             v.push(AppCommand::AudioGain(step));
+        }
+        for mode in WarpMode::ALL {
+            v.push(AppCommand::AudioWarpMode(mode));
+        }
+        for bars in [1, 2, 4, 8, 16] {
+            v.push(AppCommand::AudioWarpBars(bars));
+        }
+        for step in [
+            TransposeStep::Up,
+            TransposeStep::Down,
+            TransposeStep::OctaveUp,
+            TransposeStep::OctaveDown,
+            TransposeStep::Reset,
+        ] {
+            v.push(AppCommand::AudioTranspose(step));
         }
         for curve in FadeCurve::ALL {
             v.push(AppCommand::AudioFadeShape(curve));
@@ -1460,7 +1649,8 @@ mod tests {
                 "Quantize Options\u{2026}",
                 "Reverse Audio",
                 "Normalise Audio",
-                "Strip Silence\u{2026}"
+                "Strip Silence\u{2026}",
+                "Quantize Audio"
             ]
         );
         assert_eq!(
@@ -1548,7 +1738,22 @@ mod tests {
                 "Crossfade: Linear",
                 "Crossfade: Equal Power",
                 "Crossfade: Exponential",
-                "Crossfade: S-curve"
+                "Crossfade: S-curve",
+                "Warp Audio",
+                "Warp to Song Tempo",
+                "Warp Settings\u{2026}",
+                "Warp Mode: Beats",
+                "Warp Mode: Tonal",
+                "Warp Mode: Repitch",
+                "Warp Loop as 1 Bar",
+                "Warp Loop as 2 Bars",
+                "Warp Loop as 4 Bars",
+                "Warp Loop as 8 Bars",
+                "Transpose: Up a Semitone",
+                "Transpose: Down a Semitone",
+                "Transpose: Up an Octave",
+                "Transpose: Down an Octave",
+                "Transpose: Reset"
             ]
         );
     }
