@@ -30,12 +30,19 @@
 //!   always `Step`: between pieces and clips the value holds. In a looped clip the content
 //!   value inside the window is computed from all points, so a ramp towards a point at or after
 //!   the loop end is honoured up to the loop end.
+//! - **Controllers.** [`flatten_controllers`] treats each controller lane of a note clip like an
+//!   automation lane (same pieces, offsets, loops and hiding), with one difference: a lane says
+//!   nothing before its first point, so a piece emits a point at its start only when the lane
+//!   already has a value there (an earlier point, or a ramp running through it); a point inside
+//!   the piece is emitted at its own tick. Lanes of the same kind in several clips of the lane
+//!   join into one list per kind. Between pieces the value holds.
 //! - **Audio.** See [`flatten_audio`]: the same audible spans, converted from ticks to
 //!   frames with the tempo map, one [`AudioRegion`] per span.
 
 use super::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind, Song, Track,
 };
+use crate::controller::{ControllerKind, value_at as lane_value_at};
 use std::collections::BTreeMap;
 
 /// The audible spans `(clip, start, end)` of a lane's clips, sorted by start (rules in
@@ -181,6 +188,49 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
         }
     }
     out
+}
+
+/// One kind's flattened controller points: `(song tick, value, curve)`.
+pub type FlatController = (ControllerKind, Vec<(i64, f32, Curve)>);
+
+/// The controller data a track's note lane plays: for each [`ControllerKind`] in use (sorted by
+/// kind) the points `(song tick, value, curve)` with strictly increasing ticks (rules in the
+/// module docs). Empty without controller lanes. Track mute and solo are not applied here.
+pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
+    let Some(lane) = track.lanes.iter().find(|l| l.kind.is_notes()) else {
+        return Vec::new();
+    };
+    let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
+    for (clip, s, e, cs) in audible_pieces(lane) {
+        let ce = cs + (e - s);
+        for ctl in &clip.controllers {
+            let points = &ctl.points;
+            let out = by_kind.entry(ctl.kind).or_default();
+            let before = out.len();
+            if let Some((v, curve)) = lane_value_at(points, cs) {
+                out.push((s, v, curve));
+            }
+            let from = points.partition_point(|p| p.tick <= cs);
+            for p in points[from..].iter().take_while(|p| p.tick < ce) {
+                out.push((s + (p.tick - cs), p.value, p.curve));
+            }
+            if out.len() == before {
+                continue;
+            }
+            let last = out.len() - 1;
+            if out[last].2 == Curve::Linear {
+                // A ramp still running at the end of the piece: close it on the last tick.
+                let at_end = lane_value_at(points, ce - 1).map_or(out[last].1, |(v, _)| v);
+                if out[last].0 < e - 1 {
+                    out.push((e - 1, at_end, Curve::Step));
+                } else {
+                    out[last].2 = Curve::Step;
+                }
+            }
+        }
+    }
+    by_kind.retain(|_, v| !v.is_empty());
+    by_kind.into_iter().collect()
 }
 
 /// The tracks that play: unmuted tracks, and if any track is soloed, only the soloed ones

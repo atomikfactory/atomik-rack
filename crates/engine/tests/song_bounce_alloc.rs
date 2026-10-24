@@ -54,6 +54,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
                 notes_socket: notes_socket(),
                 chase: true,
                 notes: lead,
+                controllers: Vec::new(),
                 automation: vec![SongAutomation {
                     param: param_id(poly_synth::factory(), "filter.cutoff"),
                     points: vec![
@@ -69,6 +70,7 @@ fn song_input(s1: DeviceInstanceId, s2: DeviceInstanceId, variant: u8) -> SongIn
                 notes_socket: notes_socket(),
                 chase: true,
                 notes: bass,
+                controllers: Vec::new(),
                 automation: Vec::new(),
             },
         ],

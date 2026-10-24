@@ -17,6 +17,11 @@
 //! * Output: sum of voices · 0.5 · master gain (5 ms smoothing), then a soft limiter that is
 //!   linear up to ±2 and saturates smoothly towards ±4, which guarantees |x| < 4 for every param
 //!   combination. There is no stereo spread in this slice, so `out_l == out_r`.
+//! * Channel messages: pitch bend moves every voice by up to ±2 semitones ([`BEND_RANGE`], at the
+//!   16-sample control rate) and the mod wheel (CC 1) adds up to one semitone of LFO vibrato
+//!   ([`WHEEL_VIBRATO`]) on top of `lfo.to_pitch`. Both are device state that `AllOff` leaves
+//!   alone (as a hardware synth does) and `reset` clears; other controllers and pressure are
+//!   ignored.
 //! * Randomness (noise, sample & hold LFO) comes from `Rng`s derived from `PrepareInfo::seed`.
 
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
@@ -535,6 +540,10 @@ const CONTROL_INTERVAL: u32 = 16;
 const CV_PITCH_RANGE: f32 = 24.0;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
+/// Pitch bend range in semitones each way.
+const BEND_RANGE: f32 = 2.0;
+/// Extra LFO depth in semitones at a full mod wheel (CC 1).
+const WHEEL_VIBRATO: f32 = 1.0;
 /// Per-voice output gain before the master stage.
 const VOICE_GAIN: f32 = 0.5;
 /// Glide time for velocity changes on retrigger.
@@ -575,6 +584,10 @@ struct Shared {
     env_amount: f32,
     key_track: f32,
     lfo_to_pitch: f32,
+    /// Pitch bend in semitones, `-BEND_RANGE..=BEND_RANGE`.
+    bend: f32,
+    /// Mod wheel (CC 1), `0..=1`.
+    wheel: f32,
     lfo_to_cutoff: f32,
     velocity_amount: f32,
     cv_amount: f32,
@@ -704,7 +717,13 @@ impl Voice {
         let cv_pitch = p.cv_pitch_amount * clean(c.pitch);
         for (o, offset) in self.osc.iter_mut().zip(p.pitch_offset) {
             o.set_frequency(
-                note_to_hz(key + offset + lfo * p.lfo_to_pitch + cv_pitch, 0.0),
+                note_to_hz(
+                    key + offset
+                        + lfo * (p.lfo_to_pitch + p.wheel * WHEEL_VIBRATO)
+                        + p.bend
+                        + cv_pitch,
+                    0.0,
+                ),
                 p.sample_rate,
             );
         }
@@ -833,6 +852,8 @@ impl PolySynth {
                 env_amount: 0.0,
                 key_track: 0.0,
                 lfo_to_pitch: 0.0,
+                bend: 0.0,
+                wheel: 0.0,
                 lfo_to_cutoff: 0.0,
                 velocity_amount: 0.5,
                 cv_amount: 2.0,
@@ -963,7 +984,12 @@ impl PolySynth {
                 .filter(|v| v.sounding_key() == Some(key))
                 .for_each(Voice::release),
             NoteKind::AllOff => self.voices.iter_mut().for_each(Voice::release),
-            // Channel messages and expressions are ignored.
+            NoteKind::PitchBend { value } => self.shared.bend = value.clamp(-1.0, 1.0) * BEND_RANGE,
+            NoteKind::Cc {
+                controller: 1,
+                value,
+            } => self.shared.wheel = value.clamp(0.0, 1.0),
+            // The other controllers, pressure and expressions are ignored.
             _ => {}
         }
     }
@@ -1016,6 +1042,8 @@ impl Device for PolySynth {
             v.noise = Rng::new(derive_seed(self.seed, i as u64 + 1));
         }
         self.next_order = 0;
+        self.shared.bend = 0.0;
+        self.shared.wheel = 0.0;
         self.lfo.reset();
         let m = self.master.target();
         self.master.set_immediate(m);
@@ -1385,6 +1413,74 @@ mod tests {
         let down = dominant_frequency(&o[52_800..91_200], SR);
         assert!((up - 440.0).abs() < 2.0, "{up}");
         assert!((down - 110.0).abs() < 2.0, "{down}");
+    }
+
+    fn push(h: &mut DeviceHarness, offset: u16, kind: NoteKind) {
+        h.push_note("notes_in", NoteEvent { offset, kind });
+    }
+
+    #[test]
+    fn process_pitch_bend_moves_every_voice_by_up_to_two_semitones() {
+        let freq = |bend: f32| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            push(&mut h, 0, NoteKind::PitchBend { value: bend });
+            h.push_note("notes_in", on(1, 57, 1.0)); // 220 Hz
+            let o = h.render(seconds(0.5), &OUT).remove(0);
+            dominant_frequency(&o[4_800..24_000], SR)
+        };
+        assert!((freq(0.0) - 220.0).abs() < 1.0);
+        let up = 220.0 * 2f64.powf(2.0 / 12.0);
+        let down = 220.0 * 2f64.powf(-1.0 / 12.0);
+        assert!((freq(1.0) - up).abs() < 1.5, "{}", freq(1.0));
+        assert!((freq(-0.5) - down).abs() < 1.0, "{}", freq(-0.5));
+        // Out-of-range input is clamped to the range.
+        assert!((freq(5.0) - up).abs() < 1.5);
+    }
+
+    #[test]
+    fn process_bend_survives_all_off_and_reset_clears_it() {
+        let (mut h, _) = synth();
+        pure_sine(&mut h);
+        push(&mut h, 0, NoteKind::PitchBend { value: 1.0 });
+        push(&mut h, 1, NoteKind::AllOff);
+        h.push_note("notes_in", on(2, 57, 1.0));
+        let o = h.render(seconds(0.5), &OUT).remove(0);
+        let bent = dominant_frequency(&o[4_800..24_000], SR);
+        assert!(bent > 240.0, "{bent}");
+        let mut s = PolySynth::new();
+        s.handle(NoteKind::PitchBend { value: -1.0 });
+        s.handle(NoteKind::Cc {
+            controller: 1,
+            value: 1.0,
+        });
+        assert_eq!((s.shared.bend, s.shared.wheel), (-BEND_RANGE, 1.0));
+        s.reset();
+        assert_eq!((s.shared.bend, s.shared.wheel), (0.0, 0.0));
+    }
+
+    #[test]
+    fn process_mod_wheel_adds_lfo_vibrato_and_other_ccs_do_nothing() {
+        let spread = |kind: Option<NoteKind>| {
+            let (mut h, _) = synth();
+            pure_sine(&mut h);
+            h.set_param("lfo.wave", 3.0); // square: +1 first half, -1 second
+            h.set_param("lfo.rate", 0.5);
+            if let Some(kind) = kind {
+                push(&mut h, 0, kind);
+            }
+            h.push_note("notes_in", on(1, 57, 1.0));
+            let o = h.render(seconds(2.0), &OUT).remove(0);
+            let up = dominant_frequency(&o[4_800..43_200], SR);
+            let down = dominant_frequency(&o[52_800..91_200], SR);
+            up - down
+        };
+        let cc = |controller, value| Some(NoteKind::Cc { controller, value });
+        assert!(spread(None).abs() < 1.0);
+        assert!(spread(cc(7, 1.0)).abs() < 1.0, "volume is ignored");
+        // A full wheel: +1 and -1 semitone around 220 Hz, about 25 Hz apart.
+        let s = spread(cc(1, 1.0));
+        assert!(s > 20.0 && s < 30.0, "{s}");
     }
 
     #[test]

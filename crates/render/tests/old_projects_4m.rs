@@ -45,7 +45,7 @@ fn every_committed_project_is_format_10_and_saves_back_byte_for_byte() {
     for path in &files {
         let text = std::fs::read_to_string(path).unwrap();
         assert!(
-            text.contains("\"version\": 18"),
+            text.contains("\"version\": 19"),
             "{}: still format 10",
             path.display()
         );
@@ -159,6 +159,7 @@ fn the_starter_bounces_silently_and_one_synth_sounds_on_outputs_one_and_two() {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, 2 * PPQ, 60, 0.8)]),
             },

@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 18,
+//! { "format": "atomik-project", "version": 19,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -25,6 +25,7 @@
 //!                                      "clips": [{ "id", "start", "length", "offset",
 //!                                                  "loop_length" (int or null), "muted",
 //!                                                  "grid"? (v5, note clips only, see below),
+//!                                                  "controllers"? (v19, note clips only, see below),
 //!                                                  "notes": [[tick, length, key, velocity]…]
 //!                                                      (v10: a muted note has a fifth element,
 //!                                                      `true`, see below)
@@ -101,12 +102,13 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). Saving always writes version 18.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. Saving always writes version 19.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
     MAX_BUS_NAME_CHARS, is_console_type,
 };
+use crate::controller::{ControllerKind, ControllerLane, check_lanes};
 use crate::patch::{
     DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
     DEVICE_FIELDS_V11, DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str,
@@ -142,7 +144,7 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
 /// track heights) and 15 (no clip scales).
-pub const PROJECT_VERSION: u32 = 18;
+pub const PROJECT_VERSION: u32 = 19;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -347,6 +349,19 @@ const NOTE_CLIP_FIELDS_V16: &[&str] = &[
     "scale",
     "notes",
 ];
+const NOTE_CLIP_FIELDS_V19: &[&str] = &[
+    "id",
+    "start",
+    "length",
+    "offset",
+    "loop_length",
+    "muted",
+    "grid",
+    "scale",
+    "controllers",
+    "notes",
+];
+const CONTROLLER_LANE_FIELDS: &[&str] = &["kind", "number", "points"];
 const AUTOMATION_CLIP_FIELDS: &[&str] = &[
     "id",
     "start",
@@ -490,7 +505,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=18 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=19 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -1405,7 +1420,9 @@ fn load_track(
         } else if i == 0 {
             (
                 NOTES_LANE_FIELDS,
-                if version >= 16 {
+                if version >= 19 {
+                    NOTE_CLIP_FIELDS_V19
+                } else if version >= 16 {
                     NOTE_CLIP_FIELDS_V16
                 } else if version >= 5 {
                     NOTE_CLIP_FIELDS_V5
@@ -1551,6 +1568,7 @@ fn load_clip(
             muted,
             grid: None,
             scale: None,
+            controllers: Vec::new(),
             content: ClipContent::Audio(audio),
         });
     }
@@ -1637,6 +1655,10 @@ fn load_clip(
             Some(s) => Some(load_scale(s, &path.field("scale"))?),
             None => None,
         },
+        controllers: match obj.get("controllers") {
+            Some(c) => load_controllers(c, &path.field("controllers"))?,
+            None => Vec::new(),
+        },
         content,
     })
 }
@@ -1662,6 +1684,61 @@ fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
     };
     grid.validate().map_err(|m| path.error(m))?;
     Ok(grid)
+}
+
+/// Reads a note clip's `"controllers"` list (see the module docs).
+fn load_controllers(v: &Value, path: &JsonPath) -> Result<Vec<ControllerLane>, ModelError> {
+    let mut lanes: Vec<ControllerLane> = Vec::new();
+    for (i, item) in array(v, path)?.iter().enumerate() {
+        let p = path.index(i);
+        let obj = object(item, &p, CONTROLLER_LANE_FIELDS, &["kind", "points"])?;
+        let kind_path = p.field("kind");
+        let name = string(&obj["kind"], &kind_path)?;
+        let ccnum = match obj.get("number") {
+            Some(n) => Some(uint(n, &p.field("number"), 127)? as u8),
+            None => None,
+        };
+        let kind = match (name, ccnum) {
+            ("pitch_bend", None) => ControllerKind::PitchBend,
+            ("pressure", None) => ControllerKind::ChannelPressure,
+            ("cc", Some(n)) => ControllerKind::Cc(n),
+            ("poly_pressure", Some(n)) => ControllerKind::PolyPressure(n),
+            ("cc" | "poly_pressure", None) => {
+                return Err(p.error(format!("a \"{name}\" lane needs a \"number\"")));
+            }
+            ("pitch_bend" | "pressure", Some(_)) => {
+                return Err(p.error(format!("a \"{name}\" lane has no \"number\"")));
+            }
+            (other, _) => {
+                return Err(kind_path.error(format!(
+                    "expected \"pitch_bend\", \"pressure\", \"cc\" or \"poly_pressure\", found {other:?}"
+                )));
+            }
+        };
+        let points_path = p.field("points");
+        let mut points: Vec<AutomationPoint> = Vec::new();
+        for (j, item) in array(&obj["points"], &points_path)?.iter().enumerate() {
+            let q = points_path.index(j);
+            let a = tuple(item, &q, 3, "a point [tick, value, curve]")?;
+            let curve = match string(&a[2], &q.index(2))? {
+                "linear" => Curve::Linear,
+                "step" => Curve::Step,
+                other => {
+                    return Err(q
+                        .index(2)
+                        .error(format!("expected \"linear\" or \"step\", found {other:?}")));
+                }
+            };
+            points.push(AutomationPoint {
+                tick: tick(&a[0], &q.index(0))?,
+                value: number(&a[1], &q.index(1))? as f32,
+                curve,
+            });
+        }
+        lanes.push(ControllerLane::new(kind, points));
+    }
+    check_lanes(&lanes, crate::song::MAX_TICK).map_err(|m| path.error(m))?;
+    Ok(lanes)
 }
 
 /// Reads a note clip's `"scale"` object: a root `0..=11` and a kind name. A chromatic scale is
@@ -2099,6 +2176,46 @@ fn write_song(w: &mut String, song: &Song) {
 {indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
                                 s.root,
                                 s.kind.id()
+                            );
+                        }
+                        if !c.controllers.is_empty() {
+                            let _ = write!(
+                                w,
+                                ",
+{indent}\"controllers\": ["
+                            );
+                            for (n, lane) in c.controllers.iter().enumerate() {
+                                let (kind, number) = match lane.kind {
+                                    ControllerKind::PitchBend => ("pitch_bend", String::new()),
+                                    ControllerKind::ChannelPressure => ("pressure", String::new()),
+                                    ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
+                                    ControllerKind::PolyPressure(k) => {
+                                        ("poly_pressure", format!(", \"number\": {k}"))
+                                    }
+                                };
+                                let sep = if n == 0 { "" } else { "," };
+                                let _ = write!(
+                                    w,
+                                    "{sep}
+{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
+                                );
+                                list(
+                                    w,
+                                    &format!("{indent}  "),
+                                    lane.points.iter().map(|p| {
+                                        let curve = match p.curve {
+                                            Curve::Linear => "linear",
+                                            Curve::Step => "step",
+                                        };
+                                        format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
+                                    }),
+                                );
+                                let _ = write!(w, "}}");
+                            }
+                            let _ = write!(
+                                w,
+                                "
+{indent}]"
                             );
                         }
                     }

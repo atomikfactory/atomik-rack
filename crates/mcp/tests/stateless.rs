@@ -68,6 +68,53 @@ fn list_devices_lists_and_describes() {
 }
 
 #[test]
+fn project_inspect_lists_the_controller_lanes_of_a_note_lane() {
+    let mut s = server();
+    // The demo project with a pitch bend and a mod wheel lane added to its first note clip.
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let clip = &mut v["song"]["tracks"][0]["lanes"][0]["clips"][0];
+    clip["controllers"] = json!([
+        {"kind": "pitch_bend", "points": [[0, 0.0, "linear"], [100, 0.5, "step"]]},
+        {"kind": "cc", "number": 1, "points": [[50, 1.0, "step"]]},
+    ]);
+    let path = tmp("controllers.atomik");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let lane = &r.parsed()["song"]["tracks"][0]["lanes"][0];
+    assert_eq!(
+        lane["controllers"],
+        json!([
+            {"kind": "pitch_bend", "points": 2},
+            {"kind": "cc", "number": 1, "points": 1},
+        ])
+    );
+    // A project without controller data has no such field, and a bad lane names its path.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    assert!(
+        plain["song"]["tracks"][0]["lanes"][0]
+            .get("controllers")
+            .is_none()
+    );
+    v["song"]["tracks"][0]["lanes"][0]["clips"][0]["controllers"][1]["number"] = json!(200);
+    let bad = tmp("controllers-bad.atomik");
+    std::fs::write(&bad, v.to_string()).unwrap();
+    let e = call(&mut s, "project_inspect", json!({"path": bad}));
+    assert!(e.is_error);
+    assert!(
+        e.first_text().contains("controllers[1].number"),
+        "{}",
+        e.first_text()
+    );
+}
+
+#[test]
 fn project_inspect_describes_a_project_and_a_patch() {
     let mut s = server();
     let p = call(

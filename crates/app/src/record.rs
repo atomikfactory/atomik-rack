@@ -22,15 +22,26 @@
 //!   end or the stop; later laps: from the loop start), widened to its notes, rounded out to
 //!   whole bars. Notes are relative to the clip start, sorted by `(tick, key)`, without
 //!   duplicates, with lengths of at least one tick.
+//! - **Controller data.** Pitch bend, channel and polyphonic aftertouch and every CC that reaches
+//!   an armed device are recorded as controller lanes of the lap's clip (`Clip::controllers`),
+//!   one lane per kind, on the same laps and rounded-out range as the notes; a lap with
+//!   controller events and no notes still makes a clip. A recorded value holds until the next
+//!   one, so the points are `Step`; a burst of events closer than `PPQ / 128` ticks (3.9 ms at
+//!   120 BPM) keeps its last value at the burst's first tick, and a point that repeats the value
+//!   before it is dropped. Input quantize does not touch them.
 //! - **Input quantize** ([`InputQuantize`]): note starts snap to the nearest 1/8 or 1/16
 //!   before the clip is made; lengths are kept.
 //! - Notes still held at stop are closed at the stop position.
 
 use atomik_core::{MeterTable, NoteKind, PPQ};
 use atomik_engine::{DeviceInstanceId, ScheduledNote, SongPosition, TransportState};
-use atomik_model::{Clip, ClipContent, ClipId, DeviceKey, Note};
+use atomik_model::controller::canonical;
+use atomik_model::{
+    AutomationPoint, Clip, ClipContent, ClipId, ControllerKind, ControllerLane, Curve, DeviceKey,
+    Note,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -165,6 +176,34 @@ impl RecordTap {
     }
 }
 
+/// Events closer than this to the previous kept controller point (in ticks) are folded into it.
+const CTL_COALESCE: i64 = PPQ / 128;
+
+/// The controller events of one lap, by kind, as `(tick, value)` in arrival order.
+type CtlTake = BTreeMap<ControllerKind, Vec<(i64, f32)>>;
+
+/// The step points of recorded controller events `raw` (arrival order, song ticks), relative to
+/// the clip `start` (the module docs: a burst keeps its last value, repeats are dropped).
+fn record_points(raw: &[(i64, f32)], start: i64) -> Vec<AutomationPoint> {
+    let mut sorted = raw.to_vec();
+    sorted.sort_by_key(|p| p.0); // stable: equal ticks keep their order
+    let mut kept: Vec<(i64, f32)> = Vec::new();
+    for (tick, value) in sorted {
+        match kept.last_mut() {
+            Some(last) if tick - last.0 < CTL_COALESCE => last.1 = value,
+            _ => kept.push((tick, value)),
+        }
+    }
+    kept.dedup_by(|b, a| b.1.to_bits() == a.1.to_bits());
+    kept.into_iter()
+        .map(|(tick, value)| AutomationPoint {
+            tick: tick - start,
+            value,
+            curve: Curve::Step,
+        })
+        .collect()
+}
+
 /// A note being recorded or finished, in song ticks.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TakeNote {
@@ -185,6 +224,8 @@ pub struct Take {
     origin: Option<(i64, u64)>,
     held: BTreeMap<(DeviceInstanceId, u8), (u64, i64, f32)>,
     notes: BTreeMap<(DeviceInstanceId, u64), Vec<TakeNote>>,
+    /// Controller events by device and lap.
+    controllers: BTreeMap<(DeviceInstanceId, u64), CtlTake>,
     /// Events waiting for a playing transport state.
     pending: Vec<RecordedNote>,
 }
@@ -204,6 +245,7 @@ impl Take {
             origin: None,
             held: BTreeMap::new(),
             notes: BTreeMap::new(),
+            controllers: BTreeMap::new(),
             pending: Vec::new(),
         }
     }
@@ -291,8 +333,18 @@ impl Take {
                     self.close(device, key, lap, tick);
                 }
             }
-            // Channel messages and expressions are not recorded into clips.
-            _ => {}
+            // Pitch bend, aftertouch and CC become controller points; per-note expressions are
+            // not recorded.
+            other => {
+                if let Some((kind, value)) = ControllerKind::from_note(other) {
+                    self.controllers
+                        .entry((device, lap))
+                        .or_default()
+                        .entry(kind)
+                        .or_default()
+                        .push((tick, kind.clamp(value)));
+                }
+            }
         }
     }
 
@@ -307,7 +359,13 @@ impl Take {
         }
         let origin = self.origin.map_or(stop.tick.0, |o| o.0).max(0);
         let mut out = Vec::new();
-        for ((device, lap), mut notes) in std::mem::take(&mut self.notes) {
+        let mut note_laps = std::mem::take(&mut self.notes);
+        let mut ctl_laps = std::mem::take(&mut self.controllers);
+        let laps: BTreeSet<(DeviceInstanceId, u64)> =
+            note_laps.keys().chain(ctl_laps.keys()).copied().collect();
+        for (device, lap) in laps {
+            let mut notes = note_laps.remove(&(device, lap)).unwrap_or_default();
+            let ctl = ctl_laps.remove(&(device, lap)).unwrap_or_default();
             let Some(key) = self.tracks.get(&device).cloned() else {
                 continue;
             };
@@ -327,8 +385,19 @@ impl Take {
                 }
                 None => (origin, stop.tick.0),
             };
-            let first = notes.iter().map(|n| n.tick).min().unwrap_or(from);
-            let last = notes.iter().map(|n| n.tick + n.length).max().unwrap_or(to);
+            let ctl_ticks = ctl.values().flatten().map(|p| p.0);
+            let first = notes
+                .iter()
+                .map(|n| n.tick)
+                .chain(ctl_ticks.clone())
+                .min()
+                .unwrap_or(from);
+            let last = notes
+                .iter()
+                .map(|n| n.tick + n.length)
+                .chain(ctl_ticks.map(|t| t + 1))
+                .max()
+                .unwrap_or(to);
             let meter = self.meter.map();
             let floor_bar = |t: i64| meter.bar_start(meter.bar_at(t));
             let start = floor_bar(from.min(first).max(0));
@@ -342,6 +411,11 @@ impl Take {
                 .iter()
                 .map(|n| Note::new(n.tick - start, n.length.max(1), n.key, n.velocity))
                 .collect();
+            let controllers = canonical(
+                ctl.into_iter()
+                    .map(|(kind, raw)| ControllerLane::new(kind, record_points(&raw, start)))
+                    .collect(),
+            );
             out.push((
                 key,
                 Clip {
@@ -352,6 +426,7 @@ impl Take {
                     loop_length: None,
                     muted: false,
                     scale: None,
+                    controllers,
                     grid: None,
                     content: ClipContent::Notes(content),
                 },

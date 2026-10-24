@@ -236,6 +236,7 @@ pub fn demo_doc(hash: &str, meta: &AssetMeta, markers: &[u64]) -> RackDoc {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Notes(notes.clone()),
             },

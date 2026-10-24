@@ -6,8 +6,9 @@
 
 mod support;
 
-use atomik_model::ClipId;
+use atomik_model::controller::{ControllerKind, ControllerLane};
 use atomik_model::theory::{ChordKind, Scale, ScaleKind};
+use atomik_model::{ClipId, Curve};
 use atomik_ui::chord_edit::Stamp;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::timeline::Snap;
@@ -81,6 +82,34 @@ fn record_piano_roll_scale(fold: Fold) -> DisplayList {
     dl
 }
 
+/// The piano roll with the controller area open on a pitch bend lane (a ramp, a hold and a
+/// return to the centre) and a mod wheel lane, the second one shown.
+fn record_piano_roll_controllers() -> DisplayList {
+    let (mut doc, reg) = (song_doc(), registry());
+    let pt = |tick, value, curve| atomik_model::AutomationPoint { tick, value, curve };
+    doc.song.tracks[0].lanes[0].clips[0].controllers = vec![
+        ControllerLane::new(
+            ControllerKind::PitchBend,
+            vec![
+                pt(0, 0.0, Curve::Linear),
+                pt(PPQ, 0.5, Curve::Step),
+                pt(2 * PPQ, 0.0, Curve::Step),
+            ],
+        ),
+        ControllerLane::new(
+            ControllerKind::Cc(1),
+            vec![pt(PPQ, 0.25, Curve::Linear), pt(3 * PPQ, 1.0, Curve::Step)],
+        ),
+    ];
+    let mut v = piano_roll(&doc, &reg);
+    v.set_controllers_open(true);
+    v.set_controller_kind(ControllerKind::Cc(1));
+    v.set_playhead(PPQ);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
 fn record_transport() -> DisplayList {
     let (doc, reg) = (song_doc(), registry());
     let mut v = transport_bar(&doc, &reg);
@@ -103,6 +132,14 @@ fn arrangement_matches_golden() {
 #[test]
 fn piano_roll_matches_golden() {
     check("piano_roll_1x.json", &record_piano_roll().to_json());
+}
+
+#[test]
+fn piano_roll_with_the_controller_area_matches_golden() {
+    check(
+        "piano_roll_controllers_1x.json",
+        &record_piano_roll_controllers().to_json(),
+    );
 }
 
 #[test]

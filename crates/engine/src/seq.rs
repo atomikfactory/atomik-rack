@@ -8,7 +8,9 @@
 //!   pre-resolved so the RT player only walks indices (no allocation, no sorting on RT).
 //! - Snapshots and transport commands travel through the ordered control queue.
 //!   A retired snapshot is handed back and dropped by `collect_garbage`.
-//! - Notes are sample-accurate; automation is applied once per 64-frame batch.
+//! - Notes are sample-accurate; automation is applied once per 64-frame batch. Controller lanes
+//!   (pitch bend, aftertouch, CC: [`SongController`](crate::SongController)) are expanded here into
+//!   discrete events that play like notes.
 //! - Transport state is published lock-free for the UI and for recording ([`TransportState`]).
 //! - Tempo: while a song is loaded its tempo map (steps and linear ramps, `atomik_core::TempoMap`)
 //!   drives the transport and `TimeInfo::tempo`; `EngineHandle::set_tempo` only matters for
@@ -20,6 +22,7 @@
 //!
 //! Public signatures are a stable contract: changes need review.
 
+use crate::controllers::{CtlLane, SongController, expand, validate};
 use crate::graph::DeviceInstanceId;
 use atomik_core::{
     MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo, TempoMap, TempoPoint,
@@ -87,6 +90,10 @@ pub struct SongTrack {
     /// own velocity, and its regular off releases it. `false` plays only notes that start at or
     /// after the position (a note spanning it stays silent).
     pub chase: bool,
+    /// Pitch bend, aftertouch and controller lanes, sent to the same input next to the notes
+    /// (see [`crate::SongController`]). At most one lane per kind. Unlike notes they are always
+    /// chased: a seek restores each controller's value at the position.
+    pub controllers: Vec<SongController>,
 }
 
 /// A tempo change at a tick: a step, or with `ramp` a linear ramp (in BPM, over ticks) to the
@@ -175,7 +182,7 @@ pub struct SongSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SeqEvent {
     pub(crate) tick: i64,
-    /// `On` or `Off` (never `AllOff`).
+    /// `On`, `Off` or a controller event (never `AllOff`).
     pub(crate) kind: NoteKind,
 }
 
@@ -185,6 +192,8 @@ pub(crate) struct CompiledTrack {
     pub(crate) device: DeviceInstanceId,
     pub(crate) socket: SocketId,
     pub(crate) events: Vec<SeqEvent>,
+    /// The controller lanes (expanded), for the chase of controller values on a seek.
+    pub(crate) ctl: Vec<CtlLane>,
     /// Notes sorted by start tick (per-key overlaps resolved), for chase and for the keys a
     /// swapped track still covers.
     pub(crate) notes: Vec<ChaseNote>,
@@ -249,7 +258,9 @@ impl std::fmt::Debug for SongSnapshot {
 /// automation points by tick (stable, so equal ticks keep their input order: a jump). Each
 /// track also gets a note index sorted by start tick (with a prefix maximum of the end ticks)
 /// that the player uses to chase notes spanning a position ([`SongTrack::chase`]); the chase
-/// flag is part of the track's content hash. Lanes without points are dropped. Device and param
+/// flag is part of the track's content hash. Controller lanes are validated and expanded into
+/// events of the track's list (the `controllers` module), one lane per kind. Lanes without points
+/// are dropped. Device and param
 /// ids are not checked here: the engine ignores unknown targets (notes to them are counted as
 /// dropped).
 pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
@@ -359,6 +370,18 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
         last_of_key[k] = kept.len();
         kept.push((start, end, key, n.velocity));
     }
+    let mut ctl: Vec<CtlLane> = Vec::with_capacity(track.controllers.len());
+    for c in &track.controllers {
+        validate(c).map_err(SongError::BadEvent)?;
+        if ctl.iter().any(|l| l.kind == c.kind) {
+            return Err(SongError::BadEvent(format!(
+                "duplicate controller lane {:?}",
+                c.kind
+            )));
+        }
+        ctl.push(expand(c));
+    }
+    ctl.sort_by_key(|l| l.kind);
     let mut events = Vec::with_capacity(kept.len() * 2);
     for &(start, end, key, velocity) in &kept {
         events.push(SeqEvent {
@@ -370,12 +393,23 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
             kind: NoteKind::Off { key },
         });
     }
+    for lane in &ctl {
+        for (&tick, &value) in lane.ticks.iter().zip(&lane.values) {
+            events.push(SeqEvent {
+                tick,
+                kind: lane.kind.note(value),
+            });
+        }
+    }
+    // Stable: controllers of one tick keep their lane order, after the offs and before the ons
+    // (a bend or a pedal change takes effect for a note that starts with it).
     events.sort_by_key(|e| match e.kind {
         NoteKind::Off { key } => (e.tick, 0, key),
-        NoteKind::On { key, .. } => (e.tick, 1, key),
-        NoteKind::AllOff => (e.tick, 2, 0),
-        // Clips only hold On and Off (kinds never come from the song).
-        _ => (e.tick, 3, 0),
+        NoteKind::On { key, .. } => (e.tick, 2, key),
+        NoteKind::AllOff => (e.tick, 3, 0),
+        // PitchBend, Cc, ChannelPressure and PolyPressure; per-note expressions never come
+        // from the song.
+        _ => (e.tick, 1, 0),
     });
     let mut hash = mix(
         mix(0x6a09_e667_f3bc_c908, u64::from(track.device.0)),
@@ -407,6 +441,7 @@ fn compile_track(track: &SongTrack) -> Result<CompiledTrack, SongError> {
         device: track.device,
         socket: track.notes_socket,
         events,
+        ctl,
         notes,
         max_end,
         chase: track.chase,
@@ -644,6 +679,7 @@ mod tests {
             chase: true,
             notes,
             automation: Vec::new(),
+            controllers: Vec::new(),
         }
     }
 

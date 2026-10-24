@@ -267,6 +267,7 @@ pub mod container_edit;
 pub mod container_editor;
 pub mod container_panel;
 pub mod context_menu;
+pub mod controller_lane;
 #[cfg(feature = "cpu-canvas")]
 pub mod cpu_canvas;
 pub mod display_list;

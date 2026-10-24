@@ -6,6 +6,7 @@
 mod arena;
 mod audio;
 mod console;
+mod controllers;
 mod engine;
 mod graph;
 mod interface;
@@ -26,6 +27,7 @@ pub use audio::{
 pub use console::{
     MAX_COMPENSATION_SECONDS, MAX_METER_VALUES, METER_CAPACITY, MeterReading, Meters, PdcReport,
 };
+pub use controllers::{RAMP_STEP, SongController, SongControllerKind};
 pub use engine::{
     CONTROL_QUEUE_CAPACITY, DEFAULT_ARENA_CAPACITY, Engine, EngineError, EngineHandle, HotEdit,
     NOTE_QUEUE_CAPACITY, PARAM_QUEUE_CAPACITY, PLAN_QUEUE_CAPACITY, RETIRE_QUEUE_CAPACITY,

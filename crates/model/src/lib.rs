@@ -13,6 +13,7 @@ mod console_insert;
 mod container;
 mod container_cmd;
 mod container_io;
+pub mod controller;
 mod expand;
 mod history;
 mod patch;
@@ -82,6 +83,7 @@ pub use console::{
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;
+pub use controller::{ControllerKind, ControllerLane};
 use history::Edit;
 use rack_columns::Placement;
 pub use song::{
@@ -732,6 +734,7 @@ impl Document {
             Command::Song(
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }
+                | SongCommand::SetClipControllers { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
@@ -938,12 +941,13 @@ impl Document {
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
                                     | SongCommand::SetClipGrid { .. }
+                                    | SongCommand::SetClipControllers { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipGeometry and SetTrackFlags can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry and SetTrackFlags can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

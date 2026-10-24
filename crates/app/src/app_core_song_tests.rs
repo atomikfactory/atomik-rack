@@ -8,8 +8,8 @@ use crate::sink::{RecordingSink, SinkCall};
 use atomik_core::{NoteKind, PPQ, Ticks};
 use atomik_engine::{SongInput, TransportCommand, TransportState};
 use atomik_model::{
-    AutomationPoint, Clip, ClipContent, ClipId, Command, Curve, DeviceKey, Note, SongCommand,
-    TempoEvent,
+    AutomationPoint, Clip, ClipContent, ClipId, Command, ControllerKind, Curve, DeviceKey, Note,
+    SongCommand, TempoEvent,
 };
 use atomik_ui::{TransportAction, UiAction};
 
@@ -57,6 +57,7 @@ fn note_clip(start: i64, notes: &[(i64, u8)]) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content: ClipContent::Notes(
             notes
@@ -573,6 +574,54 @@ fn recording_turns_live_notes_into_a_clip_on_stop() {
     assert_eq!(songs(&calls).last().unwrap().tracks[0].notes.len(), 2);
     // One undo step removes the take.
     assert!(undo_before);
+    assert!(c.undo());
+    assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
+}
+
+/// Pitch bend and a CC recorded with the notes land in the clip's controller lanes, reach the
+/// engine's song input and undo with the take.
+#[test]
+fn recording_turns_live_controller_data_into_clip_lanes() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    let ev = |kind, tick| RecordedNote {
+        device: id(1),
+        kind,
+        frame: frame(tick),
+    };
+    c.sink_mut().recorded = vec![
+        ev(NoteKind::PitchBend { value: 0.5 }, PPQ),
+        ev(
+            NoteKind::Cc {
+                controller: 1,
+                value: 1.0,
+            },
+            2 * PPQ,
+        ),
+    ];
+    c.frame();
+    c.sink_mut().state = TransportState {
+        tick: BAR,
+        engine_frame: frame(BAR),
+        song_frame: frame(BAR) - 1000,
+        ..start
+    };
+    let calls = transport(&mut c, TransportAction::Stop);
+    let clip = &c.doc().song.tracks[0].lanes[0].clips[0];
+    assert!(matches!(&clip.content, ClipContent::Notes(n) if n.is_empty()));
+    let kinds: Vec<_> = clip.controllers.iter().map(|l| l.kind).collect();
+    assert_eq!(kinds, [ControllerKind::PitchBend, ControllerKind::Cc(1)]);
+    let lanes = &songs(&calls).last().unwrap().tracks[0].controllers;
+    assert_eq!(lanes.len(), 2);
     assert!(c.undo());
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }

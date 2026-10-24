@@ -3,7 +3,7 @@
 use crate::analysis;
 use crate::rpc::{Server, Tool};
 use crate::tool::{Args, ToolOutput, definition};
-use atomik_model::{ClipContent, LaneKind, RackDoc};
+use atomik_model::{ClipContent, ControllerKind, Lane, LaneKind, RackDoc};
 use atomik_render::project::{ProjectOptions, is_project, render_doc_in};
 use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
 use atomik_render::{default_registry, patch::Patch, render_built};
@@ -190,6 +190,30 @@ JSON path of the first problem when the file does not load.",
     )
 }
 
+/// The controller lanes of a note lane: for each kind in use (pitch bend, aftertouch, CC, poly
+/// aftertouch) its name, number (a CC's or a key) and the number of points over all the lane's
+/// clips. Empty for a lane without controller data.
+fn controller_summary(lane: &Lane) -> Vec<Value> {
+    let mut counts: std::collections::BTreeMap<ControllerKind, usize> =
+        std::collections::BTreeMap::new();
+    for c in &lane.clips {
+        for l in &c.controllers {
+            *counts.entry(l.kind).or_default() += l.points.len();
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(kind, points)| match kind {
+            ControllerKind::PitchBend => json!({"kind": "pitch_bend", "points": points}),
+            ControllerKind::ChannelPressure => json!({"kind": "pressure", "points": points}),
+            ControllerKind::Cc(n) => json!({"kind": "cc", "number": n, "points": points}),
+            ControllerKind::PolyPressure(k) => {
+                json!({"kind": "poly_pressure", "number": k, "points": points})
+            }
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -247,6 +271,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                         })
                         .sum();
                     let mut lane = json!({"kind": kind, "clips": l.clips.len(), "items": items});
+                    let controllers = controller_summary(l);
+                    if !controllers.is_empty() {
+                        lane["controllers"] = Value::Array(controllers);
+                    }
                     if let LaneKind::Automation(p) = &l.kind {
                         lane["write"] = json!(doc.song.write_mode(&t.device, p).name());
                     }

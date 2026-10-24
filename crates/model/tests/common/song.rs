@@ -32,6 +32,7 @@ pub fn clip(start: i64, length: i64, content: ClipContent) -> Clip {
         loop_length: None,
         muted: false,
         scale: None,
+        controllers: Vec::new(),
         grid: None,
         content,
     }
@@ -287,6 +288,7 @@ pub fn resolve_song(
                     loop_length: *lp,
                     muted: *m,
                     scale: None,
+                    controllers: Vec::new(),
                     grid: None,
                     content: content(&t.lanes[lane].kind, *seed, *bad),
                 },

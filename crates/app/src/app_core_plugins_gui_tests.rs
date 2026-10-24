@@ -849,6 +849,7 @@ fn automate_adds_a_lane_for_the_param_on_the_track_of_the_selected_clip() {
                 loop_length: None,
                 muted: false,
                 scale: None,
+                controllers: Vec::new(),
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, atomik_core::PPQ, 60, 0.8)]),
             },

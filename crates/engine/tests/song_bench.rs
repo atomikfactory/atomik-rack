@@ -30,6 +30,7 @@ fn e3_2_song(devices: &[atomik_engine::DeviceInstanceId]) -> SongInput {
             notes: (0..BARS * 16)
                 .map(|k| snote(k * PPQ / 4, PPQ / 8, 36 + ((k * 7 + t as i64) % 48) as u8))
                 .collect(),
+            controllers: Vec::new(),
             automation: (0..2u32)
                 .map(|p| SongAutomation {
                     param: atomik_core::ParamId(p),
