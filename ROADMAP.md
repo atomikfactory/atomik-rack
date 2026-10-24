@@ -10,7 +10,7 @@ The plugin sandbox (each plugin instance in its own process), release pipeline a
 
 - **Plugin sandbox follow-ups.** Run the sandbox on Linux and macOS for real (the wake-up and stdout redirection are compile-checked only), optional grouping of several instances in one process, and embedding sandboxed editors where the platform allows it.
 - **macOS and Linux verification.** Linux has been tried on Ubuntu 26.04 only; other distributions, audio setups and real plugins still need checking. macOS compiles and is linted but has not been run on a Mac. Verifying and fixing both is a priority.
-- **VST3 on Wayland.** Plugin editor embedding on Wayland (today the parameter pane is the fallback). Editors that need file-descriptor handlers now run on Linux; they still need checking with more real plugins.
+- **VST3 on Wayland.** Plugin editor embedding on native Wayland (sandboxed editors already run through XWayland; in-process editors and sessions without `DISPLAY` fall back to the parameter pane). Editors that need file-descriptor handlers now run on Linux; they still need checking with more real plugins.
 - **Signed builds.** Code signing and notarisation for the release archives.
 
 ## Phase 2: The sequencer
