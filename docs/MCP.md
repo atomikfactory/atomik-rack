@@ -78,7 +78,7 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 | `session_open` | `path`, `width`, `height`, `scale`, `os` | Starts the app on the starter project, or on `path`. A bad file is refused with its JSON path and the previous session is kept. `os` (`windows`, `mac`, `linux`) picks the keymap and shortcut texts. Returns the status. |
 | `session_status` | `include_params` | Title, unsaved changes, status line, focused and lower pane, undo and redo availability, window size, and the document (as `project_inspect`). |
 | `session_commands` | `menu`, `query`, `enabled_only` | The menu commands: menu, label, `id`, shortcut, checked, enabled. |
-| `session_command` | `id`, `confirm` | Runs a menu command as the menu or its shortcut would. A command that needs a native dialog (`file.open`...) or the "discard unsaved changes" confirmation is reported in `requests` and does not run silently; `confirm: true` accepts the discard. |
+| `session_command` | `id`, `confirm`, `wait` | Runs a menu command as the menu or its shortcut would. A command that needs a native dialog (`file.open`...) or the "discard unsaved changes" confirmation is reported in `requests` and does not run silently; `confirm: true` accepts the discard. A freeze or bounce renders on a worker and the session has no frame loop, so the call waits for the render to finish unless `wait` is `false` (the answer then has `waited` and the render's `message`, for example `Froze Lead`). |
 | `session_pointer` | `action`, `x`, `y`, `to_x`, `to_y`, `steps`, `dx`, `dy`, `button`, `modifiers` | `move`, `down`, `up`, `click`, `double_click`, `drag`, `wheel`, `leave`. |
 | `session_key` | `key` or `text`, `modifiers` | Presses and releases a key, or types characters. |
 | `session_texts` | `contains`, `limit` | Every text the UI draws, with its position and size. |
@@ -125,6 +125,16 @@ Chase Notes (`sequencer.toggle_chase`) is an item of the track header's context 
 **Track organisation**
 
 The Track menu (`session_commands` with `menu: "Track"`) holds Group Tracks (`sequencer.group_tracks`), Ungroup, Collapse or Expand Folder (`sequencer.toggle_folder`), Rename Folder, Move Track Up and Down, Track Comment, Fold and Unfold Automation Lanes (`sequencer.fold_lanes:fold`, `:unfold`) and Track Height (`sequencer.track_height:small`, `:medium`, `:large`, `:fit`). They work on the selection, which is the pointer's: click a track header (shift-click adds one) or a folder row's name, then run the command; a disabled one says so. Track Colour (`sequencer.track_color`) is in the context menus only: right-click a header and choose from its Colour submenu. The typed edits (a folder name, a track comment) are text: `session_command` opens the field, then `session_key` with `text` types it and `Enter` commits. `session_status` and `project_inspect` list the song's `folders` (id, name, parent, collapsed, colour, the devices inside) and, per track, `folder`, `color` and `comment`, per automation lane `folded` and per take group `open`; each only when there is one. `crates/model/tests/golden/organised_project.json` is a small project that has all of them.
+
+**Freeze and bounce in place**
+
+Freeze Track and its siblings are Track menu commands (`session_commands` with `menu: "Track"`): `sequencer.freeze_track`, `sequencer.freeze_track_to_device` (up to the rack's selected device), `sequencer.freeze_tail` (a check item, on by default), `sequencer.freeze_cancel`, `sequencer.unfreeze_track`, `sequencer.unfreeze_track_keep`, `sequencer.bounce_in_place` and `sequencer.bounce_in_place_mute`. They work on the selected tracks or the tracks of the selected clips, so click a track header (or a clip) with `session_pointer` first; a command that cannot run now is disabled and `session_command` says which. To check that a freeze is transparent:
+
+1. `session_open` a copy of the project in a temporary folder (a freeze stores its render in the project's bundle, so do not open a file inside `examples/`; `session_save` the example to `target/mcp/` first and open that).
+2. Select the track, then `session_bounce` into `target/mcp/before.wav`.
+3. `session_command` `sequencer.freeze_track`: the call waits for the render and answers with `message` `Froze <track>`. `session_status` shows `frozen` on the track (`start`, `length`, `asset`, the frozen `effects`), its own `lanes` still listed.
+4. `session_bounce` into `after.wav` and `compare_audio` the two: a chain without latency or tail is `bit_identical`; with a reverb the difference is below -90 dBFS (the tail is cut there), and a chain with latency is the same audio earlier by that latency.
+5. `edit.undo` brings the track back in one step; `session_texts` lists `(frozen)` in the lane while it is frozen.
 
 **Automation recording**
 
