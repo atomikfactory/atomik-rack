@@ -47,12 +47,14 @@ use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
+mod audio_edit;
 mod heights;
 mod markers;
 mod organise;
 mod takes;
 mod tempo;
 
+pub use audio_edit::AudioMenu;
 pub use heights::{
     COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
     clamp_track_zoom, scaled_height,
@@ -213,6 +215,8 @@ enum ClipPart {
     FadeIn,
     FadeOut,
     Gain,
+    /// A point of the gain envelope of an audio clip.
+    GainPoint(usize),
     /// The mute button in the header strip.
     Mute,
 }
@@ -468,6 +472,8 @@ enum AudioGrab {
     /// The gain scale: `(top y, height)`.
     Gain(f64, f64),
     TrimStart,
+    /// An envelope point: `(index, top y, height)` of the gain scale.
+    EnvPoint(usize, f64, f64),
 }
 
 /// The arrangement view. See the module documentation for hosting.
@@ -526,6 +532,8 @@ pub struct ArrangementView {
     th: heights::HeightUi,
     /// Folders, the selection of several tracks and the text being typed in the track list.
     og: organise::OrgUi,
+    /// Audio editing: the crossfade zones.
+    au: audio_edit::AudioUi,
     /// Which take groups are open.
     tk: takes::TakesUi,
     /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
@@ -599,6 +607,7 @@ impl ArrangementView {
             mk: markers::MarkerUi::default(),
             th: heights::HeightUi::default(),
             og: organise::OrgUi::default(),
+            au: audio_edit::AudioUi::default(),
             tk: takes::TakesUi::default(),
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
@@ -1145,6 +1154,7 @@ impl ArrangementView {
         }
         self.tempo = TempoMap::new(&self.song.tempo);
         self.bars = Bars::of(&self.song);
+        self.rebuild_audio_ui();
         self.assets.clone_from(&doc.assets);
         self.input_channels = doc.input_channels;
         self.device_sig = sig;
@@ -1653,6 +1663,16 @@ impl ArrangementView {
                             lane,
                             id,
                             part: ClipPart::Mute,
+                        };
+                    }
+                    if let ClipContent::Audio(a) = &clip.content
+                        && let Some(i) = self.envelope_point_at(pos, r, clip, a, tl)
+                    {
+                        return Hit::Clip {
+                            track,
+                            lane,
+                            id,
+                            part: ClipPart::GainPoint(i),
                         };
                     }
                     if let Some(part) = self.audio_handle_at(pos, r, clip, tl) {
@@ -2195,6 +2215,11 @@ impl ArrangementView {
                         (ClipPart::Point(i), ClipContent::Automation(points)) => {
                             out.push(content_cmd(id, seq_edit::remove_point(points, *i), None));
                         }
+                        (ClipPart::GainPoint(i), ClipContent::Audio(a)) => {
+                            out.push(
+                                self.envelope_edit_cmd(&clip, a, |p| audio::envelope_remove(p, *i)),
+                            );
+                        }
                         _ => {
                             self.selection.clear();
                             out.push(song_cmd(SongCommand::RemoveClip { id }));
@@ -2204,7 +2229,20 @@ impl ArrangementView {
                 }
                 // The pencil only draws: clips are not selected or moved; automation points
                 // still draw and move.
-                Tool::Pencil if !matches!(part, ClipPart::Point(_) | ClipPart::AutoBody) => {
+                Tool::Pencil
+                    if matches!(clip.content, ClipContent::Audio(_))
+                        && matches!(part, ClipPart::Body | ClipPart::Header) =>
+                {
+                    // On an audio clip the pencil draws a gain envelope point.
+                    self.pencil_envelope(&clip, pos, out);
+                    return;
+                }
+                Tool::Pencil
+                    if !matches!(
+                        part,
+                        ClipPart::Point(_) | ClipPart::AutoBody | ClipPart::GainPoint(_)
+                    ) =>
+                {
                     return;
                 }
                 _ => {}
@@ -2265,6 +2303,21 @@ impl ArrangementView {
                 }
                 let merge = self.merge_id();
                 self.start_point_drag(track, lane, &clip, points.clone(), i, pos, merge, false);
+            }
+            ClipPart::GainPoint(i) => {
+                let ClipContent::Audio(a) = &clip.content else {
+                    return;
+                };
+                if !primary {
+                    if button == PointerButton::Secondary {
+                        out.push(
+                            self.envelope_edit_cmd(&clip, a, |p| audio::envelope_remove(p, i)),
+                        );
+                    }
+                    return;
+                }
+                self.selection.select_only(id);
+                self.start_envelope_drag(&clip, a, a.envelope.clone(), i, pos, out);
             }
             ClipPart::AutoBody if primary => {
                 let ClipContent::Automation(points) = &clip.content else {
@@ -2598,19 +2651,37 @@ impl ArrangementView {
                     );
                     (l, clip.loop_length)
                 };
+                let mut new = new;
+                let mut audio_content = None;
+                if let ClipContent::Audio(a) = &clip.content {
+                    let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
+                    let mut frames = clip_frames(tempo, clip.start, new.0, rate);
+                    let mut source_offset = a.source_offset;
+                    if a.reverse {
+                        // The end of a reversed clip is the low end of its source span: the
+                        // offset moves with it, and the clip grows no further than frame 0.
+                        let old = clip_frames(tempo, clip.start, clip.length, rate);
+                        let (_, allowed) = audio::reversed_end_resize(a.source_offset, old, frames);
+                        if allowed < frames {
+                            let end_frame = tempo.frame_at(clip.start, rate) + allowed;
+                            let end = tempo.tick_at_frame(end_frame as f64, rate).round() as i64;
+                            new.0 = (end - clip.start).max(min);
+                            frames = clip_frames(tempo, clip.start, new.0, rate);
+                        }
+                        source_offset = audio::reversed_end_resize(a.source_offset, old, frames).0;
+                    }
+                    let (fade_in, fade_out) = audio::clamp_fades(a.fade_in, a.fade_out, frames);
+                    audio_content = Some(AudioClipContent {
+                        source_offset,
+                        fade_in,
+                        fade_out,
+                        ..a.clone()
+                    });
+                }
                 if new != *last {
-                    out.push(if let ClipContent::Audio(a) = &clip.content {
-                        let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
-                        let frames = clip_frames(tempo, clip.start, new.0, rate);
-                        let (fade_in, fade_out) = audio::clamp_fades(a.fade_in, a.fade_out, frames);
-                        let content = AudioClipContent {
-                            fade_in,
-                            fade_out,
-                            ..a.clone()
-                        };
-                        audio_clip_cmd(clip, clip.start, new.0, content, *merge)
-                    } else {
-                        geometry_cmd(clip, clip.start, new.0, new.1, *merge)
+                    out.push(match audio_content {
+                        Some(content) => audio_clip_cmd(clip, clip.start, new.0, content, *merge),
+                        None => geometry_cmd(clip, clip.start, new.0, new.1, *merge),
                     });
                     *last = new;
                     *emitted = true;
@@ -2656,14 +2727,34 @@ impl ArrangementView {
                             modifiers.shift,
                         );
                     }
+                    AudioGrab::EnvPoint(index, top, height) => {
+                        let start_frame = tempo.frame_at_tick(clip.start as f64, *rate);
+                        let frame = (at(pos.x) - start_frame).round() as i64;
+                        let db = audio::y_to_gain(pos.y, *top, *top + *height);
+                        new.2.envelope = audio::envelope_move(&last.2.envelope, *index, frame, db);
+                    }
                     AudioGrab::TrimStart => {
                         let wanted =
                             snap_round(clip.start + axis.dx_to_ticks(pos.x - start.x), step);
                         let orig = (clip.start, clip.length, content.source_offset);
-                        let t = audio::trim_left(tempo, *rate, orig, *asset_frames, wanted, min);
+                        let t = if content.reverse {
+                            audio::trim_left_reversed(
+                                tempo,
+                                *rate,
+                                orig,
+                                *asset_frames,
+                                wanted,
+                                min,
+                            )
+                        } else {
+                            audio::trim_left(tempo, *rate, orig, *asset_frames, wanted, min)
+                        };
                         let frames = clip_frames(tempo, t.start, t.length, *rate);
                         let (fade_in, fade_out) =
                             audio::clamp_fades(content.fade_in, content.fade_out, frames);
+                        // The envelope stays on the sound it was drawn on.
+                        let moved = i128::from(tempo.frame_at(t.start, *rate))
+                            - i128::from(tempo.frame_at(clip.start, *rate));
                         new = (
                             t.start,
                             t.length,
@@ -2671,6 +2762,10 @@ impl ArrangementView {
                                 source_offset: t.source_offset,
                                 fade_in,
                                 fade_out,
+                                envelope: audio::envelope_after_trim(
+                                    &content.envelope,
+                                    moved.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64,
+                                ),
                                 ..content.clone()
                             },
                         );
@@ -2976,6 +3071,9 @@ impl ArrangementView {
             return outcome;
         }
         if let Some(outcome) = self.org_command(id, arg) {
+            return outcome;
+        }
+        if let Some(outcome) = self.audio_command(id, arg) {
             return outcome;
         }
         match id {
@@ -3774,23 +3872,41 @@ impl ArrangementView {
         let x_start = vis.x0.max(tl.x0).floor();
         let x_end = vis.x1.min(tl.x1).ceil();
         // Source frame under a logical x: the offset plus the real time since the clip start.
+        let clip_len = self.clip_frames(clip, g.rate) as f64;
         let source = |x: f64| {
-            audio::source_frame(
+            let forward = audio::source_frame(
                 &self.tempo,
                 g.rate,
                 clip.start,
                 a.source_offset,
                 self.tick_of_x(x),
-            )
+            );
+            if a.reverse {
+                // Reversed: the clip plays its span of the asset from the top down.
+                2.0 * a.source_offset as f64 + clip_len - forward
+            } else {
+                forward
+            }
         };
         if let Some(meta) = meta {
-            let end_x = self.x_of_tick(self.tempo.tick_at_frame(
-                g.start_frame + meta.frames.saturating_sub(a.source_offset) as f64,
-                g.rate,
-            ));
-            if end_x < vis.x1 {
-                let empty = Rect::new(end_x.max(vis.x0), body.y0, vis.x1, body.y1);
-                c.fill_with(empty, st.outside);
+            if a.reverse {
+                // Silent until the playback reaches the end of the asset.
+                let silent = (a.source_offset as f64 + clip_len - meta.frames as f64).max(0.0);
+                let end_x =
+                    self.x_of_tick(self.tempo.tick_at_frame(g.start_frame + silent, g.rate));
+                if end_x > vis.x0 {
+                    let empty = Rect::new(vis.x0, body.y0, end_x.min(vis.x1), body.y1);
+                    c.fill_with(empty, st.outside);
+                }
+            } else {
+                let end_x = self.x_of_tick(self.tempo.tick_at_frame(
+                    g.start_frame + meta.frames.saturating_sub(a.source_offset) as f64,
+                    g.rate,
+                ));
+                if end_x < vis.x1 {
+                    let empty = Rect::new(end_x.max(vis.x0), body.y0, vis.x1, body.y1);
+                    c.fill_with(empty, st.outside);
+                }
             }
             if let Some(peaks) = self.peaks.get(&a.asset) {
                 let mid = (x_start + x_end) / 2.0;
@@ -3803,10 +3919,12 @@ impl ArrangementView {
                 let columns = ((x_end - x_start).max(0.0) as usize).min(MAX_COLUMNS);
                 // A source frame back to its x: the inverse of `source`.
                 let frame_x = |f: f64| {
-                    self.x_of_tick(
-                        self.tempo
-                            .tick_at_frame(g.start_frame + (f - a.source_offset as f64), g.rate),
-                    )
+                    let elapsed = if a.reverse {
+                        a.source_offset as f64 + clip_len - f
+                    } else {
+                        f - a.source_offset as f64
+                    };
+                    self.x_of_tick(self.tempo.tick_at_frame(g.start_frame + elapsed, g.rate))
                 };
                 for (ch, (cy, half)) in bands.into_iter().enumerate() {
                     let channel = WaveChannel {
@@ -3866,6 +3984,7 @@ impl ArrangementView {
                 &st.base.text.with_alpha(0.7).into(),
             );
         }
+        self.paint_audio_edits(c, r, vis, clip, a, &g);
         let hover = match &self.hover {
             Some(Hit::Clip { id, part, .. }) if *id == clip.id => Some(*part),
             _ => None,
@@ -4797,13 +4916,7 @@ fn fade_paths(
     rising: bool,
 ) -> (BezPath, BezPath) {
     const STEPS: usize = 12;
-    let gain = |t: f64| {
-        let t = if rising { t } else { 1.0 - t };
-        match curve {
-            FadeCurve::Linear => t,
-            FadeCurve::EqualPower => (t * std::f64::consts::FRAC_PI_2).sin(),
-        }
-    };
+    let gain = |t: f64| curve.eval(if rising { t } else { 1.0 - t });
     let point = |i: usize| {
         let t = i as f64 / STEPS as f64;
         pt(x_a + t * (x_b - x_a), bottom - gain(t) * (bottom - top))
