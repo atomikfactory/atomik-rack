@@ -137,9 +137,10 @@ use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
-    NumpadKey, Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction,
-    QuantizeValues, QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction,
-    SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
+    NotesAction, NotesValues, NotesView, NumpadKey, Place, PluginBannerView, PluginSettingsView,
+    PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry,
+    RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction,
+    WarpValues, WarpView,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -302,6 +303,10 @@ pub struct Shell<B: AudioBackend> {
     quantize_values: QuantizeValues,
     /// The strip silence panel (Edit > Strip Silence) while it is open.
     silence: Option<SilenceView>,
+    /// The Audio to Notes panel (Audio > Audio to Notes) while it is open.
+    notes: Option<NotesView>,
+    /// Its settings, kept between openings.
+    notes_values: NotesValues,
     /// The warp panel (Audio > Warp Settings) while it is open.
     warp: Option<WarpView>,
     /// The warp panel's last values, for the next time it opens without a clip to read.
@@ -434,6 +439,8 @@ impl<B: AudioBackend> Shell<B> {
             quantize: None,
             quantize_values: QuantizeValues::default(),
             silence: None,
+            notes: None,
+            notes_values: NotesValues::default(),
             warp: None,
             warp_values: WarpValues::default(),
             silence_values: SilenceValues::default(),
@@ -572,6 +579,23 @@ impl<B: AudioBackend> Shell<B> {
             .map_or(&self.silence_values, SilenceView::values)
     }
 
+    /// Whether the Audio to Notes panel is open.
+    pub fn notes_open(&self) -> bool {
+        self.notes.is_some()
+    }
+
+    /// The Audio to Notes panel, while it is open.
+    pub fn notes_view(&self) -> Option<&NotesView> {
+        self.notes.as_ref()
+    }
+
+    /// The Audio to Notes panel's settings (those of the open panel, else the last ones).
+    pub fn notes_values(&self) -> &NotesValues {
+        self.notes
+            .as_ref()
+            .map_or(&self.notes_values, NotesView::values)
+    }
+
     /// Whether the warp panel is open.
     pub fn warp_open(&self) -> bool {
         self.warp.is_some()
@@ -687,6 +711,63 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.sync_silence();
         self.repaint = true;
+    }
+
+    /// Opens the Audio to Notes panel with the settings of the last time.
+    fn open_notes(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = NotesView::new(theme, self.notes_values.clone());
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        self.notes = Some(view);
+        self.sync_notes();
+    }
+
+    /// Closes the Audio to Notes panel, keeping its settings for the next time.
+    fn close_notes(&mut self) {
+        if let Some(view) = self.notes.take() {
+            self.notes_values = view.values().clone();
+            self.repaint = true;
+        }
+    }
+
+    /// Feeds the Audio to Notes panel what it applies to.
+    fn sync_notes(&mut self) {
+        if self.notes.is_none() {
+            return;
+        }
+        let (text, can_apply) = self.core.audio_notes_target();
+        if let Some(view) = &mut self.notes {
+            view.set_target(text, can_apply);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the Audio to Notes panel asked for: EXTRACT starts the worker and closes the panel
+    /// (the notes arrive when it is done); a refusal leaves the panel open.
+    fn notes_action(&mut self, action: NotesAction) {
+        match action {
+            NotesAction::Close => self.close_notes(),
+            NotesAction::Apply => {
+                let values = self.notes_values().clone();
+                if self.core.audio_to_notes(&values) {
+                    self.close_notes();
+                }
+            }
+        }
+        self.sync_notes();
+        self.repaint = true;
+    }
+
+    /// Runs Audio to Notes with `values` on the selected audio clip, as the panel's EXTRACT does
+    /// (headless sessions and scripts). False, with a message, when nothing started.
+    pub fn audio_to_notes(&mut self, values: &NotesValues) -> bool {
+        self.notes_values = values.clone();
+        let started = self.core.audio_to_notes(values);
+        self.repaint = true;
+        started
     }
 
     /// Opens the warp panel with the settings of the first selected audio clip.
@@ -1433,6 +1514,12 @@ impl<B: AudioBackend> Shell<B> {
                 v.set_bounds(rect);
             }
         }
+        if self.notes.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.notes {
+                v.set_bounds(rect);
+            }
+        }
         if self.warp.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.warp {
@@ -1742,6 +1829,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.silence {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.notes {
+                    v.set_scale(*scale);
+                }
                 if let Some(v) = &mut self.warp {
                     v.set_scale(*scale);
                 }
@@ -1843,6 +1933,31 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             self.sync_warp();
+            return Vec::new();
+        }
+        if self.notes.is_some() {
+            // The Audio to Notes panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.close_notes();
+                return Vec::new();
+            }
+            let actions = self
+                .notes
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::AudioToNotes(a) = action {
+                    self.notes_action(a);
+                }
+            }
+            self.sync_notes();
             return Vec::new();
         }
         if self.silence.is_some() {
@@ -2077,6 +2192,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
+            ("sequencer.audio_to_notes", None) => self.open_notes(),
             ("sequencer.audio_quantize", None) => self.quantize_audio(),
             ("sequencer.audio_warp_tempo", None) => self.core.warp_to_song_tempo(),
             ("sequencer.audio_warp_bars", Some(bars)) => {
@@ -2880,6 +2996,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::AudioToNotes => {
+                self.open_notes();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::AudioQuantize => {
                 self.quantize_audio();
                 self.menubar.as_mut().map(MenuBar::close);
@@ -3445,6 +3566,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.silence {
             view.paint(canvas);
         }
+        if let Some(view) = &self.notes {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.warp {
             view.paint(canvas);
         }
@@ -3692,6 +3816,10 @@ mod organise_tests;
 #[cfg(test)]
 #[path = "shell_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "shell_notes_tests.rs"]
+mod notes_tests;
 
 #[cfg(test)]
 #[path = "shell_warp_tests.rs"]

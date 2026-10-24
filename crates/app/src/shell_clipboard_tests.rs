@@ -594,6 +594,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.audio_warp",
             "sequencer.audio_warp_tempo",
             "sequencer.audio_warp_panel",
+            "sequencer.audio_to_notes",
             "sequencer.audio_transpose",
             "sequencer.audio_transpose",
         ]

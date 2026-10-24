@@ -1936,6 +1936,9 @@ pub use audio_edit_ops::NORMALISE_TARGET_DB;
 mod warp;
 pub use warp::WARP_CACHE_BYTES;
 
+#[path = "app_core_notes.rs"]
+mod notes;
+
 #[path = "app_core_freeze.rs"]
 mod freeze;
 pub use freeze::{FREEZE_TAIL_SECONDS, FreezeThrough};

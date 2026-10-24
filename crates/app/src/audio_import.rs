@@ -105,11 +105,27 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<crate::freeze_worker::Done>, String>>,
     },
+    /// The notes of an audio clip were extracted (or it failed): see the Audio to Notes
+    /// section of [`crate::AppCore`].
+    Noted {
+        generation: u64,
+        job: u64,
+        result: Result<NotesFound, String>,
+    },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
         generation: u64,
         result: Result<TakeResult, String>,
     },
+}
+
+/// What a notes worker found in the audio of a clip.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NotesFound {
+    /// The notes, in frames from the start of the analysed audio.
+    pub notes: Vec<atomik_model::FoundNote>,
+    /// True when the clip is longer than the analysis reads (only its start was analysed).
+    pub truncated: bool,
 }
 
 /// What a transient-detection worker was asked for: carried through the
@@ -191,6 +207,53 @@ pub(crate) fn spawn_warp(
                 key: job.key(),
                 result,
             });
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that runs `work` (the analysis of one clip) and sends [`Msg::Noted`]; a panic
+/// sends a failure instead, so the job can never stay running.
+pub(crate) fn spawn_notes(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    work: Box<dyn FnOnce() -> Result<NotesFound, String> + Send>,
+) -> std::io::Result<()> {
+    struct Sent {
+        tx: Sender<Msg>,
+        generation: u64,
+        job: u64,
+        sent: bool,
+    }
+    impl Sent {
+        fn send(&mut self, result: Result<NotesFound, String>) {
+            self.sent = true;
+            let _ = self.tx.send(Msg::Noted {
+                generation: self.generation,
+                job: self.job,
+                result,
+            });
+        }
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            if !self.sent {
+                self.send(Err("the analysis stopped unexpectedly".to_owned()));
+            }
+        }
+    }
+    std::thread::Builder::new()
+        .name("atomik-notes".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let mut sent = Sent {
+                tx,
+                generation,
+                job,
+                sent: false,
+            };
+            let result = work();
+            sent.send(result);
         })
         .map(|_| ())
 }

@@ -461,6 +461,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.audio_warp", e.audio.can_warp),
                 item("sequencer.audio_warp_tempo", e.audio.can_warp),
                 item("sequencer.audio_warp_panel", e.audio.can_edit),
+                item("sequencer.audio_to_notes", e.audio.can_edit),
                 meter_item("sequencer.audio_transpose", "up", "Transpose Up a Semitone")
                     .enabled(e.audio.can_warp),
                 meter_item(

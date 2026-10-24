@@ -212,6 +212,9 @@ pub enum AppCommand {
     AudioWarpPanel,
     /// Audio ▸ Transpose: the pitch of the selected audio clips, without changing their length.
     AudioTranspose(TransposeStep),
+    /// Audio ▸ Audio to Notes…: the panel that extracts the notes of the selected audio clip (a
+    /// pitched voice or a drum loop) into a note clip.
+    AudioToNotes,
     /// Audio ▸ Clip Gain: a step up or down in dB, or back to 0 dB.
     AudioGain(GainStep),
     /// Audio ▸ Fade Shape: the curve of the fades of the selected audio clips.
@@ -350,6 +353,7 @@ impl AppCommand {
                 }),
             ),
             AppCommand::AudioWarpPanel => ("sequencer.audio_warp_panel", None),
+            AppCommand::AudioToNotes => ("sequencer.audio_to_notes", None),
             AppCommand::AudioTranspose(step) => ("sequencer.audio_transpose", Some(step.arg())),
             AppCommand::AudioGain(step) => ("sequencer.audio_gain", Some(step.arg())),
             AppCommand::AudioFadeShape(curve) => ("sequencer.audio_fade_shape", Some(curve.id())),
@@ -484,6 +488,7 @@ impl AppCommand {
                     .map(AppCommand::AudioWarpBars);
             }
             ("sequencer.audio_warp_panel", None) => AppCommand::AudioWarpPanel,
+            ("sequencer.audio_to_notes", None) => AppCommand::AudioToNotes,
             ("sequencer.audio_transpose", Some(arg)) => {
                 return TransposeStep::from_arg(arg).map(AppCommand::AudioTranspose);
             }
@@ -1230,6 +1235,12 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::AudioTranspose(TransposeStep::Reset),
                     state.audio.can_warp,
                 ),
+                MenuEntry::Separator,
+                enabled(
+                    "Audio to Notes\u{2026}",
+                    AppCommand::AudioToNotes,
+                    state.audio.can_edit,
+                ),
             ],
         },
     ]
@@ -1371,6 +1382,7 @@ mod tests {
             AppCommand::AudioWarp,
             AppCommand::AudioWarpTempo,
             AppCommand::AudioWarpPanel,
+            AppCommand::AudioToNotes,
             AppCommand::AudioFades(true),
             AppCommand::AudioFades(false),
             AppCommand::AudioClearEnvelope,
@@ -1861,7 +1873,8 @@ mod tests {
                 "Transpose: Down a Semitone",
                 "Transpose: Up an Octave",
                 "Transpose: Down an Octave",
-                "Transpose: Reset"
+                "Transpose: Reset",
+                "Audio to Notes\u{2026}"
             ]
         );
     }
