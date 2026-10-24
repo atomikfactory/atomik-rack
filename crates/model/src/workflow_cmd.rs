@@ -297,6 +297,12 @@ pub enum WorkflowCommand {
         /// The devices.
         keys: Vec<DeviceKey>,
     },
+    /// Adds the tracks of a MIDI file, and optionally its tempo map, meter map and markers, as
+    /// one undo step (see [`crate::MidiImport`]): per track a new instrument with its console
+    /// channel, an unarmed song track and a note clip. Reports the compound sync ops of the
+    /// pieces (`DeviceAdded`, `RoutingChanged`, `TempoChanged`, `ConsoleChanged`, `SongChanged`,
+    /// `ViewChanged` for markers).
+    ImportMidi(crate::MidiImport),
 }
 
 /// Where [`WorkflowCommand::MoveClips`] puts one clip.
@@ -410,6 +416,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveDevices { keys, to } => {
             plain(move_devices(doc, &keys, Placement::Flat(to)))
+        }
+        WorkflowCommand::ImportMidi(import) => {
+            plain(crate::midi_import::plan(doc, registry, import))
         }
         WorkflowCommand::DuplicateTrack { device } => {
             plain(duplicate_track(doc, registry, &device))

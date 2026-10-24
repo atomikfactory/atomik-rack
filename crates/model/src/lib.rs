@@ -18,6 +18,7 @@ mod expand;
 pub mod groove;
 mod groove_cmd;
 mod history;
+mod midi_import;
 mod patch;
 mod plugin;
 mod plugin_cmd;
@@ -52,6 +53,7 @@ pub use container::{
     boundary_sockets, scoped_cable, split_path,
 };
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
+pub use midi_import::{ImportedTrack, MidiImport};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
