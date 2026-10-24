@@ -221,6 +221,9 @@ pub(super) struct PluginState {
     pub(super) host: PluginHost,
     pub(super) settings: PluginSettings,
     pub(super) cache: PluginCache,
+    /// The sandbox of the host as a bounce uses it (the freeze renders with plugins need it);
+    /// `None` while the plugins run in the app process.
+    pub(super) freeze_isolation: Option<PluginIsolation>,
     paths: PluginPaths,
     runner: Option<Arc<dyn ScanRunner>>,
     job: Option<ScanJob>,
@@ -281,6 +284,7 @@ impl PluginState {
             host: PluginHost::new(),
             settings: PluginSettings::default(),
             cache: PluginCache::default(),
+            freeze_isolation: None,
             paths: PluginPaths::default(),
             runner: None,
             job: None,
@@ -408,6 +412,13 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(isolation) = config.isolation
             && self.plugins.host.manager_ref().instance_count() == 0
         {
+            self.plugins.freeze_isolation = match &isolation {
+                PluginIsolation::Sandbox { command, .. } => Some(PluginIsolation::Sandbox {
+                    command: command.clone(),
+                    bounce: true,
+                }),
+                PluginIsolation::InProcess => None,
+            };
             self.plugins.host.set_catalog(
                 &PluginCache::default(),
                 &PluginSettings::default(),
@@ -690,11 +701,14 @@ impl<S: EngineSink> AppCore<S> {
     /// Called by `rebuild_engine` after every device was inserted: instances nobody reattached
     /// (their device left the document) are destroyed.
     pub(super) fn plugins_after_rebuild(&mut self) {
+        // A frozen plugin is not built, so its instance (if one was left) goes.
+        let frozen = atomik_model::frozen_devices(self.doc());
         let wanted: BTreeSet<DeviceKey> = self
             .doc()
             .plugin_devices()
             .into_iter()
             .map(|(k, _)| k)
+            .filter(|k| !frozen.contains(k))
             .collect();
         let stale: Vec<DeviceKey> = self
             .plugins

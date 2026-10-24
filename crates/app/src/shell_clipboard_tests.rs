@@ -586,6 +586,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.join",
             "sequencer.toggle_mute",
             "edit.quantize_options",
+            "sequencer.bounce_in_place",
             "sequencer.audio_reverse",
             "sequencer.audio_normalise",
             "sequencer.audio_strip_silence",

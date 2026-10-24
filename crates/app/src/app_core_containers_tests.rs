@@ -1036,6 +1036,9 @@ fn engine_facing_code_never_walks_the_raw_document_lists() {
         // The device above a top-level slot of `CreateEffectAt`.
         ("app_core_clipboard.rs", "doc.devices[at.index - 1]"),
         ("app_core_containers.rs", "doc.devices"),
+        // What a freeze render depends on: the document's own cables around the chain, compared
+        // when the render is done (nothing is sent to the engine).
+        ("app_core_freeze.rs", "doc.cables"),
         (
             "app_core_drums.rs",
             "doc.devices.iter().find(|d| is_drum(d))",

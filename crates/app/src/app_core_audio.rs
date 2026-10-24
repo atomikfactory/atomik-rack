@@ -121,6 +121,8 @@ pub(super) struct AudioState {
     /// ([`super::warp`]).
     pub(super) warps: atomik_render::warp::WarpStore,
     pub(super) warp_work: super::warp::WarpWork,
+    /// The freeze and bounce renders ([`super::freeze`]).
+    pub(super) freeze: super::freeze::FreezeState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// Whole-asset RAM buffers for samplers: shared with the memory assets of
     /// audio tracks where those exist, loaded by a worker for streamed ones. Keeping the
@@ -162,6 +164,7 @@ impl AudioState {
             assets: BTreeMap::new(),
             warps: atomik_render::warp::WarpStore::new(),
             warp_work: super::warp::WarpWork::default(),
+            freeze: super::freeze::FreezeState::default(),
             peaks: BTreeMap::new(),
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
@@ -427,6 +430,11 @@ impl<S: EngineSink> AppCore<S> {
                         resubmit = true;
                     }
                 }
+                Msg::Frozen {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_frozen(job, *result),
                 Msg::Scanned {
                     generation,
                     root,
@@ -460,6 +468,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Sampled { .. }
                 | Msg::Sliced { .. }
                 | Msg::Warped { .. }
+                | Msg::Frozen { .. }
                 | Msg::Scanned { .. } => {}
             }
         }
@@ -818,6 +827,7 @@ impl<S: EngineSink> AppCore<S> {
         self.audio.assets.clear();
         self.audio.warps.clear();
         self.audio.warp_work.reset();
+        self.audio.freeze.reset();
         self.audio.buffers.clear();
         self.audio.ram_pending.clear();
         self.audio.missing.clear();

@@ -115,7 +115,7 @@
 //! What needs the platform (file dialogs, confirmation, quit) is returned as
 //! [`ShellRequest`]s.
 
-use crate::app_core::{AppCore, AppError, MidiExport, Pane};
+use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane};
 use crate::commands::{AppCommand, Menu, MenuState, menus};
 use crate::context_menus::{self, MenuEnable};
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -1243,6 +1243,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_song: self.core.can_export_midi(MidiExport::Song),
             org: self.core.arrangement().org_menu(),
             audio: self.core.arrangement().audio_menu(),
+            freeze: self.core.freeze_menu(),
         }
     }
 
@@ -2431,6 +2432,7 @@ impl<B: AudioBackend> Shell<B> {
             track_chase: core.arrangement().chase_menu().1,
             org: core.arrangement().org_menu(),
             audio: core.arrangement().audio_menu(),
+            freeze: core.freeze_menu(),
             tempo_can_ramp: core.arrangement().tempo_menu().can_ramp,
             tempo_ramped: core.arrangement().tempo_menu().ramped,
             tempo_can_delete: core.arrangement().tempo_menu().can_delete,
@@ -2828,6 +2830,30 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_) => {
                 self.track_command(command);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            // The freeze commands render on a worker and edit the document when it is done.
+            AppCommand::FreezeTrack
+            | AppCommand::FreezeTrackToDevice
+            | AppCommand::FreezeTail
+            | AppCommand::FreezeCancel
+            | AppCommand::UnfreezeTrack
+            | AppCommand::UnfreezeTrackKeep
+            | AppCommand::BounceInPlace
+            | AppCommand::BounceInPlaceMute => {
+                match command {
+                    AppCommand::FreezeTrack => self.core.freeze_tracks(FreezeThrough::Track),
+                    AppCommand::FreezeTrackToDevice => {
+                        self.core.freeze_tracks(FreezeThrough::SelectedDevice);
+                    }
+                    AppCommand::FreezeTail => self.core.toggle_freeze_tail(),
+                    AppCommand::FreezeCancel => self.core.cancel_freeze(),
+                    AppCommand::UnfreezeTrack => self.core.unfreeze_tracks(false),
+                    AppCommand::UnfreezeTrackKeep => self.core.unfreeze_tracks(true),
+                    AppCommand::BounceInPlace => self.core.bounce_in_place(false),
+                    _ => self.core.bounce_in_place(true),
+                }
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
@@ -3346,6 +3372,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(loading) = self.core.plugin_loading_text() {
             text = format!("{loading} \u{b7} {text}");
         }
+        if let Some(progress) = self.core.freeze_progress() {
+            text = format!("{progress} \u{b7} {text}");
+        }
         let changed = text != self.status;
         if changed {
             self.status = text;
@@ -3667,3 +3696,7 @@ mod audio_edit_tests;
 #[cfg(test)]
 #[path = "shell_warp_tests.rs"]
 mod warp_tests;
+
+#[cfg(test)]
+#[path = "shell_freeze_tests.rs"]
+mod freeze_tests;

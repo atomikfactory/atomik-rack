@@ -168,6 +168,24 @@ pub enum AppCommand {
     FoldLanes(bool),
     /// Track ▸ Track Height: Small, Medium, Large or Fit, for the selected tracks or every track.
     TrackHeight(HeightPreset),
+    /// Track ▸ Freeze Track: render the selected tracks through their instrument and insert chain
+    /// and play the render instead.
+    FreezeTrack,
+    /// Track ▸ Freeze Track up to Selected Device: the same, as far as the rack's selected device.
+    FreezeTrackToDevice,
+    /// Track ▸ Freeze with Tail: keep the decay of reverbs and delays past the end of the clips.
+    FreezeTail,
+    /// Track ▸ Cancel Freeze: stop the running render and drop the waiting ones.
+    FreezeCancel,
+    /// Track ▸ Unfreeze Track: the original track, instrument and effects again.
+    UnfreezeTrack,
+    /// Track ▸ Unfreeze Track and Keep Audio: also leave the render as a clip on a new track.
+    UnfreezeTrackKeep,
+    /// Track ▸ Bounce in Place: render the selected clips through the track's chain into a new
+    /// audio track.
+    BounceInPlace,
+    /// Track ▸ Bounce in Place and Mute Originals.
+    BounceInPlaceMute,
     /// Edit ▸ Reverse Audio: the selected audio clips play backwards (forwards again when they
     /// all do).
     AudioReverse,
@@ -303,6 +321,14 @@ impl AppCommand {
             AppCommand::MoveTrackUp => ("sequencer.move_track_up", None),
             AppCommand::MoveTrackDown => ("sequencer.move_track_down", None),
             AppCommand::TrackComment => ("sequencer.track_comment", None),
+            AppCommand::FreezeTrack => ("sequencer.freeze_track", None),
+            AppCommand::FreezeTrackToDevice => ("sequencer.freeze_track_to_device", None),
+            AppCommand::FreezeTail => ("sequencer.freeze_tail", None),
+            AppCommand::FreezeCancel => ("sequencer.freeze_cancel", None),
+            AppCommand::UnfreezeTrack => ("sequencer.unfreeze_track", None),
+            AppCommand::UnfreezeTrackKeep => ("sequencer.unfreeze_track_keep", None),
+            AppCommand::BounceInPlace => ("sequencer.bounce_in_place", None),
+            AppCommand::BounceInPlaceMute => ("sequencer.bounce_in_place_mute", None),
             AppCommand::FoldLanes(true) => ("sequencer.fold_lanes", Some("fold")),
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
             AppCommand::TrackHeight(p) => ("sequencer.track_height", Some(p.arg())),
@@ -428,6 +454,14 @@ impl AppCommand {
             ("sequencer.move_track_up", None) => AppCommand::MoveTrackUp,
             ("sequencer.move_track_down", None) => AppCommand::MoveTrackDown,
             ("sequencer.track_comment", None) => AppCommand::TrackComment,
+            ("sequencer.freeze_track", None) => AppCommand::FreezeTrack,
+            ("sequencer.freeze_track_to_device", None) => AppCommand::FreezeTrackToDevice,
+            ("sequencer.freeze_tail", None) => AppCommand::FreezeTail,
+            ("sequencer.freeze_cancel", None) => AppCommand::FreezeCancel,
+            ("sequencer.unfreeze_track", None) => AppCommand::UnfreezeTrack,
+            ("sequencer.unfreeze_track_keep", None) => AppCommand::UnfreezeTrackKeep,
+            ("sequencer.bounce_in_place", None) => AppCommand::BounceInPlace,
+            ("sequencer.bounce_in_place_mute", None) => AppCommand::BounceInPlaceMute,
             ("sequencer.fold_lanes", Some("fold")) => AppCommand::FoldLanes(true),
             ("sequencer.fold_lanes", Some("unfold")) => AppCommand::FoldLanes(false),
             ("sequencer.track_height", Some(arg)) => {
@@ -636,6 +670,25 @@ pub struct MenuState {
     pub org: OrgMenu,
     /// What the selected audio clips allow (the audio items of the Edit and Audio menus).
     pub audio: AudioMenu,
+    /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
+    pub freeze: FreezeMenu,
+}
+
+/// What the Track menu and the context menus need to know to freeze, unfreeze and bounce.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FreezeMenu {
+    /// A selected track can be frozen: it has clips and a channel, is not frozen, and no render
+    /// runs.
+    pub can_freeze: bool,
+    /// A selected track is frozen.
+    pub can_unfreeze: bool,
+    /// A selected clip can be bounced (a note or audio clip of an unfrozen track), and no render
+    /// runs.
+    pub can_bounce: bool,
+    /// A render runs or waits (Cancel Freeze works).
+    pub busy: bool,
+    /// Freezes keep the tail of the chain (the item is checked).
+    pub tail: bool,
 }
 
 /// One menu item.
@@ -960,6 +1013,44 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.org.track_selected,
                 ),
                 MenuEntry::Separator,
+                enabled(
+                    "Freeze Track",
+                    AppCommand::FreezeTrack,
+                    state.freeze.can_freeze,
+                ),
+                enabled(
+                    "Freeze Track up to Selected Device",
+                    AppCommand::FreezeTrackToDevice,
+                    state.freeze.can_freeze,
+                ),
+                check(
+                    "Freeze with Tail",
+                    AppCommand::FreezeTail,
+                    state.freeze.tail,
+                ),
+                enabled(
+                    "Unfreeze Track",
+                    AppCommand::UnfreezeTrack,
+                    state.freeze.can_unfreeze,
+                ),
+                enabled(
+                    "Unfreeze Track and Keep Audio",
+                    AppCommand::UnfreezeTrackKeep,
+                    state.freeze.can_unfreeze,
+                ),
+                enabled("Cancel Freeze", AppCommand::FreezeCancel, state.freeze.busy),
+                MenuEntry::Separator,
+                enabled(
+                    "Bounce in Place",
+                    AppCommand::BounceInPlace,
+                    state.freeze.can_bounce,
+                ),
+                enabled(
+                    "Bounce in Place and Mute Originals",
+                    AppCommand::BounceInPlaceMute,
+                    state.freeze.can_bounce,
+                ),
+                MenuEntry::Separator,
                 item("Fold Automation Lanes", AppCommand::FoldLanes(true)),
                 item("Unfold Automation Lanes", AppCommand::FoldLanes(false)),
                 MenuEntry::Separator,
@@ -1191,6 +1282,7 @@ mod tests {
             midi_song: false,
             org: OrgMenu::default(),
             audio: AudioMenu::default(),
+            freeze: FreezeMenu::default(),
         }
     }
 
@@ -1262,6 +1354,14 @@ mod tests {
             AppCommand::MoveTrackUp,
             AppCommand::MoveTrackDown,
             AppCommand::TrackComment,
+            AppCommand::FreezeTrack,
+            AppCommand::FreezeTrackToDevice,
+            AppCommand::FreezeTail,
+            AppCommand::FreezeCancel,
+            AppCommand::UnfreezeTrack,
+            AppCommand::UnfreezeTrackKeep,
+            AppCommand::BounceInPlace,
+            AppCommand::BounceInPlaceMute,
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
@@ -1710,6 +1810,14 @@ mod tests {
                 "Move Track Up",
                 "Move Track Down",
                 "Track Comment\u{2026}",
+                "Freeze Track",
+                "Freeze Track up to Selected Device",
+                "Freeze with Tail",
+                "Unfreeze Track",
+                "Unfreeze Track and Keep Audio",
+                "Cancel Freeze",
+                "Bounce in Place",
+                "Bounce in Place and Mute Originals",
                 "Fold Automation Lanes",
                 "Unfold Automation Lanes",
                 "Track Height: Small",
@@ -1799,6 +1907,10 @@ mod tests {
                 midi_song: true,
                 org: OrgMenu::default(),
                 audio: AudioMenu::default(),
+                freeze: FreezeMenu {
+                    tail: true,
+                    ..FreezeMenu::default()
+                },
             },
             &keymap,
         );
