@@ -2,7 +2,8 @@
 //!
 //! ## Signal flow
 //! `in` → input gain/phase → HP/LP filters → dynamics (gate, then compressor)
-//! → 4-band EQ → insert send/return → latency adjust → width → fader → pan → `out`.
+//! → 4-band EQ → insert send/return → latency adjust → parallel compressor → width → fader → pan
+//! → `out`.
 //! * `route.dyn_post_eq` swaps dynamics and EQ.
 //! * `route.insert_pre` moves the insert point to just after the filters (before dynamics/EQ).
 //! * `route.filters_to_sc` takes the HP/LP filters out of the audio path and puts them in the
@@ -15,7 +16,7 @@
 //!   → dynamics/EQ (unless `route.insert_pre`).
 //! * Stage 1 (`insert_return_*` → `send*`, `out_*`, `gr_cv_out`): insert return (pass-through
 //!   when unconnected or bypassed) → latency adjust → dynamics/EQ (with `route.insert_pre`, using
-//!   the `key_in` copy taken in stage 0) → width → fader → pan.
+//!   the `key_in` copy taken in stage 0) → parallel compressor → width → fader → pan.
 //! * The signal between the stages lives in preallocated buffers. [`Device::process`] runs
 //!   both stages in order (single-call hosts and tests).
 //!
@@ -64,6 +65,18 @@
 //!   fader, bit for bit) through the same 5 ms smoother; the VCA's mute and solo count as the
 //!   strip's own, so solo still beats mute. With the three at their defaults the strip is
 //!   bit-identical to one outside any VCA.
+//! * **Parallel compressor** (`pcomp.*`, stage 1, after the inserts, the dynamics and the EQ, before
+//!   the width, the fader, the pan and the sends): a second [`atomik_dsp::Compressor`] (the one of
+//!   the dynamics section, with its own threshold, ratio, attack and release, an RMS detector and
+//!   the soft knee) followed by `pcomp.makeup` dB, blended with the dry signal: `out = dry ·
+//!   (1 − mix) + compressed · makeup · mix`, so `pcomp.mix` 1 is the compressor alone. It listens
+//!   to the signal it processes (no key input) and has **no lookahead**, so it adds no latency:
+//!   the dry and the compressed signal are sample aligned and the strip reports nothing for it.
+//!   The blend is on when `pcomp.on` is set and `pcomp.mix` is above 0; both go through the 5 ms
+//!   smoother, so there is no click, and a section that is off (the default) and settled costs
+//!   nothing and leaves the signal untouched bit for bit. The compressor starts from a cleared
+//!   state whenever the section switches on. `gr_cv_out` and the meters are those of the dynamics
+//!   section only.
 //! * **`latency.adjust`** is a *relative* trim of −[`MAX_LATENCY_ADJUST`]..=
 //!   +[`MAX_LATENCY_ADJUST`] samples, default 0:
 //!   * **positive `N`:** the channel really delays its signal by `N` samples (at the start of
@@ -72,6 +85,12 @@
 //!   * **negative `N`:** no delay; [`Device::latency_frames`] reports `|N|` (phantom latency),
 //!     so the engine's PDC delays every other channel instead and this one lands `|N|` samples
 //!     *earlier*. The engine clips automatic + adjust at 0.
+//! * **`insert.bypass`** replaces the insert return by the insert send (a 5 ms crossfade) and is
+//!   **not delay compensated**: a return that comes through a latent effect plays `N` frames
+//!   later than the send, and the engine compensates the other channels for it, so bypassing here
+//!   lands the strip `N` frames early. The console does not use it for that reason: its bypass
+//!   buttons set the `bypass` of the effects in the chain (`atomik_model::inserts_bypassed`), which
+//!   keep their own latency.
 //! * **`gr_cv_out`:** `1 − g`, where `g` is the combined linear gain of gate × compressor
 //!   (0 = no reduction, 0.5 ≈ 6 dB, → 1 when fully closed).
 
@@ -279,7 +298,15 @@ const P_SEND_TRIM_FIRST: usize = P_SOLO_SILENCE + 3;
 const P_VCA_DB: usize = P_SEND_TRIM_FIRST + SENDS;
 const P_VCA_MUTE: usize = P_VCA_DB + 1;
 const P_VCA_SOLO: usize = P_VCA_DB + 2;
-const PARAM_COUNT: usize = P_VCA_DB + 3;
+/// The parallel compressor, appended last so every existing id is unchanged.
+const P_PCOMP_ON: usize = P_VCA_DB + 3;
+const P_PCOMP_THRESHOLD: usize = P_PCOMP_ON + 1;
+const P_PCOMP_RATIO: usize = P_PCOMP_ON + 2;
+const P_PCOMP_ATTACK: usize = P_PCOMP_ON + 3;
+const P_PCOMP_RELEASE: usize = P_PCOMP_ON + 4;
+const P_PCOMP_MAKEUP: usize = P_PCOMP_ON + 5;
+const P_PCOMP_MIX: usize = P_PCOMP_ON + 6;
+const PARAM_COUNT: usize = P_PCOMP_ON + 7;
 
 /// Full-scale swing of `fader_cv_in` in dB.
 const FADER_CV_DB: f32 = 24.0;
@@ -440,6 +467,59 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     );
     out[P_VCA_MUTE] = toggle(P_VCA_MUTE as u32, "internal.vca_mute", "VCA mute", 0.0);
     out[P_VCA_SOLO] = toggle(P_VCA_SOLO as u32, "internal.vca_solo", "VCA solo", 0.0);
+    out[P_PCOMP_ON] = toggle(P_PCOMP_ON as u32, "pcomp.on", "Parallel comp on", 0.0);
+    out[P_PCOMP_THRESHOLD] = db(
+        P_PCOMP_THRESHOLD as u32,
+        "pcomp.threshold",
+        "Parallel comp threshold",
+        -60.0,
+        0.0,
+        -30.0,
+    );
+    out[P_PCOMP_RATIO] = param(
+        P_PCOMP_RATIO as u32,
+        "pcomp.ratio",
+        "Parallel comp ratio",
+        1.0,
+        20.0,
+        8.0,
+        Taper::Exponential,
+        Unit::None,
+    );
+    out[P_PCOMP_ATTACK] = ms(
+        P_PCOMP_ATTACK as u32,
+        "pcomp.attack",
+        "Parallel comp attack",
+        0.1,
+        100.0,
+        10.0,
+    );
+    out[P_PCOMP_RELEASE] = ms(
+        P_PCOMP_RELEASE as u32,
+        "pcomp.release",
+        "Parallel comp release",
+        20.0,
+        2_000.0,
+        150.0,
+    );
+    out[P_PCOMP_MAKEUP] = db(
+        P_PCOMP_MAKEUP as u32,
+        "pcomp.makeup",
+        "Parallel comp makeup",
+        0.0,
+        24.0,
+        6.0,
+    );
+    out[P_PCOMP_MIX] = param(
+        P_PCOMP_MIX as u32,
+        "pcomp.mix",
+        "Parallel comp mix",
+        0.0,
+        1.0,
+        0.5,
+        Taper::Linear,
+        Unit::Percent,
+    );
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -732,6 +812,12 @@ pub struct Channel {
     gate_on: Section,
     eq: [SmoothedBiquad; 4],
     eq_on: Section,
+    /// The parallel compressor, its blend (`pcomp.mix` while on, else 0) and its makeup gain.
+    pcomp: Compressor,
+    pcomp_mix: Smoother,
+    pcomp_makeup: Smoother,
+    /// The blend is running (it is skipped while off and settled).
+    pcomp_active: bool,
     insert: Smoother,
     width: Smoother,
     fader: Smoother,
@@ -806,6 +892,10 @@ impl Channel {
                 band(BiquadShape::LowShelf),
             ],
             eq_on: Section::new(sr),
+            pcomp: Compressor::new(sr),
+            pcomp_mix: sm,
+            pcomp_makeup: sm,
+            pcomp_active: false,
             insert: sm,
             width: sm,
             fader: sm,
@@ -873,6 +963,16 @@ impl Channel {
             }),
             P_GATE_EXPANDER => self.gate.set_expander(self.on(i)),
             P_EQ_ON => self.eq_on.set_on(self.on(i)),
+            P_PCOMP_ON | P_PCOMP_MIX => self.pcomp_mix.set_target(if self.on(P_PCOMP_ON) {
+                self.values[P_PCOMP_MIX].clamp(0.0, 1.0)
+            } else {
+                0.0
+            }),
+            P_PCOMP_THRESHOLD => self.pcomp.set_threshold_db(v),
+            P_PCOMP_RATIO => self.pcomp.set_ratio(v),
+            P_PCOMP_ATTACK => self.pcomp.set_attack_ms(v),
+            P_PCOMP_RELEASE => self.pcomp.set_release_ms(v),
+            P_PCOMP_MAKEUP => self.pcomp_makeup.set_target(db_to_gain(v)),
             _ if (P_EQ_FIRST..P_EQ_FIRST + 12).contains(&i) => {
                 let b = (i - P_EQ_FIRST) / 3;
                 let band = &mut self.eq[b];
@@ -993,6 +1093,8 @@ impl Channel {
     fn smoothers_mut(&mut self) -> impl Iterator<Item = &mut Smoother> {
         [
             &mut self.input,
+            &mut self.pcomp_mix,
+            &mut self.pcomp_makeup,
             &mut self.insert,
             &mut self.width,
             &mut self.fader,
@@ -1079,6 +1181,28 @@ impl Channel {
         }
     }
 
+    /// The parallel compressor: blends the compressed signal into the dry one (see the module
+    /// documentation). Nothing runs while it is off and settled.
+    fn parallel_stage(&mut self, l: &mut Block, r: &mut Block) {
+        let on = self.pcomp_mix.target() > 0.0;
+        if on && !self.pcomp_active {
+            self.pcomp_active = true;
+            self.pcomp.reset();
+        }
+        if self.pcomp_active && !on && self.pcomp_mix.is_settled() {
+            self.pcomp_active = false;
+        }
+        if !self.pcomp_active {
+            return;
+        }
+        for n in 0..BATCH {
+            let m = self.pcomp_mix.next_value();
+            let g = self.pcomp.process(l[n], r[n]) * self.pcomp_makeup.next_value();
+            l[n] += (l[n] * g - l[n]) * m;
+            r[n] += (r[n] * g - r[n]) * m;
+        }
+    }
+
     /// Insert return: crossfades the stage-0 signal into the return when one is connected.
     fn insert_return(&mut self, l: &mut Block, r: &mut Block, ret: Option<(&Block, &Block)>) {
         let use_return = ret.is_some() && !self.on(P_INSERT_BYPASS);
@@ -1122,6 +1246,7 @@ impl Channel {
         for s in self.sections_mut() {
             s.snap();
         }
+        self.pcomp_active = self.pcomp_mix.target() > 0.0;
         self.hpf.snap();
         self.lpf.snap();
         for b in &mut self.eq {
@@ -1178,6 +1303,7 @@ impl Channel {
         if self.insert_pre {
             self.dyn_and_eq(&mut l, &mut r);
         }
+        self.parallel_stage(&mut l, &mut r);
         *ctx.output(SocketId(S_GR)) = self.gr;
 
         // Width, fader, mute; then pan for the main output and the send taps.
@@ -1251,6 +1377,7 @@ impl Device for Channel {
         self.hpf.set_sample_rate(sr);
         self.lpf.set_sample_rate(sr);
         self.comp.set_sample_rate(sr);
+        self.pcomp.set_sample_rate(sr);
         self.gate.set_sample_rate(sr);
         for b in &mut self.eq {
             b.set_sample_rate(sr);
@@ -1268,6 +1395,7 @@ impl Device for Channel {
         self.hpf.reset();
         self.lpf.reset();
         self.comp.reset();
+        self.pcomp.reset();
         self.gate.reset();
         for b in &mut self.eq {
             b.reset();
