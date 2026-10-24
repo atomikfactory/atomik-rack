@@ -435,7 +435,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 25"));
+    assert!(text.contains("\"version\": 26"));
     assert!(text.contains("\"inner\""));
 }
 

@@ -75,6 +75,27 @@ impl<'r> Planner<'r> {
         match edit {
             Edit::Compound(edits) => edits.into_iter().for_each(|e| self.push(e)),
             edit => {
+                // A strip that goes takes its VCA membership with it, first, so the undo of the
+                // removal brings the strip back and then its membership.
+                let leaving = match &edit {
+                    Edit::ConsoleChannel {
+                        old: Some(c),
+                        new: None,
+                        ..
+                    } => Some(&c.channel),
+                    Edit::ConsoleBus {
+                        old: Some(b),
+                        new: None,
+                        ..
+                    } => Some(&b.bus),
+                    _ => None,
+                };
+                if let Some(leave) =
+                    leaving.and_then(|k| crate::console_vca::leave_edit(&self.scratch.console, k))
+                {
+                    leave.perform(&mut self.scratch);
+                    self.edits.push(leave);
+                }
                 edit.perform(&mut self.scratch);
                 self.edits.push(edit);
             }
@@ -694,8 +715,22 @@ pub(crate) fn plan(
         ConsoleCommand::RouteToNewBus { strips, name } => {
             crate::console_bus::route_to_new_bus(&mut p, &strips, &name)?
         }
-        ConsoleCommand::ClearSolos => clear(&mut p, "solo")?,
-        ConsoleCommand::ClearMutes => clear(&mut p, "mute")?,
+        ConsoleCommand::ClearSolos => {
+            clear(&mut p, "solo")?;
+            crate::console_vca::clear_flags(&mut p, "solo")?;
+        }
+        ConsoleCommand::ClearMutes => {
+            clear(&mut p, "mute")?;
+            crate::console_vca::clear_flags(&mut p, "mute")?;
+        }
+        vca_command @ (ConsoleCommand::CreateVca { .. }
+        | ConsoleCommand::RenameVca { .. }
+        | ConsoleCommand::SetVcaColor { .. }
+        | ConsoleCommand::SetVcaLevel { .. }
+        | ConsoleCommand::SetVcaMute { .. }
+        | ConsoleCommand::SetVcaSolo { .. }
+        | ConsoleCommand::AssignToVca { .. }
+        | ConsoleCommand::DeleteVca { .. }) => crate::console_vca::plan(&mut p, vca_command)?,
     }
     // `ClearSolos` with nothing to clear is an empty (but valid) step.
     Ok(p.finish())

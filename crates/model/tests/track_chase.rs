@@ -83,8 +83,8 @@ fn save_project_chasing_track_writes_no_field() {
     let text = save_project(d.doc());
     assert!(!text.contains("no_chase"));
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 25);
-    assert_eq!(PROJECT_VERSION, 25);
+    assert_eq!(v["version"], 26);
+    assert_eq!(PROJECT_VERSION, 26);
 }
 
 #[test]

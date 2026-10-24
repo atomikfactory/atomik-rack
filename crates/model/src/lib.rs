@@ -12,6 +12,7 @@ pub mod automation_rec;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
+mod console_vca;
 mod container;
 mod container_cmd;
 mod container_io;
@@ -100,6 +101,7 @@ pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use automation_rec::WriteMode;
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VcaFeed, VcaGroup, clamp_vca_db,
 };
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::insert_chain;
@@ -720,6 +722,8 @@ enum MergeKey {
     Ranges(u64),
     /// `DragTrackHeights`.
     TrackHeights(u64),
+    /// `SetVcaLevel` on one VCA group.
+    Vca(u64, u32),
     /// `SetZones` on one device.
     Zones(u64, DeviceKey),
     /// `SetPattern` on one pattern of one device.
@@ -800,6 +804,11 @@ impl Document {
             Command::Song(SongCommand::DragTrackHeights { merge, .. }) => {
                 Some(MergeKey::TrackHeights(*merge))
             }
+            Command::Console(ConsoleCommand::SetVcaLevel {
+                vca,
+                merge: Some(m),
+                ..
+            }) => Some(MergeKey::Vca(*m, *vca)),
             Command::SetZones {
                 device,
                 merge: Some(m),
@@ -853,6 +862,11 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Steps { new, .. }), Edit::Steps { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::ConsoleVcas { new, .. }), Edit::ConsoleVcas { new: latest, .. })
+                if merged =>
+            {
                 new.clone_from(latest);
             }
             (Some(Edit::Splits { new, .. }), Edit::Splits { new: latest, .. }) if merged => {
@@ -1267,7 +1281,7 @@ impl RackDoc {
 
     /// The derived `internal.solo_silence` state of every console strip: the channels in
     /// console order, then the buses (additive solo-in-place): when any strip is soloed
-    /// (`solo` >= 0.5), every strip that is not audible is silenced. A soloed strip is audible,
+    /// (`solo` >= 0.5, or its VCA group is soloed), every strip that is not audible is silenced. A soloed strip is audible,
     /// so is every bus on its path to the master or an Audio I/O pair (transitively), and so is
     /// every strip that feeds a soloed bus (transitively). Returns are not strips, so they are
     /// solo-safe. Mute plays no part. The app pushes these values to the engine.
