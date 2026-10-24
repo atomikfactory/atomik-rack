@@ -241,6 +241,10 @@
 //! - **Relink.** [`RelinkView`] lists the audio files a project lost and emits
 //!   [`UiAction::Relink`] (`LOCATE...` per file, `SEARCH FOLDER...`, `CLOSE`); the app feeds it with
 //!   [`RelinkView::set_missing`].
+//! - **Quantize.** [`QuantizeView`] is the modal panel of grid, strength, swing, groove and humanize
+//!   settings and the groove library; it emits [`UiAction::Quantize`] (`APPLY`, `EXTRACT GROOVE FROM
+//!   CLIP`, `DELETE`, `CLOSE`) and the app feeds it with [`QuantizeView::set_target`] and
+//!   [`QuantizeView::set_grooves`].
 //!
 //! # Backends
 //! - [`SceneCanvas`]: vello GPU scene (text shaped with parley, system fonts via fontique).
@@ -290,6 +294,7 @@ pub mod plugin_data;
 pub mod plugin_panel;
 pub mod plugin_params;
 pub mod plugin_settings;
+pub mod quantize_panel;
 pub mod rack;
 pub mod relink_panel;
 pub mod sample_editor;
@@ -331,6 +336,7 @@ pub use piano_roll::PianoRollView;
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
+pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
     COLUMN_GAP, CableVisibility, Flip, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };

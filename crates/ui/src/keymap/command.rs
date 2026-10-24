@@ -285,6 +285,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd(
+        "edit.quantize_options",
+        "Quantize Options",
+        G::Edit,
+        C::Global,
+    )
+    .menu(),
     cmd("edit.redo", "Redo", G::Edit, C::Global).rep().menu(),
     cmd("edit.select_all", "Select All", G::Edit, C::Global)
         .decline()
