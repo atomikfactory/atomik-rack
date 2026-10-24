@@ -235,6 +235,101 @@ fn a_saved_latency_shifts_the_whole_bounce_by_its_frames_and_nothing_else() {
     }
 }
 
+// ------------------------------------------------------------------ a bypassed latent insert
+
+/// Frames before which a bypass that starts with the bounce is still in its 5 ms crossfade.
+const FADE_FRAMES: usize = 512;
+
+#[test]
+fn a_bypassed_latent_insert_lands_where_the_active_one_does_in_both_formats() {
+    // The test effect delays by `latency` frames and is otherwise unity, so its active output
+    // is the input delayed by the latency; bypassed, the host plays the input delayed by the
+    // same amount. The whole bounce must be the same samples.
+    let ids = formats(&both_core());
+    for (name, synth, effect) in ids {
+        let bounce = |bypass: f32| {
+            let mut core = insert_project(&synth, &effect, 100.0);
+            set_param(&mut core, "echo", "bypass", bypass);
+            bounce_of(core.doc(), RunMode::Realtime)
+        };
+        let (active, bypassed) = (bounce(0.0), bounce(1.0));
+        assert!(
+            active[0].iter().any(|s| s.abs() > 1e-3),
+            "{name}: it sounds"
+        );
+        for ch in 0..2 {
+            assert!(
+                bypassed[ch][..100].iter().all(|s| *s == 0.0),
+                "{name}: nothing before the compensated latency"
+            );
+            let early = active[ch][..FADE_FRAMES]
+                .iter()
+                .zip(&bypassed[ch])
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0, f32::max);
+            assert!(early < 1e-6, "{name}: channel {ch}: crossfade {early}");
+            assert!(
+                active[ch][FADE_FRAMES..]
+                    .iter()
+                    .zip(&bypassed[ch][FADE_FRAMES..])
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{name}: channel {ch}: sample for sample the same after the crossfade"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_bypassed_latent_insert_shifts_the_mix_by_its_latency_and_nothing_else() {
+    // Against the same project with no latency, the bypassed one is the plain mix 100 frames
+    // later: the bypassed lead is as late as the compensated bass, not 100 frames early.
+    let ids = formats(&both_core());
+    for (name, synth, effect) in ids {
+        let plain = bounce_of(
+            insert_project(&synth, &effect, 0.0).doc(),
+            RunMode::Realtime,
+        );
+        let bypassed = {
+            let mut core = insert_project(&synth, &effect, 100.0);
+            set_param(&mut core, "echo", "bypass", 1.0);
+            bounce_of(core.doc(), RunMode::Realtime)
+        };
+        let peak = plain[0].iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 1e-3, "{name}: it sounds");
+        for ch in 0..2 {
+            let exact = shift_error(&plain[ch], &bypassed[ch], 100);
+            assert!(
+                exact < peak * 1e-4,
+                "{name}: channel {ch}: shifted by 100 frames it is the plain mix ({exact} against {peak})"
+            );
+            for wrong in [0, 99, 101] {
+                assert!(
+                    shift_error(&plain[ch], &bypassed[ch], wrong) > exact * 100.0,
+                    "{name}: channel {ch}: a shift of {wrong} frames is clearly worse"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bypassed_latent_insert_plays_live_as_it_bounces() {
+    let ids = formats(&both_core());
+    for (name, synth, effect) in ids {
+        let mut core = insert_project(&synth, &effect, 100.0);
+        set_param(&mut core, "echo", "bypass", 1.0);
+        settle_steps(&mut core);
+        let bounce = bounce_of(core.doc(), RunMode::Realtime);
+        core.transport_action(atomik_ui::TransportAction::Play);
+        let live = stepped(&mut core, bounce[0].len() + SKIP);
+        assert!(
+            same_bits(&live, &bounce),
+            "{name}: live and bounce differ from frame {:?}",
+            first_difference(&live, &bounce)
+        );
+    }
+}
+
 // ------------------------------------------------------------------ a latency that changes mid-song
 
 /// A container `box` with a synth `syn` and a gain effect `fx` (cabled in series), macro 1 moving
