@@ -40,7 +40,8 @@
 //!   frames with the tempo map, one [`AudioRegion`] per span.
 
 use super::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind, Song, Track,
+    AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, Curve, FadeCurve, Lane, LaneKind,
+    Song, Track,
 };
 use crate::controller::{ControllerKind, value_at as lane_value_at};
 use std::collections::BTreeMap;
@@ -243,26 +244,28 @@ pub fn effective_tracks(song: &Song) -> Vec<&Track> {
         .collect()
 }
 
-/// One stretch of audio the track player plays, in song frames. Regions of one
-/// track are sorted by `song_start_frame` and never overlap.
+/// One stretch of audio the track player plays, in song frames. Regions of one track are
+/// sorted by `(song_start_frame, end)`; they overlap only where a crossfade mixes two clips
+/// (see [`flatten_audio`]), never more than two at a time.
 ///
-/// The player starts reading `asset` at frame `source_offset` at song frame `song_start_frame`
-/// and plays `frames` frames, cut earlier where the asset ends (the model does not know the
-/// asset's length here).
+/// The player starts reading `asset` at frame `source_offset` at song frame `song_start_frame` and
+/// plays `frames` frames, cut earlier where the asset ends (the model does not know the
+/// asset's length here). A `reverse` region reads downwards from `source_offset`: region frame
+/// `i` plays asset frame `source_offset - i`; frames at or past the asset's end are silent.
 ///
 /// **Fades are measured within the original clip, not reset at overlap cut points.** A clip
 /// that a later clip covers in part is flattened into several regions; each region carries the
 /// whole clip's fade lengths plus where it sits in the clip (`clip_pos`, `clip_frames`), so the
 /// fade-in plays only over the clip's first `fade_in` frames and the fade-out only over its
 /// last `fade_out` frames. A cut inside a clip makes no fade of its own (the cut is a hard
-/// edge; the covering clip supplies its own fade-in).
+/// edge; the covering clip supplies its own fade-in, or a crossfade).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioRegion {
     /// Asset id.
     pub asset: String,
     /// Song frame where the region starts (`Song::frame_at` of its tick).
     pub song_start_frame: u64,
-    /// Asset frame read at the first region frame.
+    /// Asset frame read at the first region frame (the highest one, with `reverse`).
     pub source_offset: u64,
     /// Region length in frames (at least 1).
     pub frames: u64,
@@ -278,6 +281,18 @@ pub struct AudioRegion {
     pub clip_pos: u64,
     /// Length in frames of the original clip (`frame_at(end) - frame_at(start)`).
     pub clip_frames: u64,
+    /// Plays the asset backwards.
+    pub reverse: bool,
+    /// The clip's gain envelope as `(frame from the clip start, linear gain)` pairs.
+    pub envelope: Vec<(u64, f32)>,
+    /// Frames of the crossfade-in at the region's start (0 for none): the region is the first
+    /// of a clip that crossfades with the clip before it.
+    pub x_in: u64,
+    /// Frames of the crossfade-out: the region is the tail of an earlier clip that a later
+    /// clip crossfades over, and `x_out == frames`. 0 for none.
+    pub x_out: u64,
+    /// Shape of the crossfade (the later clip's `xfade`).
+    pub x_curve: FadeCurve,
 }
 
 impl AudioRegion {
@@ -286,23 +301,49 @@ impl AudioRegion {
     /// With `n = clip_pos + i` the frame within the original clip: the fade-in gives
     /// `curve(n / fade_in)` for `n < fade_in`, the fade-out gives
     /// `curve((clip_frames - n) / fade_out)` for `n >= clip_frames - fade_out`, and both
-    /// multiply (they overlap only when `fade_in + fade_out > clip_frames`). `curve(t)` is
-    /// `t` for [`FadeCurve::Linear`] and `sin(t * pi / 2)` for [`FadeCurve::EqualPower`]. This is
-    /// the reference definition; the engine may evaluate it with a table.
+    /// multiply (they overlap only when `fade_in + fade_out > clip_frames`). `curve` is
+    /// [`FadeCurve::eval`]. This is the reference definition; the engine evaluates the same
+    /// curves with platform-independent arithmetic.
     pub fn fade_gain(&self, i: u64) -> f32 {
         let n = self.clip_pos + i;
-        let curve = |t: f64| match self.fade_curve {
-            FadeCurve::Linear => t,
-            FadeCurve::EqualPower => (t * std::f64::consts::FRAC_PI_2).sin(),
-        };
         let mut g = 1.0f64;
         if n < self.fade_in {
-            g *= curve(n as f64 / self.fade_in as f64);
+            g *= self.fade_curve.eval(n as f64 / self.fade_in as f64);
         }
         if n + self.fade_out >= self.clip_frames && self.fade_out > 0 {
-            g *= curve((self.clip_frames - n) as f64 / self.fade_out as f64);
+            g *= self
+                .fade_curve
+                .eval((self.clip_frames - n) as f64 / self.fade_out as f64);
         }
         g as f32
+    }
+
+    /// The crossfade gain at region frame `i`: `curve(i / x_in)` while `i < x_in`,
+    /// `curve((x_out - i) / x_out)` while `i < x_out`, else 1.
+    pub fn xfade_gain(&self, i: u64) -> f32 {
+        let mut g = 1.0f64;
+        if i < self.x_in {
+            g *= self.x_curve.eval(i as f64 / self.x_in as f64);
+        }
+        if i < self.x_out {
+            g *= self
+                .x_curve
+                .eval((self.x_out - i) as f64 / self.x_out as f64);
+        }
+        g as f32
+    }
+
+    /// The whole gain at region frame `i`: clip gain times fade, times the envelope, times the
+    /// crossfade (the last two only when the region has them).
+    pub fn total_gain(&self, i: u64) -> f32 {
+        let mut g = self.gain * self.fade_gain(i);
+        if let Some(e) = super::envelope_gain(&self.envelope, self.clip_pos + i) {
+            g *= e;
+        }
+        if self.x_in > 0 || self.x_out > 0 {
+            g *= self.xfade_gain(i);
+        }
+        g
     }
 }
 
@@ -317,8 +358,19 @@ impl AudioRegion {
 ///   dropped. Neighbouring spans share their boundary frame, so no frame is lost or doubled.
 /// - Audio does not stretch: the source offset advances one asset frame per song frame
 ///   from the clip start, so a region that starts `d` frames into its clip reads from
-///   `source_offset + d`.
-/// - `gain` is `db_to_gain(gain_db)`; fades are the original clip's (see [`AudioRegion`]).
+///   `source_offset + d`. A reversed clip of `n` frames plays the asset frames
+///   `source_offset .. source_offset + n` backwards, so its region that starts `d` frames in
+///   starts at `source_offset + n - 1 - d` and counts down.
+/// - `gain` is `db_to_gain(gain_db)`; fades and the envelope are the original clip's (see
+///   [`AudioRegion`]).
+/// - **Crossfades.** A clip `B` with `xfade: Some(curve)` whose first audible span begins at
+///   its own start, and which starts inside an earlier audible clip `P` that ends inside
+///   `B` (`P.end <= B.end`), crossfades with it: over the overlap `[B.start, P.end)`, shortened
+///   to where `B` stops being audible if a later clip covers `B` first, `B` fades in with
+///   `curve` and `P` fades out with the mirrored curve, and both play (an extra region, the tail
+///   of `P`, covers the overlap). With the equal-power curve the two gains square-sum to 1. A
+///   clip that lies wholly inside an earlier one hides it with hard edges, as does a clip with
+///   `xfade: None`. `P`'s and `B`'s own fades and gains apply on top of the crossfade.
 pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioRegion> {
     if !effective_tracks(song)
         .iter()
@@ -333,33 +385,67 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
     let table = song.tempo_table();
     let map = table.map();
     let sr = f64::from(sample_rate);
+    let spans = audible_spans(lane);
     let mut out = Vec::new();
-    for (id, a, b) in audible_spans(lane) {
-        let clip = by_id[&id];
-        let ClipContent::Audio(audio) = &clip.content else {
-            continue;
+    // The region of `clip` over the song frames `[start, end)`, `start` at or after the clip's.
+    let region = |clip: &Clip, audio: &AudioClipContent, start: u64, end: u64| {
+        let clip_start = map.song_frame(clip.start, sr);
+        let clip_frames = map.song_frame(clip.end(), sr) - clip_start;
+        let clip_pos = start - clip_start;
+        let source_offset = if audio.reverse {
+            audio.source_offset + clip_frames.saturating_sub(1 + clip_pos)
+        } else {
+            audio.source_offset + clip_pos
         };
-        let (clip_start, clip_end) = (
-            map.song_frame(clip.start, sr),
-            map.song_frame(clip.end(), sr),
-        );
-        let (start, end) = (map.song_frame(a, sr), map.song_frame(b, sr));
-        if end <= start {
-            continue;
-        }
-        let clip_frames = clip_end - clip_start;
-        out.push(AudioRegion {
+        AudioRegion {
             asset: audio.asset.clone(),
             song_start_frame: start,
-            source_offset: audio.source_offset + (start - clip_start),
+            source_offset,
             frames: end - start,
             gain: atomik_core::db_to_gain(audio.gain_db),
             fade_in: audio.fade_in.min(clip_frames),
             fade_out: audio.fade_out.min(clip_frames),
             fade_curve: audio.fade_curve,
-            clip_pos: start - clip_start,
+            clip_pos,
             clip_frames,
-        });
+            reverse: audio.reverse,
+            envelope: audio.envelope_linear(),
+            x_in: 0,
+            x_out: 0,
+            x_curve: FadeCurve::EqualPower,
+        }
+    };
+    for (k, &(id, a, b)) in spans.iter().enumerate() {
+        let clip = by_id[&id];
+        let ClipContent::Audio(audio) = &clip.content else {
+            continue;
+        };
+        let (start, end) = (map.song_frame(a, sr), map.song_frame(b, sr));
+        if end <= start {
+            continue;
+        }
+        let mut here = region(clip, audio, start, end);
+        let prev_span = k.checked_sub(1).and_then(|p| spans.get(p));
+        if let (Some(curve), true, Some(&(pid, _, pend))) =
+            (audio.xfade, a == clip.start, prev_span)
+            && pend == a
+            && let Some(prev) = by_id.get(&pid)
+            && let ClipContent::Audio(prev_audio) = &prev.content
+            && prev.end() > a
+            && prev.end() <= clip.end()
+        {
+            let zone_end = map.song_frame(prev.end().min(b), sr);
+            if zone_end > start {
+                let z = zone_end - start;
+                let mut tail = region(prev, prev_audio, start, zone_end);
+                tail.x_out = z;
+                tail.x_curve = curve;
+                here.x_in = z;
+                here.x_curve = curve;
+                out.push(tail);
+            }
+        }
+        out.push(here);
     }
     out
 }

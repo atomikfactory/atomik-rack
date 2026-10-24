@@ -132,6 +132,9 @@ pub fn audio(n: u8) -> AudioClipContent {
         fade_in: 0,
         fade_out: 0,
         fade_curve: FadeCurve::Linear,
+        reverse: false,
+        envelope: Vec::new(),
+        xfade: Some(FadeCurve::EqualPower),
     }
 }
 
@@ -223,6 +226,9 @@ impl ClipSpec {
             } else {
                 FadeCurve::Linear
             },
+            reverse: false,
+            envelope: Vec::new(),
+            xfade: None,
         }
     }
 }

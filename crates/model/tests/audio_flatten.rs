@@ -30,6 +30,29 @@ fn clip_at(d: &mut Document, reg: &atomik_device_sdk::Registry, start: i64, len:
         .unwrap();
 }
 
+/// Turns the crossfade off on every clip (a hard cut where clips overlap).
+fn cut_all(d: &mut Document, reg: &atomik_device_sdk::Registry) {
+    let clips: Vec<_> = d.doc().song.tracks[0].lanes[0].clips.clone();
+    for c in clips {
+        let atomik_model::ClipContent::Audio(mut a) = c.content else {
+            continue;
+        };
+        a.xfade = None;
+        d.apply(
+            sc(SongCommand::SetAudioClip {
+                id: c.id,
+                start: c.start,
+                length: c.length,
+                muted: c.muted,
+                content: a,
+                merge: None,
+            }),
+            reg,
+        )
+        .unwrap();
+    }
+}
+
 #[test]
 fn one_clip_becomes_one_region_with_clip_position_and_source_offset() {
     let (reg, mut d) = setup();
@@ -56,6 +79,11 @@ fn one_clip_becomes_one_region_with_clip_position_and_source_offset() {
             fade_curve: FadeCurve::EqualPower,
             clip_pos: 0,
             clip_frames: 2 * BAR_F,
+            reverse: false,
+            envelope: Vec::new(),
+            x_in: 0,
+            x_out: 0,
+            x_curve: FadeCurve::EqualPower,
         }]
     );
 }
@@ -345,6 +373,7 @@ fn spans_that_round_to_no_frame_are_dropped() {
     let (reg, mut d) = setup();
     clip_at(&mut d, &reg, 0, BAR, 1);
     clip_at(&mut d, &reg, 1, BAR, 2); // leaves tick span [0, 1) of the first clip
+    cut_all(&mut d, &reg);
     let song = &d.doc().song;
     let t = song.track(&key("audio-track")).unwrap();
     // At 8 kHz one tick is 0.26 frames: the one-tick head has no frame.

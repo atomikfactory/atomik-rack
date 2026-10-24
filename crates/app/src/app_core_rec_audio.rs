@@ -331,6 +331,9 @@ impl<S: EngineSink> AppCore<S> {
             fade_in: 0,
             fade_out: 0,
             fade_curve: atomik_model::FadeCurve::Linear,
+            reverse: false,
+            envelope: Vec::new(),
+            xfade: None,
         };
         let command = if let [(start, length, asset, source_offset)] = laps.as_slice() {
             SongCommand::AddAudioClip {
