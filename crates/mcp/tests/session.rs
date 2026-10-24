@@ -934,3 +934,30 @@ fn an_automation_lane_is_armed_and_its_write_mode_cycled_with_the_pointer() {
     ok(&mut s, "session_command", json!({"id": "transport.record"}));
     assert_eq!(ok(&mut s, "session_status", json!({}))["recording"], false);
 }
+
+#[test]
+fn the_quantize_panel_opens_by_command_and_closes_with_escape() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let row = command_row(&mut s, "edit.quantize_options");
+    assert_eq!(row["menu"], "Edit");
+    assert_eq!(row["enabled"], true);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "edit.quantize_options"}),
+    );
+    let t = ok(&mut s, "session_texts", json!({"contains": "QUANTIZE"}));
+    assert!(t["total"].as_u64().unwrap() >= 1, "{t}");
+    for want in ["APPLY", "EXTRACT GROOVE FROM CLIP", "Humanize timing"] {
+        let t = ok(&mut s, "session_texts", json!({"contains": want}));
+        assert!(t["total"].as_u64().unwrap() >= 1, "{want}");
+    }
+    ok(&mut s, "session_key", json!({"key": "escape"}));
+    let t = ok(&mut s, "session_texts", json!({"contains": "APPLY"}));
+    assert_eq!(t["total"], 0);
+}
