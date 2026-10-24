@@ -24,6 +24,8 @@ atomik-engine.workspace = true
 atomik-devices.workspace = true
 # Project files (.atomik): the song model and its loader.
 atomik-model.workspace = true
+# Warped clips: the stretch and pitch-shift engines.
+atomik-dsp.workspace = true
 # Project bundles: the `Audio/` store a bounce loads its assets from.
 atomik-audio-file.workspace = true
 # Third-party plugins in a bounce: the shared provider and the CLAP backend.
@@ -42,8 +44,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 atomik-testkit.workspace = true
-# The slicer-demo test slices its generated loop with the transient detector.
-atomik-dsp.workspace = true
 sha2.workspace = true
 
 [lints]

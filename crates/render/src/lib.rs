@@ -7,6 +7,7 @@
 //! - [`plugin_pass`]: the bounce loop for projects with plugins (pre-roll, restarts, latency).
 //! - [`project`]: `.atomik` projects: the song as engine input and the song bounce.
 //! - [`samples`]: sampler sample maps from document zones (shared with the app).
+//! - [`warp`]: the buffers of warped audio clips (time-stretch and pitch-shift) for a bounce.
 //! - [`wav`]: interleaved WAV writing (32-bit float or 24-bit PCM) and reading.
 //! - [`cli`]: the `atomik-render` command line (the binary is a thin wrapper around it).
 //!
@@ -28,6 +29,7 @@ pub mod plugin_pass;
 pub mod plugins;
 pub mod project;
 pub mod samples;
+pub mod warp;
 pub mod wav;
 
 use atomik_device_sdk::Registry;
