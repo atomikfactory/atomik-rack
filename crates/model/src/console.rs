@@ -22,11 +22,18 @@
 //! name; buses exist only while there is a master. The routing is cables (hidden console links,
 //! see [`link_kind`]); the bus commands live in `console_bus.rs`.
 //!
+//! **VCA groups.** [`VcaGroup`] (`Console::vcas`, in `console_vca.rs`) is a master fader, mute and
+//! solo over a set of strips (channels and buses): console state only, no device, no cables, no
+//! audio. A strip is in at most one group; a removed strip leaves its group in the same undo step.
+//!
 //! **Order:** the console order is the strip order in the console view. The engine sums a
 //! summing input's cables by source endpoint (device id, socket), not by console order, so
 //! moving a channel changes no audio (summing is deterministic either way).
 
 pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
+pub use crate::console_vca::{
+    MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
+};
 use crate::{Cable, DeviceKey, INTERFACE_KEY, RackDoc, SocketRef};
 
 /// The key the next bus device gets (`bus`, `bus-2`, ...): what `CreateBus` and `RouteToNewBus`
@@ -51,6 +58,12 @@ pub const BUS_TYPE: &str = "atomik.bus";
 pub const MAX_BUS_NAME_CHARS: usize = 32;
 /// The channel param the app sets from [`crate::RackDoc::solo_silence`]; never stored.
 pub const SOLO_SILENCE_PARAM: &str = "internal.solo_silence";
+/// The channel params the app sets from [`crate::RackDoc::vca_feeds`]; never stored.
+pub const VCA_DB_PARAM: &str = "internal.vca_db";
+/// See [`VCA_DB_PARAM`].
+pub const VCA_MUTE_PARAM: &str = "internal.vca_mute";
+/// See [`VCA_DB_PARAM`].
+pub const VCA_SOLO_PARAM: &str = "internal.vca_solo";
 /// Params with this key prefix are set by the app, never by the user: they are not stored in
 /// documents, not saved, not undoable and cannot be automated.
 pub const INTERNAL_PARAM_PREFIX: &str = "internal.";
@@ -91,6 +104,8 @@ pub struct Console {
     pub channels: Vec<ConsoleChannel>,
     /// Output buses in console order (shown between the channels and the master).
     pub buses: Vec<ConsoleBus>,
+    /// VCA groups in strip order (see [`crate::console_vca`]); none in a plain project.
+    pub vcas: Vec<VcaGroup>,
     /// The `atomik.master` device key (created with the first channel).
     pub master: Option<DeviceKey>,
     /// Effect device on each FX return slot (send k → effect → return k).
@@ -104,6 +119,7 @@ impl Default for Console {
         Self {
             channels: Vec::new(),
             buses: Vec::new(),
+            vcas: Vec::new(),
             master: None,
             returns: Default::default(),
             compensation: true,
@@ -499,5 +515,68 @@ pub enum ConsoleCommand {
         strips: Vec<DeviceKey>,
         /// The bus name.
         name: String,
+    },
+    /// Create a VCA group called `name` over `members` (console channels and buses; a member
+    /// leaves the group it was in), in one undo step. The name is trimmed; empty, over
+    /// [`MAX_VCA_NAME_CHARS`] or taken (ignoring case) is rejected, so is a member that is not
+    /// a console strip. The group starts at 0 dB, unmuted, unsoloed, with the colour [`VCA_PALETTE`] gives its id; its id is
+    /// [`Console::next_vca_id`] computed before the command.
+    CreateVca {
+        /// The group name.
+        name: String,
+        /// The member strips (may be empty).
+        members: Vec<DeviceKey>,
+    },
+    /// Rename a VCA group (the same rules as `CreateVca`).
+    RenameVca {
+        /// The group id.
+        vca: u32,
+        /// The new name.
+        name: String,
+    },
+    /// Set (or clear) the colour of a VCA group.
+    SetVcaColor {
+        /// The group id.
+        vca: u32,
+        /// The colour, or none.
+        color: Option<[u8; 3]>,
+    },
+    /// Set the offset of a VCA group in dB (clamped to `VCA_MIN_DB..=VCA_MAX_DB`; the bottom is
+    /// off). Commands with the same `merge` id on one group are one undo step (a fader drag).
+    SetVcaLevel {
+        /// The group id.
+        vca: u32,
+        /// The offset in dB.
+        db: f32,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Mute or unmute a VCA group (every member counts as muted).
+    SetVcaMute {
+        /// The group id.
+        vca: u32,
+        /// The new state.
+        on: bool,
+    },
+    /// Solo or unsolo a VCA group (every member counts as soloed).
+    SetVcaSolo {
+        /// The group id.
+        vca: u32,
+        /// The new state.
+        on: bool,
+    },
+    /// Put `strips` in the group `vca` (each leaves the group it was in), or take them out of
+    /// any group with `None`, in one undo step. Rejected: a strip that is not a console channel
+    /// or bus, an unknown group, and a command that changes nothing.
+    AssignToVca {
+        /// The group, or `None` to remove the strips from their groups.
+        vca: Option<u32>,
+        /// The strips.
+        strips: Vec<DeviceKey>,
+    },
+    /// Delete a VCA group; its members keep their faders and play at their own level again.
+    DeleteVca {
+        /// The group id.
+        vca: u32,
     },
 }

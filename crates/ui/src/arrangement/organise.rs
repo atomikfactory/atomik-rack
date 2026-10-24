@@ -1050,6 +1050,16 @@ impl ArrangementView {
                 st.selection,
             );
         }
+        // A track whose channel is in a VCA group: a slim bar in the group's colour at the right
+        // edge of the header.
+        if let Some(color) = self.vca_chips.get(device) {
+            let x = hr.x0 + super::TRACK_LIST_WIDTH;
+            sp::rect(
+                c,
+                Rect::new(x - 5.0, hr.y0 + 2.0, x - 2.0, hr.y1 - 2.0),
+                *color,
+            );
+        }
         if let Some(r) = self.comment_rect(hr, track) {
             let hot = self.hover == Some(Hit::Comment(track));
             let col = if hot { t.text } else { t.text_muted };

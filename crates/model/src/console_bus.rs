@@ -460,12 +460,10 @@ pub(crate) fn solo_silence(doc: &RackDoc, registry: &Registry) -> Vec<(DeviceKey
         .map(|c| c.channel.clone())
         .chain(doc.console.buses.iter().map(|b| b.bus.clone()))
         .collect();
+    // A strip counts as soloed by its own `solo` or by its VCA group's.
     let soloed: Vec<&DeviceKey> = strips
         .iter()
-        .filter(|k| {
-            doc.param_value(k, "solo", registry)
-                .is_some_and(|v| v >= 0.5)
-        })
+        .filter(|k| crate::console_vca::effective_solo(doc, k, registry))
         .collect();
     let mut audible: BTreeSet<DeviceKey> = BTreeSet::new();
     for s in &soloed {

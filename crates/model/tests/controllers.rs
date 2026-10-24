@@ -96,7 +96,7 @@ fn ticks(d: &Document) -> Vec<i64> {
 
 #[test]
 fn the_project_version_is_nineteen() {
-    assert_eq!(PROJECT_VERSION, 25);
+    assert_eq!(PROJECT_VERSION, 26);
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn lanes_round_trip_canonically_and_name_their_kind() {
     set(&mut d, 1, vec![bend(), pressure, wheel(), poly], None, &reg).unwrap();
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 25);
+    assert_eq!(v["version"], 26);
     let lanes = &v["song"]["tracks"][0]["lanes"][0]["clips"][0]["controllers"];
     assert_eq!(lanes[0]["kind"], "pitch_bend");
     assert!(lanes[0].get("number").is_none());

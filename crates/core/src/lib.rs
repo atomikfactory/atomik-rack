@@ -14,7 +14,9 @@ pub use meter_map::{
     meter_ok,
 };
 pub use note::{BufferFull, ExprKind, NoteBuffer, NoteEvent, NoteKind};
-pub use param::{ParamDescriptor, ParamId, Taper, Unit, db_to_gain, gain_to_db};
+pub use param::{
+    ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain, gain_to_db,
+};
 pub use tempo_map::{MapError, TempoMap, TempoPoint, TempoSegment, TempoTable, compile_tempo};
 pub use time::{
     LoopWrap, SampleRate, Tempo, Ticks, TimeError, TimeInfo, beats_to_frames, ticks_to_frames,

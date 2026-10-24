@@ -79,7 +79,9 @@ pub use dynamics::{
     static_gain_reduction_db, static_gain_reduction_knee_db,
 };
 pub use echo::Echo;
-pub use fader::{FADER_UNITY_POS, fader_db, fader_gain, fader_pos_for_db};
+pub use fader::{
+    FADER_UNITY_POS, fader_db, fader_db_vca, fader_gain, fader_gain_vca, fader_pos_for_db, vca_gain,
+};
 pub use fdn::{FDN_LINES, Fdn8};
 pub use leveller::Leveller;
 pub use lfo::{Lfo, LfoShape};

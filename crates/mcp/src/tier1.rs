@@ -338,6 +338,41 @@ fn groove_summary(doc: &RackDoc) -> Vec<Value> {
         .collect()
 }
 
+/// The VCA groups: id (what `mixer.add_to_vca` and `mixer.delete_vca` take as their argument),
+/// name, colour, offset in dB, mute, solo and the members with the level each plays at (its own
+/// fader plus the offset; `null` for -inf).
+fn vca_summary(doc: &RackDoc) -> Vec<Value> {
+    let registry = default_registry();
+    doc.console
+        .vcas
+        .iter()
+        .map(|g| {
+            let members: Vec<Value> = g
+                .members
+                .iter()
+                .map(|m| {
+                    let db = doc
+                        .effective_fader_db(m, &registry)
+                        .filter(|d| d.is_finite());
+                    json!({"strip": m.as_str(), "effective_db": db})
+                })
+                .collect();
+            let mut v = json!({
+                "id": g.id,
+                "name": g.name,
+                "level_db": g.level_db,
+                "mute": g.mute,
+                "solo": g.solo,
+                "members": members,
+            });
+            if let Some([r, gr, b]) = g.color {
+                v["color"] = json!(format!("#{r:02x}{gr:02x}{b:02x}"));
+            }
+            v
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -475,6 +510,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
         },
         "console": { "master": doc.console.master.is_some() },
     });
+    let vcas = vca_summary(doc);
+    if !vcas.is_empty() {
+        out["console"]["vcas"] = Value::Array(vcas);
+    }
     if !grooves.is_empty() {
         out["song"]["grooves"] = Value::Array(grooves);
     }

@@ -117,6 +117,12 @@ pub fn db_to_gain(db: f32) -> f32 {
     10.0f32.powf(db / 20.0)
 }
 
+/// Lowest VCA offset in dB: a VCA fader at this value is off (its members are silent), as the
+/// bottom of a send level is.
+pub const VCA_MIN_DB: f32 = -60.0;
+/// Highest VCA offset in dB.
+pub const VCA_MAX_DB: f32 = 12.0;
+
 /// Converts linear gain to decibels (−∞ for 0).
 pub fn gain_to_db(gain: f32) -> f32 {
     20.0 * gain.log10()

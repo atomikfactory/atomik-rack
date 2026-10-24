@@ -194,6 +194,10 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Maximise Console", Some("Shift+F5")),
             ("Add Channel\u{2026}", None),
             ("Route to New Output Bus", Some("Ctrl+G")),
+            ("Create VCA from Selection", None),
+            ("Add to VCA", None),
+            ("Remove from VCA", None),
+            ("Delete VCA", None),
             ("Delay Compensation", None),
         ]
     );
@@ -843,4 +847,86 @@ fn shift_range_and_double_click_rename_keep_the_console_focus() {
     click_name(&mut s, &a, Modifiers::NONE, 2);
     assert_eq!(s.focus(), Pane::Console);
     assert!(s.core().console().is_text_owner());
+}
+
+#[test]
+fn the_vca_commands_are_mixer_menu_items_without_keys_and_name_a_group_by_id() {
+    let s = shell();
+    let menus = s.menu_model();
+    let mixer = menus.iter().find(|m| m.title == "Mixer").unwrap();
+    for (label, command, id) in [
+        (
+            "Create VCA from Selection",
+            AppCommand::CreateVca,
+            "mixer.create_vca",
+        ),
+        ("Add to VCA", AppCommand::AddToVca(None), "mixer.add_to_vca"),
+        (
+            "Remove from VCA",
+            AppCommand::RemoveFromVca,
+            "mixer.remove_from_vca",
+        ),
+        (
+            "Delete VCA",
+            AppCommand::DeleteVca(None),
+            "mixer.delete_vca",
+        ),
+    ] {
+        let item = mixer
+            .items()
+            .find(|i| i.command == command)
+            .unwrap_or_else(|| panic!("{label} is in the Mixer menu"));
+        assert_eq!(item.label, label);
+        assert_eq!(item.shortcut, None, "no default key");
+        assert!(!item.enabled, "nothing is selected, and there is no group");
+        assert_eq!(command.command_id(), Some((id, None)));
+        assert_eq!(AppCommand::from_command(id, None), Some(command));
+    }
+    // The group is the argument; a command that names one has no static id.
+    assert_eq!(
+        AppCommand::from_command("mixer.add_to_vca", Some("3")),
+        Some(AppCommand::AddToVca(Some(3)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.delete_vca", Some("7")),
+        Some(AppCommand::DeleteVca(Some(7)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.add_to_vca", Some("x")),
+        None
+    );
+    assert_eq!(AppCommand::AddToVca(Some(3)).command_id(), None);
+}
+
+#[test]
+fn the_vca_menu_items_enable_with_the_selection_and_run_through_the_shell() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(DeviceKey("a".into())),
+        })
+        .unwrap();
+    s.core_mut()
+        .view_mut()
+        .set_selection(&[DeviceKey("a".into())], Some(&DeviceKey("a".into())));
+    let enabled = |s: &Shell<NullBackend>, command: AppCommand| {
+        s.menu_model()
+            .iter()
+            .flat_map(|m| m.items())
+            .find(|i| i.command == command)
+            .map(|i| i.enabled)
+    };
+    assert_eq!(enabled(&s, AppCommand::CreateVca), Some(true));
+    assert_eq!(enabled(&s, AppCommand::AddToVca(None)), Some(false));
+    s.execute(AppCommand::CreateVca);
+    assert_eq!(s.core().doc().console.vcas.len(), 1);
+    assert_eq!(enabled(&s, AppCommand::AddToVca(None)), Some(true));
+    assert_eq!(enabled(&s, AppCommand::RemoveFromVca), Some(true));
+    assert_eq!(enabled(&s, AppCommand::DeleteVca(None)), Some(true));
+    s.execute(AppCommand::RemoveFromVca);
+    assert!(s.core().doc().console.vcas[0].members.is_empty());
+    s.execute(AppCommand::DeleteVca(Some(1)));
+    assert!(s.core().doc().console.vcas.is_empty());
 }

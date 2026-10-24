@@ -2,7 +2,7 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 22,
+//! { "format": "atomik-project", "version": 26,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
@@ -10,6 +10,8 @@
 //!   "input_channels": 0..=32,                                   (v3; optional, default 0)
 //!   "console": { "channels": [{ "channel": key, "source": key | null }…],
 //!                "buses"?: [{ "bus": key, "name": string }…]     (v12; written only when non-empty),
+//!                "vcas"?: [{ "id", "name", "color"? ("#rrggbb"), "level_db"?, "mute"?, "solo"?,
+//!                            "members": [key…] }…]            (v26; written only when non-empty),
 //!                "master": key | null, "returns": [key | null × 8], "compensation": bool },
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
@@ -110,12 +112,13 @@
 //! registry, every instrument gets a channel in rack order, wired as `AddChannel` does;
 //! otherwise the console stays empty. **Version 2** files (no inputs, no pool, no audio
 //! lanes) load with `input_channels` 0 and an empty pool. **Version 3** files have no zones.
-//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). **Version 20** files have no groove library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth" | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the name of a built-in groove; a groove has 1 to 32 slots, each an `offset` in steps (`-0.5..=0.5`) and a velocity scale (`0..=2`); at most 64 grooves; the field is omitted when the song has none. **Version 21** files have no track organisation: from version 22 a song may carry `"groups"` (folders: `"id"` from 1, unique; a trimmed `"name"` of 1 to 64 characters; an optional `"parent"` folder, at most 8 levels deep and no loops; `"collapsed": true`; an optional `"#rrggbb"` `"color"`; at most 256, written sorted by id) after its `"grooves"`, and a track may carry `"group"` (its innermost folder), `"color"` and `"comment"` (trimmed, 1 to 1000 characters, newlines allowed) after its `"no_chase"`, an automation lane `"folded": true` after its `"write"`, and a take group `"open": true` after its `"clips"` (its take rows are shown). Every folder has at least one track, and the tracks of a folder, with those of its sub-folders, follow each other (see [`crate::organise`]); a file that breaks either is refused. All of it is omitted when there is none. **Version 22** files have no audio editing: from version 23 the `"audio"` object of an audio clip may carry `"reverse": true` (it plays its span of the asset backwards), `"envelope": [[frame, gain_db]…]` (gain breakpoints in frames from the clip start, strictly increasing, at most 512, each `gain_db` in `-120..=24`) and `"xfade": "off" | "linear" | "equal_power" | "exponential" | "s_curve"` (the crossfade with the clip it overlaps at its start); `"fade_curve"` also takes `"exponential"` and `"s_curve"`. `reverse` and `envelope` are omitted when unused; a file of version 23 or later without `"xfade"` crossfades with `"equal_power"` (the default of a new clip), while an older file loads with every clip at `"off"`, so a project written before crossfades keeps its hard cuts and its bounce. **Version 23** files have no warp: from version 24 the `"audio"` object of an audio clip may carry `"warp": {"mode": "beats" | "tonal" | "repitch", "bpm": 20..=999, "enabled"?: true, "transpose"?: cents, "markers"?: [[tick, source_frame]…]}` (see [`crate::warp`]): `"enabled"` follows the song tempo (the clip plays its asset through a time map in beats at `"bpm"`, the tempo it was recorded at), `"transpose"` is in cents within ±2400 and changes pitch without changing length (Beats and Tonal), and `"markers"` pin a source frame (from the clip's `"offset"`) to a tick from the clip start, at most 512, strictly increasing in both. The object is omitted for the default (not enabled, `"beats"`, 120 BPM, no transpose, no markers), a reversed clip cannot be warped or transposed, and a file written before version 24 plays every clip in real time as it did. **Version 24** files have no frozen tracks: from version 25 a track may carry `"frozen": {"start": tick, "length": ticks, "effects"?: [device key…], "audio": {…}}` after its `"comment"` (see [`crate::freeze`]): its instrument and the listed effects, which must be the first effects of the insert chain of the console channel the track plays through (in chain order, none of them a container), are replaced by `"audio"`, a plain audio clip object (an asset of the pool, no reverse, no warp) that plays from `"start"` for `"length"` ticks. The track's clips, instrument and effects are stored as they were. The field is omitted for a track that is not frozen, so a project without one differs from its version 24 file in the version line alone. Saving always writes version 25.
+//! **Version 4** files have no grids. **Version 5** zones have no `"reverse"`. **Version 6** files have no steps. **Version 7** files have no containers. **Version 8** files have no plugin devices. **Version 9** notes have no mute flag. **Version 11** files have no output buses (`"console"."buses"` is an unknown field there): a bus is an `atomik.bus` device listed in `"buses"` (console order) with a unique, trimmed, non-empty name of at most 32 characters; buses need a master; their routing is ordinary cables. **Version 12** files have a single meter and no tempo ramps: `"meter"` is `[beats_per_bar, beat_unit]` (it loads as one event at bar 1; the reader takes that shape in any version) and a tempo event has no `"ramp"` (unknown field there). From version 13 `"meter"` is written as a list of `{"bar", "num", "den"}` changes, first at bar 1, bars strictly increasing, each starting on a bar line; a tempo event with `"ramp": true` moves linearly (in BPM, over ticks) to the next event's BPM, and the last event cannot ramp. **Version 13** files have no song markers: from version 14 a song may carry `"markers"` (named points) and `"ranges"` (named sections, `start < end`, which may overlap), each sorted by tick, with a trimmed non-empty name of at most 64 characters and an optional `"#rrggbb"` colour; both are omitted when empty, and a file that lists them out of order loads sorted (ids are not stored; a loaded song numbers them from 1). **Version 14** files have no track heights: from version 15 a song may carry `"track_heights"`, an object from device key to the height in pixels (at vertical zoom 1) of that track's first lane in the arrangement, `24..=400`; it is omitted when empty, keys of devices without a track in the file are ignored, and a track without an entry has the default height of 60. **Version 15** files have no clip scales: from version 16 a note clip may carry `"scale": {"root": 0..=11, "kind": "major" | "natural_minor" | "harmonic_minor" | "melodic_minor" | "dorian" | "phrygian" | "lydian" | "mixolydian" | "locrian" | "major_pentatonic" | "minor_pentatonic" | "blues" | "whole_tone" | "phrygian_dominant" | "hungarian_minor"}` after its `"grid"`; it is omitted when there is none (a chromatic scale is not stored and is refused on load), and only note clips take it. **Version 16** files have no chase flag: from version 17 a track may carry `"no_chase": true` after its `"armed"` (a track that does not start the notes that span the play position on play, locate and loop wrap); it is omitted when the track chases, so a file without it chases. **Version 17** files have no lane write modes: from version 18 an automation lane may carry `"write": "overwrite" | "latch"` after its `"param"` (how automation recording writes into it; `"touch"`, the default, is not stored and is refused on load, and only automation lanes take it). **Version 18** files have no controller lanes: from version 19 a note clip may carry `"controllers": [{"kind": "pitch_bend" | "pressure" | "cc" | "poly_pressure", "number"?: 0..=127 (the controller of a "cc" lane, the key of a "poly_pressure" lane; required there, refused on the others), "points": [[tick, value, "linear"|"step"]…]}…]` after its `"scale"` (pitch bend and aftertouch, content ticks like the notes): the lanes are sorted by kind (pitch bend, pressure, cc by number, poly_pressure by key) without duplicates, each has at least one point, the points are sorted by tick without duplicates, and a value lies in `-1..=1` for pitch bend and `0..=1` for the others; the field is omitted when the clip has no lanes, and only note clips take it. **Version 19** files have no take groups: from version 20 a notes or audio lane may carry `"take_groups": [{"takes": [<clip>…], "comp": [[take, start, end]…], "clips": [id…]}…]` after its `"clips"` (see [`crate::takes`]): `"takes"` are whole clips of the lane's kind (one to 256, same fields as the lane's clips, ids unique among all clips of the song and below `next_clip_id`, none of them in the lane's `"clips"`); `"comp"` lists segments of take indices over the group's range (the earliest take start to the latest take end), sorted, disjoint and non-empty; `"clips"` names the lane clips compiled from the comp. The field is omitted when the lane has no groups; a loaded song numbers its groups from 1 in file order (ids are not stored). **Version 20** files have no groove library: from version 21 a song may carry `"grooves": [{"name", "step": "eighth" | "sixteenth" | "thirty_second", "slots": [[offset, velocity]…]}…]` after its `"track_heights"` (see [`crate::groove`]): a name is trimmed, non-empty, at most 32 characters, unique and not the name of a built-in groove; a groove has 1 to 32 slots, each an `offset` in steps (`-0.5..=0.5`) and a velocity scale (`0..=2`); at most 64 grooves; the field is omitted when the song has none. **Version 21** files have no track organisation: from version 22 a song may carry `"groups"` (folders: `"id"` from 1, unique; a trimmed `"name"` of 1 to 64 characters; an optional `"parent"` folder, at most 8 levels deep and no loops; `"collapsed": true`; an optional `"#rrggbb"` `"color"`; at most 256, written sorted by id) after its `"grooves"`, and a track may carry `"group"` (its innermost folder), `"color"` and `"comment"` (trimmed, 1 to 1000 characters, newlines allowed) after its `"no_chase"`, an automation lane `"folded": true` after its `"write"`, and a take group `"open": true` after its `"clips"` (its take rows are shown). Every folder has at least one track, and the tracks of a folder, with those of its sub-folders, follow each other (see [`crate::organise`]); a file that breaks either is refused. All of it is omitted when there is none. **Version 22** files have no audio editing: from version 23 the `"audio"` object of an audio clip may carry `"reverse": true` (it plays its span of the asset backwards), `"envelope": [[frame, gain_db]…]` (gain breakpoints in frames from the clip start, strictly increasing, at most 512, each `gain_db` in `-120..=24`) and `"xfade": "off" | "linear" | "equal_power" | "exponential" | "s_curve"` (the crossfade with the clip it overlaps at its start); `"fade_curve"` also takes `"exponential"` and `"s_curve"`. `reverse` and `envelope` are omitted when unused; a file of version 23 or later without `"xfade"` crossfades with `"equal_power"` (the default of a new clip), while an older file loads with every clip at `"off"`, so a project written before crossfades keeps its hard cuts and its bounce. **Version 23** files have no warp: from version 24 the `"audio"` object of an audio clip may carry `"warp": {"mode": "beats" | "tonal" | "repitch", "bpm": 20..=999, "enabled"?: true, "transpose"?: cents, "markers"?: [[tick, source_frame]…]}` (see [`crate::warp`]): `"enabled"` follows the song tempo (the clip plays its asset through a time map in beats at `"bpm"`, the tempo it was recorded at), `"transpose"` is in cents within ±2400 and changes pitch without changing length (Beats and Tonal), and `"markers"` pin a source frame (from the clip's `"offset"`) to a tick from the clip start, at most 512, strictly increasing in both. The object is omitted for the default (not enabled, `"beats"`, 120 BPM, no transpose, no markers), a reversed clip cannot be warped or transposed, and a file written before version 24 plays every clip in real time as it did. **Version 24** files have no frozen tracks: from version 25 a track may carry `"frozen": {"start": tick, "length": ticks, "effects"?: [device key…], "audio": {…}}` after its `"comment"` (see [`crate::freeze`]): its instrument and the listed effects, which must be the first effects of the insert chain of the console channel the track plays through (in chain order, none of them a container), are replaced by `"audio"`, a plain audio clip object (an asset of the pool, no reverse, no warp) that plays from `"start"` for `"length"` ticks. The track's clips, instrument and effects are stored as they were. The field is omitted for a track that is not frozen, so a project without one differs from its version 24 file in the version line alone. **Version 25** files have no VCA groups: from version 26 the console may carry `"vcas"` after its `"buses"` (see [`crate::console_vca`]): `[{"id", "name", "color"?, "level_db"?, "mute"?, "solo"?, "members"}…]`, at most 64 groups; `"id"` counts from 1 and is unique, `"name"` is trimmed, non-empty, at most 32 characters and unique ignoring case, `"color"` is `"#rrggbb"`, `"level_db"` (the offset added to the members' faders) lies in `-60..=12` and is omitted at 0, `"mute"` and `"solo"` are omitted when false, and `"members"` lists console channels or buses (any order, loaded in console order), none of them in two groups. The field is omitted when there are no groups, so a project without one differs from its version 25 file in the version line alone, and plays and bounces bit for bit as it did. Saving always writes version 26.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
     MAX_BUS_NAME_CHARS, is_console_type,
 };
+use crate::console::{MAX_VCA_NAME_CHARS, MAX_VCAS, VcaGroup};
 use crate::controller::{ControllerKind, ControllerLane, check_lanes};
 use crate::freeze::Frozen;
 use crate::groove::{Groove, GrooveSlot, MAX_GROOVES, builtin_groove};
@@ -148,6 +151,7 @@ use crate::theory::{Scale, ScaleKind};
 use crate::warp::{MAX_WARP_MARKERS, WARP_TRANSPOSE_MAX_CENTS, WarpMarker, WarpMode, WarpSettings};
 use crate::{AssetMeta, ZoneDoc, is_valid_asset_hash};
 use crate::{DeviceKey, ModelError, PATCH_FORMAT, RackDoc, TEMPO_MAX, TEMPO_MIN, WriteMode, rules};
+use atomik_core::{VCA_MAX_DB, VCA_MIN_DB};
 use atomik_device_sdk::Registry;
 use atomik_device_sdk::{LoopMode, TriggerMode};
 use serde_json::Value;
@@ -161,8 +165,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// 3 (no zones), 4 (no grids), 5 (no zone reverse), 6 (no steps), 7 (no containers) and 8 (no
 /// plugin devices) and 9 (no note mute) and 10 (no rack columns: one column on load) and 11
 /// (no output buses) and 12 (no tempo ramps or meter changes) and 13 (no markers) and 14 (no
-/// track heights) and 15 (no clip scales) and 21 (no track organisation) and 22 (no audio editing) and 23 (no warp) and 24 (no frozen tracks).
-pub const PROJECT_VERSION: u32 = 25;
+/// track heights) and 15 (no clip scales) and 21 (no track organisation) and 22 (no audio editing) and 23 (no warp) and 24 (no frozen tracks) and 25 (no VCA groups).
+pub const PROJECT_VERSION: u32 = 26;
 
 const ROOT_FIELDS_V1: &[&str] = &[
     "format",
@@ -333,7 +337,17 @@ const AUDIO_FIELDS_V24: &[&str] = &[
 const WARP_FIELDS: &[&str] = &["mode", "bpm", "enabled", "transpose", "markers"];
 const CONSOLE_FIELDS: &[&str] = &["channels", "master", "returns", "compensation"];
 const CONSOLE_FIELDS_V12: &[&str] = &["channels", "buses", "master", "returns", "compensation"];
+const CONSOLE_FIELDS_V26: &[&str] = &[
+    "channels",
+    "buses",
+    "vcas",
+    "master",
+    "returns",
+    "compensation",
+];
 const BUS_FIELDS: &[&str] = &["bus", "name"];
+const VCA_FIELDS: &[&str] = &["id", "name", "color", "level_db", "mute", "solo", "members"];
+const VCA_REQUIRED: &[&str] = &["id", "name", "members"];
 const CHANNEL_FIELDS: &[&str] = &["channel", "source"];
 const SONG_FIELDS: &[&str] = &["tempo", "meter", "loop", "end", "next_clip_id", "tracks"];
 const SONG_FIELDS_V14: &[&str] = &[
@@ -586,7 +600,7 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
         10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
         11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=25 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
+        12..=26 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
         _ => {
             return Err(version_path.error(format!(
                 "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
@@ -998,6 +1012,88 @@ fn load_assets(v: &Value, path: &JsonPath) -> Result<BTreeMap<String, AssetMeta>
     Ok(assets)
 }
 
+/// Reads the console's VCA groups (version 26): ids from 1 and unique, a trimmed name of at
+/// most 32 characters unique ignoring case, an optional colour, a `level_db` within the VCA
+/// range (default 0), optional mute and solo flags, members that are console channels or buses,
+/// none in two groups (listed in any order, kept in console order). At most 64 groups.
+fn load_vcas(v: &Value, path: &JsonPath, console: &mut Console) -> Result<(), ModelError> {
+    let items = array(v, path)?;
+    if items.len() > MAX_VCAS {
+        return Err(path.error(format!(
+            "at most {MAX_VCAS} VCA groups, found {}",
+            items.len()
+        )));
+    }
+    let mut taken: BTreeSet<DeviceKey> = BTreeSet::new();
+    for (i, item) in items.iter().enumerate() {
+        let p = path.index(i);
+        let g = object(item, &p, VCA_FIELDS, VCA_REQUIRED)?;
+        let id_path = p.field("id");
+        let id = uint(&g["id"], &id_path, u64::from(u32::MAX))? as u32;
+        if id == 0 {
+            return Err(id_path.error("VCA ids count from 1"));
+        }
+        if console.vca(id).is_some() {
+            return Err(id_path.error(format!("the VCA id {id} is used twice")));
+        }
+        let name_path = p.field("name");
+        let name = string(&g["name"], &name_path)?;
+        if name.trim() != name || name.is_empty() {
+            return Err(name_path.error(format!(
+                "{name:?} is not a valid VCA name: it must be non-empty with no space at either end"
+            )));
+        }
+        if name.chars().count() > MAX_VCA_NAME_CHARS {
+            return Err(name_path.error(format!(
+                "a VCA name has at most {MAX_VCA_NAME_CHARS} characters"
+            )));
+        }
+        if console.vca_by_name(name).is_some() {
+            return Err(name_path.error(format!("the VCA name {name:?} is used twice")));
+        }
+        let color = match g.get("color") {
+            Some(c) => parse_color(c, &p.field("color"))?,
+            None => None,
+        };
+        let level_db = match g.get("level_db") {
+            Some(l) => {
+                let lp = p.field("level_db");
+                let x = number(l, &lp)? as f32;
+                if !(VCA_MIN_DB..=VCA_MAX_DB).contains(&x) {
+                    return Err(lp.error(format!("{x} is outside {VCA_MIN_DB}..={VCA_MAX_DB}")));
+                }
+                x
+            }
+            None => 0.0,
+        };
+        let members_path = p.field("members");
+        let mut members = Vec::new();
+        for (j, m) in array(&g["members"], &members_path)?.iter().enumerate() {
+            let mp = members_path.index(j);
+            let key = DeviceKey(string(m, &mp)?.to_owned());
+            if console.channel_index(&key).is_none() && console.bus_index(&key).is_none() {
+                return Err(mp.error(format!("{:?} is not a console channel or bus", key.0)));
+            }
+            if !taken.insert(key.clone()) {
+                return Err(mp.error(format!("{:?} is in more than one VCA group", key.0)));
+            }
+            members.push(key);
+        }
+        let order: Vec<&DeviceKey> = console.strip_keys().collect();
+        members.sort_by_key(|m| order.iter().position(|k| *k == m).unwrap_or(usize::MAX));
+        console.vcas.push(VcaGroup {
+            id,
+            name: name.to_owned(),
+            color,
+            level_db,
+            mute: flag(g, &p, "mute")?,
+            solo: flag(g, &p, "solo")?,
+            members,
+        });
+    }
+    Ok(())
+}
+
 /// Reads and validates the console section against the loaded rack (the invariants
 /// are listed in [`crate::console`]).
 fn load_console(
@@ -1006,7 +1102,9 @@ fn load_console(
     doc: &RackDoc,
     version: u64,
 ) -> Result<Console, ModelError> {
-    let fields = if version >= 12 {
+    let fields = if version >= 26 {
+        CONSOLE_FIELDS_V26
+    } else if version >= 12 {
         CONSOLE_FIELDS_V12
     } else {
         CONSOLE_FIELDS
@@ -1109,6 +1207,10 @@ fn load_console(
                 name: name.to_owned(),
             });
         }
+    }
+
+    if let Some(vcas) = obj.get("vcas") {
+        load_vcas(vcas, &path.field("vcas"), &mut console)?;
     }
 
     let returns_path = path.field("returns");
@@ -2786,6 +2888,32 @@ fn write_console(w: &mut String, console: &Console) {
                     json_str(&b.bus.0),
                     json_str(&b.name)
                 )
+            }),
+        );
+        let _ = writeln!(w, ",");
+    }
+    if !console.vcas.is_empty() {
+        let _ = write!(w, "    \"vcas\": ");
+        list(
+            w,
+            "    ",
+            console.vcas.iter().map(|v| {
+                let mut out = format!("{{\"id\": {}, \"name\": {}", v.id, json_str(&v.name));
+                if let Some([r, g, b]) = v.color {
+                    let _ = write!(out, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
+                }
+                if v.level_db != 0.0 {
+                    let _ = write!(out, ", \"level_db\": {}", f32_text(v.level_db));
+                }
+                if v.mute {
+                    out.push_str(", \"mute\": true");
+                }
+                if v.solo {
+                    out.push_str(", \"solo\": true");
+                }
+                let members: Vec<String> = v.members.iter().map(|m| json_str(&m.0)).collect();
+                let _ = write!(out, ", \"members\": [{}]}}", members.join(", "));
+                out
             }),
         );
         let _ = writeln!(w, ",");

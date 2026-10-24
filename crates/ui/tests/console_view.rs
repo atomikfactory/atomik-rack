@@ -377,6 +377,8 @@ fn right_click_on_a_name_does_not_remove_the_channel() {
     let p = v.name_center(&key("ch-lead")).unwrap();
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
     assert!(a.is_empty(), "{a:?}");
+    // It opens the VCA menu, which only acts when an entry is picked.
+    assert_eq!(v.menu_items(), ["New VCA..."]);
 }
 
 #[test]

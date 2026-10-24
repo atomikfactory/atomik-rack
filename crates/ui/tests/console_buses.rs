@@ -540,7 +540,7 @@ fn the_bus_context_menu_offers_rename_and_delete() {
         a.is_empty(),
         "a bus is not removed by the click itself: {a:?}"
     );
-    assert_eq!(v.menu_items(), ["Rename", "Delete bus"]);
+    assert_eq!(v.menu_items(), ["Rename", "Delete bus", "New VCA..."]);
     let a = pick(&mut v, &doc, &reg, "Delete bus");
     assert_eq!(
         console_cmds(&a),
@@ -555,12 +555,12 @@ fn the_bus_context_menu_offers_rename_and_delete() {
 }
 
 #[test]
-fn right_click_on_a_channel_name_does_nothing() {
+fn right_click_on_a_channel_name_opens_only_the_vca_menu() {
     let (doc, reg, mut v) = setup();
     let p = name_at(&v, "ch-lead");
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
     assert!(a.is_empty(), "{a:?}");
-    assert!(v.menu_items().is_empty());
+    assert_eq!(v.menu_items(), ["New VCA..."]);
 }
 
 // ---------------------------------------------------------------- reordering
