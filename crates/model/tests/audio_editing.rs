@@ -703,3 +703,31 @@ fn bad_new_fields_name_their_json_path() {
         assert!(msg.contains(needle), "{msg}");
     }
 }
+
+#[test]
+fn crossfades_lists_the_overlaps_the_regions_mix() {
+    use atomik_model::song::crossfades;
+    let (reg, mut d) = setup();
+    let a = put(&mut d, &reg, 0, 2 * PPQ, audio(1));
+    let b = put(&mut d, &reg, PPQ, 2 * PPQ, audio(2));
+    // A clip inside another and a clip with no crossfade give none.
+    put(&mut d, &reg, 6 * PPQ, 4 * PPQ, audio(1));
+    let inside = put(&mut d, &reg, 7 * PPQ, PPQ, audio(2));
+    let off = put(&mut d, &reg, 12 * PPQ, 2 * PPQ, audio(1));
+    let _ = off;
+    let off2 = put(&mut d, &reg, 13 * PPQ, 2 * PPQ, audio(2));
+    edit(&mut d, &reg, off2, |x| x.xfade = None).unwrap();
+    let lane = &d.doc().song.tracks[0].lanes[0];
+    let x = crossfades(lane);
+    assert_eq!(x.len(), 1, "{x:?}");
+    assert_eq!(
+        (x[0].later, x[0].earlier, x[0].start, x[0].end),
+        (b, a, PPQ, 2 * PPQ)
+    );
+    assert_eq!(x[0].curve, FadeCurve::EqualPower);
+    assert!(x.iter().all(|z| z.later != inside && z.later != off2));
+    // The regions carry the same zone.
+    let r = flat(&d);
+    let xin = r.iter().find(|r| r.x_in > 0).unwrap();
+    assert_eq!((xin.song_start_frame, xin.x_in), (BEAT_F, BEAT_F));
+}

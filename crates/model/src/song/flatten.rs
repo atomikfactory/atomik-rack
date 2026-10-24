@@ -347,6 +347,62 @@ impl AudioRegion {
     }
 }
 
+/// A crossfade between two audio clips of a lane, in ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Crossfade {
+    /// The clip that fades in (the later one).
+    pub later: ClipId,
+    /// The clip that fades out (the earlier one).
+    pub earlier: ClipId,
+    /// First tick of the overlap (the later clip's start).
+    pub start: i64,
+    /// End tick of the overlap.
+    pub end: i64,
+    /// The later clip's crossfade shape.
+    pub curve: FadeCurve,
+}
+
+/// The crossfades of an audio lane: the rule of [`flatten_audio`] on ticks. A clip with
+/// `xfade: Some(curve)` whose first audible span begins at its own start, right after an
+/// audible span of an earlier audio clip that continues past that start and ends inside the
+/// later clip, crossfades over `[start, min(earlier end, end of the later clip's span))`.
+pub fn crossfades(lane: &Lane) -> Vec<Crossfade> {
+    let by_id: BTreeMap<ClipId, &Clip> = lane.clips.iter().map(|c| (c.id, c)).collect();
+    let spans = audible_spans(lane);
+    let mut out = Vec::new();
+    for (k, &(id, a, b)) in spans.iter().enumerate() {
+        let clip = by_id[&id];
+        let ClipContent::Audio(audio) = &clip.content else {
+            continue;
+        };
+        let (Some(curve), true, Some(&(pid, _, pend))) = (
+            audio.xfade,
+            a == clip.start,
+            k.checked_sub(1).and_then(|p| spans.get(p)),
+        ) else {
+            continue;
+        };
+        let Some(prev) = by_id.get(&pid) else {
+            continue;
+        };
+        if pend == a
+            && prev.content.is_audio()
+            && prev.end() > a
+            && prev.end() <= clip.end()
+            && prev.end().min(b) > a
+        {
+            out.push(Crossfade {
+                later: id,
+                earlier: pid,
+                start: a,
+                end: prev.end().min(b),
+                curve,
+            });
+        }
+    }
+    out
+}
+
 /// The audio regions an audio track plays, sorted by start frame (rules in the module docs).
 ///
 /// - Only tracks that play: a track that [`effective_tracks`] leaves out (muted, or another
@@ -415,7 +471,8 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             x_curve: FadeCurve::EqualPower,
         }
     };
-    for (k, &(id, a, b)) in spans.iter().enumerate() {
+    let zones = crossfades(lane);
+    for &(id, a, b) in &spans {
         let clip = by_id[&id];
         let ClipContent::Audio(audio) = &clip.content else {
             continue;
@@ -425,24 +482,19 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             continue;
         }
         let mut here = region(clip, audio, start, end);
-        let prev_span = k.checked_sub(1).and_then(|p| spans.get(p));
-        if let (Some(curve), true, Some(&(pid, _, pend))) =
-            (audio.xfade, a == clip.start, prev_span)
-            && pend == a
-            && let Some(prev) = by_id.get(&pid)
-            && let ClipContent::Audio(prev_audio) = &prev.content
-            && prev.end() > a
-            && prev.end() <= clip.end()
-        {
-            let zone_end = map.song_frame(prev.end().min(b), sr);
-            if zone_end > start {
-                let z = zone_end - start;
-                let mut tail = region(prev, prev_audio, start, zone_end);
-                tail.x_out = z;
-                tail.x_curve = curve;
-                here.x_in = z;
-                here.x_curve = curve;
-                out.push(tail);
+        if let Some(x) = zones.iter().find(|x| x.later == id && x.start == a) {
+            let prev = by_id[&x.earlier];
+            if let ClipContent::Audio(prev_audio) = &prev.content {
+                let zone_end = map.song_frame(x.end, sr);
+                if zone_end > start {
+                    let z = zone_end - start;
+                    let mut tail = region(prev, prev_audio, start, zone_end);
+                    tail.x_out = z;
+                    tail.x_curve = x.curve;
+                    here.x_in = z;
+                    here.x_curve = x.curve;
+                    out.push(tail);
+                }
             }
         }
         out.push(here);

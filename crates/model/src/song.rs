@@ -979,8 +979,8 @@ pub fn empty_song(bpm: f64) -> Song {
 mod flatten;
 
 pub use flatten::{
-    AudioRegion, audible_spans, effective_tracks, flatten_audio, flatten_automation,
-    flatten_controllers, flatten_notes,
+    AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
+    flatten_automation, flatten_controllers, flatten_notes,
 };
 
 /// Lowest accepted audio clip gain in dB.
