@@ -18,7 +18,9 @@ use atomik_ui::display_list::Op;
 use atomik_ui::event::NumpadKey;
 use atomik_ui::keymap::Os;
 use atomik_ui::kurbo::{Affine, Point, Size, Vec2};
-use atomik_ui::{DisplayList, Key, Modifiers, PointerButton, TextEngine, UiEvent};
+use atomik_ui::{
+    DisplayList, Key, Modifiers, NotesMode, NotesValues, PointerButton, TextEngine, UiEvent,
+};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -81,6 +83,11 @@ pub const TOOLS: &[Tool] = &[
         name: "session_midi",
         definition: midi_def,
         run: midi,
+    },
+    Tool {
+        name: "session_audio_notes",
+        definition: audio_notes_def,
+        run: audio_notes,
     },
     Tool {
         name: "session_bounce",
@@ -956,6 +963,141 @@ fn midi(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "document_changed": core.doc() != &before,
         "tracks": core.doc().song.tracks.len(),
         "status_text": session.shell().status_text(),
+        "dirty": core.is_dirty(),
+        "can_undo": core.document().can_undo(),
+    })))
+}
+
+// ------------------------------------------------------------ session_audio_notes
+
+fn audio_notes_def() -> Value {
+    definition(
+        "session_audio_notes",
+        "Runs Audio > Audio to Notes... on the first selected audio clip (select one with session_pointer first) with the given settings, waits for the worker and returns what it said. Anything left out takes the panel's default. The result is one undo step: a note clip that starts and ends with the audio clip, on a new poly synth track or on the note track selected in the rack. Returns `started`, `message` (the toast), `document_changed`, `can_undo`, and for a result the new clip's `notes` (`tick`, `length`, `key`, `velocity`, at most 500) with their `count`.",
+        &[
+            ("mode", "string", "pitched (one voice, default) or drums."),
+            ("sensitivity", "integer", "0 to 100 (default 50)."),
+            (
+                "min_note_ms",
+                "integer",
+                "Pitched: the shortest note, in ms (default 60).",
+            ),
+            (
+                "key_lo",
+                "integer",
+                "Pitched: lowest MIDI key (default 36).",
+            ),
+            (
+                "key_hi",
+                "integer",
+                "Pitched: highest MIDI key (default 96).",
+            ),
+            (
+                "drift_cents",
+                "integer",
+                "Pitched: pitch drift inside one note, in cents (default 70).",
+            ),
+            (
+                "open_hats",
+                "boolean",
+                "Drums: tell open hats from closed ones (default true).",
+            ),
+            (
+                "grid",
+                "integer",
+                "Beats timing: round starts to 1/N notes, N of 4, 8, 16 or 32 (default 0: free).",
+            ),
+            (
+                "new_track",
+                "boolean",
+                "Put the notes on a new track (default true), else on the selected note track.",
+            ),
+        ],
+        &[],
+    )
+}
+
+fn audio_notes(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let defaults = NotesValues::default();
+    let int = |name: &str, default: u32| -> Result<u32, String> {
+        args.opt_u64(name)?.map_or(Ok(default), |v| {
+            u32::try_from(v).map_err(|_| format!("{name} is out of range"))
+        })
+    };
+    let key = |name: &str, default: u8| -> Result<u8, String> {
+        let v = int(name, u32::from(default))?;
+        u8::try_from(v)
+            .ok()
+            .filter(|k| *k <= 127)
+            .ok_or_else(|| format!("{name} is not a MIDI key (0 to 127)"))
+    };
+    let mode = match args.opt_str("mode")? {
+        None => defaults.mode,
+        Some(id) => {
+            NotesMode::from_id(id).ok_or_else(|| format!("mode {id:?} is not pitched or drums"))?
+        }
+    };
+    let grid = int("grid", defaults.grid)?;
+    if ![0, 4, 8, 16, 32].contains(&grid) {
+        return Err("grid is not 0, 4, 8, 16 or 32".to_owned());
+    }
+    let values = NotesValues {
+        mode,
+        sensitivity: int("sensitivity", defaults.sensitivity)?.min(100),
+        min_note_ms: int("min_note_ms", defaults.min_note_ms)?,
+        key_lo: key("key_lo", defaults.key_lo)?,
+        key_hi: key("key_hi", defaults.key_hi)?,
+        drift_cents: int("drift_cents", defaults.drift_cents)?,
+        open_hats: args.opt_bool("open_hats")?.unwrap_or(defaults.open_hats),
+        grid,
+        new_track: args.opt_bool("new_track")?.unwrap_or(defaults.new_track),
+    };
+    if values.key_lo > values.key_hi {
+        return Err("key_lo is above key_hi".to_owned());
+    }
+    let session = server.require_session()?;
+    // The audio of a project that was just opened loads on workers: let it arrive first.
+    session.shell_mut().core_mut().wait_background();
+    let before = session.shell().core().doc().clone();
+    let started = session.shell_mut().audio_to_notes(&values);
+    if started {
+        session.shell_mut().core_mut().wait_background();
+    }
+    session.shell_mut().frame();
+    let core = session.shell().core();
+    let notes: Vec<Value> = core
+        .arrangement()
+        .selected_clips()
+        .first()
+        .and_then(|id| core.doc().song.clip(*id))
+        .map(|(_, _, clip)| match &clip.content {
+            atomik_model::ClipContent::Notes(n) if core.doc() != &before => n
+                .iter()
+                .take(500)
+                .map(|n| {
+                    json!({"tick": n.tick, "length": n.length, "key": n.key, "velocity": n.velocity})
+                })
+                .collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+    let count = match core
+        .arrangement()
+        .selected_clips()
+        .first()
+        .and_then(|id| core.doc().song.clip(*id))
+        .map(|(_, _, c)| &c.content)
+    {
+        Some(atomik_model::ClipContent::Notes(n)) if core.doc() != &before => n.len(),
+        _ => 0,
+    };
+    Ok(ToolOutput::json(&json!({
+        "started": started,
+        "message": core.last_rejection(),
+        "document_changed": core.doc() != &before,
+        "tracks": core.doc().song.tracks.len(),
+        "count": count,
+        "notes": notes,
         "dirty": core.is_dirty(),
         "can_undo": core.document().can_undo(),
     })))

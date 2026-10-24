@@ -248,6 +248,10 @@
 //! - **Strip silence.** [`SilenceView`] is the modal panel of threshold, minimum silence, padding
 //!   and fade settings; it emits [`UiAction::StripSilence`] (`APPLY`, `CLOSE`) and the app feeds it
 //!   with [`SilenceView::set_target`].
+//! - **Audio to notes.** [`NotesView`] is the modal panel of mode (pitched voice or drums),
+//!   sensitivity, minimum note, range, pitch drift, open hats, Beats timing and target; it emits
+//!   [`UiAction::AudioToNotes`] (`EXTRACT`, `CLOSE`) and the app feeds it with
+//!   [`NotesView::set_target`].
 //! - **Warp.** [`WarpView`] is the modal panel of warp on or off, mode, source tempo and
 //!   transposition; it emits [`UiAction::Warp`] (`APPLY`, `DETECT TEMPO`, `CLOSE`) and the app feeds
 //!   it with [`WarpView::set_target`] and [`WarpView::set_values`].
@@ -293,6 +297,7 @@ pub mod keymap;
 pub mod marker_edit;
 pub mod master_panel;
 pub mod modsrc_panel;
+pub mod notes_panel;
 pub mod paint;
 pub mod piano_roll;
 pub mod plugin_banner;
@@ -340,6 +345,7 @@ pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
 pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
 pub use marker_edit::MarkSel;
+pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use piano_roll::PianoRollView;
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};

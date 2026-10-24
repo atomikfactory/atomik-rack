@@ -86,6 +86,7 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 | `session_save` | `path` | Saves the document as a project. |
 | `session_relink` | `file`, `asset`, `folder` | Relinks the missing audio of the open project, answering the dialogs of File > Relink Missing Audio... (`session_command` `file.relink_audio` opens the list; its LOCATE... and SEARCH FOLDER... buttons raise native dialogs, reported as `pick_relink_path`). With `file`, that audio file replaces the missing asset `asset` (its file name in any case, or the start of its id; optional when exactly one is missing); with `folder`, the folder is searched and the missing files matched by name. Waits for the import and returns `relinked`, `still_missing`, `document_changed`, `message` (the toast), `dirty` and `can_undo`. |
 | `session_midi` | `action`, `file`, `scope`, `as_song` | Imports or exports a Standard MIDI File, answering the dialogs of File > Import MIDI... and File > Export MIDI... (`session_command` `file.import_midi`, `file.import_midi_song`, `file.export_midi_clip`, `file.export_midi_track` and `file.export_midi_song` raise native dialogs, reported as `pick_midi_file`). `action: import` reads `file`: one clip on the selected note track, or new tracks when none is selected; with `as_song`, new tracks from the start plus the file's tempo map, meter and markers. `action: export` writes `file` for `scope` (`clip` the selected note clip, `track` the selected note track, `song` every note track, the default). One undo step per import. Returns `message` (the toast), `document_changed`, `tracks`, `dirty`, `can_undo` and, for an export, `bytes`. |
+| `session_audio_notes` | `mode`, `sensitivity`, `min_note_ms`, `key_lo`, `key_hi`, `drift_cents`, `open_hats`, `grid`, `new_track` | Runs Audio > Audio to Notes... on the first selected audio clip (select one with `session_pointer`; the command `sequencer.audio_to_notes` only opens the panel) with these settings (the panel's defaults for what is left out), waits for the worker and returns `started`, `message` (the toast), `document_changed`, `tracks`, `dirty`, `can_undo` and, for a result, `count` and the new clip's `notes` (`tick`, `length`, `key`, `velocity`, at most 500). One undo step; a result with no notes is a message and no change. |
 | `session_bounce` | as `bounce` without `path` | Bounces the document as it is now, edits included, saved or not, and returns the report. Audio clips play from the session's bundle (the project's own folder, or the scratch bundle of this session's imports); a project with missing audio is refused until it is relinked. |
 | `session_close` | | Closes the session without saving. |
 
@@ -135,6 +136,14 @@ Freeze Track and its siblings are Track menu commands (`session_commands` with `
 3. `session_command` `sequencer.freeze_track`: the call waits for the render and answers with `message` `Froze <track>`. `session_status` shows `frozen` on the track (`start`, `length`, `asset`, the frozen `effects`), its own `lanes` still listed.
 4. `session_bounce` into `after.wav` and `compare_audio` the two: a chain without latency or tail is `bit_identical`; with a reverb the difference is below -90 dBFS (the tail is cut there), and a chain with latency is the same audio earlier by that latency.
 5. `edit.undo` brings the track back in one step; `session_texts` lists `(frozen)` in the lane while it is frozen.
+
+**Audio to notes**
+
+`sequencer.audio_to_notes` (Audio menu, enabled with an audio clip selected) only opens the panel; `session_audio_notes` is the headless way to run it with settings. To check it on a generated file:
+
+1. Write a test signal (a sine melody, or a click and noise pattern for drums) as a WAV file, `session_open` a project whose audio track plays it (build one by importing the file in an app test, or open a saved project), and select the clip with `session_pointer` (`session_texts` finds the clip label; click just under it).
+2. `session_audio_notes` with `mode: pitched` (or `drums`) and, if wanted, `grid`, `key_lo` and `key_hi`: the call waits for the worker and answers with the new clip's `notes`; compare their `key` and `tick` with what you generated (at 120 BPM a second is 30 720 ticks). A project's `session_status` lists the new track's note lane.
+3. `edit.undo` removes the track and the clip in one step. A file with no notes in it answers `No notes found in the clip` and changes nothing; a clip warped in Repitch mode is refused with a message.
 
 **Automation recording**
 

@@ -55,6 +55,7 @@ fn every_session_tool_needs_an_open_session() {
             "session_midi",
             json!({"action": "export", "file": "target/tmp/never.mid"}),
         ),
+        ("session_audio_notes", json!({})),
         ("session_bounce", json!({})),
     ] {
         let r = call(&mut s, tool, args);
@@ -1407,4 +1408,168 @@ fn a_freeze_that_is_not_waited_for_can_be_cancelled() {
         "{message}"
     );
     assert!(!r["status_text"].as_str().unwrap().contains("Freezing"));
+}
+
+/// A saved project with one audio track playing a sine melody (A3, E4 and C5 for 0.4 s each with
+/// a gap) that the test generated, and the project file's path.
+fn melody_project(tag: &str) -> String {
+    use atomik_app::AppCore;
+    use atomik_app::session::{LiveSession, NullBackend};
+    use atomik_app::settings::AudioSettings;
+    use atomik_render::wav::{SampleFormat, write_wav_file};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("mcp-notes-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("source")).unwrap();
+    let mut core = AppCore::with_doc(
+        LiveSession::new(NullBackend, AudioSettings::default(), false),
+        atomik_model::empty_doc(),
+        None,
+    );
+    let mut x = vec![0.0f32; 48_000 * 2];
+    for (hz, from) in [(220.0f64, 0.1f64), (329.63, 0.7), (523.25, 1.3)] {
+        let a = (from * 48_000.0) as usize;
+        for i in 0..(0.4 * 48_000.0) as usize {
+            let t = i as f64 / 48_000.0;
+            let env = (i as f64 / 240.0)
+                .min(((19_200 - i) as f64) / 240.0)
+                .min(1.0);
+            x[a + i] = (0.5 * env * (std::f64::consts::TAU * hz * t).sin()) as f32;
+        }
+    }
+    let file = dir.join("source").join("tune.wav");
+    write_wav_file(&file, &[x], 48_000, SampleFormat::F32).unwrap();
+    core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
+    core.wait_background();
+    core.save_as(&dir.join("song.atomik")).unwrap();
+    dir.join("song")
+        .join("song.atomik")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Selects the audio clip the arrangement draws by clicking under its label (the smallest text
+/// that reads `tune`; the larger ones are the rack's card and the track header).
+fn select_audio_clip(s: &mut Server) {
+    let v = ok(
+        s,
+        "session_texts",
+        json!({"contains": "tune", "limit": 1000}),
+    );
+    let label = v["texts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["text"] == "tune")
+        .min_by(|a, b| {
+            a["size"]
+                .as_f64()
+                .unwrap()
+                .total_cmp(&b["size"].as_f64().unwrap())
+        })
+        .expect("the clip label is on screen")
+        .clone();
+    ok(
+        s,
+        "session_pointer",
+        json!({"action": "click", "x": label["x"].as_f64().unwrap() + 10.0, "y": label["y"].as_f64().unwrap() + 6.0}),
+    );
+}
+
+#[test]
+fn audio_to_notes_runs_in_a_session_on_a_generated_file_and_undoes_in_one_step() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({"path": melody_project("a")}));
+    // The command opens the panel; it needs a selected audio clip.
+    let row = command_row(&mut s, "sequencer.audio_to_notes");
+    assert_eq!(row["enabled"], false);
+    let r = call(&mut s, "session_audio_notes", json!({}));
+    assert!(
+        r.is_error || r.parsed()["started"] == false,
+        "{}",
+        r.first_text()
+    );
+    select_audio_clip(&mut s);
+    assert_eq!(
+        command_row(&mut s, "sequencer.audio_to_notes")["enabled"],
+        true
+    );
+    let before = ok(&mut s, "session_status", json!({}));
+    let tracks = before["document"]["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .len();
+    let r = ok(&mut s, "session_audio_notes", json!({}));
+    assert_eq!(r["started"], true, "{r}");
+    assert_eq!(r["document_changed"], true, "{r}");
+    assert_eq!(r["count"], 3);
+    let keys: Vec<i64> = r["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["key"].as_i64().unwrap())
+        .collect();
+    assert_eq!(keys, vec![57, 64, 72], "{r}");
+    // 120 BPM: a second is 30 720 ticks. The first note starts 0.1 s in.
+    let first = r["notes"][0]["tick"].as_i64().unwrap();
+    assert!((first - 3_072).abs() < 800, "{first}");
+    assert!(r["message"].as_str().unwrap().contains("3 notes"), "{r}");
+    // The inspection shows the new track with its note clip.
+    let after = ok(&mut s, "session_status", json!({}));
+    let list = after["document"]["song"]["tracks"].as_array().unwrap();
+    assert_eq!(list.len(), tracks + 1);
+    let lane = &list.last().unwrap()["lanes"][0];
+    assert_eq!(lane["kind"], "notes");
+    assert_eq!(
+        (lane["clips"].as_u64(), lane["items"].as_u64()),
+        (Some(1), Some(3)),
+        "{lane}"
+    );
+    // One undo step takes it all away.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    let undone = ok(&mut s, "session_status", json!({}));
+    assert_eq!(
+        undone["document"]["song"]["tracks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        tracks
+    );
+    ok(&mut s, "session_close", json!({}));
+}
+
+#[test]
+fn audio_to_notes_validates_its_arguments_and_reports_nothing_found() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({"path": melody_project("b")}));
+    select_audio_clip(&mut s);
+    for args in [
+        json!({"mode": "vocal"}),
+        json!({"grid": 3}),
+        json!({"key_lo": 200}),
+        json!({"key_lo": 90, "key_hi": 40}),
+        json!({"sensitivity": "high"}),
+    ] {
+        let r = call(&mut s, "session_audio_notes", args.clone());
+        assert!(r.is_error, "{args}");
+    }
+    // A range that holds none of the notes finds nothing, and the document stays as it was.
+    let r = ok(
+        &mut s,
+        "session_audio_notes",
+        json!({"key_lo": 100, "key_hi": 110}),
+    );
+    assert_eq!(r["started"], true);
+    assert_eq!(r["document_changed"], false);
+    assert!(
+        r["message"].as_str().unwrap().contains("No notes found"),
+        "{r}"
+    );
+    // Drums on a tonal clip still work as a command (it finds what hits it can).
+    let r = ok(
+        &mut s,
+        "session_audio_notes",
+        json!({"mode": "drums", "grid": 16}),
+    );
+    assert_eq!(r["started"], true);
+    ok(&mut s, "session_close", json!({}));
 }
