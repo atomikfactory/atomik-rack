@@ -426,6 +426,11 @@ silently; `confirm` true accepts a discard-changes question. A freeze or bounce 
                 "boolean",
                 "Wait for a freeze or bounce render to finish (default true).",
             ),
+            (
+                "arg",
+                "string",
+                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca and mixer.delete_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels).",
+            ),
         ],
         &["id"],
     )
@@ -433,6 +438,7 @@ silently; `confirm` true accepts a discard-changes question. A freeze or bounce 
 
 fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let id = args.str("id")?;
+    let arg = args.opt_str("arg")?;
     let confirm = args.opt_bool("confirm")?.unwrap_or(false);
     let wait = args.opt_bool("wait")?.unwrap_or(true);
     let session = server.require_session()?;
@@ -446,8 +452,14 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     if !item.enabled {
         return Err(format!("`{id}` ({}) is disabled right now", item.label));
     }
+    // A command that takes an argument the menu cannot spell (a group id) is built from it.
+    let command = match arg {
+        None => item.command,
+        Some(a) => AppCommand::from_command(id, Some(a))
+            .ok_or_else(|| format!("`{id}` does not take the argument `{a}`"))?,
+    };
     let shell = session.shell_mut();
-    let mut raised = shell.execute(item.command);
+    let mut raised = shell.execute(command);
     let mut done = Vec::new();
     while let Some(r) = raised.pop() {
         match r {
