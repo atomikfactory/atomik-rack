@@ -288,16 +288,28 @@ impl AudioClipContent {
             .round()
             .max(0.0) as u64;
         let offset = at.min(asset_frames);
-        if self.warp.markers.is_empty() {
-            return (offset, Vec::new());
+        (
+            offset,
+            self.warp
+                .markers_after(tick - start, self.source_offset, offset),
+        )
+    }
+}
+
+impl WarpSettings {
+    /// The markers of the part of a clip that starts `shift` ticks after the clip's start (a
+    /// negative shift: before it) when its source offset moves from `old_offset` to
+    /// `new_offset`: every marker re-based on the new start, with one at its tick 0 so the
+    /// stretch before the first remaining marker stays what it was (markers that fall before
+    /// the new start or the new offset are dropped). Empty without markers.
+    pub fn markers_after(&self, shift: i64, old_offset: u64, new_offset: u64) -> Vec<WarpMarker> {
+        if self.markers.is_empty() {
+            return Vec::new();
         }
-        let shift = tick - start;
         let mut markers = vec![WarpMarker { tick: 0, source: 0 }];
-        for m in &self.warp.markers {
-            let (t, s) = (
-                m.tick - shift,
-                m.source as i128 + self.source_offset as i128 - offset as i128,
-            );
+        for m in &self.markers {
+            let t = m.tick - shift;
+            let s = i128::from(m.source) + i128::from(old_offset) - i128::from(new_offset);
             if t > 0 && s > 0 && markers.len() < MAX_WARP_MARKERS {
                 markers.push(WarpMarker {
                     tick: t,
@@ -315,7 +327,7 @@ impl AudioClipContent {
                 clean.push(m);
             }
         }
-        (offset, clean)
+        clean
     }
 }
 
