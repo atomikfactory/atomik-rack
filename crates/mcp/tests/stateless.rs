@@ -620,3 +620,79 @@ fn project_inspect_lists_the_folders_colours_comments_and_folds() {
     assert_eq!(tracks[1]["lanes"][1]["folded"], true);
     assert_eq!(tracks[1]["lanes"][0]["take_groups"][0]["open"], true);
 }
+
+#[test]
+fn project_inspect_lists_the_audio_clips_with_their_editing() {
+    use atomik_model::{
+        AudioClipContent, ClipContent, Command, Document, FadeCurve, GainPoint, SongCommand,
+    };
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/audio-demo.atomik")).unwrap();
+    let mut d = Document::new(atomik_model::load_project(&text, &reg).unwrap());
+    let (device, clip) = {
+        let t = d.doc().song.tracks.iter().find(|t| t.is_audio()).unwrap();
+        (t.device.clone(), t.lanes[0].clips[0].clone())
+    };
+    let ClipContent::Audio(mut a) = clip.content.clone() else {
+        panic!("an audio clip")
+    };
+    // The plain clip first: no editing fields beyond the always-present ones.
+    let path = tmp("audio-plain.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let plain = call(&mut s, "project_inspect", json!({"path": path})).parsed();
+    let lane = plain["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["device"] == device.as_str())
+        .unwrap()["lanes"][0]
+        .clone();
+    let first = &lane["audio_clips"][0];
+    assert_eq!(first["id"].as_u64(), Some(clip.id.0));
+    assert!(first.get("reverse").is_none() && first.get("envelope").is_none());
+    assert_eq!(first["fade_curve"], a.fade_curve.id());
+    // Reversed, with an envelope and another curve and crossfade.
+    a.reverse = true;
+    a.fade_curve = FadeCurve::SCurve;
+    a.xfade = None;
+    a.envelope = vec![
+        GainPoint {
+            frame: 0,
+            gain_db: -6.0,
+        },
+        GainPoint {
+            frame: 100,
+            gain_db: 0.0,
+        },
+    ];
+    d.apply(
+        Command::Song(SongCommand::SetAudioClip {
+            id: clip.id,
+            start: clip.start,
+            length: clip.length,
+            muted: false,
+            content: AudioClipContent { ..a },
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let path = tmp("audio-edited.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let v = r.parsed();
+    let lane = &v["song"]["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["device"] == device.as_str())
+        .unwrap()["lanes"][0];
+    let c = &lane["audio_clips"][0];
+    assert_eq!(c["reverse"], true);
+    assert_eq!(c["envelope"], 2);
+    assert_eq!(c["fade_curve"], "s_curve");
+    assert_eq!(c["crossfade"], "off");
+    assert!(c.get("crossfade_ticks").is_none());
+}
