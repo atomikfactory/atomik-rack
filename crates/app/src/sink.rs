@@ -505,3 +505,44 @@ impl EngineSink for RecordingSink {
         !self.previews.is_empty()
     }
 }
+
+/// Test support: after the last engine reset the engine got the new devices first and then a
+/// routing that names every one of them. A routing sent before the devices leaves a new track
+/// unconnected, so it makes no sound.
+#[cfg(test)]
+pub(crate) fn assert_new_devices_routed(calls: &[SinkCall]) {
+    let last_reset = calls
+        .iter()
+        .rposition(|c| matches!(c, SinkCall::Reset { .. }))
+        .map_or(0, |i| i + 1);
+    let calls = &calls[last_reset..];
+    let new: Vec<_> = calls
+        .iter()
+        .filter_map(|c| match c {
+            SinkCall::Insert { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !new.is_empty(),
+        "the track and its channel are inserted: {calls:?}"
+    );
+    let routing = calls
+        .iter()
+        .rposition(|c| matches!(c, SinkCall::Routing(_)))
+        .expect("a routing is sent");
+    let last_insert = calls
+        .iter()
+        .rposition(|c| matches!(c, SinkCall::Insert { .. }))
+        .unwrap();
+    assert!(
+        last_insert < routing,
+        "routing before the devices: {calls:?}"
+    );
+    let SinkCall::Routing(ids) = &calls[routing] else {
+        unreachable!()
+    };
+    for id in new {
+        assert!(ids.contains(&id), "{id:?} is not routed: {ids:?}");
+    }
+}

@@ -32,6 +32,29 @@ fn layout(song: &Song, order: Vec<DeviceKey>, org: &Organisation) -> Edit {
     }
 }
 
+/// The layout edit that puts the new track `new` in the folder of `source` and gives it the
+/// colour `source` shows (its own, else its device's); `None` when there is nothing to copy.
+/// `doc` already holds `new`, next to `source`.
+pub(crate) fn join_track(doc: &RackDoc, new: &DeviceKey, source: &DeviceKey) -> Option<Edit> {
+    let song = &doc.song;
+    let mut org = song.normalised_org();
+    let mut changed = false;
+    if let Some(&group) = org.members.get(source) {
+        org.members.insert(new.clone(), group);
+        changed = true;
+    }
+    let color = org
+        .colors
+        .get(source)
+        .copied()
+        .or_else(|| doc.device(source).and_then(|d| d.color));
+    if let Some(color) = color {
+        org.colors.insert(new.clone(), color);
+        changed = true;
+    }
+    changed.then(|| layout(song, order_of(song), &org))
+}
+
 /// The folder `id` of a cleaned organisation.
 fn group_mut(org: &mut Organisation, id: u32) -> Result<&mut TrackGroup, ModelError> {
     org.groups

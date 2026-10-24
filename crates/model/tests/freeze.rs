@@ -515,6 +515,7 @@ fn a_rendered_track_adds_one_clip_and_mutes_the_originals_in_one_step() {
     d.apply(
         sc(SongCommand::AddRenderedTrack {
             name: Some("Bounce".into()),
+            after: None,
             start: BAR,
             length: BAR,
             audio: audio(2),
@@ -537,6 +538,7 @@ fn a_rendered_track_adds_one_clip_and_mutes_the_originals_in_one_step() {
         .apply(
             sc(SongCommand::AddRenderedTrack {
                 name: None,
+                after: None,
                 start: 0,
                 length: BAR,
                 audio: audio(9),
@@ -547,6 +549,193 @@ fn a_rendered_track_adds_one_clip_and_mutes_the_originals_in_one_step() {
         .expect_err("asset not in the pool");
     assert!(matches!(e, ModelError::UnknownKey(_)));
     assert_eq!(d.doc(), &before);
+}
+
+/// The engine gets a device before the routing that names it: every `DeviceAdded` comes before
+/// the one `RoutingChanged`, and the song and console follow.
+fn assert_new_track_synced(ops: &[SyncOp], added: usize) {
+    let at = |f: &dyn Fn(&SyncOp) -> bool| ops.iter().position(f);
+    let routing = at(&|o| matches!(o, SyncOp::RoutingChanged)).expect("the routing is rebuilt");
+    let last_added = ops
+        .iter()
+        .rposition(|o| matches!(o, SyncOp::DeviceAdded(_)))
+        .expect("the track and its channel are inserted");
+    assert_eq!(
+        ops.iter()
+            .filter(|o| matches!(o, SyncOp::DeviceAdded(_)))
+            .count(),
+        added,
+        "{ops:?}"
+    );
+    assert!(
+        last_added < routing,
+        "the routing names devices the engine does not have yet: {ops:?}"
+    );
+    assert_eq!(
+        ops.iter()
+            .filter(|o| matches!(o, SyncOp::RoutingChanged))
+            .count(),
+        1,
+        "{ops:?}"
+    );
+    assert!(ops.contains(&SyncOp::SongChanged) && ops.contains(&SyncOp::ConsoleChanged));
+}
+
+#[test]
+fn a_rendered_track_is_routed_like_an_added_audio_track() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    let ops = d
+        .apply(
+            sc(SongCommand::AddRenderedTrack {
+                name: Some("Bounce".into()),
+                after: None,
+                start: 0,
+                length: BAR,
+                audio: audio(2),
+                mute: vec![],
+            }),
+            &reg,
+        )
+        .unwrap();
+    assert_new_track_synced(&ops, 2);
+    let doc = d.doc();
+    let track = doc.song.tracks.last().unwrap();
+    let channel = doc.console.channel_of(&track.device).expect("a channel");
+    // The same wiring as a track that was added the usual way.
+    let mut plain = rack(&reg, 0);
+    plain
+        .apply(sc(SongCommand::AddAudioTrack { name: None }), &reg)
+        .unwrap();
+    let usual = plain.doc().song.tracks.last().unwrap();
+    let usual_channel = plain.doc().console.channel_of(&usual.device).unwrap();
+    let wires = |doc: &atomik_model::RackDoc,
+                 source: &atomik_model::DeviceKey,
+                 ch: &atomik_model::DeviceKey| {
+        let mut w: Vec<(String, String)> = doc
+            .cables
+            .iter()
+            .filter(|c| &c.from.device == source || &c.to.device == source || &c.from.device == ch)
+            .map(|c| {
+                let name = |k: &atomik_model::DeviceKey| {
+                    if k == source {
+                        "track".to_owned()
+                    } else if k == ch {
+                        "channel".to_owned()
+                    } else {
+                        k.0.clone()
+                    }
+                };
+                (
+                    format!("{}:{}", name(&c.from.device), c.from.socket),
+                    format!("{}:{}", name(&c.to.device), c.to.socket),
+                )
+            })
+            .collect();
+        w.sort();
+        w
+    };
+    assert_eq!(
+        wires(doc, &track.device, &channel.channel),
+        wires(plain.doc(), &usual.device, &usual_channel.channel)
+    );
+}
+
+#[test]
+fn a_rendered_track_sits_after_its_source_in_its_folder_and_colour() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    d.apply(add(0, SYNTH, Some("bass")), &reg).unwrap();
+    d.apply(add_track("bass"), &reg).unwrap();
+    d.apply(
+        sc(SongCommand::GroupTracks {
+            devices: vec![key("synth")],
+            name: "Leads".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply(
+        sc(SongCommand::SetTrackColor {
+            device: key("synth"),
+            color: Some([10, 20, 30]),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let before = d.doc().clone();
+    d.apply(
+        sc(SongCommand::AddRenderedTrack {
+            name: None,
+            after: Some(key("synth")),
+            start: 0,
+            length: BAR,
+            audio: audio(2),
+            mute: vec![],
+        }),
+        &reg,
+    )
+    .unwrap();
+    let doc = d.doc();
+    let order: Vec<_> = doc
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.0.as_str())
+        .collect();
+    assert_eq!(order[0], "synth");
+    assert!(order[1].starts_with("audio-track"), "{order:?}");
+    assert_eq!(order[2], "bass");
+    let new = key(order[1]);
+    let org = doc.song.normalised_org();
+    assert_eq!(org.members.get(&new), org.members.get(&key("synth")));
+    assert!(org.members.contains_key(&new));
+    assert_eq!(org.colors.get(&new), Some(&[10, 20, 30]));
+    assert!(doc.console.channel_of(&new).is_some());
+    d.undo(&reg).unwrap();
+    assert_eq!(
+        d.doc(),
+        &before,
+        "one undo step removes the track, its channel and its folder entry"
+    );
+    d.redo(&reg).unwrap();
+    assert_eq!(d.doc().song.tracks.len(), before.song.tracks.len() + 1);
+}
+
+#[test]
+fn unfreeze_and_keep_the_audio_syncs_the_new_track_after_its_devices() {
+    let reg = audio_registry();
+    let mut d = rack(&reg, 0);
+    freeze(&mut d, &reg, vec![]);
+    let ops = unfreeze(&mut d, &reg, true).unwrap();
+    let added = ops
+        .iter()
+        .filter(|o| matches!(o, SyncOp::DeviceAdded(_)))
+        .count();
+    assert_eq!(added, 2, "{ops:?}");
+    let routing = ops
+        .iter()
+        .position(|o| matches!(o, SyncOp::RoutingChanged))
+        .expect("the routing is rebuilt");
+    assert!(
+        ops.iter()
+            .rposition(|o| matches!(o, SyncOp::DeviceAdded(_)))
+            .unwrap()
+            < routing,
+        "{ops:?}"
+    );
+    let order: Vec<_> = d
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.0.as_str())
+        .collect();
+    assert_eq!(order[0], "synth");
+    assert!(
+        order[1].starts_with("audio-track"),
+        "right after the unfrozen track: {order:?}"
+    );
 }
 
 #[test]

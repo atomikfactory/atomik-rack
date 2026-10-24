@@ -90,8 +90,10 @@ fn new_track_imports_name_each_track_after_its_file_and_place_clips_at_the_tick(
     let kick = wav(&t, "kick.wav", 48_000, 48_000, 1.0);
     let snare = wav(&t, "snare.wav", 24_000, 48_000, 0.5);
     let mut c = core();
+    c.sink_mut().take();
     import(&mut c, &[kick, snare], ImportTarget::NewTracks, 4 * PPQ);
     assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    crate::sink::assert_new_devices_routed(&c.sink_mut().take());
     let names: Vec<&str> = c
         .doc()
         .song

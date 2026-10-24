@@ -297,10 +297,13 @@ pub(crate) fn audio_lane(doc: &RackDoc, device: &DeviceKey) -> Result<usize, Mod
 }
 
 /// Plans `AddAudioTrack` (see the command docs).
+///
+/// The track goes to the end of the list, or right after the track of `after`.
 pub(crate) fn add_audio_track(
     doc: &RackDoc,
     registry: &Registry,
     name: Option<String>,
+    after: Option<&DeviceKey>,
 ) -> Result<Edit, ModelError> {
     let desc = rules::descriptor(registry, AUDIO_TRACK_TYPE)?;
     if name.as_ref().is_some_and(|n| n.trim().is_empty()) {
@@ -334,7 +337,10 @@ pub(crate) fn add_audio_track(
             p = with_channel;
         }
     }
-    let index = p.doc().song.tracks.len();
+    let index = match after {
+        Some(source) => track_index(doc, source)? + 1,
+        None => p.doc().song.tracks.len(),
+    };
     p.push(Edit::Track {
         index,
         old: None,
@@ -1039,7 +1045,7 @@ pub(crate) fn plan(
             let (edit, new_id) = insert_new(doc, device, lane, Clip { start, ..c.clone() })?;
             return Ok((edit, Some(new_id)));
         }
-        SongCommand::AddAudioTrack { name } => add_audio_track(doc, registry, name)?,
+        SongCommand::AddAudioTrack { name } => add_audio_track(doc, registry, name, None)?,
         SongCommand::AddAudioClip {
             device,
             start,
@@ -1098,6 +1104,7 @@ pub(crate) fn plan(
                     doc,
                     registry,
                     Some(name),
+                    Some(&device),
                     (f.start, f.length, f.audio.clone()),
                     &[],
                 )?;
@@ -1106,6 +1113,7 @@ pub(crate) fn plan(
         }
         SongCommand::AddRenderedTrack {
             name,
+            after,
             start,
             length,
             audio,
@@ -1115,6 +1123,7 @@ pub(crate) fn plan(
                 doc,
                 registry,
                 name,
+                after.as_ref(),
                 (start, length, audio),
                 &mute,
             )?;

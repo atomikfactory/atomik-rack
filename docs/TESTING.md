@@ -227,7 +227,7 @@ Hand checks, not automated (they need a real window and your ears):
 - Freeze Track up to Selected Device with the first effect selected in the rack, then change the second effect's parameters while playing: they still work, the first ones refuse with the status text.
 - Start a freeze of a long song and keep editing another track; cancel one, and check the progress text and that the window stays responsive. Edit the track being frozen before it finishes and read the message.
 - Freeze a track with a sandboxed plugin instrument and plugin effects, with the sandbox on and off (off: the message), and check that unfreezing brings the plugins back with their state.
-- Bounce in Place a few note clips and an audio clip, with and without Mute Originals, and listen to the new track against the originals; undo it in one step.
+- Bounce in Place a few note clips and an audio clip, with and without Mute Originals, and listen to the new track against the originals; undo it in one step. With Mute Originals on, play the song: the new track must be heard on its own, with a signal on its channel meter and the master meter, sit right after the source track (in its folder, in its colour) and have a channel strip like any audio track. Do the same with Unfreeze and Keep Audio.
 - Freeze a track, save, close and reopen the project, and check that the render is still there and that undo after opening does not break; move the project folder and relink.
 - Look at the snowflake and the ice-blue clip at the smallest and largest track heights, in the dark and light themes, and try to drag, split and draw on a frozen track.
 
@@ -255,6 +255,10 @@ Hand checks, not automated (they need your ears and real music):
 - Play a song the first time through with loudness on and compare the momentary, short-term and integrated readings with a trusted meter on the same bounce (they should agree within a few tenths of a LU); check that the integrated value stops moving while playback is stopped and returns to nothing on Reset.
 - Bypass both while playing: the audio does not change, the panels freeze with BYPASSED and wake up again; fold and unfold the panels, resize the window, switch between the dark and light themes and read the plots and the numbers.
 - Open a project saved before the devices existed and bounce it: the bytes of the bounce are the same as before.
+
+## A new track from a render
+
+`crates/model/tests/freeze.rs` holds the model half: a rendered track (Bounce in Place, Unfreeze and Keep Audio) is wired exactly like an added audio track, its `SyncOp`s put every `DeviceAdded` before the one `RoutingChanged` (a compound inside a compound used to put the routing first), and it sits right after its source with the folder and colour of the source and one undo step takes everything away. `crates/app/src/app_core_freeze_tests.rs` checks what the engine receives (the devices, then a routing that names them, as for a normally added track) and that the project bounce contains the new track alone with the original muted.
 
 ## Piano roll tools and cursor
 
