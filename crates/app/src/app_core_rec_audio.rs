@@ -19,9 +19,11 @@
 //!   transport stopped is placed by extrapolating the last state. The tap keeps running until
 //!   the writer has delivered its result, then it is stopped.
 //! * **Result** ([`Msg::Recorded`]): per lap and track one asset (stored by the writer) is
-//!   registered (`RegisterAsset`, not an undo step) and added as one `AddAudioClip`, so **each
-//!   take is one undo step per lap and track**, exactly like MIDI laps; later takes lie on top.
-//!   Undo removes the clip; the asset stays in the pool until a save prunes it (the
+//!   registered (`RegisterAsset`, not an undo step). A track with one lap gets one
+//!   `AddAudioClip`; a track with several laps (a loop recording) gets **one `NewTakeGroup`**,
+//!   the laps stacked as takes with the last lap playing (pick or comp them in the arrangement),
+//!   exactly like MIDI laps. Each is one undo step per track. Undo removes the clip or the
+//!   group; the asset stays in the pool until a save prunes it (the
 //!   orphan rule). A clip starts on the first tick at or after its audio ([`place_lap`]) with a
 //!   sub-tick `source_offset`, so every sample plays on its exact song frame.
 //! * **Problems** (`overflow_frames`, gaps) are reported as a message; the take still lands,
@@ -46,8 +48,8 @@ use super::*;
 use crate::audio_import::{Loaded, ticks_for_frames};
 use crate::audio_record::{TAP_SECONDS, place_lap, plan_tap, track_input};
 use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
-use atomik_model::AssetMeta;
 use atomik_model::song::AUDIO_TRACK_TYPE;
+use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId};
 use std::sync::mpsc::Sender;
 
 /// Frames after the last transport state seen that a finished take still records (on top of the
@@ -71,6 +73,10 @@ pub(super) struct AudioRecording {
     /// The latest playing transport state seen.
     last: Option<TransportState>,
 }
+
+/// A lap of a finished take placed on the tick grid: start tick, length in ticks, asset id and
+/// source offset.
+type PlacedLap = (i64, i64, String, u64);
 
 impl<S: EngineSink> AppCore<S> {
     /// The armed audio tracks, in song order.
@@ -248,14 +254,26 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Applies a finished take: one `RegisterAsset` and one `AddAudioClip` (one undo step) per
-    /// lap and track.
+    /// Applies a finished take: one `RegisterAsset` per lap, then per track one `AddAudioClip`
+    /// for a single lap (one undo step), or one `NewTakeGroup` when the loop made several laps
+    /// (the laps are stacked takes, one undo step; module docs).
     pub(super) fn apply_recorded(&mut self, result: Result<TakeResult, String>) {
         match result {
             Err(e) => self.reject(format!("audio recording: {e}")),
             Ok(take) => {
+                let mut placed: Vec<(DeviceKey, Vec<PlacedLap>)> = Vec::new();
                 for lap in &take.laps {
-                    self.place_lap_clip(lap);
+                    let Some((start, length, source_offset)) = self.place_lap_clip(lap) else {
+                        continue;
+                    };
+                    let entry = (start, length, lap.info.hash.clone(), source_offset);
+                    match placed.iter_mut().find(|(d, _)| *d == lap.device) {
+                        Some((_, laps)) => laps.push(entry),
+                        None => placed.push((lap.device.clone(), vec![entry])),
+                    }
+                }
+                for (device, laps) in placed {
+                    self.add_lap_clips(device, laps);
                 }
                 if take.overflow_frames > 0 || take.gap_frames > 0 {
                     self.reject(format!(
@@ -268,7 +286,12 @@ impl<S: EngineSink> AppCore<S> {
         self.stop_tap_when_idle();
     }
 
-    fn place_lap_clip(&mut self, lap: &crate::audio_writer::RecordedLap) {
+    /// Registers the lap's asset and places it on the tick grid: `(start tick, length in ticks,
+    /// source offset)`, or `None` (reported) when it cannot be placed.
+    fn place_lap_clip(
+        &mut self,
+        lap: &crate::audio_writer::RecordedLap,
+    ) -> Option<(i64, i64, u64)> {
         let loaded = Loaded {
             hash: lap.info.hash.clone(),
             info: Some(lap.info.clone()),
@@ -286,30 +309,62 @@ impl<S: EngineSink> AppCore<S> {
                 original_name: lap.info.original_name.clone(),
             },
         };
-        if self.apply_command(register).is_err() {
-            return;
-        }
+        self.apply_command(register).ok()?;
         if !self.doc().is_audio_track(&lap.device, &self.registry) {
             self.reject(format!("{} is not an audio track any more", lap.device));
-            return;
+            return None;
         }
         let song = &self.doc().song;
-        let Some(placement) =
-            place_lap(lap.song_frame, lap.info.frames, &|t| song.frame_at(t, rate))
-        else {
-            return;
-        };
+        let placement = place_lap(lap.song_frame, lap.info.frames, &|t| song.frame_at(t, rate))?;
         let length = ticks_for_frames(song, placement.start_tick, placement.frames, rate);
-        let command = SongCommand::AddAudioClip {
-            device: lap.device.clone(),
-            start: placement.start_tick,
-            length,
-            asset: lap.info.hash.clone(),
-            source_offset: placement.source_offset,
+        Some((placement.start_tick, length, placement.source_offset))
+    }
+
+    /// Adds the placed laps of one track: a single lap is one `AddAudioClip`; several laps (a
+    /// loop recording) become the stacked takes of one `NewTakeGroup`, later laps on top, so
+    /// the last lap plays until the user picks or comps another. Both are one undo step.
+    fn add_lap_clips(&mut self, device: DeviceKey, laps: Vec<PlacedLap>) {
+        let content = |asset: String, source_offset: u64| AudioClipContent {
+            asset,
+            source_offset,
             gain_db: 0.0,
             fade_in: 0,
             fade_out: 0,
             fade_curve: atomik_model::FadeCurve::Linear,
+        };
+        let command = if let [(start, length, asset, source_offset)] = laps.as_slice() {
+            SongCommand::AddAudioClip {
+                device,
+                start: *start,
+                length: *length,
+                asset: asset.clone(),
+                source_offset: *source_offset,
+                gain_db: 0.0,
+                fade_in: 0,
+                fade_out: 0,
+                fade_curve: atomik_model::FadeCurve::Linear,
+            }
+        } else {
+            let takes = laps
+                .into_iter()
+                .map(|(start, length, asset, source_offset)| Clip {
+                    id: ClipId(0),
+                    start,
+                    length,
+                    offset: 0,
+                    loop_length: None,
+                    muted: false,
+                    grid: None,
+                    scale: None,
+                    controllers: Vec::new(),
+                    content: ClipContent::Audio(content(asset, source_offset)),
+                })
+                .collect();
+            SongCommand::NewTakeGroup {
+                device,
+                lane: 0,
+                takes,
+            }
         };
         // A rejection is already reported.
         let _ = self.apply_command(Command::Song(command));

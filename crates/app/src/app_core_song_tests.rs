@@ -626,6 +626,77 @@ fn recording_turns_live_controller_data_into_clip_lanes() {
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }
 
+/// Recording over an enabled loop that wraps stacks the passes as takes of one group (one undo
+/// step), the last pass playing; a take that never wraps stays a plain clip.
+#[test]
+fn recording_over_a_loop_stacks_the_passes_as_takes_of_one_group() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (0, BAR),
+            enabled: true,
+        }),
+    );
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        loop_start: 0,
+        loop_end: BAR,
+        loop_enabled: true,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    // The first playing state anchors the take at pass 0.
+    c.frame();
+    let ev = |kind, tick| RecordedNote {
+        device: id(1),
+        kind,
+        frame: frame(tick),
+    };
+    let on = |key| NoteKind::On { key, velocity: 0.8 };
+    c.sink_mut().recorded = vec![
+        ev(on(60), PPQ),
+        ev(NoteKind::Off { key: 60 }, PPQ + PPQ / 2),
+        ev(on(62), BAR + PPQ),
+        ev(NoteKind::Off { key: 62 }, BAR + PPQ + PPQ / 2),
+    ];
+    // The second pass is under way: the transport wrapped once and is 2 beats into the loop.
+    c.sink_mut().state = TransportState {
+        tick: 2 * PPQ,
+        engine_frame: frame(BAR + 2 * PPQ),
+        song_frame: frame(2 * PPQ) - 1000,
+        loop_count: 1,
+        ..start
+    };
+    c.frame();
+    let calls = transport(&mut c, TransportAction::Stop);
+    let lane = &c.doc().song.tracks[0].lanes[0];
+    assert_eq!(lane.take_groups.len(), 1);
+    let group = &lane.take_groups[0];
+    assert_eq!(group.takes.len(), 2, "one take per pass");
+    assert_eq!(group.picked(), Some(1), "the last pass plays");
+    assert_eq!(lane.clips.len(), 1, "the takes are not on the lane");
+    let key_of = |t: &atomik_model::Clip| match &t.content {
+        ClipContent::Notes(n) => n[0].key,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(group.takes.iter().map(key_of).collect::<Vec<_>>(), [60, 62]);
+    // The engine got the picked pass only.
+    let sent = songs(&calls);
+    let notes = &sent.last().unwrap().tracks[0].notes;
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].key, 62);
+    // One undo step takes the whole recording away.
+    assert!(c.undo());
+    assert!(c.doc().song.tracks[0].lanes[0].take_groups.is_empty());
+    assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
+}
+
 #[test]
 fn toggling_record_off_keeps_playing_and_writes_the_take() {
     let mut c = with_track();

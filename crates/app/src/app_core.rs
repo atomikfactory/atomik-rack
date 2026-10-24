@@ -1762,8 +1762,8 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Ends the take at the transport position of `state` and writes its clips (one
-    /// `AddClip` undo step per pass).
+    /// Ends the take at the transport position of `state` and writes its clips: per track one
+    /// `AddClip`, or one `NewTakeGroup` when the loop made several passes (one undo step each).
     fn finish_take(&mut self, state: &TransportState) {
         if self.take.is_none() {
             return;
@@ -1780,11 +1780,28 @@ impl<S: EngineSink> AppCore<S> {
             tick: Ticks(state.tick),
             loop_count: state.loop_count,
         };
+        // A track with several laps (the loop wrapped) gets one take group, the laps stacked as
+        // takes with the last one playing; a single lap is a plain clip as before.
+        let mut by_device: Vec<(DeviceKey, Vec<atomik_model::Clip>)> = Vec::new();
         for (device, clip) in take.finish(stop, self.quantize) {
-            let command = SongCommand::AddClip {
-                device,
-                lane: 0,
-                clip,
+            match by_device.iter_mut().find(|(d, _)| *d == device) {
+                Some((_, clips)) => clips.push(clip),
+                None => by_device.push((device, vec![clip])),
+            }
+        }
+        for (device, mut clips) in by_device {
+            let command = if clips.len() > 1 {
+                SongCommand::NewTakeGroup {
+                    device,
+                    lane: 0,
+                    takes: clips,
+                }
+            } else {
+                SongCommand::AddClip {
+                    device,
+                    lane: 0,
+                    clip: clips.remove(0),
+                }
             };
             // A rejection is already reported.
             let _ = self.apply_command(Command::Song(command));
