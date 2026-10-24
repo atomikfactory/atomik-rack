@@ -259,6 +259,7 @@ fn content10(
         reverse: false,
         envelope: Vec::new(),
         xfade: None,
+        warp: Default::default(),
     }
 }
 

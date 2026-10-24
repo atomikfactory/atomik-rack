@@ -37,6 +37,7 @@ mod steps_cmd;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
+pub mod warp;
 mod workflow;
 mod workflow_cmd;
 mod workflow_create;
@@ -112,6 +113,11 @@ pub use song::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub use takes::{CompSegment, TakeGroup};
+pub use warp::{
+    AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,
+    WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
+    source_at_tick, tick_at_source, warp_job, warp_jobs,
+};
 
 /// Most host input channels a document may ask for (the engine interface's limit).
 pub const MAX_INPUT_CHANNELS: u16 = 32;

@@ -84,6 +84,7 @@ fn one_clip_becomes_one_region_with_clip_position_and_source_offset() {
             x_in: 0,
             x_out: 0,
             x_curve: FadeCurve::EqualPower,
+            warp: None,
         }]
     );
 }

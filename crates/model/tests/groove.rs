@@ -388,9 +388,9 @@ fn the_groove_library_round_trips_in_format_21() {
     let mut d = two_clips(&reg);
     d.apply(sc(SongCommand::SetGroove(custom())), &reg).unwrap();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 23);
+    assert_eq!(PROJECT_VERSION, 24);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 23);
+    assert_eq!(v["version"], 24);
     assert_eq!(v["song"]["grooves"][0]["name"], "Late 2nd");
     assert_eq!(v["song"]["grooves"][0]["step"], "sixteenth");
     assert_eq!(
@@ -408,13 +408,13 @@ fn the_groove_library_round_trips_in_format_21() {
 fn a_version_20_file_loads_without_grooves_and_refuses_the_field() {
     let reg = registry();
     let text = save_project(two_clips(&reg).doc());
-    let v20 = text.replace("\"version\": 23", "\"version\": 20");
+    let v20 = text.replace("\"version\": 24", "\"version\": 20");
     let loaded = load_project(&v20, &reg).unwrap();
     assert!(loaded.song.grooves.is_empty());
-    assert!(save_project(&loaded).contains("\"version\": 23"));
+    assert!(save_project(&loaded).contains("\"version\": 24"));
     let mut d = two_clips(&reg);
     d.apply(sc(SongCommand::SetGroove(custom())), &reg).unwrap();
-    let with = save_project(d.doc()).replace("\"version\": 23", "\"version\": 20");
+    let with = save_project(d.doc()).replace("\"version\": 24", "\"version\": 20");
     let e = load_project(&with, &reg).unwrap_err().to_string();
     assert!(e.contains("grooves"), "{e}");
 }

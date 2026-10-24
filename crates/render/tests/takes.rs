@@ -112,6 +112,7 @@ fn audio_take(asset: &str) -> Clip {
             reverse: false,
             envelope: Vec::new(),
             xfade: None,
+            warp: Default::default(),
         }),
     }
 }

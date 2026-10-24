@@ -14,6 +14,9 @@ use crate::{Cable, DeviceKey, RackDevice, RackDoc, SyncOp, ZoneDoc};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One reversible, already-validated change to a [`RackDoc`].
+// An edit lives in the undo history, never on a hot path: a clip edit holds two whole clips,
+// and boxing them would cost an indirection at every site that builds one for no gain.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Edit {
     /// Insert `device` at `index` together with `cables` (all attached to it).
