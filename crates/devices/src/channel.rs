@@ -58,6 +58,12 @@
 //! * **Mute / solo:** `mute` (ignored while `solo` is on, per the §8 contract) and
 //!   `internal.solo_silence` silence the main output *and every send, pre-fader included*. The
 //!   insert send and the gain-reduction CV are unaffected. `solo` has no other DSP effect.
+//! * **VCA feed** (`internal.vca_db`, `internal.vca_mute`, `internal.vca_solo`, set by the app
+//!   from the console's VCA groups, never stored): the offset in dB is a multiplier on the fader
+//!   gain ([`atomik_dsp::fader_gain_vca`], −60 dB and below is off, exactly 0 dB is the plain
+//!   fader, bit for bit) through the same 5 ms smoother; the VCA's mute and solo count as the
+//!   strip's own, so solo still beats mute. With the three at their defaults the strip is
+//!   bit-identical to one outside any VCA.
 //! * **`latency.adjust`** is a *relative* trim of −[`MAX_LATENCY_ADJUST`]..=
 //!   +[`MAX_LATENCY_ADJUST`] samples, default 0:
 //!   * **positive `N`:** the channel really delays its signal by `N` samples (at the start of
@@ -70,14 +76,16 @@
 //!   (0 = no reduction, 0.5 ≈ 6 dB, → 1 when fully closed).
 
 use crate::cv_in::batch_mean;
-use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit, db_to_gain};
+use atomik_core::{
+    BATCH, ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain,
+};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::{
     BiquadShape, Compressor, DelayLine, Detector, Gate, PassFilter, PassKind, SmoothedBiquad,
-    Smoother, fader_gain, pan_constant_power, stereo_width,
+    Smoother, fader_gain_vca, pan_constant_power, stereo_width,
 };
 
 /// Number of effect sends.
@@ -266,7 +274,12 @@ const P_FADER_TRIM: usize = P_SOLO_SILENCE + 1;
 const P_PAN_TRIM: usize = P_SOLO_SILENCE + 2;
 /// First send-level CV trim (`send1.level_cv_trim`); one per send.
 const P_SEND_TRIM_FIRST: usize = P_SOLO_SILENCE + 3;
-const PARAM_COUNT: usize = P_SEND_TRIM_FIRST + SENDS;
+/// The VCA feed (`internal.*`: set by the app from the console's VCA groups, never stored):
+/// the offset in dB added to the fader, and the linked mute and solo flags.
+const P_VCA_DB: usize = P_SEND_TRIM_FIRST + SENDS;
+const P_VCA_MUTE: usize = P_VCA_DB + 1;
+const P_VCA_SOLO: usize = P_VCA_DB + 2;
+const PARAM_COUNT: usize = P_VCA_DB + 3;
 
 /// Full-scale swing of `fader_cv_in` in dB.
 const FADER_CV_DB: f32 = 24.0;
@@ -417,6 +430,16 @@ pub(crate) static PARAMS: [ParamDescriptor; PARAM_COUNT] = {
     }
     out[P_FADER_TRIM] = cv_trim(P_FADER_TRIM, "fader_cv_trim", "Fader CV trim");
     out[P_PAN_TRIM] = cv_trim(P_PAN_TRIM, "pan_cv_trim", "Pan CV trim");
+    out[P_VCA_DB] = db(
+        P_VCA_DB as u32,
+        "internal.vca_db",
+        "VCA offset",
+        VCA_MIN_DB,
+        VCA_MAX_DB,
+        0.0,
+    );
+    out[P_VCA_MUTE] = toggle(P_VCA_MUTE as u32, "internal.vca_mute", "VCA mute", 0.0);
+    out[P_VCA_SOLO] = toggle(P_VCA_SOLO as u32, "internal.vca_solo", "VCA solo", 0.0);
     let mut k = 0;
     while k < SENDS {
         out[P_SEND_TRIM_FIRST + k] = cv[k];
@@ -878,9 +901,14 @@ impl Channel {
                 self.pan_r.set_target(r);
             }
             P_WIDTH => self.width.set_target(v),
-            P_FADER => self.fader.set_target(fader_gain(v)),
-            P_MUTE | P_SOLO | P_SOLO_SILENCE => {
-                let muted = self.on(P_MUTE) && !self.on(P_SOLO);
+            P_FADER | P_VCA_DB => self
+                .fader
+                .set_target(fader_gain_vca(self.values[P_FADER], self.values[P_VCA_DB])),
+            P_MUTE | P_SOLO | P_SOLO_SILENCE | P_VCA_MUTE | P_VCA_SOLO => {
+                // A VCA's solo counts as the strip's own, and its mute likewise; solo still
+                // beats mute, as it does for the strip's own flags.
+                let soloed = self.on(P_SOLO) || self.on(P_VCA_SOLO);
+                let muted = (self.on(P_MUTE) || self.on(P_VCA_MUTE)) && !soloed;
                 let silent = muted || self.on(P_SOLO_SILENCE);
                 self.audible.set_target(if silent { 0.0 } else { 1.0 });
             }
@@ -921,7 +949,8 @@ impl Channel {
         match cv_of(S_FADER_CV) {
             Some(cv) => {
                 let db = self.values[P_FADER_TRIM] * cv * FADER_CV_DB;
-                let g = fader_gain(self.values[P_FADER]) * db_to_gain(db);
+                let g =
+                    fader_gain_vca(self.values[P_FADER], self.values[P_VCA_DB]) * db_to_gain(db);
                 self.fader.set_target(g);
                 self.cv_live[0] = true;
             }

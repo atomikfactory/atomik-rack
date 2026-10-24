@@ -101,6 +101,11 @@ fn descriptor_keys_match_contract_exactly() {
     for k in 1..=8 {
         params.push(format!("send{k}.level_cv_trim"));
     }
+    params.extend([
+        "internal.vca_db".into(),
+        "internal.vca_mute".into(),
+        "internal.vca_solo".into(),
+    ]);
     let mut sockets: Vec<String> = [
         "in_l",
         "in_r",
@@ -557,6 +562,81 @@ fn ac_x1_mute_solo_silence_and_sends() {
     // The insert send and the GR CV are not muted.
     let o = settled(&mut h, &["insert_send_l"]);
     assert!(approx(o[0], 0.5, 1e-6));
+}
+
+/// Output of a default strip (input 0.5 on `in_l`, pan centre) after `setup`, settled.
+fn out_with(setup: impl FnOnce(&mut DeviceHarness)) -> f32 {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.5);
+    setup(&mut h);
+    settled(&mut h, &["out_l"])[0]
+}
+
+#[test]
+fn a_vca_offset_scales_the_fader_and_zero_changes_nothing() {
+    let base = out_with(|_| {});
+    let same = out_with(|h| h.set_param("internal.vca_db", 0.0));
+    assert_eq!(same.to_bits(), base.to_bits(), "0 dB is bit-identical");
+    let g = |db: f32| base * 10f32.powf(db / 20.0);
+    assert!(approx(
+        out_with(|h| h.set_param("internal.vca_db", -6.0)),
+        g(-6.0),
+        1e-5
+    ));
+    assert!(approx(
+        out_with(|h| h.set_param("internal.vca_db", 6.0)),
+        g(6.0),
+        1e-5
+    ));
+    // It adds to the strip's own fader (here -inf + anything stays off, 0.5 is -9 dB).
+    let half = out_with(|h| h.set_param("fader", 0.5));
+    let both = out_with(|h| {
+        h.set_param("fader", 0.5);
+        h.set_param("internal.vca_db", -6.0);
+    });
+    assert!(
+        approx(both, half * 10f32.powf(-6.0 / 20.0), 1e-5),
+        "{both} {half}"
+    );
+    assert!(
+        out_with(|h| h.set_param("internal.vca_db", -60.0)).abs() < 1e-9,
+        "off"
+    );
+    // The fader CV rides on top of the VCA too.
+    let cv = out_with(|h| {
+        h.set_param("internal.vca_db", -6.0);
+        h.set_param("fader_cv_trim", 1.0);
+        dc(h, "fader_cv_in", 0.25);
+    });
+    assert!(approx(cv, base * 10f32.powf(0.0), 1e-3), "{cv}");
+}
+
+#[test]
+fn a_vca_offset_ramps_without_a_step() {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.5);
+    settled(&mut h, &["out_l"]);
+    h.set_param("internal.vca_db", -12.0);
+    let o = h.render(20, &["out_l"]);
+    let ramp: Vec<f32> = o[0].clone();
+    assert!(max_step(&ramp) < 0.05, "smoothed: {}", max_step(&ramp));
+}
+
+#[test]
+fn vca_mute_and_solo_follow_the_strips_own_rules() {
+    let base = out_with(|_| {});
+    let muted = out_with(|h| h.set_param("internal.vca_mute", 1.0));
+    assert!(muted.abs() < 1e-9, "a VCA mute silences the strip");
+    // A VCA solo counts as the strip's own: it beats the VCA mute and the strip's mute.
+    let soloed = out_with(|h| {
+        h.set_param("internal.vca_mute", 1.0);
+        h.set_param("mute", 1.0);
+        h.set_param("internal.vca_solo", 1.0);
+    });
+    assert_eq!(soloed.to_bits(), base.to_bits());
+    // The strip's own mute still works under a VCA that is neither muted nor soloed.
+    let own = out_with(|h| h.set_param("mute", 1.0));
+    assert!(own.abs() < 1e-9);
 }
 
 #[test]
