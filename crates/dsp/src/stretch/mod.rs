@@ -23,7 +23,7 @@
 //! thousandth of a second of audio, and a `true` makes the call return `None`.
 
 mod beats;
-mod fft;
+pub(crate) mod fft;
 mod map;
 mod repitch;
 mod tonal;

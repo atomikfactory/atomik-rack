@@ -8,7 +8,7 @@
 //! [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
 //! (flat-sum 24 dB/oct split), [`phaser`], [`chorus`], [`echo`], [`comb`], [`room`] (small box
 //! and large room on [`Fdn8`]), [`ringmod`], [`bitcrush`], [`noise`] (white, pink, rumble,
-//! crackle, presence gate), [`spectral`] (STFT stage), [`modal`], [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift).
+//! crackle, presence gate), [`spectral`] (STFT stage), [`modal`], [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift) and [`notes`] (audio to notes: a YIN pitch tracker for monophonic audio and a drum hit classifier).
 //! They are all deterministic (see [`exp2_det`] and the module docs), allocation-free
 //! in `process`, and offer a per-sample call plus a block call that is bit-identical for any
 //! chunking.
@@ -38,6 +38,7 @@ mod mod_delay;
 pub mod mod_source;
 pub mod modal;
 pub mod noise;
+pub mod notes;
 pub mod onset;
 mod osc;
 pub mod oversample;
