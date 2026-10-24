@@ -7,6 +7,7 @@
 //! Public signatures are a stable contract: changes need review.
 
 mod audio_edit;
+mod audio_notes;
 pub mod automation_rec;
 mod console_bus;
 mod console_cmd;
@@ -95,6 +96,7 @@ use atomik_device_sdk::Registry;
 pub use audio_edit::{
     StripParams, normalise_gain_db, peak, slice_envelope, split_envelope, strip_silence,
 };
+pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use automation_rec::WriteMode;
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
