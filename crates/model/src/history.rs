@@ -2,7 +2,7 @@
 //! perform it again or invert it; undo performs the inverse.
 
 use crate::WriteMode;
-use crate::console::{ConsoleBus, ConsoleChannel, VcaGroup};
+use crate::console::{CompareState, ConsoleBus, ConsoleChannel, MixerSnapshot, VcaGroup};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::freeze::Frozen;
 use crate::groove::Groove;
@@ -202,6 +202,16 @@ pub(crate) enum Edit {
     ConsoleVcas {
         old: Vec<VcaGroup>,
         new: Vec<VcaGroup>,
+    },
+    /// The console's whole snapshot list.
+    ConsoleSnapshots {
+        old: Vec<MixerSnapshot>,
+        new: Vec<MixerSnapshot>,
+    },
+    /// The A/B comparison state of the console (not saved).
+    SnapshotCompare {
+        old: Option<Box<CompareState>>,
+        new: Option<Box<CompareState>>,
     },
     /// The console master.
     ConsoleMaster {
@@ -539,6 +549,8 @@ impl Edit {
             },
             Edit::ConsoleBusMove { from, to } => Edit::ConsoleBusMove { from: to, to: from },
             Edit::ConsoleVcas { old, new } => Edit::ConsoleVcas { old: new, new: old },
+            Edit::ConsoleSnapshots { old, new } => Edit::ConsoleSnapshots { old: new, new: old },
+            Edit::SnapshotCompare { old, new } => Edit::SnapshotCompare { old: new, new: old },
             Edit::ConsoleMaster { old, new } => Edit::ConsoleMaster { old: new, new: old },
             Edit::ConsoleReturn { slot, old, new } => Edit::ConsoleReturn {
                 slot,
@@ -918,6 +930,14 @@ impl Edit {
             }
             Edit::ConsoleVcas { new, .. } => {
                 doc.console.vcas.clone_from(new);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::ConsoleSnapshots { new, .. } => {
+                doc.console.snapshots.clone_from(new);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::SnapshotCompare { new, .. } => {
+                doc.console.compare = new.as_deref().cloned();
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleBusMove { from, to } => {

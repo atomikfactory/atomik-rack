@@ -366,6 +366,7 @@ mod tests {
             audio: atomik_ui::arrangement::AudioMenu::default(),
             vca: crate::commands::VcaMenu::default(),
             strip: crate::commands::StripMenu::default(),
+            snapshots: crate::commands::SnapshotMenu::default(),
             freeze: crate::commands::FreezeMenu::default(),
         }
     }

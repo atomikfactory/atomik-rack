@@ -2003,3 +2003,132 @@ fn polarity_and_bypass_all_inserts_are_mixer_commands_of_the_session() {
         "back to nothing to report"
     );
 }
+
+#[test]
+fn snapshots_are_stored_recalled_and_compared_by_command_and_the_bounce_hears_them() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let snapshots = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        v["document"]["console"]["snapshots"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    for id in [
+        "mixer.store_snapshot",
+        "mixer.update_snapshot",
+        "mixer.recall_next_snapshot",
+        "mixer.compare_snapshot",
+        "mixer.delete_snapshot",
+    ] {
+        let row = command_row(&mut s, id);
+        assert_eq!(row["menu"], "Mixer", "{id}");
+        assert_eq!(row["shortcut"], Value::Null, "{id}");
+    }
+    assert!(snapshots(&mut s).is_empty());
+    let reference = tmp("snap-reference.wav");
+    ok(&mut s, "session_bounce", json!({"output": reference}));
+    let same_as_reference = |s: &mut Server, name: &str| {
+        ok(
+            s,
+            "session_bounce",
+            json!({"output": tmp(name), "reference": reference}),
+        )["comparison"]["bit_identical"]
+            .clone()
+    };
+    // Store the mix as A, change it, store that under a name.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.store_snapshot"}),
+    );
+    let all = snapshots(&mut s);
+    assert_eq!(
+        (all[0]["id"].as_u64(), all[0]["name"].as_str()),
+        (Some(1), Some("A"))
+    );
+    assert_eq!(all[0]["matches_mix"], true);
+    ok(
+        &mut s,
+        "session_set_param",
+        json!({"device": "channel", "param": "fader", "value": 0.3}),
+    );
+    assert_eq!(same_as_reference(&mut s, "snap-moved.wav"), false);
+    assert_eq!(snapshots(&mut s)[0]["matches_mix"], false);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.store_snapshot", "arg": "Quiet"}),
+    );
+    assert_eq!(snapshots(&mut s)[1]["name"], "Quiet");
+    // Recall A by name: the bounce is the reference again, bit for bit.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "a"}),
+    );
+    assert_eq!(same_as_reference(&mut s, "snap-recalled.wav"), true);
+    // Recall by id and compare: the flip hears each side.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.compare_snapshot", "arg": "Quiet"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    assert_eq!(v["document"]["console"]["compare"]["side"], "B");
+    assert_eq!(same_as_reference(&mut s, "snap-b.wav"), false);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.compare_snapshot"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    assert_eq!(v["document"]["console"]["compare"]["side"], "A");
+    assert_eq!(same_as_reference(&mut s, "snap-a.wav"), true);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.end_compare"}),
+    );
+    let v = ok(&mut s, "session_status", json!({}));
+    assert!(v["document"]["console"].get("compare").is_none());
+    // A scope: only the mutes of "Quiet" leave the fader where it is.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "2:mutes"}),
+    );
+    assert_eq!(same_as_reference(&mut s, "snap-scope.wav"), true);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "Quiet:levels"}),
+    );
+    assert_eq!(same_as_reference(&mut s, "snap-levels.wav"), false);
+    // Refusals say what is wrong; undo takes the recalls back one step at a time.
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "nope"}),
+    );
+    assert!(r.is_error && r.first_text().contains("no snapshot called"));
+    let r = call(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.recall_snapshot", "arg": "A:nonsense"}),
+    );
+    assert!(r.is_error && r.first_text().contains("not a scope"));
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    assert_eq!(same_as_reference(&mut s, "snap-undone.wav"), true);
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "mixer.delete_snapshot", "arg": "2"}),
+    );
+    assert_eq!(snapshots(&mut s).len(), 1);
+}

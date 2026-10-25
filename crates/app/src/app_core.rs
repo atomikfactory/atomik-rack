@@ -181,6 +181,9 @@ pub struct AppCore<S: EngineSink> {
     arrangement_track_changed: bool,
     /// The console selection the last arming followed (see `follow_console_selection`).
     console_selection: Vec<DeviceKey>,
+    /// The snapshot the mix was last stored, updated, recalled or compared with (see
+    /// `app_core_snapshots.rs`); view state, forgotten when a document is replaced.
+    snapshot_hint: Option<u32>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
     rack_focus_request: bool,
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
@@ -349,6 +352,7 @@ impl<S: EngineSink> AppCore<S> {
             arranged_track: None,
             arrangement_track_changed: false,
             console_selection: Vec::new(),
+            snapshot_hint: None,
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
@@ -504,8 +508,13 @@ impl<S: EngineSink> AppCore<S> {
         // A device that goes away takes its latest plugin state into the undo history.
         self.plugins_flush_dirty();
         let merge = param_merge(&command);
+        let hint = self.snapshot_hint_after(&command);
         match self.document.apply(command, &self.registry) {
             Ok(ops) => {
+                if let Some(hint) = hint {
+                    self.snapshot_hint = hint;
+                    self.console.set_snapshot_hint(hint);
+                }
                 self.sync_ops(&ops);
                 self.capture_automation(&ops, merge);
                 if let Some((w, pre)) = workflow {
@@ -783,6 +792,8 @@ impl<S: EngineSink> AppCore<S> {
         self.auto_armed.clear();
         self.arranged_track = None;
         self.console_selection.clear();
+        self.snapshot_hint = None;
+        self.console.set_snapshot_hint(None);
         self.view.set_selected(None);
         self.close_piano_roll();
         self.close_sample_editor();
@@ -2207,6 +2218,9 @@ mod workflow;
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
+#[path = "app_core_snapshots.rs"]
+mod snapshots;
+
 #[path = "app_core_audio_edit.rs"]
 mod audio_edit_ops;
 pub use audio_edit_ops::NORMALISE_TARGET_DB;
@@ -2295,6 +2309,10 @@ mod song_tests;
 #[cfg(test)]
 #[path = "app_core_console_tests.rs"]
 mod console_tests;
+
+#[cfg(test)]
+#[path = "app_core_snapshots_tests.rs"]
+mod snapshots_tests;
 
 #[cfg(test)]
 #[path = "app_core_samples_tests.rs"]
