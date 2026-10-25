@@ -340,6 +340,36 @@ fn groove_summary(doc: &RackDoc) -> Vec<Value> {
         .collect()
 }
 
+/// The mixer snapshots: id and name (what the `mixer.*_snapshot` commands take as their argument),
+/// how many strips and effects each holds, and whether the mix is exactly that snapshot now (what
+/// a recall of it would change nothing of); `skips` lists what a recall would skip because it was
+/// deleted.
+fn snapshot_summary(doc: &RackDoc) -> Vec<Value> {
+    let registry = default_registry();
+    doc.console
+        .snapshots
+        .iter()
+        .map(|s| {
+            let mut v = json!({
+                "id": s.id,
+                "name": s.name,
+                "devices": s.state.devices.len(),
+                "vcas": s.state.vcas.len(),
+                "matches_mix": doc.snapshot_matches(
+                    s.id,
+                    &registry,
+                    atomik_model::SnapshotScope::ALL,
+                ),
+            });
+            let skips = doc.snapshot_notes(s.id);
+            if !skips.is_empty() {
+                v["skips"] = json!(skips);
+            }
+            v
+        })
+        .collect()
+}
+
 /// The VCA groups: id (what `mixer.add_to_vca` and `mixer.delete_vca` take as their argument),
 /// name, colour, offset in dB, mute, solo and the members with the level each plays at (its own
 /// fader plus the offset; `null` for -inf).
@@ -581,6 +611,16 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let vcas = vca_summary(doc);
     if !vcas.is_empty() {
         out["console"]["vcas"] = Value::Array(vcas);
+    }
+    let snapshots = snapshot_summary(doc);
+    if !snapshots.is_empty() {
+        out["console"]["snapshots"] = Value::Array(snapshots);
+    }
+    if let Some(c) = &doc.console.compare {
+        out["console"]["compare"] = json!({
+            "snapshot": c.snapshot,
+            "side": if c.on_snapshot { "B" } else { "A" },
+        });
     }
     let strips = strip_summary(doc);
     if !strips.is_empty() {
