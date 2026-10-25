@@ -449,3 +449,67 @@ mod forwarder {
         assert_eq!(fwd.dropped.load(Ordering::Relaxed), 0);
     }
 }
+
+#[test]
+fn parse_message_keeps_the_channel_and_the_raw_values() {
+    let mut s = RunningStatus::default();
+    assert_eq!(
+        parse_message(&[0xB3, 74, 100], &mut s),
+        Some(ChannelMessage::cc(3, 74, 100))
+    );
+    assert_eq!(
+        parse_message(&[0x92, 60, 90], &mut s),
+        Some(ChannelMessage::note_on(2, 60, 90))
+    );
+    assert_eq!(
+        parse_message(&[0x92, 60, 0], &mut s),
+        Some(ChannelMessage::note_off(2, 60))
+    );
+    assert_eq!(
+        parse_message(&[0x85, 61, 40], &mut s),
+        Some(ChannelMessage::note_off(5, 61))
+    );
+    assert_eq!(
+        parse_message(&[0xE1, 0x7F, 0x7F], &mut s),
+        Some(ChannelMessage::pitch_bend(1, 16_383))
+    );
+    assert_eq!(
+        parse_message(&[0xE1, 0x00, 0x40], &mut s),
+        Some(ChannelMessage::pitch_bend(1, 8192))
+    );
+}
+
+#[test]
+fn parse_message_treats_controllers_120_and_123_as_controllers_and_uses_running_status() {
+    let mut s = RunningStatus::default();
+    assert_eq!(
+        parse_message(&[0xB0, 123, 0], &mut s),
+        Some(ChannelMessage::cc(0, 123, 0))
+    );
+    // Running status: the status byte is the channel's of the last message.
+    assert_eq!(
+        parse_message(&[7, 33], &mut s),
+        Some(ChannelMessage::cc(0, 7, 33))
+    );
+    // Program change, pressure, system messages and noise are not control messages.
+    let mut s = RunningStatus::default();
+    assert_eq!(parse_message(&[0xC0, 5], &mut s), None);
+    assert_eq!(parse_message(&[0xD0, 5], &mut s), None);
+    assert_eq!(parse_message(&[0xF0, 1, 0xF7], &mut s), None);
+    assert_eq!(parse_message(&[0x40], &mut s), None);
+    assert_eq!(parse_message(&[], &mut s), None);
+}
+
+proptest! {
+    #[test]
+    fn parse_message_never_panics_and_agrees_with_parse_on_notes(bytes in proptest::collection::vec(any::<u8>(), 0..8)) {
+        let mut a = RunningStatus::default();
+        let mut b = RunningStatus::default();
+        let message = parse_message(&bytes, &mut a);
+        let note = parse(&bytes, &mut b);
+        if let (Some(m), Some(NoteKind::On { key, .. })) = (message, note) {
+            let is_on = matches!(m.kind, atomik_core::MessageKind::NoteOn { key: k, .. } if k == key);
+            prop_assert!(is_on);
+        }
+    }
+}

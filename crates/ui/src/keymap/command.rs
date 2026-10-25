@@ -531,6 +531,31 @@ const COMMANDS: &[CommandDef] = &[
         C::Files,
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
+    cmd(
+        "midi.clear_maps",
+        "Clear MIDI Mappings",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "midi.export_preset",
+        "Export MIDI Mapping Preset...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("midi.forget_control", "Forget MIDI", G::Mixer, C::Global),
+    cmd(
+        "midi.import_preset",
+        "Import MIDI Mapping Preset...",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd("midi.learn", "MIDI Learn", G::Mixer, C::Global).menu(),
+    cmd("midi.learn_control", "Learn MIDI", G::Mixer, C::Global),
+    cmd("midi.mappings", "MIDI Mappings...", G::Mixer, C::Global).menu(),
     cmd("mixer.add_channel", "Add Channel", G::Mixer, C::Global).menu(),
     cmd("mixer.add_to_vca", "Add to VCA", G::Mixer, C::Global).menu(),
     cmd(
@@ -1483,7 +1508,7 @@ mod tests {
                 Group::Rack => &["rack"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
-                Group::Mixer => &["mixer"],
+                Group::Mixer => &["mixer", "midi"],
                 Group::Browser => &["browser"],
                 Group::Files => &["files"],
                 Group::Create => &["create"],

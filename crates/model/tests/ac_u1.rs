@@ -85,6 +85,7 @@ impl Mirror {
                 }
                 SyncOp::TempoChanged(t) => self.tempo = *t,
                 SyncOp::ViewChanged
+                | SyncOp::MidiMapsChanged
                 | SyncOp::ZonesChanged(_)
                 | SyncOp::PatternsChanged { .. }
                 | SyncOp::MacrosChanged { .. }

@@ -79,6 +79,11 @@ pub trait EngineSink {
     fn note_target(&self) -> Option<Arc<NoteTarget>> {
         None
     }
+    /// The control hub the sink's MIDI input fills (the mappings read it); `None` (the default)
+    /// makes the core create its own, which only injected messages reach.
+    fn control_hub(&self) -> Option<Arc<crate::midi_control::ControlHub>> {
+        None
+    }
     /// [`atomik_engine::EngineHandle::latency_epoch`]: when it moves, the core
     /// refills the latencies and resubmits the routing. 0 when no engine runs.
     fn latency_epoch(&self) -> u64 {

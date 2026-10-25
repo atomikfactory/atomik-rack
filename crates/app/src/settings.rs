@@ -21,7 +21,8 @@
 //!   "worker_linger_spins": 500000,
 //!   "metronome_gain": 0.5,
 //!   "input_device": null,
-//!   "record_offset_frames": 0
+//!   "record_offset_frames": 0,
+//!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" }
 //! }
 //! ```
 //!
@@ -30,7 +31,9 @@
 //! `worker_linger_spins: 0` is the engine default. `input_device: null` is the device named like
 //! the output when the host lists it as an input, else no input (pick one). A positive
 //! `record_offset_frames` places recordings earlier (see [`crate::audio_record`]).
-//! `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
+//! `surface` is the control surface (the Surfaces tab of the settings): a driver id (`"mcu"`, the
+//! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
+//! It is an app setting, not part of the project. `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
 //! which audio assets stream from disk instead of loading into RAM. The file is written only when the user
 //! applies the settings dialog; command-line overrides are never saved. `keymap.json` and
 //! `workflow.json` (the Keyboard and Workflow tabs, see [`crate::keymap_store`]) live next to it.
@@ -172,6 +175,19 @@ impl HostChoice {
     }
 }
 
+/// The control surface: a driver and the MIDI ports it talks through.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SurfaceSettings {
+    /// The driver id (see [`atomik_midi_io::surface::DRIVERS`]); `None` = no surface.
+    pub driver: Option<String>,
+    /// The input port name (exact or unique substring); `None` = none.
+    pub input: Option<String>,
+    /// The output port name (exact or unique substring), for the motors, LEDs and displays;
+    /// `None` = none.
+    pub output: Option<String>,
+}
+
 /// What the app opens for live audio and MIDI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -203,6 +219,8 @@ pub struct AudioSettings {
     /// Third-party plugins: off by default, the search folders, the scan
     /// timeout and the plugins the user disabled.
     pub plugins: atomik_plugin_host::PluginSettings,
+    /// The control surface (the Surfaces tab).
+    pub surface: SurfaceSettings,
 }
 
 impl Default for AudioSettings {
@@ -219,6 +237,7 @@ impl Default for AudioSettings {
             record_offset_frames: 0,
             stream_threshold_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
+            surface: SurfaceSettings::default(),
         }
     }
 }
@@ -253,6 +272,11 @@ impl AudioSettings {
             output_device: name(self.output_device),
             midi_input: name(self.midi_input),
             input_device: name(self.input_device),
+            surface: SurfaceSettings {
+                driver: name(self.surface.driver),
+                input: name(self.surface.input),
+                output: name(self.surface.output),
+            },
             record_offset_frames: self
                 .record_offset_frames
                 .clamp(-MAX_RECORD_OFFSET, MAX_RECORD_OFFSET),
@@ -453,6 +477,24 @@ mod tests {
     }
 
     #[test]
+    fn the_surface_is_optional_and_sanitised() {
+        let none = AudioSettings::from_json("{}").unwrap();
+        assert_eq!(none.surface, SurfaceSettings::default());
+        assert_eq!(none.surface.driver, None);
+        let s = AudioSettings::from_json(
+            r#"{ "surface": { "driver": "mcu", "input": "  ", "output": "Example Desk" } }"#,
+        )
+        .unwrap();
+        assert_eq!(s.surface.driver.as_deref(), Some("mcu"));
+        assert_eq!(s.surface.input, None, "an empty port is none");
+        assert_eq!(s.surface.output.as_deref(), Some("Example Desk"));
+        // Partial objects and unknown fields are fine.
+        let s =
+            AudioSettings::from_json(r#"{ "surface": { "driver": "mcu", "extra": 1 } }"#).unwrap();
+        assert_eq!(s.surface.output, None);
+    }
+
+    #[test]
     fn json_round_trips() {
         let s = AudioSettings {
             host: HostChoice::Asio,
@@ -471,6 +513,11 @@ mod tests {
                 timeout_secs: 60,
                 disabled: ["clap.vendor.broken".to_string()].into(),
                 sandbox: false,
+            },
+            surface: SurfaceSettings {
+                driver: Some("mcu".into()),
+                input: Some("Example Surface".into()),
+                output: Some("Example Surface Out".into()),
             },
         };
         let json = s.to_json();

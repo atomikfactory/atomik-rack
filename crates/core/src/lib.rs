@@ -4,6 +4,7 @@
 //! This crate is a stable contract: public changes need review.
 
 mod meter_map;
+mod midi;
 mod note;
 mod param;
 mod tempo_map;
@@ -13,6 +14,7 @@ pub use meter_map::{
     BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent, MeterMap, MeterSegment, MeterTable, compile_meter,
     meter_ok,
 };
+pub use midi::{ChannelMessage, MessageKind};
 pub use note::{BufferFull, ExprKind, NoteBuffer, NoteEvent, NoteKind};
 pub use param::{
     ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain, gain_to_db,

@@ -209,6 +209,11 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("End Compare", None),
             ("Delete Snapshot", None),
             ("Delay Compensation", None),
+            ("MIDI Learn", None),
+            ("MIDI Mappings\u{2026}", None),
+            ("Export MIDI Mapping Preset\u{2026}", None),
+            ("Import MIDI Mapping Preset\u{2026}", None),
+            ("Clear MIDI Mappings", None),
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));

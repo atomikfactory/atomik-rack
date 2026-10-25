@@ -24,6 +24,8 @@ pub mod groove;
 mod groove_cmd;
 mod history;
 mod midi_import;
+mod midi_map;
+mod midi_map_io;
 pub mod organise;
 mod organise_cmd;
 mod patch;
@@ -66,6 +68,12 @@ pub use freeze::{
     ticks_for_frames, track_chain,
 };
 pub use midi_import::{ImportedTrack, MidiImport};
+pub use midi_map::{
+    DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
+    MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource, MidiTarget, PAIR_WINDOW_SECONDS,
+    PICKUP_WINDOW, PresetMap, PresetTarget, RelativeKind, SourceKind, TransportTarget, note_name,
+};
+pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
@@ -251,6 +259,9 @@ pub struct RackDoc {
     pub song: Song,
     /// The console (main mixer) section.
     pub console: Console,
+    /// The MIDI mappings (hardware controls bound to params, the tempo and the transport).
+    /// Project data with no part in the sound: see [`crate::midi_map`].
+    pub midi_maps: Vec<MidiMapping>,
 }
 
 /// An edit. Every command is undoable.
@@ -395,6 +406,8 @@ pub enum Command {
     SetInputChannels(u16),
     /// A console edit.
     Console(ConsoleCommand),
+    /// A MIDI mapping edit (see [`MidiMapCommand`]); reports [`SyncOp::MidiMapsChanged`].
+    MidiMap(MidiMapCommand),
     /// Several commands as one undo step, validated in order (each against the
     /// document as the earlier ones left it) and rejected as a whole if any fails, if the
     /// batch is empty or if it holds anything else. **Accepted:** `Connect`, `Disconnect`
@@ -574,6 +587,9 @@ pub enum SyncOp {
     /// [`RackDoc::solo_silence`] to the channels' `internal.solo_silence` params and the
     /// compensation switch to the engine.
     ConsoleChanged,
+    /// The MIDI mappings changed (any mapping command, its undo and redo, a project load). The
+    /// app rebuilds its mapping table; nothing reaches the engine.
+    MidiMapsChanged,
     /// A sampler's zone list changed (`SetZones`, its undo and redo; not reported
     /// when a whole device comes back or goes away, the app builds its map on insertion). The
     /// app rebuilds the device's sample map from [`RackDevice::zones`].
@@ -640,6 +656,10 @@ pub enum ModelError {
     /// Console edit rejected (not a channel, no master, source already has a channel…).
     #[error("console: {0}")]
     BadConsole(String),
+    /// MIDI mapping edit rejected (bad source or options, a target that does not exist, no such
+    /// mapping, too many mappings).
+    #[error("MIDI mapping: {0}")]
+    BadMidiMap(String),
     /// Zone edit rejected (device takes no samples, asset not in the pool, bad range...).
     #[error("zones: {0}")]
     BadZones(String),
@@ -1237,6 +1257,7 @@ impl Document {
                 }
             }
             Command::Console(console_command) => console_cmd::plan(doc, registry, console_command)?,
+            Command::MidiMap(c) => midi_map::plan(doc, registry, c)?,
             Command::Song(song_command) => return song_cmd::plan(doc, registry, song_command),
             Command::Workflow(c) => return workflow_cmd::plan(doc, registry, c),
         };
@@ -1370,6 +1391,7 @@ pub fn empty_doc() -> RackDoc {
         cables: Vec::new(),
         song: empty_song(120.0),
         console: Console::default(),
+        midi_maps: Vec::new(),
     }
 }
 

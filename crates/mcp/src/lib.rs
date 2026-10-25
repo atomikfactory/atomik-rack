@@ -12,12 +12,16 @@
 //!   `session_open`, `session_commands`, `session_command`, `session_pointer`, `session_key`,
 //!   `session_texts`, `session_screenshot`, `session_status`, `session_save`, `session_set_param`,
 //!   `session_meters`, `session_bounce`, `session_close`.
+//! - [`midi_tools`]: the MIDI control tools of the session: `session_midi_input`,
+//!   `session_midi_learn` (learn, mappings, presets) and `session_surface` (a control surface
+//!   on an in-memory port).
 //! - [`analysis`]: the audio measurements behind `analyze_audio` and `compare_audio`.
 //!
 //! `docs/MCP.md` is the reference and the QA recipes.
 
 pub mod analysis;
 pub mod b64;
+pub mod midi_tools;
 pub mod rpc;
 pub mod session;
 pub mod tier1;

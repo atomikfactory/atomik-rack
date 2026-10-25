@@ -471,6 +471,35 @@ fn strip_summary(doc: &RackDoc) -> Vec<Value> {
         .collect()
 }
 
+/// The project's MIDI mappings: id, the source as text, the target as text and the options that
+/// differ from the defaults.
+fn midi_map_summary(doc: &RackDoc) -> Vec<Value> {
+    doc.midi_maps
+        .iter()
+        .map(|m| {
+            let o = &m.options;
+            let mut v = json!({
+                "id": m.id,
+                "source": m.source.describe(),
+                "target": m.target.describe(),
+                "mode": o.mode.id(),
+                "min": r6(o.min),
+                "max": r6(o.max),
+            });
+            if o.invert {
+                v["invert"] = json!(true);
+            }
+            if !o.pickup {
+                v["pickup"] = json!(false);
+            }
+            if !o.consume {
+                v["consume"] = json!(false);
+            }
+            v
+        })
+        .collect()
+}
+
 /// The description of a document, shared with `session_status`.
 pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let devices: Vec<Value> = doc
@@ -625,6 +654,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     let strips = strip_summary(doc);
     if !strips.is_empty() {
         out["console"]["strips"] = Value::Array(strips);
+    }
+    let maps = midi_map_summary(doc);
+    if !maps.is_empty() {
+        out["midi_maps"] = Value::Array(maps);
     }
     if !grooves.is_empty() {
         out["song"]["grooves"] = Value::Array(grooves);

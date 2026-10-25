@@ -132,6 +132,17 @@ pub enum AppCommand {
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
     ToggleCompensation,
+    /// Mixer > MIDI Learn (on/off): while on, changing a control arms it for the next hardware
+    /// control that moves.
+    MidiLearn,
+    /// Mixer > MIDI Mappings...: the panel that lists the project's mappings.
+    MidiMappings,
+    /// Mixer > Export MIDI Mapping Preset...: the mappings as a preset file, by role.
+    ExportMidiPreset,
+    /// Mixer > Import MIDI Mapping Preset...: a preset file's mappings, added to the project.
+    ImportMidiPreset,
+    /// Mixer > Clear MIDI Mappings: removes every mapping (one undo step).
+    ClearMidiMaps,
     /// Mixer > Route to New Output Bus (Ctrl/Cmd+G): a new bus for the selected channels.
     RouteToNewBus,
     /// Mixer > Create VCA from Selection: a VCA group over the selected channels (the console's
@@ -368,6 +379,11 @@ impl AppCommand {
             AppCommand::TogglePolarity => ("mixer.toggle_polarity", None),
             AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
+            AppCommand::MidiLearn => ("midi.learn", None),
+            AppCommand::MidiMappings => ("midi.mappings", None),
+            AppCommand::ExportMidiPreset => ("midi.export_preset", None),
+            AppCommand::ImportMidiPreset => ("midi.import_preset", None),
+            AppCommand::ClearMidiMaps => ("midi.clear_maps", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
             AppCommand::CreateAudioTrack => ("create.audio_track", None),
@@ -546,6 +562,11 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
             }
             ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
+            ("midi.learn", None) => AppCommand::MidiLearn,
+            ("midi.mappings", None) => AppCommand::MidiMappings,
+            ("midi.export_preset", None) => AppCommand::ExportMidiPreset,
+            ("midi.import_preset", None) => AppCommand::ImportMidiPreset,
+            ("midi.clear_maps", None) => AppCommand::ClearMidiMaps,
             ("create.instrument", None) => AppCommand::CreateInstrument,
             ("create.effect", None) => AppCommand::CreateEffect,
             ("create.audio_track", None) => AppCommand::CreateAudioTrack,
@@ -784,8 +805,19 @@ pub struct MenuState {
     pub strip: StripMenu,
     /// What the mixer snapshots allow (the Mixer menu).
     pub snapshots: SnapshotMenu,
+    /// What MIDI Learn and the mappings allow (the Mixer menu).
+    pub midi: MidiMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
     pub freeze: FreezeMenu,
+}
+
+/// What the Mixer menu needs to know for MIDI Learn and the mappings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MidiMenu {
+    /// MIDI Learn mode is on (the item is checked).
+    pub learning: bool,
+    /// The project has mappings: export and clear work.
+    pub has_maps: bool,
 }
 
 /// What the Mixer menu needs to know to store, recall, compare and delete mixer snapshots.
@@ -1187,6 +1219,24 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ToggleCompensation,
                     state.compensation,
                 ),
+                MenuEntry::Separator,
+                check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
+                enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
+                enabled(
+                    "Export MIDI Mapping Preset\u{2026}",
+                    AppCommand::ExportMidiPreset,
+                    state.midi.has_maps,
+                ),
+                enabled(
+                    "Import MIDI Mapping Preset\u{2026}",
+                    AppCommand::ImportMidiPreset,
+                    true,
+                ),
+                enabled(
+                    "Clear MIDI Mappings",
+                    AppCommand::ClearMidiMaps,
+                    state.midi.has_maps,
+                ),
             ],
         },
         Menu {
@@ -1515,6 +1565,7 @@ mod tests {
             vca: VcaMenu::default(),
             strip: StripMenu::default(),
             snapshots: SnapshotMenu::default(),
+            midi: MidiMenu::default(),
             freeze: FreezeMenu::default(),
         }
     }
@@ -1586,6 +1637,11 @@ mod tests {
             AppCommand::EndCompare,
             AppCommand::DeleteSnapshot(None),
             AppCommand::ToggleCompensation,
+            AppCommand::MidiLearn,
+            AppCommand::MidiMappings,
+            AppCommand::ExportMidiPreset,
+            AppCommand::ImportMidiPreset,
+            AppCommand::ClearMidiMaps,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
             AppCommand::CreateAudioTrack,
@@ -2050,7 +2106,12 @@ mod tests {
                 "Compare A/B",
                 "End Compare",
                 "Delete Snapshot",
-                "Delay Compensation"
+                "Delay Compensation",
+                "MIDI Learn",
+                "MIDI Mappings\u{2026}",
+                "Export MIDI Mapping Preset\u{2026}",
+                "Import MIDI Mapping Preset\u{2026}",
+                "Clear MIDI Mappings"
             ]
         );
         assert_eq!(
@@ -2173,6 +2234,7 @@ mod tests {
                 vca: VcaMenu::default(),
                 strip: StripMenu::default(),
                 snapshots: SnapshotMenu::default(),
+                midi: MidiMenu::default(),
                 freeze: FreezeMenu {
                     tail: true,
                     ..FreezeMenu::default()

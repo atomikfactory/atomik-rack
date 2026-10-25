@@ -13,11 +13,17 @@
 //!   [`ScheduledNote`] through the [`LiveNoteSender`]. Before the audio callback has published
 //!   the clock, notes are delivered at frame 0 (offset 0 of the next batch). Frames pushed by
 //!   one input never decrease.
+//! - [`parse_message`] is the parser of the control path (mappings and control surfaces): the
+//!   channel and the raw values of notes, controllers and pitch bend.
+//! - [`ports`] opens raw input (SysEx included) and output ports for control surfaces.
+//! - [`surface`] holds the control-surface drivers (pure: bytes in, actions out, bytes out).
 //! - [`smf`] reads and writes Standard MIDI Files (format 0 and 1), pure bytes in and out.
 
+pub mod ports;
 pub mod smf;
+pub mod surface;
 
-use atomik_core::NoteKind;
+use atomik_core::{ChannelMessage, NoteKind};
 use atomik_device_sdk::SocketId;
 use atomik_engine::{DeviceInstanceId, FrameClock, LiveNoteSender, ScheduledNote};
 use std::sync::Arc;
@@ -52,6 +58,57 @@ pub struct RunningStatus {
 /// else (program change, system messages) or malformed bytes. The MIDI channel is dropped: all
 /// channels reach the focused or armed instrument. Never panics.
 pub fn parse(bytes: &[u8], state: &mut RunningStatus) -> Option<NoteKind> {
+    let (status, d0, d1) = frame(bytes, state)?;
+    match status & 0xF0 {
+        0xA0 => Some(NoteKind::PolyPressure {
+            key: d0,
+            value: f32::from(d1) / 127.0,
+        }),
+        0xB0 if d0 != 120 && d0 != 123 => Some(NoteKind::Cc {
+            controller: d0,
+            value: f32::from(d1) / 127.0,
+        }),
+        0xD0 => Some(NoteKind::ChannelPressure {
+            value: f32::from(d0) / 127.0,
+        }),
+        0xE0 => {
+            let bend = i32::from(d0) | (i32::from(d1) << 7);
+            Some(NoteKind::PitchBend {
+                value: (bend - 8192) as f32 / 8192.0,
+            })
+        }
+        0x80 => Some(NoteKind::Off { key: d0 }),
+        0x90 if d1 == 0 => Some(NoteKind::Off { key: d0 }),
+        0x90 => Some(NoteKind::On {
+            key: d0,
+            velocity: f32::from(d1) / 127.0,
+        }),
+        0xB0 if d0 == 120 || d0 == 123 => Some(NoteKind::AllOff),
+        _ => None,
+    }
+}
+
+/// Parses one MIDI message for the control path (mappings and control surfaces): the channel
+/// and the raw values of a note, a controller or a pitch bend (the controllers 120 and 123 are
+/// messages like any other here). `None` for anything else or malformed bytes. Never panics.
+pub fn parse_message(bytes: &[u8], state: &mut RunningStatus) -> Option<ChannelMessage> {
+    let (status, d0, d1) = frame(bytes, state)?;
+    let channel = status & 0x0F;
+    match status & 0xF0 {
+        0x80 => Some(ChannelMessage::note_off(channel, d0)),
+        0x90 => Some(ChannelMessage::note_on(channel, d0, d1)),
+        0xB0 => Some(ChannelMessage::cc(channel, d0, d1)),
+        0xE0 => Some(ChannelMessage::pitch_bend(
+            channel,
+            u16::from(d0) | (u16::from(d1) << 7),
+        )),
+        _ => None,
+    }
+}
+
+/// Frames one message: its status byte (running status applied) and two data bytes (the second
+/// is 0 for the one-byte messages). `None` when malformed or not a channel message.
+fn frame(bytes: &[u8], state: &mut RunningStatus) -> Option<(u8, u8, u8)> {
     let mut status = 0u8;
     let mut data = [0u8; 2];
     let mut len = 0usize;
@@ -91,33 +148,7 @@ pub fn parse(bytes: &[u8], state: &mut RunningStatus) -> Option<NoteKind> {
         return None;
     }
     let [d0, d1] = data;
-    match status & 0xF0 {
-        0xA0 => Some(NoteKind::PolyPressure {
-            key: d0,
-            value: f32::from(d1) / 127.0,
-        }),
-        0xB0 if d0 != 120 && d0 != 123 => Some(NoteKind::Cc {
-            controller: d0,
-            value: f32::from(d1) / 127.0,
-        }),
-        0xD0 => Some(NoteKind::ChannelPressure {
-            value: f32::from(d0) / 127.0,
-        }),
-        0xE0 => {
-            let bend = i32::from(d0) | (i32::from(d1) << 7);
-            Some(NoteKind::PitchBend {
-                value: (bend - 8192) as f32 / 8192.0,
-            })
-        }
-        0x80 => Some(NoteKind::Off { key: d0 }),
-        0x90 if d1 == 0 => Some(NoteKind::Off { key: d0 }),
-        0x90 => Some(NoteKind::On {
-            key: d0,
-            velocity: f32::from(d1) / 127.0,
-        }),
-        0xB0 if d0 == 120 || d0 == 123 => Some(NoteKind::AllOff),
-        _ => None,
-    }
+    Some((status, d0, d1))
 }
 
 /// Maps an event received at `at` to an engine frame (jitter-free):

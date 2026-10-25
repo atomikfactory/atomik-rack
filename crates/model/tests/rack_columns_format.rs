@@ -73,14 +73,14 @@ fn edit(text: &str, f: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 27);
+    assert_eq!(PROJECT_VERSION, 28);
 }
 
 #[test]
 fn a_single_column_rack_writes_neither_field() {
     let r = registry();
     let text = save_project(three_devices(&r).doc());
-    assert!(text.contains("\"version\": 27"));
+    assert!(text.contains("\"version\": 28"));
     assert!(!text.contains("rack_columns"));
     assert!(!text.contains("\"column\""));
 }
@@ -128,7 +128,7 @@ fn every_older_version_loads_as_one_column_in_column_zero() {
         assert!(doc.devices.iter().all(|d| d.column == 0), "{name}");
         doc.check_columns().unwrap();
         let saved = save_project(&doc);
-        assert!(saved.contains("\"version\": 27"), "{name}");
+        assert!(saved.contains("\"version\": 28"), "{name}");
         assert!(
             !saved.contains("rack_columns") && !saved.contains("\"column\""),
             "{name}"
@@ -150,7 +150,7 @@ fn the_new_fields_need_version_11() {
     let (d, r) = rack();
     let text = save_project(d.doc());
     for v in 3..=10 {
-        let old = text.replace("\"version\": 27", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 28", &format!("\"version\": {v}"));
         let e = load_project(&old, &r).unwrap_err().to_string();
         assert!(
             e.contains("rack_columns") || e.contains("column"),

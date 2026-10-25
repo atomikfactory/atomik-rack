@@ -500,11 +500,17 @@ fn a_press_outside_the_menu_or_escape_closes_it_without_a_command() {
     let _ = right_click(&mut v, d.doc(), p);
     assert!(click(&mut v, d.doc(), Point::new(5.0, 700.0)).is_empty());
     assert!(rows(&v).is_empty());
-    // The top level has no such menu: a right-click on a knob does nothing.
+    // The top level has no such menu: a right-click on a knob only asks for the MIDI menu of
+    // the control (the shell opens it), and no rows open here.
     let reg = registry();
     let mut v = view(d.doc(), &reg);
     let p = v.control_center(&key("lead"), "filter.resonance").unwrap();
-    assert!(right_click(&mut v, d.doc(), p).is_empty());
+    let actions = right_click(&mut v, d.doc(), p);
+    assert!(
+        matches!(&actions[..], [UiAction::ControlMenu { device, param, .. }]
+            if *device == key("lead") && param == "filter.resonance"),
+        "{actions:?}"
+    );
     assert!(rows(&v).is_empty());
 }
 

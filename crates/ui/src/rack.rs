@@ -458,6 +458,8 @@ pub struct RackView {
     roles: Roles,
     browser: Browser,
     toast: Option<String>,
+    /// The mapped controls and the learn state (see [`crate::MidiMarks`]).
+    midi: crate::MidiMarks,
     repaint: bool,
     content_height: f64,
     /// How many columns the view lays out (1 inside a container).
@@ -562,6 +564,16 @@ fn param_cmd(key: &DeviceKey, param: &str, value: f32, merge: Option<u64>) -> Ui
 }
 
 impl RackView {
+    /// Tells the view which controls have a MIDI mapping (a dot on each; an outline on each
+    /// while MIDI Learn is on, and in the warning colour on the one waiting for a hardware
+    /// control).
+    pub fn set_midi_marks(&mut self, marks: crate::MidiMarks) {
+        if self.midi != marks {
+            self.midi = marks;
+            self.repaint = true;
+        }
+    }
+
     /// A view with no devices; call [`Self::sync`] with a document.
     pub fn new(theme: Theme) -> Self {
         Self {
@@ -598,6 +610,7 @@ impl RackView {
                 ..Browser::default()
             },
             toast: None,
+            midi: crate::MidiMarks::default(),
             repaint: true,
             content_height: 0.0,
             columns: 1,
@@ -2814,6 +2827,17 @@ impl RackView {
         }
         let key = self.devices[i].key.clone();
         match (kind, button) {
+            // A right click on a knob, a fader or a switch opens its MIDI menu.
+            (
+                ControlKind::Knob | ControlKind::Fader | ControlKind::Toggle,
+                PointerButton::Secondary,
+            ) => {
+                out.push(UiAction::ControlMenu {
+                    device: key,
+                    param: p.key.to_owned(),
+                    at: self.pointer,
+                });
+            }
             (ControlKind::Knob | ControlKind::Fader, PointerButton::Primary) => {
                 // A double-click or a Ctrl/Cmd-click resets to the default.
                 if clicks >= 2 || modifiers.command() {
@@ -3478,6 +3502,7 @@ impl RackView {
             canvas.pop_transform();
         }
         self.paint_overlays(canvas, doc, top, bottom);
+        self.paint_midi_marks(canvas, top, bottom);
         canvas.pop_transform();
         canvas.pop_clip();
         self.paint_navigator(canvas);
@@ -3495,6 +3520,26 @@ impl RackView {
         canvas.pop_transform();
         self.tree.clear_dirty();
         self.repaint = false;
+    }
+
+    /// The marks of the mapped controls of the front panels in view.
+    fn paint_midi_marks(&self, c: &mut dyn Canvas, top: f64, bottom: f64) {
+        if self.flip != Flip::Front || self.midi.is_empty() {
+            return;
+        }
+        for d in &self.devices {
+            if d.folded || d.y + d.height < top || d.y > bottom {
+                continue;
+            }
+            let Some(desc) = d.desc else { continue };
+            for pc in &d.spec.front {
+                let Some(p) = desc.params.get(d.spec.param_index(&desc, pc, d.pad)) else {
+                    continue;
+                };
+                self.midi
+                    .paint_control(c, &self.theme, &d.key, p.key, pc.rect + d.offset());
+            }
+        }
     }
 
     fn paint_overlays(&self, c: &mut dyn Canvas, doc: &RackDoc, top: f64, bottom: f64) {

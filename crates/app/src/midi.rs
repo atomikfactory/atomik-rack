@@ -8,11 +8,12 @@
 //! every device. Closing the connection hands the sender back, so the MIDI port can change
 //! without restarting the engine.
 
+use crate::midi_control::ControlHub;
 use crate::record::RecordTap;
 use crate::target::{NoteRouter, NoteTarget, Target};
 use atomik_core::NoteKind;
 use atomik_engine::{EngineError, FrameClock, LiveNoteSender, ScheduledNote};
-use atomik_midi_io::{MidiError, RunningStatus, event_frame, parse};
+use atomik_midi_io::{MidiError, RunningStatus, event_frame, parse, parse_message};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
@@ -32,6 +33,9 @@ pub struct MidiLink {
     pub latency: Arc<AtomicU64>,
     /// Recording capture: every note sent is offered to it.
     pub tap: Arc<RecordTap>,
+    /// The control path: every parsed message goes to its inbox for the mappings, and its
+    /// consume list decides which messages never reach the notes.
+    pub hub: Arc<ControlHub>,
 }
 
 impl MidiLink {
@@ -91,6 +95,33 @@ impl NoteForwarder {
         sample_rate: f64,
         latency_frames: u64,
         target: &NoteTarget,
+        emit: impl FnMut(ScheduledNote),
+    ) {
+        self.forward_with(
+            bytes,
+            at,
+            clock,
+            sample_rate,
+            latency_frames,
+            target,
+            false,
+            emit,
+        );
+    }
+
+    /// [`Self::forward`] for a message a mapping may have consumed: a consumed message is
+    /// parsed (so running status stays right) and timestamped but not routed, so it plays no
+    /// note.
+    #[allow(clippy::too_many_arguments)]
+    pub fn forward_with(
+        &mut self,
+        bytes: &[u8],
+        at: Instant,
+        clock: Option<(u64, Instant)>,
+        sample_rate: f64,
+        latency_frames: u64,
+        target: &NoteTarget,
+        consumed: bool,
         mut emit: impl FnMut(ScheduledNote),
     ) {
         let Some(kind) = parse(bytes, &mut self.state) else {
@@ -102,6 +133,9 @@ impl NoteForwarder {
         // The live queue expects non-decreasing frames.
         self.last_frame = self.last_frame.max(mapped);
         let frame = self.last_frame;
+        if consumed {
+            return;
+        }
         self.router
             .route(kind, target.get(), |(device, socket), kind| {
                 emit(ScheduledNote {
@@ -139,6 +173,10 @@ impl std::fmt::Debug for MidiConnection {
 /// thread (is untouched).
 struct Forwarder {
     forwarder: NoteForwarder,
+    /// The parser of the control path (its own running status).
+    control_state: RunningStatus,
+    /// The port's name, shared with every message sent to the hub.
+    port: Arc<str>,
     slot: Arc<Mutex<Option<MidiLink>>>,
     dropped: Arc<AtomicU64>,
 }
@@ -159,13 +197,20 @@ impl Forwarder {
         let clock = link.clock.read();
         let sender = &mut link.sender;
         let tap = &link.tap;
-        self.forwarder.forward(
+        // The control path first: the mappings see every message, and a message a mapping
+        // consumes (or any message while learning) plays no note.
+        let consumed = parse_message(bytes, &mut self.control_state).is_some_and(|m| {
+            link.hub.push(&self.port, m);
+            link.hub.consumes(&self.port, &m)
+        });
+        self.forwarder.forward_with(
             bytes,
             at,
             clock,
             link.sample_rate,
             latency,
             &link.target,
+            consumed,
             |note| {
                 if sender.push(note).is_err() {
                     dropped.fetch_add(1, Ordering::Relaxed);
@@ -200,6 +245,8 @@ impl MidiConnection {
         let slot = Arc::new(Mutex::new(Some(link)));
         let forwarder = Forwarder {
             forwarder: NoteForwarder::new(),
+            control_state: RunningStatus::default(),
+            port: Arc::from(names[index].as_str()),
             slot: Arc::clone(&slot),
             dropped: Arc::clone(&dropped),
         };
@@ -502,6 +549,7 @@ mod tests {
             sample_rate: 48_000.0,
             latency: Arc::new(AtomicU64::new(256)),
             tap: Arc::clone(&tap),
+            hub: Arc::new(ControlHub::new()),
         };
         (Arc::new(Mutex::new(Some(link))), tap, target)
     }
@@ -511,6 +559,8 @@ mod tests {
         let (slot, tap, target) = link_with_tap();
         let mut fwd = Forwarder {
             forwarder: NoteForwarder::new(),
+            control_state: RunningStatus::default(),
+            port: Arc::from("Example"),
             slot: Arc::clone(&slot),
             dropped: Arc::new(AtomicU64::new(0)),
         };
@@ -532,5 +582,56 @@ mod tests {
             link.send_now((DeviceInstanceId(3), SocketId(9)), NoteKind::Off { key: 1 })
                 .is_ok()
         );
+    }
+
+    /// A message a mapping listens to is consumed (it plays no note, but the mappings still see
+    /// it), every other message plays, running status survives a consumed message, and learning
+    /// consumes everything.
+    #[test]
+    fn a_mapped_message_is_consumed_and_the_rest_plays() {
+        use atomik_model::{MidiSource, SourceKind};
+        let (slot, tap, _target) = link_with_tap();
+        let hub = Arc::clone(&slot.lock().unwrap().as_ref().unwrap().hub);
+        hub.set_consumed(vec![MidiSource::any_port(Some(0), SourceKind::Note(36))]);
+        let mut fwd = Forwarder {
+            forwarder: NoteForwarder::new(),
+            control_state: RunningStatus::default(),
+            port: Arc::from("Pad"),
+            slot: Arc::clone(&slot),
+            dropped: Arc::new(AtomicU64::new(0)),
+        };
+        tap.set_armed(&[DeviceInstanceId(3)]);
+        fwd.on_message(&[0x90, 36, 100]);
+        fwd.on_message(&[0x80, 36, 0]);
+        // Running status after a consumed message: the second note (37) is not mapped.
+        fwd.on_message(&[0x90, 36, 100]);
+        fwd.on_message(&[37, 90]);
+        fwd.on_message(&[0x90, 60, 100]);
+        let mut out = Vec::new();
+        tap.drain(&mut out);
+        let keys: Vec<u8> = out
+            .iter()
+            .filter_map(|n| match n.kind {
+                NoteKind::On { key, .. } => Some(key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, [37, 60], "only the unmapped keys play: {out:?}");
+        // The mappings saw all of them, mapped or not.
+        let mut seen = Vec::new();
+        hub.drain(&mut seen);
+        assert_eq!(seen.len(), 5);
+        assert_eq!(&*seen[0].port, "Pad");
+        // While learning nothing plays.
+        out.clear();
+        hub.set_learning(true);
+        fwd.on_message(&[0x90, 61, 100]);
+        tap.drain(&mut out);
+        assert!(out.is_empty(), "{out:?}");
+        hub.set_learning(false);
+        fwd.on_message(&[0x90, 62, 100]);
+        out.clear();
+        tap.drain(&mut out);
+        assert_eq!(out.len(), 1);
     }
 }
