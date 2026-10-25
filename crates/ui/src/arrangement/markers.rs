@@ -9,7 +9,7 @@
 //! double-click on a label types a new name in place (the view is the text owner meanwhile,
 //! see [`ArrangementView::is_text_owner`]).
 
-use super::{ArrangementView, DRAG_THRESHOLD, Drag, Hit, MIN_TICKS, song_cmd};
+use super::{ArrangementView, DRAG_THRESHOLD, Drag, Hit, LINE_GRAB, MIN_TICKS, song_cmd};
 use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton};
@@ -328,6 +328,39 @@ impl ArrangementView {
                 )
             })
             .collect()
+    }
+
+    /// The marker whose line is within [`LINE_GRAB`] of `x` (the nearest one); only while the
+    /// strip is shown, as the lines are.
+    pub(super) fn marker_line_at(&self, x: f64) -> Option<u32> {
+        if !self.mk.strip {
+            return None;
+        }
+        self.song
+            .markers
+            .iter()
+            .map(|m| (m.id, (self.axis.tick_to_x(m.tick) - x).abs()))
+            .filter(|(_, d)| *d <= LINE_GRAB)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    /// The marker lines over the lanes: faint, in the colour of the marker.
+    pub(super) fn paint_marker_lines(&self, c: &mut dyn Canvas, tl: Rect) {
+        if !self.mk.strip {
+            return;
+        }
+        let t = &self.st.base;
+        for m in &self.song.markers {
+            let x = self.axis.tick_to_x(m.tick).round() + 0.5;
+            if x < tl.x0 || x > tl.x1 {
+                continue;
+            }
+            let lit = self.mk.sel == Some(MarkSel::Marker(m.id))
+                || self.hover == Some(Hit::MarkerLine(m.id));
+            let col = color_of(m.color, t.highlight).with_alpha(if lit { 0.8 } else { 0.35 });
+            sp::line(c, x, tl.y0, x, tl.y1, col);
+        }
     }
 
     /// What is under `pos` in the strip.

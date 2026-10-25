@@ -4040,14 +4040,17 @@ impl<B: AudioBackend> Shell<B> {
         changed
     }
 
-    /// The mouse cursor to show: the piano roll's while it is the visible song pane (its hover
-    /// is cleared by the `PointerLeave` the shell sends when the pointer moves to another
-    /// pane), the arrow elsewhere.
+    /// The mouse cursor to show: the piano roll's or the arrangement's while it is the visible
+    /// song pane (its hover is cleared by the `PointerLeave` the shell sends when the pointer
+    /// moves to another pane), the arrow elsewhere.
     pub fn cursor(&self) -> CursorHint {
-        if self.ui.show_song && self.song_pane() == Pane::PianoRoll {
-            self.core.piano_roll().cursor()
-        } else {
-            CursorHint::Default
+        if !self.ui.show_song {
+            return CursorHint::Default;
+        }
+        match self.song_pane() {
+            Pane::PianoRoll => self.core.piano_roll().cursor(),
+            Pane::Arrangement => self.core.arrangement().cursor(),
+            _ => CursorHint::Default,
         }
     }
 

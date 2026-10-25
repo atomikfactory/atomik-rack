@@ -1013,3 +1013,71 @@ fn preview_png() {
     std::fs::write(&path, png).unwrap();
     println!("wrote {}", path.display());
 }
+
+// ---------------------------------------------------------------- marker lines in the grid
+
+#[test]
+fn dragging_a_marker_line_in_the_grid_moves_the_marker() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    let y = v.lane_rect(&key("lead"), 0).unwrap().center().y;
+    let x = v.tick_to_x(4 * BAR);
+    let to = Point::new(x + 2.0 * PPQ as f64 * v.px_per_tick() + 1.0, y);
+    let a = handle(
+        &mut v,
+        &doc,
+        &[
+            down(Point::new(x + 2.0, y)),
+            mv(Point::new(x + 20.0, y)),
+            mv(to),
+            up(to),
+        ],
+    );
+    let lists = marker_lists(&a);
+    let moved = lists.last().unwrap().iter().find(|m| m.id == 2).unwrap();
+    assert_eq!(moved.tick, 4 * BAR + 2 * PPQ, "snapped like a strip drag");
+    assert_eq!(a.last(), Some(&UiAction::EndMerge));
+}
+
+#[test]
+fn hovering_a_marker_line_hints_the_resize_cursor() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    let y = v.lane_rect(&key("lead"), 0).unwrap().center().y;
+    let p = Point::new(v.tick_to_x(4 * BAR), y);
+    let _ = handle(&mut v, &doc, &[mv(p)]);
+    assert_eq!(v.cursor(), atomik_ui::CursorHint::ResizeHorizontal);
+}
+
+#[test]
+fn pressing_beside_a_marker_line_or_with_another_tool_leaves_the_grid_alone() {
+    let doc = marked();
+    let mut v = with_strip(&doc);
+    let y = v.lane_rect(&key("lead"), 0).unwrap().center().y;
+    let x = v.tick_to_x(4 * BAR);
+    let beside = Point::new(x + 12.0, y);
+    let a = handle(&mut v, &doc, &[down(beside), up(beside)]);
+    assert!(marker_lists(&a).is_empty());
+    v.set_tool(Tool::Pencil);
+    let to = Point::new(x + 80.0, y);
+    let a = handle(
+        &mut v,
+        &doc,
+        &[down(Point::new(x + 1.0, y)), mv(to), up(to)],
+    );
+    assert!(
+        marker_lists(&a).is_empty(),
+        "the pencil draws over the line"
+    );
+}
+
+#[test]
+fn marker_lines_are_not_grabbed_while_the_strip_is_hidden() {
+    let doc = marked();
+    let mut v = arrangement(&doc, &registry());
+    let y = v.lane_rect(&key("lead"), 0).unwrap().center().y;
+    let x = v.tick_to_x(4 * BAR);
+    let to = Point::new(x + 80.0, y);
+    let a = handle(&mut v, &doc, &[down(Point::new(x, y)), mv(to), up(to)]);
+    assert!(marker_lists(&a).is_empty());
+}

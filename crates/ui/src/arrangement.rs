@@ -23,6 +23,7 @@
 use crate::action::{ContextTarget, ImportTarget, TransportAction, UiAction};
 use crate::audio::{self, InputSel, TempoMap};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, Roles};
 use crate::marker_edit::RangePart;
@@ -92,6 +93,10 @@ const MUTE_BUTTON: f64 = 10.0;
 const AUDIO_HANDLE_INSET: f64 = 12.0;
 const EDGE_PX: f64 = 6.0;
 const DRAG_THRESHOLD: f64 = 3.0;
+/// How far from the playhead, a marker line or a loop locator a press still grabs it.
+const LINE_GRAB: f64 = 3.0;
+/// The height of the playhead's flag at the bottom of the ruler.
+const PLAYHEAD_FLAG: f64 = 9.0;
 const POINT_RADIUS: f64 = 6.0;
 const SCROLL_STEP: f64 = 48.0;
 /// Height of the horizontal scrollbar along the bottom of the timeline.
@@ -237,6 +242,12 @@ enum Hit {
     TrackEdge(usize),
     RulerLabel,
     LoopBand,
+    /// The playhead: its flag in the ruler, or its line in the grid (a drag locates).
+    Playhead,
+    /// A loop locator in the ruler (`true`: the right one); a drag moves it.
+    LoopEdge(bool),
+    /// The line of a marker in the grid (the same grab as the marker's label in the strip).
+    MarkerLine(u32),
     /// A point of the tempo lane.
     TempoPoint(usize),
     /// The tempo lane away from its points.
@@ -342,6 +353,32 @@ impl Menu {
     }
 }
 
+/// The locator a modified press in the ruler sets: Alt the left one (`Some(false)`), Ctrl or
+/// Cmd the right one (`Some(true)`). Both together (Ctrl+Alt is the no-snap hold) set none.
+fn locator_edge(m: Modifiers) -> Option<bool> {
+    match (m.alt, m.command()) {
+        (true, false) => Some(false),
+        (false, true) => Some(true),
+        _ => None,
+    }
+}
+
+/// The loop range with one locator moved to `t`: the other one stays unless the range would
+/// shrink under `min`, then it gives way (the left one stops at zero).
+fn locator_range(range: (i64, i64), right: bool, t: i64, min: i64) -> (i64, i64) {
+    let (a, z) = range;
+    if right {
+        if t >= a + min {
+            (a, t)
+        } else {
+            let a = (t - min).max(0);
+            (a, (a + min).max(t))
+        }
+    } else {
+        (t, z.max(t + min))
+    }
+}
+
 // One drag lives at a time and is rebuilt on every pointer event anyway: the audio variant holds
 // whole clips, and boxing them would only add an allocation per drag.
 #[allow(clippy::large_enum_variant)]
@@ -412,6 +449,20 @@ enum Drag {
         moved: bool,
         emitted: bool,
         last: Vec<AutomationPoint>,
+    },
+    /// Dragging the playhead: every new snapped tick is located.
+    Playhead {
+        /// The pointer's offset from the playhead at the press (zero when it was placed there).
+        grab: i64,
+        last: i64,
+    },
+    /// Dragging a loop locator: the range is committed on release.
+    LoopEdge {
+        start: Point,
+        right: bool,
+        original: (i64, i64),
+        range: (i64, i64),
+        moved: bool,
     },
     Loop {
         start: Point,
@@ -1594,7 +1645,60 @@ impl ArrangementView {
         out
     }
 
+    /// What is under `pos`: the grabs of the playhead, the loop locators and the marker lines
+    /// first, then the rest ([`Self::hit_base`]).
     fn hit(&self, pos: Point) -> Hit {
+        self.line_hit(pos).unwrap_or_else(|| self.hit_base(pos))
+    }
+
+    /// The thin things drawn over the timeline that a press grabs: the playhead (flag in the
+    /// ruler, line in the grid), the loop locators, the marker lines. In the grid they only
+    /// answer to the Select tool and sit within [`LINE_GRAB`] of the line, and a clip's own
+    /// controls keep their press.
+    fn line_hit(&self, pos: Point) -> Option<Hit> {
+        if self.menu.as_ref().is_some_and(|m| m.rect().contains(pos))
+            || (self.mk.list && self.marker_list_rect().contains(pos))
+            || !self.bounds.contains(pos)
+            || self.hscroll_rect().contains(pos)
+            || pos.x < self.timeline_rect().x0
+        {
+            return None;
+        }
+        let near = |tick: i64| (self.axis.tick_to_x(tick) - pos.x).abs() <= LINE_GRAB;
+        let ruler = self.ruler_bottom();
+        if pos.y < ruler {
+            if pos.y < self.bounds.y0 + LABEL_BAND {
+                return None;
+            }
+            if pos.y >= ruler - PLAYHEAD_FLAG && near(self.playhead) {
+                return Some(Hit::Playhead);
+            }
+            let (a, z) = self.song.loop_range;
+            let dist = |t: i64| (self.axis.tick_to_x(t) - pos.x).abs();
+            return (near(a) || near(z)).then(|| Hit::LoopEdge(dist(z) <= dist(a)));
+        }
+        if pos.y < self.lanes_top() || self.vp.shown_tool() != Tool::Select {
+            return None;
+        }
+        // A clip's own controls (edges, fades, points, mute) keep their press.
+        if matches!(
+            self.hit_base(pos),
+            Hit::Clip { part, .. }
+                if !matches!(part, ClipPart::Body | ClipPart::AutoBody | ClipPart::Header)
+        ) {
+            return None;
+        }
+        // Clear of the timeline's left edge, where a stopped playhead sits and a band starts.
+        if pos.x - self.timeline_rect().x0 <= 2.0 * LINE_GRAB {
+            return None;
+        }
+        if near(self.playhead) {
+            return Some(Hit::Playhead);
+        }
+        self.marker_line_at(pos.x).map(Hit::MarkerLine)
+    }
+
+    fn hit_base(&self, pos: Point) -> Hit {
         if let Some(m) = &self.menu {
             if let Some(i) = m.row_at(pos) {
                 return Hit::Menu(i);
@@ -1927,7 +2031,19 @@ impl ArrangementView {
             self.hscroll_to(pos.x - grab);
             return;
         }
-        let hit = self.hit(pos);
+        // The lines drawn over the timeline are grabbed with the primary button only; the other
+        // buttons reach what lies under them.
+        // Shift and Ctrl (band, toggle) keep the grid under a line as well.
+        let hit = match self.hit(pos) {
+            Hit::Playhead | Hit::MarkerLine(_)
+                if button != PointerButton::Primary
+                    || (pos.y >= self.ruler_bottom()
+                        && (modifiers.shift || modifiers.command())) =>
+            {
+                self.hit_base(pos)
+            }
+            h => h,
+        };
         if self.rename_press(pos, out) {
             return;
         }
@@ -1963,10 +2079,49 @@ impl ArrangementView {
             self.tempo_sel = None;
             self.meter_sel = None;
         }
-        if !matches!(hit, Hit::Marker(_) | Hit::Range(..) | Hit::Panel(_)) {
+        if !matches!(
+            hit,
+            Hit::Marker(_) | Hit::MarkerLine(_) | Hit::Range(..) | Hit::Panel(_)
+        ) {
             self.mk.sel = None;
         }
+        let in_ruler = matches!(
+            hit,
+            Hit::RulerLabel | Hit::LoopBand | Hit::LoopEdge(_) | Hit::Playhead
+        ) && pos.y < self.ruler_bottom();
+        if primary
+            && in_ruler
+            && let Some(right) = locator_edge(modifiers)
+        {
+            // Alt+click sets the left locator, Ctrl+click (Cmd) the right one.
+            // The modifier is the gesture here, not the no-snap hold: the locator always snaps.
+            let grid = self.step(Modifiers::NONE);
+            let t = snap_round(self.axis.x_to_tick(pos.x), grid.clone()).max(0);
+            let min = seq_edit::min_length(grid, MIN_TICKS);
+            out.push(song_cmd(SongCommand::SetLoop {
+                range: locator_range(self.song.loop_range, right, t, min),
+                enabled: self.song.loop_enabled,
+            }));
+            return;
+        }
         match hit {
+            Hit::MarkerLine(id) => self.marker_down(id, pos, button, clicks, tool, out),
+            Hit::Playhead => {
+                self.drag = Drag::Playhead {
+                    grab: self.axis.x_to_tick(pos.x) - self.playhead,
+                    last: self.playhead,
+                };
+            }
+            Hit::LoopEdge(right) => {
+                let r = self.song.loop_range;
+                self.drag = Drag::LoopEdge {
+                    start: pos,
+                    right,
+                    original: r,
+                    range: r,
+                    moved: false,
+                };
+            }
             Hit::Marker(id) => self.marker_down(id, pos, button, clicks, tool, out),
             Hit::Range(id, part) => self.range_down(id, part, pos, button, clicks, tool, out),
             Hit::MarkerStrip(row) => {
@@ -1994,8 +2149,10 @@ impl ArrangementView {
                 out.extend(self.split_all_at(at, None));
             }
             Hit::RulerLabel if primary => {
+                // A press locates; the drag goes on locating the snapped tick under the pointer.
                 let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers)).max(0);
                 out.push(UiAction::Transport(TransportAction::Locate(t)));
+                self.drag = Drag::Playhead { grab: 0, last: t };
             }
             Hit::LoopBand if primary => {
                 let t = self.axis.x_to_tick(pos.x);
@@ -2658,6 +2815,10 @@ impl ArrangementView {
             out.extend(actions);
             return;
         }
+        if matches!(self.drag, Drag::Playhead { .. } | Drag::LoopEdge { .. }) {
+            self.locator_move(pos, modifiers, out);
+            return;
+        }
         if matches!(self.drag, Drag::Marquee { .. }) {
             self.marquee_move(pos);
             return;
@@ -2683,6 +2844,8 @@ impl ArrangementView {
             | Drag::Height
             | Drag::Meter { .. }
             | Drag::Comp { .. }
+            | Drag::Playhead { .. }
+            | Drag::LoopEdge { .. }
             | Drag::Mark => {}
             Drag::Move {
                 start,
@@ -2944,11 +3107,69 @@ impl ArrangementView {
         }
     }
 
+    /// The pointer moved while the playhead or a loop locator is dragged.
+    fn locator_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        let grid = self.step(modifiers);
+        let min = seq_edit::min_length(&grid, MIN_TICKS);
+        let raw = self.axis.x_to_tick(pos.x);
+        match &mut self.drag {
+            Drag::Playhead { grab, last } => {
+                let t = snap_round(raw - *grab, grid).max(0);
+                if t != *last {
+                    *last = t;
+                    out.push(UiAction::Transport(TransportAction::Locate(t)));
+                }
+            }
+            Drag::LoopEdge {
+                start,
+                right,
+                original,
+                range,
+                moved,
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if *moved {
+                    *range = locator_range(*original, *right, snap_round(raw, grid).max(0), min);
+                }
+            }
+            _ => {}
+        }
+        self.repaint = true;
+    }
+
+    /// The mouse cursor to show: the horizontal arrows over (and while dragging) the playhead,
+    /// a loop locator or a marker line.
+    pub fn cursor(&self) -> CursorHint {
+        match &self.drag {
+            Drag::Playhead { .. } | Drag::LoopEdge { .. } => CursorHint::ResizeHorizontal,
+            Drag::None => match self.hover {
+                Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::MarkerLine(_)) => {
+                    CursorHint::ResizeHorizontal
+                }
+                _ => CursorHint::Default,
+            },
+            _ => CursorHint::Default,
+        }
+    }
+
     fn pointer_up(&mut self, pos: Point, _modifiers: Modifiers, out: &mut Vec<UiAction>) {
         let drag = std::mem::replace(&mut self.drag, Drag::None);
         self.repaint = true;
         match drag {
-            Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } => {}
+            Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } | Drag::Playhead { .. } => {}
+            Drag::LoopEdge {
+                original,
+                range,
+                moved,
+                ..
+            } => {
+                if moved && range != original {
+                    out.push(song_cmd(SongCommand::SetLoop {
+                        range,
+                        enabled: self.song.loop_enabled,
+                    }));
+                }
+            }
             Drag::Mark => self.marker_drag_up(out),
             Drag::Height => self.height_up(out),
             Drag::Comp {
@@ -3803,6 +4024,7 @@ impl ArrangementView {
         }
         self.paint_drag_overlays(c, doc, tl);
         self.paint_drop_hint(c, doc, tl);
+        self.paint_marker_lines(c, tl);
         let col = if self.recording {
             st.record
         } else {
@@ -4446,6 +4668,11 @@ impl ArrangementView {
                 let (s, len) = seq_edit::draw_span(*t0, *t1, self.step(*modifiers), MIN_TICKS);
                 (s, s + len, true)
             }
+            Drag::LoopEdge {
+                range: (a, z),
+                moved: true,
+                ..
+            } => (*a, *z, self.song.loop_enabled),
             _ => (
                 self.song.loop_range.0,
                 self.song.loop_range.1,
