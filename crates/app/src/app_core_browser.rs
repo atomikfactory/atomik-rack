@@ -318,6 +318,10 @@ impl<S: EngineSink> AppCore<S> {
             BrowseAction::SetAutoPreview(_)
             | BrowseAction::DragFiles(_)
             | BrowseAction::LayoutChanged => {}
+            // Loading, opening and renaming library items is the library work of the app.
+            BrowseAction::Load(_)
+            | BrowseAction::OpenProject(_)
+            | BrowseAction::RenameItem { .. } => {}
         }
     }
 
@@ -404,6 +408,8 @@ impl<S: EngineSink> AppCore<S> {
                     .unwrap_or_default();
                 self.submit(BrowseJob::Stat { generation, paths });
             }
+            // Listing the library sections is the library work of the app.
+            Place::Library(_) => {}
         }
     }
 

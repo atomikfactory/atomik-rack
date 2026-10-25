@@ -1,7 +1,9 @@
 //! FileBrowserView behaviour: list, selection, preview, keyboard, search, tree, menus, drag,
 //! info requests and large-list performance. Driven through `handle` and the display list.
 
-use atomik_library::{AudioFormat, AudioInfo, FileKind, FileRow};
+use atomik_library::{
+    AudioFormat, AudioInfo, FileKind, FileRow, ItemInfo, LibrarySection, device_uri,
+};
 use atomik_ui::kurbo::{Point, Rect, Size, Vec2};
 use atomik_ui::{
     BrowseAction, DisplayList, FileBrowserView, Key, Modifiers, PlacesData, PointerButton, Theme,
@@ -19,7 +21,16 @@ fn row_pt(i: usize) -> Point {
     Point::new(80.0, LIST_Y + 22.0 * i as f64 + 11.0)
 }
 
+/// Rows of the library block (heading and five sections) above the Favourites entry.
+const LIBRARY_ROWS: usize = 6;
+
+/// The point of tree item `i` counted from Favourites, the first entry below the library block.
 fn tree_pt(i: usize, x: f64) -> Point {
+    lib_pt(LIBRARY_ROWS + i, x)
+}
+
+/// The point of tree item `i` counted from the top of the tree (the library heading is 0).
+fn lib_pt(i: usize, x: f64) -> Point {
     Point::new(x, TREE_Y + 20.0 * i as f64 + 10.0)
 }
 
@@ -386,22 +397,6 @@ fn space_toggles_preview_of_the_selected_file() {
         run(&mut v, &[key(Key::Space)]),
         vec![BrowseAction::Preview(p("hat.wav"))]
     );
-}
-
-#[test]
-fn enter_on_a_library_item_row_does_nothing_yet() {
-    let mut v = FileBrowserView::new(Theme::default());
-    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
-    v.set_tree_fraction(0.4);
-    v.set_focused(true);
-    v.set_location(Place::Folder(PathBuf::from("/lib")));
-    v.set_rows(vec![FileRow {
-        kind: FileKind::Patch,
-        ..audio("Lead.atomikpatch")
-    }]);
-    let mut v = settled(v);
-    run(&mut v, &[down(row_pt(0)), up(row_pt(0))]);
-    assert_eq!(run(&mut v, &[key(Key::Enter)]), vec![]);
 }
 
 #[test]
@@ -800,11 +795,26 @@ fn tree_view() -> FileBrowserView {
     v
 }
 
-// Items: 0 Favourites, 1 Tags, 2 808, 3 snare, 4 BOOKMARKS, 5 drums, 6 LOCATIONS, 7 "/", 8 me.
+// Items (counted by `tree_pt` from Favourites): 0 Favourites, 1 Tags, 2 808, 3 snare,
+// 4 BOOKMARKS, 5 drums, 6 LOCATIONS, 7 "/", 8 me. Above them: 0 LIBRARY, 1 Devices, 2 Patches,
+// 3 Containers, 4 Clips, 5 Projects (`lib_pt`).
+
+/// A taller panel, so the whole tree is visible.
+fn tall_tree_view() -> FileBrowserView {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 800.0));
+    v.set_tree_fraction(0.4);
+    v.set_focused(true);
+    v.set_location(Place::Folder(PathBuf::from("/lib")));
+    v.set_rows(sample_rows());
+    v.handle(&UiEvent::Resize(Size::new(300.0, 800.0)));
+    v.set_places(places());
+    v
+}
 
 #[test]
 fn tree_entries_show_places() {
-    let mut v = tree_view();
+    let mut v = tall_tree_view();
     assert_eq!(
         run(&mut v, &[down(tree_pt(0, 60.0)), up(tree_pt(0, 60.0))]),
         vec![BrowseAction::Show(Place::Favorites)]
@@ -836,7 +846,7 @@ fn tags_entry_collapses_and_expands() {
 
 #[test]
 fn expanding_a_folder_requests_its_children_once() {
-    let mut v = tree_view();
+    let mut v = tall_tree_view();
     let arrow = tree_pt(5, 15.0);
     assert_eq!(
         run(&mut v, &[down(arrow), up(arrow)]),
@@ -877,7 +887,7 @@ fn expanding_a_folder_requests_its_children_once() {
 
 #[test]
 fn a_folder_without_children_becomes_a_leaf() {
-    let mut v = tree_view();
+    let mut v = tall_tree_view();
     let arrow = tree_pt(5, 15.0);
     run(&mut v, &[down(arrow), up(arrow)]);
     v.set_children(Path::new("/music/drums"), Vec::new());
@@ -1104,7 +1114,7 @@ fn tag_menu_renames_and_deletes() {
 
 #[test]
 fn bookmark_menus_in_the_tree() {
-    let mut v = tree_view();
+    let mut v = tall_tree_view();
     let bookmark = tree_pt(5, 60.0);
     run(&mut v, &[right(bookmark)]);
     assert_eq!(
@@ -1314,6 +1324,420 @@ fn filtering_and_sorting_a_hundred_thousand_rows_is_fast() {
     assert!(sort.as_millis() <= 30, "sort {sort:?}");
 }
 
+// ----- library sections and items ------------------------------------------------------------------
+
+fn item_row(name: &str, kind: FileKind, detail: &str) -> FileRow {
+    FileRow {
+        kind,
+        size: 900,
+        info: None,
+        item: Some(ItemInfo {
+            detail: detail.into(),
+            category: String::new(),
+        }),
+        ..audio(name)
+    }
+}
+
+fn device_row(type_id: &str, name: &str, category: &str) -> FileRow {
+    FileRow {
+        path: device_uri(type_id),
+        name: name.to_string(),
+        kind: FileKind::Device,
+        size: 0,
+        info: None,
+        item: Some(ItemInfo {
+            detail: category.into(),
+            category: category.into(),
+        }),
+        favorite: false,
+        tags: Vec::new(),
+    }
+}
+
+/// A panel listing `rows` (sorted by name) in a library section, the library folder set.
+fn library_view(section: LibrarySection, rows: Vec<FileRow>) -> FileBrowserView {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_tree_fraction(0.4);
+    v.set_focused(true);
+    v.set_library_folder(Some(PathBuf::from("/lib")));
+    v.set_location(Place::Library(section));
+    v.set_rows(rows);
+    settled(v)
+}
+
+/// Sorted order: 0 Box, 1 Lead, 2 Riff, 3 Song.
+fn patch_rows() -> Vec<FileRow> {
+    vec![
+        item_row(
+            "Lead.atomikpatch",
+            FileKind::Patch,
+            "2 devices: Poly, Delay",
+        ),
+        item_row(
+            "Box.atomikcontainer",
+            FileKind::Container,
+            "Container, 3 inside",
+        ),
+        item_row("Riff.atomikclip", FileKind::Clip, "2 bars, 8 notes"),
+        item_row("Song.atomik", FileKind::Project, "120 BPM, 4 tracks"),
+    ]
+}
+
+fn click(v: &mut FileBrowserView, row: usize) -> Vec<BrowseAction> {
+    run(v, &[down(row_pt(row)), up(row_pt(row))])
+}
+
+fn click_at(v: &mut FileBrowserView, at: Point) -> Vec<BrowseAction> {
+    run(v, &[down(at), up(at)])
+}
+
+#[test]
+fn tree_starts_with_the_library_sections_and_shows_them() {
+    let mut v = settled(view());
+    let dl = paint(&mut v);
+    for label in ["Devices", "Patches", "Containers", "Clips", "Projects"] {
+        assert!(dl.texts().contains(&label), "{label}");
+    }
+    for (i, section) in LibrarySection::ALL.into_iter().enumerate() {
+        assert_eq!(
+            click_at(&mut v, lib_pt(1 + i, 60.0)),
+            vec![BrowseAction::Show(Place::Library(section))],
+            "{section:?}"
+        );
+    }
+    // The heading does nothing.
+    assert!(click_at(&mut v, lib_pt(0, 60.0)).is_empty());
+}
+
+#[test]
+fn a_library_section_is_highlighted_as_the_location() {
+    let mut v = settled(view());
+    let plain = paint(&mut v).to_json();
+    v.set_location(Place::Library(LibrarySection::Clips));
+    assert_ne!(paint(&mut v).to_json(), plain);
+    assert_eq!(v.location(), Some(&Place::Library(LibrarySection::Clips)));
+}
+
+#[test]
+fn an_empty_library_folder_section_shows_the_hint() {
+    let hint = "Nothing saved yet: right-click a device or clip and choose Save to Library";
+    for section in [
+        LibrarySection::Patches,
+        LibrarySection::Containers,
+        LibrarySection::Clips,
+        LibrarySection::Projects,
+    ] {
+        let mut v = library_view(section, Vec::new());
+        assert!(paint(&mut v).texts().contains(&hint), "{section:?}");
+    }
+    // A plain folder says "Nothing here", and so do the devices.
+    let mut v = library_view(LibrarySection::Devices, Vec::new());
+    assert!(!paint(&mut v).texts().contains(&hint));
+    let mut v = settled(view());
+    v.set_rows(Vec::new());
+    assert!(!paint(&mut v).texts().contains(&hint));
+    // A search without a match is not "nothing saved".
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    run(&mut v, &[key_with(Key::Char('f'), Modifiers::CTRL)]);
+    typed(&mut v, "zzz");
+    assert!(!paint(&mut v).texts().contains(&hint));
+}
+
+#[test]
+fn the_path_bar_names_a_library_section() {
+    let mut v = library_view(LibrarySection::Containers, patch_rows());
+    assert!(paint(&mut v).texts().contains(&"Containers"));
+}
+
+#[test]
+fn enter_on_an_item_row_loads_it() {
+    let mut rows = patch_rows();
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = library_view(LibrarySection::Patches, rows);
+    // Sorted: Box, Lead, Poly Synth, Riff, Song.
+    for (row, path) in [
+        (0, p("Box.atomikcontainer")),
+        (1, p("Lead.atomikpatch")),
+        (2, device_uri("atomik.poly")),
+        (3, p("Riff.atomikclip")),
+        (4, p("Song.atomik")),
+    ] {
+        click(&mut v, row);
+        assert_eq!(
+            run(&mut v, &[key(Key::Enter)]),
+            vec![BrowseAction::Load(path.clone())],
+            "{path:?}"
+        );
+    }
+}
+
+#[test]
+fn double_click_on_an_item_row_loads_it_and_a_single_click_only_selects() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    assert!(
+        click(&mut v, 1).is_empty(),
+        "auto-preview is on: still silent"
+    );
+    let acts = run(
+        &mut v,
+        &[down_with(row_pt(1), Modifiers::NONE, 2), up(row_pt(1))],
+    );
+    assert_eq!(acts, vec![BrowseAction::Load(p("Lead.atomikpatch"))]);
+}
+
+#[test]
+fn space_and_arrow_keys_never_preview_an_item() {
+    let mut rows = patch_rows();
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = library_view(LibrarySection::Patches, rows);
+    click(&mut v, 0);
+    assert!(run(&mut v, &[key(Key::Space)]).is_empty());
+    assert!(run(&mut v, &[key(Key::Down), key(Key::Down), key(Key::Down)]).is_empty());
+    assert!(run(&mut v, &[key(Key::Space)]).is_empty());
+}
+
+#[test]
+fn dragging_an_item_row_drags_the_item_and_a_device_row_its_uri() {
+    let mut rows = patch_rows();
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = library_view(LibrarySection::Patches, rows);
+    run(&mut v, &[down(row_pt(1))]);
+    let far = Point::new(row_pt(1).x + 40.0, row_pt(1).y);
+    assert_eq!(
+        run(&mut v, &[mv(far)]),
+        vec![BrowseAction::DragFiles(vec![p("Lead.atomikpatch")])]
+    );
+    run(&mut v, &[up(far)]);
+    run(&mut v, &[down(row_pt(2))]);
+    let far = Point::new(row_pt(2).x + 40.0, row_pt(2).y);
+    assert_eq!(
+        run(&mut v, &[mv(far)]),
+        vec![BrowseAction::DragFiles(vec![device_uri("atomik.poly")])]
+    );
+}
+
+#[test]
+fn f_toggles_the_favourite_of_an_item() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    click(&mut v, 1);
+    assert_eq!(
+        run(&mut v, &[ch('f')]),
+        vec![BrowseAction::ToggleFavorite(vec![p("Lead.atomikpatch")])]
+    );
+}
+
+#[test]
+fn item_rows_show_their_detail_and_devices_their_category() {
+    let mut rows = patch_rows();
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = library_view(LibrarySection::Patches, rows);
+    let dl = paint(&mut v);
+    let t = dl.texts();
+    assert!(t.contains(&"2 devices: Poly, Delay"));
+    assert!(t.contains(&"2 bars, 8 notes"));
+    assert!(t.contains(&"INSTRUMENT"));
+    assert!(!t.contains(&"\u{2014}"), "no duration text for items");
+}
+
+#[test]
+fn visible_item_rows_without_detail_are_requested_once_and_devices_never() {
+    let mut rows = patch_rows();
+    for r in &mut rows {
+        r.item = None;
+    }
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_location(Place::Library(LibrarySection::Patches));
+    v.set_rows(rows);
+    let acts = run(&mut v, &[UiEvent::Resize(Size::new(300.0, 600.0))]);
+    let [BrowseAction::RequestInfo(paths)] = acts.as_slice() else {
+        panic!("{acts:?}");
+    };
+    assert_eq!(paths.len(), 4);
+    assert!(!paths.contains(&device_uri("atomik.poly")));
+    assert!(run(&mut v, &[UiEvent::Resize(Size::new(300.0, 600.0))]).is_empty());
+    // The answer fills the detail column and nothing is asked again.
+    v.patch_item_info(&[(
+        p("Lead.atomikpatch"),
+        ItemInfo {
+            detail: "2 devices: Poly, Delay".into(),
+            category: String::new(),
+        },
+    )]);
+    assert!(paint(&mut v).texts().contains(&"2 devices: Poly, Delay"));
+    assert!(run(&mut v, &[UiEvent::Resize(Size::new(300.0, 600.0))]).is_empty());
+}
+
+#[test]
+fn the_search_matches_the_category_of_a_device_row() {
+    let mut v = library_view(
+        LibrarySection::Devices,
+        vec![
+            device_row("atomik.poly", "Poly Synth", "INSTRUMENT"),
+            device_row("atomik.delay", "Delay", "EFFECT"),
+        ],
+    );
+    run(&mut v, &[key_with(Key::Char('f'), Modifiers::CTRL)]);
+    typed(&mut v, "effect");
+    let dl = paint(&mut v);
+    assert!(dl.texts().contains(&"Delay") && !dl.texts().contains(&"Poly Synth"));
+}
+
+/// Which of the item entries a right click on list row `row` adds to the painted texts.
+fn menu_labels(v: &mut FileBrowserView, row: usize) -> Vec<String> {
+    run(v, &[right(row_pt(row))]);
+    let texts: Vec<String> = paint(v).texts().iter().map(|s| (*s).to_string()).collect();
+    ["Load", "Open as Project", "Rename..."]
+        .into_iter()
+        .filter(|l| texts.iter().any(|t| t == l))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn list_menu_offers_load_open_as_project_and_rename_by_kind() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let all = ["Load", "Open as Project", "Rename..."];
+    assert_eq!(menu_labels(&mut v, 0), all, "container");
+    run(&mut v, &[key(Key::Escape)]);
+    assert_eq!(menu_labels(&mut v, 1), all, "patch");
+    run(&mut v, &[key(Key::Escape)]);
+    assert_eq!(menu_labels(&mut v, 2), ["Load", "Rename..."], "clip");
+    run(&mut v, &[key(Key::Escape)]);
+    assert_eq!(menu_labels(&mut v, 3), all, "project");
+}
+
+#[test]
+fn rename_is_only_offered_inside_the_library_folder() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    assert_eq!(menu_labels(&mut v, 1), ["Load", "Open as Project"]);
+    run(&mut v, &[key(Key::Escape)]);
+    v.set_library_folder(None);
+    assert_eq!(menu_labels(&mut v, 1), ["Load", "Open as Project"]);
+    run(&mut v, &[key(Key::Escape)]);
+    // A file below the library folder counts as inside.
+    v.set_library_folder(Some(PathBuf::from("/")));
+    assert_eq!(
+        menu_labels(&mut v, 1),
+        ["Load", "Open as Project", "Rename..."]
+    );
+}
+
+#[test]
+fn device_rows_offer_only_load() {
+    let mut v = library_view(
+        LibrarySection::Devices,
+        vec![device_row("atomik.poly", "Poly Synth", "INSTRUMENT")],
+    );
+    assert_eq!(menu_labels(&mut v, 0), ["Load"]);
+    assert_eq!(
+        run(&mut v, &[down(menu_item(row_pt(0), 0))]),
+        vec![BrowseAction::Load(device_uri("atomik.poly"))]
+    );
+}
+
+#[test]
+fn menu_load_and_open_as_project_emit_their_actions() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let at = row_pt(1);
+    run(&mut v, &[right(at)]);
+    assert_eq!(
+        run(&mut v, &[down(menu_item(at, 0))]),
+        vec![BrowseAction::Load(p("Lead.atomikpatch"))]
+    );
+    run(&mut v, &[right(at)]);
+    assert_eq!(
+        run(&mut v, &[down(menu_item(at, 1))]),
+        vec![BrowseAction::OpenProject(p("Lead.atomikpatch"))]
+    );
+}
+
+#[test]
+fn rename_entry_starts_with_the_stem_and_commits_the_new_name() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let at = row_pt(1);
+    run(&mut v, &[right(at)]);
+    assert!(run(&mut v, &[down(menu_item(at, 2))]).is_empty());
+    assert!(v.is_text_owner());
+    assert!(
+        paint(&mut v).texts().contains(&"Lead"),
+        "prefilled with the stem"
+    );
+    // The text is selected: typing replaces it.
+    typed(&mut v, "Pad");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::RenameItem {
+            path: p("Lead.atomikpatch"),
+            to: "Pad".into()
+        }]
+    );
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn rename_with_the_same_empty_or_cancelled_name_emits_nothing() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    let at = row_pt(1);
+    run(&mut v, &[right(at), down(menu_item(at, 2))]);
+    assert!(run(&mut v, &[key(Key::Enter)]).is_empty(), "unchanged");
+    run(&mut v, &[right(at), down(menu_item(at, 2))]);
+    run(&mut v, &[key(Key::Backspace)]);
+    assert!(run(&mut v, &[key(Key::Enter)]).is_empty(), "empty");
+    run(&mut v, &[right(at), down(menu_item(at, 2))]);
+    typed(&mut v, "zzz");
+    assert!(run(&mut v, &[key(Key::Escape)]).is_empty());
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn f2_starts_the_rename_of_the_cursor_item_inside_the_library_only() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    click(&mut v, 1);
+    assert!(run(&mut v, &[key(Key::F(2))]).is_empty());
+    assert!(v.is_text_owner());
+    assert!(paint(&mut v).texts().contains(&"Rename"), "path bar label");
+    typed(&mut v, "Pad");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::RenameItem {
+            path: p("Lead.atomikpatch"),
+            to: "Pad".into()
+        }]
+    );
+    // Outside the library folder, on an audio file or on a device: nothing.
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::F(2))]);
+    assert!(!v.is_text_owner());
+    let mut v = settled(view());
+    v.set_library_folder(Some(PathBuf::from("/lib")));
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::F(2))]);
+    assert!(!v.is_text_owner());
+    let mut v = library_view(
+        LibrarySection::Devices,
+        vec![device_row("atomik.poly", "Poly Synth", "INSTRUMENT")],
+    );
+    click(&mut v, 0);
+    run(&mut v, &[key(Key::F(2))]);
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn set_library_folder_cancels_a_rename_that_is_no_longer_allowed() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    click(&mut v, 1);
+    run(&mut v, &[key(Key::F(2))]);
+    assert!(v.is_text_owner());
+    v.set_library_folder(None);
+    assert!(!v.is_text_owner());
+}
+
 // ----- goldens -------------------------------------------------------------------------------------
 
 fn check_golden(name: &str, actual: &str) {
@@ -1392,7 +1816,10 @@ fn golden_tree_and_list() {
             path: PathBuf::from("/music/drums/kicks"),
         }],
     );
-    run(&mut v, &[down(tree_pt(5, 15.0)), up(tree_pt(5, 15.0))]);
+    // One wheel notch scrolls the tree three rows: the drums bookmark sits at index 11 - 3.
+    run(&mut v, &[wheel(lib_pt(0, 60.0), -1.0)]);
+    let arrow = lib_pt(LIBRARY_ROWS + 5 - 3, 15.0);
+    run(&mut v, &[down(arrow), up(arrow)]);
     run(&mut v, &[down(row_pt(3)), up(row_pt(3))]);
     v.set_preview(Some(p("hat.wav")), 0.4);
     check_golden("file_browser_tree_list_1x.json", &paint(&mut v).to_json());
@@ -1417,6 +1844,15 @@ fn golden_menu() {
     run(&mut v, &[right(row_pt(2))]);
     run(&mut v, &[mv(menu_item(row_pt(2), 0))]);
     check_golden("file_browser_menu_1x.json", &paint(&mut v).to_json());
+}
+
+#[test]
+fn golden_library_items() {
+    let mut rows = patch_rows();
+    rows.push(device_row("atomik.poly", "Poly Synth", "INSTRUMENT"));
+    let mut v = library_view(LibrarySection::Patches, rows);
+    run(&mut v, &[down(row_pt(1)), up(row_pt(1))]);
+    check_golden("file_browser_library_1x.json", &paint(&mut v).to_json());
 }
 
 #[test]

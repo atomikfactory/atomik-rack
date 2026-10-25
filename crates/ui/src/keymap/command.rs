@@ -520,6 +520,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("files.page_down", "Next Page", G::Files, C::Files).rep(),
     cmd("files.page_up", "Previous Page", G::Files, C::Files).rep(),
     cmd("files.parent", "Parent Folder", G::Files, C::Files),
+    cmd("files.rename", "Rename Library Item", G::Files, C::Files),
     cmd("files.right", "Expand", G::Files, C::Files).rep(),
     cmd("files.search", "Search Files", G::Files, C::Files),
     cmd("files.select_all", "Select All Files", G::Files, C::Files),

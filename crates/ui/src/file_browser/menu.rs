@@ -35,6 +35,12 @@ pub(super) enum Act {
     RenameTag(String),
     /// Delete a tag everywhere.
     DeleteTag(String),
+    /// Load a library item or device.
+    Load(PathBuf),
+    /// Open a library item as a project.
+    OpenProject(PathBuf),
+    /// Start the rename entry of a library item.
+    RenameItem(PathBuf),
 }
 
 /// One row of a menu.

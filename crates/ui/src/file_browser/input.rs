@@ -21,6 +21,23 @@ fn is_audio(row: &FileRow) -> bool {
     matches!(row.kind, FileKind::Audio(_))
 }
 
+/// Whether the row is a file (audio or library item): what a star, a tag and a drag apply to.
+fn is_file(row: &FileRow) -> bool {
+    row.kind != FileKind::Folder
+}
+
+/// Whether the info probe reads the row: audio headers and the item files (a device row
+/// carries its detail and is never a file).
+fn wants_info(row: &FileRow) -> bool {
+    match row.kind {
+        FileKind::Audio(_) => row.info.is_none(),
+        FileKind::Patch | FileKind::Container | FileKind::Clip | FileKind::Project => {
+            row.item.is_none()
+        }
+        FileKind::Folder | FileKind::Device => false,
+    }
+}
+
 impl FileBrowserView {
     pub(super) fn dispatch(&mut self, event: &UiEvent, out: &mut Vec<UiAction>) {
         if self.menu.is_some() && self.menu_event(event, out) {
@@ -185,7 +202,7 @@ impl FileBrowserView {
             Gesture::RowPress { start, .. } => {
                 if (pos - start).hypot() > DRAG_THRESHOLD {
                     self.gesture = Gesture::None;
-                    let files = self.selected_files();
+                    let files = self.selected_entries();
                     if !files.is_empty() {
                         emit(out, BrowseAction::DragFiles(files));
                     }
@@ -338,17 +355,21 @@ impl FileBrowserView {
             return;
         };
         let row_idx = self.view[vp];
-        let (path, audio, folder) = {
+        let (path, audio, file, item) = {
             let r = &self.rows[row_idx as usize];
-            (r.path.clone(), is_audio(r), r.kind == FileKind::Folder)
+            (r.path.clone(), is_audio(r), is_file(r), r.kind.is_item())
         };
         let cols = lay::columns(lay.list.x0, lay.list.x1, self.bounds.width());
-        if audio && pos.x >= cols.star.0 && pos.x < cols.star.1 {
+        if file && pos.x >= cols.star.0 && pos.x < cols.star.1 {
             emit(out, BrowseAction::ToggleFavorite(vec![path]));
             return;
         }
-        if folder && clicks >= 2 {
+        if !file && clicks >= 2 {
             emit(out, BrowseAction::Show(Place::Folder(path)));
+            return;
+        }
+        if item && clicks >= 2 {
+            emit(out, BrowseAction::Load(path));
             return;
         }
         let mut collapse = None;
@@ -376,7 +397,7 @@ impl FileBrowserView {
                 emit(out, BrowseAction::Preview(path));
             }
         }
-        if audio {
+        if file {
             self.gesture = Gesture::RowPress {
                 start: pos,
                 collapse,
@@ -496,14 +517,14 @@ impl FileBrowserView {
             self.cursor = Some(row_idx);
             self.anchor = Some(row_idx);
         }
-        let targets = self.selected_files();
+        let targets = self.selected_entries();
         let folder = (self.rows[row_idx as usize].kind == FileKind::Folder).then(|| path.clone());
         // How many of the targets carry each tag.
         let mut counts = vec![0usize; self.places.tags.len()];
         if !targets.is_empty() {
             for &i in &self.view {
                 let r = &self.rows[i as usize];
-                if is_audio(r) && self.selection.contains(&r.path) {
+                if is_file(r) && self.selection.contains(&r.path) {
                     for (k, (name, _)) in self.places.tags.iter().enumerate() {
                         if r.tags.iter().any(|t| t.eq_ignore_ascii_case(name)) {
                             counts[k] += 1;
@@ -514,6 +535,23 @@ impl FileBrowserView {
         }
         let have = !targets.is_empty();
         let mut items: Vec<MenuItem> = Vec::new();
+        let kind = self.rows[row_idx as usize].kind;
+        if kind.is_item() {
+            items.push(MenuItem::new("Load", Act::Load(path.clone())));
+            if matches!(
+                kind,
+                FileKind::Patch | FileKind::Container | FileKind::Project
+            ) {
+                items.push(MenuItem::new(
+                    "Open as Project",
+                    Act::OpenProject(path.clone()),
+                ));
+            }
+            if kind != FileKind::Device && self.inside_library(&path) {
+                items.push(MenuItem::new("Rename...", Act::RenameItem(path.clone())));
+            }
+            items.push(MenuItem::separator());
+        }
         for (k, (name, _)) in self.places.tags.iter().enumerate() {
             let checked = have && counts[k] == targets.len();
             items.push(MenuItem {
@@ -623,7 +661,19 @@ impl FileBrowserView {
                 self.begin_entry(EntryKind::RenameTag(t), &initial, Vec::new());
             }
             Some(Act::DeleteTag(t)) => emit(out, BrowseAction::DeleteTag(t)),
+            Some(Act::Load(p)) => emit(out, BrowseAction::Load(p)),
+            Some(Act::OpenProject(p)) => emit(out, BrowseAction::OpenProject(p)),
+            Some(Act::RenameItem(p)) => self.begin_rename_item(p),
         }
+    }
+
+    /// Starts the rename entry of a library item with its file stem selected.
+    fn begin_rename_item(&mut self, path: PathBuf) {
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.begin_entry(EntryKind::RenameItem, &stem, vec![path]);
     }
 
     fn begin_entry(&mut self, kind: EntryKind, initial: &str, targets: Vec<PathBuf>) {
@@ -681,6 +731,13 @@ impl FileBrowserView {
                     ),
                     EntryKind::RenameTag(from) if from != text => {
                         emit(out, BrowseAction::RenameTag { from, to: text });
+                    }
+                    EntryKind::RenameItem => {
+                        if let Some(path) = entry.targets.into_iter().next()
+                            && path.file_stem().is_none_or(|s| s.to_string_lossy() != text)
+                        {
+                            emit(out, BrowseAction::RenameItem { path, to: text });
+                        }
                     }
                     _ => {}
                 }
@@ -740,19 +797,16 @@ impl FileBrowserView {
             Key::End if n > 0 => self.select_to(n - 1, mods.shift, out),
             Key::Enter => {
                 if let Some(r) = cur.and_then(|c| self.row_at_pos(c)) {
-                    // Library items only show as rows for now: loading them comes later.
                     let action = match r.kind {
-                        FileKind::Folder => Some(BrowseAction::Show(Place::Folder(r.path.clone()))),
-                        FileKind::Audio(_) => Some(BrowseAction::Preview(r.path.clone())),
+                        FileKind::Folder => BrowseAction::Show(Place::Folder(r.path.clone())),
+                        FileKind::Audio(_) => BrowseAction::Preview(r.path.clone()),
                         FileKind::Patch
                         | FileKind::Container
                         | FileKind::Clip
                         | FileKind::Project
-                        | FileKind::Device => None,
+                        | FileKind::Device => BrowseAction::Load(r.path.clone()),
                     };
-                    if let Some(action) = action {
-                        emit(out, action);
-                    }
+                    emit(out, action);
                 }
             }
             Key::Space => {
@@ -779,8 +833,18 @@ impl FileBrowserView {
             }
             Key::Escape => emit(out, BrowseAction::StopPreview),
             Key::Backspace => emit(out, BrowseAction::Parent),
+            Key::F(2) => {
+                let target = cur
+                    .and_then(|c| self.row_at_pos(c))
+                    .filter(|r| r.kind.is_item() && r.kind != FileKind::Device)
+                    .map(|r| r.path.clone())
+                    .filter(|p| self.inside_library(p));
+                if let Some(path) = target {
+                    self.begin_rename_item(path);
+                }
+            }
             Key::Char(c) if c.eq_ignore_ascii_case(&'f') && !mods.command() && !mods.alt => {
-                let files = self.selected_files();
+                let files = self.selected_entries();
                 if !files.is_empty() {
                     emit(out, BrowseAction::ToggleFavorite(files));
                 }
@@ -897,7 +961,7 @@ impl FileBrowserView {
         let mut want: Vec<PathBuf> = Vec::new();
         for pos in range {
             let r = &self.rows[self.view[pos] as usize];
-            if is_audio(r) && r.info.is_none() && !self.requested_info.contains(&r.path) {
+            if wants_info(r) && !self.requested_info.contains(&r.path) {
                 want.push(r.path.clone());
             }
         }

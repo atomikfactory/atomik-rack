@@ -3,8 +3,8 @@
 //! Same hosting contract as the sequencer views (`new`, `set_bounds`, `handle`, `paint`,
 //! `needs_repaint`, `is_dragging`, `set_focused`, `set_scale`), with no document: the app
 //! pushes everything the panel shows (`set_places`, `set_children`, `set_location`,
-//! `set_rows`, `append_rows`, `patch_info`, `patch_marks`, `set_preview`) and answers the
-//! [`BrowseAction`]s it emits. The view owns the query text, sort, selection, scroll, tree
+//! `set_rows`, `append_rows`, `patch_info`, `patch_item_info`, `patch_marks`, `set_preview`,
+//! `set_library_folder`) and answers the [`BrowseAction`]s it emits. The view owns the query text, sort, selection, scroll, tree
 //! expansion and the filtered index list; filtering uses [`atomik_library::Query`] and
 //! ordering [`atomik_library::sort_rows`]. Painting costs O(visible rows).
 //!
@@ -18,6 +18,19 @@
 //! When a drag of the panel's edge or splitter ends the panel emits
 //! [`BrowseAction::LayoutChanged`]: read [`FileBrowserView::width`] and
 //! [`FileBrowserView::tree_fraction`] and lay out again.
+//!
+//! # The library
+//!
+//! The tree starts with the library sections ([`atomik_library::LibrarySection`]); choosing one
+//! emits [`BrowseAction::Show`] with [`Place::Library`]. The host answers with
+//! `set_location` and `set_rows`: for `Devices` the rows of [`crate::device_rows`] (virtual
+//! rows whose path is a device URI, never a file: the panel asks for no info and no preview of
+//! them), for the other sections the items found below `<library folder>/<Section>` (a missing
+//! folder is an empty list, for which the panel shows a hint). Items appear in plain folder
+//! listings too. Enter or a double-click on an item row emits [`BrowseAction::Load`], the list
+//! menu adds "Open as Project" and, for files below [`FileBrowserView::set_library_folder`],
+//! "Rename..." (also `F2`), which ends in [`BrowseAction::RenameItem`]. Dragging an item (or a
+//! device row) emits [`BrowseAction::DragFiles`] with its path or URI like an audio file.
 //!
 //! # Info requests
 //!
@@ -37,7 +50,7 @@ mod tree;
 use crate::action::{BrowseAction, Place};
 use crate::event::UiEvent;
 use crate::theme::Theme;
-use atomik_library::{AudioInfo, FileRow, Query, SortKey, sort_rows};
+use atomik_library::{AudioInfo, FileKind, FileRow, ItemInfo, Query, SortKey, sort_rows};
 use field::TextField;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -101,6 +114,8 @@ enum Gesture {
 enum EntryKind {
     NewTag,
     RenameTag(String),
+    /// Rename the library item in `Entry::targets`.
+    RenameItem,
 }
 
 /// The inline text entry for "New tag..." and "Rename...".
@@ -156,6 +171,7 @@ pub struct FileBrowserView {
     preview: Option<(PathBuf, f32)>,
     requested_info: BTreeSet<PathBuf>,
     info_dirty: bool,
+    library_folder: Option<PathBuf>,
     // Text fields and pointer state.
     search: TextField,
     search_focused: bool,
@@ -206,6 +222,7 @@ impl FileBrowserView {
             preview: None,
             requested_info: BTreeSet::new(),
             info_dirty: false,
+            library_folder: None,
             search: TextField::default(),
             search_focused: false,
             entry: None,
@@ -349,6 +366,45 @@ impl FileBrowserView {
             self.resort();
         }
         self.dirty = true;
+    }
+
+    /// Fills in the probed detail of library items (the answer to a
+    /// [`BrowseAction::RequestInfo`] for item rows).
+    pub fn patch_item_info(&mut self, info: &[(PathBuf, ItemInfo)]) {
+        let wanted: BTreeMap<&Path, usize> = info
+            .iter()
+            .enumerate()
+            .map(|(i, (p, _))| (p.as_path(), i))
+            .collect();
+        for (row, k) in self.find_rows(wanted) {
+            self.rows[row].item = Some(info[k].1.clone());
+        }
+        if !self.query_empty {
+            self.refilter();
+        }
+        self.dirty = true;
+    }
+
+    /// The library folder (`None` while unknown). Only items below it can be renamed; an
+    /// open rename entry that is no longer allowed is dropped.
+    pub fn set_library_folder(&mut self, folder: Option<PathBuf>) {
+        if self.library_folder != folder {
+            self.library_folder = folder;
+            if self.entry.as_ref().is_some_and(|e| {
+                e.kind == EntryKind::RenameItem
+                    && !e.targets.first().is_some_and(|p| self.inside_library(p))
+            }) {
+                self.entry = None;
+            }
+            self.dirty = true;
+        }
+    }
+
+    /// Whether `path` is a file below the library folder.
+    fn inside_library(&self, path: &Path) -> bool {
+        self.library_folder
+            .as_deref()
+            .is_some_and(|lib| path != lib && path.starts_with(lib))
     }
 
     /// Updates favourite flags and tags after a library change.
@@ -557,6 +613,20 @@ impl FileBrowserView {
         found
     }
 
+    /// The selected audio files and library items (what a tag, a favourite or a drag acts on),
+    /// in list order.
+    fn selected_entries(&self) -> Vec<PathBuf> {
+        if self.selection.is_empty() {
+            return Vec::new();
+        }
+        self.view
+            .iter()
+            .map(|&i| &self.rows[i as usize])
+            .filter(|r| r.kind != FileKind::Folder && self.selection.contains(&r.path))
+            .map(|r| r.path.clone())
+            .collect()
+    }
+
     /// The selected audio files, in list order.
     fn selected_files(&self) -> Vec<PathBuf> {
         if self.selection.is_empty() {
@@ -565,10 +635,7 @@ impl FileBrowserView {
         self.view
             .iter()
             .map(|&i| &self.rows[i as usize])
-            .filter(|r| {
-                matches!(r.kind, atomik_library::FileKind::Audio(_))
-                    && self.selection.contains(&r.path)
-            })
+            .filter(|r| matches!(r.kind, FileKind::Audio(_)) && self.selection.contains(&r.path))
             .map(|r| r.path.clone())
             .collect()
     }

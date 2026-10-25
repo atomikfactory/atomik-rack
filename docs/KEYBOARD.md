@@ -285,6 +285,7 @@ The locator clicks win over the razor in the ruler. In the grid the playhead and
 | Play / Stop Preview | files | `Space` | `Space` | `Space` |
 | Previous Item | files | `Up` | `Up` | `Up` |
 | Previous Page | files | `PageUp` | `PageUp` | `PageUp` |
+| Rename Library Item | files | `F2` | `F2` | `F2` |
 | Search Files | files | `Ctrl+F` | `Cmd+F` | `Ctrl+F` |
 | Select All Files | files | `Ctrl+A` | `Cmd+A` | `Ctrl+A` |
 | Stop Preview | files | `Esc` | `Esc` | `Esc` |
@@ -425,6 +426,7 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Play / Stop Preview | files | `Space` | `Space` | `Space` |
 | Previous Item | files | `Up` | `Up` | `Up` |
 | Previous Page | files | `PageUp` | `PageUp` | `PageUp` |
+| Rename Library Item | files | `F2` | `F2` | `F2` |
 | Search Files | files | `Ctrl+F` | `Cmd+F` | `Ctrl+F` |
 | Select All Files | files | `Ctrl+A` | `Cmd+A` | `Ctrl+A` |
 | Stop Preview | files | `Esc` | `Esc` | `Esc` |

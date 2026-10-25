@@ -2,6 +2,7 @@
 
 use super::{PlacesData, TreeChild};
 use crate::action::Place;
+use atomik_library::LibrarySection;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,8 @@ const MAX_DEPTH: u8 = 32;
 /// A section heading of the tree (not clickable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Heading {
+    /// The library sections.
+    Library,
     /// Bookmarked folders.
     Bookmarks,
     /// Drives and the home folder.
@@ -22,6 +25,8 @@ pub(super) enum Heading {
 pub(super) enum Key {
     /// A section heading.
     Heading(Heading),
+    /// One library section.
+    Library(LibrarySection),
     /// The Favourites entry.
     Favorites,
     /// The expandable Tags entry.
@@ -41,6 +46,7 @@ impl Key {
     /// The place that clicking the item shows.
     pub fn place(&self) -> Option<Place> {
         match self {
+            Key::Library(section) => Some(Place::Library(*section)),
             Key::Favorites => Some(Place::Favorites),
             Key::Tag(t) => Some(Place::Tag(t.clone())),
             Key::Folder { path, .. } => Some(Place::Folder(path.clone())),
@@ -126,6 +132,26 @@ fn push_folder(
 pub(super) fn build(src: &Source<'_>) -> Vec<Item> {
     let places = src.places;
     let mut out = vec![Item {
+        key: Key::Heading(Heading::Library),
+        depth: 0,
+        label: "Library".into(),
+        count: None,
+        expandable: false,
+        expanded: false,
+        loading: false,
+    }];
+    for section in LibrarySection::ALL {
+        out.push(Item {
+            key: Key::Library(section),
+            depth: 0,
+            label: section.title().into(),
+            count: None,
+            expandable: false,
+            expanded: false,
+            loading: false,
+        });
+    }
+    out.push(Item {
         key: Key::Favorites,
         depth: 0,
         label: "Favourites".into(),
@@ -133,7 +159,7 @@ pub(super) fn build(src: &Source<'_>) -> Vec<Item> {
         expandable: false,
         expanded: false,
         loading: false,
-    }];
+    });
     let tags_open = src.tags_open && !places.tags.is_empty();
     out.push(Item {
         key: Key::TagsHeader,
@@ -213,6 +239,12 @@ mod tests {
         assert_eq!(
             labels,
             [
+                "Library",
+                "Devices",
+                "Patches",
+                "Containers",
+                "Clips",
+                "Projects",
                 "Favourites",
                 "Tags",
                 "808",
@@ -224,17 +256,26 @@ mod tests {
                 "me"
             ]
         );
-        assert_eq!(items[0].count, Some(3));
-        assert_eq!(items[2].count, Some(4));
-        assert!(items[2].depth == 1 && items[5].depth == 0);
-        assert!(matches!(items[5].key, Key::Folder { bookmark: true, .. }));
+        assert_eq!(items[6].count, Some(3));
+        assert_eq!(items[8].count, Some(4));
+        assert!(items[8].depth == 1 && items[11].depth == 0);
+        assert!(matches!(items[11].key, Key::Folder { bookmark: true, .. }));
+    }
+
+    #[test]
+    fn the_library_block_comes_first_with_its_sections_in_order() {
+        let items = flat(&places(), &BTreeMap::new(), &BTreeSet::new(), true);
+        assert_eq!(items[0].key, Key::Heading(Heading::Library));
+        let sections: Vec<&Key> = items[1..6].iter().map(|i| &i.key).collect();
+        let expected: Vec<Key> = LibrarySection::ALL.into_iter().map(Key::Library).collect();
+        assert_eq!(sections, expected.iter().collect::<Vec<_>>());
     }
 
     #[test]
     fn closed_tags_hide_their_children() {
         let items = flat(&places(), &BTreeMap::new(), &BTreeSet::new(), false);
         assert!(!items.iter().any(|i| matches!(i.key, Key::Tag(_))));
-        assert!(!items[1].expanded && items[1].expandable);
+        assert!(!items[7].expanded && items[7].expandable);
     }
 
     #[test]
@@ -245,8 +286,9 @@ mod tests {
             &BTreeSet::new(),
             true,
         );
-        assert_eq!(items.len(), 2);
-        assert!(!items[1].expandable);
+        // The library block, Favourites and Tags stay.
+        assert_eq!(items.len(), 8);
+        assert!(!items[7].expandable);
     }
 
     #[test]
@@ -296,6 +338,12 @@ mod tests {
         assert_eq!(Key::Favorites.place(), Some(Place::Favorites));
         assert_eq!(Key::Tag("x".into()).place(), Some(Place::Tag("x".into())));
         assert_eq!(Key::TagsHeader.place(), None);
+        assert_eq!(
+            Key::Library(LibrarySection::Clips).place(),
+            Some(Place::Library(LibrarySection::Clips))
+        );
         assert!(!Key::Heading(Heading::Bookmarks).selectable());
+        assert!(!Key::Heading(Heading::Library).selectable());
+        assert!(Key::Library(LibrarySection::Devices).selectable());
     }
 }

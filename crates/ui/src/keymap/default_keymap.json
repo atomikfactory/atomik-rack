@@ -142,6 +142,7 @@
         { "command": "files.toggle_preview", "context": "files", "chords": ["Space"] },
         { "command": "files.parent", "context": "files", "chords": ["Backspace", "Alt+Up"] },
         { "command": "files.favorite", "context": "files", "chords": ["F"] },
+        { "command": "files.rename", "context": "files", "chords": ["F2"] },
         { "command": "files.search", "context": "files", "chords": ["Cmd+F"] },
         { "command": "files.select_all", "context": "files", "chords": ["Cmd+A"] }
       ]
@@ -221,6 +222,7 @@
         { "command": "files.toggle_preview", "context": "files", "chords": ["Space"] },
         { "command": "files.parent", "context": "files", "chords": ["Backspace", "Alt+Up"] },
         { "command": "files.favorite", "context": "files", "chords": ["F"] },
+        { "command": "files.rename", "context": "files", "chords": ["F2"] },
         { "command": "files.search", "context": "files", "chords": ["Cmd+F"] },
         { "command": "files.select_all", "context": "files", "chords": ["Cmd+A"] }
       ]

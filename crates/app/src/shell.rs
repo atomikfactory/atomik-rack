@@ -4251,6 +4251,7 @@ fn files_key(id: &str, os: Os) -> Option<(Key, Modifiers)> {
         "files.toggle_preview" => (Key::Space, Modifiers::NONE),
         "files.parent" => (Key::Backspace, Modifiers::NONE),
         "files.favorite" => (Key::Char('f'), Modifiers::NONE),
+        "files.rename" => (Key::F(2), Modifiers::NONE),
         "files.search" => (Key::Char('f'), command),
         "files.select_all" => (Key::Char('a'), command),
         _ => return None,

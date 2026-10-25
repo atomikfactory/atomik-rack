@@ -443,6 +443,10 @@ pub enum Place {
     Favorites,
     /// Every file with this tag.
     Tag(String),
+    /// One section of the library: the built-in devices (rows the host builds with
+    /// [`crate::device_rows`]) or the items saved in `<library folder>/<Section>` (listed
+    /// recursively; a missing folder is an empty list).
+    Library(atomik_library::LibrarySection),
 }
 
 /// A request from [`crate::FileBrowserView`] (see [`UiAction::Browse`]).
@@ -496,8 +500,26 @@ pub enum BrowseAction {
     /// Remove a bookmark.
     RemovePlace(PathBuf),
     /// The pointer dragged these files past the drag threshold: the app takes the drag over
-    /// and delivers it to the pane under the pointer as a file hover/drop.
+    /// and delivers it to the pane under the pointer as a file hover/drop. Library items and
+    /// device URIs ride along (see [`atomik_library::device_uri`]).
     DragFiles(Vec<PathBuf>),
+    /// Enter or a double-click on a library item row (a patch, container, clip or project
+    /// file, or a device URI): load it where the app's rules say (the rack, the selected
+    /// track, or as the open project).
+    Load(PathBuf),
+    /// "Open as Project" on a patch, container or project item: open the file as a project
+    /// (the app asks about unsaved changes first).
+    OpenProject(PathBuf),
+    /// Rename a library item: `path` is the file, `to` the new name as typed (without the
+    /// extension). Only offered for files inside the library folder
+    /// ([`crate::FileBrowserView::set_library_folder`]); the app renames the file (and a
+    /// sibling asset bundle), refuses a taken name and lists the section again.
+    RenameItem {
+        /// The item file.
+        path: PathBuf,
+        /// The new file stem as typed.
+        to: String,
+    },
     /// These visible audio rows have no `AudioInfo` yet: probe them (each path is requested
     /// once until the rows are replaced).
     RequestInfo(Vec<PathBuf>),
