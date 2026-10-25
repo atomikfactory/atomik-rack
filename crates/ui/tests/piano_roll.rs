@@ -493,3 +493,86 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------- dragging the playhead
+
+/// The song with the bass clip (id 1) moved to bar 2, so content ticks and song ticks differ.
+fn bass_at_bar_two() -> atomik_model::RackDoc {
+    let mut doc = song_doc();
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(1) {
+                    c.start = BAR;
+                }
+            }
+        }
+    }
+    doc
+}
+
+fn locates(actions: &[UiAction]) -> Vec<i64> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Transport(TransportAction::Locate(t)) => Some(*t),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn ruler_drag_keeps_locating_the_snapped_song_tick_once_per_change() {
+    let (doc, reg) = (bass_at_bar_two(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let y = v.ruler_y();
+    let at = |t: i64| Point::new(v.tick_to_x(t), y);
+    let events = [
+        down(at(PPQ)),
+        mv(at(PPQ + 100)),
+        mv(at(2 * PPQ)),
+        mv(at(2 * PPQ + 100)),
+        mv(at(0)),
+        up(at(0)),
+    ];
+    let a = run(|e| v.handle(e, &doc, &reg), &events);
+    assert_eq!(locates(&a), vec![BAR + PPQ, BAR + 2 * PPQ, BAR]);
+}
+
+#[test]
+fn playhead_line_drags_from_where_it_was_grabbed() {
+    let (doc, reg) = (bass_at_bar_two(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    v.set_playhead(BAR + PPQ);
+    let y = v.key_center_y(56);
+    let x = v.tick_to_x(PPQ);
+    let p = Point::new(x + 2.0, y);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[mv(p)]);
+    assert_eq!(v.cursor(), atomik_ui::CursorHint::ResizeHorizontal);
+    let step = PPQ as f64 * v.px_per_tick();
+    let to = Point::new(x + 2.0 + step * 2.0, y);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to), up(to)]);
+    assert_eq!(locates(&a), vec![BAR + 3 * PPQ]);
+    assert!(contents(&a).is_empty());
+}
+
+#[test]
+fn pressing_away_from_the_playhead_line_or_on_a_note_does_not_drag_it() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_playhead(PPQ);
+    let y = v.key_center_y(56);
+    let p = Point::new(v.tick_to_x(PPQ) + 12.0, y);
+    let to = Point::new(p.x + 60.0, y);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to), up(to)]);
+    assert!(locates(&a).is_empty());
+    // A note starting under the line keeps its edge.
+    v.set_playhead(PPQ);
+    let r = v.note_rect(1).unwrap();
+    let edge = Point::new(r.x0 + 1.0, r.center().y);
+    let to = Point::new(edge.x + 40.0, edge.y);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(edge), mv(to), up(to)]);
+    assert!(locates(&a).is_empty(), "{a:?}");
+}
