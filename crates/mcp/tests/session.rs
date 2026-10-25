@@ -62,6 +62,7 @@ fn every_session_tool_needs_an_open_session() {
         ),
         ("session_meters", json!({})),
         ("session_bounce", json!({})),
+        ("session_library", json!({"action": "save_selection"})),
     ] {
         let r = call(&mut s, tool, args);
         assert!(r.is_error, "{tool}");

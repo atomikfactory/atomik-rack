@@ -92,6 +92,8 @@ pub(crate) struct BrowserState {
     /// A project the user asked to open from the library: the shell asks about unsaved
     /// changes, then opens it.
     open_request: Option<PathBuf>,
+    /// The item file the last Save to Library wrote.
+    last_saved: Option<PathBuf>,
     /// The panel started a rename entry the user should type into.
     focus_request: bool,
     /// The device rows of the favourites or tag place being listed (built from the registry,
@@ -134,6 +136,7 @@ impl Default for BrowserState {
             select_after: None,
             offer_name: false,
             open_request: None,
+            last_saved: None,
             focus_request: false,
             collection_devices: Vec::new(),
             shown_paths: Vec::new(),
@@ -263,6 +266,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Shows the library `section` and selects the row of `path` once it is listed, when the
     /// panel shows. Returns whether it did (otherwise the caller says so in the status line).
     pub(super) fn show_saved(&mut self, section: LibrarySection, path: PathBuf) -> bool {
+        self.browser.last_saved = Some(path.clone());
         if !self.browser.visible {
             return false;
         }
@@ -305,6 +309,11 @@ impl<S: EngineSink> AppCore<S> {
     /// the panel the keys.
     pub fn take_browser_focus_request(&mut self) -> bool {
         std::mem::take(&mut self.browser.focus_request)
+    }
+
+    /// The item file the last Save to Library wrote (its audio may still be copying).
+    pub fn last_saved_item(&self) -> Option<&std::path::Path> {
+        self.browser.last_saved.as_deref()
     }
 
     pub(super) fn request_open(&mut self, path: PathBuf) {

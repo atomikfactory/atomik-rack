@@ -22,7 +22,7 @@ use atomik_ui::{
     DisplayList, Key, Modifiers, NotesMode, NotesValues, PointerButton, TextEngine, UiEvent,
 };
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Default logical window size.
 pub const DEFAULT_SIZE: (f64, f64) = (1280.0, 860.0);
@@ -123,8 +123,15 @@ pub struct Session {
 }
 
 impl Session {
-    /// A session on the starter project, or on the file at `file` (already validated).
-    pub fn open(file: Option<&Path>, logical: Size, scale: f64, os: Os) -> Self {
+    /// A session on the starter project, or on the file at `file` (already validated), with
+    /// `library` as its library folder (`None`: it has none, and Save to Library refuses).
+    pub fn open(
+        file: Option<&Path>,
+        library: Option<PathBuf>,
+        logical: Size,
+        scale: f64,
+        os: Os,
+    ) -> Self {
         let backend = LiveSession::new(SystemBackend, AudioSettings::default(), false);
         let core = AppCore::with_doc(backend, atomik_model::new_project_doc(), None);
         let mut shell = Shell::new(
@@ -132,6 +139,7 @@ impl Session {
             ShellOptions {
                 in_window_menu: true,
                 os: Some(os),
+                library_root: library,
                 ..ShellOptions::default()
             },
         );
@@ -171,6 +179,7 @@ impl Session {
             "status_text": self.shell.status_text(),
             "focus": format!("{:?}", self.shell.focus()),
             "lower_pane": format!("{:?}", self.shell.lower_pane()),
+            "library": self.shell.library_root().map(|p| p.to_string_lossy().into_owned()),
             "recording": self.shell.core().is_recording(),
             "armed_lanes": self
                 .shell
@@ -286,6 +295,11 @@ session status.",
                 "string",
                 "windows (default), mac or linux: the keymap and shortcut texts.",
             ),
+            (
+                "library",
+                "string",
+                "The library folder of the session (Save to Library writes there, session_library loads from it); inside the allowed folders, made when missing. Without it the session has no library.",
+            ),
         ],
         &[],
     )
@@ -318,10 +332,33 @@ fn open(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             Some(file)
         }
     };
-    let mut session = Session::open(file.as_deref(), Size::new(width, height), scale, os);
+    let library = match args.opt_str("library")? {
+        None => None,
+        Some(name) => Some(library_folder(server, name)?),
+    };
+    let mut session = Session::open(
+        file.as_deref(),
+        library,
+        Size::new(width, height),
+        scale,
+        os,
+    );
     let status = session.status_json(false);
     server.set_session(Some(session));
     Ok(ToolOutput::json(&status))
+}
+
+/// The library folder `name` of a session: inside the allowed folders, made when missing.
+fn library_folder(server: &Server, name: &str) -> Result<PathBuf, String> {
+    if name.trim().is_empty() {
+        return Err("`library` is empty".to_string());
+    }
+    // `write` checks a file and makes its folder: a name inside the library gives the folder.
+    let marker = server.paths().write(&format!("{name}/library"))?;
+    marker
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("{name}: not a folder"))
 }
 
 // --------------------------------------------------------------- session_status

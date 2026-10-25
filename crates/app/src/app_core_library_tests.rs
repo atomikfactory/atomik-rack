@@ -1099,3 +1099,23 @@ fn rename_item_with_the_panel_open_lists_and_selects_the_renamed_row() {
     assert!(!c.file_browser().is_text_owner(), "no second rename entry");
     assert!(!c.take_browser_focus_request());
 }
+
+#[test]
+fn last_saved_item_names_the_newest_saved_file() {
+    let lib = Tmp::new("last-saved");
+    let mut c = core(&lib);
+    assert_eq!(c.last_saved_item(), None);
+    add(&mut c, SYNTH, "a");
+    select(&mut c, &["a"]);
+    c.save_selection_to_library();
+    let first = lib.path("Library/Patches/Poly Synth.atomikpatch");
+    assert_eq!(c.last_saved_item(), Some(first.as_path()));
+    c.save_selection_to_library();
+    assert_eq!(
+        c.last_saved_item(),
+        Some(
+            lib.path("Library/Patches/Poly Synth 2.atomikpatch")
+                .as_path()
+        )
+    );
+}
