@@ -1508,7 +1508,7 @@ mod tests {
                 Group::Rack => &["rack"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
-                Group::Mixer => &["mixer"],
+                Group::Mixer => &["mixer", "midi"],
                 Group::Browser => &["browser"],
                 Group::Files => &["files"],
                 Group::Create => &["create"],

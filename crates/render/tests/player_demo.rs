@@ -284,7 +284,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     let again = load_project(&save_project(&doc), &registry).unwrap();
     assert_eq!(again, doc);
-    assert!(text.contains("\"version\": 27"));
+    assert!(text.contains("\"version\": 28"));
 }
 
 #[test]
