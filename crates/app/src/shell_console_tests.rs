@@ -18,6 +18,7 @@ fn shell_at(ui_state_path: Option<PathBuf>) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::Resize(Size::new(1200.0, 800.0)));

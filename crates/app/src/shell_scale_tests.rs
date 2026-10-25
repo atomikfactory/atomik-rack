@@ -23,6 +23,7 @@ fn make(path: Option<PathBuf>) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: path,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));

@@ -66,6 +66,9 @@ pub(crate) struct BrowserState {
     roots: Vec<PathBuf>,
     db: LibraryDb,
     lib_path: Option<PathBuf>,
+    /// The library folder (`<root>/Patches`, `Containers`, `Clips`, `Projects`); `None` while
+    /// unknown.
+    library_root: Option<PathBuf>,
     /// The database changed since the last snapshot was handed to the saver.
     dirty: bool,
     /// The file must not be overwritten this session (newer version, unreadable).
@@ -96,6 +99,7 @@ impl Default for BrowserState {
             roots: Vec::new(),
             db: LibraryDb::new(),
             lib_path: None,
+            library_root: None,
             dirty: false,
             locked: false,
             saver: None,
@@ -197,6 +201,27 @@ impl<S: EngineSink> AppCore<S> {
         if self.browser.shown {
             self.refresh_places();
             self.reshow_collection();
+        }
+    }
+
+    /// The library folder, or `None` while unknown.
+    pub fn library_root(&self) -> Option<PathBuf> {
+        self.browser.library_root.clone()
+    }
+
+    /// Sets the library folder (the shell resolves it from the run's option, the Workflow
+    /// setting and the default). The panel is told, so it renames only below it, and a library
+    /// section on show is listed again.
+    pub fn set_library_root(&mut self, root: Option<PathBuf>) {
+        if self.browser.library_root == root {
+            return;
+        }
+        self.browser.library_root.clone_from(&root);
+        self.file_browser.set_library_folder(root);
+        if self.browser.shown
+            && let Some(place @ Place::Library(_)) = self.file_browser.location().cloned()
+        {
+            self.show(place);
         }
     }
 

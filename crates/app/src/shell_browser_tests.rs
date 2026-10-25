@@ -18,6 +18,7 @@ fn shell_with(os: Os, in_window_menu: bool) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
@@ -526,6 +527,7 @@ fn shell_at(path: &Path) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: Some(path.to_path_buf()),
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
@@ -948,6 +950,7 @@ fn the_library_path_option_reaches_the_core_and_shutdown_flushes_it() {
             os: Some(Os::Windows),
             in_window_menu: true,
             library_path: Some(library.clone()),
+            library_root: None,
             ..ShellOptions::default()
         },
     );

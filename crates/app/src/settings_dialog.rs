@@ -30,6 +30,7 @@ use atomik_ui::keymap::{KeymapEditor, UserKeymap};
 use atomik_ui::kurbo::{Circle, Point, Rect, RoundedRect, Size, Vec2};
 use atomik_ui::peniko::Color;
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use std::path::PathBuf;
 
 /// The audio hosts, devices and MIDI ports the dialog offers.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -194,6 +195,8 @@ pub enum DialogOutcome {
     ExportKeymap,
     /// The Keyboard tab asks for a file to import a keymap from (the dialog stays open).
     ImportKeymap,
+    /// The Workflow tab asks for a folder to be the library (the dialog stays open).
+    PickLibraryFolder,
 }
 
 /// The settings modal.
@@ -275,6 +278,14 @@ impl SettingsDialog {
         }
     }
 
+    /// Replaces the library folder draft of the Workflow tab (a picked folder; `None`: the
+    /// default).
+    pub fn set_library_folder(&mut self, folder: Option<PathBuf>) {
+        if let Some(p) = &mut self.prefs {
+            p.workflow.set_library_folder(folder);
+        }
+    }
+
     /// Replaces the keymap draft (an imported file).
     pub fn replace_user(&mut self, user: UserKeymap) {
         if let Some(p) = &mut self.prefs {
@@ -301,7 +312,7 @@ impl SettingsDialog {
             }
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 3.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 5.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
@@ -809,6 +820,7 @@ impl SettingsDialog {
             TabOutcome::Cancel => DialogOutcome::Cancel,
             TabOutcome::Export => DialogOutcome::ExportKeymap,
             TabOutcome::Import => DialogOutcome::ImportKeymap,
+            TabOutcome::PickLibraryFolder => DialogOutcome::PickLibraryFolder,
         }
     }
 

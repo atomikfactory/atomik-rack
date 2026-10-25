@@ -39,6 +39,8 @@ pub(crate) enum TabOutcome {
     Export,
     /// Ask the platform for a file to import from.
     Import,
+    /// Ask the platform for the library folder (the Workflow tab's Choose).
+    PickLibraryFolder,
 }
 
 /// One chord chip of a row.

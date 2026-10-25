@@ -43,6 +43,10 @@ pub struct Cli {
     /// Settings file to use instead of the one in the OS config directory.
     #[arg(long, value_name = "PATH")]
     pub settings: Option<PathBuf>,
+    /// Library folder for this run, instead of the one in the Workflow settings or the default
+    /// (`Documents/Atomik Rack/Library`).
+    #[arg(long, value_name = "DIR")]
+    pub library: Option<PathBuf>,
     /// Print the keyboard cheat sheet (markdown: every command and its chords per OS and
     /// profile, the output `docs/KEYBOARD.md` is checked against) and exit. Narrow it with
     /// `--os` and `--profile`; `--keymap` adds a user keymap on top.
@@ -270,6 +274,16 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("atomik").chain(args.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn library_option_names_the_folder_for_this_run() {
+        assert_eq!(parse(&[]).library, None);
+        assert_eq!(
+            parse(&["--library", "D:/Lib"]).library,
+            Some(PathBuf::from("D:/Lib"))
+        );
+        assert!(Cli::try_parse_from(["atomik", "--library"]).is_err());
     }
 
     #[test]

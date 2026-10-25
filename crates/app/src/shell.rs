@@ -206,6 +206,9 @@ pub enum ShellRequest {
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
+    /// Show a folder dialog (the Workflow tab's Library folder Choose...), then call
+    /// [`Shell::set_library_folder`] with the picked folder.
+    PickLibraryFolder,
     /// Show a save-file dialog for the keymap (the Keyboard tab's Export), then call
     /// [`Shell::export_keymap_to`].
     PickExportKeymap,
@@ -232,6 +235,9 @@ pub struct ShellOptions {
     /// Where the file browser's library (favourites, tags, bookmarks) is kept
     /// (`<config dir>/library.json`; `None`: in memory only).
     pub library_path: Option<PathBuf>,
+    /// The library folder for this run (`--library`; tests and the MCP server), taking
+    /// precedence over the Workflow tab's choice and the default (`None`: those).
+    pub library_root: Option<PathBuf>,
 }
 
 /// Where the window's parts are, in logical pixels.
@@ -352,6 +358,10 @@ pub struct Shell<B: AudioBackend> {
     roles: Roles,
     /// The workflow preferences.
     workflow: WorkflowPrefs,
+    /// The library folder forced for this run ([`ShellOptions::library_root`]).
+    library_override: Option<PathBuf>,
+    /// The folder used when neither the override nor the Workflow tab names one.
+    library_default: Option<PathBuf>,
     /// Modification time and size of `keymap.json` as last read or written, to notice edits.
     keymap_stamp: Option<(SystemTime, u64)>,
     /// The layout F7 (sequencer only) replaced, to restore on the next F7.
@@ -436,6 +446,7 @@ impl<B: AudioBackend> Shell<B> {
         startup_notes.extend(built.report.summary());
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
         let options_library_path = options.library_path.clone();
+        let library_override = options.library_root.clone();
         let mut shell = Self {
             core,
             menubar: options.in_window_menu.then(MenuBar::new),
@@ -479,6 +490,8 @@ impl<B: AudioBackend> Shell<B> {
             user_keymap,
             roles: built.roles,
             workflow,
+            library_override,
+            library_default: None,
             keymap_stamp,
             seq_only_prev: None,
             browser_edge: 0.0,
@@ -487,6 +500,7 @@ impl<B: AudioBackend> Shell<B> {
         shell.core.set_roles(&shell.roles);
         shell.configure_surface();
         shell.core.set_library_path(options_library_path);
+        shell.sync_library_root();
         // Before anything saves the window state: a save copies the panel's values.
         shell.restore_file_browser();
         shell.apply_workflow_to_views();
@@ -1286,6 +1300,41 @@ impl<B: AudioBackend> Shell<B> {
         &self.workflow
     }
 
+    /// The library folder in use: the run's override, else the one chosen in the Workflow tab,
+    /// else the default; `None` when none of them is known.
+    pub fn library_root(&self) -> Option<PathBuf> {
+        self.library_override
+            .clone()
+            .or_else(|| self.workflow.library_folder.clone())
+            .or_else(|| self.library_default.clone())
+    }
+
+    /// Sets the folder used when the user has not chosen one (the platform passes
+    /// [`crate::settings::default_library_dir`]).
+    pub fn set_library_default(&mut self, folder: Option<PathBuf>) {
+        self.library_default = folder;
+        self.sync_library_root();
+    }
+
+    /// Hands the library folder in use to the core and the browser panel.
+    fn sync_library_root(&mut self) {
+        let root = self.library_root();
+        self.core.set_library_root(root);
+    }
+
+    /// The library folder picked in the folder dialog: into the open settings dialog's draft
+    /// (applied with its Apply), else applied and saved at once.
+    pub fn set_library_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_library_folder(Some(folder));
+        } else {
+            self.workflow.library_folder = Some(folder);
+            self.save_workflow();
+            self.sync_library_root();
+        }
+        self.repaint = true;
+    }
+
     /// The OS whose keys and texts apply.
     pub fn os(&self) -> Os {
         self.os
@@ -1328,6 +1377,7 @@ impl<B: AudioBackend> Shell<B> {
             self.workflow = workflow;
             self.save_workflow();
             self.apply_workflow_to_views();
+            self.sync_library_root();
         }
     }
 
@@ -2361,6 +2411,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 DialogOutcome::ExportKeymap => return vec![ShellRequest::PickExportKeymap],
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
+                DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
             }
             return Vec::new();
         }
@@ -4402,3 +4453,7 @@ mod warp_tests;
 #[cfg(test)]
 #[path = "shell_freeze_tests.rs"]
 mod freeze_tests;
+
+#[cfg(test)]
+#[path = "shell_library_tests.rs"]
+mod library_tests;

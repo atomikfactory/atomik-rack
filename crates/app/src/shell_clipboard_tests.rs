@@ -25,6 +25,7 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
