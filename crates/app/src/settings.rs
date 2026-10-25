@@ -672,10 +672,10 @@ mod tests {
 
     #[test]
     fn default_library_dir_follows_platform_conventions() {
-        let win = env(&[("USERPROFILE", r"C:\Users\example")]);
+        let win = env(&[("USERPROFILE", "profile/example")]);
         assert_eq!(
             default_library_dir(TargetOs::Windows, &win),
-            Some(PathBuf::from(r"C:\Users\example").join("Documents/Atomik Rack/Library"))
+            Some(PathBuf::from("profile/example").join("Documents/Atomik Rack/Library"))
         );
         let mac = env(&[("HOME", "/Users/example")]);
         assert_eq!(
