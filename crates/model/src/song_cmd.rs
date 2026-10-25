@@ -27,6 +27,20 @@ pub(crate) fn range(message: impl Into<String>) -> ModelError {
     ModelError::OutOfRange(message.into())
 }
 
+/// The refusal of a lane for a param a macro drives (automate the macro instead).
+fn driven_lane(
+    doc: &RackDoc,
+    device: &DeviceKey,
+    param: &str,
+    a: &crate::MacroAssign,
+) -> ModelError {
+    bad(format!(
+        "{device} {param} is driven by {} of {}: automate the macro instead",
+        doc.macro_name(&a.bank, a.index),
+        a.bank
+    ))
+}
+
 /// True if the device type has a Notes input (a track can play it).
 pub(crate) fn has_notes_input(desc: &DeviceDescriptor) -> bool {
     desc.sockets
@@ -552,6 +566,11 @@ pub(crate) fn check_new_clip(
         .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?
         .kind;
     check_geometry(clip.start, clip.length, clip.offset, clip.loop_length).map_err(range)?;
+    if let LaneKind::Automation(param) = kind
+        && let Some(a) = doc.bank_driver(device, param)
+    {
+        return Err(driven_lane(doc, device, param, a));
+    }
     if let Some(g) = &clip.grid {
         if !kind.is_notes() {
             return Err(bad("only a note clip can have a step grid"));
@@ -829,6 +848,9 @@ pub(crate) fn plan(
                 return Err(bad(format!(
                     "{device} has no Notes input, so it has no track to automate"
                 )));
+            }
+            if let Some(a) = doc.bank_driver(&device, &param) {
+                return Err(driven_lane(doc, &device, &param, a));
             }
             let lane = Lane {
                 kind: LaneKind::Automation(param.clone()),

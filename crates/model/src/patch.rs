@@ -293,6 +293,7 @@ pub(crate) fn load_rack(
         song: crate::song::empty_song(tempo_bpm),
         console: crate::console::Console::default(),
         midi_maps: Vec::new(),
+        macros: crate::macros::MacroSet::default(),
     };
     let (v, p) = field("devices");
     let mut first_use: BTreeMap<String, JsonPath> = BTreeMap::new();

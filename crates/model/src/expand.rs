@@ -235,6 +235,7 @@ impl RackDoc {
     /// are flagged and unplugged and a `<track>/~freeze` player takes their place.
     pub fn expand(&self, registry: &Registry) -> ExpandedRack {
         let mut expanded = expand_with_loops(&self.devices, &self.cables, registry).0;
+        crate::macros::apply(self, registry, &mut expanded);
         crate::freeze::apply(self, &mut expanded);
         expanded
     }

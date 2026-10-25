@@ -23,11 +23,14 @@ pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 mod history;
+mod macros;
+mod macros_io;
 mod midi_import;
 mod midi_map;
 mod midi_map_io;
 pub mod organise;
 mod organise_cmd;
+mod param_search;
 mod patch;
 mod plugin;
 mod plugin_cmd;
@@ -67,6 +70,10 @@ pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
     ticks_for_frames, track_chain,
 };
+pub use macros::{
+    MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MacroAssign, MacroCommand, MacroName, MacroSet,
+    assign_position, assign_value, expand_bank_lane, macro_index_of, macro_key,
+};
 pub use midi_import::{ImportedTrack, MidiImport};
 pub use midi_map::{
     DEFAULT_SENSITIVITY, Effect, Learner, MAX_MIDI_MAPS, MAX_PORT_NAME_CHARS, MapMode, MapOptions,
@@ -74,6 +81,7 @@ pub use midi_map::{
     PICKUP_WINDOW, PresetMap, PresetTarget, RelativeKind, SourceKind, TransportTarget, note_name,
 };
 pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
+pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
     PLUGIN_GESTURE_MERGE_BASE, PluginCommand, PluginDoc, register_stand_ins,
@@ -262,6 +270,9 @@ pub struct RackDoc {
     /// The MIDI mappings (hardware controls bound to params, the tempo and the transport).
     /// Project data with no part in the sound: see [`crate::midi_map`].
     pub midi_maps: Vec<MidiMapping>,
+    /// The macro assignments and names (see [`crate::macros`]). Project data: a driven param is
+    /// set to the macro's value wherever the rack is expanded.
+    pub macros: MacroSet,
 }
 
 /// An edit. Every command is undoable.
@@ -408,6 +419,9 @@ pub enum Command {
     Console(ConsoleCommand),
     /// A MIDI mapping edit (see [`MidiMapCommand`]); reports [`SyncOp::MidiMapsChanged`].
     MidiMap(MidiMapCommand),
+    /// A macro edit (see [`MacroCommand`]); reports [`SyncOp::MacrosChanged`] for each bank it
+    /// touches. Not accepted by [`Command::Batch`].
+    Macro(MacroCommand),
     /// Several commands as one undo step, validated in order (each against the
     /// document as the earlier ones left it) and rejected as a whole if any fails, if the
     /// batch is empty or if it holds anything else. **Accepted:** `Connect`, `Disconnect`
@@ -1206,6 +1220,13 @@ impl Document {
                 if value.is_nan() {
                     return Err(ModelError::OutOfRange(format!("{key} {param:?} is NaN")));
                 }
+                if let Some(a) = doc.bank_driver(&key, &param) {
+                    return Err(ModelError::MacroDriven(format!(
+                        "{key} {param} is driven by {} of {}; change the macro or remove the assignment",
+                        doc.macro_name(&a.bank, a.index),
+                        a.bank
+                    )));
+                }
                 if let Some((container, index)) = doc.macro_driver(&key, &param) {
                     return Err(ModelError::MacroDriven(format!(
                         "{key} {param} is driven by macro {} of {container}; unmap it first",
@@ -1258,6 +1279,7 @@ impl Document {
             }
             Command::Console(console_command) => console_cmd::plan(doc, registry, console_command)?,
             Command::MidiMap(c) => midi_map::plan(doc, registry, c)?,
+            Command::Macro(c) => macros::plan(doc, registry, c)?,
             Command::Song(song_command) => return song_cmd::plan(doc, registry, song_command),
             Command::Workflow(c) => return workflow_cmd::plan(doc, registry, c),
         };
@@ -1392,6 +1414,7 @@ pub fn empty_doc() -> RackDoc {
         song: empty_song(120.0),
         console: Console::default(),
         midi_maps: Vec::new(),
+        macros: MacroSet::default(),
     }
 }
 

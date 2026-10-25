@@ -454,6 +454,14 @@ impl RackDoc {
             }
         }
         macros(&self.devices, "", &mut used);
+        // The params a macro bank drives.
+        for a in &self.macros.assigns {
+            if let Some(id) = param_id_of_key(&a.param)
+                && let Some(ids) = used.get_mut(&a.device.0)
+            {
+                ids.insert(id);
+            }
+        }
         used
     }
 
