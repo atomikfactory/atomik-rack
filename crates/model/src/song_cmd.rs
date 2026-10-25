@@ -71,11 +71,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::notes()],
     }
 }
 
@@ -88,11 +84,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Audio,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::audio()],
     }
 }
 
@@ -852,11 +844,7 @@ pub(crate) fn plan(
             if let Some(a) = doc.bank_driver(&device, &param) {
                 return Err(driven_lane(doc, &device, &param, a));
             }
-            let lane = Lane {
-                kind: LaneKind::Automation(param.clone()),
-                clips: Vec::new(),
-                take_groups: Vec::new(),
-            };
+            let lane = Lane::automation(param.clone());
             match song.track(&device) {
                 Some(t) if t.automation_lane(&param).is_some() => {
                     return Err(bad(format!("{device} already has a {param} lane")));

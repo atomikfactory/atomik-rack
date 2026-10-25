@@ -37,8 +37,8 @@
 use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfError, SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
 use atomik_model::song::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, LaneKind, MAX_MARKER_NAME, MAX_TICK,
-    MeterEvent, Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_notes,
+    AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, MAX_MARKER_NAME, MAX_TICK, MeterEvent,
+    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_notes,
 };
 use atomik_model::{ControllerKind, ControllerLane, DeviceKey};
 use std::collections::BTreeMap;
@@ -291,15 +291,11 @@ fn lone_clip_track(clip: &Clip) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: vec![Clip {
-                start: 0,
-                muted: false,
-                ..clip.clone()
-            }],
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::notes().with_clips(vec![Clip {
+            start: 0,
+            muted: false,
+            ..clip.clone()
+        }])],
     }
 }
 

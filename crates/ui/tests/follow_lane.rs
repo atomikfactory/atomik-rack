@@ -5,7 +5,7 @@
 
 mod support;
 
-use atomik_model::{Lane, LaneKind, RackDoc};
+use atomik_model::{Lane, RackDoc};
 use atomik_ui::{ArrangementView, DisplayList};
 use support::song::*;
 use support::*;
@@ -27,17 +27,9 @@ fn tall_doc() -> RackDoc {
     for n in 0..12 {
         let k = format!("extra{n}");
         doc.devices.push(device(&k, "atomik.poly-synth", &k));
-        let mut lanes = vec![Lane {
-            kind: LaneKind::Notes,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }];
+        let mut lanes = vec![Lane::notes()];
         if n == 11 {
-            lanes.push(Lane {
-                kind: LaneKind::Automation(CUTOFF.into()),
-                clips: Vec::new(),
-                take_groups: Vec::new(),
-            });
+            lanes.push(Lane::automation(CUTOFF));
         }
         doc.song.tracks.push(track(&k, lanes));
     }

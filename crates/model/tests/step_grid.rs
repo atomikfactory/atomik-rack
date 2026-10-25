@@ -7,8 +7,8 @@ mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::song::flatten_notes;
 use atomik_model::{
-    Clip, ClipContent, ClipId, Command, Curve, Document, Lane, LaneKind, ModelError, Note,
-    SongCommand, StepGrid, StepResolution, SyncOp, Track, load_project, save_project,
+    Clip, ClipContent, ClipId, Command, Curve, Document, Lane, ModelError, Note, SongCommand,
+    StepGrid, StepResolution, SyncOp, Track, load_project, save_project,
 };
 use common::audio::{add_audio_clip, add_audio_track, audio_registry, register};
 use common::song::*;
@@ -385,18 +385,18 @@ fn track_of(clips: Vec<Clip>) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: clips
-                .into_iter()
-                .enumerate()
-                .map(|(i, mut c)| {
-                    c.id = ClipId(i as u64 + 1);
-                    c
-                })
-                .collect(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![
+            Lane::notes().with_clips(
+                clips
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, mut c)| {
+                        c.id = ClipId(i as u64 + 1);
+                        c
+                    })
+                    .collect(),
+            ),
+        ],
     }
 }
 

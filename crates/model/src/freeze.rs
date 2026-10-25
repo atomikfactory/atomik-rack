@@ -38,8 +38,7 @@ use crate::console::{CHANNEL_TYPE, INSERT_SLOTS};
 use crate::expand::{ExpandedDevice, ExpandedRack};
 use crate::history::Edit;
 use crate::song::{
-    AUDIO_TRACK_TYPE, AudioClipContent, Clip, ClipContent, ClipId, Lane, LaneKind, SongCommand,
-    Track,
+    AUDIO_TRACK_TYPE, AudioClipContent, Clip, ClipContent, ClipId, Lane, SongCommand, Track,
 };
 use crate::song_cmd::{
     add_audio_track, audio_lane, bad, check_audio, check_geometry, find_clip, insert_new, range,
@@ -108,11 +107,7 @@ impl Track {
             armed: false,
             chase: false,
             frozen: None,
-            lanes: vec![Lane {
-                kind: LaneKind::Audio,
-                clips: vec![frozen.clip()],
-                take_groups: Vec::new(),
-            }],
+            lanes: vec![Lane::audio().with_clips(vec![frozen.clip()])],
         })
     }
 }

@@ -2086,11 +2086,11 @@ fn load_track(
             )?,
             None => Vec::new(),
         };
-        lanes.push(Lane {
-            kind,
-            clips,
-            take_groups,
-        });
+        lanes.push(
+            Lane::new(kind)
+                .with_clips(clips)
+                .with_take_groups(take_groups),
+        );
     }
     if lanes.is_empty() {
         return Err(lanes_path.error("a track needs its note lane"));

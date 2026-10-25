@@ -1207,6 +1207,46 @@ impl Song {
     }
 }
 
+impl Lane {
+    /// An empty lane of `kind`.
+    pub fn new(kind: LaneKind) -> Self {
+        Lane {
+            kind,
+            clips: Vec::new(),
+            take_groups: Vec::new(),
+        }
+    }
+
+    /// An empty note lane.
+    pub fn notes() -> Self {
+        Self::new(LaneKind::Notes)
+    }
+
+    /// An empty audio lane.
+    pub fn audio() -> Self {
+        Self::new(LaneKind::Audio)
+    }
+
+    /// An empty automation lane of the parameter with key `param`.
+    pub fn automation(param: impl Into<String>) -> Self {
+        Self::new(LaneKind::Automation(param.into()))
+    }
+
+    /// This lane holding `clips`.
+    #[must_use]
+    pub fn with_clips(mut self, clips: Vec<Clip>) -> Self {
+        self.clips = clips;
+        self
+    }
+
+    /// This lane holding `take_groups`.
+    #[must_use]
+    pub fn with_take_groups(mut self, take_groups: Vec<TakeGroup>) -> Self {
+        self.take_groups = take_groups;
+        self
+    }
+}
+
 impl Track {
     /// True for an audio track: its first lane is the audio lane. (A track only knows its
     /// device key; [`crate::RackDoc::is_audio_track`] checks the device type too.)

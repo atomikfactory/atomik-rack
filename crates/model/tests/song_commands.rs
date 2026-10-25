@@ -54,14 +54,7 @@ fn add_track_creates_note_lane() {
         ("synth", "lead")
     );
     assert!(!t[0].muted && !t[0].solo && !t[0].armed);
-    assert_eq!(
-        t[0].lanes,
-        [Lane {
-            kind: LaneKind::Notes,
-            clips: vec![],
-            take_groups: vec![]
-        }]
-    );
+    assert_eq!(t[0].lanes, [Lane::notes()]);
     assert_eq!(
         d.doc().song.track(&key("lead")).unwrap().device,
         key("lead")
