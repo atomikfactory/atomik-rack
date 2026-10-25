@@ -3,8 +3,10 @@
 use crate::analysis;
 use crate::rpc::{Server, Tool};
 use crate::tool::{Args, ToolOutput, definition};
+use atomik_library::{FileKind, classify};
 use atomik_model::{
-    ClipContent, ControllerKind, Lane, LaneKind, RackDoc, insert_bypass_states, inserts_bypassed,
+    ClipContent, ControllerKind, ItemKind, Lane, LaneKind, RackDoc, insert_bypass_states,
+    inserts_bypassed, summarize_item,
 };
 use atomik_render::project::{ProjectOptions, is_project, render_doc_in};
 use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
@@ -173,14 +175,17 @@ fn list_devices(server: &mut Server, args: &Args) -> Result<ToolOutput, String> 
 fn project_inspect_def() -> Value {
     definition(
         "project_inspect",
-        "Loads a project (.atomik, or a bundle folder) or a patch and describes it: devices, \
-cables, the song (tracks, lanes, clips, tempo, loop, markers) and the console. Fails with the \
-JSON path of the first problem when the file does not load.",
+        "Loads a project (.atomik, or a bundle folder), a patch or a library item and describes it: \
+devices, cables, the song (tracks, lanes, clips, tempo, loop, markers) and the console. `kind` is \
+`project`, `patch`, or for a library item (by extension) `patch_item` (.atomikpatch), \
+`container_item` (.atomikcontainer) or `clip` (.atomikclip: tempo, meter and the clip's length, \
+offset, loop, notes); an item also has a one line `summary`. Fails with the JSON path of the \
+first problem when the file does not load.",
         &[
             (
                 "path",
                 "string",
-                "Project file, bundle folder or patch file.",
+                "Project file, bundle folder, patch file or library item.",
             ),
             (
                 "include_params",
@@ -697,14 +702,71 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
 
 fn project_inspect(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let (file, text) = read_project_text(server, args.str("path")?)?;
+    let item = item_kind(&file);
+    if item == Some(FileKind::Clip) {
+        return clip_inspect(&file, &text);
+    }
     let doc = atomik_model::load_project(&text, &default_registry()).map_err(|e| e.to_string())?;
     let mut v = doc_json(&doc, args.opt_bool("include_params")?.unwrap_or(false));
     v["file"] = json!(file.to_string_lossy());
-    v["kind"] = json!(if is_project(&text) {
-        "project"
-    } else {
-        "patch"
+    v["kind"] = json!(match item {
+        Some(FileKind::Patch) => "patch_item",
+        Some(FileKind::Container) => "container_item",
+        _ if is_project(&text) => "project",
+        _ => "patch",
     });
+    if let Some(summary) = item
+        .and_then(model_kind)
+        .and_then(|k| summarize_item(k, &text))
+    {
+        v["summary"] = json!(summary.detail);
+    }
+    Ok(ToolOutput::json(&v))
+}
+
+/// The library kind of a file by its extension (`.atomikpatch`, `.atomikcontainer`,
+/// `.atomikclip`, in any case), or `None` for anything else.
+fn item_kind(file: &Path) -> Option<FileKind> {
+    classify(file, false)
+        .filter(|k| matches!(k, FileKind::Patch | FileKind::Container | FileKind::Clip))
+}
+
+fn model_kind(kind: FileKind) -> Option<ItemKind> {
+    match kind {
+        FileKind::Patch => Some(ItemKind::Patch),
+        FileKind::Container => Some(ItemKind::Container),
+        FileKind::Clip => Some(ItemKind::Clip),
+        _ => None,
+    }
+}
+
+/// `project_inspect` of an `.atomikclip`: the clip's span, flags and counts.
+fn clip_inspect(file: &Path, text: &str) -> Result<ToolOutput, String> {
+    let clip = atomik_model::load_clip_file(text).map_err(|e| e.to_string())?;
+    let c = &clip.clip;
+    let notes = match &c.content {
+        ClipContent::Notes(n) => n.len(),
+        _ => 0,
+    };
+    let mut v = json!({
+        "file": file.to_string_lossy(),
+        "kind": "clip",
+        "tempo_bpm": clip.tempo_bpm,
+        "meter": {"num": clip.meter.0, "den": clip.meter.1},
+        "clip": {
+            "length": c.length,
+            "offset": c.offset,
+            "loop_length": c.loop_length,
+            "muted": c.muted,
+            "notes": notes,
+            "grid": c.grid.is_some(),
+            "scale": c.scale.is_some(),
+            "controllers": c.controllers.len(),
+        },
+    });
+    if let Some(summary) = summarize_item(ItemKind::Clip, text) {
+        v["summary"] = json!(summary.detail);
+    }
     Ok(ToolOutput::json(&v))
 }
 
@@ -727,21 +789,39 @@ fn validate_def() -> Value {
 fn validate(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let (file, text) = read_project_text(server, args.str("path")?)?;
     let registry = default_registry();
+    let item = item_kind(&file);
     let project = is_project(&text);
-    let outcome: Result<Vec<String>, String> = if project {
-        atomik_model::load_project_with_warnings(&text, &registry)
-            .map(|(_, w)| w)
+    let outcome: Result<Vec<String>, String> = match item {
+        Some(FileKind::Clip) => atomik_model::load_clip_file(&text)
+            .map(|_| Vec::new())
+            .map_err(|e| e.to_string()),
+        Some(kind) => atomik_model::load_device_item(&text, &registry)
             .map_err(|e| e.to_string())
-    } else {
-        Patch::from_json(&text)
+            .and_then(|snapshot| {
+                if kind == FileKind::Container && ItemKind::of(&snapshot) != ItemKind::Container {
+                    Err("a container item holds exactly one container device".to_owned())
+                } else {
+                    Ok(Vec::new())
+                }
+            }),
+        None if project => atomik_model::load_project_with_warnings(&text, &registry)
+            .map(|(_, w)| w)
+            .map_err(|e| e.to_string()),
+        None => Patch::from_json(&text)
             .map_err(|e| e.to_string())
             .and_then(|p| {
                 atomik_render::build::build(&p, &registry)
                     .map(|b| b.warnings.iter().map(ToString::to_string).collect())
                     .map_err(|e| e.to_string())
-            })
+            }),
     };
-    let kind = if project { "project" } else { "patch" };
+    let kind = match item {
+        Some(FileKind::Patch) => "patch_item",
+        Some(FileKind::Container) => "container_item",
+        Some(_) => "clip",
+        None if project => "project",
+        None => "patch",
+    };
     Ok(ToolOutput::json(&match outcome {
         Ok(warnings) => json!({
             "valid": true, "kind": kind, "file": file.to_string_lossy(), "warnings": warnings,

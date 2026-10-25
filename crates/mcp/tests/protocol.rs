@@ -51,6 +51,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "param_search",
     "session_macros",
     "session_param_search",
+    "library_list",
 ];
 
 #[test]
