@@ -23,10 +23,10 @@
 //!
 //! # Bounce in place
 //!
-//! **Bounce in Place** renders the selected clips (note or audio clips of the main lane) of each
-//! track through its instrument and its whole chain into **one clip on a new audio track** that
-//! starts where the first of them does; the originals stay (**Bounce in Place and Mute
-//! Originals** mutes them in the same step). It is the additive twin of a freeze: nothing is
+//! **Bounce in Place** renders the selected clips (note clips of any note lane, or audio clips; the
+//! clips of a muted lane still render) of each track through its instrument and its whole chain
+//! into **one clip on a new audio track** that starts where the first of them does; the
+//! originals stay (**Bounce in Place and Mute Originals** mutes them in the same step). It is the additive twin of a freeze: nothing is
 //! frozen, nothing leaves the engine, and the sends and the rest of the channel strip apply to
 //! the new track like to any.
 //!
@@ -195,9 +195,8 @@ impl<S: EngineSink> AppCore<S> {
             })
         };
         let bounceable = self.arrangement.selected_clips().iter().any(|id| {
-            doc.song.clip(*id).is_some_and(|(t, lane, c)| {
+            doc.song.clip(*id).is_some_and(|(t, _, c)| {
                 t.frozen.is_none()
-                    && lane == 0
                     && !matches!(c.content, ClipContent::Automation(_))
                     && track_chain(doc, &self.registry, &t.device).is_ok()
             })
@@ -270,7 +269,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut per_track: Vec<(DeviceKey, Vec<ClipId>, i64, i64)> = Vec::new();
         let mut skipped = Vec::new();
         for id in selected {
-            let Some((track, lane, clip)) = doc.song.clip(id) else {
+            let Some((track, _, clip)) = doc.song.clip(id) else {
                 continue;
             };
             let name = doc
@@ -280,7 +279,7 @@ impl<S: EngineSink> AppCore<S> {
                 skipped.push(format!("{name} is frozen: unfreeze it to bounce its clips"));
                 continue;
             }
-            if lane != 0 || matches!(clip.content, ClipContent::Automation(_)) {
+            if matches!(clip.content, ClipContent::Automation(_)) {
                 skipped.push("Only note and audio clips can be bounced".to_owned());
                 continue;
             }
