@@ -2631,6 +2631,8 @@ impl<B: AudioBackend> Shell<B> {
                     self.set_focus(Pane::Arrangement);
                 }
             }
+            ("rack.save_to_library", None) => self.core.save_selection_to_library(),
+            ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
             ("view.cables_cycle", None) => {
                 let view = self.core.view_mut();
                 let next = match view.cable_visibility() {
@@ -2945,6 +2947,8 @@ impl<B: AudioBackend> Shell<B> {
                 let notes = core.piano_roll().notes();
                 !sel.is_empty() && sel.iter().all(|i| notes.get(*i).is_some_and(|n| n.muted))
             },
+            save_clip: matches!(clips.as_slice(), [id]
+                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes())),
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)

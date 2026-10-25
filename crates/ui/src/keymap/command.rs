@@ -762,6 +762,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
+    cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),
     cmd(
         "rack.select_prev",
@@ -1108,6 +1109,12 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu()
     .decline(),
+    cmd(
+        "sequencer.save_clip_to_library",
+        "Save Clip to Library",
+        G::Sequencer,
+        C::Sequencer,
+    ),
     cmd(
         "sequencer.select_next_clip",
         "Select Next Clip",
@@ -1607,6 +1614,21 @@ mod tests {
         );
         assert!(r.validate("transport.go_locator", Some("left")));
         assert!(!r.validate("no.such", None));
+    }
+
+    #[test]
+    fn the_save_to_library_commands_are_registered_in_their_views() {
+        let r = Registry::bundled();
+        let rack = r.get("rack.save_to_library").unwrap();
+        assert_eq!(rack.label, "Save to Library");
+        assert_eq!((rack.group, rack.context), (Group::Rack, Context::Rack));
+        let clip = r.get("sequencer.save_clip_to_library").unwrap();
+        assert_eq!(clip.label, "Save Clip to Library");
+        assert_eq!(
+            (clip.group, clip.context),
+            (Group::Sequencer, Context::Sequencer)
+        );
+        assert!(!rack.menu && !clip.menu, "context menu items only");
     }
 
     #[test]

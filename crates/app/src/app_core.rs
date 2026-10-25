@@ -2313,6 +2313,9 @@ mod io_ops;
 #[path = "app_core_browser.rs"]
 mod browser;
 
+#[path = "app_core_library.rs"]
+mod library;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
@@ -2428,6 +2431,10 @@ mod starter_tests;
 #[cfg(test)]
 #[path = "app_core_browser_tests.rs"]
 mod browser_tests;
+
+#[cfg(test)]
+#[path = "app_core_library_tests.rs"]
+mod library_tests;
 
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]

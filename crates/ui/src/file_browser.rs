@@ -352,6 +352,33 @@ impl FileBrowserView {
         self.resort();
     }
 
+    /// Selects the row of `path` alone, moves the cursor to it and scrolls it into view (a
+    /// saved library item is shown this way). `false` when the list has no such row (it may be
+    /// filtered out).
+    pub fn select_path(&mut self, path: &Path) -> bool {
+        let Some(row) = self.row_of_path(path) else {
+            return false;
+        };
+        let Some(pos) = self.pos_of(row) else {
+            return false;
+        };
+        self.selection.clear();
+        self.selection.insert(path.to_path_buf());
+        self.cursor = Some(row);
+        self.anchor = Some(row);
+        let top = pos as f64 * layout::ROW_H;
+        let height = self.lay().list.height();
+        if top < self.list_scroll {
+            self.list_scroll = top;
+        } else if top + layout::ROW_H > self.list_scroll + height {
+            self.list_scroll = top + layout::ROW_H - height;
+        }
+        self.clamp_scrolls();
+        self.info_dirty = true;
+        self.dirty = true;
+        true
+    }
+
     /// Fills in probed header data.
     pub fn patch_info(&mut self, info: &[(PathBuf, AudioInfo)]) {
         let wanted: BTreeMap<&Path, usize> = info

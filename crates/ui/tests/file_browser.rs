@@ -419,6 +419,28 @@ fn escape_stops_the_preview_and_enter_acts_on_the_cursor() {
 }
 
 #[test]
+fn select_path_selects_the_row_alone_and_scrolls_it_into_view() {
+    let mut v = settled(view());
+    run(&mut v, &[down(row_pt(0)), up(row_pt(0))]);
+    assert!(v.select_path(&p("snare.wav")));
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::Preview(p("snare.wav"))],
+        "the cursor moved to the row"
+    );
+    assert!(!v.select_path(&p("nope.wav")), "no such row");
+    // A long list: the selected row far down is scrolled to.
+    let rows: Vec<FileRow> = (0..200).map(|i| audio(&format!("s{i:03}.wav"))).collect();
+    v.set_rows(rows);
+    assert!(!paint(&mut v).texts().contains(&"s199.wav"));
+    assert!(v.select_path(&p("s199.wav")));
+    assert!(paint(&mut v).texts().contains(&"s199.wav"));
+    assert!(v.select_path(&p("s000.wav")));
+    assert!(paint(&mut v).texts().contains(&"s000.wav"));
+    assert!(v.needs_repaint() || !paint(&mut v).texts().is_empty());
+}
+
+#[test]
 fn backspace_and_alt_up_go_to_the_parent() {
     let mut v = settled(view());
     assert_eq!(

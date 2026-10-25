@@ -23,7 +23,7 @@
 
 use super::AppCore;
 use crate::browser_workers::{
-    BrowseJob, BrowseMsg, PreviewJob, WalkScope, Workers, home_dir, split_devices,
+    BrowseJob, BrowseMsg, CopyAssets, PreviewJob, WalkScope, Workers, home_dir, split_devices,
 };
 use crate::library_store::{LibrarySaver, Loaded, load};
 use crate::sink::EngineSink;
@@ -57,6 +57,7 @@ pub(crate) enum ViewCall {
     PatchItemInfo(Vec<(PathBuf, ItemInfo)>),
     SetPlaces(PlacesData),
     SetChildren(PathBuf, Vec<TreeChild>),
+    Select(PathBuf),
 }
 
 /// The browser's worker channels, generations, preview and library state.
@@ -84,6 +85,8 @@ pub(crate) struct BrowserState {
     workers: Option<Workers>,
     /// Jobs submitted whose `Done` has not arrived.
     jobs: usize,
+    /// A saved library item to select once the list that shows it arrives.
+    select_after: Option<PathBuf>,
     /// The device rows of the favourites or tag place being listed (built from the registry,
     /// shown with the answer of the stat job).
     collection_devices: Vec<FileRow>,
@@ -121,6 +124,7 @@ impl Default for BrowserState {
             saver: None,
             workers: None,
             jobs: 0,
+            select_after: None,
             collection_devices: Vec::new(),
             shown_paths: Vec::new(),
             preview: None,
@@ -243,6 +247,24 @@ impl<S: EngineSink> AppCore<S> {
             && let Some(place @ Place::Library(_)) = self.file_browser.location().cloned()
         {
             self.show(place);
+        }
+    }
+
+    /// Shows the library `section` and selects the row of `path` once it is listed, when the
+    /// panel shows. Returns whether it did (otherwise the caller says so in the status line).
+    pub(super) fn show_saved(&mut self, section: LibrarySection, path: PathBuf) -> bool {
+        if !self.browser.visible {
+            return false;
+        }
+        self.show(Place::Library(section));
+        self.browser.select_after = Some(path);
+        true
+    }
+
+    /// Hands the audio of a saved library item to the copy worker.
+    pub(super) fn copy_item_assets(&mut self, job: CopyAssets) {
+        if self.browser.workers().copy_assets(job) {
+            self.browser.jobs += 1;
         }
     }
 
@@ -446,6 +468,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Shows `place`: the view switches at once, the rows follow from a worker.
     fn show(&mut self, place: Place) {
+        self.browser.select_after = None;
         let generation = self.browser.workers().bump();
         self.file_browser.set_location(place.clone());
         match place {
@@ -579,6 +602,7 @@ impl<S: EngineSink> AppCore<S> {
                     .shown_paths
                     .extend(rows.iter().map(|r| r.path.clone()));
                 self.view_rows(rows, true);
+                self.select_pending();
             }
             BrowseMsg::Listed { .. } | BrowseMsg::Stats { .. } | BrowseMsg::Walked { .. } => {}
             BrowseMsg::Children { path, children } => {
@@ -604,6 +628,12 @@ impl<S: EngineSink> AppCore<S> {
                     .push(ViewCall::PatchItemInfo(info.clone()));
                 self.file_browser.patch_item_info(&info);
             }
+            BrowseMsg::AssetsCopied {
+                name,
+                section,
+                path,
+                report,
+            } => self.library_audio_copied(&name, section, path, &report),
             BrowseMsg::PreviewTotal { path, frames } => {
                 if let Some(active) = self.browser.preview.as_mut().filter(|a| a.path == path) {
                     active.total = frames;
@@ -625,6 +655,18 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             BrowseMsg::Done => self.browser.jobs = self.browser.jobs.saturating_sub(1),
+        }
+    }
+
+    /// Selects the saved item the list was waiting for, once its row is there.
+    fn select_pending(&mut self) {
+        let Some(path) = self.browser.select_after.clone() else {
+            return;
+        };
+        if self.file_browser.select_path(&path) {
+            #[cfg(test)]
+            self.browser.trace.push(ViewCall::Select(path));
+            self.browser.select_after = None;
         }
     }
 
