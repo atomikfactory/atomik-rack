@@ -14,20 +14,26 @@
 //! * A preview starts on the UI thread: the ring is created, its stream goes to the engine at
 //!   once and the feed goes to the decoder thread, so the sound begins as soon as the first
 //!   chunk is decoded. The panel shows progress from the stream's monitor.
+//! * The library sections list from the library folder: **Devices** is built from the registry on
+//!   the UI thread (virtual rows whose path is a device URI), the other sections are a walk over
+//!   `<library>/<Section>` that keeps the items of the section. A device URI is never handed to
+//!   a worker as a path: collections split them off ([`split_devices`]) and the probe skips them.
 //! * Library changes mark the database dirty; the next frame hands a JSON snapshot to the saver
 //!   thread (one write in flight, the newest snapshot wins).
 
 use super::AppCore;
-use crate::browser_workers::{BrowseJob, BrowseMsg, PreviewJob, Workers, home_dir};
+use crate::browser_workers::{
+    BrowseJob, BrowseMsg, PreviewJob, WalkScope, Workers, home_dir, split_devices,
+};
 use crate::library_store::{LibrarySaver, Loaded, load};
 use crate::sink::EngineSink;
 use atomik_engine::{PreviewMonitor, preview_channel};
 #[cfg(test)]
-use atomik_library::AudioInfo;
-use atomik_library::{FileRow, LibraryDb, PathKey, Tag};
+use atomik_library::{AudioInfo, ItemInfo};
+use atomik_library::{FileRow, LibraryDb, LibrarySection, PathKey, Tag, classify, device_type_of};
 #[cfg(test)]
 use atomik_ui::TreeChild;
-use atomik_ui::{BrowseAction, FileBrowserView, Place, PlacesData};
+use atomik_ui::{BrowseAction, FileBrowserView, Place, PlacesData, device_rows};
 use std::path::PathBuf;
 
 /// The preview that is playing (or about to).
@@ -48,6 +54,7 @@ pub(crate) enum ViewCall {
     AppendRows(Vec<FileRow>),
     PatchMarks(Vec<(PathBuf, bool, Vec<String>)>),
     PatchInfo(Vec<(PathBuf, AudioInfo)>),
+    PatchItemInfo(Vec<(PathBuf, ItemInfo)>),
     SetPlaces(PlacesData),
     SetChildren(PathBuf, Vec<TreeChild>),
 }
@@ -77,12 +84,21 @@ pub(crate) struct BrowserState {
     workers: Option<Workers>,
     /// Jobs submitted whose `Done` has not arrived.
     jobs: usize,
+    /// The device rows of the favourites or tag place being listed (built from the registry,
+    /// shown with the answer of the stat job).
+    collection_devices: Vec<FileRow>,
     /// Paths of the audio rows the list holds (to patch marks after a library change).
     shown_paths: Vec<PathBuf>,
     preview: Option<ActivePreview>,
     /// Every push into the panel (tests).
     #[cfg(test)]
     pub(crate) trace: Vec<ViewCall>,
+    /// The paths of every stat job submitted (tests).
+    #[cfg(test)]
+    pub(crate) stat_paths: Vec<Vec<PathBuf>>,
+    /// Every path queued for the probe worker (tests).
+    #[cfg(test)]
+    pub(crate) probed: Vec<PathBuf>,
     /// The last `set_preview` (tests).
     #[cfg(test)]
     pub(crate) last_preview: Option<(Option<PathBuf>, f32)>,
@@ -105,10 +121,15 @@ impl Default for BrowserState {
             saver: None,
             workers: None,
             jobs: 0,
+            collection_devices: Vec::new(),
             shown_paths: Vec::new(),
             preview: None,
             #[cfg(test)]
             trace: Vec::new(),
+            #[cfg(test)]
+            stat_paths: Vec::new(),
+            #[cfg(test)]
+            probed: Vec::new(),
             #[cfg(test)]
             last_preview: None,
         }
@@ -291,7 +312,14 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             BrowseAction::ListChildren(path) => self.submit(BrowseJob::Children(path)),
-            BrowseAction::Preview(path) => self.start_preview(path),
+            BrowseAction::Preview(path) => {
+                // Only audio is previewed: not a device row, not a patch or a clip.
+                let audio = device_type_of(&path).is_none()
+                    && !classify(&path, false).is_some_and(atomik_library::FileKind::is_item);
+                if audio {
+                    self.start_preview(path);
+                }
+            }
             BrowseAction::StopPreview => self.stop_preview(),
             BrowseAction::ToggleFavorite(paths) => {
                 if self.browser.db.toggle_favorite(&paths) {
@@ -394,12 +422,23 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ listings
 
     fn submit(&mut self, job: BrowseJob) {
+        #[cfg(test)]
+        if let BrowseJob::Stat { paths, .. } = &job {
+            self.browser.stat_paths.push(paths.clone());
+        }
         if self.browser.workers().browse(job) {
             self.browser.jobs += 1;
         }
     }
 
     fn queue_probe(&mut self, paths: Vec<PathBuf>) {
+        // A device URI is not a file: nothing is read for it.
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| device_type_of(p).is_none())
+            .collect();
+        #[cfg(test)]
+        self.browser.probed.extend(paths.iter().cloned());
         if !paths.is_empty() && self.browser.workers().probe(paths) {
             self.browser.jobs += 1;
         }
@@ -420,21 +459,53 @@ impl<S: EngineSink> AppCore<S> {
                     self.submit(BrowseJob::Walk {
                         generation,
                         root: path,
+                        scope: WalkScope::Below,
                     });
                 }
             }
             Place::Favorites => {
                 let paths = self.browser.db.favorites().iter().map(path_of).collect();
-                self.submit(BrowseJob::Stat { generation, paths });
+                self.show_collection(generation, paths);
             }
             Place::Tag(name) => {
                 let paths: Vec<PathBuf> = Tag::new(&name)
                     .map(|tag| self.browser.db.tagged(&tag).iter().map(path_of).collect())
                     .unwrap_or_default();
-                self.submit(BrowseJob::Stat { generation, paths });
+                self.show_collection(generation, paths);
             }
-            // Listing the library sections is the library work of the app.
-            Place::Library(_) => {}
+            Place::Library(section) => self.show_library(generation, section),
+        }
+    }
+
+    /// Lists a favourites or tag place: the files from a stat job, the device rows from the
+    /// registry (a device that no longer exists is left out like a missing file).
+    fn show_collection(&mut self, generation: u64, paths: Vec<PathBuf>) {
+        let (files, devices) = split_devices(&paths);
+        self.browser.collection_devices = device_rows(&self.registry)
+            .into_iter()
+            .filter(|r| device_type_of(&r.path).is_some_and(|id| devices.iter().any(|d| d == id)))
+            .collect();
+        self.submit(BrowseJob::Stat {
+            generation,
+            paths: files,
+        });
+    }
+
+    /// Lists a library section. Devices come from the registry at once; the other sections
+    /// are empty until the walk over `<library>/<Section>` delivers (no folder, no rows).
+    fn show_library(&mut self, generation: u64, section: LibrarySection) {
+        let Some(folder) = section.folder_name() else {
+            self.set_rows(device_rows(&self.registry));
+            return;
+        };
+        self.set_rows(Vec::new());
+        if let Some(root) = &self.browser.library_root {
+            let root = root.join(folder);
+            self.submit(BrowseJob::Walk {
+                generation,
+                root,
+                scope: WalkScope::Section(section),
+            });
         }
     }
 
@@ -494,7 +565,14 @@ impl<S: EngineSink> AppCore<S> {
                     }
                 }
             },
-            BrowseMsg::Stats { generation, rows } if generation == current => self.set_rows(rows),
+            BrowseMsg::Stats {
+                generation,
+                mut rows,
+            } if generation == current => {
+                let mut all = std::mem::take(&mut self.browser.collection_devices);
+                all.append(&mut rows);
+                self.set_rows(all);
+            }
             BrowseMsg::Walked { generation, rows } if generation == current => {
                 let rows = self.decorated(rows);
                 self.browser
@@ -518,6 +596,13 @@ impl<S: EngineSink> AppCore<S> {
                 #[cfg(test)]
                 self.browser.trace.push(ViewCall::PatchInfo(info.clone()));
                 self.file_browser.patch_info(&info);
+            }
+            BrowseMsg::ItemInfo(info) => {
+                #[cfg(test)]
+                self.browser
+                    .trace
+                    .push(ViewCall::PatchItemInfo(info.clone()));
+                self.file_browser.patch_item_info(&info);
             }
             BrowseMsg::PreviewTotal { path, frames } => {
                 if let Some(active) = self.browser.preview.as_mut().filter(|a| a.path == path) {

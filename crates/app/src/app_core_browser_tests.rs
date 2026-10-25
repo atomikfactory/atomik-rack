@@ -9,7 +9,9 @@ use crate::offline_sink::OfflineSink;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, write_wav_f32};
 use atomik_engine::preview_channel;
-use atomik_library::{AudioFormat, FileKind, FileRow, PathKey};
+use atomik_library::{
+    AudioFormat, FileKind, FileRow, ItemInfo, LibrarySection, PathKey, device_type_of, device_uri,
+};
 use atomik_model::empty_doc;
 use atomik_ui::kurbo::{Point, Rect};
 use atomik_ui::{BrowseAction, Modifiers, Place, PlacesData, PointerButton, UiEvent};
@@ -1181,4 +1183,260 @@ fn a_full_browse_session_leaves_the_user_folder_untouched() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(written, ["library.json"]);
+}
+
+// ---------------------------------------------------------------------------- library
+
+const PATCH_TEXT: &str = r#"{"devices":[{"name":"Poly Synth"},{"name":"Delay"}]}"#;
+const CONTAINER_TEXT: &str = r#"{"devices":[{"inner":{"devices":[{},{}]}}]}"#;
+const CLIP_TEXT: &str = r#"{"format":"atomik-clip","version":1,"ppq":15360,"tempo_bpm":120.0,"meter":{"num":4,"den":4},"clip":{"length":61440,"offset":0,"loop_length":null,"muted":false,"notes":[[0,1000,60,0.5]]}}"#;
+const PROJECT_TEXT: &str = r#"{"tempo_bpm":120.0,"song":{"tracks":[]}}"#;
+
+fn write(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+/// A library folder with one or more items per section, sub-folders, a project bundle, and
+/// files that belong nowhere (a text file, audio, an item of another section).
+fn item_library(tag: &str) -> Tmp {
+    let t = Tmp::new(tag);
+    write(&t.path("Patches/lead.atomikpatch"), PATCH_TEXT);
+    write(&t.path("Patches/pads/warm.atomikpatch"), PATCH_TEXT);
+    write(&t.path("Patches/pads/deep/dark.atomikpatch"), PATCH_TEXT);
+    write(&t.path("Patches/readme.txt"), "hello");
+    write(&t.path("Patches/misfit.atomikclip"), CLIP_TEXT);
+    wav(&t.path("Patches/lead/Audio/ab.wav"), 480);
+    write(&t.path("Containers/chain.atomikcontainer"), CONTAINER_TEXT);
+    write(&t.path("Clips/Bass bar 5.atomikclip"), CLIP_TEXT);
+    write(&t.path("Projects/demo/demo.atomik"), PROJECT_TEXT);
+    write(&t.path("Projects/flat.atomik"), PROJECT_TEXT);
+    t
+}
+
+fn library_core(root: &Path) -> AppCore<RecordingSink> {
+    let mut c = core();
+    c.set_library_root(Some(root.to_path_buf()));
+    c
+}
+
+fn show_section(c: &mut AppCore<RecordingSink>, section: LibrarySection) -> Vec<FileRow> {
+    c.browse(BrowseAction::Show(Place::Library(section)));
+    wait_browser(c);
+    rows(c)
+}
+
+fn item_info_patches(c: &AppCore<impl EngineSink>) -> Vec<(PathBuf, ItemInfo)> {
+    trace(c)
+        .iter()
+        .filter_map(|t| match t {
+            ViewCall::PatchItemInfo(i) => Some(i.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn show_library_devices_builds_registry_rows_without_the_disk() {
+    let mut c = core();
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Devices)));
+    assert!(!c.browser_busy(), "no job: the registry is in memory");
+    let listed = rows(&c);
+    assert_eq!(listed.len(), atomik_ui::device_rows(c.registry()).len());
+    assert!(!listed.is_empty());
+    assert!(listed.iter().all(|r| r.kind == FileKind::Device
+        && device_type_of(&r.path).is_some()
+        && r.item.as_ref().is_some_and(|i| !i.category.is_empty())));
+    assert_eq!(
+        c.file_browser().location(),
+        Some(&Place::Library(LibrarySection::Devices))
+    );
+}
+
+#[test]
+fn show_library_section_lists_its_items_recursively_and_only_those() {
+    let lib = item_library("sections");
+    let mut c = library_core(&lib.0);
+    let patches = show_section(&mut c, LibrarySection::Patches);
+    assert_eq!(
+        names(&patches),
+        ["dark.atomikpatch", "lead.atomikpatch", "warm.atomikpatch"]
+    );
+    assert!(patches.iter().all(|r| r.kind == FileKind::Patch));
+    let containers = show_section(&mut c, LibrarySection::Containers);
+    assert_eq!(names(&containers), ["chain.atomikcontainer"]);
+    let clips = show_section(&mut c, LibrarySection::Clips);
+    assert_eq!(names(&clips), ["Bass bar 5.atomikclip"]);
+    let projects = show_section(&mut c, LibrarySection::Projects);
+    assert_eq!(names(&projects), ["demo.atomik", "flat.atomik"]);
+    assert_eq!(
+        c.file_browser().location(),
+        Some(&Place::Library(LibrarySection::Projects))
+    );
+}
+
+#[test]
+fn show_library_section_without_a_root_or_a_folder_is_empty_and_quiet() {
+    let mut c = core();
+    assert!(show_section(&mut c, LibrarySection::Patches).is_empty());
+    let lib = Tmp::new("empty-lib");
+    let mut c = library_core(&lib.0);
+    assert!(show_section(&mut c, LibrarySection::Clips).is_empty());
+    assert!(
+        c.last_rejection().is_none(),
+        "a missing folder is not an error"
+    );
+    assert!(
+        !lib.path("Clips").exists(),
+        "the browser never creates the folders"
+    );
+}
+
+#[test]
+fn a_newer_section_listing_replaces_the_older_one() {
+    let lib = item_library("replace");
+    let mut c = library_core(&lib.0);
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Patches)));
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Clips)));
+    wait_browser(&mut c);
+    assert_eq!(names(&rows(&c)), ["Bass bar 5.atomikclip"]);
+}
+
+#[test]
+fn changing_the_library_root_lists_the_shown_section_again() {
+    let lib = item_library("reroot");
+    let other = Tmp::new("reroot-other");
+    write(&other.path("Clips/other.atomikclip"), CLIP_TEXT);
+    let mut c = library_core(&lib.0);
+    c.set_file_browser_visible(true);
+    wait_browser(&mut c);
+    assert_eq!(
+        names(&show_section(&mut c, LibrarySection::Clips)),
+        ["Bass bar 5.atomikclip"]
+    );
+    c.set_library_root(Some(other.0.clone()));
+    wait_browser(&mut c);
+    assert_eq!(names(&rows(&c)), ["other.atomikclip"]);
+}
+
+#[test]
+fn library_items_get_their_detail_from_the_probe_worker() {
+    let lib = item_library("detail");
+    let mut c = library_core(&lib.0);
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Patches)));
+    wait_browser(&mut c);
+    wait_until(&mut c, "item info", |c| !item_info_patches(c).is_empty());
+    wait_browser(&mut c);
+    let info = item_info_patches(&c);
+    let lead = info
+        .iter()
+        .find(|(p, _)| p == &lib.path("Patches/lead.atomikpatch"))
+        .expect("the lead patch was probed");
+    assert_eq!(lead.1.detail, "2 devices: Poly Synth, Delay");
+    assert!(lead.1.category.is_empty());
+}
+
+#[test]
+fn item_info_is_probed_in_plain_folder_listings_too() {
+    let lib = item_library("plain");
+    let mut c = core();
+    show(&mut c, &lib.path("Clips"));
+    wait_until(&mut c, "item info", |c| !item_info_patches(c).is_empty());
+    wait_browser(&mut c);
+    let info = item_info_patches(&c);
+    assert_eq!(info[0].0, lib.path("Clips/Bass bar 5.atomikclip"));
+    assert_eq!(info[0].1.detail, "1 bar, 1 note");
+    show(&mut c, &lib.path("Projects/demo"));
+    wait_until(&mut c, "project info", |c| {
+        item_info_patches(c)
+            .iter()
+            .any(|(_, i)| i.detail == "120 BPM, 0 tracks")
+    });
+}
+
+#[test]
+fn an_unreadable_item_gets_no_detail_and_no_error() {
+    let lib = Tmp::new("broken-item");
+    write(&lib.path("Patches/bad.atomikpatch"), "not json");
+    let mut c = library_core(&lib.0);
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Patches)));
+    wait_browser(&mut c);
+    c.browse(BrowseAction::RequestInfo(vec![
+        lib.path("Patches/bad.atomikpatch"),
+    ]));
+    wait_browser(&mut c);
+    assert!(item_info_patches(&c).is_empty());
+    assert!(c.last_rejection().is_none());
+}
+
+#[test]
+fn browse_device_uri_never_reaches_stat_or_probe() {
+    let mut c = core();
+    let uri = device_uri("atomik.poly-synth");
+    let file = Tmp::new("uri");
+    wav(&file.path("kick.wav"), 480);
+    // Favourite a device row and a file, then show the collection and ask for info.
+    c.browse(BrowseAction::ToggleFavorite(vec![
+        uri.clone(),
+        file.path("kick.wav"),
+    ]));
+    c.browse(BrowseAction::Show(Place::Favorites));
+    c.browse(BrowseAction::RequestInfo(vec![
+        uri.clone(),
+        file.path("kick.wav"),
+    ]));
+    c.browse(BrowseAction::Preview(uri.clone()));
+    wait_browser(&mut c);
+    assert!(
+        c.browser.stat_paths.iter().flatten().all(|p| p != &uri),
+        "stat saw {:?}",
+        c.browser.stat_paths
+    );
+    assert!(
+        c.browser.probed.iter().all(|p| p != &uri),
+        "probe saw {:?}",
+        c.browser.probed
+    );
+    assert!(c.browser.probed.contains(&file.path("kick.wav")));
+    assert!(preview_calls(&c).is_empty(), "a device is not previewed");
+    // The collection shows the device row, built from the registry, and the file.
+    let listed = rows(&c);
+    let device = listed.iter().find(|r| r.path == uri).expect("device row");
+    assert_eq!(device.kind, FileKind::Device);
+    assert!(device.favorite);
+    assert!(device.item.is_some());
+    assert!(
+        listed
+            .iter()
+            .any(|r| same_file(&r.path, &file.path("kick.wav")))
+    );
+}
+
+#[test]
+fn tag_places_list_tagged_devices_from_the_registry() {
+    let mut c = core();
+    let uri = device_uri("atomik.poly-synth");
+    let gone = device_uri("no.such.device");
+    c.browse(BrowseAction::AddTag {
+        paths: vec![uri.clone(), gone.clone()],
+        tag: "lead".into(),
+    });
+    c.browse(BrowseAction::Show(Place::Tag("lead".into())));
+    wait_browser(&mut c);
+    let listed = rows(&c);
+    assert_eq!(
+        listed.len(),
+        1,
+        "an unknown device is left out like a missing file"
+    );
+    assert_eq!(listed[0].path, uri);
+    assert_eq!(listed[0].tags, ["lead"]);
+    assert!(
+        c.browser
+            .stat_paths
+            .iter()
+            .flatten()
+            .all(|p| p != &uri && p != &gone)
+    );
 }
