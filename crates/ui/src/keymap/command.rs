@@ -540,6 +540,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("mixer.compare_snapshot", "Compare A/B", G::Mixer, C::Global).menu(),
     cmd(
         "mixer.create_vca",
         "Create VCA from Selection",
@@ -547,7 +548,36 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "mixer.delete_snapshot",
+        "Delete Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd("mixer.delete_vca", "Delete VCA", G::Mixer, C::Global).menu(),
+    cmd("mixer.end_compare", "End Compare", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.recall_next_snapshot",
+        "Recall Next Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.recall_previous_snapshot",
+        "Recall Previous Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.recall_snapshot",
+        "Recall Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "mixer.remove_from_vca",
         "Remove from VCA",
@@ -589,6 +619,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "mixer.store_snapshot",
+        "Store Snapshot",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.toggle_compensation",
         "Delay Compensation",
         G::Mixer,
@@ -598,6 +635,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.toggle_polarity",
         "Toggle Polarity",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.update_snapshot",
+        "Update Snapshot",
         G::Mixer,
         C::Global,
     )

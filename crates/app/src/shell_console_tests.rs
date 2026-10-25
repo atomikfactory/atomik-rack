@@ -200,6 +200,14 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Delete VCA", None),
             ("Toggle Polarity", None),
             ("Bypass All Inserts", None),
+            ("Store Snapshot", None),
+            ("Update Snapshot", None),
+            ("Recall Snapshot", None),
+            ("Recall Next Snapshot", None),
+            ("Recall Previous Snapshot", None),
+            ("Compare A/B", None),
+            ("End Compare", None),
+            ("Delete Snapshot", None),
             ("Delay Compensation", None),
         ]
     );
@@ -988,4 +996,160 @@ fn polarity_and_insert_bypass_are_mixer_menu_items_without_keys_that_enable_with
     assert_eq!(phase(&s), 1.0);
     s.execute(AppCommand::TogglePolarity);
     assert_eq!(phase(&s), 0.0);
+}
+
+#[test]
+fn the_snapshot_menu_items_run_through_the_shell_and_enable_with_the_snapshots() {
+    let mut s = shell();
+    for (label, command, id) in [
+        (
+            "Store Snapshot",
+            AppCommand::StoreSnapshot,
+            "mixer.store_snapshot",
+        ),
+        (
+            "Update Snapshot",
+            AppCommand::UpdateSnapshot(None),
+            "mixer.update_snapshot",
+        ),
+        (
+            "Recall Snapshot",
+            AppCommand::RecallSnapshot(None),
+            "mixer.recall_snapshot",
+        ),
+        (
+            "Recall Next Snapshot",
+            AppCommand::RecallNextSnapshot,
+            "mixer.recall_next_snapshot",
+        ),
+        (
+            "Recall Previous Snapshot",
+            AppCommand::RecallPreviousSnapshot,
+            "mixer.recall_previous_snapshot",
+        ),
+        (
+            "Compare A/B",
+            AppCommand::CompareSnapshot(None),
+            "mixer.compare_snapshot",
+        ),
+        ("End Compare", AppCommand::EndCompare, "mixer.end_compare"),
+        (
+            "Delete Snapshot",
+            AppCommand::DeleteSnapshot(None),
+            "mixer.delete_snapshot",
+        ),
+    ] {
+        let item = mixer_item(&s, command);
+        assert_eq!(item.label, label);
+        assert_eq!(item.shortcut, None, "no default key");
+        assert_eq!(item.enabled, id == "mixer.store_snapshot", "{label}");
+        assert_eq!(command.command_id(), Some((id, None)));
+        assert_eq!(AppCommand::from_command(id, None), Some(command));
+    }
+    // A snapshot is the argument; a command that names one has no static id.
+    assert_eq!(
+        AppCommand::from_command("mixer.recall_snapshot", Some("3")),
+        Some(AppCommand::RecallSnapshot(Some(3)))
+    );
+    assert_eq!(
+        AppCommand::from_command("mixer.delete_snapshot", Some("x")),
+        None
+    );
+    assert_eq!(AppCommand::RecallSnapshot(Some(3)).command_id(), None);
+
+    add_synth(&mut s, "a");
+    s.execute(AppCommand::StoreSnapshot);
+    assert_eq!(s.core().doc().console.snapshots.len(), 1);
+    for command in [
+        AppCommand::RecallSnapshot(None),
+        AppCommand::RecallNextSnapshot,
+        AppCommand::RecallPreviousSnapshot,
+        AppCommand::CompareSnapshot(None),
+        AppCommand::DeleteSnapshot(None),
+    ] {
+        assert!(mixer_item(&s, command).enabled, "{command:?}");
+    }
+    assert!(!mixer_item(&s, AppCommand::EndCompare).enabled);
+    assert!(
+        !mixer_item(&s, AppCommand::UpdateSnapshot(None)).enabled,
+        "the mix is the snapshot"
+    );
+    s.execute(AppCommand::CompareSnapshot(None));
+    assert!(s.core().doc().console.compare.is_some());
+    assert!(mixer_item(&s, AppCommand::EndCompare).enabled);
+    s.execute(AppCommand::EndCompare);
+    assert!(s.core().doc().console.compare.is_none());
+    s.execute(AppCommand::DeleteSnapshot(None));
+    assert!(s.core().doc().console.snapshots.is_empty());
+}
+
+#[test]
+fn the_snapshot_bar_of_the_console_stores_recalls_and_compares_through_the_shell() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    s.execute(AppCommand::ToggleConsole);
+    let channel = s.core().doc().console.channels[0].channel.clone();
+    let fader = |s: &Shell<NullBackend>| {
+        s.core()
+            .doc()
+            .param_value(&channel, "fader", s.core().registry())
+            .unwrap()
+    };
+    let store = s
+        .core()
+        .console()
+        .button_center(ConsoleButton::StoreSnapshot)
+        .unwrap();
+    click(&mut s, store);
+    assert_eq!(s.core().doc().console.snapshots[0].name, "A");
+    s.core_mut()
+        .apply_command(Command::SetParam {
+            key: channel.clone(),
+            param: "fader".into(),
+            value: 0.2,
+            merge: None,
+        })
+        .unwrap();
+    // The chip recalls (one undo step), the A/B button compares and flips.
+    let chip = s.core().console().snapshot_center(1).unwrap();
+    click(&mut s, chip);
+    assert_ne!(fader(&s), 0.2);
+    let original = fader(&s);
+    s.core_mut().undo();
+    assert_eq!(fader(&s), 0.2);
+    let ab = s
+        .core()
+        .console()
+        .button_center(ConsoleButton::Compare)
+        .unwrap();
+    click(&mut s, ab);
+    assert_eq!(fader(&s), original);
+    assert_eq!(s.core().console().compare_state(), Some((1, true)));
+    click(&mut s, ab);
+    assert_eq!(fader(&s), 0.2);
+    let end = s
+        .core()
+        .console()
+        .button_center(ConsoleButton::EndCompare)
+        .unwrap();
+    click(&mut s, end);
+    assert!(s.core().doc().console.compare.is_none());
+    assert_eq!(fader(&s), 0.2);
+    // Double-click names the snapshot: the console owns the keyboard while it is typed.
+    let chip = s.core().console().snapshot_center(1).unwrap();
+    click_with(&mut s, chip, Modifiers::NONE, 2);
+    assert!(s.core().console().is_text_owner());
+    for c in "Chorus".chars() {
+        tap(&mut s, Key::Char(c), Modifiers::NONE);
+    }
+    tap(&mut s, Key::Enter, Modifiers::NONE);
+    assert!(s.core().doc().console.snapshots[0].name.ends_with("Chorus"));
+}
+
+fn mixer_item(s: &Shell<NullBackend>, command: AppCommand) -> crate::commands::MenuItem {
+    s.menu_model()
+        .into_iter()
+        .find(|m| m.title == "Mixer")
+        .and_then(|m| m.items().find(|i| i.command == command).cloned())
+        .expect("in the Mixer menu")
 }
