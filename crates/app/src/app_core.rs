@@ -1031,6 +1031,8 @@ impl<S: EngineSink> AppCore<S> {
                     let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
                     self.send_split_params(exp, container);
                 }
+                // The mapping table is rebuilt from the document when the next message arrives.
+                SyncOp::MidiMapsChanged => {}
                 SyncOp::ConsoleChanged => {
                     if self.topology.compensation() != self.doc().console.compensation {
                         self.submit_routing();

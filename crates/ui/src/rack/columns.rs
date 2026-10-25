@@ -285,6 +285,7 @@ mod tests {
             cables: Vec::new(),
             song: atomik_model::empty_song(120.0),
             console: atomik_model::Console::default(),
+            midi_maps: Vec::new(),
         };
         let mut v = RackView::new(Theme::dark());
         let _ = v.handle(&UiEvent::Resize(Size::new(1200.0, 200.0)), &doc, &reg);

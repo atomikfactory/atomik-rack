@@ -184,6 +184,7 @@ impl RackView {
             cables: container.cables.clone(),
             song: atomik_model::empty_song(doc.tempo_bpm),
             console: Console::default(),
+            midi_maps: Vec::new(),
         })
     }
 

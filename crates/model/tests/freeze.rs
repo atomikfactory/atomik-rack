@@ -769,10 +769,10 @@ fn a_frozen_track_round_trips_canonically() {
     let mut d = rack(&reg, 2);
     let fx = chain_keys(&d, &reg);
     freeze(&mut d, &reg, fx.clone());
-    assert_eq!(PROJECT_VERSION, 27);
+    assert_eq!(PROJECT_VERSION, 28);
     let text = saved(&d);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 27);
+    assert_eq!(v["version"], 28);
     let track = &v["song"]["tracks"][0];
     assert_eq!(track["frozen"]["start"], 0);
     assert_eq!(track["frozen"]["length"], 2 * BAR);
@@ -791,23 +791,23 @@ fn a_project_before_freezing_loads_and_saves_with_only_the_version_changed() {
     let reg = audio_registry();
     let d = rack(&reg, 1);
     let text = saved(&d);
-    let old = text.replace("\"version\": 27", "\"version\": 24");
+    let old = text.replace("\"version\": 28", "\"version\": 24");
     let loaded = load_project(&old, &reg).unwrap();
     assert_eq!(&loaded, d.doc());
     assert_eq!(save_project(&loaded), text);
     assert_eq!(
-        text.replace("\"version\": 27", "\"version\": 24"),
+        text.replace("\"version\": 28", "\"version\": 24"),
         old,
         "the files differ in the version line alone"
     );
     // A version 24 file knows no frozen state.
     let mut d = rack(&reg, 0);
     freeze(&mut d, &reg, vec![]);
-    let old = saved(&d).replace("\"version\": 27", "\"version\": 24");
+    let old = saved(&d).replace("\"version\": 28", "\"version\": 24");
     let e = load_project(&old, &reg).expect_err("frozen before 25");
     assert!(e.to_string().contains("frozen"), "{e}");
     // And a newer file than this reader is refused.
-    let newer = saved(&d).replace("\"version\": 27", "\"version\": 28");
+    let newer = saved(&d).replace("\"version\": 28", "\"version\": 29");
     assert!(load_project(&newer, &reg).is_err());
 }
 

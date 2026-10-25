@@ -6,6 +6,7 @@ use crate::console::{CompareState, ConsoleBus, ConsoleChannel, MixerSnapshot, Vc
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::freeze::Frozen;
 use crate::groove::Groove;
+use crate::midi_map::MidiMapping;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
 use crate::song::{Clip, ClipContent, Lane, Marker, MeterEvent, RangeMarker, TempoEvent, Track};
@@ -197,6 +198,11 @@ pub(crate) enum Edit {
     ConsoleBusMove {
         from: usize,
         to: usize,
+    },
+    /// The project's whole MIDI mapping list.
+    MidiMaps {
+        old: Vec<MidiMapping>,
+        new: Vec<MidiMapping>,
     },
     /// The console's whole VCA group list.
     ConsoleVcas {
@@ -548,6 +554,7 @@ impl Edit {
                 new: old,
             },
             Edit::ConsoleBusMove { from, to } => Edit::ConsoleBusMove { from: to, to: from },
+            Edit::MidiMaps { old, new } => Edit::MidiMaps { old: new, new: old },
             Edit::ConsoleVcas { old, new } => Edit::ConsoleVcas { old: new, new: old },
             Edit::ConsoleSnapshots { old, new } => Edit::ConsoleSnapshots { old: new, new: old },
             Edit::SnapshotCompare { old, new } => Edit::SnapshotCompare { old: new, new: old },
@@ -927,6 +934,10 @@ impl Edit {
                     buses.insert(*index, new.clone());
                 }
                 vec![SyncOp::ConsoleChanged]
+            }
+            Edit::MidiMaps { new, .. } => {
+                doc.midi_maps.clone_from(new);
+                vec![SyncOp::MidiMapsChanged]
             }
             Edit::ConsoleVcas { new, .. } => {
                 doc.console.vcas.clone_from(new);

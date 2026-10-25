@@ -66,6 +66,7 @@ impl Mirror {
                 | SyncOp::ParamChanged { .. }
                 | SyncOp::ViewChanged
                 | SyncOp::ConsoleChanged
+                | SyncOp::MidiMapsChanged
                 | SyncOp::ZonesChanged(_)
                 | SyncOp::PatternsChanged { .. }
                 | SyncOp::MacrosChanged { .. }

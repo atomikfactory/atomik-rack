@@ -360,7 +360,7 @@ fn v4_saves_zones_in_the_device_object_only_when_non_empty() {
     d.apply(add(1, SYNTH, Some("y")), &r).unwrap();
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 27);
+    assert_eq!(v["version"], 28);
     let devices = v["devices"].as_array().unwrap();
     assert_eq!(devices[0]["id"], "s");
     assert_eq!(
@@ -397,7 +397,7 @@ fn v1_to_v3_projects_still_load_with_no_zones() {
     doc.devices[0].zones.clear();
     let text = save_project(&doc);
     for version in 1..=3 {
-        let old = text.replace("\"version\": 27", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 28", &format!("\"version\": {version}"));
         let mut v: Value = serde_json::from_str(&old).unwrap();
         if version < 3 {
             // Before v3 there are no input channels and no pool; v1 has no console either.
@@ -419,7 +419,7 @@ fn v1_to_v3_projects_still_load_with_no_zones() {
 #[test]
 fn zones_need_version_4() {
     let r = reg();
-    let text = save_project(&project_doc(&r)).replace("\"version\": 27", "\"version\": 3");
+    let text = save_project(&project_doc(&r)).replace("\"version\": 28", "\"version\": 3");
     let e = load_project(&text, &r).unwrap_err();
     let ModelError::Patch(m) = e else { panic!() };
     assert!(m.starts_with("devices[0].zones: unknown field"), "{m}");
@@ -647,7 +647,7 @@ fn v6_writes_reverse_last_in_every_zone_and_round_trips() {
     doc.devices[0].zones[1].reverse = true;
     let text = save_project(&doc);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 27);
+    assert_eq!(v["version"], 28);
     assert_eq!(v["devices"][0]["zones"][0]["reverse"], false);
     assert_eq!(v["devices"][0]["zones"][1]["reverse"], true);
     assert!(text.contains("\"trigger\": \"gate\", \"reverse\": true}"));

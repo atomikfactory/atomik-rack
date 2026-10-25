@@ -91,6 +91,7 @@ pub fn reference_doc() -> RackDoc {
         cables,
         song: atomik_model::empty_song(120.0),
         console: atomik_model::Console::default(),
+        midi_maps: Vec::new(),
     }
 }
 
