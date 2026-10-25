@@ -536,7 +536,7 @@ fn boolean(v: &Value, path: &JsonPath) -> Result<bool, ModelError> {
 }
 
 /// An optional boolean field (default `false`).
-fn flag(
+pub(crate) fn flag(
     obj: &serde_json::Map<String, Value>,
     path: &JsonPath,
     name: &str,
@@ -2339,24 +2339,8 @@ fn load_clip(
         )));
     }
     let start = tick(&obj["start"], &path.field("start"))?;
-    let length = length(&obj["length"], &path.field("length"))?;
-    let offset = match obj.get("offset") {
-        Some(v) => tick(v, &path.field("offset"))?,
-        None => 0,
-    };
+    let (length, offset, loop_length) = clip_span(obj, path)?;
     let loop_path = path.field("loop_length");
-    let loop_length = match obj.get("loop_length") {
-        None | Some(Value::Null) => None,
-        Some(v) => {
-            let n = self::length(v, &loop_path)?;
-            if length > n * MAX_LOOP_REPEATS {
-                return Err(loop_path.error(format!(
-                    "the clip ({length} ticks) holds more than {MAX_LOOP_REPEATS} repetitions of {n}"
-                )));
-            }
-            Some(n)
-        }
-    };
     if kind.is_audio() {
         if offset != 0 {
             return Err(path
@@ -2387,34 +2371,7 @@ fn load_clip(
     let items = array(&obj[content_field], &content_path)?;
     let content = match kind {
         LaneKind::Audio => unreachable!("audio clips return above"),
-        LaneKind::Notes => {
-            let mut notes: Vec<Note> = Vec::with_capacity(items.len());
-            for (i, item) in items.iter().enumerate() {
-                let p = content_path.index(i);
-                let n = note_tuple(item, &p, version)?;
-                let note = Note {
-                    muted: match n.get(4) {
-                        Some(m) => boolean(m, &p.index(4))?,
-                        None => false,
-                    },
-                    ..Note::new(
-                        tick(&n[0], &p.index(0))?,
-                        self::length(&n[1], &p.index(1))?,
-                        uint(&n[2], &p.index(2), 127)? as u8,
-                        number(&n[3], &p.index(3))? as f32,
-                    )
-                };
-                check_note(note.tick, note.length, note.key, note.velocity)
-                    .map_err(|m| p.index(3).error(m))?;
-                if let Some(prev) = notes.last()
-                    && (prev.tick, prev.key) >= (note.tick, note.key)
-                {
-                    return Err(p.error("notes must be sorted by (tick, key) without duplicates"));
-                }
-                notes.push(note);
-            }
-            ClipContent::Notes(notes)
-        }
+        LaneKind::Notes => ClipContent::Notes(load_notes(items, &content_path, version)?),
         LaneKind::Automation(param) => {
             // `None`: a dead plugin param, whose values are kept as they are.
             let pd = desc.param_by_key(param);
@@ -2475,8 +2432,70 @@ fn load_clip(
     })
 }
 
+/// A clip's `"length"`, optional `"offset"` and optional `"loop_length"` (`null` is none), with
+/// the repetition limit of a looped clip. Shared by the project and clip file loaders.
+pub(crate) fn clip_span(
+    obj: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+) -> Result<(i64, i64, Option<i64>), ModelError> {
+    let len = length(&obj["length"], &path.field("length"))?;
+    let offset = match obj.get("offset") {
+        Some(v) => tick(v, &path.field("offset"))?,
+        None => 0,
+    };
+    let loop_path = path.field("loop_length");
+    let loop_length = match obj.get("loop_length") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let n = length(v, &loop_path)?;
+            if len > n * MAX_LOOP_REPEATS {
+                return Err(loop_path.error(format!(
+                    "the clip ({len} ticks) holds more than {MAX_LOOP_REPEATS} repetitions of {n}"
+                )));
+            }
+            Some(n)
+        }
+    };
+    Ok((len, offset, loop_length))
+}
+
+/// Reads a note clip's `"notes"` list (`path` is the list's path): each note is checked and
+/// the list must be sorted by `(tick, key)` without duplicates.
+pub(crate) fn load_notes(
+    items: &[Value],
+    content_path: &JsonPath,
+    version: u64,
+) -> Result<Vec<Note>, ModelError> {
+    let mut notes: Vec<Note> = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        let p = content_path.index(i);
+        let n = note_tuple(item, &p, version)?;
+        let note = Note {
+            muted: match n.get(4) {
+                Some(m) => boolean(m, &p.index(4))?,
+                None => false,
+            },
+            ..Note::new(
+                tick(&n[0], &p.index(0))?,
+                length(&n[1], &p.index(1))?,
+                uint(&n[2], &p.index(2), 127)? as u8,
+                number(&n[3], &p.index(3))? as f32,
+            )
+        };
+        check_note(note.tick, note.length, note.key, note.velocity)
+            .map_err(|m| p.index(3).error(m))?;
+        if let Some(prev) = notes.last()
+            && (prev.tick, prev.key) >= (note.tick, note.key)
+        {
+            return Err(p.error("notes must be sorted by (tick, key) without duplicates"));
+        }
+        notes.push(note);
+    }
+    Ok(notes)
+}
+
 /// Reads and validates a note clip's `"grid"` object.
-fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
+pub(crate) fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
     let g = object(v, path, GRID_FIELDS, GRID_FIELDS)?;
     let rp = path.field("resolution");
     let resolution = match string(&g["resolution"], &rp)? {
@@ -2499,7 +2518,10 @@ fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
 }
 
 /// Reads a note clip's `"controllers"` list (see the module docs).
-fn load_controllers(v: &Value, path: &JsonPath) -> Result<Vec<ControllerLane>, ModelError> {
+pub(crate) fn load_controllers(
+    v: &Value,
+    path: &JsonPath,
+) -> Result<Vec<ControllerLane>, ModelError> {
     let mut lanes: Vec<ControllerLane> = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
@@ -2555,7 +2577,7 @@ fn load_controllers(v: &Value, path: &JsonPath) -> Result<Vec<ControllerLane>, M
 
 /// Reads a note clip's `"scale"` object: a root `0..=11` and a kind name. A chromatic scale is
 /// not stored, so it is refused.
-fn load_scale(v: &Value, path: &JsonPath) -> Result<Scale, ModelError> {
+pub(crate) fn load_scale(v: &Value, path: &JsonPath) -> Result<Scale, ModelError> {
     let s = object(v, path, SCALE_FIELDS, SCALE_FIELDS)?;
     let root = uint(&s["root"], &path.field("root"), 11)? as u8;
     let kp = path.field("kind");
@@ -2849,6 +2871,86 @@ fn audio_json(a: &AudioClipContent) -> String {
 
 /// Writes one clip object of a lane's `"clips"` (or of a take group's `"takes"`), after the
 /// separator `sep` of its list.
+/// Writes a note clip's `"notes"` and, when set, its `"grid"`, `"scale"` and `"controllers"`
+/// at `indent`, without a trailing newline. Shared by the project and clip file writers.
+pub(crate) fn write_note_clip_tail(w: &mut String, c: &Clip, notes: &[Note], indent: &str) {
+    let _ = write!(w, "{indent}\"notes\": ");
+    list(
+        w,
+        indent,
+        notes.iter().map(|n| {
+            format!(
+                "[{}, {}, {}, {}{}]",
+                n.tick,
+                n.length,
+                n.key,
+                f32_text(n.velocity),
+                if n.muted { ", true" } else { "" }
+            )
+        }),
+    );
+    if let Some(g) = &c.grid {
+        let resolution = match g.resolution {
+            StepResolution::Eighth => "eighth",
+            StepResolution::Sixteenth => "sixteenth",
+            StepResolution::ThirtySecond => "thirty_second",
+        };
+        let _ = write!(
+            w,
+            ",
+{indent}\"grid\": {{\"resolution\": \"{resolution}\", \"steps\": {}, \"swing\": {}}}",
+            g.steps, g.swing
+        );
+    }
+    if let Some(s) = c.scale.filter(|s| !s.is_chromatic()) {
+        let _ = write!(
+            w,
+            ",
+{indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
+            s.root,
+            s.kind.id()
+        );
+    }
+    if !c.controllers.is_empty() {
+        let _ = write!(
+            w,
+            ",
+{indent}\"controllers\": ["
+        );
+        for (n, lane) in c.controllers.iter().enumerate() {
+            let (kind, number) = match lane.kind {
+                ControllerKind::PitchBend => ("pitch_bend", String::new()),
+                ControllerKind::ChannelPressure => ("pressure", String::new()),
+                ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
+                ControllerKind::PolyPressure(k) => ("poly_pressure", format!(", \"number\": {k}")),
+            };
+            let sep = if n == 0 { "" } else { "," };
+            let _ = write!(
+                w,
+                "{sep}
+{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
+            );
+            list(
+                w,
+                &format!("{indent}  "),
+                lane.points.iter().map(|p| {
+                    let curve = match p.curve {
+                        Curve::Linear => "linear",
+                        Curve::Step => "step",
+                    };
+                    format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
+                }),
+            );
+            let _ = write!(w, "}}");
+        }
+        let _ = write!(
+            w,
+            "
+{indent}]"
+        );
+    }
+}
+
 fn write_clip(w: &mut String, c: &Clip, sep: &str) {
     let loop_length = c.loop_length.map_or("null".to_owned(), |n| n.to_string());
     let _ = write!(
@@ -2861,85 +2963,7 @@ fn write_clip(w: &mut String, c: &Clip, sep: &str) {
         ClipContent::Audio(a) => {
             let _ = write!(w, "{indent}\"audio\": {}", audio_json(a));
         }
-        ClipContent::Notes(notes) => {
-            let _ = write!(w, "{indent}\"notes\": ");
-            list(
-                w,
-                indent,
-                notes.iter().map(|n| {
-                    format!(
-                        "[{}, {}, {}, {}{}]",
-                        n.tick,
-                        n.length,
-                        n.key,
-                        f32_text(n.velocity),
-                        if n.muted { ", true" } else { "" }
-                    )
-                }),
-            );
-            if let Some(g) = &c.grid {
-                let resolution = match g.resolution {
-                    StepResolution::Eighth => "eighth",
-                    StepResolution::Sixteenth => "sixteenth",
-                    StepResolution::ThirtySecond => "thirty_second",
-                };
-                let _ = write!(
-                    w,
-                    ",
-{indent}\"grid\": {{\"resolution\": \"{resolution}\", \"steps\": {}, \"swing\": {}}}",
-                    g.steps, g.swing
-                );
-            }
-            if let Some(s) = c.scale.filter(|s| !s.is_chromatic()) {
-                let _ = write!(
-                    w,
-                    ",
-{indent}\"scale\": {{\"root\": {}, \"kind\": \"{}\"}}",
-                    s.root,
-                    s.kind.id()
-                );
-            }
-            if !c.controllers.is_empty() {
-                let _ = write!(
-                    w,
-                    ",
-{indent}\"controllers\": ["
-                );
-                for (n, lane) in c.controllers.iter().enumerate() {
-                    let (kind, number) = match lane.kind {
-                        ControllerKind::PitchBend => ("pitch_bend", String::new()),
-                        ControllerKind::ChannelPressure => ("pressure", String::new()),
-                        ControllerKind::Cc(k) => ("cc", format!(", \"number\": {k}")),
-                        ControllerKind::PolyPressure(k) => {
-                            ("poly_pressure", format!(", \"number\": {k}"))
-                        }
-                    };
-                    let sep = if n == 0 { "" } else { "," };
-                    let _ = write!(
-                        w,
-                        "{sep}
-{indent}  {{\"kind\": \"{kind}\"{number}, \"points\": "
-                    );
-                    list(
-                        w,
-                        &format!("{indent}  "),
-                        lane.points.iter().map(|p| {
-                            let curve = match p.curve {
-                                Curve::Linear => "linear",
-                                Curve::Step => "step",
-                            };
-                            format!("[{}, {}, \"{curve}\"]", p.tick, f32_text(p.value))
-                        }),
-                    );
-                    let _ = write!(w, "}}");
-                }
-                let _ = write!(
-                    w,
-                    "
-{indent}]"
-                );
-            }
-        }
+        ClipContent::Notes(notes) => write_note_clip_tail(w, c, notes, indent),
         ClipContent::Automation(points) => {
             let _ = write!(w, "{indent}\"points\": ");
             list(
@@ -2988,7 +3012,7 @@ fn write_take_groups(w: &mut String, groups: &[TakeGroup], open: &BTreeSet<u32>)
     let _ = write!(w, "\n            ]");
 }
 
-fn list(w: &mut String, indent: &str, items: impl IntoIterator<Item = String>) {
+pub(crate) fn list(w: &mut String, indent: &str, items: impl IntoIterator<Item = String>) {
     let mut any = false;
     for (i, item) in items.into_iter().enumerate() {
         let sep = if i == 0 { "[" } else { "," };
