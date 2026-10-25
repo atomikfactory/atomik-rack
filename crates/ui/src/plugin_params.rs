@@ -808,9 +808,24 @@ impl PluginParamsView {
             self.pins = pins;
             self.repaint = true;
         }
-        if d.params != self.values {
-            self.values.clone_from(&d.params);
-            self.repaint = true;
+        // A param a macro bank drives shows the value the macro gives it.
+        let driven = doc.driven_params(&key);
+        if driven.is_empty() {
+            if d.params != self.values {
+                self.values.clone_from(&d.params);
+                self.repaint = true;
+            }
+        } else {
+            let mut values = d.params.clone();
+            for (param, _) in &driven {
+                if let Some(v) = doc.driven_value(registry, &key, param) {
+                    values.insert(param.clone(), v);
+                }
+            }
+            if values != self.values {
+                self.values = values;
+                self.repaint = true;
+            }
         }
         self.sync_drivers(doc, &key);
     }
@@ -895,6 +910,17 @@ impl PluginParamsView {
                 }
             }
         }
+        // The macro banks drive the params of top-level devices.
+        for a in &doc.macros.assigns {
+            if &a.device == key
+                && doc.macro_assign_live(a)
+                && let Some(id) = param_id_of(&a.param)
+            {
+                drivers
+                    .entry(id)
+                    .or_insert_with(|| (a.bank.clone(), a.index));
+            }
+        }
         if drivers != self.drivers || names != self.macro_names {
             self.drivers = drivers;
             self.macro_names = names;
@@ -970,7 +996,7 @@ impl PluginParamsView {
         match self.drivers.get(&id) {
             Some((_, m)) => {
                 self.toast = Some(format!(
-                    "Driven by macro {}: unmap it first",
+                    "Driven by macro {}: remove it from the macro first",
                     u16::from(*m) + 1
                 ));
                 self.repaint = true;
@@ -1035,6 +1061,35 @@ impl PluginParamsView {
         if let Some(menu) = self.menu.take() {
             if let Hit::MenuRow(i) = hit {
                 self.apply_menu(&menu, menu.entries[i].0, out);
+            }
+            return;
+        }
+        if let (
+            Hit::Slider(id) | Hit::StepDec(id) | Hit::StepInc(id) | Hit::Toggle(id) | Hit::Row(id),
+            Some(device),
+        ) = (hit, self.device.clone())
+        {
+            out.push(UiAction::ParamTouched {
+                device,
+                param: param_key(id),
+            });
+        }
+        // A right click on a param opens its control menu (MIDI learn, macros), locked or not.
+        if button == PointerButton::Secondary {
+            if let (
+                Hit::Slider(id)
+                | Hit::StepDec(id)
+                | Hit::StepInc(id)
+                | Hit::Toggle(id)
+                | Hit::Row(id),
+                Some(device),
+            ) = (hit, self.device.clone())
+            {
+                out.push(UiAction::ControlMenu {
+                    device,
+                    param: param_key(id),
+                    at: pos,
+                });
             }
             return;
         }

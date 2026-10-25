@@ -48,6 +48,9 @@ const EXPECTED_TOOLS: &[&str] = &[
     "session_midi_input",
     "session_midi_learn",
     "session_surface",
+    "param_search",
+    "session_macros",
+    "session_param_search",
 ];
 
 #[test]

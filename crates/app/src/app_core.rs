@@ -186,6 +186,8 @@ pub struct AppCore<S: EngineSink> {
     snapshot_hint: Option<u32>,
     /// MIDI learn, the mapping runtime and the held mapped moves (see `app_core_midimap.rs`).
     midi: midimap::MidiControl,
+    /// The current macro bank, the last touched params, the search index (see `app_core_macros.rs`).
+    macros: macro_ops::MacroState,
     /// The control surface driving the console, if one is set up (see `app_core_surface.rs`).
     surface: Option<crate::surface::SurfaceHost>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
@@ -359,6 +361,7 @@ impl<S: EngineSink> AppCore<S> {
             console_selection: Vec::new(),
             snapshot_hint: None,
             midi: midimap::MidiControl::new(hub),
+            macros: macro_ops::MacroState::default(),
             surface: None,
             rack_focus_request: false,
             selection_changed: false,
@@ -551,6 +554,8 @@ impl<S: EngineSink> AppCore<S> {
                 self.document.end_merge();
                 self.release_automation();
             }
+            // The param being touched: the arrangement follows it when it is set to.
+            UiAction::ParamTouched { device, param } => self.param_touched(&device, &param),
             UiAction::ToggleLaneArm { device, param } => {
                 self.toggle_automation_arm(&device, &param);
             }
@@ -751,6 +756,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.share_pattern_clipboard();
         self.sync_midi_marks();
+        self.follow_selected_device();
         self.target.set(self.notes_target());
     }
 
@@ -1002,8 +1008,10 @@ impl<S: EngineSink> AppCore<S> {
                     if inserted.contains(key) || self.echo_suppressed() {
                         // A device inserted by this edit already got its stored params; a
                         // value the plugin's own window made is not sent back to it.
-                    } else if self.doc().resolve(key).is_some_and(|d| d.inner.is_some()) {
-                        // A container's macro: one `set_param` per target.
+                    } else if self.doc().resolve(key).is_some_and(|d| {
+                        d.inner.is_some() || d.type_id == atomik_model::MACRO_BANK_TYPE
+                    }) {
+                        // A container's or a bank's macro: one `set_param` per target.
                         let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
                         self.send_macro_values(exp);
                     } else {
@@ -1057,6 +1065,15 @@ impl<S: EngineSink> AppCore<S> {
                     self.push_vca_feeds();
                 }
             }
+        }
+        // A bank or a target that came or went changes what the macros drive: the targets of a
+        // removed bank get their stored values back and those of a restored one the macro's.
+        let membership = ops
+            .iter()
+            .any(|op| matches!(op, SyncOp::DeviceAdded(_) | SyncOp::DeviceRemoved(_)));
+        if membership && (!self.macro_sent.is_empty() || !self.doc().macros.assigns.is_empty()) {
+            let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
+            self.send_macro_values(exp);
         }
         if let Some(exp) = &expanded {
             self.macro_sent = containers::macro_values(exp);
@@ -2242,6 +2259,10 @@ mod snapshots;
 #[path = "app_core_midimap.rs"]
 mod midimap;
 
+#[path = "app_core_macros.rs"]
+mod macro_ops;
+pub use macro_ops::{Revealed, SEARCH_ROWS};
+
 #[path = "app_core_surface.rs"]
 mod surface_ops;
 pub use midimap::{GESTURE_TIMEOUT, describe_message};
@@ -2370,6 +2391,10 @@ mod character_tests;
 #[cfg(test)]
 #[path = "app_core_containers_tests.rs"]
 mod containers_tests;
+
+#[cfg(test)]
+#[path = "app_core_macros_tests.rs"]
+mod macros_tests;
 
 #[cfg(test)]
 #[path = "app_core_clipboard_tests.rs"]

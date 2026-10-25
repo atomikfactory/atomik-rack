@@ -40,6 +40,7 @@ pub fn all_tools() -> impl Iterator<Item = &'static Tool> {
         .iter()
         .chain(session::TOOLS.iter())
         .chain(crate::midi_tools::TOOLS.iter())
+        .chain(crate::macro_tools::TOOLS.iter())
 }
 
 /// The server state: the folders it may touch and the open session.

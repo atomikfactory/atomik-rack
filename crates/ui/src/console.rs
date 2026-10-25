@@ -457,6 +457,8 @@ struct StripView {
     vca: Option<(Color, f32)>,
     /// The id of that group.
     vca_id: Option<u32>,
+    /// The params a macro bank drives, with the macro (0-based): drawn locked with a tag.
+    driven: Vec<(String, u8)>,
     cache_id: u64,
     revision: u64,
     sig: Option<Sig>,
@@ -482,6 +484,7 @@ impl StripView {
             selected: false,
             vca: None,
             vca_id: None,
+            driven: Vec::new(),
             cache_id,
             revision: 0,
             sig: None,
@@ -1766,7 +1769,9 @@ impl ConsoleView {
         let generation = self.generation;
         for (i, s) in self.strips.iter_mut().enumerate() {
             let key = s.key.clone();
-            let device = doc.device(&key).cloned();
+            // A param a macro drives shows the value the macro gives it.
+            let device = doc.device_with_driven_values(registry, &key);
+            s.driven = doc.driven_params(&key);
             s.desc = desc_of(&key);
             if let Some(c) = console.channels.get(i) {
                 let source = c.source.as_ref().and_then(|k| doc.device(k));
@@ -1803,6 +1808,7 @@ impl ConsoleView {
                 format!("{}", s.selected),
                 format!("{:?}", s.vca),
                 format!("{:?} {:?}", s.insert_bypass, s.bypass_all),
+                format!("{:?}", s.driven),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -1842,7 +1848,8 @@ impl ConsoleView {
                 let accent = self.st.base.highlight;
                 let flags = vec![format!("{any_solo} {any_mute}")];
                 if let Some(m) = &mut self.master {
-                    m.device = doc.device(k).cloned();
+                    m.device = doc.device_with_driven_values(registry, k);
+                    m.driven = doc.driven_params(k);
                     m.desc = desc;
                     m.name = "MASTER".into();
                     m.accent = accent;
@@ -1850,6 +1857,7 @@ impl ConsoleView {
                     (m.insert_bypass, m.bypass_all) = bypass_view(doc, registry, k, &m.inserts);
                     let mut extra = names.clone();
                     extra.push(format!("{:?} {:?}", m.insert_bypass, m.bypass_all));
+                    extra.push(format!("{:?}", m.driven));
                     extra.extend(flags);
                     extra.extend(chain_sig(&m.inserts));
                     let sig = Sig {
@@ -1963,6 +1971,15 @@ impl ConsoleView {
             UiEvent::Key { .. } => {}
         }
         out
+    }
+
+    /// The macro (0-based) that drives `param` of the strip `t`.
+    fn driven_by(&self, t: Target, param: &str) -> Option<u8> {
+        self.view_of(t)?
+            .driven
+            .iter()
+            .find(|(p, _)| p == param)
+            .map(|(_, m)| *m)
     }
 
     fn view_of(&self, t: Target) -> Option<&StripView> {
@@ -2910,6 +2927,23 @@ impl ConsoleView {
         };
         let (kind, param, rect) = (pc.kind, pc.param, pc.rect);
         self.focus = Some((t, c));
+        if let Some(v) = self.view_of(t) {
+            out.push(UiAction::ParamTouched {
+                device: v.key.clone(),
+                param: param.to_owned(),
+            });
+        }
+        // A param a macro drives is locked, but its right-click menu stays (Remove from Macro).
+        if let Some(m) = self.driven_by(t, param)
+            && button != PointerButton::Secondary
+        {
+            self.notice = Some(format!(
+                "Driven by macro {}: right-click to remove it from the macro first",
+                u16::from(m) + 1
+            ));
+            self.repaint = true;
+            return;
+        }
         match (kind, button) {
             (CtrlKind::Knob | CtrlKind::Slider | CtrlKind::Fader, PointerButton::Primary) => {
                 if clicks >= 2 {
@@ -3565,13 +3599,24 @@ impl ConsoleView {
         l: &StripLayout,
         pinned: bool,
     ) {
-        if self.midi.is_empty() {
+        let driven = self
+            .strips
+            .iter()
+            .find(|s| &s.key == key)
+            .map_or(&[][..], |s| s.driven.as_slice());
+        if self.midi.is_empty() && driven.is_empty() {
             return;
         }
         for pc in &l.controls {
-            if l.is_pinned(pc.section) == pinned {
+            if l.is_pinned(pc.section) != pinned {
+                continue;
+            }
+            if !self.midi.is_empty() {
                 self.midi
                     .paint_control(c, &self.st.base, key, pc.param, pc.rect);
+            }
+            if let Some((_, m)) = driven.iter().find(|(p, _)| p == pc.param) {
+                crate::macro_marks::paint_tag(c, &self.st.base, pc.rect, *m);
             }
         }
     }

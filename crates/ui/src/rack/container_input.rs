@@ -135,10 +135,18 @@ impl RackView {
     /// The document the views are built from: the host document at the top level, else the
     /// scope document of the container in view (see the module documentation). Leaves a scope
     /// whose container is gone for the nearest one that exists.
-    pub(super) fn prepare<'a>(&mut self, doc: &'a RackDoc) -> Cow<'a, RackDoc> {
+    pub(super) fn prepare<'a>(
+        &mut self,
+        doc: &'a RackDoc,
+        registry: &Registry,
+    ) -> Cow<'a, RackDoc> {
         if self.scope.is_empty() {
-            self.driven.clear();
-            return Cow::Borrowed(doc);
+            self.compute_bank_driven(doc);
+            // The panels show the value a macro gives a param, not the one stored under it.
+            return match doc.view_with_driven_values(registry) {
+                Some(view) => Cow::Owned(view),
+                None => Cow::Borrowed(doc),
+            };
         }
         let mut keep = 0;
         let mut path: Option<DeviceKey> = None;
@@ -185,6 +193,7 @@ impl RackView {
             song: atomik_model::empty_song(doc.tempo_bpm),
             console: Console::default(),
             midi_maps: Vec::new(),
+            macros: Default::default(),
         })
     }
 
@@ -218,6 +227,21 @@ impl RackView {
         }
     }
 
+    /// Which params of the top-level devices a macro bank drives (the locks and tags). These are
+    /// never the scope's own container macros, so the "map to macro" menu ignores them.
+    fn compute_bank_driven(&mut self, doc: &RackDoc) {
+        self.driven.clear();
+        for a in &doc.macros.assigns {
+            if doc.macro_assign_live(a) {
+                self.driven.entry(a.device.clone()).or_default().push((
+                    a.param.clone(),
+                    a.index,
+                    false,
+                ));
+            }
+        }
+    }
+
     /// The driven params of a shown device, for its panel.
     pub(super) fn driven_for(&self, key: &DeviceKey) -> Vec<(String, u8)> {
         self.driven
@@ -246,10 +270,17 @@ impl RackView {
 
     pub(super) fn notify_driven(&mut self, i: usize, param: &str) {
         if let Some(m) = self.driven_by(i, param) {
-            self.toast = Some(format!(
-                "Driven by macro {}: right-click to unmap it first",
-                u16::from(m) + 1
-            ));
+            self.toast = Some(if self.scope.is_empty() {
+                format!(
+                    "Driven by macro {}: right-click to remove it from the macro first",
+                    u16::from(m) + 1
+                )
+            } else {
+                format!(
+                    "Driven by macro {}: right-click to unmap it first",
+                    u16::from(m) + 1
+                )
+            });
         }
     }
 
@@ -355,6 +386,15 @@ impl RackView {
             },
             UiAction::SlicesToTrack { device } => UiAction::SlicesToTrack { device: k(device) },
             UiAction::OpenSeqEditor { device } => UiAction::OpenSeqEditor { device: k(device) },
+            UiAction::ControlMenu { device, param, at } => UiAction::ControlMenu {
+                device: k(device),
+                param,
+                at,
+            },
+            UiAction::ParamTouched { device, param } => UiAction::ParamTouched {
+                device: k(device),
+                param,
+            },
             UiAction::SelectPattern { device, index } => UiAction::SelectPattern {
                 device: k(device),
                 index,

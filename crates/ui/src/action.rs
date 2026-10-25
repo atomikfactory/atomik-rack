@@ -297,6 +297,21 @@ pub enum UiAction {
         /// Where the menu opens.
         at: vello::kurbo::Point,
     },
+    /// A press on a control (a knob, a fader or a switch of a rack panel or a console strip, a
+    /// row of the parameter pane), whatever it goes on to do: the parameter is the one the user
+    /// is touching. The shell uses it to make the arrangement follow the selection.
+    ParamTouched {
+        /// The device that owns the control (a console strip is a device too).
+        device: DeviceKey,
+        /// The control's param key.
+        param: String,
+    },
+    /// The Macros panel ([`crate::MacrosView`]) asks for something: move a macro, edit or remove an
+    /// assignment, name a macro, make a bank, learn a controller for a macro, or close.
+    Macros(crate::macros_panel::MacrosAction),
+    /// The parameter search ([`crate::ParamSearchView`]) asks for something: a new query, an action
+    /// on a result, or to close.
+    ParamSearch(crate::param_search_panel::ParamSearchAction),
     /// The MIDI Mappings panel ([`crate::MidiMapsView`]) asks for something: edit or delete a
     /// mapping, learn another control for it, export or import a preset, or close.
     MidiMaps(crate::midi_maps_panel::MidiMapsAction),

@@ -507,7 +507,7 @@ fn a_press_outside_the_menu_or_escape_closes_it_without_a_command() {
     let p = v.control_center(&key("lead"), "filter.resonance").unwrap();
     let actions = right_click(&mut v, d.doc(), p);
     assert!(
-        matches!(&actions[..], [UiAction::ControlMenu { device, param, .. }]
+        matches!(&actions[..], [UiAction::ParamTouched { .. }, UiAction::ControlMenu { device, param, .. }]
             if *device == key("lead") && param == "filter.resonance"),
         "{actions:?}"
     );

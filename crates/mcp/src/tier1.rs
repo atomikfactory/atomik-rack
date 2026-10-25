@@ -659,6 +659,20 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     if !maps.is_empty() {
         out["midi_maps"] = Value::Array(maps);
     }
+    let banks = crate::macro_tools::macros_json(doc);
+    if !banks.is_empty() || !doc.macros.assigns.is_empty() {
+        // An assignment whose bank is gone does nothing; it is counted, not listed.
+        let orphans = doc
+            .macros
+            .assigns
+            .iter()
+            .filter(|a| doc.device(&a.bank).is_none())
+            .count();
+        out["macros"] = json!({"banks": banks});
+        if orphans > 0 {
+            out["macros"]["orphans"] = json!(orphans);
+        }
+    }
     if !grooves.is_empty() {
         out["song"]["grooves"] = Value::Array(grooves);
     }

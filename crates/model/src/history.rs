@@ -6,6 +6,7 @@ use crate::console::{CompareState, ConsoleBus, ConsoleChannel, MixerSnapshot, Vc
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::freeze::Frozen;
 use crate::groove::Groove;
+use crate::macros::MacroSet;
 use crate::midi_map::MidiMapping;
 use crate::organise::TrackLayout;
 use crate::plugin_cmd::RelinkData;
@@ -198,6 +199,11 @@ pub(crate) enum Edit {
     ConsoleBusMove {
         from: usize,
         to: usize,
+    },
+    /// The project's whole macro set (assignments and names).
+    Macros {
+        old: MacroSet,
+        new: MacroSet,
     },
     /// The project's whole MIDI mapping list.
     MidiMaps {
@@ -554,6 +560,7 @@ impl Edit {
                 new: old,
             },
             Edit::ConsoleBusMove { from, to } => Edit::ConsoleBusMove { from: to, to: from },
+            Edit::Macros { old, new } => Edit::Macros { old: new, new: old },
             Edit::MidiMaps { old, new } => Edit::MidiMaps { old: new, new: old },
             Edit::ConsoleVcas { old, new } => Edit::ConsoleVcas { old: new, new: old },
             Edit::ConsoleSnapshots { old, new } => Edit::ConsoleSnapshots { old: new, new: old },
@@ -934,6 +941,23 @@ impl Edit {
                     buses.insert(*index, new.clone());
                 }
                 vec![SyncOp::ConsoleChanged]
+            }
+            Edit::Macros { old, new } => {
+                let before = std::mem::replace(&mut doc.macros, new.clone());
+                // Every bank that had or has an assignment or a name: the app re-sends its targets.
+                let mut banks: Vec<DeviceKey> = Vec::new();
+                for set in [old, new, &before] {
+                    let named = set.names.iter().map(|n| &n.bank);
+                    for bank in set.assigns.iter().map(|a| &a.bank).chain(named) {
+                        if !banks.contains(bank) {
+                            banks.push(bank.clone());
+                        }
+                    }
+                }
+                banks
+                    .into_iter()
+                    .map(|container| SyncOp::MacrosChanged { container })
+                    .collect()
             }
             Edit::MidiMaps { new, .. } => {
                 doc.midi_maps.clone_from(new);

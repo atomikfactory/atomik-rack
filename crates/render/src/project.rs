@@ -53,7 +53,7 @@ use atomik_model::song::{
 };
 use atomik_model::{
     AutomationPoint, ControllerKind, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind,
-    PROJECT_FORMAT, RackDoc, expand_macro_lane, load_project,
+    PROJECT_FORMAT, RackDoc, expand_bank_lane, expand_macro_lane, load_project,
 };
 use atomik_plugin_host::InstantiateRequest;
 use std::collections::BTreeMap;
@@ -224,6 +224,8 @@ pub fn song_input_with_warps(
     // lane on one of its `macroN` params expands into one engine lane per macro target.
     let expanded = doc.has_containers().then(|| doc.expand(registry));
     let mut macro_tracks: Vec<SongTrack> = Vec::new();
+    // The lanes a macro bank's lanes expand to: `(target, param, points)`.
+    let mut bank_lanes: Vec<(DeviceKey, String, Vec<AutomationPoint>)> = Vec::new();
     let mut tracks: Vec<SongTrack> = Vec::new();
     for track in effective_tracks(song) {
         // A frozen track plays its render through its player (below), not its own devices.
@@ -231,6 +233,9 @@ pub fn song_input_with_warps(
             continue;
         }
         let is_container = doc.device(&track.device).is_some_and(|d| d.inner.is_some());
+        let is_bank = doc
+            .device(&track.device)
+            .is_some_and(|d| d.type_id == atomik_model::MACRO_BANK_TYPE);
         let (flat, type_id) = match (&expanded, is_container) {
             (Some(exp), true) => {
                 let Some(split) = exp.alias.get(&track.device) else {
@@ -268,13 +273,23 @@ pub fn song_input_with_warps(
             let LaneKind::Automation(key) = &lane.kind else {
                 continue;
             };
-            if is_container {
+            if is_container || is_bank {
                 let points: Vec<AutomationPoint> = flatten_automation(track, i)
                     .into_iter()
                     .map(|(tick, value, curve)| AutomationPoint { tick, value, curve })
                     .collect();
-                let lanes = expand_macro_lane(doc, registry, &track.device, key, &points);
+                // A bank's lane follows its assignments exactly like a container's macro.
+                let lanes = if is_bank {
+                    expand_bank_lane(doc, registry, &track.device, key, &points)
+                } else {
+                    expand_macro_lane(doc, registry, &track.device, key, &points)
+                };
                 for (target, param, mapped) in lanes.into_iter().flatten() {
+                    if is_bank {
+                        // The target has its own track: its lane joins that track below.
+                        bank_lanes.push((target, param, mapped));
+                        continue;
+                    }
                     push_macro_lane(
                         doc,
                         registry,
@@ -290,6 +305,10 @@ pub fn song_input_with_warps(
             let Some(param) = desc.param_by_key(key).map(|p| p.id) else {
                 continue;
             };
+            // A param a macro drives follows the macro, whatever its own lane holds.
+            if doc.bank_driver(&track.device, key).is_some() {
+                continue;
+            }
             let points = flatten_automation(track, i)
                 .into_iter()
                 .map(|(tick, value, curve)| song_point(tick, value, curve))
@@ -319,6 +338,14 @@ pub fn song_input_with_warps(
             automation,
             controllers,
         });
+    }
+    // A macro bank drives top-level devices, which may have a track of their own: the lane joins
+    // it (a target without one gets an automation-only track). A frozen target plays its render.
+    for (target, param, mapped) in bank_lanes {
+        if doc.song.track(&target).is_some_and(|t| t.frozen.is_some()) {
+            continue;
+        }
+        push_macro_lane(doc, registry, &id_of, &mut tracks, &target, &param, &mapped);
     }
     tracks.extend(macro_tracks);
     let tempo = song
