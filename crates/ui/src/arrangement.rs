@@ -3203,6 +3203,7 @@ impl ArrangementView {
                             .map(|(id, track, _, start)| ClipMove {
                                 id,
                                 track: self.song.tracks[track].device.clone(),
+                                lane: None,
                                 start,
                             })
                             .collect(),

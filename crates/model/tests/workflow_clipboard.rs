@@ -60,6 +60,7 @@ fn clip_of(d: &Document, id: ClipId) -> Clip {
 fn paste_clips(track: Option<&str>, at_tick: i64, s: &ClipSnapshot) -> Command {
     wf(WorkflowCommand::PasteClips {
         track: track.map(key),
+        lane: None,
         at_tick,
         clips: s.clone(),
     })

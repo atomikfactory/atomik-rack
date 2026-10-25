@@ -368,11 +368,23 @@ pub enum LaneKind {
     Audio,
 }
 
+/// The most note lanes a track can have.
+pub const MAX_NOTE_LANES: usize = 64;
+
+/// The longest note lane name, in characters.
+pub const MAX_LANE_NAME_CHARS: usize = 32;
+
 /// A lane with its clips (sorted by start; clips may overlap: later clips win).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lane {
     /// Lane kind.
     pub kind: LaneKind,
+    /// The name of a note lane (`None` shows the default, see [`Track::lane_label`]). Always
+    /// `None` on automation and audio lanes.
+    pub name: Option<String>,
+    /// A muted note lane plays nothing (its clips stay and stay editable). Always `false` on
+    /// automation and audio lanes.
+    pub muted: bool,
     /// Clips, sorted by (start, id).
     pub clips: Vec<Clip>,
     /// Stacked takes and their comps (notes and audio lanes only; see [`crate::takes`]). Each
@@ -398,7 +410,9 @@ pub struct Track {
     /// are rendered to the audio held here, which plays instead of them (see
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
     pub frozen: Option<Frozen>,
-    /// Lanes: index 0 is the note lane, or the audio lane of an audio track.
+    /// Lanes: the note lanes first (at least one, up to [`MAX_NOTE_LANES`]; lane 0 is "the"
+    /// note lane), then the automation lanes; an audio track has its audio lane alone. All the
+    /// note lanes play the track's device.
     pub lanes: Vec<Lane>,
 }
 
@@ -533,6 +547,44 @@ pub enum SongCommand {
         device: DeviceKey,
         /// Chase notes that span the play position.
         chase: bool,
+    },
+    /// Add a note lane after the track's last note lane (before its automation lanes), with a
+    /// name (trimmed; blank or `None` leaves it unnamed). One undo step. The track must exist,
+    /// not be an audio track and not be frozen, and has at most [`MAX_NOTE_LANES`] note lanes.
+    AddNoteLane {
+        /// Device (track).
+        device: DeviceKey,
+        /// The name, at most [`MAX_LANE_NAME_CHARS`] characters without control characters.
+        name: Option<String>,
+    },
+    /// Remove a note lane with its clips and takes (one undo step). The track keeps at least
+    /// one note lane.
+    RemoveNoteLane {
+        /// Device (track).
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+    },
+    /// Rename a note lane (see [`Lane::name`]); blank or `None` resets it to the default. One
+    /// undo step.
+    RenameLane {
+        /// Device (track).
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+        /// The name, trimmed, at most [`MAX_LANE_NAME_CHARS`] characters without control
+        /// characters.
+        name: Option<String>,
+    },
+    /// Mute or unmute a note lane (see [`Lane::muted`]); setting the value it has is an error.
+    /// One undo step.
+    SetLaneMuted {
+        /// Device (track).
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+        /// The new state.
+        muted: bool,
     },
     /// Set the write mode of an automation lane (see [`Song::lane_write`]); the lane must
     /// exist. One undo step. Reports [`crate::SyncOp::ViewChanged`] only: the engine never sees
@@ -1212,6 +1264,8 @@ impl Lane {
     pub fn new(kind: LaneKind) -> Self {
         Lane {
             kind,
+            name: None,
+            muted: false,
             clips: Vec::new(),
             take_groups: Vec::new(),
         }
@@ -1252,6 +1306,37 @@ impl Track {
     /// device key; [`crate::RackDoc::is_audio_track`] checks the device type too.)
     pub fn is_audio(&self) -> bool {
         self.lanes.first().is_some_and(|l| l.kind.is_audio())
+    }
+
+    /// The track's note lanes in order (lane `i` of the iterator is `lanes[i]`).
+    pub fn note_lanes(&self) -> impl Iterator<Item = &Lane> {
+        self.lanes.iter().take_while(|l| l.kind.is_notes())
+    }
+
+    /// How many note lanes the track has (0 for an audio track).
+    pub fn note_lane_count(&self) -> usize {
+        self.note_lanes().count()
+    }
+
+    /// True if lane `i` is a note lane.
+    pub fn is_note_lane(&self, i: usize) -> bool {
+        i < self.note_lane_count()
+    }
+
+    /// The text to show for lane `i`: a note lane's name, else "Notes" (lane 0) or "Notes N"
+    /// (the lane with index `N - 1`); an automation lane's param key; "Audio". Empty for a lane
+    /// that does not exist.
+    pub fn lane_label(&self, i: usize) -> String {
+        match self.lanes.get(i) {
+            None => String::new(),
+            Some(l) => match (&l.kind, &l.name) {
+                (_, Some(name)) => name.clone(),
+                (LaneKind::Notes, None) if i == 0 => "Notes".into(),
+                (LaneKind::Notes, None) => format!("Notes {}", i + 1),
+                (LaneKind::Automation(p), None) => p.clone(),
+                (LaneKind::Audio, None) => "Audio".into(),
+            },
+        }
     }
 
     /// Index of the audio lane, if any.

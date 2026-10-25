@@ -207,6 +207,7 @@ fn resolve(op: &Op, d: &Document) -> Option<Command> {
                 .collect();
             wf(WorkflowCommand::PasteClips {
                 track: track.and_then(|i| pick(&tracks, i)),
+                lane: None,
                 at_tick: *at,
                 clips,
             })

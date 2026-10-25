@@ -167,6 +167,10 @@ pub struct ClipEntry {
     pub device: DeviceKey,
     /// The kind of lane it was on; it pastes on the lane of the same kind.
     pub lane: LaneKind,
+    /// For a note clip, the ordinal of its note lane on its track (0 for the first); it pastes
+    /// back on the note lane with that ordinal, the last one if the track has fewer. 0 for any
+    /// other clip.
+    pub note_lane: usize,
     /// The clip. `start` is relative to the earliest copied clip (0 for that one); `id` is 0.
     pub clip: Clip,
 }
@@ -212,6 +216,7 @@ impl ClipSnapshot {
             .map(|(t, lane, c)| ClipEntry {
                 device: t.device.clone(),
                 lane: t.lanes[*lane].kind.clone(),
+                note_lane: if t.is_note_lane(*lane) { *lane } else { 0 },
                 clip: Clip {
                     id: ClipId(0),
                     start: c.start - origin,

@@ -38,6 +38,7 @@ fn mv(id: u64, track: &str, start: i64) -> ClipMove {
     ClipMove {
         id: ClipId(id),
         track: key(track),
+        lane: None,
         start,
     }
 }

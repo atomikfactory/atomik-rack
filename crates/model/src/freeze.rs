@@ -369,7 +369,11 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             SongCommand::AddClip { device, .. }
             | SongCommand::AddAudioClip { device, .. }
             | SongCommand::NewTakeGroup { device, .. }
-            | SongCommand::AddAutomationLane { device, .. } => track_frozen(device),
+            | SongCommand::AddAutomationLane { device, .. }
+            | SongCommand::AddNoteLane { device, .. }
+            | SongCommand::RemoveNoteLane { device, .. }
+            | SongCommand::RenameLane { device, .. }
+            | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
             SongCommand::RemoveClip { id }
             | SongCommand::SetClipGeometry { id, .. }
             | SongCommand::SetClipContent { id, .. }

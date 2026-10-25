@@ -203,6 +203,7 @@ impl<S: EngineSink> AppCore<S> {
                 let at_tick = self.position;
                 self.apply_workflow(WorkflowCommand::PasteClips {
                     track,
+                    lane: None,
                     at_tick,
                     clips: s,
                 })?;

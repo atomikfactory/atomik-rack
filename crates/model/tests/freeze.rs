@@ -271,6 +271,24 @@ fn a_frozen_track_and_what_it_freezes_cannot_be_edited() {
         ),
         sc(SongCommand::RemoveClip { id: clip }),
         sc(SongCommand::SplitClip { id: clip, at: BAR }),
+        sc(SongCommand::AddNoteLane {
+            device: key("synth"),
+            name: None,
+        }),
+        sc(SongCommand::RemoveNoteLane {
+            device: key("synth"),
+            lane: 0,
+        }),
+        sc(SongCommand::RenameLane {
+            device: key("synth"),
+            lane: 0,
+            name: Some("Lead".into()),
+        }),
+        sc(SongCommand::SetLaneMuted {
+            device: key("synth"),
+            lane: 0,
+            muted: true,
+        }),
         Command::RemoveDevice { key: fx[0].clone() },
         Command::SetTempo(100.0),
         sc(SongCommand::SetTempoMap(vec![

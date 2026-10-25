@@ -142,11 +142,15 @@ pub enum WorkflowCommand {
     },
     /// Pastes clips with their track-relative layout: the earliest clip starts at `at_tick`.
     /// Each clip goes to the lane of its kind on its source track, or on `track` when given
-    /// (a lane of the same kind must exist there). New ids are allocated from the song's next
+    /// (a lane of the same kind must exist there). A note clip goes to note lane `lane` when
+    /// given (it must be a note lane of the target track), else to the note lane with the
+    /// ordinal it had when copied (the last one if the track has fewer). New ids are allocated from the song's next
     /// free id in snapshot order (the last is [`crate::Document::last_clip_id`]).
     PasteClips {
         /// The track that takes every clip, or `None` for the source tracks.
         track: Option<DeviceKey>,
+        /// The note lane that takes every note clip, or `None` to keep each clip's lane.
+        lane: Option<usize>,
         /// Song tick of the earliest pasted clip.
         at_tick: i64,
         /// What to paste.
@@ -159,9 +163,12 @@ pub enum WorkflowCommand {
         ids: Vec<ClipId>,
     },
     /// Puts clips on other tracks and ticks, or copies of them (a drag across lanes, one undo
-    /// step). Each clip goes to the lane of its own kind on its target track (a note clip to the
+    /// step). Each clip goes to the lane of its own kind on its target track (a note clip to a
     /// note lane, an audio clip to the audio lane, an automation clip to the lane of its
-    /// param); a track without such a lane rejects the whole command. With `copy` the clips stay
+    /// param); a track without such a lane rejects the whole command. A note clip goes to
+    /// [`ClipMove::lane`] when given, else stays on its note lane when the track does not
+    /// change, else goes to the note lane with the same ordinal (the last one if the target
+    /// has fewer). With `copy` the clips stay
     /// and the copies get new ids from the song's next free id in `moves` order (the last is
     /// [`crate::Document::last_clip_id`]). `merge` joins the move to the drag-merge group of the
     /// `SetClipGeometry` commands of the same drag. Unknown clips and an empty list reject it.
@@ -312,6 +319,9 @@ pub struct ClipMove {
     pub id: ClipId,
     /// The track that takes it.
     pub track: DeviceKey,
+    /// The target lane (an index into the track's lanes; it must have the clip's lane kind),
+    /// or `None` to let the rule of [`WorkflowCommand::MoveClips`] choose.
+    pub lane: Option<usize>,
     /// Its new start tick.
     pub start: i64,
 }
@@ -426,12 +436,19 @@ pub(crate) fn plan(
         WorkflowCommand::DisconnectDevice { key } => plain(disconnect_device(doc, &key)),
         WorkflowCommand::PasteClips {
             track,
+            lane,
             at_tick,
             clips,
-        } => paste_clips(doc, registry, track.as_ref(), at_tick, &clips),
+        } => paste_clips(doc, registry, (track.as_ref(), lane), at_tick, &clips),
         WorkflowCommand::DuplicateClips { ids } => {
             let s = ClipSnapshot::capture(doc, &ids)?;
-            paste_clips(doc, registry, None, s.origin.saturating_add(s.span), &s)
+            paste_clips(
+                doc,
+                registry,
+                (None, None),
+                s.origin.saturating_add(s.span),
+                &s,
+            )
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
@@ -960,7 +977,7 @@ fn lane_name(kind: &LaneKind) -> String {
 fn paste_clips(
     doc: &RackDoc,
     registry: &Registry,
-    track: Option<&DeviceKey>,
+    (track, note_lane): (Option<&DeviceKey>, Option<usize>),
     at_tick: i64,
     snapshot: &ClipSnapshot,
 ) -> Result<(Edit, Option<ClipId>), ModelError> {
@@ -985,11 +1002,24 @@ fn paste_clips(
             .song
             .track(device)
             .ok_or_else(|| bad_song(format!("{device} has no track")))?;
-        let lane = t
-            .lanes
-            .iter()
-            .position(|l| l.kind == e.lane)
-            .ok_or_else(|| bad_song(format!("{device} has no {} lane", lane_name(&e.lane))))?;
+        let lane = if e.lane.is_notes() {
+            match note_lane {
+                Some(l) if t.is_note_lane(l) => l,
+                Some(l) => return Err(bad_song(format!("{device} has no note lane {l}"))),
+                None => e.note_lane.min(t.note_lane_count().saturating_sub(1)),
+            }
+        } else {
+            t.lanes
+                .iter()
+                .position(|l| l.kind == e.lane)
+                .ok_or_else(|| bad_song(format!("{device} has no {} lane", lane_name(&e.lane))))?
+        };
+        if !t.lanes.get(lane).is_some_and(|l| l.kind == e.lane) {
+            return Err(bad_song(format!(
+                "{device} has no {} lane",
+                lane_name(&e.lane)
+            )));
+        }
         let desc = rules::descriptor(registry, &rules::device(doc, device)?.type_id)?;
         let mut clip = e.clip.clone();
         clip.id = ClipId(next);
@@ -1044,11 +1074,29 @@ fn move_clips(
             .expect("clip_of found its track")
             .lanes[lane]
             .kind;
-        let to = t
-            .lanes
-            .iter()
-            .position(|l| &l.kind == kind)
-            .ok_or_else(|| bad_song(format!("{} has no {} lane", m.track, lane_name(kind))))?;
+        let to = match m.lane {
+            Some(l) => {
+                let target = t
+                    .lanes
+                    .get(l)
+                    .ok_or_else(|| bad_song(format!("{} has no lane {l}", m.track)))?;
+                if &target.kind != kind {
+                    return Err(bad_song(format!(
+                        "lane {l} of {} is not a {} lane",
+                        m.track,
+                        lane_name(kind)
+                    )));
+                }
+                l
+            }
+            None if device == m.track => lane,
+            None if kind.is_notes() && t.note_lane_count() > 0 => lane.min(t.note_lane_count() - 1),
+            None => t
+                .lanes
+                .iter()
+                .position(|l| &l.kind == kind)
+                .ok_or_else(|| bad_song(format!("{} has no {} lane", m.track, lane_name(kind))))?,
+        };
         check_geometry(m.start, c.length, c.offset, c.loop_length)
             .map_err(ModelError::OutOfRange)?;
         let placed = Clip {
