@@ -2132,3 +2132,81 @@ fn snapshots_are_stored_recalled_and_compared_by_command_and_the_bounce_hears_th
     );
     assert_eq!(snapshots(&mut s).len(), 1);
 }
+
+#[test]
+fn a_note_lane_is_added_renamed_and_muted_with_the_track_menu_commands() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    let lanes = |s: &mut Server| {
+        let v = ok(s, "session_status", json!({}));
+        v["document"]["song"]["tracks"][0]["lanes"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let notes = |lanes: &[Value]| {
+        lanes
+            .iter()
+            .filter(|l| l["kind"] == "notes")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(notes(&lanes(&mut s)).len(), 1);
+    // The lane commands act on the selected track: a click on its header picks it.
+    // The name in the arrangement's track list (the left column), not the rack's.
+    let texts = ok(
+        &mut s,
+        "session_texts",
+        json!({"contains": "Bass", "limit": 100}),
+    );
+    let header = texts["texts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["x"].as_f64().unwrap() < 100.0)
+        .expect("the track header")
+        .clone();
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": header["x"].as_f64().unwrap() + 10.0,
+               "y": header["y"].as_f64().unwrap() - 3.0}),
+    );
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.add_note_lane"}),
+    );
+    let two = notes(&lanes(&mut s));
+    assert_eq!(two.len(), 2);
+    assert_eq!(two[1]["label"], "Notes 2");
+    text_pos(&mut s, "Notes 2");
+    // The new lane is the selected one: its name is typed in place.
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.rename_note_lane"}),
+    );
+    for _ in 0.."Notes 2".len() {
+        ok(&mut s, "session_key", json!({"key": "Backspace"}));
+    }
+    ok(&mut s, "session_key", json!({"text": "Strings"}));
+    ok(&mut s, "session_key", json!({"key": "Enter"}));
+    assert_eq!(notes(&lanes(&mut s))[1]["name"], "Strings");
+    text_pos(&mut s, "Strings");
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "sequencer.toggle_lane_mute"}),
+    );
+    assert_eq!(notes(&lanes(&mut s))[1]["muted"], true);
+    // Each is one undo step.
+    for _ in 0..3 {
+        ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    }
+    assert_eq!(notes(&lanes(&mut s)).len(), 1);
+}
