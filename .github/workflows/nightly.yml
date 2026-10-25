@@ -1,0 +1,189 @@
+name: Nightly
+
+# A daily build of main: when main has commits since the previous nightly (or on a manual run with
+# `force`), builds the same artifacts as a release through the reusable build workflow (build.yml)
+# and updates ONE rolling GitHub pre-release tagged `nightly`: its assets are replaced and the tag
+# moves to the new commit. Nightlies are signed exactly where the release-signing secrets exist
+# (see docs/RELEASING.md) and say in the notes when they are not. The file names are
+# atomik-rack-nightly-<YYYYMMDD>-<shortsha>-<platform>.<ext>; the version shown by the installers
+# is <version>-nightly.<YYYYMMDD>+<shortsha>. Only the publish job can write to the repository.
+# Forks never run it. A manual run from a branch other than main builds and smoke-tests but does
+# not publish.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build and publish even when main has no new commits since the last nightly"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A newer run replaces one that is still going: the nightly is always the latest main. (An
+# interrupted publish is harmless: it moves the tag last, so the next run simply redoes it.)
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: changes since the last nightly
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      label: ${{ steps.plan.outputs.label }}
+      display: ${{ steps.plan.outputs.display }}
+      sha: ${{ steps.plan.outputs.sha }}
+      previous: ${{ steps.plan.outputs.previous }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide whether to build
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -eu
+          label="$(ATOMIK_CHANNEL=nightly sh scripts/release/version.sh)"
+          display="$(sh scripts/release/version-info.sh "$label" display)"
+          # Only main is published; a manual run of another branch is a dry run.
+          publish=false
+          if [ "$REF" = "refs/heads/main" ]; then publish=true; fi
+          # The commit the nightly tag points at now (empty when there is none yet).
+          previous=""
+          if ref="$(gh api "repos/$REPO/git/ref/tags/nightly" 2> /dev/null)"; then
+            previous="$(printf '%s' "$ref" | jq -r '.object.sha')"
+            if [ "$(printf '%s' "$ref" | jq -r '.object.type')" = "tag" ]; then
+              previous="$(gh api "repos/$REPO/git/tags/$previous" --jq '.object.sha')"
+            fi
+          fi
+          build=true
+          if [ "$publish" = "true" ] && [ "$previous" = "$SHA" ] && [ "$FORCE" != "true" ]; then
+            build=false
+            echo "::notice title=Nightly skipped::main has no commits since the last nightly (${SHA}). Run with force to build anyway."
+          fi
+          {
+            echo "build=$build"
+            echo "publish=$publish"
+            echo "label=$label"
+            echo "display=$display"
+            echo "sha=$SHA"
+            echo "previous=$previous"
+          } >> "$GITHUB_OUTPUT"
+          echo "nightly $label ($display): build=$build publish=$publish previous=${previous:-none}"
+
+  build:
+    name: build
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.changes.outputs.label }}
+      retention-days: 3
+
+  publish:
+    name: publish the nightly
+    needs: [changes, build]
+    if: needs.changes.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    # Two publishes must not interleave (the second would delete the first one's assets).
+    concurrency:
+      group: nightly-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: atomik-rack-*
+          path: dist
+          merge-multiple: true
+      - name: Replace the assets of the nightly pre-release and move its tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.changes.outputs.sha }}
+          PREVIOUS: ${{ needs.changes.outputs.previous }}
+          LABEL: ${{ needs.changes.outputs.label }}
+          DISPLAY_VERSION: ${{ needs.changes.outputs.display }}
+          WINDOWS_SIGNED: ${{ needs.build.outputs.windows-signed }}
+          MACOS_SIGNED: ${{ needs.build.outputs.macos-signed }}
+          MACOS_NOTARIZED: ${{ needs.build.outputs.macos-notarized }}
+          CHECKSUMS_SIGNED: ${{ needs.build.outputs.checksums-signed }}
+        run: |
+          set -eu
+          (cd dist && sha256sum -c SHA256SUMS)
+          ls -l dist
+
+          # nightly-YYYYMMDD-<sha> -> date and short sha
+          rest="${LABEL#nightly-}"
+          date="${rest%%-*}"
+          short="${rest#*-}"
+          title="Atomik Rack nightly $date ($short)"
+
+          if [ "$WINDOWS_SIGNED" = "true" ]; then win="Authenticode-signed"; else win="not signed"; fi
+          if [ "$MACOS_NOTARIZED" = "true" ]; then
+            mac="Developer ID signed and notarised"
+          elif [ "$MACOS_SIGNED" = "true" ]; then
+            mac="Developer ID signed, not notarised"
+          else
+            mac="ad-hoc signed only"
+          fi
+          if [ "$CHECKSUMS_SIGNED" = "true" ]; then sums="SHA256SUMS.asc is its GPG signature"; else sums="SHA256SUMS is not signed"; fi
+
+          notes="$(mktemp)"
+          {
+            echo "Automatic build of \`main\` at \`$short\` ($date), version \`$DISPLAY_VERSION\`. This is a rolling pre-release: it is replaced every night that \`main\` changes. Use a tagged release for anything that matters."
+            echo
+            echo "Signing: Windows $win, macOS $mac, $sums."
+            if [ "$WINDOWS_SIGNED" != "true" ] || [ "$MACOS_NOTARIZED" != "true" ]; then
+              echo
+              echo "**Unsigned or not notarised builds make the system warn on first launch**; see the README for the first-run steps."
+            fi
+            echo
+            echo "Verify the downloads against \`SHA256SUMS\`."
+            if [ -n "$PREVIOUS" ]; then
+              echo
+              echo "Commits since the previous nightly (\`$(printf '%s' "$PREVIOUS" | cut -c1-7)\`):"
+              echo
+              if ! gh api "repos/$REPO/compare/$PREVIOUS...$SHA" \
+                --jq '.commits | .[-30:] | .[] | "- `" + .sha[0:7] + "` " + (.commit.message | split("\n")[0])' | sed 's/@/ /g'; then
+                echo "(the range could not be listed)"
+              fi
+            fi
+          } > "$notes"
+
+          set -- dist/atomik-rack[-_]* dist/SHA256SUMS
+          if [ -f dist/SHA256SUMS.asc ]; then set -- "$@" dist/SHA256SUMS.asc; fi
+
+          if gh release view nightly --repo "$REPO" > /dev/null 2>&1; then
+            # Drop the old assets, then upload the new ones.
+            gh release view nightly --repo "$REPO" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                gh release delete-asset nightly "$asset" --repo "$REPO" --yes
+              done
+            gh release upload nightly "$@" --repo "$REPO" --clobber
+          else
+            gh release create nightly "$@" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
+              --title "$title" --notes-file "$notes"
+          fi
+
+          # Move the tag to the built commit last, once the assets are all there.
+          if ! gh api -X PATCH "repos/$REPO/git/refs/tags/nightly" -f sha="$SHA" -F force=true > /dev/null 2>&1; then
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/tags/nightly" -f sha="$SHA" > /dev/null
+          fi
+          gh release edit nightly --repo "$REPO" --prerelease --latest=false \
+            --title "$title" --notes-file "$notes"
+          echo "nightly now at $SHA"
