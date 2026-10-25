@@ -1,7 +1,14 @@
 #!/bin/sh
-# Packages the macOS build: dist/atomik-rack-<version>-macos-universal.zip (+ .sha256).
+# Packages the macOS build: dist/atomik-rack-<version>-macos-universal.zip and .dmg (+ .sha256).
 # Needs target/aarch64-apple-darwin/release and target/x86_64-apple-darwin/release.
 # Usage: package-macos.sh <version>   (run from the repository root on macOS)
+# Environment (all optional; the workflow sets them only when the secrets exist):
+#   MACOS_SIGN_IDENTITY  Developer ID Application identity: sign with it (hardened runtime) instead
+#                        of ad hoc; see sign-macos.sh. APPLE_KEYCHAIN_PATH names its keychain.
+#   MACOS_NOTARIZE=1     notarise and staple the app and the disk image (needs the identity and the
+#                        APPLE_NOTARY_* variables of notarize-macos.sh), then check them with spctl.
+# The app is signed, notarised and stapled BEFORE it goes into the zip and the disk image, and
+# the disk image is signed and notarised again as a whole.
 set -eu
 version="$1"
 name="atomik-rack-$version-macos-universal"
@@ -55,11 +62,25 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$app/Contents/Info.plist"
 
-# Ad-hoc signature: Apple Silicon refuses unsigned code. This is not a developer signature.
-codesign --force --deep -s - "$app"
-codesign --verify --deep --strict --verbose=2 "$app"
+# Ad hoc when there is no Developer ID identity (Apple Silicon refuses unsigned code; this is not
+# a developer signature), else Developer ID with the hardened runtime.
+sh scripts/release/sign-macos.sh app "$app"
+if [ "${MACOS_NOTARIZE:-}" = "1" ]; then
+  sh scripts/release/notarize-macos.sh "$app"
+fi
 
 cp LICENSE README.md CHANGELOG.md "dist/$name/"
-(cd dist && ditto -c -k --keepParent "$name" "$name.zip" && rm -rf "$name")
-sh scripts/release/checksum.sh "dist/$name.zip"
+(cd dist && ditto -c -k --keepParent "$name" "$name.zip")
+
+dmg="dist/$name.dmg"
+sh scripts/release/package-dmg.sh "dist/$name" "$dmg"
+sh scripts/release/sign-macos.sh dmg "$dmg"
+if [ "${MACOS_NOTARIZE:-}" = "1" ]; then
+  sh scripts/release/notarize-macos.sh "$dmg"
+  spctl --assess --type execute --verbose=2 "$app"
+  spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+fi
+
+rm -rf "dist/$name"
+sh scripts/release/checksum.sh "dist/$name.zip" "$dmg"
 ls -l dist

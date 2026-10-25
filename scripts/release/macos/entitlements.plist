@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Plugin hosting under the hardened runtime. Third-party CLAP and VST3 plugins are loaded
+       into the app, the plugin scanner and the plugin host process: they are signed by other
+       developers (or not at all), many generate or patch code at run time, and some use a JIT.
+       Without these three entitlements macOS refuses to load them in a hardened, notarised app. -->
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+  <key>com.apple.security.cs.disable-library-validation</key><true/>
+  <!-- Audio input: a hardened-runtime app needs this (plus the usage text in Info.plist) to
+       be allowed to record from a microphone or an audio interface. -->
+  <key>com.apple.security.device.audio-input</key><true/>
+</dict>
+</plist>
