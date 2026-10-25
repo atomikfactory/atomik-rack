@@ -24,6 +24,7 @@ pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 mod history;
+mod library_io;
 mod macros;
 mod macros_io;
 mod midi_import;
@@ -133,6 +134,7 @@ pub use console_snapshot::{
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 use history::Edit;
+pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
     OutlineKind, TrackGroup,
