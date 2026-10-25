@@ -286,6 +286,20 @@ pub enum UiAction {
     PluginSettings(crate::plugin_data::PluginSettingsAction),
     /// The project banner asks for something.
     PluginBanner(crate::plugin_data::PluginBannerAction),
+    /// A right click on a control (a knob, a fader or a switch of a rack panel or a console strip)
+    /// that has a menu of its own: Learn MIDI and Forget MIDI. `at` is the pointer position in the
+    /// coordinates of the emitting view; the shell builds the menu.
+    ControlMenu {
+        /// The device that owns the control (a console strip is a device too).
+        device: DeviceKey,
+        /// The control's param key.
+        param: String,
+        /// Where the menu opens.
+        at: vello::kurbo::Point,
+    },
+    /// The MIDI Mappings panel ([`crate::MidiMapsView`]) asks for something: edit or delete a
+    /// mapping, learn another control for it, export or import a preset, or close.
+    MidiMaps(crate::midi_maps_panel::MidiMapsAction),
     /// The relink panel ([`crate::RelinkView`]) asks for something: a file for a missing audio
     /// asset, a folder to search, or to close.
     Relink(crate::relink_panel::RelinkAction),

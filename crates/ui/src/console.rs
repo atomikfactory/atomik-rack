@@ -690,6 +690,8 @@ pub struct ConsoleView {
     focus: Option<(Target, usize)>,
     next_merge: u64,
     focused: bool,
+    /// The mapped controls and the learn state (see [`crate::MidiMarks`]).
+    midi: crate::MidiMarks,
     repaint: bool,
 }
 
@@ -737,6 +739,7 @@ impl ConsoleView {
             focus: None,
             next_merge: MERGE_BASE,
             focused: false,
+            midi: crate::MidiMarks::default(),
             repaint: true,
         }
     }
@@ -1075,6 +1078,15 @@ impl ConsoleView {
             .iter()
             .find(|(c, _)| *c == i)
             .map(|(_, r)| r.center())
+    }
+
+    /// Tells the view which controls have a MIDI mapping (a dot on each; an outline on each while
+    /// MIDI Learn is on, and in the warning colour on the one waiting for a hardware control).
+    pub fn set_midi_marks(&mut self, marks: crate::MidiMarks) {
+        if self.midi != marks {
+            self.midi = marks;
+            self.repaint = true;
+        }
     }
 
     /// Tells the view which snapshot the mix was last recalled from, for the chip to stay lit
@@ -2933,6 +2945,16 @@ impl ConsoleView {
                 let v = widget::cycle_choice(p, value, button == PointerButton::Primary);
                 out.extend(self.set_param(t, param, v, None));
             }
+            // A right click on a knob, a slider, a fader or a button opens its MIDI menu.
+            (_, PointerButton::Secondary) => {
+                if let Some(v) = self.view_of(t) {
+                    out.push(UiAction::ControlMenu {
+                        device: v.key.clone(),
+                        param: param.to_owned(),
+                        at: self.pointer,
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -3414,6 +3436,7 @@ impl ConsoleView {
             if let Some(list) = &s.lists[0] {
                 c.draw_list(list);
             }
+            self.paint_strip_marks(c, &s.key, l, false);
             if let (Some(gr), Some(m)) = (l.gr_meter, self.meters.get(&s.key)) {
                 gr_bar(c, &self.st, gr, m.gr_db);
             }
@@ -3426,6 +3449,7 @@ impl ConsoleView {
             if let Some(list) = &s.lists[1] {
                 c.draw_list(list);
             }
+            self.paint_strip_marks(c, &s.key, l, true);
             if let Some(r) = l.meter {
                 stereo_meter(c, &self.st, r, self.meters.get(&s.key), s.silenced);
             }
@@ -3503,6 +3527,12 @@ impl ConsoleView {
                 dropping,
                 members_selected,
             );
+            self.midi.paint_vca(
+                c,
+                &self.st.base,
+                v.id,
+                Rect::new(x + 2.0, sr.y0 + 2.0, x + STRIP_W - 2.0, sr.y0 + 26.0),
+            );
         }
         if let Drag::Move { strip, start_x, x } = &self.drag
             && (x - start_x).abs() > MOVE_THRESHOLD
@@ -3525,6 +3555,25 @@ impl ConsoleView {
             c.stroke_with(Line::new(pt(lx, sr.y0), pt(lx, sr.y1)), 3.0, t.highlight);
         }
         c.pop_clip();
+    }
+
+    /// The MIDI marks of the controls of one strip (in the strip's own coordinates).
+    fn paint_strip_marks(
+        &self,
+        c: &mut dyn Canvas,
+        key: &DeviceKey,
+        l: &StripLayout,
+        pinned: bool,
+    ) {
+        if self.midi.is_empty() {
+            return;
+        }
+        for pc in &l.controls {
+            if l.is_pinned(pc.section) == pinned {
+                self.midi
+                    .paint_control(c, &self.st.base, key, pc.param, pc.rect);
+            }
+        }
     }
 
     fn focus_ring(&self, c: &mut dyn Canvas, t: Target, pinned: bool, l: &StripLayout) {
