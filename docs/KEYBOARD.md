@@ -4,6 +4,20 @@
 
 Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the primary modifier is `Cmd` (Command) and Alt is `Opt` (Option), and Control and Command are never interchanged. `Numpad` keys are told apart from the main keys. Letters are matched by the character they type, so a layout that moves a letter moves the shortcut with it; any binding can be changed in Settings, Keyboard (saved as `keymap.json` next to `settings.json`, only your changes). While a text field has focus only chords with the primary modifier, function keys and Esc run commands. Where a binding in a pane overlaps a global one, the pane wins inside that pane. The file browser panel (View, File Browser, `F4`) is the `files` context: while it has the focus, its keys (arrows, Page Up and Down, Home and End, Enter, Space, Esc, Backspace, `F`, the search and select-all chords) are the `files.*` commands, which the shell hands to the panel as those keys, so they win over the global bindings of the same chords (Space previews instead of playing, Backspace goes up a folder instead of deleting); every other chord, `F4` and `F5` included, still runs as usual. While the panel's search or tag field has focus, only Esc, function keys and the chords with the primary modifier run commands.
 
+## Pointer gestures: playhead, locators and markers
+
+| Gesture | Where | Result |
+|---|---|---|
+| Press and drag | Arrangement ruler | Locates the snapped position under the pointer and keeps locating while the pointer moves (not before zero) |
+| Drag the playhead | Arrangement (ruler flag, or its line in the grid) and piano roll (its line in the grid, or the ruler) | Moves the playhead by the distance dragged, snapped |
+| Drag a loop edge | Arrangement ruler, lower band | Moves the left or the right locator, snapped, with one snap step left between them; the loop is set on release |
+| `Alt+click` | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
+| `Ctrl+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| Drag a marker line | Arrangement grid, while the marker strip is shown | Moves the marker, as dragging its label in the strip does |
+| `Ctrl+Alt` held | While dragging any of these | No snap |
+
+The locator clicks win over the razor in the ruler. In the grid the playhead and the marker lines are grabbed within three pixels of the line, with the Select tool, without Shift or `Ctrl` held, and never over the edge, fade, point or mute controls of a clip or a note; elsewhere the press does what it did before.
+
 ## Moved keys: standard keys against the legacy keys (Windows)
 
 | Command | Atomik legacy keys | Standard keys |
