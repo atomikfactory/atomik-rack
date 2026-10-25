@@ -1,0 +1,406 @@
+name: Build artifacts
+
+# Reusable workflow (workflow_call) used by release.yml and nightly.yml, so the build, signing,
+# packaging and smoke-test logic exists once. It builds the five programs on Linux, Windows and
+# macOS, then packages and (when the secrets exist) signs:
+#   Linux    .tar.gz and .deb
+#   Windows  .zip and the Inno Setup installer; the programs and the installer are Authenticode-signed
+#   macOS    .zip and .dmg; the app is signed with the hardened runtime and notarised, the dmg too
+# smoke-tests every artifact on its own platform, then writes SHA256SUMS (and a detached GPG
+# signature of it). Every artifact set is uploaded as a workflow artifact named atomik-rack-<platform>
+# (and atomik-rack-checksums); the caller publishes them. This workflow never publishes anything.
+#
+# Signing is optional and never breaks a build: a platform whose secrets are missing is built
+# unsigned and says so in the log. The secrets are read only by the jobs that carry the protected
+# `release-signing` environment (the packaging jobs and the checksums job, none of which compiles
+# anything) and are handed only to the steps that need them. See docs/RELEASING.md.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release label: vX.Y.Z[-pre] (a tag), nightly-YYYYMMDD-<sha> or dev-<sha>. It is part of every file name."
+        required: true
+        type: string
+      retention-days:
+        description: "How long the workflow artifacts are kept."
+        required: false
+        type: number
+        default: 7
+    outputs:
+      windows-signed:
+        description: "true when the Windows programs and the installer were Authenticode-signed."
+        value: ${{ jobs.package-windows.outputs.signed }}
+      macos-signed:
+        description: "true when the macOS app was signed with a Developer ID."
+        value: ${{ jobs.package-macos.outputs.signed }}
+      macos-notarized:
+        description: "true when the macOS app and disk image were notarised and stapled."
+        value: ${{ jobs.package-macos.outputs.notarized }}
+      checksums-signed:
+        description: "true when SHA256SUMS has a detached GPG signature."
+        value: ${{ jobs.checksums.outputs.signed }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build:
+    name: build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x86_64, os: ubuntu-latest }
+          - { label: windows-x86_64, os: windows-latest }
+          - { label: macos-universal, os: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: release-${{ matrix.label }}
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --release --locked -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan -p atomik-plugin-hostd
+      - name: Build (macOS, both architectures)
+        if: runner.os == 'macOS'
+        run: |
+          set -eu
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked --target "$target" -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan -p atomik-plugin-hostd
+          done
+      - name: Bundle the programs
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.label }}
+        run: sh scripts/release/stage-raw.sh "$PLATFORM"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: raw-${{ matrix.label }}
+          path: raw/raw-${{ matrix.label }}.tgz
+          retention-days: 1
+          if-no-files-found: error
+
+  package-linux:
+    name: package (linux-x86_64)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: raw-linux-x86_64
+          path: raw
+      - name: Package (tar.gz and deb)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          tar -xzf raw/raw-linux-x86_64.tgz
+          sh scripts/release/package-tar.sh "$VERSION"
+          sh scripts/release/package-deb.sh "$VERSION"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: atomik-rack-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.sha256
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+
+  package-windows:
+    name: package (windows-x86_64)
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # The Authenticode secrets live in this environment (see docs/RELEASING.md). An environment
+    # with no secrets is fine: every signing step below is skipped and the files stay unsigned.
+    environment: release-signing
+    outputs:
+      signed: ${{ steps.detect.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: raw-windows-x86_64
+          path: raw
+      - name: Unpack the programs
+        shell: bash
+        run: tar -xzf raw/raw-windows-x86_64.tgz
+      # Only booleans leave this step: the secrets themselves are not put in its environment.
+      - name: Detect the signing configuration
+        id: detect
+        shell: bash
+        env:
+          HAVE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+          HAVE_AZURE: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT != '' && vars.AZURE_TRUSTED_SIGNING_ACCOUNT != '' && vars.AZURE_TRUSTED_SIGNING_PROFILE != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_CLIENT_SECRET != '' }}
+        run: |
+          set -eu
+          method=none
+          if [ "$HAVE_AZURE" = "true" ]; then
+            method=azure
+          elif [ "$HAVE_PFX" = "true" ]; then
+            method=pfx
+          fi
+          echo "method=$method" >> "$GITHUB_OUTPUT"
+          if [ "$method" = "none" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Windows signing skipped::No Authenticode secrets in the release-signing environment (WINDOWS_CERTIFICATE_PFX_BASE64 and WINDOWS_CERTIFICATE_PASSWORD, or the Azure Trusted Signing variables and secrets). The programs and the installer are built unsigned."
+          else
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Windows signing: $method"
+          fi
+
+      - name: Sign the programs (Azure Trusted Signing)
+        if: steps.detect.outputs.method == 'azure'
+        # Azure/artifact-signing-action is the new name of Azure/trusted-signing-action.
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\target\release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Sign the programs (certificate file)
+        if: steps.detect.outputs.method == 'pfx'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./scripts/release/sign-windows.ps1 -Files (Get-ChildItem target/release/*.exe).FullName
+      - name: Verify the signatures of the programs
+        if: steps.detect.outputs.signed == 'true'
+        shell: pwsh
+        run: ./scripts/release/verify-windows.ps1 -Files (Get-ChildItem target/release/*.exe).FullName
+
+      - name: Package (zip and installer)
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          sh scripts/release/package-zip.sh "$VERSION"
+          sh scripts/release/package-windows.sh "$VERSION"
+
+      - name: Sign the installer (Azure Trusted Signing)
+        if: steps.detect.outputs.method == 'azure'
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_TRUSTED_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Sign the installer (certificate file)
+        if: steps.detect.outputs.method == 'pfx'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./scripts/release/sign-windows.ps1 -Files (Get-ChildItem dist/*-setup.exe).FullName
+      - name: Verify the signature of the installer
+        if: steps.detect.outputs.signed == 'true'
+        shell: pwsh
+        run: ./scripts/release/verify-windows.ps1 -Files (Get-ChildItem dist/*-setup.exe).FullName
+
+      # The installer changed when it was signed, so its checksum is written last.
+      - name: Checksum the installer
+        shell: bash
+        run: sh scripts/release/checksum.sh dist/*-setup.exe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: atomik-rack-windows-x86_64
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+            dist/*.sha256
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+
+  package-macos:
+    name: package (macos-universal)
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 90
+    # The Developer ID certificate and the notary key live in this environment (see
+    # docs/RELEASING.md). With none, the app keeps the ad-hoc signature and nothing is notarised.
+    environment: release-signing
+    outputs:
+      signed: ${{ steps.detect.outputs.signed }}
+      notarized: ${{ steps.detect.outputs.notarized }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: raw-macos-universal
+          path: raw
+      - name: Unpack the programs
+        run: tar -xzf raw/raw-macos-universal.tgz
+      # Only booleans leave this step: the secrets themselves are not put in its environment.
+      - name: Detect the signing configuration
+        id: detect
+        env:
+          HAVE_CERT: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+          HAVE_NOTARY: ${{ secrets.APPLE_NOTARY_KEY_BASE64 != '' && secrets.APPLE_NOTARY_KEY_ID != '' && secrets.APPLE_NOTARY_ISSUER_ID != '' }}
+        run: |
+          set -eu
+          signed=false
+          notarized=false
+          if [ "$HAVE_CERT" = "true" ]; then
+            signed=true
+            if [ "$HAVE_NOTARY" = "true" ]; then
+              notarized=true
+            else
+              echo "::notice title=macOS notarisation skipped::APPLE_NOTARY_KEY_BASE64, APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID are not all set. The app is signed with the Developer ID but not notarised, so Gatekeeper still warns."
+            fi
+          else
+            echo "::notice title=macOS signing skipped::APPLE_CERTIFICATE_P12_BASE64, APPLE_CERTIFICATE_PASSWORD and APPLE_SIGNING_IDENTITY are not all set. The app keeps its ad-hoc signature and is not notarised."
+            if [ "$HAVE_NOTARY" = "true" ]; then
+              echo "::warning title=macOS notary key ignored::The notary key is set but there is no Developer ID certificate to sign with, so nothing is notarised."
+            fi
+          fi
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+          echo "notarized=$notarized" >> "$GITHUB_OUTPUT"
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: steps.detect.outputs.signed == 'true'
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: sh scripts/release/macos-keychain.sh create
+      - name: Package (app, zip and disk image; sign and notarise when configured)
+        env:
+          VERSION: ${{ inputs.version }}
+          MACOS_SIGN_IDENTITY: ${{ steps.detect.outputs.signed == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          MACOS_NOTARIZE: ${{ steps.detect.outputs.notarized == 'true' && '1' || '' }}
+          APPLE_NOTARY_KEY_BASE64: ${{ steps.detect.outputs.notarized == 'true' && secrets.APPLE_NOTARY_KEY_BASE64 || '' }}
+          APPLE_NOTARY_KEY_ID: ${{ steps.detect.outputs.notarized == 'true' && secrets.APPLE_NOTARY_KEY_ID || '' }}
+          APPLE_NOTARY_ISSUER_ID: ${{ steps.detect.outputs.notarized == 'true' && secrets.APPLE_NOTARY_ISSUER_ID || '' }}
+        run: sh scripts/release/package-macos.sh "$VERSION"
+      - name: Delete the temporary keychain
+        if: always() && steps.detect.outputs.signed == 'true'
+        run: sh scripts/release/macos-keychain.sh delete
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: atomik-rack-macos-universal
+          path: |
+            dist/*.zip
+            dist/*.dmg
+            dist/*.sha256
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error
+
+  smoke:
+    name: smoke (${{ matrix.label }})
+    needs: [package-linux, package-windows, package-macos]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x86_64, os: ubuntu-latest }
+          - { label: windows-x86_64, os: windows-latest }
+          - { label: macos-universal, os: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: atomik-rack-${{ matrix.label }}
+          path: dist
+      - name: Verify the checksums and run the smoke checks on every artifact
+        shell: bash
+        env:
+          # Make the smoke check insist on a valid signature where signing was configured.
+          EXPECT_SIGNED: ${{ (matrix.label == 'windows-x86_64' && needs.package-windows.outputs.signed == 'true') || (matrix.label == 'macos-universal' && needs.package-macos.outputs.notarized == 'true') }}
+        run: |
+          set -eu
+          cd dist
+          ls -l
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum -c ./*.sha256
+          else
+            shasum -a 256 -c ./*.sha256
+          fi
+          cd ..
+          for artifact in dist/*.zip dist/*.tar.gz dist/*-setup.exe dist/*.deb dist/*.dmg; do
+            [ -f "$artifact" ] || continue
+            echo "::group::smoke $artifact"
+            sh scripts/release/smoke.sh "$artifact" "$PWD"
+            echo "::endgroup::"
+          done
+
+  checksums:
+    name: SHA256SUMS
+    needs: [package-linux, package-windows, package-macos, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Holds the GPG key (see docs/RELEASING.md); without it SHA256SUMS is published unsigned.
+    environment: release-signing
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: atomik-rack-*
+          path: dist
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        run: |
+          set -eu
+          sh scripts/release/sha256sums.sh dist
+          cat dist/SHA256SUMS
+      - name: Sign SHA256SUMS (GPG)
+        id: sign
+        env:
+          GPG_PRIVATE_KEY_BASE64: ${{ secrets.GPG_PRIVATE_KEY_BASE64 }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -eu
+          sh scripts/release/sign-checksums.sh dist/SHA256SUMS
+          if [ -f dist/SHA256SUMS.asc ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: atomik-rack-checksums
+          path: |
+            dist/SHA256SUMS
+            dist/SHA256SUMS.asc
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error

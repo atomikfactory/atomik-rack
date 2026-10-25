@@ -50,3 +50,6 @@ examples/projects/*/Audio/.peaks/
 /.mcp.json
 
 /not-for-git/
+
+# Release packaging output (scripts/release)
+/dist

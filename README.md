@@ -37,11 +37,19 @@ There are no screenshots in the repository yet. The user interface is drawn proc
 
 ## Install
 
-Release builds are attached to each [GitHub release](https://github.com/atomikfactory/atomik-rack/releases): `atomik-rack-<version>-windows-x86_64.zip`, `atomik-rack-<version>-macos-universal.zip` (Apple Silicon and Intel) and `atomik-rack-<version>-linux-x86_64.tar.gz`, with a `SHA256SUMS` file to check them against. The builds are not code-signed, so each system warns the first time.
+Release builds are attached to each [GitHub release](https://github.com/atomikfactory/atomik-rack/releases), each with a `SHA256SUMS` file to check them against:
 
-- **Windows.** Unzip, run `atomik.exe`. If SmartScreen says "Windows protected your PC", choose **More info**, then **Run anyway**.
-- **macOS.** Unzip and move `Atomik Rack.app` to Applications. The app is only ad-hoc signed and not notarised: right-click it, choose **Open**, then **Open** again. Or remove the quarantine flag once: `xattr -dr com.apple.quarantine "Atomik Rack.app"`.
-- **Linux.** Extract the archive and run `./atomik`. It needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
+- **Windows:** `atomik-rack-<version>-windows-x86_64-setup.exe` (installer) or `atomik-rack-<version>-windows-x86_64.zip`.
+- **macOS (Apple Silicon and Intel):** `atomik-rack-<version>-macos-universal.dmg` or `atomik-rack-<version>-macos-universal.zip`.
+- **Linux (x86-64):** `atomik-rack_<version>_amd64.deb` for Debian and Ubuntu, or `atomik-rack-<version>-linux-x86_64.tar.gz`.
+
+A [nightly build](https://github.com/atomikfactory/atomik-rack/releases/tag/nightly) of `main` is published every day that it changes, under the same names with `nightly-<date>-<commit>` as the version. It is a pre-release: expect rough edges.
+
+Builds are code-signed (Windows) and notarised (macOS) only when the project's signing certificates are configured, and the release notes say whether they were. They are not signed yet, so each system warns the first time; the steps below work whether or not a build is signed.
+
+- **Windows.** Run the installer (it asks for administrator rights to install for everyone, and offers to install just for you), or unzip the archive and run `atomik.exe`. If SmartScreen says "Windows protected your PC", choose **More info**, then **Run anyway**.
+- **macOS.** Open the disk image and drag `Atomik Rack.app` to Applications (or unzip the archive). A build that is not notarised is only ad-hoc signed: right-click the app, choose **Open**, then **Open** again. Or remove the quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Atomik Rack.app"`.
+- **Linux.** Install the package with `sudo apt-get install ./atomik-rack_<version>_amd64.deb` (it pulls in ALSA and fontconfig and puts `atomik` on your path), or extract the archive and run `./atomik`. The archive needs ALSA (`libasound2`), fontconfig (`libfontconfig1`) and a working Vulkan or OpenGL driver; on Debian/Ubuntu: `sudo apt-get install libasound2 libfontconfig1`.
 
 ## Building
 
