@@ -215,7 +215,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "atomik-app"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-audio-file",
  "atomik-audio-io",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-audio-file"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-library",
  "hound",
@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-audio-io"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-core"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "proptest",
  "thiserror 2.0.21",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-device-sdk"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "thiserror 2.0.21",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-devices"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -304,7 +304,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-dsp"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-testkit",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-engine"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-library"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "proptest",
  "serde",
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-mcp"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-app",
  "atomik-core",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-midi-io"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -365,7 +365,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-model"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-play"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-audio-io",
  "atomik-core",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-clap"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-host"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-hostd"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -446,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-ipc"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-sandbox"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-scan"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-device-sdk",
  "atomik-plugin-clap",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-plugin-vst3"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-render"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-audio-file",
  "atomik-core",
@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-bad"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-crash"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-hang"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-leak"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-shell"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "clap-sys",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-clap-variants"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-clap-shell",
  "atomik-test-plugin-core",
@@ -582,11 +582,11 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-plugin-core"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 
 [[package]]
 name = "atomik-test-vst3"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-bad"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-crash"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-hang"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -618,7 +618,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-leak"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-shell"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "vst3",
@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-test-vst3-variants"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-test-plugin-core",
  "atomik-test-vst3-shell",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-testkit"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-core",
  "atomik-device-sdk",
@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "atomik-ui"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "atomik-audio-file",
  "atomik-core",
