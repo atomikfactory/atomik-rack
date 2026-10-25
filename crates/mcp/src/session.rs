@@ -227,6 +227,10 @@ fn request_json(r: ShellRequest) -> Value {
             "confirm_discard",
             "the document has unsaved changes: repeat the command with confirm true to discard them",
         ),
+        ShellRequest::ConfirmDiscardOpen(_) => (
+            "confirm_discard_open",
+            "the document has unsaved changes: open the project with session_open instead, or save first",
+        ),
         ShellRequest::Quit => ("quit", "the app asked to quit; the session stays open"),
         ShellRequest::PickOpenFile => (
             "pick_open_file",

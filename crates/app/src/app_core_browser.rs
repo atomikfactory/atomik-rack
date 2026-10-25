@@ -21,7 +21,7 @@
 //! * Library changes mark the database dirty; the next frame hands a JSON snapshot to the saver
 //!   thread (one write in flight, the newest snapshot wins).
 
-use super::AppCore;
+use super::{AppCore, LoadTarget};
 use crate::browser_workers::{
     BrowseJob, BrowseMsg, CopyAssets, PreviewJob, WalkScope, Workers, home_dir, split_devices,
 };
@@ -87,6 +87,11 @@ pub(crate) struct BrowserState {
     jobs: usize,
     /// A saved library item to select once the list that shows it arrives.
     select_after: Option<PathBuf>,
+    /// A project the user asked to open from the library: the shell asks about unsaved
+    /// changes, then opens it.
+    open_request: Option<PathBuf>,
+    /// The panel started a rename entry the user should type into.
+    focus_request: bool,
     /// The device rows of the favourites or tag place being listed (built from the registry,
     /// shown with the answer of the stat job).
     collection_devices: Vec<FileRow>,
@@ -125,6 +130,8 @@ impl Default for BrowserState {
             workers: None,
             jobs: 0,
             select_after: None,
+            open_request: None,
+            focus_request: false,
             collection_devices: Vec::new(),
             shown_paths: Vec::new(),
             preview: None,
@@ -261,6 +268,22 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    /// A project (or an item to open as one) was picked in the library: the shell takes it
+    /// once, asks about unsaved changes and opens it.
+    pub fn take_open_request(&mut self) -> Option<PathBuf> {
+        self.browser.open_request.take()
+    }
+
+    /// True once after the panel opened a rename entry (a saved item's name): the shell gives
+    /// the panel the keys.
+    pub fn take_browser_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.browser.focus_request)
+    }
+
+    pub(super) fn request_open(&mut self, path: PathBuf) {
+        self.browser.open_request = Some(path);
+    }
+
     /// Hands the audio of a saved library item to the copy worker.
     pub(super) fn copy_item_assets(&mut self, job: CopyAssets) {
         if self.browser.workers().copy_assets(job) {
@@ -394,9 +417,9 @@ impl<S: EngineSink> AppCore<S> {
             | BrowseAction::DragFiles(_)
             | BrowseAction::LayoutChanged => {}
             // Loading, opening and renaming library items is the library work of the app.
-            BrowseAction::Load(_)
-            | BrowseAction::OpenProject(_)
-            | BrowseAction::RenameItem { .. } => {}
+            BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
+            BrowseAction::OpenProject(path) => self.open_library_project(&path),
+            BrowseAction::RenameItem { .. } => {}
         }
     }
 
@@ -664,6 +687,10 @@ impl<S: EngineSink> AppCore<S> {
             return;
         };
         if self.file_browser.select_path(&path) {
+            // A saved item is offered a name: the rename entry opens on its row.
+            if self.file_browser.begin_rename(&path) {
+                self.browser.focus_request = true;
+            }
             #[cfg(test)]
             self.browser.trace.push(ViewCall::Select(path));
             self.browser.select_after = None;

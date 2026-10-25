@@ -379,6 +379,17 @@ impl FileBrowserView {
         true
     }
 
+    /// Selects the row of the library item `path` and starts its rename entry (a saved item is
+    /// offered a name this way). `false` when the list has no such row or the item is not below
+    /// the library folder.
+    pub fn begin_rename(&mut self, path: &Path) -> bool {
+        if !self.inside_library(path) || !self.select_path(path) {
+            return false;
+        }
+        self.begin_rename_item(path.to_path_buf());
+        true
+    }
+
     /// Fills in probed header data.
     pub fn patch_info(&mut self, info: &[(PathBuf, AudioInfo)]) {
         let wanted: BTreeMap<&Path, usize> = info

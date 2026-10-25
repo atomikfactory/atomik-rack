@@ -632,6 +632,19 @@ impl App {
                         self.handle_requests(event_loop, more);
                     }
                 }
+                ShellRequest::ConfirmDiscardOpen(path) => {
+                    let mut dialog = rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title("Unsaved changes")
+                        .set_description("The rack has unsaved changes. Discard them?")
+                        .set_buttons(rfd::MessageButtons::YesNo);
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if dialog.show() == rfd::MessageDialogResult::Yes {
+                        self.shell.open_file(&path);
+                    }
+                }
                 ShellRequest::Quit => {
                     self.shutdown();
                     event_loop.exit();

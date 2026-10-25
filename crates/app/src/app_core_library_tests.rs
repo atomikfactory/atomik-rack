@@ -1,18 +1,19 @@
-//! Save to Library in the app core: the selected devices become a patch or a container item,
+//! The library in the app core. Save: the selected devices become a patch or a container item,
 //! a selected note clip a clip item, in the library folder, with the audio copied beside the
-//! item by a worker. Saving changes neither the document nor the undo history. Every test
-//! uses its own temporary library folder.
+//! item by a worker; saving changes neither the document nor the undo history. Load: items
+//! come back as one undo step, with their audio. Every test uses its own temporary library
+//! folder.
 
 use super::*;
 use crate::sink::RecordingSink;
 use atomik_audio_file::{AudioData, Bundle, write_wav_f32};
 use atomik_core::PPQ;
-use atomik_library::{FileKind, LibrarySection};
+use atomik_library::{FileKind, LibrarySection, device_uri};
 use atomik_model::{
-    Clip, ClipContent, ClipId, Command, DeviceKey, MeterEvent, Note, SongCommand, TempoEvent,
-    ZoneDoc, empty_doc, load_clip_file, load_device_item, save_project,
+    Clip, ClipContent, ClipId, Command, ContainerCommand, DeviceKey, MeterEvent, Note, RackSlot,
+    SongCommand, TempoEvent, ZoneDoc, empty_doc, load_clip_file, load_device_item, save_project,
 };
-use atomik_ui::{BrowseAction, Place};
+use atomik_ui::{BrowseAction, Place, TransportAction};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -521,4 +522,416 @@ fn save_clip_to_library_with_the_panel_open_shows_the_clips_section() {
         Some(&Place::Library(LibrarySection::Clips))
     );
     let _ = BrowseAction::Refresh;
+}
+
+// ------------------------------------------------------------------ load
+
+/// Saves synth "Lead" and a delay as one patch of `lib` and returns its path.
+fn saved_patch(lib: &Tmp) -> PathBuf {
+    let mut c = core(lib);
+    add(&mut c, SYNTH, "a");
+    add(&mut c, DELAY, "b");
+    rename(&mut c, "a", "Lead");
+    select(&mut c, &["a", "b"]);
+    c.save_selection_to_library();
+    lib.path("Library/Patches/Lead+1.atomikpatch")
+}
+
+fn type_count(c: &AppCore<RecordingSink>, type_id: &str) -> usize {
+    c.doc()
+        .devices
+        .iter()
+        .filter(|d| d.type_id == type_id)
+        .count()
+}
+
+#[test]
+fn load_library_item_patch_undo_removes_all_pasted() {
+    let lib = Tmp::new("load-patch");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    add(&mut c, SYNTH, "x");
+    let before = save_project(c.doc());
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(type_count(&c, SYNTH), 2);
+    assert_eq!(type_count(&c, DELAY), 1);
+    assert!(c.doc().devices.iter().any(|d| d.name == "Lead"));
+    assert!(c.undo(), "one undo step");
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn load_library_item_container_adds_the_container_with_its_inside() {
+    let lib = Tmp::new("load-container");
+    let mut a = core(&lib);
+    add(&mut a, "atomik.container", "box");
+    a.apply_command(Command::Container(ContainerCommand::AddInner {
+        container: key("box"),
+        index: 0,
+        type_id: SYNTH.to_string(),
+        key: None,
+        auto_split: false,
+    }))
+    .unwrap();
+    rename(&mut a, "box", "My Chain");
+    select(&mut a, &["box"]);
+    a.save_selection_to_library();
+    let path = lib.path("Library/Containers/My Chain.atomikcontainer");
+    let mut c = core(&lib);
+    c.load_library_item(&path, LoadTarget::Default);
+    let container = c
+        .doc()
+        .devices
+        .iter()
+        .find(|d| d.type_id == "atomik.container")
+        .expect("the container")
+        .key
+        .clone();
+    assert_eq!(c.doc().scope_devices(Some(&container)).unwrap().len(), 1);
+    assert!(c.undo());
+    assert_eq!(type_count(&c, "atomik.container"), 0);
+}
+
+#[test]
+fn load_library_item_a_container_file_holding_a_patch_is_refused() {
+    let lib = Tmp::new("load-wrong");
+    let patch = saved_patch(&lib);
+    let wrong = lib.path("Library/Containers/Fake.atomikcontainer");
+    std::fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+    std::fs::copy(&patch, &wrong).unwrap();
+    let mut c = core(&lib);
+    let before = save_project(c.doc());
+    c.load_library_item(&wrong, LoadTarget::Default);
+    assert!(c.last_rejection().unwrap().contains("not a container"));
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn load_library_item_a_missing_or_damaged_file_reports_and_changes_nothing() {
+    let lib = Tmp::new("load-bad");
+    let mut c = core(&lib);
+    let before = save_project(c.doc());
+    c.load_library_item(
+        &lib.path("Library/Patches/Gone.atomikpatch"),
+        LoadTarget::Default,
+    );
+    assert!(c.last_rejection().unwrap().contains("Gone"));
+    let bad = lib.path("Library/Patches/Bad.atomikpatch");
+    std::fs::create_dir_all(bad.parent().unwrap()).unwrap();
+    std::fs::write(&bad, "{ not json").unwrap();
+    c.load_library_item(&bad, LoadTarget::Default);
+    assert!(c.last_rejection().unwrap().contains("Bad"));
+    c.load_library_item(&lib.path("notes.txt"), LoadTarget::Default);
+    assert!(c.last_rejection().unwrap().contains("not a library item"));
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn load_library_item_into_a_rack_slot_lands_at_the_slot() {
+    let lib = Tmp::new("load-slot");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    add(&mut c, DELAY, "x");
+    let columns = c.doc().columns;
+    c.load_library_item(
+        &path,
+        LoadTarget::Rack {
+            container: None,
+            slot: RackSlot {
+                column: columns,
+                index: 0,
+            },
+        },
+    );
+    assert_eq!(c.doc().columns, columns + 1, "a new column");
+    let new: Vec<&str> = c
+        .doc()
+        .devices
+        .iter()
+        .filter(|d| d.column == columns && !atomik_model::console::is_console_type(&d.type_id))
+        .map(|d| d.type_id.as_str())
+        .collect();
+    assert_eq!(new, [SYNTH, DELAY]);
+    assert!(c.undo());
+    assert_eq!(c.doc().columns, columns);
+}
+
+#[test]
+fn load_library_item_into_a_container_target_goes_inside_at_the_index() {
+    let lib = Tmp::new("load-inside");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    add(&mut c, "atomik.container", "box");
+    c.load_library_item(
+        &path,
+        LoadTarget::Rack {
+            container: Some(key("box")),
+            slot: RackSlot {
+                column: 0,
+                index: 0,
+            },
+        },
+    );
+    assert_eq!(c.doc().scope_devices(Some(&key("box"))).unwrap().len(), 2);
+    assert!(c.undo());
+    assert_eq!(c.doc().scope_devices(Some(&key("box"))).unwrap().len(), 0);
+}
+
+#[test]
+fn load_library_item_device_uri_adds_the_device_like_the_browser() {
+    let lib = Tmp::new("load-uri");
+    let mut c = core(&lib);
+    c.load_library_item(&device_uri(DELAY), LoadTarget::Default);
+    assert_eq!(type_count(&c, DELAY), 1);
+    c.load_library_item(&device_uri(SYNTH), LoadTarget::Default);
+    assert_eq!(type_count(&c, SYNTH), 1);
+    assert_eq!(
+        c.doc().song.tracks.len(),
+        1,
+        "an instrument gets its track through the creation chain"
+    );
+    c.load_library_item(&device_uri("atomik.nothing"), LoadTarget::Default);
+    assert!(c.last_rejection().unwrap().contains("atomik.nothing"));
+}
+
+#[test]
+fn load_library_item_device_uri_into_a_slot_and_a_container() {
+    let lib = Tmp::new("load-uri-slot");
+    let mut c = core(&lib);
+    add(&mut c, "atomik.container", "box");
+    let columns = c.doc().columns;
+    c.load_library_item(
+        &device_uri(DELAY),
+        LoadTarget::Rack {
+            container: None,
+            slot: RackSlot {
+                column: columns,
+                index: 0,
+            },
+        },
+    );
+    assert!(
+        c.doc()
+            .devices
+            .iter()
+            .any(|d| d.type_id == DELAY && d.column == columns)
+    );
+    c.load_library_item(
+        &device_uri(SYNTH),
+        LoadTarget::Rack {
+            container: Some(key("box")),
+            slot: RackSlot {
+                column: 0,
+                index: 0,
+            },
+        },
+    );
+    assert_eq!(c.doc().scope_devices(Some(&key("box"))).unwrap().len(), 1);
+}
+
+#[test]
+fn browse_load_loads_a_patch_and_open_project_asks_the_shell() {
+    let lib = Tmp::new("browse-load");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    c.browse(BrowseAction::Load(path.clone()));
+    assert_eq!(type_count(&c, DELAY), 1);
+    assert_eq!(c.take_open_request(), None, "a patch is not a project");
+    c.browse(BrowseAction::OpenProject(path.clone()));
+    assert_eq!(c.take_open_request(), Some(path));
+    assert_eq!(c.take_open_request(), None, "once");
+    let project = lib.path("Library/Projects/Song.atomik");
+    c.browse(BrowseAction::Load(project.clone()));
+    assert_eq!(c.take_open_request(), Some(project));
+}
+
+// ------------------------------------------------------------------ load: audio
+
+#[test]
+fn load_library_item_with_a_sample_finds_its_audio() {
+    let lib = Tmp::new("load-audio");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let path = lib.path("Library/Patches/Kit.atomikpatch");
+    let mut c = core(&lib);
+    c.load_library_item(&path, LoadTarget::Default);
+    c.wait_background();
+    assert!(c.doc().assets.contains_key(&hash), "the pool entry");
+    assert!(c.missing_assets().is_empty(), "{:?}", c.missing_assets());
+    assert!(c.song_assets().contains_key(&hash), "loaded for the engine");
+    let root = c.bundle_root().expect("a session bundle").to_path_buf();
+    assert!(Bundle::open(&root).unwrap().exists(&hash), "copied in");
+    assert_eq!(type_count(&c, "atomik.sampler"), 1);
+}
+
+#[test]
+fn load_library_item_with_a_sample_into_a_slot_registers_the_audio_too() {
+    let lib = Tmp::new("load-audio-slot");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let path = lib.path("Library/Patches/Kit.atomikpatch");
+    let mut c = core(&lib);
+    let columns = c.doc().columns;
+    c.load_library_item(
+        &path,
+        LoadTarget::Rack {
+            container: None,
+            slot: RackSlot {
+                column: columns,
+                index: 0,
+            },
+        },
+    );
+    c.wait_background();
+    assert!(c.doc().assets.contains_key(&hash));
+    assert!(c.song_assets().contains_key(&hash));
+}
+
+#[test]
+fn load_library_item_without_the_audio_folder_the_asset_is_missing_but_the_device_loads() {
+    let lib = Tmp::new("load-audio-gone");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    std::fs::remove_dir_all(lib.path("Library/Patches/Kit")).unwrap();
+    let mut c = core(&lib);
+    c.load_library_item(
+        &lib.path("Library/Patches/Kit.atomikpatch"),
+        LoadTarget::Default,
+    );
+    c.wait_background();
+    assert_eq!(type_count(&c, "atomik.sampler"), 1);
+    let missing: Vec<&str> = c.missing_assets().iter().map(|m| m.hash.as_str()).collect();
+    assert_eq!(missing, [hash.as_str()], "reported, so it can be relinked");
+    assert!(c.last_rejection().unwrap().contains("audio"));
+}
+
+#[test]
+fn load_library_item_twice_loads_the_audio_once() {
+    let lib = Tmp::new("load-audio-twice");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let path = lib.path("Library/Patches/Kit.atomikpatch");
+    let mut c = core(&lib);
+    c.load_library_item(&path, LoadTarget::Default);
+    c.wait_background();
+    c.load_library_item(&path, LoadTarget::Default);
+    c.wait_background();
+    assert_eq!(type_count(&c, "atomik.sampler"), 2);
+    assert!(c.missing_assets().is_empty());
+    assert!(c.song_assets().contains_key(&hash));
+}
+
+// ------------------------------------------------------------------ load: clips
+
+/// A core with synth "t" and its track, and a clip item in the library.
+fn track_core(lib: &Tmp) -> (AppCore<RecordingSink>, PathBuf) {
+    let mut a = with_clip(lib);
+    a.save_clip_to_library();
+    let path = lib.path("Library/Clips/Bass bar 5.atomikclip");
+    let mut c = core(lib);
+    add(&mut c, SYNTH, "t");
+    c.apply_command(Command::Song(SongCommand::AddTrack { device: key("t") }))
+        .unwrap();
+    c.after_view_change();
+    (c, path)
+}
+
+fn clips_of(c: &AppCore<RecordingSink>) -> Vec<(i64, i64)> {
+    c.doc().song.tracks[0].lanes[0]
+        .clips
+        .iter()
+        .map(|x| (x.start, x.length))
+        .collect()
+}
+
+#[test]
+fn load_library_item_clip_lands_on_the_selected_track_at_the_snapped_playhead() {
+    let lib = Tmp::new("load-clip");
+    let (mut c, path) = track_core(&lib);
+    c.arrangement_mut().set_selected_track(Some(key("t")));
+    c.transport_action(TransportAction::Locate(BAR + PPQ / 8));
+    let at = c.snapped_playhead();
+    assert!(at > 0);
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(clips_of(&c), [(at, BAR)]);
+    assert!(c.undo(), "one undo step");
+    assert!(clips_of(&c).is_empty());
+}
+
+#[test]
+fn load_library_item_clip_without_a_note_track_selected_says_so() {
+    let lib = Tmp::new("load-clip-none");
+    let (mut c, path) = track_core(&lib);
+    let before = save_project(c.doc());
+    c.load_library_item(&path, LoadTarget::Default);
+    assert_eq!(
+        c.last_rejection(),
+        Some("Select an instrument track to load a clip")
+    );
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn load_library_item_clip_on_a_track_target_goes_there() {
+    let lib = Tmp::new("load-clip-track");
+    let (mut c, path) = track_core(&lib);
+    c.load_library_item(
+        &path,
+        LoadTarget::Track {
+            device: key("t"),
+            lane: 0,
+            tick: 2 * BAR,
+        },
+    );
+    assert_eq!(clips_of(&c), [(2 * BAR, BAR)]);
+    let notes = &c.doc().song.tracks[0].lanes[0].clips[0].content;
+    assert_eq!(*notes, note_clip(0).content);
+}
+
+#[test]
+fn load_library_item_clip_on_a_missing_track_reports_and_changes_nothing() {
+    let lib = Tmp::new("load-clip-bad");
+    let (mut c, path) = track_core(&lib);
+    let before = save_project(c.doc());
+    c.load_library_item(
+        &path,
+        LoadTarget::Track {
+            device: key("nobody"),
+            lane: 0,
+            tick: 0,
+        },
+    );
+    assert!(c.last_rejection().is_some());
+    assert_eq!(save_project(c.doc()), before);
+}
+
+#[test]
+fn save_selection_to_library_with_the_panel_open_offers_the_new_name() {
+    let lib = Tmp::new("offers-name");
+    let mut c = core(&lib);
+    c.set_file_browser_visible(true);
+    wait(&mut c);
+    add(&mut c, SYNTH, "a");
+    rename(&mut c, "a", "Pad");
+    select(&mut c, &["a"]);
+    c.save_selection_to_library();
+    wait(&mut c);
+    assert!(c.file_browser().is_text_owner(), "the rename entry is open");
+    assert!(c.take_browser_focus_request(), "the panel takes the keys");
+    assert!(!c.take_browser_focus_request(), "once");
+}
+
+#[test]
+fn save_selection_to_library_with_the_panel_closed_offers_nothing() {
+    let lib = Tmp::new("offers-none");
+    let mut c = core(&lib);
+    add(&mut c, SYNTH, "a");
+    select(&mut c, &["a"]);
+    c.save_selection_to_library();
+    assert!(!c.file_browser().is_text_owner());
+    assert!(!c.take_browser_focus_request());
 }

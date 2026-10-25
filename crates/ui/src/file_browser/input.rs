@@ -668,7 +668,7 @@ impl FileBrowserView {
     }
 
     /// Starts the rename entry of a library item with its file stem selected.
-    fn begin_rename_item(&mut self, path: PathBuf) {
+    pub(super) fn begin_rename_item(&mut self, path: PathBuf) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())

@@ -1760,6 +1760,28 @@ fn set_library_folder_cancels_a_rename_that_is_no_longer_allowed() {
     assert!(!v.is_text_owner());
 }
 
+#[test]
+fn begin_rename_selects_the_row_and_starts_the_entry_inside_the_library_only() {
+    let mut v = library_view(LibrarySection::Patches, patch_rows());
+    assert!(v.begin_rename(&p("Lead.atomikpatch")));
+    assert!(v.is_text_owner());
+    typed(&mut v, "Pad");
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::RenameItem {
+            path: p("Lead.atomikpatch"),
+            to: "Pad".into()
+        }]
+    );
+    assert!(!v.begin_rename(&p("Nothing.atomikpatch")), "no such row");
+    v.set_library_folder(Some(PathBuf::from("/elsewhere")));
+    assert!(
+        !v.begin_rename(&p("Lead.atomikpatch")),
+        "outside the library"
+    );
+    assert!(!v.is_text_owner());
+}
+
 // ----- goldens -------------------------------------------------------------------------------------
 
 fn check_golden(name: &str, actual: &str) {

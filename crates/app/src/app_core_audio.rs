@@ -62,13 +62,15 @@
 
 use super::rec::AudioRecording;
 use super::{AppCore, AppError};
-use crate::audio_import::{Loaded, Msg, display_name, spawn_import, spawn_load, ticks_for_frames};
+use crate::audio_import::{
+    Loaded, Msg, display_name, spawn_adopt, spawn_import, spawn_load, ticks_for_frames,
+};
 use crate::sink::EngineSink;
 use crate::stream_source::STREAM_THRESHOLD_BYTES;
 use atomik_audio_file::{AudioFileError, Bundle, PeakPyramid, save_text_atomic};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
-use atomik_model::{Command, DeviceKey, SongCommand, save_project};
+use atomik_model::{AssetMeta, Command, DeviceKey, SongCommand, save_project};
 use atomik_render::bundle::{
     MissingAsset, existing_bundle_root, missing_assets, save_as_layout, sibling_bundle_root,
 };
@@ -463,10 +465,12 @@ impl<S: EngineSink> AppCore<S> {
                     }
                     Err(e) => {
                         let name = self.asset_name(&hash);
-                        self.audio.missing.push(MissingAsset {
-                            hash,
-                            name: name.clone(),
-                        });
+                        if !self.audio.missing.iter().any(|m| m.hash == hash) {
+                            self.audio.missing.push(MissingAsset {
+                                hash,
+                                name: name.clone(),
+                            });
+                        }
                         self.reject(format!("audio {name}: {e}"));
                     }
                 },
@@ -891,6 +895,38 @@ impl<S: EngineSink> AppCore<S> {
             threshold,
             hashes,
         ) {
+            Ok(()) => self.audio.pending += 1,
+            Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
+        }
+    }
+
+    /// After a library item was pasted: the audio of its pool (`assets`, already registered)
+    /// that the session has not loaded comes from the item's bundle folder `from`. A worker
+    /// copies what the session bundle lacks and loads it; what the item does not hold is
+    /// reported missing, like a project's missing audio.
+    pub(super) fn adopt_assets(&mut self, from: &Path, assets: &BTreeMap<String, AssetMeta>) {
+        let hashes: Vec<String> = assets
+            .keys()
+            .filter(|h| !self.audio.assets.contains_key(*h))
+            .cloned()
+            .collect();
+        if hashes.is_empty() {
+            return;
+        }
+        let bundle = match self.import_bundle() {
+            Ok(b) => b,
+            Err(e) => return self.reject(e),
+        };
+        let threshold = self.stream_threshold();
+        let started = spawn_adopt(
+            self.audio.tx.clone(),
+            self.audio.generation,
+            from.to_path_buf(),
+            bundle,
+            threshold,
+            hashes,
+        );
+        match started {
             Ok(()) => self.audio.pending += 1,
             Err(e) => self.reject(format!("audio: cannot start the loader: {e}")),
         }
