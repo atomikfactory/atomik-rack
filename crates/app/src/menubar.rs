@@ -363,6 +363,7 @@ mod tests {
             midi_track: false,
             midi_song: false,
             org: atomik_ui::arrangement::OrgMenu::default(),
+            lane: atomik_ui::arrangement::LaneMenu::default(),
             audio: atomik_ui::arrangement::AudioMenu::default(),
             vca: crate::commands::VcaMenu::default(),
             strip: crate::commands::StripMenu::default(),

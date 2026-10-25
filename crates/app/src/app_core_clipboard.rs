@@ -200,10 +200,12 @@ impl<S: EngineSink> AppCore<S> {
             (Pane::Arrangement, ClipboardData::Clips(s)) => {
                 let span = s.span;
                 let track = self.arrangement.selected_track().cloned();
+                // Note clips land on the selected lane of the selected track.
+                let lane = self.arrangement.selected_lane().map(|(_, l)| l);
                 let at_tick = self.position;
                 self.apply_workflow(WorkflowCommand::PasteClips {
                     track,
-                    lane: None,
+                    lane,
                     at_tick,
                     clips: s,
                 })?;

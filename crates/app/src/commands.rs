@@ -7,7 +7,7 @@
 
 use crate::record::InputQuantize;
 use atomik_model::{FadeCurve, WarpMode};
-use atomik_ui::arrangement::{AudioMenu, HeightPreset, OrgMenu};
+use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::Keymap;
 use atomik_ui::{CableVisibility, Flip, TransportAction};
 
@@ -222,6 +222,14 @@ pub enum AppCommand {
     MoveTrackDown,
     /// Track ▸ Track Comment…: type the selected track's comment.
     TrackComment,
+    /// Track > Add Note Lane: one more note lane on the selected track.
+    AddNoteLane,
+    /// Track > Rename Note Lane...: type the name of the selected note lane.
+    RenameNoteLane,
+    /// Track > Delete Note Lane: the selected note lane (a track keeps one).
+    DeleteNoteLane,
+    /// Track > Mute Lane: mute or unmute the selected note lane.
+    ToggleLaneMute,
     /// Track ▸ Fold Automation Lanes (`true`) and Unfold Automation Lanes (`false`), of the
     /// selected tracks or of every track.
     FoldLanes(bool),
@@ -415,6 +423,10 @@ impl AppCommand {
             AppCommand::MoveTrackUp => ("sequencer.move_track_up", None),
             AppCommand::MoveTrackDown => ("sequencer.move_track_down", None),
             AppCommand::TrackComment => ("sequencer.track_comment", None),
+            AppCommand::AddNoteLane => ("sequencer.add_note_lane", None),
+            AppCommand::RenameNoteLane => ("sequencer.rename_note_lane", None),
+            AppCommand::DeleteNoteLane => ("sequencer.delete_note_lane", None),
+            AppCommand::ToggleLaneMute => ("sequencer.toggle_lane_mute", None),
             AppCommand::FreezeTrack => ("sequencer.freeze_track", None),
             AppCommand::FreezeTrackToDevice => ("sequencer.freeze_track_to_device", None),
             AppCommand::FreezeTail => ("sequencer.freeze_tail", None),
@@ -603,6 +615,10 @@ impl AppCommand {
             ("sequencer.move_track_up", None) => AppCommand::MoveTrackUp,
             ("sequencer.move_track_down", None) => AppCommand::MoveTrackDown,
             ("sequencer.track_comment", None) => AppCommand::TrackComment,
+            ("sequencer.add_note_lane", None) => AppCommand::AddNoteLane,
+            ("sequencer.rename_note_lane", None) => AppCommand::RenameNoteLane,
+            ("sequencer.delete_note_lane", None) => AppCommand::DeleteNoteLane,
+            ("sequencer.toggle_lane_mute", None) => AppCommand::ToggleLaneMute,
             ("sequencer.freeze_track", None) => AppCommand::FreezeTrack,
             ("sequencer.freeze_track_to_device", None) => AppCommand::FreezeTrackToDevice,
             ("sequencer.freeze_tail", None) => AppCommand::FreezeTail,
@@ -818,6 +834,8 @@ pub struct MenuState {
     pub midi_song: bool,
     /// What the selected tracks and folder allow (the Track menu).
     pub org: OrgMenu,
+    /// What the selected note lane allows (the lane items of the Track menu).
+    pub lane: LaneMenu,
     /// What the selected audio clips allow (the audio items of the Edit and Audio menus).
     pub audio: AudioMenu,
     /// What the selected strips allow for VCA groups (the Mixer menu).
@@ -1321,6 +1339,24 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.org.track_selected,
                 ),
                 MenuEntry::Separator,
+                enabled("Add Note Lane", AppCommand::AddNoteLane, state.lane.can_add),
+                enabled(
+                    "Rename Note Lane\u{2026}",
+                    AppCommand::RenameNoteLane,
+                    state.lane.can_rename,
+                ),
+                enabled(
+                    "Delete Note Lane",
+                    AppCommand::DeleteNoteLane,
+                    state.lane.can_delete,
+                ),
+                make(
+                    "Mute Lane",
+                    AppCommand::ToggleLaneMute,
+                    Some(state.lane.muted),
+                    state.lane.can_rename,
+                ),
+                MenuEntry::Separator,
                 enabled(
                     "Freeze Track",
                     AppCommand::FreezeTrack,
@@ -1595,6 +1631,7 @@ mod tests {
             midi_track: false,
             midi_song: false,
             org: OrgMenu::default(),
+            lane: LaneMenu::default(),
             audio: AudioMenu::default(),
             vca: VcaMenu::default(),
             strip: StripMenu::default(),
@@ -1697,6 +1734,10 @@ mod tests {
             AppCommand::MoveTrackUp,
             AppCommand::MoveTrackDown,
             AppCommand::TrackComment,
+            AppCommand::AddNoteLane,
+            AppCommand::RenameNoteLane,
+            AppCommand::DeleteNoteLane,
+            AppCommand::ToggleLaneMute,
             AppCommand::FreezeTrack,
             AppCommand::FreezeTrackToDevice,
             AppCommand::FreezeTail,
@@ -2178,6 +2219,10 @@ mod tests {
                 "Move Track Up",
                 "Move Track Down",
                 "Track Comment\u{2026}",
+                "Add Note Lane",
+                "Rename Note Lane\u{2026}",
+                "Delete Note Lane",
+                "Mute Lane",
                 "Freeze Track",
                 "Freeze Track up to Selected Device",
                 "Freeze with Tail",
@@ -2275,6 +2320,7 @@ mod tests {
                 midi_track: false,
                 midi_song: true,
                 org: OrgMenu::default(),
+                lane: LaneMenu::default(),
                 audio: AudioMenu::default(),
                 vca: VcaMenu::default(),
                 strip: StripMenu::default(),

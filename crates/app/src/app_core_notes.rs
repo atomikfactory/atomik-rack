@@ -393,12 +393,9 @@ impl<S: EngineSink> AppCore<S> {
             .doc()
             .device(&device)
             .map_or_else(|| device.0.clone(), |d| d.name.clone());
-        self.apply_command(Command::Song(SongCommand::AddClip {
-            device,
-            lane: 0,
-            clip,
-        }))
-        .map_err(|e| e.to_string())?;
+        let lane = self.arrangement.record_lane(&device);
+        self.apply_command(Command::Song(SongCommand::AddClip { device, lane, clip }))
+            .map_err(|e| e.to_string())?;
         let id = self.document.last_clip_id();
         self.after_view_change();
         self.arrangement

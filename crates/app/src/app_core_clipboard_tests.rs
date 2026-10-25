@@ -358,6 +358,30 @@ fn paste_lands_on_the_selected_track() {
 }
 
 #[test]
+fn paste_lands_on_the_selected_lane_of_the_selected_track() {
+    let mut c = with_clip();
+    add(&mut c, SYNTH, "b");
+    song(&mut c, SongCommand::AddTrack { device: key("b") });
+    song(
+        &mut c,
+        SongCommand::AddNoteLane {
+            device: key("b"),
+            name: None,
+        },
+    );
+    c.arrangement_mut().set_selected_clips(&[ClipId(1)]);
+    command(&mut c, Pane::Arrangement, "edit.copy");
+    c.arrangement_mut().set_selected_track(Some(key("b")));
+    c.arrangement_mut().set_selected_lane(&key("b"), 1);
+    c.transport_action(TransportAction::Locate(BAR));
+    command(&mut c, Pane::Arrangement, "edit.paste");
+    let b = c.doc().song.track(&key("b")).unwrap();
+    assert!(b.lanes[0].clips.is_empty());
+    assert_eq!(b.lanes[1].clips.len(), 1);
+    assert_eq!(b.lanes[1].clips[0].start, BAR);
+}
+
+#[test]
 fn cut_clips_removes_them_in_one_step_and_duplicate_selects_the_copies() {
     let mut c = with_clip();
     c.apply_command(Command::Song(SongCommand::AddClip {

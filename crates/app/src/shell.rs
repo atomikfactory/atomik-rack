@@ -1567,6 +1567,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
             org: self.core.arrangement().org_menu(),
+            lane: self.core.arrangement().lane_menu(),
             audio: self.core.arrangement().audio_menu(),
             vca: self.core.vca_menu(self.live_pane(self.focus)),
             strip: self.core.strip_menu(self.live_pane(self.focus)),
@@ -2910,6 +2911,7 @@ impl<B: AudioBackend> Shell<B> {
             columns: doc.columns,
             track_can_chase: core.arrangement().chase_menu().0,
             track_chase: core.arrangement().chase_menu().1,
+            lane: core.arrangement().lane_menu(),
             org: core.arrangement().org_menu(),
             audio: core.arrangement().audio_menu(),
             freeze: core.freeze_menu(),
@@ -3323,6 +3325,10 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::MoveTrackUp
             | AppCommand::MoveTrackDown
             | AppCommand::TrackComment
+            | AppCommand::AddNoteLane
+            | AppCommand::RenameNoteLane
+            | AppCommand::DeleteNoteLane
+            | AppCommand::ToggleLaneMute
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_) => {
                 self.track_command(command);

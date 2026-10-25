@@ -253,11 +253,9 @@ impl<S: EngineSink> AppCore<S> {
         };
         if let Some(device) = target {
             let clip = midi.merged().into_clip(playhead, &self.doc().song);
-            let add = SongCommand::AddClip {
-                device,
-                lane: 0,
-                clip,
-            };
+            // The note lane picked in the arrangement (the first one without a pick).
+            let lane = self.arrangement.record_lane(&device);
+            let add = SongCommand::AddClip { device, lane, clip };
             self.apply_command(Command::Song(add))
                 .map_err(|e| e.to_string())?;
             let id = self.document.last_clip_id();
