@@ -87,6 +87,8 @@ pub(crate) struct BrowserState {
     jobs: usize,
     /// A saved library item to select once the list that shows it arrives.
     select_after: Option<PathBuf>,
+    /// The row of `select_after` is a new item: its rename entry opens when it is selected.
+    offer_name: bool,
     /// A project the user asked to open from the library: the shell asks about unsaved
     /// changes, then opens it.
     open_request: Option<PathBuf>,
@@ -130,6 +132,7 @@ impl Default for BrowserState {
             workers: None,
             jobs: 0,
             select_after: None,
+            offer_name: false,
             open_request: None,
             focus_request: false,
             collection_devices: Vec::new(),
@@ -265,7 +268,31 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.show(Place::Library(section));
         self.browser.select_after = Some(path);
+        self.browser.offer_name = true;
         true
+    }
+
+    /// Lists the shown place again and selects the row of the renamed item `path` once it is
+    /// there (without opening another rename entry).
+    pub(super) fn show_renamed(&mut self, path: PathBuf) {
+        if let Some(place) = self.file_browser.location().cloned() {
+            self.show(place);
+            self.browser.select_after = Some(path);
+            self.browser.offer_name = false;
+        }
+    }
+
+    /// The favourite flag and tags of `path` in the library database (tests).
+    #[cfg(test)]
+    pub(crate) fn library_mark(&self, path: &std::path::Path) -> atomik_library::Mark {
+        self.browser.db.mark(path)
+    }
+
+    /// Moves the favourite flag and tags of a renamed item to its new path and tells the panel.
+    pub(super) fn library_moved(&mut self, from: &std::path::Path, to: &std::path::Path) {
+        if self.browser.db.move_path(from, to) {
+            self.library_changed(&[from.to_path_buf(), to.to_path_buf()]);
+        }
     }
 
     /// A project (or an item to open as one) was picked in the library: the shell takes it
@@ -419,7 +446,7 @@ impl<S: EngineSink> AppCore<S> {
             // Loading, opening and renaming library items is the library work of the app.
             BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
             BrowseAction::OpenProject(path) => self.open_library_project(&path),
-            BrowseAction::RenameItem { .. } => {}
+            BrowseAction::RenameItem { path, to } => self.rename_library_item(&path, &to),
         }
     }
 
@@ -688,7 +715,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         if self.file_browser.select_path(&path) {
             // A saved item is offered a name: the rename entry opens on its row.
-            if self.file_browser.begin_rename(&path) {
+            if self.browser.offer_name && self.file_browser.begin_rename(&path) {
                 self.browser.focus_request = true;
             }
             #[cfg(test)]

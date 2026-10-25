@@ -34,6 +34,17 @@
 //!   playhead, or the lane of a track target.
 //! * A **project** is not loaded here: the shell asks about unsaved changes and opens it
 //!   ([`AppCore::take_open_request`]).
+//!
+//! # Rename
+//!
+//! `BrowseAction::RenameItem` renames an item file inside the library folder (never the
+//! folder itself, never anything outside it, `..` included), keeping its extension. The new
+//! name must be a valid file name stem (the characters [`stem_of`] replaces are refused, not
+//! replaced) and free: a file, or a folder such as an item's audio bundle, of that name
+//! blocks it, except for the item itself (a change of case). The sibling bundle folder
+//! `<stem>/` is renamed with the file; if that fails the file goes back. The favourite flag and
+//! tags move to the new path in `library.json`, and the panel lists the place again and selects
+//! the row. A refusal goes to the status line.
 
 use super::*;
 use crate::browser_workers::{CopyAssets, CopyReport};
@@ -275,6 +286,77 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
+    /// Renames the library item `path` to the stem `to` (see the module docs). A refusal or a
+    /// failure goes to the status line.
+    pub(super) fn rename_library_item(&mut self, path: &Path, to: &str) {
+        match self.rename_item(path, to) {
+            Ok(new) => {
+                self.library_moved(path, &new);
+                self.show_renamed(new.clone());
+                self.report(format!(
+                    "Renamed '{}' to '{}'",
+                    stem_name(path),
+                    stem_name(&new)
+                ));
+            }
+            Err(message) => self.report(message),
+        }
+    }
+
+    fn rename_item(&self, path: &Path, to: &str) -> Result<PathBuf, String> {
+        let root = self.library_folder()?;
+        let inside = path != root
+            && path.starts_with(&root)
+            && !path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
+        if !inside {
+            return Err("Only items inside the library folder can be renamed".into());
+        }
+        let name = file_name(path);
+        if !classify(path, false).is_some_and(|k| k.is_item() && k != FileKind::Device) {
+            return Err(format!("'{name}' is not a library item"));
+        }
+        if !path.is_file() {
+            return Err(format!("'{name}' is gone"));
+        }
+        let to = to.trim();
+        if to.is_empty() {
+            return Err("The name is empty".into());
+        }
+        if stem_of(to, "") != to {
+            return Err(format!(
+                "'{to}' contains characters a file name cannot hold"
+            ));
+        }
+        let dir = path.parent().unwrap_or(&root);
+        let mut new_name = to.to_string();
+        if let Some(ext) = path.extension() {
+            new_name.push('.');
+            new_name.push_str(&ext.to_string_lossy());
+        }
+        let new = dir.join(new_name);
+        // The item itself (and its audio folder) may differ in case only; anything else of
+        // that name, a file or a folder, is taken.
+        let bundle = path.with_extension("");
+        let new_bundle = new.with_extension("");
+        let file_taken = new.exists() && !same_name(&new, path);
+        let folder_taken = new_bundle.exists() && !same_name(&new_bundle, &bundle);
+        if file_taken || folder_taken {
+            return Err(format!("'{to}' already exists in this folder"));
+        }
+        std::fs::rename(path, &new).map_err(|e| format!("'{name}' cannot be renamed: {e}"))?;
+        if bundle.is_dir()
+            && let Err(e) = std::fs::rename(&bundle, &new_bundle)
+        {
+            let _ = std::fs::rename(&new, path);
+            return Err(format!(
+                "The audio folder of '{name}' cannot be renamed: {e}"
+            ));
+        }
+        Ok(new)
+    }
+
     fn library_folder(&self) -> Result<PathBuf, String> {
         self.library_root().ok_or_else(|| {
             "There is no library folder: choose one in Settings > Workflow".to_string()
@@ -401,6 +483,23 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.library_saved(name, section, path, warning);
     }
+}
+
+/// Whether two paths name the same file in the same folder, ignoring case (the way a
+/// case-insensitive file system sees them; on others only a case-only rename passes here).
+fn same_name(a: &Path, b: &Path) -> bool {
+    a.parent() == b.parent()
+        && a.file_name().zip(b.file_name()).is_some_and(|(x, y)| {
+            x.to_string_lossy().to_lowercase() == y.to_string_lossy().to_lowercase()
+        })
+}
+
+/// The stem of `path` for a message.
+fn stem_name(path: &Path) -> String {
+    path.file_stem().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }
 
 /// The file name of `path` for a message.

@@ -935,3 +935,167 @@ fn save_selection_to_library_with_the_panel_closed_offers_nothing() {
     assert!(!c.file_browser().is_text_owner());
     assert!(!c.take_browser_focus_request());
 }
+
+// ------------------------------------------------------------------ rename
+
+fn rename_item(c: &mut AppCore<RecordingSink>, path: &Path, to: &str) {
+    c.browse(BrowseAction::RenameItem {
+        path: path.to_path_buf(),
+        to: to.to_string(),
+    });
+}
+
+#[test]
+fn rename_item_renames_the_file_and_its_audio_bundle_and_the_item_still_loads() {
+    let lib = Tmp::new("rename-audio");
+    let (mut a, hash, _) = sampler_with_audio(&lib);
+    a.save_selection_to_library();
+    wait(&mut a);
+    let old = lib.path("Library/Patches/Kit.atomikpatch");
+    rename_item(&mut a, &old, "Drums");
+    let dir = lib.path("Library/Patches");
+    assert_eq!(files_in(&dir), ["Drums", "Drums.atomikpatch"]);
+    assert!(dir.join(format!("Drums/Audio/{hash}.wav")).is_file());
+    assert_eq!(
+        a.last_rejection(),
+        Some("Renamed 'Kit' to 'Drums'"),
+        "the status line says so"
+    );
+    let mut c = core(&lib);
+    c.load_library_item(&dir.join("Drums.atomikpatch"), LoadTarget::Default);
+    c.wait_background();
+    assert!(c.missing_assets().is_empty());
+    assert!(c.song_assets().contains_key(&hash));
+}
+
+#[test]
+fn rename_item_without_audio_renames_just_the_file() {
+    let lib = Tmp::new("rename-plain");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    rename_item(&mut c, &path, "Pair");
+    assert_eq!(files_in(&lib.path("Library/Patches")), ["Pair.atomikpatch"]);
+}
+
+#[test]
+fn rename_item_keeps_the_extension_and_allows_a_change_of_case() {
+    let lib = Tmp::new("rename-case");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    rename_item(&mut c, &path, "  lead pair  ");
+    assert_eq!(
+        files_in(&lib.path("Library/Patches")),
+        ["lead pair.atomikpatch"]
+    );
+    let now = lib.path("Library/Patches/lead pair.atomikpatch");
+    rename_item(&mut c, &now, "Lead Pair");
+    assert_eq!(
+        files_in(&lib.path("Library/Patches")),
+        ["Lead Pair.atomikpatch"]
+    );
+}
+
+#[test]
+fn rename_item_refuses_an_empty_an_invalid_or_a_taken_name() {
+    let lib = Tmp::new("rename-refuse");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    let other = lib.path("Library/Patches/Other.atomikpatch");
+    std::fs::copy(&path, &other).unwrap();
+    for (to, says) in [
+        ("", "empty"),
+        ("   ", "empty"),
+        ("a/b", "cannot"),
+        ("what?", "cannot"),
+        (".hidden", "cannot"),
+        ("Other", "already"),
+    ] {
+        rename_item(&mut c, &path, to);
+        let message = c.last_rejection().unwrap_or_default().to_lowercase();
+        assert!(message.contains(says), "{to:?}: {message}");
+        assert!(path.is_file(), "{to:?}: nothing was renamed");
+    }
+    // A folder of that name (an item's audio) is taken too.
+    std::fs::create_dir_all(lib.path("Library/Patches/Taken")).unwrap();
+    rename_item(&mut c, &path, "Taken");
+    assert!(c.last_rejection().unwrap().contains("already"));
+    assert!(path.is_file());
+}
+
+#[test]
+fn rename_item_refuses_anything_not_strictly_inside_the_library() {
+    let lib = Tmp::new("rename-outside");
+    let _ = saved_patch(&lib);
+    let mut c = core(&lib);
+    let outside = lib.path("Elsewhere/Lead.atomikpatch");
+    std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    std::fs::write(&outside, "x").unwrap();
+    rename_item(&mut c, &outside, "Pad");
+    assert!(c.last_rejection().unwrap().contains("library"));
+    assert!(outside.is_file());
+    // A path that climbs out of the library with `..` is outside too.
+    let sneaky = lib.path("Library/Patches/../../Elsewhere/Lead.atomikpatch");
+    rename_item(&mut c, &sneaky, "Pad");
+    assert!(outside.is_file());
+    assert!(!lib.path("Elsewhere/Pad.atomikpatch").exists());
+    // The library folder itself, and a missing library folder.
+    rename_item(&mut c, &lib.path("Library"), "Pad");
+    assert!(lib.path("Library").is_dir());
+    c.set_library_root(None);
+    let inside = lib.path("Library/Patches/Lead+1.atomikpatch");
+    rename_item(&mut c, &inside, "Pad");
+    assert!(inside.is_file());
+}
+
+#[test]
+fn rename_item_refuses_what_is_not_an_item_or_is_gone() {
+    let lib = Tmp::new("rename-kinds");
+    let _ = saved_patch(&lib);
+    let mut c = core(&lib);
+    let audio = lib.path("Library/Patches/kick.wav");
+    std::fs::write(&audio, "x").unwrap();
+    rename_item(&mut c, &audio, "snare");
+    assert!(audio.is_file());
+    assert!(c.last_rejection().unwrap().contains("not a library item"));
+    rename_item(&mut c, &lib.path("Library/Patches/Gone.atomikpatch"), "Pad");
+    assert!(c.last_rejection().unwrap().contains("Gone"));
+}
+
+#[test]
+fn rename_item_moves_the_favourite_and_the_tags_to_the_new_path() {
+    let lib = Tmp::new("rename-marks");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    c.browse(BrowseAction::ToggleFavorite(vec![path.clone()]));
+    c.browse(BrowseAction::AddTag {
+        paths: vec![path.clone()],
+        tag: "bass".into(),
+    });
+    rename_item(&mut c, &path, "Pair");
+    let new = lib.path("Library/Patches/Pair.atomikpatch");
+    let moved = c.library_mark(&new);
+    assert!(moved.favorite);
+    assert_eq!(moved.tags.len(), 1);
+    assert_eq!(c.library_mark(&path), atomik_library::Mark::default());
+}
+
+#[test]
+fn rename_item_with_the_panel_open_lists_and_selects_the_renamed_row() {
+    let lib = Tmp::new("rename-shows");
+    let path = saved_patch(&lib);
+    let mut c = core(&lib);
+    c.set_file_browser_visible(true);
+    wait(&mut c);
+    c.browse(BrowseAction::Show(Place::Library(LibrarySection::Patches)));
+    wait(&mut c);
+    rename_item(&mut c, &path, "Pair");
+    wait(&mut c);
+    let new = lib.path("Library/Patches/Pair.atomikpatch");
+    let selected = c.browser.trace.iter().rev().find_map(|t| match t {
+        super::browser::ViewCall::Select(p) => Some(p.clone()),
+        _ => None,
+    });
+    assert_eq!(selected, Some(new));
+    assert!(!c.file_browser().is_text_owner(), "no second rename entry");
+    assert!(!c.take_browser_focus_request());
+}

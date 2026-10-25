@@ -131,6 +131,24 @@ impl LibraryDb {
         true
     }
 
+    /// Moves the favourite flag and tags of `from` to `to` (a renamed file), merging with what
+    /// `to` already has. Returns whether `from` had any mark.
+    pub fn move_path(&mut self, from: &Path, to: &Path) -> bool {
+        let (from, to) = (PathKey::new(from), PathKey::new(to));
+        if from == to {
+            return false;
+        }
+        let Some(mark) = self.entries.remove(&from) else {
+            return false;
+        };
+        let target = self.entries.entry(to).or_default();
+        target.favorite |= mark.favorite;
+        for tag in &mark.tags {
+            target.insert_tag(tag);
+        }
+        true
+    }
+
     /// Every tag in use with the number of files carrying it, ordered by tag.
     pub fn all_tags(&self) -> Vec<(Tag, usize)> {
         let mut counts: BTreeMap<Tag, usize> = BTreeMap::new();
@@ -646,6 +664,30 @@ mod tests {
             let err = LibraryDb::from_json(text).unwrap_err();
             assert!(matches!(err, LibraryError::Corrupt(_)), "{text}: {err:?}");
         }
+    }
+
+    #[test]
+    fn move_path_carries_favourite_and_tags_to_the_new_path() {
+        let mut db = LibraryDb::new();
+        db.add_tag(&p("/lib/Lead.atomikpatch"), &t("bass"));
+        db.set_favorite(&p("/lib/Lead.atomikpatch"), true);
+        assert!(db.move_path(&p("/lib/Lead.atomikpatch"), &p("/lib/Pad.atomikpatch")));
+        assert_eq!(db.mark(&p("/lib/Lead.atomikpatch")), Mark::default());
+        assert!(db.is_favorite(&p("/lib/Pad.atomikpatch")));
+        assert_eq!(db.tags_of_names(&p("/lib/Pad.atomikpatch")), ["bass"]);
+        assert_eq!(db.tagged(&t("bass")).len(), 1);
+    }
+
+    #[test]
+    fn move_path_merges_with_a_mark_already_on_the_target_and_ignores_unmarked_files() {
+        let mut db = LibraryDb::new();
+        db.add_tag(&p("/a"), &t("x"));
+        db.add_tag(&p("/b"), &t("y"));
+        db.set_favorite(&p("/b"), true);
+        assert!(db.move_path(&p("/a"), &p("/b")));
+        assert_eq!(db.tags_of_names(&p("/b")), ["x", "y"]);
+        assert!(db.is_favorite(&p("/b")));
+        assert!(!db.move_path(&p("/none"), &p("/c")), "unmarked: no change");
     }
 
     #[test]
