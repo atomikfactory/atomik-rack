@@ -1,10 +1,13 @@
 name: Release
 
-# Builds release archives for Windows (zip), macOS (universal .app in a zip) and Linux (tar.gz),
-# smoke-tests each packaged archive, and on a tag vX.Y.Z (which must equal the Cargo.toml version)
-# creates a DRAFT GitHub release with the archives and checksums attached; a maintainer publishes
-# it by hand after checking it. A manual run builds and smoke-tests but never creates a release. The optional ASIO
-# backend (which needs a Steinberg SDK that is not part of this repository) is never built here.
+# On a tag vX.Y.Z (which must equal the Cargo.toml version) builds the release artifacts through the
+# reusable build workflow (build.yml): Windows zip and installer, macOS zip and dmg, Linux tar.gz
+# and deb, each with a .sha256, plus SHA256SUMS (and SHA256SUMS.asc when a GPG key is configured).
+# Every artifact is smoke-tested, and signed where the signing secrets exist (see
+# docs/RELEASING.md); then a DRAFT GitHub release is created with all of them, and a maintainer
+# publishes it by hand after checking it. A manual run builds and smoke-tests but never creates a
+# release. The optional ASIO backend (which needs a Steinberg SDK that is not part of this
+# repository) is never built here.
 on:
   push:
     tags:
@@ -17,10 +20,6 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
 
 jobs:
   version:
@@ -38,91 +37,17 @@ jobs:
         run: echo "version=$(sh scripts/release/version.sh)" >> "$GITHUB_OUTPUT"
 
   build:
-    name: build (${{ matrix.label }})
+    name: build
     needs: version
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { label: linux-x86_64, os: ubuntu-latest, package: package-tar.sh }
-          - { label: windows-x86_64, os: windows-latest, package: package-zip.sh }
-          - { label: macos-universal, os: macos-latest, package: package-macos.sh }
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-rust
-        with:
-          cache-key: release-${{ matrix.label }}
-      - name: Build
-        if: runner.os != 'macOS'
-        run: cargo build --release --locked -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan -p atomik-plugin-hostd
-      - name: Build (macOS, both architectures)
-        if: runner.os == 'macOS'
-        run: |
-          set -eu
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked --target "$target" -p atomik-app -p atomik-render -p atomik-play -p atomik-plugin-scan -p atomik-plugin-hostd
-          done
-      - name: Package
-        shell: bash
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-          PACKAGE: ${{ matrix.package }}
-        run: sh "scripts/release/$PACKAGE" "$VERSION"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: atomik-rack-${{ matrix.label }}
-          path: |
-            dist/*.zip
-            dist/*.tar.gz
-            dist/*.sha256
-          if-no-files-found: error
-
-  smoke:
-    name: smoke (${{ matrix.label }})
-    needs: build
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { label: linux-x86_64, os: ubuntu-latest }
-          - { label: windows-x86_64, os: windows-latest }
-          - { label: macos-universal, os: macos-latest }
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: atomik-rack-${{ matrix.label }}
-          path: dist
-      - name: Verify the checksum and run the smoke checks on the packaged archive
-        shell: bash
-        run: |
-          set -eu
-          cd dist
-          ls -l
-          if command -v sha256sum > /dev/null 2>&1; then
-            sha256sum -c ./*.sha256
-          else
-            shasum -a 256 -c ./*.sha256
-          fi
-          cd ..
-          for archive in dist/*.zip dist/*.tar.gz; do
-            [ -f "$archive" ] || continue
-            sh scripts/release/smoke.sh "$archive" "$PWD"
-          done
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      retention-days: 14
 
   draft-release:
     name: draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, smoke]
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -130,6 +55,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: atomik-rack-*
           path: dist
           merge-multiple: true
       - name: Create the draft release
@@ -137,13 +63,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
+          WINDOWS_SIGNED: ${{ needs.build.outputs.windows-signed }}
+          MACOS_SIGNED: ${{ needs.build.outputs.macos-signed }}
+          MACOS_NOTARIZED: ${{ needs.build.outputs.macos-notarized }}
+          CHECKSUMS_SIGNED: ${{ needs.build.outputs.checksums-signed }}
         run: |
           set -eu
           cd dist
-          sha256sum atomik-rack-*.zip atomik-rack-*.tar.gz > SHA256SUMS
           sha256sum -c SHA256SUMS
           ls -l
           cd ..
           prerelease=""
           case "$TAG" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" dist/* --repo "$REPO" --draft --verify-tag $prerelease             --title "Atomik Rack $TAG"             --notes "Release notes: see CHANGELOG.md. The builds are unsigned (macOS is ad-hoc signed only); see the README for first-run steps. Verify the downloads against SHA256SUMS."
+          if [ "$WINDOWS_SIGNED" = "true" ]; then win="Authenticode-signed"; else win="not signed"; fi
+          if [ "$MACOS_NOTARIZED" = "true" ]; then
+            mac="Developer ID signed and notarised"
+          elif [ "$MACOS_SIGNED" = "true" ]; then
+            mac="Developer ID signed, not notarised"
+          else
+            mac="ad-hoc signed only"
+          fi
+          if [ "$CHECKSUMS_SIGNED" = "true" ]; then sums="SHA256SUMS.asc is its GPG signature"; else sums="SHA256SUMS is not signed"; fi
+          notes="Release notes: see CHANGELOG.md. Signing: Windows $win, macOS $mac, $sums. A build that is not signed makes the system warn on first launch; see the README for the first-run steps. Verify the downloads against SHA256SUMS."
+          set -- dist/atomik-rack[-_]* dist/SHA256SUMS
+          if [ -f dist/SHA256SUMS.asc ]; then set -- "$@" dist/SHA256SUMS.asc; fi
+          gh release create "$TAG" "$@" --repo "$REPO" --draft --verify-tag $prerelease \
+            --title "Atomik Rack $TAG" --notes "$notes"
