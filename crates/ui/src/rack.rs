@@ -746,7 +746,7 @@ impl RackView {
     /// [`Self::set_scope`]) the views show that container's inside; a scope whose container no
     /// longer exists is left for the nearest one that does.
     pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
-        let view = self.prepare(doc);
+        let view = self.prepare(doc, registry);
         self.sync_in(&view, registry);
     }
 
@@ -2158,6 +2158,17 @@ impl RackView {
                 }
                 Some(h @ Hit::ReturnEdit(..)) => self.return_edit_tooltip(h),
                 Some(Hit::Preset(i, n)) => self.preset_name(i, n),
+                // A control a macro drives says what it shows and who moves it.
+                Some(Hit::Control(i, slot)) => {
+                    let (p, _, value) = self.param_of(i, slot)?;
+                    let m = self.driven_by(i, p.key)?;
+                    Some(format!(
+                        "{}  {}  (driven by macro {})",
+                        autolayout::control_label(p),
+                        widget::format_value(p, value),
+                        u16::from(m) + 1
+                    ))
+                }
                 Some(Hit::Bypass(i)) => Some(
                     if self.devices[i].is_bypassed() {
                         "Bypassed: the dry signal passes. Click to switch the effect back in"
@@ -2234,7 +2245,7 @@ impl RackView {
     /// container the commands and actions carry **path keys** (`layer/synth`), and a gesture
     /// that changes the scope has already changed it when this returns.
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
-        let view = self.prepare(doc);
+        let view = self.prepare(doc, registry);
         let out = self.handle_in(event, &view, registry);
         self.finish(out, registry)
     }
@@ -2821,7 +2832,14 @@ impl RackView {
         let Some((p, kind, value)) = self.param_of(i, slot) else {
             return;
         };
-        if self.driven_by(i, p.key).is_some() {
+        out.push(UiAction::ParamTouched {
+            device: self.devices[i].key.clone(),
+            param: p.key.to_owned(),
+        });
+        // A param a macro drives is locked, but its right-click menu stays (Remove from Macro).
+        if self.driven_by(i, p.key).is_some()
+            && !(self.scope.is_empty() && button == PointerButton::Secondary)
+        {
             self.notify_driven(i, p.key);
             return;
         }
@@ -3366,7 +3384,7 @@ impl RackView {
     ) -> CommandOutcome {
         // The selection holds keys local to the scope: work on the scope's view of the
         // document and lift the actions out, as `handle` does.
-        let view = self.prepare(doc);
+        let view = self.prepare(doc, registry);
         self.sync_in(&view, registry);
         match self.selection_command(id, &view, registry) {
             Some(outcome) => outcome,
@@ -3405,7 +3423,7 @@ impl RackView {
     /// Paints the whole view. The canvas receives **physical pixels**: everything is scaled by
     /// the scale factor. Panels are cached per device; cables are an overlay.
     pub fn paint(&mut self, canvas: &mut dyn Canvas, doc: &RackDoc, registry: &Registry) {
-        let view = self.prepare(doc);
+        let view = self.prepare(doc, registry);
         self.paint_in(canvas, &view, registry);
     }
 

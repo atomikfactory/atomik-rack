@@ -354,8 +354,11 @@ impl ArrangementView {
 
     /// Whether lane `lane` of track `track` is a folded automation lane.
     pub(super) fn is_lane_folded(&self, track: usize, lane: usize) -> bool {
-        self.lane_id(track, lane)
-            .is_some_and(|(d, p)| self.song.lane_folded(&d, &p))
+        // The lane that follows the selected parameter stays open, whatever the project says.
+        !self.is_followed(track, lane)
+            && self
+                .lane_id(track, lane)
+                .is_some_and(|(d, p)| self.song.lane_folded(&d, &p))
     }
 
     /// The accent colour of a track: its own colour, else its device's.

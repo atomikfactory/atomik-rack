@@ -298,6 +298,72 @@ impl RackDoc {
             .collect()
     }
 
+    /// The params of `device` that a live assignment drives, as `(param, macro index)`.
+    pub fn driven_params(&self, device: &DeviceKey) -> Vec<(String, u8)> {
+        self.macros
+            .assigns
+            .iter()
+            .filter(|a| &a.device == device && self.macro_assign_live(a))
+            .map(|a| (a.param.clone(), a.index))
+            .collect()
+    }
+
+    /// A copy of device `key` whose driven params hold the value the macros give them (what a
+    /// view of the device shows); the plain device when nothing drives it.
+    pub fn device_with_driven_values(
+        &self,
+        registry: &Registry,
+        key: &DeviceKey,
+    ) -> Option<RackDevice> {
+        let mut d = self.device(key)?.clone();
+        for (param, _) in self.driven_params(key) {
+            if let Some(v) = self.driven_value(registry, key, &param) {
+                d.params.insert(param, v);
+            }
+        }
+        Some(d)
+    }
+
+    /// A copy for the views when some param shows a value other than the stored one: the devices
+    /// carry the driven values (see [`RackDoc::device_with_driven_values`]) and the song is empty,
+    /// as in the scope document of a container. `None` when no live assignment changes a
+    /// value, so a project without macros costs the views nothing.
+    pub fn view_with_driven_values(&self, registry: &Registry) -> Option<RackDoc> {
+        let differs = self.macros.assigns.iter().any(|a| {
+            self.driven_value(registry, &a.device, &a.param)
+                .is_some_and(|v| {
+                    self.param_value(&a.device, &a.param, registry)
+                        .is_none_or(|stored| stored.to_bits() != v.to_bits())
+                })
+        });
+        if !differs {
+            return None;
+        }
+        let devices = self
+            .devices
+            .iter()
+            .map(|d| {
+                self.device_with_driven_values(registry, &d.key)
+                    .unwrap_or_else(|| d.clone())
+            })
+            .collect();
+        Some(RackDoc {
+            sample_rate: self.sample_rate,
+            tempo_bpm: self.tempo_bpm,
+            seed: self.seed,
+            output_channels: self.output_channels,
+            input_channels: self.input_channels,
+            assets: self.assets.clone(),
+            devices,
+            columns: self.columns,
+            cables: self.cables.clone(),
+            song: crate::empty_song(self.tempo_bpm),
+            console: self.console.clone(),
+            midi_maps: Vec::new(),
+            macros: self.macros.clone(),
+        })
+    }
+
     /// Why `param` of `device` cannot be a macro target, or `None` when it can (not counting the
     /// assignment it may already have or the automation on its lane).
     pub fn macro_target_problem(

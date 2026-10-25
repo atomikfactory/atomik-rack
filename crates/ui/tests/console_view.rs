@@ -118,7 +118,12 @@ fn hidden_params_are_never_shown() {
 fn knob_drags_emit_merged_set_params_and_end_the_merge() {
     let (doc, reg, mut v) = setup();
     let p = v.control_center(&key("ch-lead"), "input.gain").unwrap();
-    assert!(v.handle(&down(p), &doc, &reg).is_empty());
+    // The press only says which param is touched.
+    assert!(
+        v.handle(&down(p), &doc, &reg)
+            .iter()
+            .all(|a| matches!(a, UiAction::ParamTouched { .. }))
+    );
     assert!(v.is_dragging());
     let a = v.handle(
         &mv(p - Vec2::new(0.0, KNOB_PIXELS_PER_RANGE / 4.0)),
@@ -273,7 +278,7 @@ fn mute_is_disabled_while_the_channel_is_soloed() {
     assert!(v.mute_enabled(&key("ch-lead")));
     let m = v.control_center(&key("ch-keys"), "mute").unwrap();
     assert!(
-        click(&mut v, &doc, &reg, m).is_empty(),
+        set_params(&click(&mut v, &doc, &reg, m)).is_empty(),
         "ignored under solo"
     );
     let w = v.handle(

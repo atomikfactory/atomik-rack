@@ -506,6 +506,11 @@ pub struct ArrangementView {
     content_height: f64,
     lane_params: Vec<Vec<Option<ParamDescriptor>>>,
     collapsed: BTreeSet<DeviceKey>,
+    /// The automation lane that follows the selected parameter (view state): drawn highlighted
+    /// and shown open even when it is folded.
+    follow: Option<(DeviceKey, String)>,
+    /// A reveal of the followed lane waits for the next rebuild of the rows.
+    reveal_pending: bool,
     selection: Selection<ClipId>,
     /// The selected track (a click on its header or the Up and Down keys): view state.
     selected_track: Option<DeviceKey>,
@@ -594,6 +599,8 @@ impl ArrangementView {
             content_height: 0.0,
             lane_params: Vec::new(),
             collapsed: BTreeSet::new(),
+            follow: None,
+            reveal_pending: false,
             selection: Selection::new(),
             selected_track: None,
             point_sel: None,
@@ -914,6 +921,66 @@ impl ArrangementView {
         let row = self.row_of(track, 0)?;
         let r = self.row_rect(row);
         Some(Point::new(self.bounds.x0 + 100.0, r.y0 + 14.0))
+    }
+
+    /// Marks the automation lane of `param` on `device` as the one that follows the selected
+    /// parameter (or none): it is drawn highlighted and kept open even when it is folded, so
+    /// the fold in the project is not touched. See [`Self::reveal_lane`].
+    pub fn follow_lane(&mut self, target: Option<(DeviceKey, String)>) {
+        if self.follow != target {
+            self.follow = target;
+            self.synced = false;
+            self.repaint = true;
+        }
+    }
+
+    /// The lane that follows the selected parameter.
+    pub fn followed_lane(&self) -> Option<&(DeviceKey, String)> {
+        self.follow.as_ref()
+    }
+
+    /// Follows the lane of `param` on `device` and brings it into view: the track's lanes are
+    /// shown (the collapse is view state) and the list scrolls to the lane when it is not
+    /// already in sight (on the next [`Self::sync`]). A folder that holds the track is the
+    /// document's to open (`SongCommand::SetGroupCollapsed`); a lane that does not exist is
+    /// followed once it does.
+    pub fn reveal_lane(&mut self, device: &DeviceKey, param: &str) {
+        self.follow = Some((device.clone(), param.to_owned()));
+        self.collapsed.remove(device);
+        self.reveal_pending = true;
+        self.synced = false;
+        self.repaint = true;
+    }
+
+    /// Whether lane `lane` of track `track` is the followed one.
+    pub(super) fn is_followed(&self, track: usize, lane: usize) -> bool {
+        self.follow.is_some() && self.lane_id(track, lane).as_ref() == self.follow.as_ref()
+    }
+
+    /// Scrolls the followed lane into view (after the rows are rebuilt).
+    fn apply_reveal(&mut self) {
+        if !std::mem::take(&mut self.reveal_pending) {
+            return;
+        }
+        let Some((device, param)) = self.follow.clone() else {
+            return;
+        };
+        let Some(ti) = self.song.tracks.iter().position(|t| t.device == device) else {
+            return;
+        };
+        let Some(li) = self.song.tracks[ti].automation_lane(&param) else {
+            return;
+        };
+        let Some(row) = self.row_of(ti, li) else {
+            return;
+        };
+        let (top, bottom) = (row.y, row.y + row.h);
+        let visible = (self.bounds.y1 - self.lanes_top()).max(0.0);
+        if top < self.scroll_y || bottom > self.scroll_y + visible {
+            // A third of the way down, so the track's own header is usually in sight too.
+            self.scroll_y = top - visible / 3.0;
+        }
+        self.clamp_scroll();
     }
 
     /// Shows or hides a track's automation lanes.
@@ -1274,6 +1341,7 @@ impl ArrangementView {
         y += ADD_ROW_HEIGHT;
         self.rows = rows;
         self.content_height = y;
+        self.apply_reveal();
         let song = &self.song;
         self.selection.retain(|id| find_clip(song, *id).is_some());
         if self
@@ -4516,6 +4584,13 @@ impl ArrangementView {
                         );
                         self.paint_lane_buttons(c, hr, *track, *lane);
                         self.paint_lane_fold(c, hr, *track, *lane);
+                        if self.is_followed(*track, *lane) {
+                            c.stroke_with(
+                                RoundedRect::from_rect(hr.inset(-1.5), 2.0),
+                                1.5,
+                                t.highlight,
+                            );
+                        }
                     }
                 }
             }
