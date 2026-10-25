@@ -143,7 +143,10 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
     assert!(plain.keyboard_layout(VIEW).is_none());
     let mut d = dialog();
     let tabs: Vec<Tab> = d.layout(VIEW).tabs.iter().map(|(_, t)| *t).collect();
-    assert_eq!(tabs, [Tab::Audio, Tab::Keyboard, Tab::Workflow]);
+    assert_eq!(
+        tabs,
+        [Tab::Audio, Tab::Keyboard, Tab::Workflow, Tab::Surfaces]
+    );
     assert_eq!(d.tab(), Tab::Audio);
     goto(&mut d, Tab::Keyboard);
     goto(&mut d, Tab::Workflow);
@@ -830,4 +833,153 @@ fn the_row_keys_are_the_registry_keys() {
     assert!(rows.iter().any(|r| r.key == key));
     let chord = Chord::parse("Cmd+Z").unwrap();
     assert_eq!(rows.iter().find(|r| r.key == key).unwrap().chords, [chord]);
+}
+
+// ------------------------------------------------------------------ surfaces
+
+fn surface_lists() -> DeviceLists {
+    DeviceLists {
+        midi_ports: vec!["Example Surface".into(), "Example Keyboard".into()],
+        midi_outputs: vec!["Example Surface".into()],
+        ..DeviceLists::default()
+    }
+}
+
+fn surfaces_dialog(current: AudioSettings) -> SettingsDialog {
+    SettingsDialog::new(current, surface_lists()).with_preferences(
+        KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+        WorkflowPrefs::default(),
+    )
+}
+
+/// The centre of the option labelled `label` in the section `title` of the tab that shows.
+fn option_at(d: &SettingsDialog, title: &str, label: &str) -> Point {
+    let sections = d.sections();
+    let section = sections.iter().find(|s| s.title == title).unwrap();
+    let choice = &section
+        .options
+        .iter()
+        .find(|(l, _)| l == label)
+        .unwrap_or_else(|| panic!("no option {label} in {title}"))
+        .1;
+    d.layout(VIEW)
+        .options
+        .iter()
+        .find(|(_, _, c)| c == choice)
+        .unwrap()
+        .0
+        .center()
+}
+
+fn pick(d: &mut SettingsDialog, title: &str, label: &str) {
+    let at = option_at(d, title, label);
+    down(d, at);
+}
+
+#[test]
+fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Surfaces);
+    let titles: Vec<&str> = d.sections().iter().map(|s| s.title).collect();
+    assert_eq!(
+        titles,
+        [
+            "Control surface",
+            "Surface MIDI input",
+            "Surface MIDI output"
+        ]
+    );
+    let sections = d.sections();
+    let labels =
+        |i: usize| -> Vec<String> { sections[i].options.iter().map(|(l, _)| l.clone()).collect() };
+    assert_eq!(labels(0), ["None", "Control surface (MCU-compatible)"]);
+    assert_eq!(labels(1), ["None", "Example Surface", "Example Keyboard"]);
+    assert_eq!(labels(2), ["None", "Example Surface"]);
+    // Nothing is chosen by default.
+    for (_, _, c) in &d.layout(VIEW).options {
+        assert_eq!(
+            d.is_selected(c),
+            matches!(
+                c,
+                Choice::SurfaceDriver(None)
+                    | Choice::SurfaceInput(None)
+                    | Choice::SurfaceOutput(None)
+            )
+        );
+    }
+    // The tab has no audio sections and no tab-strip overlap with the panel.
+    assert!(d.layout(VIEW).panel.contains(d.layout(VIEW).apply.center()));
+}
+
+#[test]
+fn choosing_a_surface_is_applied_with_the_settings() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Surfaces);
+    pick(
+        &mut d,
+        "Control surface",
+        "Control surface (MCU-compatible)",
+    );
+    pick(&mut d, "Surface MIDI input", "Example Surface");
+    pick(&mut d, "Surface MIDI output", "Example Surface");
+    let apply = d.layout(VIEW).apply.center();
+    let DialogOutcome::Apply(s) = down(&mut d, apply) else {
+        panic!("apply");
+    };
+    assert_eq!(s.surface.driver.as_deref(), Some("mcu"));
+    assert_eq!(s.surface.input.as_deref(), Some("Example Surface"));
+    assert_eq!(s.surface.output.as_deref(), Some("Example Surface"));
+    // Choosing None again clears one.
+    let mut d = surfaces_dialog(s);
+    goto(&mut d, Tab::Surfaces);
+    pick(&mut d, "Surface MIDI output", "None");
+    assert_eq!(d.draft().surface.output, None);
+    assert_eq!(d.draft().surface.input.as_deref(), Some("Example Surface"));
+}
+
+#[test]
+fn a_saved_surface_that_is_not_there_stays_selectable() {
+    let current = AudioSettings {
+        surface: crate::settings::SurfaceSettings {
+            driver: Some("legacy".into()),
+            input: Some("Old Desk".into()),
+            output: Some("Old Desk".into()),
+        },
+        ..AudioSettings::default()
+    };
+    let mut d = surfaces_dialog(current);
+    goto(&mut d, Tab::Surfaces);
+    let sections = d.sections();
+    let last = |i: usize| sections[i].options.last().unwrap().0.clone();
+    assert_eq!(last(0), "legacy (unknown driver)");
+    assert_eq!(last(1), "Old Desk (not found)");
+    assert_eq!(last(2), "Old Desk (not found)");
+    for (_, _, c) in &d.layout(VIEW).options {
+        if matches!(c, Choice::SurfaceDriver(Some(n)) | Choice::SurfaceInput(Some(n)) | Choice::SurfaceOutput(Some(n)) if n == "legacy" || n == "Old Desk")
+        {
+            assert!(d.is_selected(c));
+        }
+    }
+}
+
+#[test]
+fn the_other_tabs_do_not_show_the_surface_sections_and_back_to_audio_shows_the_audio_ones() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    assert!(d.sections().iter().all(|s| s.title != "Control surface"));
+    goto(&mut d, Tab::Surfaces);
+    assert!(d.sections().iter().all(|s| s.title != "Audio host"));
+    goto(&mut d, Tab::Audio);
+    assert!(d.sections().iter().any(|s| s.title == "Audio host"));
+    let mut list = DisplayList::new();
+    goto(&mut d, Tab::Surfaces);
+    d.paint(&mut list, &Theme::dark(), VIEW);
+    let texts = list.texts();
+    for t in [
+        "Control surfaces",
+        "Surfaces",
+        "Surface MIDI input",
+        "Example Surface",
+    ] {
+        assert!(texts.contains(&t), "{t} in {texts:?}");
+    }
 }

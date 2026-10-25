@@ -34,6 +34,7 @@ fn lists() -> DeviceLists {
             },
         ],
         midi_ports: vec!["Example Keyboard".into()],
+        midi_outputs: vec!["Example Surface".into()],
         errors: vec![],
         input_note: None,
     }

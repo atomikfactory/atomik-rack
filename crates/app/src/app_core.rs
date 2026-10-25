@@ -184,6 +184,10 @@ pub struct AppCore<S: EngineSink> {
     /// The snapshot the mix was last stored, updated, recalled or compared with (see
     /// `app_core_snapshots.rs`); view state, forgotten when a document is replaced.
     snapshot_hint: Option<u32>,
+    /// MIDI learn, the mapping runtime and the held mapped moves (see `app_core_midimap.rs`).
+    midi: midimap::MidiControl,
+    /// The control surface driving the console, if one is set up (see `app_core_surface.rs`).
+    surface: Option<crate::surface::SurfaceHost>,
     /// A plain click selected exactly one strip: the shell moves the focus to the rack.
     rack_focus_request: bool,
     /// `follow_console_selection` saw a new console selection (cleared by the pane event).
@@ -345,6 +349,7 @@ impl<S: EngineSink> AppCore<S> {
         view.set_layout_provider(atomik_devices::panel_layout);
         let config = engine_config(&doc);
         let target = sink.note_target().unwrap_or_default();
+        let hub = sink.control_hub().unwrap_or_default();
         let mut core = Self {
             registry,
             clipboard: Clipboard::new(),
@@ -353,6 +358,8 @@ impl<S: EngineSink> AppCore<S> {
             arrangement_track_changed: false,
             console_selection: Vec::new(),
             snapshot_hint: None,
+            midi: midimap::MidiControl::new(hub),
+            surface: None,
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
@@ -413,6 +420,7 @@ impl<S: EngineSink> AppCore<S> {
         core.audio_reset();
         core.rebuild_engine();
         core.audio_opened();
+        core.midi_maps_changed();
         core
     }
 
@@ -533,8 +541,11 @@ impl<S: EngineSink> AppCore<S> {
     pub fn handle_action(&mut self, action: UiAction) {
         match action {
             UiAction::Command(c) => {
-                // A rejection is already reported to the view.
-                let _ = self.apply_command(c);
+                // In MIDI Learn mode a change to a control arms it instead; otherwise a
+                // rejection is already reported to the view.
+                if !self.learn_swallows(&c) {
+                    let _ = self.apply_command(c);
+                }
             }
             UiAction::EndMerge => {
                 self.document.end_merge();
@@ -592,7 +603,11 @@ impl<S: EngineSink> AppCore<S> {
                 velocity,
                 on,
             } => self.audition_velocity(&device, key, velocity, on),
-            UiAction::Transport(t) => self.transport_action(t),
+            UiAction::Transport(t) => {
+                if !self.learn_swallows_transport(t) {
+                    self.transport_action(t);
+                }
+            }
             UiAction::Browse(b) => self.browse(b),
             UiAction::Audition { device, key, on } => self.audition(&device, key, on),
             a @ (UiAction::OpenPluginGui { .. }
@@ -794,6 +809,7 @@ impl<S: EngineSink> AppCore<S> {
         self.console_selection.clear();
         self.snapshot_hint = None;
         self.console.set_snapshot_hint(None);
+        self.midi_replaced();
         self.view.set_selected(None);
         self.close_piano_roll();
         self.close_sample_editor();
@@ -1031,8 +1047,7 @@ impl<S: EngineSink> AppCore<S> {
                     let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
                     self.send_split_params(exp, container);
                 }
-                // The mapping table is rebuilt from the document when the next message arrives.
-                SyncOp::MidiMapsChanged => {}
+                SyncOp::MidiMapsChanged => self.midi_maps_changed(),
                 SyncOp::ConsoleChanged => {
                     if self.topology.compensation() != self.doc().console.compensation {
                         self.submit_routing();
@@ -2222,6 +2237,13 @@ mod clipboard_ops;
 
 #[path = "app_core_snapshots.rs"]
 mod snapshots;
+
+#[path = "app_core_midimap.rs"]
+mod midimap;
+
+#[path = "app_core_surface.rs"]
+mod surface_ops;
+pub use midimap::{GESTURE_TIMEOUT, describe_message};
 
 #[path = "app_core_audio_edit.rs"]
 mod audio_edit_ops;

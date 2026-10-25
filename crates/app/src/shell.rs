@@ -121,7 +121,7 @@ use crate::context_menus::{self, MenuEnable};
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
-use crate::settings::{self, AudioSettings};
+use crate::settings::{self, AudioSettings, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
 use crate::status::status_text;
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
@@ -277,6 +277,8 @@ pub struct Shell<B: AudioBackend> {
     context_menu: Option<OpenContextMenu>,
     dialog: Option<SettingsDialog>,
     settings_path: Option<PathBuf>,
+    /// The surface settings the control surface was last set up with.
+    surface_applied: SurfaceSettings,
     ui_state_path: Option<PathBuf>,
     ui: UiState,
     size: Size,
@@ -423,6 +425,7 @@ impl<B: AudioBackend> Shell<B> {
             context_menu: None,
             dialog: None,
             settings_path: options.settings_path,
+            surface_applied: SurfaceSettings::default(),
             ui_state_path: options.ui_state_path,
             ui,
             size: Size::new(1280.0, 800.0),
@@ -461,6 +464,7 @@ impl<B: AudioBackend> Shell<B> {
             file_drag: None,
         };
         shell.core.set_roles(&shell.roles);
+        shell.configure_surface();
         shell.core.set_library_path(options_library_path);
         // Before anything saves the window state: a save copies the panel's values.
         shell.restore_file_browser();
@@ -3513,11 +3517,51 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.plugin_tick(now_seconds);
+        // The control path: MIDI mappings and the control surface.
+        let heard = self.core.midi_received();
+        self.core.midi_control_frame(now_seconds);
+        self.core.surface_frame(now_seconds);
+        if self.core.midi_received() != heard {
+            self.repaint = true;
+        }
         if self.console_shown() {
             self.core.update_console_meters(now_seconds);
         }
         if self.core.view().flip() == atomik_ui::Flip::Back {
             self.core.feed_cv_activity(now_seconds);
+        }
+    }
+
+    /// Opens the control surface the settings name (its driver and ports), or closes it. Nothing
+    /// happens when the settings are the ones it already runs with. A port that cannot be opened
+    /// is reported, and a surface with no open port is not set up.
+    fn configure_surface(&mut self) {
+        let wanted = self.core.sink().settings().surface.clone();
+        if wanted == self.surface_applied {
+            return;
+        }
+        self.surface_applied = wanted.clone();
+        let Some(id) = wanted.driver.as_deref() else {
+            self.core.set_surface(None);
+            return;
+        };
+        let Some(driver) = atomik_midi_io::surface::driver_by_id(id) else {
+            self.core.set_surface(None);
+            self.notify(format!("unknown control surface {id:?}"));
+            return;
+        };
+        let (link, problems) =
+            crate::surface::SystemLink::open(wanted.input.as_deref(), wanted.output.as_deref());
+        if let Some(problem) = problems.first() {
+            self.notify(problem.clone());
+        }
+        if link.is_open() {
+            self.core.set_surface(Some(crate::surface::SurfaceHost::new(
+                driver,
+                Box::new(link),
+            )));
+        } else {
+            self.core.set_surface(None);
         }
     }
 
@@ -3528,6 +3572,7 @@ impl<B: AudioBackend> Shell<B> {
             session.set_enabled(true);
             self.core.rebuild_engine();
         }
+        self.configure_surface();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
         }

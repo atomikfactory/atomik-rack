@@ -12,6 +12,7 @@
 
 use crate::audio_record::record_offset_frames;
 use crate::midi::{MidiConnection, MidiLink};
+use crate::midi_control::ControlHub;
 use crate::record::{RecordTap, RecordedNote};
 use crate::settings::AudioSettings;
 use crate::sink::EngineSink;
@@ -65,6 +66,10 @@ pub trait AudioBackend {
     fn list_audio(&self) -> Result<Vec<HostInfo>, IoError>;
     /// Lists MIDI input ports.
     fn list_midi(&self) -> Result<Vec<String>, MidiError>;
+    /// Lists MIDI output ports (a control surface's motors, LEDs and displays); none by default.
+    fn list_midi_out(&self) -> Result<Vec<String>, MidiError> {
+        Ok(Vec::new())
+    }
     /// Opens and starts a stream driving `engine` (dropped here on failure). With input
     /// channels, `input_device` names the capture device (`None` = the device named like the
     /// output; never the host default input).
@@ -120,6 +125,10 @@ impl AudioBackend for SystemBackend {
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
         atomik_midi_io::list_inputs()
+    }
+
+    fn list_midi_out(&self) -> Result<Vec<String>, MidiError> {
+        atomik_midi_io::ports::list_outputs()
     }
 
     fn start(
@@ -209,6 +218,7 @@ pub struct LiveSession<B: AudioBackend> {
     target: Arc<NoteTarget>,
     latency: Arc<AtomicU64>,
     tap: Arc<RecordTap>,
+    hub: Arc<ControlHub>,
     status: AudioStatus,
 }
 
@@ -238,6 +248,7 @@ impl<B: AudioBackend> LiveSession<B> {
             target: Arc::new(NoteTarget::new()),
             latency: Arc::new(AtomicU64::new(FALLBACK_LATENCY_FRAMES)),
             tap: Arc::new(RecordTap::new()),
+            hub: Arc::new(ControlHub::new()),
             status,
         }
     }
@@ -455,6 +466,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             sample_rate: config.sample_rate.hz(),
             latency: Arc::clone(&self.latency),
             tap: Arc::clone(&self.tap),
+            hub: Arc::clone(&self.hub),
         });
         self.running = Some(Running {
             meters: handle.meters(),
@@ -542,6 +554,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn note_target(&self) -> Option<Arc<NoteTarget>> {
         Some(Arc::clone(&self.target))
+    }
+
+    fn control_hub(&self) -> Option<Arc<ControlHub>> {
+        Some(Arc::clone(&self.hub))
     }
 
     fn submit_song(&mut self, _input: &SongInput, song: SongSnapshot) -> Result<(), EngineError> {

@@ -9,8 +9,9 @@
 //! # Tabs
 //!
 //! With [`SettingsDialog::with_preferences`] the dialog gets a tab strip in its title row:
-//! **Audio** (everything above, unchanged), **Keyboard** ([`crate::keyboard_tab`]) and
-//! **Workflow** ([`crate::workflow_tab`]). The Keyboard and Workflow drafts are applied and
+//! **Audio** (everything above, unchanged), **Keyboard** ([`crate::keyboard_tab`]),
+//! **Workflow** ([`crate::workflow_tab`]) and **Surfaces** (the control surface: its driver and
+//! the MIDI input and output ports it talks through, the same radio sections as the Audio tab). The Keyboard and Workflow drafts are applied and
 //! cancelled together with the audio draft: the shell reads [`SettingsDialog::preferences`]
 //! when [`DialogOutcome::Apply`] arrives and saves `keymap.json` and `workflow.json`. Without
 //! preferences the dialog is the audio-only dialog it always was.
@@ -37,6 +38,8 @@ pub struct DeviceLists {
     pub hosts: Vec<HostInfo>,
     /// MIDI input ports.
     pub midi_ports: Vec<String>,
+    /// MIDI output ports (the control surface's motors, LEDs and displays).
+    pub midi_outputs: Vec<String>,
     /// Listing problems to show.
     pub errors: Vec<String>,
     /// What the running stream opened for input (shown as a note), e.g.
@@ -56,9 +59,14 @@ impl DeviceLists {
             errors.push(format!("MIDI ports: {e}"));
             Vec::new()
         });
+        let midi_outputs = backend.list_midi_out().unwrap_or_else(|e| {
+            errors.push(format!("MIDI output ports: {e}"));
+            Vec::new()
+        });
         Self {
             hosts,
             midi_ports,
+            midi_outputs,
             errors,
             input_note: None,
         }
@@ -80,6 +88,12 @@ pub enum Choice {
     Buffer(u32),
     /// MIDI input (`None` = none).
     Midi(Option<String>),
+    /// The control surface driver (`None` = no surface).
+    SurfaceDriver(Option<String>),
+    /// The control surface's input port (`None` = none).
+    SurfaceInput(Option<String>),
+    /// The control surface's output port (`None` = none).
+    SurfaceOutput(Option<String>),
     /// Worker threads.
     Workers(u16),
     /// Worker linger spins.
@@ -106,11 +120,13 @@ pub enum Tab {
     Keyboard,
     /// Workflow preferences.
     Workflow,
+    /// The control surface.
+    Surfaces,
 }
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 3] = [Tab::Audio, Tab::Keyboard, Tab::Workflow];
+    pub const ALL: [Tab; 4] = [Tab::Audio, Tab::Keyboard, Tab::Workflow, Tab::Surfaces];
 
     /// The tab label.
     pub fn label(self) -> &'static str {
@@ -118,6 +134,7 @@ impl Tab {
             Tab::Audio => "Audio",
             Tab::Keyboard => "Keyboard",
             Tab::Workflow => "Workflow",
+            Tab::Surfaces => "Surfaces",
         }
     }
 
@@ -126,6 +143,7 @@ impl Tab {
             Tab::Audio => "Audio settings",
             Tab::Keyboard => "Keyboard shortcuts",
             Tab::Workflow => "Workflow",
+            Tab::Surfaces => "Control surfaces",
         }
     }
 }
@@ -162,6 +180,9 @@ pub struct DialogLayout {
 
 /// The dialog result after an event.
 #[derive(Debug, Clone, PartialEq)]
+// An outcome is made once per click of the dialog, never on a hot path: boxing the settings would
+// only cost an indirection at every site that matches `Apply`.
+#[allow(clippy::large_enum_variant)]
 pub enum DialogOutcome {
     /// Still open.
     Open,
@@ -270,7 +291,7 @@ impl SettingsDialog {
     /// The panel of the tab that shows.
     pub fn panel(&self, view: Size) -> Rect {
         match self.tab {
-            Tab::Audio => self.layout(view).panel,
+            Tab::Audio | Tab::Surfaces => self.layout(view).panel,
             Tab::Keyboard => {
                 let width = (view.width - 32.0).clamp(320.0, 780.0);
                 let height = (view.height - 48.0).clamp(300.0, (view.height - 32.0).max(300.0));
@@ -328,6 +349,9 @@ impl SettingsDialog {
     /// The sections: host, output device, buffer, MIDI input, workers, linger. Saved values
     /// that are no longer available are still listed (marked) so they stay selectable.
     pub fn sections(&self) -> Vec<Section> {
+        if self.tab == Tab::Surfaces {
+            return self.surface_sections();
+        }
         let d = &self.draft;
         let mut hosts: Vec<HostChoice> = Vec::new();
         for h in &self.lists.hosts {
@@ -468,6 +492,56 @@ impl SettingsDialog {
         ]
     }
 
+    /// The Surfaces tab: the driver and the two ports. A saved port that is not plugged in is
+    /// still listed (marked) so it stays selectable.
+    fn surface_sections(&self) -> Vec<Section> {
+        let s = &self.draft.surface;
+        let known = |id: &str| {
+            atomik_midi_io::surface::DRIVERS
+                .iter()
+                .any(|(d, _)| *d == id)
+        };
+        let mut drivers = vec![("None".to_string(), Choice::SurfaceDriver(None))];
+        drivers.extend(atomik_midi_io::surface::DRIVERS.iter().map(|(id, label)| {
+            (
+                (*label).to_string(),
+                Choice::SurfaceDriver(Some((*id).to_string())),
+            )
+        }));
+        if let Some(saved) = s.driver.as_ref().filter(|d| !known(d)) {
+            drivers.push((
+                format!("{saved} (unknown driver)"),
+                Choice::SurfaceDriver(Some(saved.clone())),
+            ));
+        }
+        let ports =
+            |names: &[String], saved: &Option<String>, make: fn(Option<String>) -> Choice| {
+                let mut v = vec![("None".to_string(), make(None))];
+                v.extend(names.iter().map(|p| (p.clone(), make(Some(p.clone())))));
+                if let Some(saved) = saved.as_ref().filter(|p| !names.contains(p)) {
+                    v.push((format!("{saved} (not found)"), make(Some(saved.clone()))));
+                }
+                v
+            };
+        vec![
+            Section {
+                title: "Control surface",
+                options: drivers,
+                chips: false,
+            },
+            Section {
+                title: "Surface MIDI input",
+                options: ports(&self.lists.midi_ports, &s.input, Choice::SurfaceInput),
+                chips: false,
+            },
+            Section {
+                title: "Surface MIDI output",
+                options: ports(&self.lists.midi_outputs, &s.output, Choice::SurfaceOutput),
+                chips: false,
+            },
+        ]
+    }
+
     fn output_devices(&self, host: HostChoice) -> Vec<String> {
         self.lists
             .hosts
@@ -500,6 +574,9 @@ impl SettingsDialog {
             Choice::RecordOffset(o) => d.record_offset_frames == *o,
             Choice::Buffer(b) => d.buffer_frames == *b,
             Choice::Midi(p) => d.midi_input == *p,
+            Choice::SurfaceDriver(n) => d.surface.driver == *n,
+            Choice::SurfaceInput(n) => d.surface.input == *n,
+            Choice::SurfaceOutput(n) => d.surface.output == *n,
             Choice::Workers(w) => d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
         }
@@ -524,12 +601,25 @@ impl SettingsDialog {
             Choice::RecordOffset(o) => self.draft.record_offset_frames = o,
             Choice::Buffer(b) => self.draft.buffer_frames = b,
             Choice::Midi(p) => self.draft.midi_input = p,
+            Choice::SurfaceDriver(n) => self.draft.surface.driver = n,
+            Choice::SurfaceInput(n) => self.draft.surface.input = n,
+            Choice::SurfaceOutput(n) => self.draft.surface.output = n,
             Choice::Workers(w) => self.draft.workers = w,
             Choice::Linger(l) => self.draft.worker_linger_spins = l,
         }
     }
 
     fn notes(&self) -> Vec<String> {
+        if self.tab == Tab::Surfaces {
+            let mut notes = vec![
+                "A surface shows the console: its faders, V-pots, keys and displays follow it."
+                    .to_string(),
+                "Pick the ports of the surface itself, not the port the keyboard plays through."
+                    .to_string(),
+            ];
+            notes.extend(self.lists.errors.iter().cloned());
+            return notes;
+        }
         let mut notes = vec![
             "Live MIDI notes go to the selected device (else the first device with a notes input)."
                 .to_string(),
@@ -643,7 +733,7 @@ impl SettingsDialog {
                 self.tab = tab;
                 return DialogOutcome::Open;
             }
-            if self.tab != Tab::Audio {
+            if !matches!(self.tab, Tab::Audio | Tab::Surfaces) {
                 return self.handle_preferences(event, view);
             }
         }
@@ -711,7 +801,7 @@ impl SettingsDialog {
         let out = match tab {
             Tab::Keyboard => prefs.keyboard.handle(event, panel),
             Tab::Workflow => prefs.workflow.handle(event, panel),
-            Tab::Audio => TabOutcome::Open,
+            Tab::Audio | Tab::Surfaces => TabOutcome::Open,
         };
         match out {
             TabOutcome::Open => DialogOutcome::Open,

@@ -152,6 +152,7 @@ fn settings() -> AudioSettings {
         record_offset_frames: 0,
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
+        surface: crate::settings::SurfaceSettings::default(),
     }
 }
 
