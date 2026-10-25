@@ -149,7 +149,7 @@ pub enum UiAction {
     InsertLibrary {
         /// The item file or the device URI.
         path: PathBuf,
-        /// The container the rack view was inside, `None` at the top level.
+        /// The path key of the container the rack view was inside, `None` at the top level.
         container: Option<DeviceKey>,
         /// Where it goes.
         slot: RackSlot,

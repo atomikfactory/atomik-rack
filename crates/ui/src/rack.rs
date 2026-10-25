@@ -2341,7 +2341,7 @@ impl RackView {
                         let column = if self.scope.is_empty() { dp.column } else { 0 };
                         out.push(UiAction::InsertLibrary {
                             path: path.clone(),
-                            container: self.scope.last().cloned(),
+                            container: self.scope_path(),
                             slot: RackSlot { column, index },
                         });
                     }
@@ -3144,6 +3144,20 @@ impl RackView {
             .as_ref()
             .and_then(|k| doc.devices.iter().position(|d| &d.key == k))
             .map_or(doc.devices.len(), |i| i + 1)
+    }
+
+    /// The action the browser's add (Enter on a device row) emits for the built-in device
+    /// `desc`: below the selection, else at the end, through the creation chain for an
+    /// instrument or an effect. Top level only: a container is added to with
+    /// `ContainerCommand::AddInner`. For callers that hold a device by type, such as the
+    /// library's device rows.
+    pub fn add_device_action_for(
+        &self,
+        desc: &atomik_device_sdk::DeviceDescriptor,
+        doc: &RackDoc,
+        modifiers: Modifiers,
+    ) -> UiAction {
+        self.add_device_action(desc.type_id, desc.kind, self.add_index(doc), modifiers)
     }
 
     fn add_device_action(

@@ -6,12 +6,12 @@ mod support;
 
 use atomik_device_sdk::{RACK_WIDTH, Registry};
 use atomik_library::device_uri;
-use atomik_model::{Lane, RackDoc, RackSlot};
+use atomik_model::{Command, Lane, RackDoc, RackSlot, WorkflowCommand};
 use atomik_ui::container_panel::ContainerButton;
 use atomik_ui::kurbo::{Point, Rect, Size};
 use atomik_ui::timeline::{Snap, snap_round};
 use atomik_ui::{
-    ArrangementView, COLUMN_GAP, DisplayList, RackView, UiAction, UiEvent, keymap::Os,
+    ArrangementView, COLUMN_GAP, DisplayList, Modifiers, RackView, UiAction, UiEvent, keymap::Os,
     keymap::Roles,
 };
 use std::path::PathBuf;
@@ -259,6 +259,102 @@ fn inside_a_container_the_drop_names_the_container() {
                 if *c == key("layer") && slot.column == 0
         ),
         "{a:?}"
+    );
+}
+
+#[test]
+fn inside_a_nested_container_the_drop_names_the_whole_path() {
+    let d = nested();
+    let reg = registry();
+    let mut v = scoped_view(d.doc(), &["layer", "fx"]);
+    let _ = v.handle(&UiEvent::Resize(WIDE), d.doc(), &reg);
+    v.sync(d.doc(), &reg);
+    let deep = v.device_rect(&key("deep")).unwrap();
+    let to = v.rack_to_view(Point::new(300.0, deep.y0 + 4.0));
+    let a = v.handle(
+        &drop_on(to, &[p("Patches/Lead.atomikpatch")]),
+        d.doc(),
+        &reg,
+    );
+    assert!(
+        matches!(
+            a.as_slice(),
+            [UiAction::InsertLibrary { container: Some(c), .. }] if *c == key("layer/fx")
+        ),
+        "{a:?}"
+    );
+}
+
+// -------------------------------------------------------------- the add actions of a device row
+
+fn desc(reg: &Registry, type_id: &str) -> &'static atomik_device_sdk::DeviceDescriptor {
+    reg.descriptor(type_id).expect("a registered type")
+}
+
+#[test]
+fn add_device_slot_action_for_an_instrument_goes_through_the_creation_chain() {
+    let (_doc, reg, v) = two_columns();
+    let slot = RackSlot {
+        column: 1,
+        index: 0,
+    };
+    let a = v.add_device_slot_action_for(desc(&reg, "atomik.poly-synth"), slot, Modifiers::NONE);
+    assert!(
+        matches!(
+            a,
+            UiAction::Command(Command::Workflow(WorkflowCommand::CreateInstrumentAt { slot: s, .. }))
+                if s == slot
+        ),
+        "{a:?}"
+    );
+}
+
+#[test]
+fn add_device_slot_action_for_an_effect_and_a_utility_differ() {
+    let (_doc, reg, v) = two_columns();
+    let slot = RackSlot {
+        column: 0,
+        index: 1,
+    };
+    let fx = v.add_device_slot_action_for(desc(&reg, "atomik.stereo-delay"), slot, Modifiers::NONE);
+    assert!(
+        matches!(
+            fx,
+            UiAction::Command(Command::Workflow(WorkflowCommand::CreateEffectAt { .. }))
+        ),
+        "{fx:?}"
+    );
+    let util =
+        v.add_device_slot_action_for(desc(&reg, "atomik.arpeggiator"), slot, Modifiers::NONE);
+    assert!(
+        matches!(
+            &util,
+            UiAction::Command(Command::AddDeviceAt { slot: s, type_id, .. })
+                if *s == slot && type_id == "atomik.arpeggiator"
+        ),
+        "{util:?}"
+    );
+}
+
+#[test]
+fn add_device_action_for_adds_below_the_selection_else_at_the_end() {
+    let (doc, reg, mut v) = two_columns();
+    let at_end = v.add_device_action_for(desc(&reg, "atomik.arpeggiator"), &doc, Modifiers::NONE);
+    assert!(
+        matches!(
+            at_end,
+            UiAction::Command(Command::AddDevice { index, .. }) if index == doc.devices.len()
+        ),
+        "{at_end:?}"
+    );
+    v.set_selected(Some(key("synth")));
+    let below = v.add_device_action_for(desc(&reg, "atomik.arpeggiator"), &doc, Modifiers::NONE);
+    assert!(
+        matches!(
+            below,
+            UiAction::Command(Command::AddDevice { index: 1, .. })
+        ),
+        "{below:?}"
     );
 }
 
