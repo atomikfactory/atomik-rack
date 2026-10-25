@@ -87,7 +87,17 @@ fn a_plain_band_replaces_the_selection_and_shift_or_ctrl_adds() {
     let a = run(|e| v.handle(e, &doc, &reg), &[down(a0), mv(a1), up(a1)]);
     assert!(lists(&a).is_empty());
     assert_eq!(v.selected_notes(), vec![0, 1], "the old selection is gone");
-    for m in [Modifiers::SHIFT, Modifiers::CTRL] {
+    // The add modifier is Shift or the platform's Cmd. Literal Ctrl is the alternate tool on
+    // macOS (it is not an add there), so only the other systems exercise it.
+    let meta = Modifiers {
+        meta: true,
+        ..Modifiers::NONE
+    };
+    let mut adders = vec![Modifiers::SHIFT, meta];
+    if !cfg!(target_os = "macos") {
+        adders.push(Modifiers::CTRL);
+    }
+    for m in adders {
         v.set_selected_notes(&[15]);
         run(
             |e| v.handle(e, &doc, &reg),
