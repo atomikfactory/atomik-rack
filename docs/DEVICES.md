@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-four original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-five original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -434,6 +434,27 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 - **Determinism.** No libm call in the output path (deterministic sine, `exp2`, integer hashes): bit-identical on every platform. The example [mod-source-demo.json](../examples/patches/mod-source-demo.json) drives the poly synth's cutoff from a tempo-synced saw.
 
 ---
+
+## Macro Bank: `atomik.macro-bank` (Utility)
+
+Eight macro knobs that drive params of other devices. It makes no sound and the engine does nothing with its params: the model turns each assignment into a plain value of the target before the engine sees the project (see "Macro banks" in [ARCHITECTURE.md](ARCHITECTURE.md)). It is in the device browser with the utilities, or comes into being when a param is assigned to a macro with no bank to take it. Source: [crates/devices/src/macro_bank.rs](../crates/devices/src/macro_bank.rs).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Ignored. It exists so that the song can give the bank a track and the track automation lanes. |
+
+### Params
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| `macro1` ... `macro8` | Macro 1 ... Macro 8 | 0..1 | 0 | The value of the macro. What it drives is the project's list of assignments, not a param of the device. |
+
+### Behaviour (as built)
+
+- **No processing.** `process`, `reset` and `set_param` do nothing; there is no latency and no output. A project with a bank that drives nothing renders bit for bit like the project without it.
+- **Names and assignments** are project data (`"macros"`), not params: a macro has an optional name of up to 24 characters, and each assignment carries a range in plain values of its target and an invert flag.
 
 ## Mastering: `atomik.mastering` (Effect)
 
