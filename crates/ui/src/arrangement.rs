@@ -50,6 +50,7 @@ use vello::peniko::Color;
 
 mod audio_edit;
 mod heights;
+mod lanes;
 mod markers;
 mod organise;
 mod takes;
@@ -60,6 +61,7 @@ pub use heights::{
     COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
     clamp_track_zoom, scaled_height,
 };
+pub use lanes::LaneMenu;
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
 pub use organise::{
     FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
@@ -173,9 +175,12 @@ pub enum TrackButton {
     Monitor,
 }
 
-/// A control in the header of an automation lane.
+/// A control in the header of a lane: the automation lanes have the first three, the note lanes
+/// the mute button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneButton {
+    /// Mute the note lane, or unmute it.
+    Mute,
     /// Fold the lane to a thin strip, or unfold it (the chevron at the left of the header).
     Fold,
     /// Arm the lane for automation recording.
@@ -196,7 +201,7 @@ enum RowKind {
     },
     AddTrack(DeviceKey),
     AddAudio,
-    /// The comp strip of take group `group` under lane 0 of track `track`.
+    /// The comp strip of take group `group` under the note or audio lane that holds it.
     TakeGroup {
         track: usize,
         group: u32,
@@ -273,6 +278,8 @@ enum Hit {
     Button(usize, TrackButton),
     /// A control in the header of automation lane `lane` of track `track`.
     LaneButton(usize, usize, LaneButton),
+    /// The label of the header of note lane `lane` of track `track` (also the chip of lane 0).
+    NoteLaneHeader(usize, usize),
     Header(usize),
     AddTrack(DeviceKey),
     AddAudio,
@@ -401,10 +408,10 @@ enum Drag {
         toggle_off: Option<ClipId>,
         /// A drag drops copies (Ctrl at the press); the clips themselves stay put meanwhile.
         copy: bool,
-        /// The track of the grabbed clip, and the track under the pointer now (`None` over a
-        /// row that is no lane).
-        grab_track: usize,
-        over: Option<usize>,
+        /// The `(track, lane)` of the grabbed clip, and the one under the pointer now (`None`
+        /// over a row that is no lane).
+        grab: (usize, usize),
+        over: Option<(usize, usize)>,
     },
     /// A rubber band over the lanes: the clips it touches are the selection (plus `base`).
     Marquee {
@@ -565,6 +572,9 @@ pub struct ArrangementView {
     selection: Selection<ClipId>,
     /// The selected track (a click on its header or the Up and Down keys): view state.
     selected_track: Option<DeviceKey>,
+    /// The note lane picked per track (the lane recordings, pastes and imports land on): view
+    /// state, not saved.
+    note_lane_sel: BTreeMap<DeviceKey, usize>,
     /// The selected automation points of one clip (positions in its point list).
     point_sel: Option<(ClipId, BTreeSet<usize>)>,
     menu: Option<Menu>,
@@ -654,6 +664,7 @@ impl ArrangementView {
             reveal_pending: false,
             selection: Selection::new(),
             selected_track: None,
+            note_lane_sel: BTreeMap::new(),
             point_sel: None,
             menu: None,
             drag: Drag::None,
@@ -768,6 +779,7 @@ impl ArrangementView {
         let (x, cy) = (self.bounds.x0, row.y0 + row.height() / 2.0);
         match button {
             LaneButton::Fold => Rect::new(x + 3.0, cy - 7.0, x + 15.0, cy + 7.0),
+            LaneButton::Mute => self.lane_mute_rect(row, 1),
             LaneButton::Mode => Rect::new(x + 134.0, cy - 8.0, x + 168.0, cy + 8.0),
             LaneButton::Arm => Rect::new(x + 174.0, cy - 8.0, x + 194.0, cy + 8.0),
         }
@@ -1353,22 +1365,32 @@ impl ArrangementView {
                 h,
             });
             y += h;
-            for (kind, h) in self.take_rows(ti) {
+            for (kind, h) in self.take_rows(ti, 0) {
                 rows.push(Row { kind, y, h });
                 y += h;
             }
-            if !self.collapsed.contains(&t.device) {
-                for li in 1..t.lanes.len() {
-                    let lane_h = self.lane_height_of(ti, li);
-                    rows.push(Row {
-                        kind: RowKind::Lane {
-                            track: ti,
-                            lane: li,
-                        },
-                        y,
-                        h: lane_h,
-                    });
-                    y += lane_h;
+            // The note lanes after the first stay when the track collapses; the automation
+            // lanes behind them fold away.
+            let notes = t.note_lane_count().max(1);
+            for li in 1..t.lanes.len() {
+                if li >= notes && self.collapsed.contains(&t.device) {
+                    break;
+                }
+                let lane_h = self.lane_height_of(ti, li);
+                rows.push(Row {
+                    kind: RowKind::Lane {
+                        track: ti,
+                        lane: li,
+                    },
+                    y,
+                    h: lane_h,
+                });
+                y += lane_h;
+                if li < notes {
+                    for (kind, h) in self.take_rows(ti, li) {
+                        rows.push(Row { kind, y, h });
+                        y += h;
+                    }
                 }
             }
         }
@@ -1393,6 +1415,7 @@ impl ArrangementView {
         self.rows = rows;
         self.content_height = y;
         self.apply_reveal();
+        self.lanes_sync();
         let song = &self.song;
         self.selection.retain(|id| find_clip(song, *id).is_some());
         if self
@@ -1814,6 +1837,13 @@ impl ArrangementView {
                         if let Some(h) = self.comment_hit(rr, track, pos) {
                             return h;
                         }
+                        if let Some(h) = self.note_lane_header_hit(rr, track, 0, pos) {
+                            return h;
+                        }
+                    } else if self.is_extra_note_lane(track, lane) {
+                        return self
+                            .note_lane_header_hit(rr, track, lane, pos)
+                            .unwrap_or(Hit::NoteLaneHeader(track, lane));
                     } else if self.is_automation_lane(track, lane) {
                         let folded = self.is_lane_folded(track, lane);
                         let buttons: &[LaneButton] = if folded {
@@ -1837,7 +1867,9 @@ impl ArrangementView {
                     return Hit::Empty;
                 };
                 // The clips of a frozen track are hidden behind its render: nothing to grab.
-                if lane == 0 && self.song.tracks[track].frozen.is_some() {
+                if (lane == 0 || self.is_note_lane(track, lane))
+                    && self.song.tracks[track].frozen.is_some()
+                {
                     return Hit::Lane { track, lane };
                 }
                 for clip in l.clips.iter().rev() {
@@ -2180,6 +2212,10 @@ impl ArrangementView {
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
+            Hit::NoteLaneHeader(track, lane) => {
+                let secondary = button == PointerButton::Secondary;
+                self.note_lane_header_down(track, lane, secondary, clicks, pos, out);
+            }
             Hit::AddTrack(device) if primary => {
                 out.push(song_cmd(SongCommand::AddTrack { device }));
             }
@@ -2208,7 +2244,8 @@ impl ArrangementView {
                     });
                 }
             }
-            Hit::Lane { .. } if button == PointerButton::Secondary => {
+            Hit::Lane { track, lane } if button == PointerButton::Secondary => {
+                self.pick_note_lane(track, lane);
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::Lane,
                     at: pos,
@@ -2238,20 +2275,22 @@ impl ArrangementView {
             Hit::Lane { track, lane } if primary => {
                 self.selected_track = None;
                 self.point_sel = None;
+                self.pick_note_lane(track, lane);
                 let t = self.axis.x_to_tick(pos.x);
                 let device = self.song.tracks[track].device.clone();
+                let automation = self.is_automation_lane(track, lane);
                 if clicks >= 2 {
                     // A double-click on an empty lane creates a one-bar clip.
                     let start = snap_floor(t, self.step(modifiers)).max(0);
                     let length = self.bars.bar_ticks_at(start);
-                    out.push(new_clip_cmd(device, lane, lane > 0, start, length));
+                    out.push(new_clip_cmd(device, lane, automation, start, length));
                     return;
                 }
                 self.drag = Drag::Draw {
                     start: pos,
                     device,
                     lane,
-                    automation: lane > 0,
+                    automation,
                     t0: t,
                     t1: t,
                     moved: false,
@@ -2306,6 +2345,10 @@ impl ArrangementView {
     }
 
     fn lane_button(&mut self, track: usize, lane: usize, b: LaneButton, out: &mut Vec<UiAction>) {
+        if b == LaneButton::Mute {
+            self.lane_mute_button(track, lane, out);
+            return;
+        }
         let Some((device, param)) = self.lane_id(track, lane) else {
             return;
         };
@@ -2318,6 +2361,7 @@ impl ArrangementView {
                     folded,
                 }));
             }
+            LaneButton::Mute => {}
             LaneButton::Arm => out.push(UiAction::ToggleLaneArm { device, param }),
             LaneButton::Mode => {
                 let mode = self.song.write_mode(&device, &param).next();
@@ -2460,6 +2504,7 @@ impl ArrangementView {
             }
             return;
         }
+        self.pick_note_lane(track, lane);
         if primary {
             match self.vp.effective_tool(modifiers) {
                 Tool::Razor => {
@@ -2711,8 +2756,8 @@ impl ArrangementView {
                     reselect,
                     toggle_off,
                     copy,
-                    grab_track: track,
-                    over: Some(track),
+                    grab: (track, lane),
+                    over: Some((track, lane)),
                 };
             }
             _ => {}
@@ -2831,7 +2876,7 @@ impl ArrangementView {
         let min = seq_edit::min_length(&step, MIN_TICKS);
         let axis = self.axis;
         let over_row = self.row_at(pos.y).and_then(|r| match r.kind {
-            RowKind::Lane { track, .. } => Some(track),
+            RowKind::Lane { track, lane } => Some((track, lane)),
             _ => None,
         });
         let (tempo, assets) = (&self.tempo, &self.assets);
@@ -3189,21 +3234,19 @@ impl ArrangementView {
                 reselect,
                 toggle_off,
                 copy,
-                grab_track,
+                grab,
                 over,
                 ..
             } => {
-                if moved
-                    && let Some(plan) = self.drop_plan(&originals, last_dt, grab_track, over, copy)
-                {
+                if moved && let Some(plan) = self.drop_plan(&originals, last_dt, grab, over, copy) {
                     // One undo step with the live moves of the gesture.
                     out.push(workflow_cmd(WorkflowCommand::MoveClips {
                         moves: plan
                             .into_iter()
-                            .map(|(id, track, _, start)| ClipMove {
+                            .map(|(id, track, lane, start)| ClipMove {
                                 id,
                                 track: self.song.tracks[track].device.clone(),
-                                lane: None,
+                                lane: Some(lane),
                                 start,
                             })
                             .collect(),
@@ -3408,6 +3451,9 @@ impl ArrangementView {
             return outcome;
         }
         if let Some(outcome) = self.org_command(id, arg) {
+            return outcome;
+        }
+        if let Some(outcome) = self.lane_command(id) {
             return outcome;
         }
         if let Some(outcome) = self.audio_command(id, arg) {
@@ -3719,19 +3765,27 @@ impl ArrangementView {
 
     /// Where the dragged clips land when dropped: `(clip, track, lane, start)` for each, or
     /// `None` when the drop adds nothing to the live drag (a move inside the lanes) or is not
-    /// allowed. The grabbed clip's track change (`over` against `grab_track`) applies to every
-    /// clip, each keeping its own lane kind; one clip without such a lane on its target track
-    /// makes the whole drop impossible.
+    /// allowed. The grabbed clip's track change (`over` against `grab`) applies to every clip,
+    /// each keeping its own lane kind; one clip without such a lane on its target track makes
+    /// the whole drop impossible. A note clip also follows the change of note lane (when the
+    /// grab and the pointer are both on note lanes), clamped to the lanes of its target track.
     fn drop_plan(
         &self,
         originals: &[Clip],
         dt: i64,
-        grab_track: usize,
-        over: Option<usize>,
+        grab: (usize, usize),
+        over: Option<(usize, usize)>,
         copy: bool,
     ) -> Option<Vec<(ClipId, usize, usize, i64)>> {
-        let delta = over? as i64 - grab_track as i64;
-        if delta == 0 && (!copy || dt == 0) {
+        let (over_track, over_lane) = over?;
+        let delta = over_track as i64 - grab.0 as i64;
+        let note_delta =
+            if self.is_note_lane(grab.0, grab.1) && self.is_note_lane(over_track, over_lane) {
+                over_lane as i64 - grab.1 as i64
+            } else {
+                0
+            };
+        if delta == 0 && note_delta == 0 && (!copy || dt == 0) {
             return None;
         }
         originals
@@ -3740,13 +3794,15 @@ impl ArrangementView {
                 let (track, lane, _) = self.find_clip(c.id)?;
                 let kind = &self.song.tracks[track].lanes[lane].kind;
                 let to = usize::try_from(track as i64 + delta).ok()?;
-                let lane_to = self
-                    .song
-                    .tracks
-                    .get(to)?
-                    .lanes
-                    .iter()
-                    .position(|l| &l.kind == kind)?;
+                let target = self.song.tracks.get(to)?;
+                let lane_to = if kind.is_notes() {
+                    let last = target.note_lane_count().checked_sub(1)?;
+                    usize::try_from(lane as i64 + note_delta)
+                        .unwrap_or(0)
+                        .min(last)
+                } else {
+                    target.lanes.iter().position(|l| &l.kind == kind)?
+                };
                 Some((c.id, to, lane_to, c.start + dt))
             })
             .collect()
@@ -3936,7 +3992,7 @@ impl ArrangementView {
             let lr = Rect::new(tl.x0, rr.y0, tl.x1, rr.y1);
             match &row.kind {
                 RowKind::Lane { track, lane } => {
-                    let bg = if *lane > 0 {
+                    let bg = if self.is_automation_lane(*track, *lane) {
                         st.lane_auto
                     } else if track % 2 == 0 {
                         st.lane
@@ -3982,9 +4038,13 @@ impl ArrangementView {
             let name = sp::track_name(doc, &t.device);
             let param = self.param_of(track, lane);
             // A frozen track shows its render in place of its own clips (they are still there).
-            if lane == 0
+            if (lane == 0 || self.is_note_lane(track, lane))
                 && let Some(frozen) = &t.frozen
             {
+                // Its render stands in for lane 0; the other note lanes show nothing.
+                if lane > 0 {
+                    continue;
+                }
                 let clip = frozen.clip();
                 let r = self.clip_rect_in(rr, &clip);
                 if r.x1 >= tl.x0 - 2.0 && r.x0 <= tl.x1 + 2.0 {
@@ -3992,13 +4052,14 @@ impl ArrangementView {
                 }
                 continue;
             }
+            let muted = t.muted || t.lanes[lane].muted;
             for clip in &t.lanes[lane].clips {
                 let r = self.clip_rect_in(rr, clip);
                 if r.x1 < tl.x0 - 2.0 || r.x0 > tl.x1 + 2.0 {
                     continue;
                 }
                 let selected = self.selection.contains(&clip.id);
-                self.paint_clip(c, r, clip, accent, &name, &param, selected, t.muted, tl);
+                self.paint_clip(c, r, clip, accent, &name, &param, selected, muted, tl);
             }
         }
         if let Drag::Draw {
@@ -4062,12 +4123,11 @@ impl ArrangementView {
                 last_dt,
                 moved: true,
                 copy,
-                grab_track,
+                grab,
                 over,
                 ..
             } => {
-                let Some(plan) = self.drop_plan(originals, *last_dt, *grab_track, *over, *copy)
-                else {
+                let Some(plan) = self.drop_plan(originals, *last_dt, *grab, *over, *copy) else {
                     return;
                 };
                 for (id, track, lane, start) in plan {
@@ -4775,7 +4835,10 @@ impl ArrangementView {
                     let accent = self.track_accent(doc, *track);
                     if *lane == 0 {
                         self.paint_track_header(c, doc, hr, *track, accent);
+                        self.paint_lane_chip(c, hr, *track);
                         self.paint_track_marks(c, hr, *track);
+                    } else if self.is_extra_note_lane(*track, *lane) {
+                        self.paint_note_lane_header(c, hr, *track, *lane, accent);
                     } else if self.is_lane_folded(*track, *lane) {
                         self.paint_folded_lane_header(c, hr, *track, *lane, accent);
                     } else {
@@ -4891,7 +4954,7 @@ impl ArrangementView {
         // Expand chevron (dim when the track has no automation lanes).
         let er = self.button_rect(hr, TrackButton::Expand);
         let expanded = !self.collapsed.contains(&tr.device);
-        let has_lanes = tr.lanes.len() > 1;
+        let has_lanes = tr.lanes.len() > tr.note_lane_count().max(1);
         let col = if has_lanes {
             t.text
         } else {

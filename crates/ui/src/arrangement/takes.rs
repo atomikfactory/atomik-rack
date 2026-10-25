@@ -1,5 +1,5 @@
-//! Take groups in the [`ArrangementView`]: a thin comp strip under the lane of a track that has
-//! a group, and, when it is opened, one row per take (stacked sub-lanes).
+//! Take groups in the [`ArrangementView`]: a thin comp strip under the lane (a note lane or the
+//! audio lane) of a track that has a group, and, when it is opened, one row per take (stacked sub-lanes).
 //!
 //! * The **group row** (`TAKE_GROUP_HEIGHT` tall) shows the comp: each segment in the colour of
 //!   its take. Its header has a chevron that opens or closes the take rows, the take count, and a
@@ -13,8 +13,8 @@
 //!   without a drag in the row picks the whole take. Escape cancels a drag.
 //!
 //! Which groups are open is saved with the project (`SetTakesOpen`; the view shows a click at
-//! once). The rows are laid out below the lane row (lane 0, the notes or audio lane) of their
-//! track, before its automation lanes.
+//! once). The rows are laid out below the row of the lane that holds the group, before the row
+//! of the next lane.
 
 use super::{ArrangementView, Drag, Hit, Rect, Row, RowKind, TRACK_LIST_WIDTH, song_cmd};
 use crate::canvas::{Align, Canvas, CanvasExt, pt};
@@ -66,11 +66,12 @@ impl ArrangementView {
         }
     }
 
-    /// The rows that follow lane 0 of track `ti`: per take group its strip and, when open, the
-    /// take rows. Heights are fixed (they do not follow the vertical zoom).
-    pub(super) fn take_rows(&self, ti: usize) -> Vec<(RowKind, f64)> {
+    /// The rows that follow lane `lane` (a note lane or the audio lane) of track `ti`: per take
+    /// group its strip and, when open, the take rows. Heights are fixed (they do not follow the
+    /// vertical zoom).
+    pub(super) fn take_rows(&self, ti: usize, lane: usize) -> Vec<(RowKind, f64)> {
         let mut rows = Vec::new();
-        let Some(lane) = self.song.tracks.get(ti).and_then(|t| t.lanes.first()) else {
+        let Some(lane) = self.song.tracks.get(ti).and_then(|t| t.lanes.get(lane)) else {
             return rows;
         };
         for g in &lane.take_groups {

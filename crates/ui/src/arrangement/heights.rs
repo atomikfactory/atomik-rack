@@ -3,7 +3,8 @@
 //! The height of a row is a base height times the vertical zoom, kept within
 //! [`MIN_ROW_HEIGHT`]`..=`[`MAX_ROW_HEIGHT`]. The base of a track's first lane is its entry in
 //! `Song::track_heights` (saved with the project, [`DEFAULT_TRACK_HEIGHT`] without one), the
-//! base of an automation lane is [`LANE_HEIGHT`]. The zoom is the view's own
+//! base of the other note lanes of a track is the same, and the base of an automation lane is
+//! [`LANE_HEIGHT`]. The zoom is the view's own
 //! ([`ArrangementView::track_zoom`], saved with the window state, not the project).
 //!
 //! Dragging the bottom edge of a track header sets that track's base height (one undo step per
