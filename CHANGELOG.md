@@ -22,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **The project format is version 30** (a notes lane may have a `name` and `muted`, and a track may have several notes lanes). Version 29 files load unchanged.
 - **The project format is version 29** (an optional `macros` object after `midi_maps`). Version 28 files load unchanged. A MIDI mapping cannot be armed for a param a macro drives (map the macro), and the device browser lists the macro bank among the utilities.
 
+### Fixed
+- **Right click on a note in the piano roll.** With the Select tool it no longer deletes the note: it selects the note (a note already in a multi-selection keeps the selection) and opens the notes menu, so Delete, Quantize and the rest act on it. The pencil, eraser and razor still delete on a right click.
+
 ## [0.2.0-rc.1] - 2026-10-25
 
 ### Fixed
