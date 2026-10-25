@@ -553,6 +553,38 @@ impl App {
                         self.shell.relink_file(path);
                     }
                 }
+                ShellRequest::PickExportMidiPreset => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export MIDI mapping preset")
+                        .add_filter("MIDI mapping preset", &["json"])
+                        .set_file_name("midi-mappings.json");
+                    if let Some(dir) = self.shell.midi_preset_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("json");
+                        }
+                        self.shell.export_midi_preset_to(&path);
+                    }
+                }
+                ShellRequest::PickImportMidiPreset => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import MIDI mapping preset")
+                        .add_filter("MIDI mapping preset", &["json"]);
+                    if let Some(dir) = self.shell.midi_preset_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_midi_preset_from(&path);
+                    }
+                }
                 ShellRequest::PickRelinkFolder => {
                     let mut dialog =
                         rfd::FileDialog::new().set_title("Search a folder for the missing audio");

@@ -32,6 +32,7 @@ use atomik_model::{
     Effect, Learner, MapMode, MapState, MidiMapCommand, MidiMapping, MidiPreset, MidiSource,
     MidiTarget, TEMPO_MAX, TEMPO_MIN, TransportTarget, load_midi_preset, save_midi_preset,
 };
+use atomik_ui::{MidiMapRow, MidiMarks};
 
 /// Seconds without a message after which a mapped move counts as let go.
 pub const GESTURE_TIMEOUT: f64 = 0.5;
@@ -225,6 +226,7 @@ impl<S: EngineSink> AppCore<S> {
 
     fn sync_learning(&mut self) {
         self.midi.hub.set_learning(self.midi.learning());
+        self.sync_midi_marks();
     }
 
     /// Removes every mapping of `target` (Forget MIDI); false, with a message, when it has none.
@@ -542,6 +544,122 @@ impl<S: EngineSink> AppCore<S> {
             .map(|m| m.source.clone())
             .collect();
         self.midi.hub.set_consumed(sources);
+        self.sync_midi_marks();
+    }
+
+    // ------------------------------------------------------------------ views
+
+    /// What the Mixer menu's MIDI items can do now.
+    pub fn midi_menu(&self) -> crate::commands::MidiMenu {
+        crate::commands::MidiMenu {
+            learning: self.midi.learn_mode,
+            has_maps: !self.doc().midi_maps.is_empty(),
+        }
+    }
+
+    /// The mapped controls and the learn state, as the rack and the console mark them.
+    pub fn midi_marks(&self) -> MidiMarks {
+        let mut marks = MidiMarks {
+            learning: self.midi.learn_mode || self.midi.armed.is_some(),
+            ..MidiMarks::default()
+        };
+        for m in &self.doc().midi_maps {
+            match &m.target {
+                MidiTarget::Param { device, param } => {
+                    marks.mapped.insert((device.clone(), param.clone()));
+                }
+                MidiTarget::Vca { id } => {
+                    marks.vcas.insert(*id);
+                }
+                _ => {}
+            }
+        }
+        if let Some(MidiTarget::Param { device, param }) = &self.midi.armed {
+            marks.armed = Some((device.clone(), param.clone()));
+        }
+        marks
+    }
+
+    /// Hands the rack and the console the current marks (a no-op while nothing is marked).
+    pub(super) fn sync_midi_marks(&mut self) {
+        let marks = self.midi_marks();
+        self.view.set_midi_marks(marks.clone());
+        self.console.set_midi_marks(marks);
+    }
+
+    /// The text of the status bar while MIDI Learn is on, or `None`.
+    pub fn midi_status(&self) -> Option<String> {
+        match (&self.midi.armed, self.midi.learn_mode) {
+            (Some(t), _) => Some(format!(
+                "MIDI LEARN: move a hardware control for {}",
+                self.target_text(t)
+            )),
+            (None, true) => {
+                Some("MIDI LEARN: change a control, then move a hardware control".to_owned())
+            }
+            (None, false) => None,
+        }
+    }
+
+    /// A target as text for lists: the device's name and the param's name, `VCA Drums`, `Tempo`.
+    pub fn target_text(&self, t: &MidiTarget) -> String {
+        let doc = self.doc();
+        let param_name = |device: &DeviceKey, param: &str| -> String {
+            doc.resolve(device)
+                .and_then(|d| self.registry.get(&d.type_id))
+                .and_then(|f| f.descriptor.param_by_key(param))
+                .map_or_else(|| param.to_owned(), |p| p.name.to_owned())
+        };
+        match t {
+            MidiTarget::Param { device, param } => {
+                let name = doc
+                    .device(device)
+                    .map_or_else(|| device.0.clone(), |d| d.name.clone());
+                format!("{name} {}", param_name(device, param))
+            }
+            MidiTarget::Vca { id } => doc
+                .console
+                .vca(*id)
+                .map_or_else(|| format!("VCA {id}"), |v| format!("VCA {}", v.name)),
+            MidiTarget::SelectedStrip { param } => format!("Selected strip {param}"),
+            other => other.describe(),
+        }
+    }
+
+    /// The rows of the MIDI Mappings panel.
+    pub fn midi_map_rows(&self) -> Vec<MidiMapRow> {
+        self.doc()
+            .midi_maps
+            .iter()
+            .map(|m| MidiMapRow {
+                mapping: m.clone(),
+                target: self.target_text(&m.target),
+                missing: self
+                    .doc()
+                    .midi_target_problem(&self.registry, &m.target)
+                    .is_some(),
+            })
+            .collect()
+    }
+
+    /// Replaces a mapping with an edited one (the panel's cells); one undo step.
+    pub fn edit_midi_map(&mut self, mapping: MidiMapping) -> bool {
+        self.apply_command(Command::MidiMap(MidiMapCommand::Set(mapping)))
+            .is_ok()
+    }
+
+    /// Deletes a mapping; one undo step.
+    pub fn remove_midi_map(&mut self, id: u32) -> bool {
+        self.apply_command(Command::MidiMap(MidiMapCommand::Remove { id }))
+            .is_ok()
+    }
+
+    /// Arms the target of mapping `id`: the next hardware control moved becomes its source.
+    pub fn relearn_midi_map(&mut self, id: u32) -> bool {
+        let Some(target) = self.doc().midi_map(id).map(|m| m.target.clone()) else {
+            return false;
+        };
+        self.midi_arm(target)
     }
 
     // ------------------------------------------------------------------ presets

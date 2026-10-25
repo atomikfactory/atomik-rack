@@ -62,6 +62,8 @@ pub struct MenuEnable {
     /// Piano roll: the scale, fold and chord state the check marks of the scale and chord
     /// submenus show.
     pub notes: NoteTools,
+    /// Control menu: the control has a MIDI mapping (Forget MIDI works).
+    pub control_mapped: bool,
 }
 
 /// The items of the colour part of a marker menu: the command argument and the label.
@@ -526,6 +528,10 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             ]);
             v
         }
+        ContextTarget::Control => vec![
+            item("midi.learn_control", true),
+            item("midi.forget_control", e.control_mapped),
+        ],
         ContextTarget::Marker => {
             let mut v = vec![item("sequencer.marker_rename", true), Spec::Separator];
             v.extend(marker_colors());

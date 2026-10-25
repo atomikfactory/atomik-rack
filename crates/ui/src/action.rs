@@ -368,6 +368,8 @@ pub enum ContextTarget {
     MarkerRange,
     /// The marker strip away from its markers.
     MarkerStrip,
+    /// A knob, fader or switch (the shell knows which from [`UiAction::ControlMenu`]).
+    Control,
 }
 
 /// How [`UiAction::SliceLoop`] finds the slice markers.

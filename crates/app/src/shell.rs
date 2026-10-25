@@ -137,11 +137,11 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, Modifiers,
-    NotesAction, NotesValues, NotesView, NumpadKey, Place, PluginBannerView, PluginSettingsView,
-    PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry,
-    RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction,
-    WarpValues, WarpView,
+    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, MidiMapsAction,
+    MidiMapsView, Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, Place,
+    PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
+    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -192,6 +192,14 @@ pub enum ShellRequest {
     /// Show a folder dialog (the relink panel's SEARCH FOLDER...), then call
     /// [`Shell::relink_search_folder`] with the picked folder.
     PickRelinkFolder,
+    /// Show a save dialog for a MIDI mapping preset (Mixer > Export MIDI Mapping Preset, the
+    /// panel's EXPORT), starting in [`Shell::midi_preset_dir`], then call
+    /// [`Shell::export_midi_preset_to`] with the path.
+    PickExportMidiPreset,
+    /// Show an open dialog for a MIDI mapping preset (Mixer > Import MIDI Mapping Preset, the
+    /// panel's IMPORT), starting in [`Shell::midi_preset_dir`], then call
+    /// [`Shell::import_midi_preset_from`] with the path.
+    PickImportMidiPreset,
     /// The rack has unsaved changes: ask, then call [`Shell::confirmed`] with the command.
     ConfirmDiscard(AppCommand),
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
@@ -300,6 +308,10 @@ pub struct Shell<B: AudioBackend> {
     plugin_settings: Option<PluginSettingsView>,
     /// The relink panel (File > Relink Missing Audio) while it is open.
     relink: Option<RelinkView>,
+    /// The MIDI Mappings panel (Mixer > MIDI Mappings) while it is open.
+    midi_maps: Option<MidiMapsView>,
+    /// The control a right click opened the MIDI menu for (what Learn MIDI and Forget MIDI act on).
+    control_target: Option<(DeviceKey, String)>,
     /// The quantize panel (Edit > Quantize Options) while it is open.
     quantize: Option<QuantizeView>,
     /// The panel's settings, kept between openings (view state, not in the project).
@@ -449,6 +461,8 @@ impl<B: AudioBackend> Shell<B> {
             warp_values: WarpValues::default(),
             silence_values: SilenceValues::default(),
             relink_target: None,
+            midi_maps: None,
+            control_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
             os,
@@ -943,6 +957,91 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Whether the MIDI Mappings panel is open.
+    pub fn midi_maps_open(&self) -> bool {
+        self.midi_maps.is_some()
+    }
+
+    /// The MIDI Mappings panel, while it is open.
+    pub fn midi_maps_view(&self) -> Option<&MidiMapsView> {
+        self.midi_maps.as_ref()
+    }
+
+    /// Opens the MIDI Mappings panel.
+    fn open_midi_maps(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MidiMapsView::new(theme);
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_rows(self.core.midi_map_rows());
+        self.midi_maps = Some(view);
+        self.repaint = true;
+    }
+
+    /// Feeds the MIDI Mappings panel the project's rows.
+    fn sync_midi_maps(&mut self) {
+        let rows = self.core.midi_map_rows();
+        if let Some(view) = &mut self.midi_maps {
+            view.set_rows(rows);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the MIDI Mappings panel asked for.
+    fn midi_maps_action(&mut self, action: MidiMapsAction) -> Vec<ShellRequest> {
+        let mut requests = Vec::new();
+        match action {
+            MidiMapsAction::Edit(mapping) => {
+                self.core.edit_midi_map(mapping);
+            }
+            MidiMapsAction::Remove(id) => {
+                self.core.remove_midi_map(id);
+            }
+            MidiMapsAction::Relearn(id) => {
+                // The panel gives way to the control being moved.
+                if self.core.relearn_midi_map(id) {
+                    self.midi_maps = None;
+                }
+            }
+            MidiMapsAction::Export => requests.push(ShellRequest::PickExportMidiPreset),
+            MidiMapsAction::Import => requests.push(ShellRequest::PickImportMidiPreset),
+            MidiMapsAction::Clear => {
+                self.core.clear_midi_maps();
+            }
+            MidiMapsAction::Close => self.midi_maps = None,
+        }
+        self.sync_midi_maps();
+        self.repaint = true;
+        requests
+    }
+
+    /// The folder MIDI mapping presets are kept in (`midi-presets` next to the settings file),
+    /// created on demand; `None` without a settings file.
+    pub fn midi_preset_dir(&self) -> Option<PathBuf> {
+        let dir = self
+            .settings_path
+            .as_deref()?
+            .parent()?
+            .join("midi-presets");
+        let _ = std::fs::create_dir_all(&dir);
+        Some(dir)
+    }
+
+    /// Writes the project's MIDI mappings to the picked preset file.
+    pub fn export_midi_preset_to(&mut self, path: &Path) {
+        self.core.export_midi_preset(path, &[]);
+        self.repaint = true;
+    }
+
+    /// Adds the mappings of the picked preset file to the project.
+    pub fn import_midi_preset_from(&mut self, path: &Path) {
+        self.core.import_midi_preset(path);
+        self.sync_midi_maps();
+        self.repaint = true;
+    }
+
     /// What the relink panel asked for.
     fn relink_action(&mut self, action: RelinkAction) -> Vec<ShellRequest> {
         match action {
@@ -1332,6 +1431,7 @@ impl<B: AudioBackend> Shell<B> {
             vca: self.core.vca_menu(self.live_pane(self.focus)),
             strip: self.core.strip_menu(self.live_pane(self.focus)),
             snapshots: self.core.snapshot_menu(),
+            midi: self.core.midi_menu(),
             freeze: self.core.freeze_menu(),
         }
     }
@@ -1507,6 +1607,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.relink.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.relink {
+                v.set_bounds(rect);
+            }
+        }
+        if self.midi_maps.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.midi_maps {
                 v.set_bounds(rect);
             }
         }
@@ -1831,6 +1937,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.relink {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.midi_maps {
+                    v.set_scale(*scale);
+                }
                 if let Some(v) = &mut self.quantize {
                     v.set_scale(*scale);
                 }
@@ -1892,6 +2001,31 @@ impl<B: AudioBackend> Shell<B> {
             }
             self.sync_plugin_ui();
             return Vec::new();
+        }
+        if self.midi_maps.is_some() {
+            // The MIDI Mappings panel takes every event; Esc closes it.
+            self.repaint = true;
+            if let UiEvent::Key {
+                key: Key::Escape,
+                pressed: true,
+                ..
+            } = event
+            {
+                self.midi_maps = None;
+                return Vec::new();
+            }
+            let actions = self
+                .midi_maps
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            let mut requests = Vec::new();
+            for action in actions {
+                if let UiAction::MidiMaps(a) = action {
+                    requests.extend(self.midi_maps_action(a));
+                }
+            }
+            return requests;
         }
         if self.relink.is_some() {
             // The relink panel takes every event; Esc closes it.
@@ -2197,6 +2331,18 @@ impl<B: AudioBackend> Shell<B> {
             ("editor.quantize", None) => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
+            }
+            ("midi.learn_control", None) => {
+                if let Some((device, param)) = self.control_target.clone() {
+                    self.core
+                        .midi_arm(atomik_model::MidiTarget::Param { device, param });
+                }
+            }
+            ("midi.forget_control", None) => {
+                if let Some((device, param)) = self.control_target.clone() {
+                    self.core
+                        .midi_forget(atomik_model::MidiTarget::Param { device, param });
+                }
             }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
@@ -2563,6 +2709,10 @@ impl<B: AudioBackend> Shell<B> {
             meter_can_delete: core.arrangement().meter_change_deletable(),
             marker_selection: !clips.is_empty(),
             notes: core.piano_roll().tools(),
+            control_mapped: self
+                .control_target
+                .as_ref()
+                .is_some_and(|(d, p)| core.is_midi_mapped(d, p)),
         }
     }
 
@@ -2635,17 +2785,21 @@ impl<B: AudioBackend> Shell<B> {
     /// coordinates (the rack view sits below the menu bar).
     fn open_context_menus(&mut self, pane: Pane, actions: &[UiAction]) {
         for action in actions {
-            if let UiAction::ContextMenu { target, at } = action {
-                let at = if pane == Pane::Rack {
-                    {
-                        let o = self.layout().rack.origin();
-                        Point::new(at.x + o.x, at.y + o.y)
-                    }
-                } else {
-                    *at
-                };
-                self.open_context_menu(pane, *target, at);
-            }
+            let (target, at) = match action {
+                UiAction::ContextMenu { target, at } => (*target, *at),
+                UiAction::ControlMenu { device, param, at } => {
+                    self.control_target = Some((device.clone(), param.clone()));
+                    (ContextTarget::Control, *at)
+                }
+                _ => continue,
+            };
+            let at = if pane == Pane::Rack {
+                let o = self.layout().rack.origin();
+                Point::new(at.x + o.x, at.y + o.y)
+            } else {
+                at
+            };
+            self.open_context_menu(pane, target, at);
         }
     }
 
@@ -3364,6 +3518,29 @@ impl<B: AudioBackend> Shell<B> {
                 let _ = self.core.apply_command(command);
                 Vec::new()
             }
+            AppCommand::MidiLearn => {
+                self.core.toggle_midi_learn();
+                Vec::new()
+            }
+            AppCommand::MidiMappings => {
+                self.open_midi_maps();
+                Vec::new()
+            }
+            AppCommand::ExportMidiPreset => {
+                if self.core.doc().midi_maps.is_empty() {
+                    self.notify("There are no MIDI mappings to export");
+                    Vec::new()
+                } else {
+                    vec![ShellRequest::PickExportMidiPreset]
+                }
+            }
+            AppCommand::ImportMidiPreset => vec![ShellRequest::PickImportMidiPreset],
+            AppCommand::ClearMidiMaps => {
+                if !self.core.clear_midi_maps() {
+                    self.notify("There are no MIDI mappings to clear");
+                }
+                Vec::new()
+            }
             AppCommand::AudioSettings => {
                 let session = self.core.sink();
                 let mut lists = DeviceLists::query(session.backend());
@@ -3486,6 +3663,7 @@ impl<B: AudioBackend> Shell<B> {
         self.core.frame();
         self.sync_plugin_ui();
         self.sync_relink();
+        self.sync_midi_maps();
         self.sync_quantize();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
@@ -3605,6 +3783,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(progress) = self.core.freeze_progress() {
             text = format!("{progress} \u{b7} {text}");
         }
+        if let Some(learn) = self.core.midi_status() {
+            text = format!("{learn} \u{b7} {text}");
+        }
         let changed = text != self.status;
         if changed {
             self.status = text;
@@ -3678,6 +3859,9 @@ impl<B: AudioBackend> Shell<B> {
             view.paint(canvas);
         }
         if let Some(view) = &self.relink {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.midi_maps {
             view.paint(canvas);
         }
         if let Some(view) = &self.quantize {
@@ -3860,6 +4044,10 @@ mod midi_tests;
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]
 mod console_tests;
+
+#[cfg(test)]
+#[path = "shell_midimap_tests.rs"]
+mod midimap_tests;
 
 #[cfg(test)]
 #[path = "shell_sampler_tests.rs"]

@@ -750,6 +750,7 @@ impl<S: EngineSink> AppCore<S> {
             self.close_plugin_params();
         }
         self.share_pattern_clipboard();
+        self.sync_midi_marks();
         self.target.set(self.notes_target());
     }
 
