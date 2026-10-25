@@ -50,6 +50,22 @@ impl<S: EngineSink> AppCore<S> {
         self.surface = host;
     }
 
+    /// Sets up the driver `driver` on an in-memory surface and returns the surface's end of it
+    /// (what a test or the MCP server plays the hardware with).
+    ///
+    /// # Errors
+    /// A message when no driver has that id.
+    pub fn attach_loopback_surface(
+        &mut self,
+        driver: &str,
+    ) -> Result<crate::surface::LoopbackSurface, String> {
+        let d = atomik_midi_io::surface::driver_by_id(driver)
+            .ok_or_else(|| format!("no control surface driver {driver:?}"))?;
+        let surface = crate::surface::LoopbackSurface::new();
+        self.set_surface(Some(SurfaceHost::new(d, Box::new(surface.clone()))));
+        Ok(surface)
+    }
+
     /// The control surface in use, if any.
     pub fn surface(&self) -> Option<&SurfaceHost> {
         self.surface.as_ref()

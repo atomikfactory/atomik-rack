@@ -118,6 +118,8 @@ pub struct Session {
     scale: f64,
     logical: Size,
     os: Os,
+    /// The clock and the surface port of the MIDI tools ([`crate::midi_tools`]).
+    pub(crate) midi: crate::midi_tools::MidiTools,
 }
 
 impl Session {
@@ -145,6 +147,7 @@ impl Session {
             scale,
             logical,
             os,
+            midi: crate::midi_tools::MidiTools::default(),
         }
     }
 
@@ -186,6 +189,7 @@ impl Session {
                 "physical": [pw, ph],
                 "os": os_name(self.os),
             },
+            "midi": crate::midi_tools::status_json(self),
             "document": tier1::doc_json(self.shell.core().doc(), include_params),
         })
     }
@@ -235,6 +239,10 @@ fn request_json(r: ShellRequest) -> Value {
         ShellRequest::PickSaveFile | ShellRequest::PickExportFile => (
             "pick_save_file",
             "a file dialog: use session_save with a path",
+        ),
+        ShellRequest::PickExportMidiPreset | ShellRequest::PickImportMidiPreset => (
+            "pick_midi_preset",
+            "a file dialog: use session_midi_learn with action export or import and a file",
         ),
         ShellRequest::PickImportMidi { .. } | ShellRequest::PickExportMidi(_) => (
             "pick_midi_file",

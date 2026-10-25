@@ -36,7 +36,10 @@ pub struct Tool {
 
 /// Every tool, in the order `tools/list` shows them.
 pub fn all_tools() -> impl Iterator<Item = &'static Tool> {
-    tier1::TOOLS.iter().chain(session::TOOLS.iter())
+    tier1::TOOLS
+        .iter()
+        .chain(session::TOOLS.iter())
+        .chain(crate::midi_tools::TOOLS.iter())
 }
 
 /// The server state: the folders it may touch and the open session.

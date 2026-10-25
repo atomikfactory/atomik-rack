@@ -310,6 +310,22 @@ impl<S: EngineSink> AppCore<S> {
         self.midi.hub.push(&Arc::from(port), message);
     }
 
+    /// [`Self::inject_midi`] for raw bytes: one note, controller or pitch bend message (the MCP
+    /// server and the hardware-free tests).
+    ///
+    /// # Errors
+    /// A message naming the bytes when they are not such a message.
+    pub fn inject_midi_bytes(&self, port: &str, bytes: &[u8]) -> Result<ChannelMessage, String> {
+        let message = atomik_midi_io::parse_message(bytes, &mut atomik_midi_io::RunningStatus::default())
+            .ok_or_else(|| {
+                format!(
+                    "{bytes:02X?} is not a note, controller or pitch bend message (a channel message of three bytes)"
+                )
+            })?;
+        self.inject_midi(port, message);
+        Ok(message)
+    }
+
     /// Handles what the MIDI input queued since the last frame, learns, and lets held moves go:
     /// call it once per UI frame with a monotonic time in seconds.
     pub fn midi_control_frame(&mut self, now: f64) {
