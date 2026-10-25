@@ -12,6 +12,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::fx::FxKind;
 use crate::interface::{boundary_in_descriptor, boundary_out_descriptor, interface_descriptor};
 use crate::keymap::{CommandOutcome, Roles};
+use crate::library_drop;
 use crate::paint::{self, CableLook, PanelInfo, Ring};
 use crate::plugin_data::{PluginDeviceStatus, PluginEntryInfo};
 use crate::plugin_panel::{PluginButton, PluginInfo};
@@ -494,6 +495,9 @@ pub struct RackView {
     drop_hover: Option<usize>,
     /// The drum pad (device index, pad) files are being dragged over.
     drop_pad: Option<(usize, u8)>,
+    /// A library item (a patch, a container or a device) is being dragged over the rack: the
+    /// drop line follows the pointer.
+    lib_drop: bool,
     /// Selected pad of each drum machine (view state, not in the document).
     pads: BTreeMap<DeviceKey, u8>,
     /// Sensitivity of each loop slicer panel (view state, not in the document).
@@ -630,6 +634,7 @@ impl RackView {
             console_seen: None,
             drop_hover: None,
             drop_pad: None,
+            lib_drop: false,
             pads: BTreeMap::new(),
             sens: BTreeMap::new(),
             sc_menu: None,
@@ -1239,6 +1244,7 @@ impl RackView {
         self.hover = None;
         self.drop_hover = None;
         self.drop_pad = None;
+        self.lib_drop = false;
         self.rename = None;
         self.rebuild_tree();
         self.clamp_scroll();
@@ -2298,7 +2304,15 @@ impl RackView {
                 }
             }
             UiEvent::FileHover { pos, paths } => {
-                let target = if paths.is_empty() {
+                let library = paths.iter().any(|p| library_drop::is_library(p));
+                let line =
+                    library_drop::rack_item(paths).is_some() && self.rack_area().contains(*pos);
+                if line {
+                    self.pointer = *pos;
+                }
+                self.set_lib_drop(line);
+                // A library item is never a sample: the sampler panel does not light up.
+                let target = if paths.is_empty() || library {
                     None
                 } else {
                     self.sampler_at(*pos)
@@ -2310,8 +2324,29 @@ impl RackView {
             UiEvent::FileHoverCancel => {
                 self.set_drop_hover(None);
                 self.set_drop_pad(None);
+                self.set_lib_drop(false);
             }
             UiEvent::FileDrop { pos, paths } => {
+                self.set_lib_drop(false);
+                if paths.iter().any(|p| library_drop::is_library(p)) {
+                    self.set_drop_hover(None);
+                    self.set_drop_pad(None);
+                    if let Some(path) = library_drop::rack_item(paths)
+                        && self.rack_area().contains(*pos)
+                    {
+                        let none = vec![false; self.devices.len()];
+                        let dp = self.drop_point(self.view_to_rack(*pos), &none);
+                        let index = self.slot_index(doc, &dp, &[]);
+                        // Inside a container there is one column: the index counts its devices.
+                        let column = if self.scope.is_empty() { dp.column } else { 0 };
+                        out.push(UiAction::InsertLibrary {
+                            path: path.clone(),
+                            container: self.scope.last().cloned(),
+                            slot: RackSlot { column, index },
+                        });
+                    }
+                    return out;
+                }
                 let target = self.sampler_at(*pos);
                 let pad = target.and_then(|_| self.pad_at(*pos));
                 self.set_drop_hover(None);
@@ -2346,6 +2381,13 @@ impl RackView {
         match self.hit(pos)? {
             Hit::Pad(i, pad) => Some((i, pad)),
             _ => None,
+        }
+    }
+
+    fn set_lib_drop(&mut self, on: bool) {
+        if self.lib_drop != on {
+            self.lib_drop = on;
+            self.repaint = true;
         }
     }
 

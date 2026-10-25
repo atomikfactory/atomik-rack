@@ -311,6 +311,7 @@ pub mod interface;
 pub mod io_panel;
 pub mod key_rows;
 pub mod keymap;
+mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
 pub mod marker_edit;
