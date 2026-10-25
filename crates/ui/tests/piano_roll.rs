@@ -576,3 +576,69 @@ fn pressing_away_from_the_playhead_line_or_on_a_note_does_not_drag_it() {
     let a = run(|e| v.handle(e, &doc, &reg), &[down(edge), mv(to), up(to)]);
     assert!(locates(&a).is_empty(), "{a:?}");
 }
+
+fn right_click_note(
+    v: &mut PianoRollView,
+    doc: &atomik_model::RackDoc,
+    reg: &atomik_device_sdk::Registry,
+    i: usize,
+) -> (Point, Vec<UiAction>) {
+    let at = v.note_rect(i).unwrap().center();
+    let a = run(
+        |e| v.handle(e, doc, reg),
+        &[down_with(at, PointerButton::Secondary, 1)],
+    );
+    (at, a)
+}
+
+#[test]
+fn right_click_on_an_unselected_note_with_select_selects_it_and_opens_the_notes_menu() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Select);
+    v.set_selected_notes(&[0, 2]);
+    let (at, a) = right_click_note(&mut v, &doc, &reg, 5);
+    assert!(contents(&a).is_empty(), "no removal: {a:?}");
+    assert_eq!(
+        v.selected_notes(),
+        vec![5],
+        "the click replaces the selection"
+    );
+    assert_eq!(
+        a,
+        vec![UiAction::ContextMenu {
+            target: atomik_ui::ContextTarget::Notes,
+            at
+        }]
+    );
+}
+
+#[test]
+fn right_click_on_a_selected_note_with_select_keeps_the_multi_selection() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Select);
+    v.set_selected_notes(&[0, 2, 4]);
+    let (at, a) = right_click_note(&mut v, &doc, &reg, 2);
+    assert!(contents(&a).is_empty(), "no removal: {a:?}");
+    assert_eq!(v.selected_notes(), vec![0, 2, 4]);
+    assert_eq!(
+        a,
+        vec![UiAction::ContextMenu {
+            target: atomik_ui::ContextTarget::Notes,
+            at
+        }]
+    );
+}
+
+#[test]
+fn right_click_on_a_note_with_pencil_still_removes_it() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Pencil);
+    let (_, a) = right_click_note(&mut v, &doc, &reg, 1);
+    let c = contents(&a);
+    assert_eq!(c.len(), 1, "{a:?}");
+    assert_eq!(c[0].0.len(), bass_line().len() - 1);
+    assert!(!c[0].0.contains(&bass_line()[1]));
+}
