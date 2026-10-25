@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-10-25
+
 ### Fixed
 - **Bounce in Place and Unfreeze and Keep Audio make an audible track.** The new audio track was silent while playing: its devices reached the engine after the routing that connects them, so the track and its channel were never cabled to the master. The changes of a compound edit inside another one are now reported with every device first, then one routing. The new track also sits right after its source track, in the same folder and colour, instead of at the end of the list.
 - **Piano roll tools.** Only the pencil creates notes now: with Select a press on the empty grid starts a rubber band (a click clears the selection, Shift or Ctrl adds to it) instead of drawing one. A note can be resized from its left edge as well as its right one, and with several notes selected every one of them changes by the same delta (snapped, with a minimum length), in one undo step like a group move. The mouse cursor shows what a press will do: a horizontal resize cursor over a note edge and during the drag, a move cursor over a note body, a crosshair for the pencil.
