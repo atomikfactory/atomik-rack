@@ -47,6 +47,15 @@
 //! it) to the group; a right-click on a channel or bus plate offers New VCA, Add to VCA and Remove
 //! from VCA (`CreateVca`, `AssignToVca`).
 //!
+//! Snapshots: under the toolbar a slim bar ([`crate::console_snapshots`], [`SNAPSHOT_BAR_H`]) holds
+//! a chip per mixer snapshot, a `+` that stores the mix (`StoreSnapshot`, named `A`, `B`, `1`, ...),
+//! the A/B compare toggle (`Compare`, with an END button while it is on) and a status text. A click
+//! on a chip recalls it (`RecallSnapshot`), a double-click edits its name in place (`RenameSnapshot`;
+//! the console is the text owner), a right-click opens Recall (all, or levels, mutes and solos,
+//! sends, insert bypass only), Compare with this, Update from current mix, Rename, Move and Delete.
+//! The chip of the current snapshot is lit and carries a dot once the mix has moved
+//! ([`ConsoleView::set_snapshot_hint`] gives the one last recalled).
+//!
 //! Solo display: with any channel soloed, every other channel is drawn as silenced (hollow
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
@@ -58,6 +67,7 @@ use crate::console_layout::{
     StripLayout,
 };
 use crate::console_meter::{ChannelMeters, GR_MAX_DB, MeterBallistics, meter_norm};
+use crate::console_snapshots::{self as cs, CompareView, SnapView};
 use crate::console_vca::{self as cv, VCA_LEVEL, VcaPart, VcaView};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
@@ -71,8 +81,8 @@ use atomik_device_sdk::{DeviceDescriptor, DeviceKind, Registry};
 use atomik_model::console::{MAX_BUS_NAME_CHARS, OutputAvail, output_options};
 use atomik_model::{
     Command, ConsoleCommand, DeviceKey, FX_SLOTS, INSERT_SLOTS, INTERFACE_KEY, InsertEffect,
-    OutputDest, RackDevice, RackDoc, bypass_inserts_commands, insert_bypass_states, insert_chain,
-    inserts_bypassed, output_dest,
+    OutputDest, RackDevice, RackDoc, SnapshotScope, bypass_inserts_commands, insert_bypass_states,
+    insert_chain, inserts_bypassed, output_dest,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -81,6 +91,8 @@ use vello::peniko::Color;
 
 /// Toolbar height.
 pub const TOOLBAR_H: f64 = 28.0;
+/// Height of the snapshot bar under the toolbar.
+pub const SNAPSHOT_BAR_H: f64 = cs::BAR_H;
 /// Horizontal scrollbar height (below the strips).
 pub const SCROLLBAR_H: f64 = 8.0;
 /// Pixels of drag for the full range of a send bar.
@@ -115,6 +127,12 @@ pub enum ConsoleButton {
     ClearSolos,
     /// Master: clear every mute.
     ClearMutes,
+    /// Snapshot bar: store the mix as a new snapshot (the `+` button).
+    StoreSnapshot,
+    /// Snapshot bar: the A/B compare toggle.
+    Compare,
+    /// Snapshot bar: end the compare and keep the live mix (only while comparing).
+    EndCompare,
 }
 
 const TOOLBAR: [(ConsoleButton, f64); 5] = [
@@ -239,6 +257,8 @@ enum Hit {
     OutputSel(usize),
     /// A part of VCA strip `i`.
     Vca(usize, VcaPart),
+    /// Snapshot chip `i` (index into the snapshot list).
+    Snap(usize),
     Picker(usize),
     /// An insert chain slot (name or "+ add").
     Insert(Target, usize),
@@ -279,6 +299,18 @@ enum MenuItem {
     VcaColor(u32, Option<[u8; 3]>),
     /// Select the members of this group in the console.
     SelectVca(u32),
+    /// Recall this snapshot, all of it or only the categories of the scope.
+    SnapRecall(u32, SnapshotScope),
+    /// Compare the mix with this snapshot.
+    SnapCompare(u32),
+    /// Overwrite this snapshot with the mix as it is now.
+    SnapUpdate(u32),
+    /// Edit this snapshot name in place.
+    SnapRename(u32),
+    /// Move this snapshot to a position in the list.
+    SnapMove(u32, usize),
+    /// Delete this snapshot.
+    SnapDelete(u32),
     Disabled,
 }
 
@@ -603,6 +635,8 @@ struct RenameState {
     bus: bool,
     /// A VCA group (`RenameVca`); `strip` and `target` are then empty.
     vca: Option<u32>,
+    /// A mixer snapshot (`RenameSnapshot`); `strip` and `target` are then empty.
+    snapshot: Option<u32>,
     text: String,
 }
 
@@ -622,6 +656,12 @@ pub struct ConsoleView {
     master: Option<StripView>,
     /// The VCA strips, in group order, after the buses.
     vcas: Vec<VcaView>,
+    /// The snapshot chips, the compare in progress and what a recall of the current snapshot
+    /// skips (see [`crate::console_snapshots`]).
+    snaps: Vec<SnapView>,
+    compare: Option<CompareView>,
+    snap_hint: Option<u32>,
+    snap_notes: Vec<String>,
     return_names: Vec<String>,
     layouts: Vec<(&'static str, StripLayout)>,
     master_layout: Option<MasterLayout>,
@@ -668,6 +708,10 @@ impl ConsoleView {
             n_channels: 0,
             master: None,
             vcas: Vec::new(),
+            snaps: Vec::new(),
+            compare: None,
+            snap_hint: None,
+            snap_notes: Vec::new(),
             return_names: Vec::new(),
             layouts: Vec::new(),
             master_layout: None,
@@ -1017,6 +1061,62 @@ impl ConsoleView {
         (self.hit(p) == Hit::Vca(i, part)).then_some(p)
     }
 
+    /// The snapshot ids in list order (the chips, whether or not they fit the bar).
+    pub fn snapshot_ids(&self) -> Vec<u32> {
+        self.snaps.iter().map(|s| s.id).collect()
+    }
+
+    /// Centre of the chip of snapshot `id` (logical window coordinates), `None` when there is no
+    /// such snapshot or its chip does not fit the bar.
+    pub fn snapshot_center(&self, id: u32) -> Option<Point> {
+        let i = self.snaps.iter().position(|s| s.id == id)?;
+        let l = self.snapshot_layout();
+        l.chips
+            .iter()
+            .find(|(c, _)| *c == i)
+            .map(|(_, r)| r.center())
+    }
+
+    /// Tells the view which snapshot the mix was last recalled from, for the chip to stay lit
+    /// (with a dot once the mix has moved) when no snapshot matches the mix exactly. The host
+    /// keeps it; a snapshot that does not exist is ignored.
+    pub fn set_snapshot_hint(&mut self, id: Option<u32>) {
+        if self.snap_hint != id {
+            self.snap_hint = id;
+            self.repaint = true;
+        }
+    }
+
+    /// The snapshot that counts as the current one: the one being compared with, else the first
+    /// that the mix matches exactly, else the host's hint.
+    pub fn current_snapshot(&self) -> Option<u32> {
+        cs::current(&self.snaps, self.compare, self.snap_hint)
+    }
+
+    /// The compare in progress: the snapshot and whether its side (B) is live, else the working
+    /// mix (A).
+    pub fn compare_state(&self) -> Option<(u32, bool)> {
+        self.compare.map(|c| (c.snapshot, c.on_snapshot))
+    }
+
+    /// The text of the snapshot bar's status area (the live side of a compare, or what the
+    /// current snapshot skips), if any.
+    pub fn snapshot_status(&self) -> Option<String> {
+        cs::status_text(
+            &self.snaps,
+            self.compare,
+            self.current_snapshot(),
+            &self.snap_notes,
+        )
+    }
+
+    /// Whether the chip of snapshot `id` shows the "mix has moved" dot.
+    pub fn snapshot_modified(&self, id: u32) -> bool {
+        self.compare.is_none()
+            && self.current_snapshot() == Some(id)
+            && self.snaps.iter().any(|s| s.id == id && !s.matches)
+    }
+
     /// Whether a channel is silenced by another channel's solo.
     pub fn solo_silenced(&self, channel: &DeviceKey) -> bool {
         self.strips
@@ -1028,11 +1128,21 @@ impl ConsoleView {
     // ------------------------------------------------------------------ geometry
 
     fn area_top(&self) -> f64 {
-        self.bounds.y0 + TOOLBAR_H
+        self.bounds.y0 + TOOLBAR_H + SNAPSHOT_BAR_H
     }
 
     fn area_height(&self) -> f64 {
-        (self.bounds.height() - TOOLBAR_H - SCROLLBAR_H).max(0.0)
+        (self.bounds.height() - TOOLBAR_H - SNAPSHOT_BAR_H - SCROLLBAR_H).max(0.0)
+    }
+
+    /// The snapshot bar, under the toolbar.
+    fn snapshot_bar(&self) -> Rect {
+        let y = self.bounds.y0 + TOOLBAR_H;
+        Rect::new(self.bounds.x0, y, self.bounds.x1, y + SNAPSHOT_BAR_H)
+    }
+
+    fn snapshot_layout(&self) -> cs::SnapLayout {
+        cs::layout(self.snapshot_bar(), &self.snaps, self.compare.is_some())
     }
 
     fn master_x(&self) -> Option<f64> {
@@ -1158,6 +1268,9 @@ impl ConsoleView {
                 }
                 None
             }
+            ConsoleButton::StoreSnapshot => Some(self.snapshot_layout().store),
+            ConsoleButton::Compare => Some(self.snapshot_layout().compare),
+            ConsoleButton::EndCompare => self.snapshot_layout().end,
             ConsoleButton::ClearSolos | ConsoleButton::ClearMutes => {
                 let (l, mx) = (self.master_layout.as_ref()?, self.master_x()?);
                 let r = if button == ConsoleButton::ClearSolos {
@@ -1385,6 +1498,21 @@ impl ConsoleView {
                     return Hit::Button(bt);
                 }
             }
+            if self.snapshot_bar().contains(p) {
+                let l = self.snapshot_layout();
+                if let Some((i, _)) = l.chips.iter().find(|(_, r)| r.contains(p)) {
+                    return Hit::Snap(*i);
+                }
+                for (bt, r) in [
+                    (ConsoleButton::StoreSnapshot, Some(l.store)),
+                    (ConsoleButton::Compare, Some(l.compare)),
+                    (ConsoleButton::EndCompare, l.end),
+                ] {
+                    if r.is_some_and(|r| r.contains(p)) {
+                        return Hit::Button(bt);
+                    }
+                }
+            }
             return Hit::Empty;
         }
         let top = self.area_top();
@@ -1596,6 +1724,28 @@ impl ConsoleView {
                 .as_ref()
                 .and_then(|r| r.vca)
                 .is_some_and(|id| !self.vcas.iter().any(|v| v.id == id))
+            {
+                self.rename = None;
+            }
+            self.repaint = true;
+        }
+        // The snapshot chips, the compare, and what the current snapshot would skip.
+        let snaps = cs::views(doc, registry);
+        let compare = console.compare.as_ref().map(|c| CompareView {
+            snapshot: c.snapshot,
+            on_snapshot: c.on_snapshot,
+        });
+        let notes = cs::current(&snaps, compare, self.snap_hint)
+            .map_or_else(Vec::new, |id| doc.snapshot_notes(id));
+        if snaps != self.snaps || compare != self.compare || notes != self.snap_notes {
+            self.snaps = snaps;
+            self.compare = compare;
+            self.snap_notes = notes;
+            if self
+                .rename
+                .as_ref()
+                .and_then(|r| r.snapshot)
+                .is_some_and(|id| !self.snaps.iter().any(|s| s.id == id))
             {
                 self.rename = None;
             }
@@ -1877,6 +2027,12 @@ impl ConsoleView {
             if group.is_some_and(|g| hit == Hit::Vca(g, VcaPart::Plate)) {
                 return;
             }
+            let chip = r
+                .snapshot
+                .and_then(|id| self.snaps.iter().position(|s| s.id == id));
+            if chip.is_some_and(|c| hit == Hit::Snap(c)) {
+                return;
+            }
             self.finish_rename(true, out);
         }
         if button == PointerButton::Middle {
@@ -1903,6 +2059,10 @@ impl ConsoleView {
                 };
             }
             (Hit::Name(i), PointerButton::Secondary) => self.open_strip_menu(i, pos, doc),
+            (Hit::Snap(i), PointerButton::Primary) => self.snap_down(i, clicks, doc, registry, out),
+            (Hit::Snap(i), PointerButton::Secondary) => {
+                self.open_snapshot_menu(i, pos, doc, registry)
+            }
             (Hit::Vca(i, VcaPart::Plate), PointerButton::Secondary) => self.open_vca_menu(i, pos),
             (Hit::Vca(i, part), PointerButton::Primary) => self.vca_down(i, part, clicks, out),
             (Hit::OutputSel(i), PointerButton::Primary) => self.open_output_menu(i, pos, doc),
@@ -2008,7 +2168,112 @@ impl ConsoleView {
                     ConsoleCommand::ClearMutes,
                 )));
             }
+            ConsoleButton::StoreSnapshot => out.push(UiAction::Command(Command::Console(
+                ConsoleCommand::StoreSnapshot {
+                    name: doc.console.default_snapshot_name(),
+                },
+            ))),
+            ConsoleButton::Compare => {
+                // The snapshot being compared with, else the current one, else the first.
+                let target = self
+                    .compare
+                    .map(|c| c.snapshot)
+                    .or_else(|| cs::current(&self.snaps, None, self.snap_hint))
+                    .or_else(|| self.snaps.first().map(|s| s.id));
+                if let Some(id) = target {
+                    out.push(UiAction::Command(Command::Console(
+                        ConsoleCommand::Compare { id },
+                    )));
+                }
+            }
+            ConsoleButton::EndCompare => out.push(UiAction::Command(Command::Console(
+                ConsoleCommand::EndCompare,
+            ))),
         }
+    }
+
+    /// A press on snapshot chip `i`: a click recalls it (nothing to do when the mix already is
+    /// that snapshot and no compare is on), a double-click edits its name.
+    fn snap_down(
+        &mut self,
+        i: usize,
+        clicks: u8,
+        doc: &RackDoc,
+        registry: &Registry,
+        out: &mut Vec<UiAction>,
+    ) {
+        let Some(s) = self.snaps.get(i) else { return };
+        if clicks >= 2 {
+            self.begin_rename_snapshot(s.id);
+            return;
+        }
+        let id = s.id;
+        if self.compare.is_none() && doc.snapshot_matches(id, registry, SnapshotScope::ALL) {
+            return;
+        }
+        out.push(UiAction::Command(Command::Console(
+            ConsoleCommand::RecallSnapshot {
+                id,
+                scope: SnapshotScope::ALL,
+            },
+        )));
+    }
+
+    /// The right-click menu of snapshot chip `i`.
+    fn open_snapshot_menu(&mut self, i: usize, pos: Point, doc: &RackDoc, registry: &Registry) {
+        let Some(s) = self.snaps.get(i) else { return };
+        let id = s.id;
+        let last = self.snaps.len() - 1;
+        let comparing = self.compare.is_some();
+        let mut items: Vec<(String, MenuItem)> = Vec::new();
+        for (label, scope) in [
+            ("Recall", SnapshotScope::ALL),
+            ("Recall levels only", SnapshotScope::LEVELS),
+            ("Recall mutes and solos only", SnapshotScope::MUTES),
+            ("Recall sends only", SnapshotScope::SENDS),
+            ("Recall insert bypass only", SnapshotScope::INSERTS),
+        ] {
+            if !comparing && doc.snapshot_matches(id, registry, scope) {
+                items.push((format!("{label} (no change)"), MenuItem::Disabled));
+            } else {
+                items.push((label.to_string(), MenuItem::SnapRecall(id, scope)));
+            }
+        }
+        items.push(("Compare with this".to_string(), MenuItem::SnapCompare(id)));
+        items.push((
+            "Update from current mix".to_string(),
+            MenuItem::SnapUpdate(id),
+        ));
+        items.push(("Rename".to_string(), MenuItem::SnapRename(id)));
+        if i > 0 {
+            items.push(("Move left".to_string(), MenuItem::SnapMove(id, i - 1)));
+        }
+        if i < last {
+            items.push(("Move right".to_string(), MenuItem::SnapMove(id, i + 1)));
+        }
+        items.push(("Delete snapshot".to_string(), MenuItem::SnapDelete(id)));
+        let origin = self.menu_origin(pos, items.len());
+        self.menu = Some(Menu::plain(items, origin));
+    }
+
+    /// Starts typing the name of snapshot `id` (a double-click on its chip); the console is the
+    /// text owner while it is open and Enter sends `RenameSnapshot`. Nothing happens for an unknown
+    /// snapshot.
+    pub fn begin_rename_snapshot(&mut self, id: u32) {
+        let Some(s) = self.snaps.iter().find(|s| s.id == id) else {
+            return;
+        };
+        self.rename = Some(RenameState {
+            strip: DeviceKey(String::new()),
+            target: DeviceKey(String::new()),
+            bus: false,
+            vca: None,
+            snapshot: Some(id),
+            text: s.name.clone(),
+        });
+        self.drag = Drag::None;
+        self.menu = None;
+        self.repaint = true;
     }
 
     fn menu_origin(&self, pos: Point, rows: usize) -> Point {
@@ -2228,6 +2493,18 @@ impl ConsoleView {
                 return;
             }
             (MenuItem::DeleteVca(id), _) => ConsoleCommand::DeleteVca { vca: *id },
+            (MenuItem::SnapRecall(id, scope), _) => ConsoleCommand::RecallSnapshot {
+                id: *id,
+                scope: *scope,
+            },
+            (MenuItem::SnapCompare(id), _) => ConsoleCommand::Compare { id: *id },
+            (MenuItem::SnapUpdate(id), _) => ConsoleCommand::UpdateSnapshot { id: *id },
+            (MenuItem::SnapRename(id), _) => {
+                self.begin_rename_snapshot(*id);
+                return;
+            }
+            (MenuItem::SnapMove(id, to), _) => ConsoleCommand::MoveSnapshot { id: *id, to: *to },
+            (MenuItem::SnapDelete(id), _) => ConsoleCommand::DeleteSnapshot { id: *id },
             (MenuItem::VcaColor(id, color), _) => ConsoleCommand::SetVcaColor {
                 vca: *id,
                 color: *color,
@@ -2386,6 +2663,7 @@ impl ConsoleView {
             target: DeviceKey(String::new()),
             bus: false,
             vca: Some(v.id),
+            snapshot: None,
             text: v.name.clone(),
         });
         self.drag = Drag::None;
@@ -2485,6 +2763,7 @@ impl ConsoleView {
             target: s.name_device.clone(),
             bus: i >= self.n_channels,
             vca: None,
+            snapshot: None,
             text: s.name.clone(),
         });
         self.drag = Drag::None;
@@ -2502,6 +2781,22 @@ impl ConsoleView {
             return;
         }
         let name = r.text.trim();
+        if let Some(id) = r.snapshot {
+            let current = self
+                .snaps
+                .iter()
+                .find(|s| s.id == id)
+                .map(|s| s.name.as_str());
+            if !name.is_empty() && current.is_some_and(|c| c != name) {
+                out.push(UiAction::Command(Command::Console(
+                    ConsoleCommand::RenameSnapshot {
+                        id,
+                        name: name.to_string(),
+                    },
+                )));
+            }
+            return;
+        }
         if let Some(id) = r.vca {
             let current = self
                 .vcas
@@ -2963,6 +3258,7 @@ impl ConsoleView {
         self.paint_strips(canvas);
         self.paint_master(canvas);
         self.paint_toolbar(canvas);
+        self.paint_snapshot_bar(canvas);
         self.paint_scrollbar(canvas);
         if let Some(m) = &self.menu {
             paint_menu(canvas, &self.st, m);
@@ -3426,6 +3722,25 @@ impl ConsoleView {
                 }
             }
         }
+    }
+
+    fn paint_snapshot_bar(&self, c: &mut dyn Canvas) {
+        let editing = self
+            .rename
+            .as_ref()
+            .and_then(|r| r.snapshot.map(|id| (id, r.text.as_str())));
+        cs::paint(
+            c,
+            self.snapshot_bar(),
+            &cs::Paint {
+                st: &self.st,
+                snaps: &self.snaps,
+                compare: self.compare,
+                current: self.current_snapshot(),
+                notes: &self.snap_notes,
+                editing,
+            },
+        );
     }
 
     fn paint_scrollbar(&self, c: &mut dyn Canvas) {

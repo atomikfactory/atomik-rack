@@ -31,6 +31,10 @@
 //! moving a channel changes no audio (summing is deterministic either way).
 
 pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
+pub use crate::console_snapshot::{
+    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
+    SnapshotVca,
+};
 pub use crate::console_vca::{
     MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
 };
@@ -106,6 +110,10 @@ pub struct Console {
     pub buses: Vec<ConsoleBus>,
     /// VCA groups in strip order (see [`crate::console_vca`]); none in a plain project.
     pub vcas: Vec<VcaGroup>,
+    /// Mixer snapshots in order (see [`crate::console_snapshot`]); none in a plain project.
+    pub snapshots: Vec<MixerSnapshot>,
+    /// The A/B comparison in progress, if any. Not saved.
+    pub compare: Option<CompareState>,
     /// The `atomik.master` device key (created with the first channel).
     pub master: Option<DeviceKey>,
     /// Effect device on each FX return slot (send k → effect → return k).
@@ -120,6 +128,8 @@ impl Default for Console {
             channels: Vec::new(),
             buses: Vec::new(),
             vcas: Vec::new(),
+            snapshots: Vec::new(),
+            compare: None,
             master: None,
             returns: Default::default(),
             compensation: true,
@@ -579,4 +589,56 @@ pub enum ConsoleCommand {
         /// The group id.
         vca: u32,
     },
+    /// Store the mixer as a new snapshot called `name` (trimmed; empty, over
+    /// [`MAX_SNAPSHOT_NAME_CHARS`] or taken ignoring case is rejected; at most [`MAX_SNAPSHOTS`]),
+    /// its id [`Console::next_snapshot_id`] computed before the command. Changes no audio.
+    StoreSnapshot {
+        /// The snapshot name.
+        name: String,
+    },
+    /// Overwrite snapshot `id` with the mixer as it is now. Rejected when it already holds it.
+    UpdateSnapshot {
+        /// The snapshot id.
+        id: u32,
+    },
+    /// Apply snapshot `id` to the mixer in one undo step: what `scope` covers is set through
+    /// ordinary param edits, so the engine's smoothers apply it without clicks. Ends a compare
+    /// in progress (the recalled mix stays). Rejected when nothing would change and no compare
+    /// ends.
+    RecallSnapshot {
+        /// The snapshot id.
+        id: u32,
+        /// The categories to recall ([`SnapshotScope::ALL`] for everything).
+        scope: SnapshotScope,
+    },
+    /// Rename a snapshot (the rules of `StoreSnapshot`).
+    RenameSnapshot {
+        /// The snapshot id.
+        id: u32,
+        /// The new name.
+        name: String,
+    },
+    /// Delete a snapshot; a compare with it ends first.
+    DeleteSnapshot {
+        /// The snapshot id.
+        id: u32,
+    },
+    /// Move a snapshot to position `to` in the list (final index). Rejected when it does not
+    /// move.
+    MoveSnapshot {
+        /// The snapshot id.
+        id: u32,
+        /// The new position.
+        to: usize,
+    },
+    /// Compare with snapshot `id`: with no compare in progress the working mix goes to the hidden
+    /// slot and the snapshot is recalled; while comparing with `id` the live mix and the slot
+    /// swap (the A/B flip); while comparing with another snapshot that snapshot takes the place
+    /// of the compared one (the working side stays as it is).
+    Compare {
+        /// The snapshot id.
+        id: u32,
+    },
+    /// End the compare and keep the mix that is live (a snapshot's or the working one).
+    EndCompare,
 }

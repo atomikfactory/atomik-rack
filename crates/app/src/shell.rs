@@ -1327,6 +1327,7 @@ impl<B: AudioBackend> Shell<B> {
             audio: self.core.arrangement().audio_menu(),
             vca: self.core.vca_menu(self.live_pane(self.focus)),
             strip: self.core.strip_menu(self.live_pane(self.focus)),
+            snapshots: self.core.snapshot_menu(),
             freeze: self.core.freeze_menu(),
         }
     }
@@ -3310,6 +3311,38 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::DeleteVca(id) => {
                 self.core.delete_vca(self.live_pane(self.focus), id);
+                Vec::new()
+            }
+            AppCommand::StoreSnapshot => {
+                self.core.store_snapshot(None);
+                Vec::new()
+            }
+            AppCommand::UpdateSnapshot(id) => {
+                self.core.update_snapshot(id);
+                Vec::new()
+            }
+            AppCommand::RecallSnapshot(id) => {
+                self.core.recall_snapshot(id);
+                Vec::new()
+            }
+            AppCommand::RecallNextSnapshot => {
+                self.core.recall_adjacent(true);
+                Vec::new()
+            }
+            AppCommand::RecallPreviousSnapshot => {
+                self.core.recall_adjacent(false);
+                Vec::new()
+            }
+            AppCommand::CompareSnapshot(id) => {
+                self.core.compare_snapshot(id);
+                Vec::new()
+            }
+            AppCommand::EndCompare => {
+                self.core.end_compare();
+                Vec::new()
+            }
+            AppCommand::DeleteSnapshot(id) => {
+                self.core.delete_snapshot(id);
                 Vec::new()
             }
             AppCommand::TogglePolarity => {

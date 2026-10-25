@@ -434,7 +434,7 @@ silently; `confirm` true accepts a discard-changes question. A freeze or bounce 
             (
                 "arg",
                 "string",
-                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca and mixer.delete_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels).",
+                "The command's argument, for the ones that take one: the id of a VCA group for mixer.add_to_vca and mixer.delete_vca (ids are in session_status under console.vcas; without it they act on the last group, and on the groups of the selected channels). For the snapshot commands (mixer.recall_snapshot, mixer.update_snapshot, mixer.compare_snapshot, mixer.delete_snapshot) the id or the name of a snapshot (ids and names are in session_status under console.snapshots; without it they act on the current snapshot); mixer.recall_snapshot also takes `<snapshot>:<scope>` with a scope of all, levels, mutes, sends or inserts; mixer.store_snapshot takes the name of the new snapshot (without it the next of A, B, 1, 2, ...).",
             ),
         ],
         &["id"],
@@ -453,18 +453,49 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         .iter()
         .flat_map(|m| m.items().cloned().collect::<Vec<_>>())
         .find(|item| command_text(&item.command).as_deref() == Some(id));
-    let item = found.ok_or_else(|| format!("no menu command `{id}` (see session_commands)"))?;
-    if !item.enabled {
+    // A command whose argument names a runtime thing (a snapshot) may be run without its own
+    // menu item: the argument is what the menu cannot spell.
+    let snapshot_arg = arg.is_some() && id.ends_with("_snapshot");
+    let item = match found {
+        Some(item) => Some(item),
+        None if snapshot_arg => None,
+        None => return Err(format!("no menu command `{id}` (see session_commands)")),
+    };
+    if let Some(item) = &item
+        && !item.enabled
+    {
         return Err(format!("`{id}` ({}) is disabled right now", item.label));
     }
-    // A command that takes an argument the menu cannot spell (a group id) is built from it.
-    let command = match arg {
-        None => item.command,
-        Some(a) => AppCommand::from_command(id, Some(a))
-            .ok_or_else(|| format!("`{id}` does not take the argument `{a}`"))?,
+    // The snapshot commands that take a name or a scope are run on the core.
+    let special = snapshot_special(session.shell().core().doc(), id, arg)?;
+    let command = match (&special, arg, &item) {
+        (Some(_), _, _) => None,
+        (None, None, Some(item)) => Some(item.command),
+        // A command that takes an argument the menu cannot spell (a group id) is built from it.
+        (None, Some(a), _) => {
+            let a = snapshot_number(session.shell().core().doc(), id, a)?;
+            Some(
+                AppCommand::from_command(id, Some(&a))
+                    .ok_or_else(|| format!("`{id}` does not take the argument `{a}`"))?,
+            )
+        }
+        (None, None, None) => return Err(format!("no menu command `{id}` (see session_commands)")),
     };
     let shell = session.shell_mut();
-    let mut raised = shell.execute(command);
+    let mut raised = match (special, command) {
+        (Some(special), _) => {
+            if !special.run(shell) {
+                return Err(shell
+                    .core()
+                    .last_rejection()
+                    .unwrap_or("the command was refused")
+                    .to_owned());
+            }
+            Vec::new()
+        }
+        (None, Some(command)) => shell.execute(command),
+        (None, None) => Vec::new(),
+    };
     let mut done = Vec::new();
     while let Some(r) = raised.pop() {
         match r {
@@ -492,6 +523,90 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         out["message"] = json!(session.shell().core().last_rejection());
     }
     Ok(ToolOutput::json(&out))
+}
+
+/// A snapshot command that the menu cannot spell: storing under a name, or recalling only some
+/// categories.
+enum SnapshotSpecial {
+    Store(String),
+    Recall(u32, atomik_model::SnapshotScope),
+}
+
+impl SnapshotSpecial {
+    fn run(self, shell: &mut Shell<SystemBackend>) -> bool {
+        let core = shell.core_mut();
+        match self {
+            SnapshotSpecial::Store(name) => core.store_snapshot(Some(name)),
+            SnapshotSpecial::Recall(id, scope) => core.recall_scoped(id, scope),
+        }
+    }
+}
+
+/// The id of the snapshot an argument names: a number is the id (it must exist when it is looked
+/// up by the command), anything else is a name.
+fn snapshot_id(doc: &atomik_model::RackDoc, text: &str) -> Result<u32, String> {
+    let text = text.trim();
+    if let Ok(id) = text.parse::<u32>() {
+        return Ok(id);
+    }
+    doc.console
+        .snapshot_by_name(text)
+        .map(|s| s.id)
+        .ok_or_else(|| {
+            let names: Vec<&str> = doc
+                .console
+                .snapshots
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            format!(
+                "no snapshot called `{text}` (snapshots: {})",
+                names.join(", ")
+            )
+        })
+}
+
+/// A snapshot argument as the number the registry command takes (a name becomes its id); other
+/// commands' arguments pass through.
+fn snapshot_number(doc: &atomik_model::RackDoc, id: &str, arg: &str) -> Result<String, String> {
+    if matches!(
+        id,
+        "mixer.recall_snapshot"
+            | "mixer.update_snapshot"
+            | "mixer.compare_snapshot"
+            | "mixer.delete_snapshot"
+    ) {
+        return Ok(snapshot_id(doc, arg)?.to_string());
+    }
+    Ok(arg.to_owned())
+}
+
+/// `mixer.store_snapshot` with a name, and `mixer.recall_snapshot` with a scope
+/// (`<snapshot>:<scope>`).
+fn snapshot_special(
+    doc: &atomik_model::RackDoc,
+    id: &str,
+    arg: Option<&str>,
+) -> Result<Option<SnapshotSpecial>, String> {
+    let (Some(arg), true) = (arg, id.ends_with("_snapshot")) else {
+        return Ok(None);
+    };
+    match id {
+        "mixer.store_snapshot" => Ok(Some(SnapshotSpecial::Store(arg.to_owned()))),
+        "mixer.recall_snapshot" => {
+            let Some((which, scope)) = arg.rsplit_once(':') else {
+                return Ok(None);
+            };
+            let scope = atomik_model::SnapshotScope::from_name(scope).ok_or_else(|| {
+                format!("`{scope}` is not a scope (all, levels, mutes, sends, inserts)")
+            })?;
+            Ok(Some(SnapshotSpecial::Recall(
+                snapshot_id(doc, which)?,
+                scope,
+            )))
+        }
+        _ => Ok(None),
+    }
 }
 
 // ------------------------------------------------------------ session_pointer

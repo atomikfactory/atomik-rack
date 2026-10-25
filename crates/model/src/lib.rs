@@ -12,6 +12,7 @@ pub mod automation_rec;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
+mod console_snapshot;
 mod console_vca;
 mod container;
 mod container_cmd;
@@ -106,6 +107,10 @@ pub use console::{
 pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::{
     bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
+};
+pub use console_snapshot::{
+    CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
+    SnapshotVca,
 };
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};

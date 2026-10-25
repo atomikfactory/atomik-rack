@@ -103,7 +103,7 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 26);
+    assert_eq!(PROJECT_VERSION, 27);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn steps_are_written_only_on_devices_that_have_them() {
     let r = registry();
     let text = save_project(&project(&r));
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 26);
+    assert_eq!(v["version"], 27);
     let devices = v["devices"].as_array().unwrap();
     assert!(devices[0].get("steps").is_none());
     assert!(devices[2].get("steps").is_none());
@@ -363,7 +363,7 @@ fn steps_are_unknown_before_version_7() {
             "v{version}: {e}"
         );
     }
-    let text = edited(&good, |v| v["version"] = json!(27));
+    let text = edited(&good, |v| v["version"] = json!(28));
     assert!(
         load_project(&text, &r)
             .unwrap_err()
@@ -381,7 +381,7 @@ fn version_6_files_load_unchanged_and_resave_as_version_7() {
         let doc = load_project(&v6, &r).unwrap();
         assert!(doc.devices.iter().all(|d| d.steps.is_none()), "{name}");
         let v7 = save_project(&doc);
-        assert!(v7.contains("\"version\": 26,"));
+        assert!(v7.contains("\"version\": 27,"));
         assert_eq!(v7, as_current(&v6, 6), "{name}");
         assert_eq!(load_project(&v7, &r).unwrap(), doc);
     }
@@ -393,7 +393,7 @@ fn versions_3_to_6_load_a_rack_without_steps() {
     let doc = load_project(&fixture("demo-v6.atomik"), &r).unwrap();
     let text = save_project(&doc);
     for version in 3..=6 {
-        let old = text.replace("\"version\": 26", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 27", &format!("\"version\": {version}"));
         assert_eq!(load_project(&old, &r).unwrap(), doc, "v{version}");
     }
 }

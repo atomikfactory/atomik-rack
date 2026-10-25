@@ -145,6 +145,26 @@ pub enum AppCommand {
     /// Mixer > Delete VCA: the group `id` (`mixer.delete_vca` with the id as its argument), or
     /// the groups the selected strips are in.
     DeleteVca(Option<u32>),
+    /// Mixer > Store Snapshot: the mix as a new snapshot (named `A`, `B`, `1`, ...).
+    StoreSnapshot,
+    /// Mixer > Update Snapshot: overwrites a snapshot with the mix (`mixer.update_snapshot`, the
+    /// id as its argument), the current one by default.
+    UpdateSnapshot(Option<u32>),
+    /// Mixer > Recall Snapshot: applies a snapshot (`mixer.recall_snapshot`, the id as its
+    /// argument), the current one by default.
+    RecallSnapshot(Option<u32>),
+    /// Mixer > Recall Next Snapshot.
+    RecallNextSnapshot,
+    /// Mixer > Recall Previous Snapshot.
+    RecallPreviousSnapshot,
+    /// Mixer > Compare A/B: starts comparing the mix with a snapshot (`mixer.compare_snapshot`,
+    /// the id as its argument; the current one by default) and flips between the two while it is on.
+    CompareSnapshot(Option<u32>),
+    /// Mixer > End Compare: keeps the mix that is live.
+    EndCompare,
+    /// Mixer > Delete Snapshot: a snapshot (`mixer.delete_snapshot`, the id as its argument), the
+    /// current one by default.
+    DeleteSnapshot(Option<u32>),
     /// Mixer > Toggle Polarity: flips the input polarity of the selected strips (all inverted
     /// switch back to normal, otherwise all are inverted).
     TogglePolarity,
@@ -253,9 +273,10 @@ pub enum AppCommand {
 
 impl AppCommand {
     /// The registry command id and argument of this command, `None` only for
-    /// `Transport(Locate(_))`, a pointer action that is not a command, and for the VCA commands
-    /// that name a group (`AddToVca(Some(_))`, `DeleteVca(Some(_))`: their id is a runtime number,
-    /// given as the argument of `mixer.add_to_vca` and `mixer.delete_vca`).
+    /// `Transport(Locate(_))`, a pointer action that is not a command, and for the VCA and snapshot
+    /// commands that name a group or a snapshot (`AddToVca(Some(_))`, `DeleteVca(Some(_))`,
+    /// `RecallSnapshot(Some(_))` ...: their id is a runtime number, given as the argument of
+    /// `mixer.add_to_vca`, `mixer.delete_vca`, `mixer.recall_snapshot` ...).
     pub fn command_id(&self) -> Option<(&'static str, Option<&'static str>)> {
         Some(match self {
             AppCommand::New => ("file.new", None),
@@ -332,6 +353,18 @@ impl AppCommand {
             AppCommand::DeleteVca(None) => ("mixer.delete_vca", None),
             AppCommand::AddToVca(Some(_)) | AppCommand::DeleteVca(Some(_)) => return None,
             AppCommand::RemoveFromVca => ("mixer.remove_from_vca", None),
+            AppCommand::StoreSnapshot => ("mixer.store_snapshot", None),
+            AppCommand::UpdateSnapshot(None) => ("mixer.update_snapshot", None),
+            AppCommand::RecallSnapshot(None) => ("mixer.recall_snapshot", None),
+            AppCommand::RecallNextSnapshot => ("mixer.recall_next_snapshot", None),
+            AppCommand::RecallPreviousSnapshot => ("mixer.recall_previous_snapshot", None),
+            AppCommand::CompareSnapshot(None) => ("mixer.compare_snapshot", None),
+            AppCommand::EndCompare => ("mixer.end_compare", None),
+            AppCommand::DeleteSnapshot(None) => ("mixer.delete_snapshot", None),
+            AppCommand::UpdateSnapshot(Some(_))
+            | AppCommand::RecallSnapshot(Some(_))
+            | AppCommand::CompareSnapshot(Some(_))
+            | AppCommand::DeleteSnapshot(Some(_)) => return None,
             AppCommand::TogglePolarity => ("mixer.toggle_polarity", None),
             AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
@@ -474,6 +507,38 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::AddToVca(Some(id)));
             }
             ("mixer.remove_from_vca", None) => AppCommand::RemoveFromVca,
+            ("mixer.store_snapshot", None) => AppCommand::StoreSnapshot,
+            ("mixer.update_snapshot", None) => AppCommand::UpdateSnapshot(None),
+            ("mixer.recall_snapshot", None) => AppCommand::RecallSnapshot(None),
+            ("mixer.recall_next_snapshot", None) => AppCommand::RecallNextSnapshot,
+            ("mixer.recall_previous_snapshot", None) => AppCommand::RecallPreviousSnapshot,
+            ("mixer.compare_snapshot", None) => AppCommand::CompareSnapshot(None),
+            ("mixer.end_compare", None) => AppCommand::EndCompare,
+            ("mixer.delete_snapshot", None) => AppCommand::DeleteSnapshot(None),
+            ("mixer.update_snapshot", Some(id)) => {
+                return id
+                    .parse()
+                    .ok()
+                    .map(|id| AppCommand::UpdateSnapshot(Some(id)));
+            }
+            ("mixer.recall_snapshot", Some(id)) => {
+                return id
+                    .parse()
+                    .ok()
+                    .map(|id| AppCommand::RecallSnapshot(Some(id)));
+            }
+            ("mixer.compare_snapshot", Some(id)) => {
+                return id
+                    .parse()
+                    .ok()
+                    .map(|id| AppCommand::CompareSnapshot(Some(id)));
+            }
+            ("mixer.delete_snapshot", Some(id)) => {
+                return id
+                    .parse()
+                    .ok()
+                    .map(|id| AppCommand::DeleteSnapshot(Some(id)));
+            }
             ("mixer.toggle_polarity", None) => AppCommand::TogglePolarity,
             ("mixer.bypass_all_inserts", None) => AppCommand::BypassAllInserts,
             ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
@@ -717,8 +782,29 @@ pub struct MenuState {
     pub vca: VcaMenu,
     /// What the selected strips allow for polarity and insert bypass (the Mixer menu).
     pub strip: StripMenu,
+    /// What the mixer snapshots allow (the Mixer menu).
+    pub snapshots: SnapshotMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
     pub freeze: FreezeMenu,
+}
+
+/// What the Mixer menu needs to know to store, recall, compare and delete mixer snapshots.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapshotMenu {
+    /// Fewer than the most snapshots: Store Snapshot works.
+    pub can_store: bool,
+    /// A snapshot is current and the mix differs from it: Update Snapshot works.
+    pub can_update: bool,
+    /// A snapshot is current: Recall Snapshot works.
+    pub can_recall: bool,
+    /// There are snapshots: Recall Next and Previous work.
+    pub can_cycle: bool,
+    /// There are snapshots: Compare A/B works.
+    pub can_compare: bool,
+    /// A compare is on: End Compare works.
+    pub comparing: bool,
+    /// A snapshot is current: Delete Snapshot works.
+    pub can_delete: bool,
 }
 
 /// What the Mixer menu needs to know to flip the polarity and bypass the inserts of strips.
@@ -1055,6 +1141,47 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.strip.can_bypass,
                 ),
                 MenuEntry::Separator,
+                enabled(
+                    "Store Snapshot",
+                    AppCommand::StoreSnapshot,
+                    state.snapshots.can_store,
+                ),
+                enabled(
+                    "Update Snapshot",
+                    AppCommand::UpdateSnapshot(None),
+                    state.snapshots.can_update,
+                ),
+                enabled(
+                    "Recall Snapshot",
+                    AppCommand::RecallSnapshot(None),
+                    state.snapshots.can_recall,
+                ),
+                enabled(
+                    "Recall Next Snapshot",
+                    AppCommand::RecallNextSnapshot,
+                    state.snapshots.can_cycle,
+                ),
+                enabled(
+                    "Recall Previous Snapshot",
+                    AppCommand::RecallPreviousSnapshot,
+                    state.snapshots.can_cycle,
+                ),
+                enabled(
+                    "Compare A/B",
+                    AppCommand::CompareSnapshot(None),
+                    state.snapshots.can_compare,
+                ),
+                enabled(
+                    "End Compare",
+                    AppCommand::EndCompare,
+                    state.snapshots.comparing,
+                ),
+                enabled(
+                    "Delete Snapshot",
+                    AppCommand::DeleteSnapshot(None),
+                    state.snapshots.can_delete,
+                ),
+                MenuEntry::Separator,
                 check(
                     "Delay Compensation",
                     AppCommand::ToggleCompensation,
@@ -1387,6 +1514,7 @@ mod tests {
             audio: AudioMenu::default(),
             vca: VcaMenu::default(),
             strip: StripMenu::default(),
+            snapshots: SnapshotMenu::default(),
             freeze: FreezeMenu::default(),
         }
     }
@@ -1449,6 +1577,14 @@ mod tests {
             AppCommand::DeleteVca(None),
             AppCommand::TogglePolarity,
             AppCommand::BypassAllInserts,
+            AppCommand::StoreSnapshot,
+            AppCommand::UpdateSnapshot(None),
+            AppCommand::RecallSnapshot(None),
+            AppCommand::RecallNextSnapshot,
+            AppCommand::RecallPreviousSnapshot,
+            AppCommand::CompareSnapshot(None),
+            AppCommand::EndCompare,
+            AppCommand::DeleteSnapshot(None),
             AppCommand::ToggleCompensation,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
@@ -1906,6 +2042,14 @@ mod tests {
                 "Delete VCA",
                 "Toggle Polarity",
                 "Bypass All Inserts",
+                "Store Snapshot",
+                "Update Snapshot",
+                "Recall Snapshot",
+                "Recall Next Snapshot",
+                "Recall Previous Snapshot",
+                "Compare A/B",
+                "End Compare",
+                "Delete Snapshot",
                 "Delay Compensation"
             ]
         );
@@ -2028,6 +2172,7 @@ mod tests {
                 audio: AudioMenu::default(),
                 vca: VcaMenu::default(),
                 strip: StripMenu::default(),
+                snapshots: SnapshotMenu::default(),
                 freeze: FreezeMenu {
                     tail: true,
                     ..FreezeMenu::default()
