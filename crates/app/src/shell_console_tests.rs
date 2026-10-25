@@ -214,6 +214,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Export MIDI Mapping Preset\u{2026}", None),
             ("Import MIDI Mapping Preset\u{2026}", None),
             ("Clear MIDI Mappings", None),
+            ("Macros\u{2026}", None),
+            ("New Macro Bank", None),
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));

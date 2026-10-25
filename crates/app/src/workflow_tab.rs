@@ -19,6 +19,8 @@ pub enum Pref {
     CreateKeepsBrowserOpen,
     /// Follow song while playing.
     FollowSong,
+    /// Automation follows the selection.
+    FollowSelection,
 }
 
 /// One switch.
@@ -68,6 +70,7 @@ impl WorkflowTab {
             Pref::AutoRoute => self.prefs.auto_route,
             Pref::CreateKeepsBrowserOpen => self.prefs.create_keeps_browser_open,
             Pref::FollowSong => self.prefs.follow_song,
+            Pref::FollowSelection => self.prefs.follow_selection,
         }
     }
 
@@ -78,6 +81,7 @@ impl WorkflowTab {
                 self.prefs.create_keeps_browser_open = !self.prefs.create_keeps_browser_open;
             }
             Pref::FollowSong => self.prefs.follow_song = !self.prefs.follow_song,
+            Pref::FollowSelection => self.prefs.follow_selection = !self.prefs.follow_selection,
         }
     }
 
@@ -102,6 +106,11 @@ impl WorkflowTab {
                 Pref::FollowSong,
                 "Follow song while playing",
                 "The arrangement and piano roll scroll to keep the playhead visible while playing.",
+            ),
+            (
+                Pref::FollowSelection,
+                "Automation follows the selection",
+                "Touching a control shows its lane in the arrangement (an empty lane is added; no data is written).",
             ),
         ] {
             toggles.push(Toggle {

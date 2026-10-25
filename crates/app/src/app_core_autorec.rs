@@ -33,7 +33,7 @@
 
 use super::*;
 use atomik_model::automation_rec::{PassRecorder, Segment, WriteMode, segment_clips};
-use atomik_model::{AutomationPoint, Clip, ClipContent, expand_macro_lane};
+use atomik_model::{AutomationPoint, Clip, ClipContent, expand_bank_lane, expand_macro_lane};
 use std::collections::BTreeSet;
 
 /// The default thinning tolerance: a recorded point goes when the line between its kept
@@ -296,6 +296,11 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// True while an automation take is being recorded.
+    pub(super) fn automation_take_running(&self) -> bool {
+        self.autorec.take.is_some()
+    }
+
     /// The engine `(device, param)` pairs that play the lane of `param` on `device`: itself,
     /// or for a container's macro every target it expands to.
     fn engine_lanes(
@@ -316,6 +321,11 @@ impl<S: EngineSink> AppCore<S> {
         if containers::is_container(doc, device) {
             let targets = expand_macro_lane(doc, &self.registry, device, param, &[]);
             for (target, target_param, _) in targets.into_iter().flatten() {
+                out.extend(one(&target, &target_param));
+            }
+        } else if let Some(targets) = expand_bank_lane(doc, &self.registry, device, param, &[]) {
+            // A macro bank's lane holds every param its macro drives.
+            for (target, target_param, _) in targets {
                 out.extend(one(&target, &target_param));
             }
         } else {

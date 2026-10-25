@@ -703,21 +703,26 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.toggles.len(), 3);
+    assert_eq!(l.toggles.len(), 4);
     let labels: Vec<&str> = l.toggles.iter().map(|t| t.label).collect();
     assert_eq!(
         labels,
         [
             "Auto-route new devices",
             "Create keeps the browser open",
-            "Follow song while playing"
+            "Follow song while playing",
+            "Automation follows the selection"
         ]
     );
+    assert!(!l.toggles[3].on, "following the selection starts off");
     assert!(l.toggles[0].on && !l.toggles[1].on);
     down(&mut d, l.toggles[0].rect.center());
     down(&mut d, l.toggles[1].rect.center());
     let (_, wf) = d.preferences().unwrap();
-    assert!(!wf.auto_route && wf.create_keeps_browser_open);
+    assert!(!wf.auto_route && wf.create_keeps_browser_open && !wf.follow_selection);
+    let l = d.workflow_layout(VIEW).unwrap();
+    down(&mut d, l.toggles[3].rect.center());
+    assert!(d.preferences().unwrap().1.follow_selection);
     let again = d.workflow_layout(VIEW).unwrap();
     assert!(!again.toggles[0].on && again.toggles[1].on);
     assert!(matches!(

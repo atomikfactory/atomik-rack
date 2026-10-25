@@ -50,6 +50,8 @@ pub struct WorkflowPrefs {
     pub create_keeps_browser_open: bool,
     /// Views follow the playhead while playing.
     pub follow_song: bool,
+    /// The arrangement shows the automation lane of the parameter being touched (default off).
+    pub follow_selection: bool,
     /// The rack is shown (the F6 layout flag; view state, not part of the project).
     pub rack_visible: bool,
     /// The one-time notice of the keys that moved with the standard keymap was shown.
@@ -64,6 +66,7 @@ impl Default for WorkflowPrefs {
             auto_route: true,
             create_keeps_browser_open: false,
             follow_song: false,
+            follow_selection: false,
             rack_visible: true,
             keys_notice_seen: false,
             extra: BTreeMap::new(),
@@ -89,6 +92,7 @@ impl WorkflowPrefs {
                 defaults.create_keeps_browser_open,
             ),
             follow_song: flag("follow_song", defaults.follow_song),
+            follow_selection: flag("follow_selection", defaults.follow_selection),
             rack_visible: flag("rack_visible", defaults.rack_visible),
             keys_notice_seen: flag("keys_notice_seen", defaults.keys_notice_seen),
             extra: obj
@@ -99,6 +103,7 @@ impl WorkflowPrefs {
                         "auto_route"
                             | "create_keeps_browser_open"
                             | "follow_song"
+                            | "follow_selection"
                             | "rack_visible"
                             | "keys_notice_seen"
                     )
@@ -117,6 +122,10 @@ impl WorkflowPrefs {
             Value::Bool(self.create_keeps_browser_open),
         );
         map.insert("follow_song".into(), Value::Bool(self.follow_song));
+        map.insert(
+            "follow_selection".into(),
+            Value::Bool(self.follow_selection),
+        );
         map.insert("rack_visible".into(), Value::Bool(self.rack_visible));
         map.insert(
             "keys_notice_seen".into(),

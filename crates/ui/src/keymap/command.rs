@@ -532,6 +532,26 @@ const COMMANDS: &[CommandDef] = &[
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
     cmd(
+        "macro.assign_control",
+        "Assign to Macro",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "macro.assign_control_new",
+        "Assign to New Macro Bank",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd("macro.new_bank", "New Macro Bank", G::Mixer, C::Global).menu(),
+    cmd("macro.panel", "Macros...", G::Mixer, C::Global).menu(),
+    cmd(
+        "macro.remove_control",
+        "Remove from Macro",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
         "midi.clear_maps",
         "Clear MIDI Mappings",
         G::Mixer,
@@ -1353,11 +1373,25 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     ),
     cmd(
+        "view.find_parameter",
+        "Find Parameter...",
+        G::View,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "view.focus_browser_search",
         "Focus Browser Search",
         G::View,
         C::Global,
     ),
+    cmd(
+        "view.follow_selection",
+        "Automation Follows Selection",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "view.maximise_console",
         "Maximise Console",
@@ -1366,6 +1400,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.sequencer_only", "Sequencer Only", G::View, C::Global).menu(),
+    cmd(
+        "view.show_param_lane",
+        "Show Automation Lane",
+        G::View,
+        C::Global,
+    )
+    .menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(
@@ -1508,7 +1549,7 @@ mod tests {
                 Group::Rack => &["rack"],
                 Group::Sequencer => &["sequencer"],
                 Group::Editor => &["editor"],
-                Group::Mixer => &["mixer", "midi"],
+                Group::Mixer => &["mixer", "midi", "macro"],
                 Group::Browser => &["browser"],
                 Group::Files => &["files"],
                 Group::Create => &["create"],

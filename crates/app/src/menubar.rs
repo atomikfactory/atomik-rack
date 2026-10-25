@@ -369,6 +369,7 @@ mod tests {
             snapshots: crate::commands::SnapshotMenu::default(),
             midi: crate::commands::MidiMenu::default(),
             freeze: crate::commands::FreezeMenu::default(),
+            follow_selection: false,
         }
     }
 

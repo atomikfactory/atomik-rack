@@ -99,7 +99,7 @@ impl MidiControl {
         }
     }
 
-    fn learning(&self) -> bool {
+    pub(super) fn learning(&self) -> bool {
         self.learn_mode || self.armed.is_some()
     }
 

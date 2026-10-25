@@ -64,7 +64,23 @@ pub struct MenuEnable {
     pub notes: NoteTools,
     /// Control menu: the control has a MIDI mapping (Forget MIDI works).
     pub control_mapped: bool,
+    /// Control menu: the param can be assigned to a macro (nothing drives it and it can be).
+    pub control_assign: bool,
+    /// Control menu: a macro drives the param (Remove from Macro works).
+    pub control_driven: bool,
 }
+
+/// The macros of the control menu's Assign to Macro submenu: the command argument and the label.
+const MACROS: [(&str, &str); 8] = [
+    ("1", "Macro 1"),
+    ("2", "Macro 2"),
+    ("3", "Macro 3"),
+    ("4", "Macro 4"),
+    ("5", "Macro 5"),
+    ("6", "Macro 6"),
+    ("7", "Macro 7"),
+    ("8", "Macro 8"),
+];
 
 /// The items of the colour part of a marker menu: the command argument and the label.
 const MARKER_COLORS: [(&str, &str); 7] = [
@@ -528,10 +544,27 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             ]);
             v
         }
-        ContextTarget::Control => vec![
-            item("midi.learn_control", true),
-            item("midi.forget_control", e.control_mapped),
-        ],
+        ContextTarget::Control => {
+            let mut macros: Vec<Spec> = MACROS
+                .iter()
+                .map(|(arg, label)| meter_item("macro.assign_control", arg, label))
+                .collect();
+            macros.push(Spec::Separator);
+            macros.push(Spec::Item {
+                command: "macro.assign_control_new",
+                arg: Some("1"),
+                label: None,
+                enabled: true,
+                checked: None,
+            });
+            vec![
+                item("midi.learn_control", true),
+                item("midi.forget_control", e.control_mapped),
+                Spec::Separator,
+                Spec::submenu("Assign to Macro", macros).enabled(e.control_assign),
+                item("macro.remove_control", e.control_driven),
+            ]
+        }
         ContextTarget::Marker => {
             let mut v = vec![item("sequencer.marker_rename", true), Spec::Separator];
             v.extend(marker_colors());

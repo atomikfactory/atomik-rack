@@ -784,6 +784,16 @@ impl RackDoc {
                     return Some(format!("`{param}` is not a parameter you can map"));
                 }
                 let desc = registry.get(&d.type_id).map(|f| f.descriptor)?;
+                if desc.param_by_key(param).is_some()
+                    && let Some(a) = self.bank_driver(device, param)
+                {
+                    // A macro owns the param: the controller belongs on the macro.
+                    return Some(format!(
+                        "`{device}` {param} is driven by macro {} of `{}`: map the macro instead",
+                        a.index + 1,
+                        a.bank
+                    ));
+                }
                 desc.param_by_key(param)
                     .is_none()
                     .then(|| format!("`{device}` has no param `{param}`"))

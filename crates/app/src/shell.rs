@@ -115,7 +115,7 @@
 //! What needs the platform (file dialogs, confirmation, quit) is returned as
 //! [`ShellRequest`]s.
 
-use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane};
+use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
 use crate::commands::{AppCommand, Menu, MenuState, menus};
 use crate::context_menus::{self, MenuEnable};
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -137,11 +137,12 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, MidiMapsAction,
-    MidiMapsView, Modifiers, NotesAction, NotesValues, NotesView, NumpadKey, Place,
-    PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
-    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
-    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
+    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, MacrosAction,
+    MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction, NotesValues, NotesView,
+    NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView,
+    PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry,
+    RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction,
+    WarpValues, WarpView,
 };
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -310,6 +311,10 @@ pub struct Shell<B: AudioBackend> {
     relink: Option<RelinkView>,
     /// The MIDI Mappings panel (Mixer > MIDI Mappings) while it is open.
     midi_maps: Option<MidiMapsView>,
+    /// The Macros panel (Mixer > Macros) while it is open.
+    macros_panel: Option<MacrosView>,
+    /// The parameter search (View > Find Parameter) while it is open.
+    param_search: Option<ParamSearchView>,
     /// The control a right click opened the MIDI menu for (what Learn MIDI and Forget MIDI act on).
     control_target: Option<(DeviceKey, String)>,
     /// The quantize panel (Edit > Quantize Options) while it is open.
@@ -462,6 +467,8 @@ impl<B: AudioBackend> Shell<B> {
             silence_values: SilenceValues::default(),
             relink_target: None,
             midi_maps: None,
+            macros_panel: None,
+            param_search: None,
             control_target: None,
             router: Router::new(built.keymap),
             modifiers: Modifiers::NONE,
@@ -1017,6 +1024,137 @@ impl<B: AudioBackend> Shell<B> {
         requests
     }
 
+    /// Whether the Macros panel is open.
+    pub fn macros_open(&self) -> bool {
+        self.macros_panel.is_some()
+    }
+
+    /// The Macros panel, while it is open.
+    pub fn macros_view(&self) -> Option<&MacrosView> {
+        self.macros_panel.as_ref()
+    }
+
+    /// Opens the Macros panel.
+    fn open_macros(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = MacrosView::new(theme);
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        view.set_banks(self.core.macro_bank_rows(), self.core.macro_bank().as_ref());
+        self.macros_panel = Some(view);
+        self.repaint = true;
+    }
+
+    /// Feeds the Macros panel the project's banks.
+    fn sync_macros(&mut self) {
+        if self.macros_panel.is_none() {
+            return;
+        }
+        let banks = self.core.macro_bank_rows();
+        let current = self.core.macro_bank();
+        if let Some(view) = &mut self.macros_panel {
+            view.set_banks(banks, current.as_ref());
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the Macros panel asked for.
+    fn macros_action(&mut self, action: MacrosAction) {
+        if self.core.macros_action(action) {
+            self.macros_panel = None;
+        }
+        self.sync_macros();
+        self.repaint = true;
+    }
+
+    /// Whether the parameter search is open.
+    pub fn param_search_open(&self) -> bool {
+        self.param_search.is_some()
+    }
+
+    /// The parameter search, while it is open.
+    pub fn param_search_view(&self) -> Option<&ParamSearchView> {
+        self.param_search.as_ref()
+    }
+
+    /// Opens the parameter search on an empty query.
+    fn open_param_search(&mut self) {
+        let theme = self.core.view().theme().clone();
+        let mut view = ParamSearchView::new(theme);
+        view.set_scale(self.scale);
+        view.set_bounds(self.plugin_modal_rect());
+        let (rows, total) = self.core.param_search("");
+        view.set_rows(rows, total);
+        self.param_search = Some(view);
+        self.repaint = true;
+    }
+
+    /// Keeps the values of the rows the search shows current (cheap: no new search).
+    fn sync_param_search(&mut self) {
+        if self.param_search.is_none() {
+            return;
+        }
+        let (rows, total) = self.core.param_search_refresh();
+        if let Some(view) = &mut self.param_search {
+            view.set_rows(rows, total);
+            if view.needs_repaint() {
+                self.repaint = true;
+            }
+        }
+    }
+
+    /// What the parameter search asked for.
+    fn param_search_action(&mut self, action: ParamSearchAction) {
+        match action {
+            ParamSearchAction::Query(q) => {
+                let (rows, total) = self.core.param_search(&q);
+                if let Some(view) = &mut self.param_search {
+                    view.set_rows(rows, total);
+                }
+            }
+            ParamSearchAction::Reveal(row) => {
+                self.param_search = None;
+                match self.core.search_reveal(row) {
+                    Some(Revealed::Console) => {
+                        if !self.console_shown() {
+                            self.execute(AppCommand::ToggleConsole);
+                        }
+                        self.set_focus(Pane::Console);
+                    }
+                    Some(Revealed::Rack) => {
+                        if !self.workflow.rack_visible {
+                            self.set_rack_visible(true);
+                        }
+                        self.set_focus(Pane::Rack);
+                    }
+                    None => {}
+                }
+            }
+            ParamSearchAction::Lane(row) => {
+                if self.core.search_show_lane(row) {
+                    self.param_search = None;
+                    self.set_focus(Pane::Arrangement);
+                }
+            }
+            ParamSearchAction::Assign(row) => {
+                self.core.search_assign(row);
+            }
+            ParamSearchAction::Learn(row) => {
+                if self.core.search_learn(row) {
+                    self.param_search = None;
+                }
+            }
+            ParamSearchAction::Adjust { row, steps, fine } => {
+                self.core.search_adjust(row, steps, fine);
+            }
+            ParamSearchAction::Close => self.param_search = None,
+        }
+        self.sync_param_search();
+        self.repaint = true;
+    }
+
     /// The folder MIDI mapping presets are kept in (`midi-presets` next to the settings file),
     /// created on demand; `None` without a settings file.
     pub fn midi_preset_dir(&self) -> Option<PathBuf> {
@@ -1207,6 +1345,8 @@ impl<B: AudioBackend> Shell<B> {
     /// browser stays open, and the rack flag (through the layout).
     fn apply_workflow_to_views(&mut self) {
         self.core.set_follow(self.workflow.follow_song);
+        self.core
+            .set_follow_selection(self.workflow.follow_selection);
         self.core
             .view_mut()
             .set_create_keeps_browser_open(self.workflow.create_keeps_browser_open);
@@ -1433,6 +1573,7 @@ impl<B: AudioBackend> Shell<B> {
             snapshots: self.core.snapshot_menu(),
             midi: self.core.midi_menu(),
             freeze: self.core.freeze_menu(),
+            follow_selection: self.core.follow_selection(),
         }
     }
 
@@ -1613,6 +1754,18 @@ impl<B: AudioBackend> Shell<B> {
         if self.midi_maps.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.midi_maps {
+                v.set_bounds(rect);
+            }
+        }
+        if self.macros_panel.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.macros_panel {
+                v.set_bounds(rect);
+            }
+        }
+        if self.param_search.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.param_search {
                 v.set_bounds(rect);
             }
         }
@@ -1940,6 +2093,12 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.midi_maps {
                     v.set_scale(*scale);
                 }
+                if let Some(v) = &mut self.macros_panel {
+                    v.set_scale(*scale);
+                }
+                if let Some(v) = &mut self.param_search {
+                    v.set_scale(*scale);
+                }
                 if let Some(v) = &mut self.quantize {
                     v.set_scale(*scale);
                 }
@@ -2000,6 +2159,36 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.handle_action(action);
             }
             self.sync_plugin_ui();
+            return Vec::new();
+        }
+        if self.macros_panel.is_some() {
+            // The Macros panel takes every event; Esc closes it (or drops a name being edited).
+            self.repaint = true;
+            let actions = self
+                .macros_panel
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Macros(a) = action {
+                    self.macros_action(a);
+                }
+            }
+            return Vec::new();
+        }
+        if self.param_search.is_some() {
+            // The parameter search takes every event: the keys are its own, Esc closes it.
+            self.repaint = true;
+            let actions = self
+                .param_search
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::ParamSearch(a) = action {
+                    self.param_search_action(a);
+                }
+            }
             return Vec::new();
         }
         if self.midi_maps.is_some() {
@@ -2336,6 +2525,27 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some((device, param)) = self.control_target.clone() {
                     self.core
                         .midi_arm(atomik_model::MidiTarget::Param { device, param });
+                }
+            }
+            ("macro.assign_control", Some(n)) => {
+                if let (Some((device, param)), Ok(n)) =
+                    (self.control_target.clone(), n.parse::<u8>())
+                    && (1..=8).contains(&n)
+                {
+                    self.core.assign_to_macro(&device, &param, n - 1, false);
+                }
+            }
+            ("macro.assign_control_new", Some(n)) => {
+                if let (Some((device, param)), Ok(n)) =
+                    (self.control_target.clone(), n.parse::<u8>())
+                    && (1..=8).contains(&n)
+                {
+                    self.core.assign_to_macro(&device, &param, n - 1, true);
+                }
+            }
+            ("macro.remove_control", None) => {
+                if let Some((device, param)) = self.control_target.clone() {
+                    self.core.remove_from_macro(&device, &param);
                 }
             }
             ("midi.forget_control", None) => {
@@ -2713,6 +2923,14 @@ impl<B: AudioBackend> Shell<B> {
                 .control_target
                 .as_ref()
                 .is_some_and(|(d, p)| core.is_midi_mapped(d, p)),
+            control_assign: self
+                .control_target
+                .as_ref()
+                .is_some_and(|(d, p)| core.macro_control_state(d, p).0),
+            control_driven: self
+                .control_target
+                .as_ref()
+                .is_some_and(|(d, p)| core.macro_control_state(d, p).1),
         }
     }
 
@@ -3526,6 +3744,32 @@ impl<B: AudioBackend> Shell<B> {
                 self.open_midi_maps();
                 Vec::new()
             }
+            AppCommand::MacroPanel => {
+                self.open_macros();
+                Vec::new()
+            }
+            AppCommand::NewMacroBank => {
+                if self.core.new_macro_bank() {
+                    self.notify("Added a macro bank at the end of the rack");
+                }
+                Vec::new()
+            }
+            AppCommand::FindParameter => {
+                self.open_param_search();
+                Vec::new()
+            }
+            AppCommand::FollowSelection => {
+                self.workflow.follow_selection = !self.workflow.follow_selection;
+                self.save_workflow();
+                self.apply_workflow_to_views();
+                Vec::new()
+            }
+            AppCommand::ShowParamLane => {
+                if self.core.show_touched_lane() {
+                    self.set_focus(Pane::Arrangement);
+                }
+                Vec::new()
+            }
             AppCommand::ExportMidiPreset => {
                 if self.core.doc().midi_maps.is_empty() {
                     self.notify("There are no MIDI mappings to export");
@@ -3664,6 +3908,8 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_plugin_ui();
         self.sync_relink();
         self.sync_midi_maps();
+        self.sync_macros();
+        self.sync_param_search();
         self.sync_quantize();
         // Imports and loads finish between frames: keep painting until the last one landed.
         if busy || self.core.is_busy() {
@@ -3864,6 +4110,12 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.midi_maps {
             view.paint(canvas);
         }
+        if let Some(view) = &self.macros_panel {
+            view.paint(canvas);
+        }
+        if let Some(view) = &self.param_search {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.quantize {
             view.paint(canvas);
         }
@@ -4048,6 +4300,10 @@ mod console_tests;
 #[cfg(test)]
 #[path = "shell_midimap_tests.rs"]
 mod midimap_tests;
+
+#[cfg(test)]
+#[path = "shell_macros_tests.rs"]
+mod macros_tests;
 
 #[cfg(test)]
 #[path = "shell_sampler_tests.rs"]

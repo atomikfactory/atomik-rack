@@ -143,6 +143,17 @@ pub enum AppCommand {
     ImportMidiPreset,
     /// Mixer > Clear MIDI Mappings: removes every mapping (one undo step).
     ClearMidiMaps,
+    /// Mixer > Macros...: the panel of the macro banks, their macros and assignments.
+    MacroPanel,
+    /// Mixer > New Macro Bank: a macro bank device at the end of the rack (one undo step).
+    NewMacroBank,
+    /// View > Find Parameter...: the search over every parameter of the project.
+    FindParameter,
+    /// View > Automation Follows Selection (on/off, kept in the workflow preferences): the
+    /// arrangement shows the lane of the parameter being touched.
+    FollowSelection,
+    /// View > Show Automation Lane: the lane of the last parameter touched on the selected device.
+    ShowParamLane,
     /// Mixer > Route to New Output Bus (Ctrl/Cmd+G): a new bus for the selected channels.
     RouteToNewBus,
     /// Mixer > Create VCA from Selection: a VCA group over the selected channels (the console's
@@ -384,6 +395,11 @@ impl AppCommand {
             AppCommand::ExportMidiPreset => ("midi.export_preset", None),
             AppCommand::ImportMidiPreset => ("midi.import_preset", None),
             AppCommand::ClearMidiMaps => ("midi.clear_maps", None),
+            AppCommand::MacroPanel => ("macro.panel", None),
+            AppCommand::NewMacroBank => ("macro.new_bank", None),
+            AppCommand::FindParameter => ("view.find_parameter", None),
+            AppCommand::FollowSelection => ("view.follow_selection", None),
+            AppCommand::ShowParamLane => ("view.show_param_lane", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
             AppCommand::CreateAudioTrack => ("create.audio_track", None),
@@ -567,6 +583,11 @@ impl AppCommand {
             ("midi.export_preset", None) => AppCommand::ExportMidiPreset,
             ("midi.import_preset", None) => AppCommand::ImportMidiPreset,
             ("midi.clear_maps", None) => AppCommand::ClearMidiMaps,
+            ("macro.panel", None) => AppCommand::MacroPanel,
+            ("macro.new_bank", None) => AppCommand::NewMacroBank,
+            ("view.find_parameter", None) => AppCommand::FindParameter,
+            ("view.follow_selection", None) => AppCommand::FollowSelection,
+            ("view.show_param_lane", None) => AppCommand::ShowParamLane,
             ("create.instrument", None) => AppCommand::CreateInstrument,
             ("create.effect", None) => AppCommand::CreateEffect,
             ("create.audio_track", None) => AppCommand::CreateAudioTrack,
@@ -809,6 +830,8 @@ pub struct MenuState {
     pub midi: MidiMenu,
     /// What the selected tracks and clips allow for freezing and bouncing (the Track menu).
     pub freeze: FreezeMenu,
+    /// Automation follows the selection (the View menu item is checked).
+    pub follow_selection: bool,
 }
 
 /// What the Mixer menu needs to know for MIDI Learn and the mappings.
@@ -1094,6 +1117,14 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ToggleMarkerList,
                     state.marker_list,
                 ),
+                MenuEntry::Separator,
+                item("Find Parameter\u{2026}", AppCommand::FindParameter),
+                check(
+                    "Automation Follows Selection",
+                    AppCommand::FollowSelection,
+                    state.follow_selection,
+                ),
+                item("Show Automation Lane", AppCommand::ShowParamLane),
             ],
         },
         Menu {
@@ -1237,6 +1268,9 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ClearMidiMaps,
                     state.midi.has_maps,
                 ),
+                MenuEntry::Separator,
+                enabled("Macros\u{2026}", AppCommand::MacroPanel, true),
+                enabled("New Macro Bank", AppCommand::NewMacroBank, true),
             ],
         },
         Menu {
@@ -1567,6 +1601,7 @@ mod tests {
             snapshots: SnapshotMenu::default(),
             midi: MidiMenu::default(),
             freeze: FreezeMenu::default(),
+            follow_selection: false,
         }
     }
 
@@ -1614,6 +1649,9 @@ mod tests {
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleMarkerStrip,
             AppCommand::ToggleMarkerList,
+            AppCommand::FindParameter,
+            AppCommand::FollowSelection,
+            AppCommand::ShowParamLane,
             AppCommand::AddMarker,
             AppCommand::AddRangeFromLoop,
             AppCommand::PreviousMarker,
@@ -1642,6 +1680,8 @@ mod tests {
             AppCommand::ExportMidiPreset,
             AppCommand::ImportMidiPreset,
             AppCommand::ClearMidiMaps,
+            AppCommand::MacroPanel,
+            AppCommand::NewMacroBank,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
             AppCommand::CreateAudioTrack,
@@ -2083,6 +2123,9 @@ mod tests {
                 "Tempo Lane",
                 "Marker Strip",
                 "Marker List",
+                "Find Parameter\u{2026}",
+                "Automation Follows Selection",
+                "Show Automation Lane",
             ]
         );
         assert_eq!(
@@ -2111,7 +2154,9 @@ mod tests {
                 "MIDI Mappings\u{2026}",
                 "Export MIDI Mapping Preset\u{2026}",
                 "Import MIDI Mapping Preset\u{2026}",
-                "Clear MIDI Mappings"
+                "Clear MIDI Mappings",
+                "Macros\u{2026}",
+                "New Macro Bank"
             ]
         );
         assert_eq!(
@@ -2239,6 +2284,7 @@ mod tests {
                     tail: true,
                     ..FreezeMenu::default()
                 },
+                follow_selection: false,
             },
             &keymap,
         );
