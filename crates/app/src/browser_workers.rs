@@ -265,6 +265,7 @@ fn row_of(entry: &std::fs::DirEntry, follow: bool) -> Option<FileRow> {
         kind,
         size: if is_dir { 0 } else { size },
         info: None,
+        item: None,
         favorite: false,
         tags: Vec::new(),
     })
@@ -331,6 +332,7 @@ pub(crate) fn stat_files(paths: &[PathBuf]) -> Vec<FileRow> {
                 kind,
                 size: meta.len(),
                 info: None,
+                item: None,
                 favorite: false,
                 tags: Vec::new(),
             })

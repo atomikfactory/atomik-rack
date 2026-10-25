@@ -740,11 +740,19 @@ impl FileBrowserView {
             Key::End if n > 0 => self.select_to(n - 1, mods.shift, out),
             Key::Enter => {
                 if let Some(r) = cur.and_then(|c| self.row_at_pos(c)) {
+                    // Library items only show as rows for now: loading them comes later.
                     let action = match r.kind {
-                        FileKind::Folder => BrowseAction::Show(Place::Folder(r.path.clone())),
-                        FileKind::Audio(_) => BrowseAction::Preview(r.path.clone()),
+                        FileKind::Folder => Some(BrowseAction::Show(Place::Folder(r.path.clone()))),
+                        FileKind::Audio(_) => Some(BrowseAction::Preview(r.path.clone())),
+                        FileKind::Patch
+                        | FileKind::Container
+                        | FileKind::Clip
+                        | FileKind::Project
+                        | FileKind::Device => None,
                     };
-                    emit(out, action);
+                    if let Some(action) = action {
+                        emit(out, action);
+                    }
                 }
             }
             Key::Space => {

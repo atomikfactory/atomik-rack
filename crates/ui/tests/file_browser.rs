@@ -38,6 +38,7 @@ fn audio(name: &str) -> FileRow {
         kind: FileKind::Audio(AudioFormat::Wav),
         size: 2048,
         info: Some(info()),
+        item: None,
         favorite: false,
         tags: Vec::new(),
     }
@@ -50,6 +51,7 @@ fn folder(name: &str) -> FileRow {
         kind: FileKind::Folder,
         size: 0,
         info: None,
+        item: None,
         favorite: false,
         tags: Vec::new(),
     }
@@ -384,6 +386,22 @@ fn space_toggles_preview_of_the_selected_file() {
         run(&mut v, &[key(Key::Space)]),
         vec![BrowseAction::Preview(p("hat.wav"))]
     );
+}
+
+#[test]
+fn enter_on_a_library_item_row_does_nothing_yet() {
+    let mut v = FileBrowserView::new(Theme::default());
+    v.set_bounds(Rect::new(0.0, 0.0, 300.0, 600.0));
+    v.set_tree_fraction(0.4);
+    v.set_focused(true);
+    v.set_location(Place::Folder(PathBuf::from("/lib")));
+    v.set_rows(vec![FileRow {
+        kind: FileKind::Patch,
+        ..audio("Lead.atomikpatch")
+    }]);
+    let mut v = settled(v);
+    run(&mut v, &[down(row_pt(0)), up(row_pt(0))]);
+    assert_eq!(run(&mut v, &[key(Key::Enter)]), vec![]);
 }
 
 #[test]
@@ -1411,6 +1429,7 @@ fn take_info_requests_polls_visible_rows_without_an_event() {
         kind: atomik_library::FileKind::Audio(atomik_library::AudioFormat::Wav),
         size: 1,
         info: None,
+        item: None,
         favorite: false,
         tags: Vec::new(),
     };

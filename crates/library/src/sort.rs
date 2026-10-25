@@ -91,7 +91,12 @@ fn duration_of(row: &FileRow) -> Option<f64> {
 fn format_of(row: &FileRow) -> Option<AudioFormat> {
     match row.kind {
         FileKind::Audio(f) => Some(f),
-        FileKind::Folder => None,
+        FileKind::Folder
+        | FileKind::Patch
+        | FileKind::Container
+        | FileKind::Clip
+        | FileKind::Project
+        | FileKind::Device => None,
     }
 }
 
@@ -144,6 +149,7 @@ mod tests {
                 channels: 1,
                 frames: Some(s * 1000),
             }),
+            item: None,
             favorite: false,
             tags: Vec::new(),
         }

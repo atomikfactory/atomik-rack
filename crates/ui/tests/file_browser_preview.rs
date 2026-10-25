@@ -24,6 +24,7 @@ fn row(name: &str, kind: FileKind, tags: &[&str], favorite: bool, info: bool) ->
             channels: 2,
             frames: Some(44100 * 5 / 2),
         }),
+        item: None,
         favorite,
         tags: tags.iter().map(|t| (*t).to_string()).collect(),
     }

@@ -8,6 +8,8 @@
 //! # Pieces
 //!
 //! - [`classify`] / [`FileKind`] / [`AudioFormat`]: which directory entries become rows.
+//! - [`LibrarySection`] / [`ItemInfo`] / [`device_uri`] / [`unique_name`]: the library item kinds,
+//!   sections, virtual device paths and file naming.
 //! - [`PathKey`]: the normalised path used as the database key (lexical, never touches disk).
 //! - [`Tag`]: a validated, case-insensitive tag name.
 //! - [`LibraryDb`]: favourites, tags and bookmarked places, saved as deterministic JSON.
@@ -20,6 +22,7 @@
 //! `atomik-ui` and `atomik-app` (see the file browser plan); change them only deliberately.
 
 mod db;
+mod item;
 mod path_key;
 mod query;
 mod row;
@@ -27,6 +30,10 @@ mod sort;
 mod tag;
 
 pub use db::{LIBRARY_VERSION, LibraryDb, LibraryError, Mark};
+pub use item::{
+    CLIP_EXT, CONTAINER_EXT, DEVICE_URI_PREFIX, ItemInfo, LibrarySection, PATCH_EXT, PROJECT_EXT,
+    device_type_of, device_uri, unique_name,
+};
 pub use path_key::PathKey;
 pub use query::Query;
 pub use row::{AudioFormat, AudioInfo, FileKind, FileRow, classify};

@@ -7,7 +7,8 @@ use crate::{FileKind, FileRow};
 /// Whitespace-separated tokens, all of which must match (AND):
 /// - `#name` — the row has that tag (case-insensitive, exact tag name).
 /// - `fav` or `is:fav` (case-insensitive) — the row is a favourite.
-/// - anything else — a case-insensitive substring of the row's name.
+/// - anything else — a case-insensitive substring of the row's name or, for a library item,
+///   of its category.
 ///
 /// A lone `#` is ignored. Folders match only on name terms: a query with a tag or
 /// favourite token never matches a folder. The empty query matches everything.
@@ -55,10 +56,13 @@ impl Query {
         self.tags
             .iter()
             .all(|want| row.tags.iter().any(|have| folded_eq(have, want)))
-            && self
-                .terms
-                .iter()
-                .all(|term| contains_folded(&row.name, term))
+            && self.terms.iter().all(|term| {
+                contains_folded(&row.name, term)
+                    || row
+                        .item
+                        .as_ref()
+                        .is_some_and(|i| contains_folded(&i.category, term))
+            })
     }
 }
 
@@ -129,6 +133,7 @@ mod tests {
             kind: FileKind::Audio(AudioFormat::Wav),
             size: 0,
             info: None,
+            item: None,
             favorite,
             tags: tags.iter().map(|t| (*t).to_string()).collect(),
         }
@@ -163,6 +168,19 @@ mod tests {
         assert!(m("g k", &r));
         assert!(m("ick 0", &r));
         assert!(!m("snare", &r));
+    }
+
+    #[test]
+    fn words_match_the_category_of_an_item() {
+        let mut r = file("Poly Synth", false, &[]);
+        r.item = Some(crate::ItemInfo {
+            detail: String::new(),
+            category: "Instrument".to_string(),
+        });
+        assert!(m("instru", &r));
+        assert!(m("poly instrument", &r));
+        assert!(!m("effect", &r));
+        assert!(!m("instru", &file("Poly Synth", false, &[])));
     }
 
     #[test]

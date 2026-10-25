@@ -381,6 +381,7 @@ mod tests {
             kind: FileKind::Audio(AudioFormat::Wav),
             size: 0,
             info: None,
+            item: None,
             favorite: false,
             tags: Vec::new(),
         }
