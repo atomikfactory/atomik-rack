@@ -28,6 +28,7 @@ use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
+use crate::tooltip::Help;
 use crate::viewport::{Tool, ViewportState};
 use atomik_device_sdk::Registry;
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
@@ -1107,6 +1108,64 @@ impl PianoRollView {
             return Hit::Playhead;
         }
         Hit::Grid
+    }
+
+    /// What the button under `pos` does, for its tooltip (`None` during a gesture and away from
+    /// a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        match self.hit(pos) {
+            Hit::Top(Some(item)) => Some(self.top_help(item)),
+            Hit::CtlChip(chip, _) => {
+                let a = self.controller_area();
+                let rect = cl::chip_rect(self.axis.x0, a.y0, chip);
+                let text = match chip {
+                    Chip::Preset(_) => "Show this controller lane under the velocity lane",
+                    Chip::Cc => "Show a CC lane: the arrows step the controller number",
+                    Chip::Poly => "Show a poly aftertouch lane: the arrows step the key",
+                    Chip::Curve => "Curve of new points: click to switch ramp and step",
+                };
+                Some(Help::new(rect, text))
+            }
+            _ => None,
+        }
+    }
+
+    fn top_help(&self, item: TopItem) -> Help {
+        let rect = self.top_rect(item);
+        let help = |text: &'static str| Help::new(rect, text);
+        match item {
+            TopItem::Snap => {
+                help("Snap grid: click to step to the next value, drag or scroll to choose")
+            }
+            TopItem::Quantize => help("Quantize the selected notes with the last settings")
+                .with_command("editor.quantize"),
+            TopItem::QuantizeOptions => help("Quantize options"),
+            TopItem::Close => help("Close the piano roll and show the arrangement"),
+            TopItem::Tool(t) => help(match t {
+                Tool::Select => "Select tool: click to select, drag to move, resize or box select",
+                Tool::Pencil => "Pencil tool: click to draw a note",
+                Tool::Eraser => "Eraser tool: click a note to delete it",
+                Tool::Razor => "Razor tool: click a note to split it at the snapped position",
+            })
+            .with_command(t.command_id()),
+            TopItem::ScaleRoot => help("Root note of the scale: click to choose"),
+            TopItem::ScaleKind => help("Kind of scale: click to choose"),
+            TopItem::ScaleDetect => help("Detect the scale from the notes of the clip"),
+            TopItem::ScaleSnap => help("Snap drawn notes and moves to the scale")
+                .with_command("editor.scale_snap_toggle"),
+            TopItem::Fold => help("Fold the keys: hide the keys outside the scale or not used")
+                .with_command("editor.fold_toggle"),
+            TopItem::Chord => help("Chord stamp: the pencil drops a whole chord; click to choose"),
+            TopItem::Inversion => {
+                help("Chord inversion: click for the next, right-click for the previous")
+            }
+            TopItem::Controllers => {
+                help("Show or hide the controller lanes under the velocity lane")
+            }
+        }
     }
 
     /// The playhead in content ticks (`None` while it is outside the clip's windows).

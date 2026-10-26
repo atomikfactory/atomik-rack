@@ -27,6 +27,7 @@ use crate::event::{PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -228,6 +229,25 @@ impl RelinkView {
             _ => {}
         }
         out
+    }
+
+    /// What the button under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        match self.hit(pos)? {
+            RelinkAction::Close => help(self.close_rect(), "Close the list"),
+            RelinkAction::SearchFolder => help(
+                self.search_rect(),
+                "Search a folder for the missing files and relink what it finds",
+            ),
+            RelinkAction::Locate { hash } => {
+                let i = self.entries.iter().position(|e| e.hash == hash)?;
+                help(
+                    self.locate_rect(i)?,
+                    "Choose the file that replaces this audio",
+                )
+            }
+        }
     }
 
     fn hit(&self, pos: Point) -> Option<RelinkAction> {

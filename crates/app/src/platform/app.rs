@@ -1206,6 +1206,7 @@ impl ApplicationHandler for App {
         let running = self.shell.core().sink().is_running()
             || self.shell.is_busy()
             || self.shell.context_menu_pending()
+            || self.shell.tooltip_pending()
             || self.shell.core().view().is_auto_scrolling()
             || self.plugin_windows.any()
             || self.shell.core().plugin_instance_count() > 0

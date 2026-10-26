@@ -127,6 +127,8 @@ pub struct Session {
     os: Os,
     /// The clock and the surface port of the MIDI tools ([`crate::midi_tools`]).
     pub(crate) midi: crate::midi_tools::MidiTools,
+    /// The frame clock of the tooltips (seconds; only `session_pointer` `wait` moves it).
+    clock: f64,
 }
 
 impl Session {
@@ -163,6 +165,7 @@ impl Session {
             logical,
             os,
             midi: crate::midi_tools::MidiTools::default(),
+            clock: 0.0,
         }
     }
 
@@ -250,6 +253,14 @@ impl Session {
         let mut list = DisplayList::new();
         self.shell.paint_in(window, &mut list);
         list
+    }
+
+    /// Lets `seconds` pass on the clock of the hover delays (a tooltip shows after the pointer
+    /// has rested for the delay): one frame at the time it is, then one `seconds` later.
+    pub fn rest(&mut self, seconds: f64) {
+        self.shell.frame_at(self.clock);
+        self.clock += seconds.max(0.0);
+        self.shell.frame_at(self.clock);
     }
 
     /// Delivers `events` to `window` in order, then runs a frame; returns the requests the shell
@@ -769,6 +780,11 @@ leave. Find where to aim with session_texts. With `window`, the position is in t
                 "strings",
                 "Held keys: shift, ctrl, alt, meta (cmd is meta on mac, ctrl elsewhere).",
             ),
+            (
+                "wait",
+                "number",
+                "Seconds the pointer then rests where it is. A tooltip shows after 0.6 s on a button: read it in `tooltip`, in session_texts or in a screenshot.",
+            ),
         ],
         &["action"],
     )
@@ -893,6 +909,9 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         });
     }
     let requests = session.feed(window, &events);
+    if let Some(wait) = args.opt_f64("wait")?.filter(|w| *w > 0.0) {
+        session.rest(wait);
+    }
     let pane = last.and_then(|p| match window {
         WindowKind::Main => session.shell().hit_pane(p),
         _ => {
@@ -910,6 +929,7 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         "window": window_name(window),
         "pane_under_pointer": pane.map(|p| format!("{p:?}")),
         "requests": requests.into_iter().map(request_json).collect::<Vec<_>>(),
+        "tooltip": session.shell().tooltip().map(|t| t.text),
         "status_text": session.shell().status_text(),
         "dirty": session.shell().core().is_dirty(),
     })))

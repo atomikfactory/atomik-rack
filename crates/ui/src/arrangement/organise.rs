@@ -419,7 +419,7 @@ impl ArrangementView {
     }
 
     /// The chevron of a folder header.
-    fn folder_chevron_rect(&self, hr: Rect, group: u32) -> Rect {
+    pub(super) fn folder_chevron_rect(&self, hr: Rect, group: u32) -> Rect {
         let x = hr.x0 + 8.0 + self.folder_depth(group) as f64 * DEPTH_STEP;
         let cy = hr.y0 + hr.height() / 2.0;
         Rect::new(x, cy - 7.0, x + 14.0, cy + 7.0)
@@ -1340,7 +1340,7 @@ impl ArrangementView {
 }
 
 /// The track header button a folder button sits where.
-fn track_button(b: FolderButton) -> TrackButton {
+pub(super) fn track_button(b: FolderButton) -> TrackButton {
     match b {
         FolderButton::Mute => TrackButton::Mute,
         FolderButton::Solo => TrackButton::Solo,

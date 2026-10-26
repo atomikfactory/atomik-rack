@@ -403,6 +403,8 @@ pub struct Shell<B: AudioBackend> {
     browser_edge: f64,
     /// The file drag in progress (see [`Capture::FileDrag`]).
     file_drag: Option<FileDrag>,
+    /// The help tooltip: what the pointer rests on and whether it shows yet.
+    tips: Tips,
 }
 
 /// The layout flags F7 remembers.
@@ -529,6 +531,7 @@ impl<B: AudioBackend> Shell<B> {
             seq_only_prev: None,
             browser_edge: 0.0,
             file_drag: None,
+            tips: Tips::default(),
         };
         shell.core.set_roles(&shell.roles);
         shell.configure_surface();
@@ -1443,6 +1446,12 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .view_mut()
             .set_auto_route(self.workflow.auto_route);
+        self.core
+            .view_mut()
+            .set_button_tips(self.workflow.show_tooltips);
+        if !self.workflow.show_tooltips {
+            self.clear_tooltip();
+        }
         self.layout_view();
     }
 
@@ -1554,6 +1563,7 @@ impl<B: AudioBackend> Shell<B> {
     /// the modifier state (a hold-style role must not stay on).
     pub fn focus_lost(&mut self) {
         self.router.clear_held();
+        self.clear_tooltip();
         self.modifiers = Modifiers::NONE;
         self.forward_modifiers();
     }
@@ -2058,6 +2068,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         let modal = self.modal_open();
         let mut requests = self.handle_event_inner(window, event, under);
+        self.track_tooltip(window, event);
         self.sync_library_ui();
         self.save_zoom_state();
         requests.append(&mut self.pending);
@@ -4243,6 +4254,7 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.plugin_tick(now_seconds);
+        self.tick_tooltip(now_seconds);
         // A pointer resting on another row of a context menu switches its submenu.
         if let Some(open) = &mut self.context_menu
             && open.menu.tick(now_seconds)
@@ -4632,9 +4644,18 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
 mod windows_impl;
 use windows_impl::{MAIN_SIZE, WinState};
 
+#[path = "shell_tooltip.rs"]
+mod tooltip_impl;
+use tooltip_impl::Tips;
+pub use tooltip_impl::Tooltip;
+
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shell_tooltip_tests.rs"]
+mod tooltip_tests;
 
 #[cfg(test)]
 #[path = "shell_windows_tests.rs"]

@@ -57,6 +57,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::plugin_panel::{MAX_FEATURED, featured_pins, param_id_of, param_key};
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
@@ -648,6 +649,31 @@ impl PluginParamsView {
     fn menu_row(menu: Rect, i: usize) -> Rect {
         let y = menu.y0 + 2.0 + i as f64 * MENU_ROW_H;
         Rect::new(menu.x0 + 2.0, y, menu.x1 - 2.0, y + MENU_ROW_H)
+    }
+
+    /// What the button under `pos` does, for its tooltip (`None` during a drag and away from a
+    /// button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let help = |rect: Option<Rect>, text: &'static str| Some(Help::new(rect?, text));
+        match self.hit(pos) {
+            Hit::Close => help(Some(self.close_rect()), "Close the parameter pane"),
+            Hit::StepDec(id) => help(self.dec_rect(id), "Previous value"),
+            Hit::StepInc(id) => help(self.inc_rect(id), "Next value"),
+            Hit::Toggle(id) => help(self.toggle_rect(id), "Switch this parameter on or off"),
+            Hit::Pin(id) => help(
+                self.pin_rect(id),
+                "Pin this parameter to the device panel in the rack",
+            ),
+            Hit::Auto(id) => help(
+                self.auto_rect(id),
+                "Show this parameter's automation lane in the arrangement",
+            ),
+            Hit::Map(id) => help(self.map_rect(id), "Drive this parameter from a macro"),
+            Hit::None | Hit::Search | Hit::Slider(_) | Hit::Row(_) | Hit::MenuRow(_) => None,
+        }
     }
 
     /// What is at `pos`.

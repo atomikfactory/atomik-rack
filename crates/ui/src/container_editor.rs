@@ -55,6 +55,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::SeqTheme;
 use crate::seq_panel::{self, RenameKey};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use crate::widget::{self, ValueDrag};
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
@@ -738,6 +739,57 @@ impl ContainerEditorView {
         match self.tab {
             ContainerTab::Splits => self.hit_splits(p),
             ContainerTab::Macros => self.hit_macros(p),
+        }
+    }
+
+    /// What the button or field under `p` does, for its tooltip (`None` during a gesture and
+    /// away from a button).
+    pub fn help_at(&self, p: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        match self.hit(p) {
+            Hit::Close => help(self.close_rect(), "Close the container editor"),
+            Hit::Tab(t) => help(
+                self.tab_rect(t),
+                match t {
+                    ContainerTab::Splits => "Split the keyboard between the devices inside",
+                    ContainerTab::Macros => {
+                        "Macros: knobs that drive parameters of the devices inside"
+                    }
+                },
+            ),
+            Hit::Add => help(self.add_rect(), "Add a note split"),
+            Hit::Target(i) => help(self.target_rect(i), "Choose the device this split plays"),
+            Hit::TransposeDec(i) => help(
+                self.dec_rect(i),
+                "Transpose this split down a semitone (Shift: an octave)",
+            ),
+            Hit::TransposeInc(i) => help(
+                self.inc_rect(i),
+                "Transpose this split up a semitone (Shift: an octave)",
+            ),
+            Hit::Delete(i) => help(self.delete_rect(i), "Delete this split"),
+            Hit::TargetDelete(j) => help(
+                self.target_delete_rect(j),
+                "Stop this macro driving the parameter",
+            ),
+            Hit::Field(j, b) => help(
+                self.field_rect(j, b),
+                match b {
+                    Bound::Min => "Parameter value when the macro is at its minimum",
+                    Bound::Max => "Parameter value when the macro is at its maximum",
+                },
+            ),
+            Hit::None
+            | Hit::Bar(..)
+            | Hit::Map
+            | Hit::Keys(_)
+            | Hit::Row(_)
+            | Hit::MacroRow(_)
+            | Hit::MacroName(_)
+            | Hit::MacroKnob(_) => None,
         }
     }
 

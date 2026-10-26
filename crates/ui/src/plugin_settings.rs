@@ -48,6 +48,7 @@ use crate::plugin_data::{
 };
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use vello::kurbo::{Affine, Point, Rect, RoundedRect};
 use vello::peniko::Color;
 
@@ -367,6 +368,89 @@ impl PluginSettingsView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let at = |r: Option<Rect>, text: &'static str| {
+            r.filter(|r| r.contains(pos)).map(|r| Help::new(r, text))
+        };
+        let visible = self.visible();
+        let shown = |item: Item| {
+            self.items
+                .iter()
+                .position(|i| *i == item)
+                .is_some_and(|k| visible.iter().any(|(i, _)| *i == k))
+        };
+        if let Some(h) = at(
+            Some(self.enable_rect()),
+            "Turn third-party plugins on or off",
+        ) {
+            return Some(h);
+        }
+        let fixed = [
+            (
+                Item::Sandbox,
+                self.sandbox_toggle_rect(),
+                "Run each plugin in its own process so a crash cannot take Atomik down",
+            ),
+            (
+                Item::AddFolder,
+                self.add_folder_rect(),
+                "Add a folder to search for plugins",
+            ),
+            (
+                Item::ScanButtons,
+                self.scan_rect(),
+                "Scan the folders for new and changed plugins",
+            ),
+            (
+                Item::ScanButtons,
+                self.full_rescan_rect(),
+                "Scan every plugin again",
+            ),
+            (
+                Item::ScanButtons,
+                self.rescan_failed_rect(),
+                "Try the files that failed again",
+            ),
+            (
+                Item::Timeout,
+                self.timeout_dec_rect(),
+                "Shorter time allowed per plugin",
+            ),
+            (
+                Item::Timeout,
+                self.timeout_inc_rect(),
+                "Longer time allowed per plugin",
+            ),
+            (Item::Progress, self.cancel_scan_rect(), "Stop the scan"),
+        ];
+        for (item, rect, text) in fixed {
+            if shown(item)
+                && let Some(h) = at(rect, text)
+            {
+                return Some(h);
+            }
+        }
+        for (k, item) in self.items.iter().enumerate() {
+            if !visible.iter().any(|(i, _)| *i == k) {
+                continue;
+            }
+            let found = match *item {
+                Item::Folder(i) => at(self.folder_remove_rect(i), "Remove this search folder"),
+                Item::Plugin(i) => at(
+                    self.plugin_toggle_rect(i),
+                    "Disable this plugin: it stays installed but is not offered",
+                ),
+                Item::Failed(i) => at(self.retry_rect(i), "Try this file again"),
+                _ => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

@@ -648,7 +648,7 @@ impl RackView {
 
     // ------------------------------------------------------------------ breadcrumb
 
-    fn bar_rect(&self) -> Rect {
+    pub(super) fn bar_rect(&self) -> Rect {
         let a = self.rack_area();
         Rect::new(a.x0, 0.0, a.x1, breadcrumb::BAR_HEIGHT)
     }

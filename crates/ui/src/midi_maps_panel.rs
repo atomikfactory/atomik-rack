@@ -32,6 +32,7 @@ use crate::event::{PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use atomik_model::{MapMode, MidiMapping, RelativeKind};
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -339,6 +340,55 @@ impl MidiMapsView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let hit = self.hit(pos)?;
+        let header = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        let (i, text) = match hit {
+            Hit::Close => return header(self.close_rect(), "Close the panel"),
+            Hit::Clear => return header(self.clear_rect(), "Remove every mapping of the project"),
+            Hit::Import => {
+                return header(
+                    self.import_rect(),
+                    "Apply a mapping preset file to this project",
+                );
+            }
+            Hit::Export => {
+                return header(self.export_rect(), "Save these mappings as a preset file");
+            }
+            Hit::Remove(i) => (i, "Remove this mapping"),
+            Hit::Learn(i) => (i, "Learn a new source for this control: move a knob or key"),
+            Hit::Consume(i) => (i, "Consume: the message is not passed on to other mappings"),
+            Hit::Pickup(i) => (
+                i,
+                "Pickup: the control waits until the source passes its value",
+            ),
+            Hit::Invert(i) => (i, "Invert the direction of the control"),
+            Hit::Mode(i) => (i, "Mode: click for the next, right-click for the previous"),
+            Hit::Max(i) => (
+                i,
+                "Highest value the control reaches: click to raise, right-click to lower",
+            ),
+            Hit::Min(i) => (
+                i,
+                "Lowest value the control reaches: click to raise, right-click to lower",
+            ),
+        };
+        let row = self.row_rect(i)?;
+        let c = self.columns(row);
+        let x = match hit {
+            Hit::Remove(_) => c.remove,
+            Hit::Learn(_) => c.learn,
+            Hit::Consume(_) => c.consume,
+            Hit::Pickup(_) => c.pickup,
+            Hit::Invert(_) => c.invert,
+            Hit::Mode(_) => c.mode,
+            Hit::Max(_) => c.max,
+            _ => c.min,
+        };
+        Some(Help::new(self.cell(row, x), text))
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

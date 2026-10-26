@@ -573,5 +573,6 @@ impl<B: AudioBackend> Shell<B> {
                 theme.text,
             ));
         }
+        self.paint_tooltip(window, canvas, theme, size);
     }
 }

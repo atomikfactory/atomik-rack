@@ -25,6 +25,7 @@ use crate::paint::fit_label;
 use crate::plugin_data::PluginBannerAction;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use vello::kurbo::{Affine, Point, Rect};
 
 /// Height of the banner strip.
@@ -191,6 +192,23 @@ impl PluginBannerView {
     /// The OPEN RECOVERY button of the unclean-exit banner (when a snapshot exists).
     pub fn recovery_rect(&self) -> Option<Rect> {
         self.crash_buttons().and_then(|b| b.2)
+    }
+
+    /// What the button under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let text = |label: &str| match label {
+            "LOAD" => "Load the plugins this project uses",
+            "OPEN WITHOUT" => {
+                "Open the project without its plugins: their devices stay as stand-ins"
+            }
+            "DISABLE" => "Disable the plugins that were loaded when Atomik ended",
+            "KEEP" => "Keep those plugins enabled",
+            _ => "Open the recovery copy saved before Atomik ended",
+        };
+        self.button_list()
+            .into_iter()
+            .find(|(rect, _, _)| rect.contains(pos))
+            .map(|(rect, label, _)| Help::new(rect, text(label)))
     }
 
     /// Handles one event and returns what the app must do.

@@ -60,6 +60,8 @@
 //! mute button, dimmed name), derived from the document's `solo` params. A soloed channel's
 //! mute button is disabled (dimmed, ignores clicks). `internal.*` params are never shown.
 
+mod help;
+
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::console_layout::{

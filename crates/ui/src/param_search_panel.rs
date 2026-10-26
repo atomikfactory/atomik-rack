@@ -33,6 +33,7 @@ use crate::event::{Key, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -297,6 +298,35 @@ impl ParamSearchView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button or value under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        match self.hit(pos)? {
+            Hit::Close => help(self.close_rect(), "Close the search"),
+            Hit::Reveal => help(
+                self.foot_button(0),
+                "Show the selected parameter in the rack",
+            ),
+            Hit::Lane => help(
+                self.foot_button(1),
+                "Show the selected parameter's automation lane in the arrangement",
+            ),
+            Hit::Macro => help(
+                self.foot_button(2),
+                "Drive the selected parameter from a macro",
+            ),
+            Hit::Learn => help(
+                self.foot_button(3),
+                "Learn: move a knob or key to control the selected parameter",
+            ),
+            Hit::Value(i) => help(
+                self.value_cell(self.row_rect(i)?),
+                "Value: scroll to change (Shift: fine)",
+            ),
+            Hit::Row(_) => None,
+        }
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

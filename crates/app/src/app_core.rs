@@ -21,8 +21,9 @@ use atomik_model::{
     register_stand_ins, save_patch,
 };
 use atomik_render::project::song_input_with_warps;
+use atomik_ui::kurbo::Point;
 use atomik_ui::{
-    ArrangementView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView, PianoRollView,
+    ArrangementView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView, Help, PianoRollView,
     PluginParamsView, RackView, SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView,
     Theme, TransportAction, TransportBar, UiAction, UiEvent,
 };
@@ -663,6 +664,25 @@ impl<S: EngineSink> AppCore<S> {
     /// returned for the shell (selection, browser).
     pub fn handle_event(&mut self, event: &UiEvent) -> Vec<UiAction> {
         self.handle_pane_event(Pane::Rack, event)
+    }
+
+    /// What the button at `pos` of `pane` does, for its tooltip (`pos` in the coordinates the
+    /// pane's events use; the rack's are relative to the rack's own origin, so is its answer).
+    pub fn help_in_pane(&self, pane: Pane, pos: Point) -> Option<Help> {
+        match pane {
+            Pane::Rack => self.view.help_at(pos),
+            Pane::Transport => self.transport_bar.help_at(pos),
+            Pane::Arrangement => self.arrangement.help_at(pos),
+            Pane::PianoRoll => self.piano_roll.help_at(pos),
+            Pane::Console => self.console.help_at(pos),
+            Pane::SampleEditor => self.sample_editor.help_at(pos),
+            Pane::StepEditor => self.step_editor.help_at(pos),
+            Pane::SliceEditor => self.slice_editor.help_at(pos),
+            Pane::SeqEditor => self.seq_editor.help_at(pos),
+            Pane::ContainerEditor => self.container_editor.help_at(pos),
+            Pane::PluginParams => self.plugin_params.help_at(pos),
+            Pane::FileBrowser => self.file_browser.help_at(pos),
+        }
     }
 
     /// Forwards a UI event to one pane's view (in that view's coordinates: the rack view's

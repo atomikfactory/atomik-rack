@@ -2248,3 +2248,42 @@ fn a_track_is_renamed_by_double_clicking_its_name_in_the_arrangement() {
     ok(&mut s, "session_command", json!({"id": "edit.undo"}));
     header(&mut s, "Bass");
 }
+
+#[test]
+fn a_tooltip_shows_after_the_pointer_rests_on_a_button() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // The SEL tool button of the arrangement corner (its label is drawn on the button).
+    let texts = ok(&mut s, "session_texts", json!({"contains": "SEL"}));
+    let sel = &texts["texts"][0];
+    let (x, y) = (sel["x"].as_f64().unwrap(), sel["y"].as_f64().unwrap());
+    let at =
+        |action: &str, wait: f64| json!({"action": action, "x": x, "y": y - 4.0, "wait": wait});
+    // Not before the delay.
+    let v = ok(&mut s, "session_pointer", at("move", 0.2));
+    assert!(v["tooltip"].is_null(), "{v}");
+    // After it, with the shortcut of the tool's command when the keymap has one.
+    let v = ok(&mut s, "session_pointer", at("move", 1.0));
+    let tip = v["tooltip"].as_str().unwrap_or_else(|| panic!("{v}"));
+    assert!(tip.starts_with("Select tool"), "{tip}");
+    // The box is drawn: its text is among the texts of the window.
+    let drawn = ok(&mut s, "session_texts", json!({"contains": "Select tool"}));
+    assert!(drawn["shown"].as_u64().unwrap() >= 1, "{drawn}");
+    // A press hides it, and it stays hidden on the same button.
+    let v = ok(&mut s, "session_pointer", at("down", 0.0));
+    assert!(v["tooltip"].is_null(), "{v}");
+    ok(&mut s, "session_pointer", at("up", 0.0));
+    let v = ok(&mut s, "session_pointer", at("move", 2.0));
+    assert!(v["tooltip"].is_null(), "{v}");
+    // Leaving drops everything.
+    let v = ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "leave", "wait": 2.0}),
+    );
+    assert!(v["tooltip"].is_null(), "{v}");
+}
