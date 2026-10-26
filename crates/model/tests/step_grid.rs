@@ -7,8 +7,8 @@ mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::song::flatten_notes;
 use atomik_model::{
-    Clip, ClipContent, ClipId, Command, Curve, Document, Lane, LaneKind, ModelError, Note,
-    SongCommand, StepGrid, StepResolution, SyncOp, Track, load_project, save_project,
+    Clip, ClipContent, ClipId, Command, Curve, Document, Lane, ModelError, Note, SongCommand,
+    StepGrid, StepResolution, SyncOp, Track, load_project, save_project,
 };
 use common::audio::{add_audio_clip, add_audio_track, audio_registry, register};
 use common::song::*;
@@ -385,18 +385,18 @@ fn track_of(clips: Vec<Clip>) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: clips
-                .into_iter()
-                .enumerate()
-                .map(|(i, mut c)| {
-                    c.id = ClipId(i as u64 + 1);
-                    c
-                })
-                .collect(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![
+            Lane::notes().with_clips(
+                clips
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, mut c)| {
+                        c.id = ClipId(i as u64 + 1);
+                        c
+                    })
+                    .collect(),
+            ),
+        ],
     }
 }
 
@@ -660,7 +660,7 @@ fn v5_writes_grid_only_when_present() {
     let d = doc_with_grids(&reg);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 29);
+    assert_eq!(v["version"], 30);
     let clips = &v["song"]["tracks"][0]["lanes"][0]["clips"];
     assert_eq!(
         clips[0]["grid"],
@@ -701,7 +701,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     let text = save_project(d.doc());
     assert!(!text.contains("grid"));
     for version in 3..=4 {
-        let old = text.replace("\"version\": 29", &format!("\"version\": {version}"));
+        let old = text.replace("\"version\": 30", &format!("\"version\": {version}"));
         let back = load_project(&old, &reg).unwrap();
         assert!(
             back.song
@@ -716,7 +716,7 @@ fn older_versions_load_without_grids_and_reject_the_field() {
     // A grid in an older file is an unknown field.
     let with = save_project(doc_with_grids(&reg).doc());
     for version in 3..=4 {
-        let old = with.replace("\"version\": 29", &format!("\"version\": {version}"));
+        let old = with.replace("\"version\": 30", &format!("\"version\": {version}"));
         let e = load_project(&old, &reg).unwrap_err().to_string();
         assert!(e.contains("grid"), "v{version}: {e}");
     }

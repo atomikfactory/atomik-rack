@@ -541,7 +541,8 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             let lanes: Vec<Value> = t
                 .lanes
                 .iter()
-                .map(|l| {
+                .enumerate()
+                .map(|(index, l)| {
                     let kind = match &l.kind {
                         LaneKind::Notes => "notes".to_string(),
                         LaneKind::Automation(p) => format!("automation:{p}"),
@@ -557,6 +558,18 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                         })
                         .sum();
                     let mut lane = json!({"kind": kind, "clips": l.clips.len(), "items": items});
+                    if t.is_note_lane(index) {
+                        // The lane number the lane commands and the headers use, and what the
+                        // header shows (the name, else Notes, Notes 2, ...).
+                        lane["index"] = json!(index);
+                        lane["label"] = json!(t.lane_label(index));
+                        if let Some(name) = &l.name {
+                            lane["name"] = json!(name);
+                        }
+                        if l.muted {
+                            lane["muted"] = json!(true);
+                        }
+                    }
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);

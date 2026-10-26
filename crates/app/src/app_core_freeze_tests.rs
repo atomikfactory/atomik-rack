@@ -505,6 +505,41 @@ fn bounce_in_place_adds_a_new_track_and_leaves_the_originals() {
 }
 
 #[test]
+fn bounce_in_place_takes_a_clip_of_a_muted_second_note_lane() {
+    let mut c = core_with(0);
+    c.apply_command(Command::Song(SongCommand::AddNoteLane {
+        device: key("lead"),
+        name: None,
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("lead"),
+        lane: 1,
+        clip: notes(0, BAR),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(SongCommand::SetLaneMuted {
+        device: key("lead"),
+        lane: 1,
+        muted: true,
+    }))
+    .unwrap();
+    let held = c.doc().song.track(&key("lead")).unwrap().lanes[1].clips[0].id;
+    let tracks = c.doc().song.tracks.len();
+    c.arrangement_mut().set_selected_clips(&[held]);
+    assert!(c.freeze_menu().can_bounce);
+    c.bounce_in_place(false);
+    c.wait_background();
+    assert_eq!(c.doc().song.tracks.len(), tracks + 1);
+    let new = &c.doc().song.tracks[1];
+    assert!(new.is_audio() && new.lanes[0].clips.len() == 1);
+    assert!(
+        c.doc().song.track(&key("lead")).unwrap().lanes[1].muted,
+        "the lane stays muted"
+    );
+}
+
+#[test]
 fn bounce_in_place_and_mute_originals_mutes_them_in_the_same_step() {
     let mut c = core_with(0);
     let lead_clip = c.doc().song.track(&key("lead")).unwrap().lanes[0].clips[0].id;

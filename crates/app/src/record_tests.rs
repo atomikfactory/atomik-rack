@@ -69,7 +69,7 @@ fn off(key: u8, frame: u64) -> RecordedNote {
 
 fn take(loop_range: Option<(i64, i64)>) -> Take {
     Take::new(
-        [(DEV, DeviceKey("bass".into()))],
+        [(DEV, DeviceKey("bass".into()), 0)],
         loop_range,
         atomik_core::MeterTable::constant(4, 4),
     )
@@ -525,4 +525,19 @@ fn quantize_settings_have_labels_and_grids() {
         serde_json::to_string(&InputQuantize::Sixteenth).unwrap(),
         "\"1/16\""
     );
+}
+
+#[test]
+fn new_keeps_the_note_lane_of_each_armed_track() {
+    let t = Take::new(
+        [
+            (DEV, DeviceKey("bass".into()), 2),
+            (DeviceInstanceId(9), DeviceKey("lead".into()), 0),
+        ],
+        None,
+        atomik_core::MeterTable::constant(4, 4),
+    );
+    assert_eq!(t.lanes().get(&DeviceKey("bass".into())), Some(&2));
+    assert_eq!(t.lanes().get(&DeviceKey("lead".into())), Some(&0));
+    assert_eq!(t.devices().len(), 2);
 }

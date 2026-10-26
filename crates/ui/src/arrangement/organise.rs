@@ -37,8 +37,8 @@ use crate::paint::{fit_label, tooltip};
 use crate::seq_paint as sp;
 use crate::theme::mix;
 use atomik_model::{
-    Command, DeviceKey, MAX_GROUP_NAME, MAX_TRACK_COMMENT, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT,
-    RackDoc, SongCommand,
+    Command, DeviceKey, MAX_GROUP_NAME, MAX_LANE_NAME_CHARS, MAX_TRACK_COMMENT, MAX_TRACK_HEIGHT,
+    MIN_TRACK_HEIGHT, RackDoc, SongCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{BezPath, Point, Rect, RoundedRect};
@@ -130,6 +130,8 @@ pub(super) enum EditTarget {
     Folder(u32),
     /// The comment of a track.
     Comment(DeviceKey),
+    /// The name of a note lane of a track.
+    Lane(DeviceKey, usize),
 }
 
 /// A text being typed: one line, Enter commits, Escape cancels.
@@ -317,6 +319,7 @@ impl ArrangementView {
         let gone = match self.og.edit.as_ref().map(|e| &e.target) {
             Some(EditTarget::Folder(g)) => song.org.group(*g).is_none(),
             Some(EditTarget::Comment(d)) => song.track(d).is_none(),
+            Some(EditTarget::Lane(d, lane)) => song.track(d).is_none_or(|t| !t.is_note_lane(*lane)),
             None => false,
         };
         if gone {
@@ -343,9 +346,17 @@ impl ArrangementView {
         }
     }
 
-    /// The row height of an automation lane: a thin strip when it is folded.
+    /// The row height of lane `lane`: lane 0 and the note lanes have their track's height, an
+    /// automation lane the lane height, a thin strip when it is folded.
     pub(super) fn lane_height_of(&self, track: usize, lane: usize) -> f64 {
-        if self.is_lane_folded(track, lane) {
+        if let Some(t) = self
+            .song
+            .tracks
+            .get(track)
+            .filter(|t| lane == 0 || t.is_note_lane(lane))
+        {
+            self.track_row_height(&t.device)
+        } else if self.is_lane_folded(track, lane) {
             FOLDED_LANE_HEIGHT
         } else {
             self.lane_row_height()
@@ -427,6 +438,22 @@ impl ArrangementView {
                     hr.y0 + 4.0,
                     hr.x0 + TRACK_LIST_WIDTH - 6.0,
                     hr.y1 - 4.0,
+                ))
+            }
+            EditTarget::Lane(d, lane) => {
+                let track = self.song.tracks.iter().position(|t| &t.device == d)?;
+                let hr = self.row_rect(self.row_of(track, *lane)?);
+                let (top, bottom) = if *lane == 0 {
+                    (hr.y0 + 7.0, hr.y0 + 27.0)
+                } else {
+                    let cy = hr.y0 + hr.height() / 2.0;
+                    (cy - 10.0, cy + 10.0)
+                };
+                Some(Rect::new(
+                    hr.x0 + 24.0,
+                    top,
+                    hr.x0 + TRACK_LIST_WIDTH - 40.0,
+                    bottom,
                 ))
             }
             EditTarget::Comment(d) => {
@@ -658,6 +685,11 @@ impl ArrangementView {
         true
     }
 
+    /// Starts typing the name of a note lane (`text` is what shows now).
+    pub(super) fn begin_lane_edit(&mut self, device: DeviceKey, lane: usize, text: String) {
+        self.start_edit(EditTarget::Lane(device, lane), text);
+    }
+
     fn start_edit(&mut self, target: EditTarget, text: String) {
         self.og.edit = Some(TextEdit {
             target,
@@ -695,6 +727,9 @@ impl ArrangementView {
                     return;
                 }
                 out.push(song_cmd(SongCommand::RenameGroup { group, name }));
+            }
+            EditTarget::Lane(device, lane) => {
+                out.extend(self.lane_rename_command(&device, lane, text));
             }
             EditTarget::Comment(device) => {
                 let comment: String = text.chars().take(MAX_TRACK_COMMENT).collect();
@@ -735,6 +770,7 @@ impl ArrangementView {
             let max = match e.target {
                 EditTarget::Folder(_) => MAX_GROUP_NAME,
                 EditTarget::Comment(_) => MAX_TRACK_COMMENT,
+                EditTarget::Lane(..) => MAX_LANE_NAME_CHARS,
             };
             if e.text.chars().count() < max {
                 e.text.push(c);
@@ -1007,22 +1043,24 @@ impl ArrangementView {
         sp::grid(c, st, &self.axis, lr, &self.bars);
         for i in self.song.group_tracks(group) {
             let accent = self.track_accent(doc, i);
-            let Some(lane) = self.song.tracks[i].lanes.first() else {
-                continue;
-            };
-            for clip in &lane.clips {
-                let (x0, x1) = (
-                    self.axis.tick_to_x(clip.start),
-                    self.axis.tick_to_x(clip.start + clip.length),
-                );
-                if x1 < lr.x0 - 2.0 || x0 > lr.x1 + 2.0 {
-                    continue;
+            let track = &self.song.tracks[i];
+            // Every note lane (or the audio lane) counts; the automation lanes do not.
+            let lanes = track.lanes.iter().take(track.note_lane_count().max(1));
+            for lane in lanes {
+                for clip in &lane.clips {
+                    let (x0, x1) = (
+                        self.axis.tick_to_x(clip.start),
+                        self.axis.tick_to_x(clip.start + clip.length),
+                    );
+                    if x1 < lr.x0 - 2.0 || x0 > lr.x1 + 2.0 {
+                        continue;
+                    }
+                    let r = Rect::new(x0, lr.y0 + 7.0, x1.max(x0 + 1.0), lr.y1 - 7.0);
+                    c.fill_with(
+                        RoundedRect::from_rect(r, 2.0),
+                        accent.with_alpha(if clip.muted || lane.muted { 0.25 } else { 0.7 }),
+                    );
                 }
-                let r = Rect::new(x0, lr.y0 + 7.0, x1.max(x0 + 1.0), lr.y1 - 7.0);
-                c.fill_with(
-                    RoundedRect::from_rect(r, 2.0),
-                    accent.with_alpha(if clip.muted { 0.25 } else { 0.7 }),
-                );
             }
         }
     }

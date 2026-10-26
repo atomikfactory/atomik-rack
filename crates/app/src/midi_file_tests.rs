@@ -42,11 +42,7 @@ fn track(device: &str, clips: Vec<Clip>) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips,
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::notes().with_clips(clips)],
     }
 }
 
@@ -337,11 +333,7 @@ fn a_track_file_is_type_zero_with_the_tempo_map_and_markers() {
 fn the_song_file_skips_audio_tracks() {
     let mut song = conducted_song();
     song.tracks.push(Track {
-        lanes: vec![Lane {
-            kind: LaneKind::Audio,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::audio()],
         ..track("audio", Vec::new())
     });
     let f = read(&song_file(&song, "S", &|k| k.0.clone())).unwrap();

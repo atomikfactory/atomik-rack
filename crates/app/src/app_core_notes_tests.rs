@@ -479,3 +479,40 @@ fn a_long_clip_is_read_only_up_to_the_cap() {
     assert_eq!(rev.notes.len(), 1);
     assert_eq!(rev.notes[0].key, 67);
 }
+
+#[test]
+fn the_notes_go_on_the_selected_lane_of_the_selected_note_track() {
+    let t = Tmp::new("lane");
+    let mut c = core();
+    let id = import(&mut c, write(&t, "Melody.wav", sines(2.0, &MELODY)));
+    let lead = DeviceKey("lead".to_owned());
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: IMPORT_INSTRUMENT.to_owned(),
+        key: Some(lead.clone()),
+    })
+    .unwrap();
+    for command in [
+        SongCommand::AddTrack {
+            device: lead.clone(),
+        },
+        SongCommand::AddNoteLane {
+            device: lead.clone(),
+            name: None,
+        },
+    ] {
+        c.apply_command(Command::Song(command)).unwrap();
+    }
+    let values = NotesValues {
+        new_track: false,
+        ..pitched()
+    };
+    c.arrangement_mut().set_selected_clips(&[id]);
+    c.view_mut().set_selected(Some(lead.clone()));
+    c.arrangement_mut().set_selected_lane(&lead, 1);
+    assert!(c.audio_to_notes(&values));
+    c.wait_background();
+    let track = c.doc().song.track(&lead).unwrap();
+    assert!(track.lanes[0].clips.is_empty());
+    assert_eq!(track.lanes[1].clips.len(), 1);
+}

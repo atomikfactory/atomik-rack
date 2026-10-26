@@ -6,8 +6,8 @@ use super::song::{notes_clip, track};
 use super::*;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    AssetMeta, Clip, ClipId, Command, Document, Lane, LaneKind, Note, RackDoc, SongCommand,
-    StepGrid, StepResolution, ZoneDoc, pad_key,
+    AssetMeta, Clip, ClipId, Command, Document, Lane, Note, RackDoc, SongCommand, StepGrid,
+    StepResolution, ZoneDoc, pad_key,
 };
 use atomik_ui::kurbo::Rect;
 use atomik_ui::{StepEditorView, Theme, UiAction};
@@ -73,14 +73,9 @@ pub fn drum_doc_with(clip: Option<Clip>) -> RackDoc {
     doc.assets
         .insert(SNARE_HARD.into(), meta("snare_hard.flac"));
     let clips = clip.into_iter().collect();
-    doc.song.tracks.push(track(
-        "drums",
-        vec![Lane {
-            kind: LaneKind::Notes,
-            clips,
-            take_groups: Vec::new(),
-        }],
-    ));
+    doc.song
+        .tracks
+        .push(track("drums", vec![Lane::notes().with_clips(clips)]));
     doc.song.next_clip_id = 100;
     doc
 }

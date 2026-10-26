@@ -2053,13 +2053,14 @@ impl<S: EngineSink> AppCore<S> {
         }
         let audio = self.armed_audio_tracks();
         let song = &self.doc().song;
-        let tracks: Vec<(DeviceInstanceId, DeviceKey)> = song
+        let tracks: Vec<(DeviceInstanceId, DeviceKey, usize)> = song
             .tracks
             .iter()
             .filter(|t| t.armed && !audio.contains(&t.device))
             .filter_map(|t| {
                 let flat = containers::flat_key(self.document.doc(), &t.device);
-                Some((*self.ids.get(&flat)?, t.device.clone()))
+                let lane = self.arrangement.record_lane(&t.device);
+                Some((*self.ids.get(&flat)?, t.device.clone(), lane))
             })
             .collect();
         let loop_range = song.loop_enabled.then_some(song.loop_range);
@@ -2115,6 +2116,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         // A track with several laps (the loop wrapped) gets one take group, the laps stacked as
         // takes with the last one playing; a single lap is a plain clip as before.
+        let lanes = take.lanes().clone();
         let mut by_device: Vec<(DeviceKey, Vec<atomik_model::Clip>)> = Vec::new();
         for (device, clip) in take.finish(stop, self.quantize) {
             match by_device.iter_mut().find(|(d, _)| *d == device) {
@@ -2123,16 +2125,28 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         for (device, mut clips) in by_device {
+            // The lane picked when the take began, unless it is gone by now (or no longer a
+            // note lane): then the first one.
+            let lane = lanes
+                .get(&device)
+                .copied()
+                .filter(|l| {
+                    self.doc()
+                        .song
+                        .track(&device)
+                        .is_some_and(|t| t.is_note_lane(*l))
+                })
+                .unwrap_or(0);
             let command = if clips.len() > 1 {
                 SongCommand::NewTakeGroup {
                     device,
-                    lane: 0,
+                    lane,
                     takes: clips,
                 }
             } else {
                 SongCommand::AddClip {
                     device,
-                    lane: 0,
+                    lane,
                     clip: clips.remove(0),
                 }
             };

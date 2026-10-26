@@ -8,8 +8,8 @@ use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
-    MAX_GAIN_POINTS, MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_TICK, Marker, MeterEvent, RangeMarker,
-    SongCommand, TempoEvent, Track,
+    MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_NOTE_LANES,
+    MAX_TICK, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent, Track,
 };
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, TEMPO_MAX,
@@ -71,11 +71,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::notes()],
     }
 }
 
@@ -88,12 +84,36 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Audio,
-            clips: Vec::new(),
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::audio()],
     }
+}
+
+/// Lane `lane` of `track`, which must be a note lane.
+pub(crate) fn note_lane_of(track: &Track, lane: usize) -> Result<&Lane, ModelError> {
+    let device = &track.device;
+    let l = track
+        .lanes
+        .get(lane)
+        .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?;
+    if !l.kind.is_notes() {
+        return Err(bad(format!("lane {lane} of {device} is not a note lane")));
+    }
+    Ok(l)
+}
+
+/// A note lane name: trimmed; blank or `None` is no name.
+fn checked_lane_name(name: Option<String>) -> Result<Option<String>, ModelError> {
+    let Some(name) = name else { return Ok(None) };
+    let name = name.trim();
+    if name.chars().count() > MAX_LANE_NAME_CHARS {
+        return Err(range(format!(
+            "a lane name has at most {MAX_LANE_NAME_CHARS} characters"
+        )));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(bad("a lane name cannot contain control characters"));
+    }
+    Ok((!name.is_empty()).then(|| name.to_owned()))
 }
 
 pub(crate) fn track_index(doc: &RackDoc, device: &DeviceKey) -> Result<usize, ModelError> {
@@ -801,6 +821,71 @@ pub(crate) fn plan(
                 new: chase,
             }
         }
+        SongCommand::AddNoteLane { device, name } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            if t.is_audio() {
+                return Err(bad(format!(
+                    "{device} is an audio track, so it has no note lanes"
+                )));
+            }
+            let count = t.note_lane_count();
+            if count >= MAX_NOTE_LANES {
+                return Err(range(format!(
+                    "a track has at most {MAX_NOTE_LANES} note lanes"
+                )));
+            }
+            let mut lane = Lane::notes();
+            lane.name = checked_lane_name(name)?;
+            Edit::Lane {
+                index: count,
+                device,
+                old: None,
+                new: Some(lane),
+            }
+        }
+        SongCommand::RemoveNoteLane { device, lane } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            note_lane_of(t, lane)?;
+            if t.note_lane_count() == 1 {
+                return Err(bad("a track needs at least one note lane"));
+            }
+            Edit::Lane {
+                index: lane,
+                old: Some(t.lanes[lane].clone()),
+                device,
+                new: None,
+            }
+        }
+        SongCommand::RenameLane { device, lane, name } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            let l = note_lane_of(t, lane)?;
+            Edit::LaneMeta {
+                old: (l.name.clone(), l.muted),
+                new: (checked_lane_name(name)?, l.muted),
+                device,
+                lane,
+            }
+        }
+        SongCommand::SetLaneMuted {
+            device,
+            lane,
+            muted,
+        } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            let l = note_lane_of(t, lane)?;
+            if l.muted == muted {
+                return Err(bad(format!(
+                    "lane {lane} of {device} is already {}",
+                    if muted { "muted" } else { "unmuted" }
+                )));
+            }
+            Edit::LaneMeta {
+                old: (l.name.clone(), l.muted),
+                new: (l.name.clone(), muted),
+                device,
+                lane,
+            }
+        }
         SongCommand::SetLaneWriteMode {
             device,
             param,
@@ -852,11 +937,7 @@ pub(crate) fn plan(
             if let Some(a) = doc.bank_driver(&device, &param) {
                 return Err(driven_lane(doc, &device, &param, a));
             }
-            let lane = Lane {
-                kind: LaneKind::Automation(param.clone()),
-                clips: Vec::new(),
-                take_groups: Vec::new(),
-            };
+            let lane = Lane::automation(param.clone());
             match song.track(&device) {
                 Some(t) if t.automation_lane(&param).is_some() => {
                     return Err(bad(format!("{device} already has a {param} lane")));

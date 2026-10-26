@@ -226,11 +226,11 @@ fn a_version_27_file_without_mappings_loads_and_bounces_as_before() {
     let reference = bits(&bounce_with(plain.doc(), 512, 0));
     let text = save_project(plain.doc());
     assert!(!text.contains("midi_maps"));
-    let old = text.replace("\"version\": 29", "\"version\": 27");
+    let old = text.replace("\"version\": 30", "\"version\": 27");
     let loaded = load_project(&old, &registry).unwrap();
     assert!(loaded.midi_maps.is_empty());
     assert_eq!(&loaded, plain.doc());
     assert_eq!(bits(&bounce_with(&loaded, 512, 0)), reference);
-    // Saved again it is the version 29 file, with nothing else changed.
+    // Saved again it is the version 30 file, with nothing else changed.
     assert_eq!(save_project(&loaded), text);
 }

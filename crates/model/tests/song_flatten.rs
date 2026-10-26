@@ -7,7 +7,7 @@ use atomik_model::song::{
     audible_spans, bars_beats_ticks, effective_tracks, flatten_automation, flatten_notes,
     format_bbt, ticks_from_bars_beats_ticks,
 };
-use atomik_model::{Clip, ClipId, Curve, Lane, LaneKind, Song, Track, empty_song};
+use atomik_model::{Clip, ClipId, Curve, Lane, Song, Track, empty_song};
 use common::key;
 use common::song::*;
 use proptest::prelude::*;
@@ -26,16 +26,8 @@ fn track(note_clips: Vec<Clip>, auto: Vec<Clip>) -> Track {
         chase: true,
         frozen: None,
         lanes: vec![
-            Lane {
-                kind: LaneKind::Notes,
-                clips: note_clips,
-                take_groups: Vec::new(),
-            },
-            Lane {
-                kind: LaneKind::Automation("filter.cutoff".into()),
-                clips: auto,
-                take_groups: Vec::new(),
-            },
+            Lane::notes().with_clips(note_clips),
+            Lane::automation("filter.cutoff").with_clips(auto),
         ],
     }
 }
@@ -435,11 +427,7 @@ fn flags(k: &str, muted: bool, solo: bool) -> Track {
         armed: false,
         chase: true,
         frozen: None,
-        lanes: vec![Lane {
-            kind: LaneKind::Notes,
-            clips: vec![],
-            take_groups: Vec::new(),
-        }],
+        lanes: vec![Lane::notes()],
     }
 }
 

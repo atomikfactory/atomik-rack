@@ -909,3 +909,123 @@ fn opening_a_new_file_stops_the_transport_and_recording() {
     assert!(!c.is_recording() && !c.is_playing());
     assert!(c.sink().calls.contains(&SinkCall::Recording(vec![])));
 }
+
+// ------------------------------------------------------------------ note lanes
+
+/// Records one note over the first bar (the transport script of the test above) and stops;
+/// `during` runs while the take is open.
+fn record_a_note(c: &mut AppCore<RecordingSink>, during: impl FnOnce(&mut AppCore<RecordingSink>)) {
+    transport(c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::On {
+                key: 45,
+                velocity: 0.9,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::Off { key: 45 },
+            frame: frame(2 * PPQ),
+        },
+    ];
+    c.frame();
+    during(c);
+    c.sink_mut().state = TransportState {
+        tick: BAR,
+        engine_frame: frame(BAR),
+        song_frame: frame(BAR) - 1000,
+        ..start
+    };
+    transport(c, TransportAction::Stop);
+}
+
+fn with_second_lane() -> AppCore<RecordingSink> {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddNoteLane {
+            device: key("a"),
+            name: None,
+        }),
+    );
+    arm(&mut c, "a", true);
+    c
+}
+
+#[test]
+fn recording_lands_on_the_selected_note_lane() {
+    let mut c = with_second_lane();
+    c.arrangement_mut().set_selected_lane(&key("a"), 1);
+    record_a_note(&mut c, |_| {});
+    let track = &c.doc().song.tracks[0];
+    assert!(track.lanes[0].clips.is_empty());
+    assert_eq!(track.lanes[1].clips.len(), 1);
+    assert!(c.undo());
+    assert!(c.doc().song.tracks[0].lanes[1].clips.is_empty());
+}
+
+#[test]
+fn recording_without_a_pick_lands_on_the_first_lane() {
+    let mut c = with_second_lane();
+    record_a_note(&mut c, |_| {});
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.lanes[0].clips.len(), 1);
+    assert!(track.lanes[1].clips.is_empty());
+}
+
+#[test]
+fn recording_falls_back_to_the_first_lane_when_the_lane_was_deleted_meanwhile() {
+    let mut c = with_second_lane();
+    c.arrangement_mut().set_selected_lane(&key("a"), 1);
+    record_a_note(&mut c, |c| {
+        c.apply_command(song(SongCommand::RemoveNoteLane {
+            device: key("a"),
+            lane: 1,
+        }))
+        .unwrap();
+    });
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.lanes.len(), 1);
+    assert_eq!(track.lanes[0].clips.len(), 1);
+}
+
+#[test]
+fn a_clip_on_the_third_lane_opens_in_the_piano_roll_and_deleting_the_lane_closes_it() {
+    let mut c = with_track();
+    for _ in 0..2 {
+        apply(
+            &mut c,
+            song(SongCommand::AddNoteLane {
+                device: key("a"),
+                name: None,
+            }),
+        );
+    }
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 2,
+            clip: note_clip(0, &[(0, 60)]),
+        }),
+    );
+    let clip = c.doc().song.tracks[0].lanes[2].clips[0].id;
+    c.handle_action(UiAction::OpenPianoRoll(clip));
+    assert_eq!(c.piano_roll_clip(), Some(clip));
+    c.apply_command(song(SongCommand::RemoveNoteLane {
+        device: key("a"),
+        lane: 2,
+    }))
+    .unwrap();
+    assert_eq!(c.piano_roll_clip(), None);
+}

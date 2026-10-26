@@ -4,9 +4,7 @@
 use super::song::*;
 use super::*;
 use atomik_audio_file::{AudioData, PeakPyramid};
-use atomik_model::{
-    AssetMeta, AudioClipContent, Clip, ClipContent, ClipId, FadeCurve, Lane, LaneKind,
-};
+use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId, FadeCurve, Lane};
 use atomik_ui::{ArrangementView, Theme};
 use std::sync::Arc;
 
@@ -110,21 +108,11 @@ pub fn audio_doc() -> RackDoc {
             original_name: "vox.flac".into(),
         },
     );
-    let audio = |clips| {
-        vec![Lane {
-            kind: LaneKind::Audio,
-            clips,
-            take_groups: Vec::new(),
-        }]
-    };
+    let audio = |clips| vec![Lane::audio().with_clips(clips)];
     doc.song.tracks = vec![
         track(
             "bass",
-            vec![Lane {
-                kind: LaneKind::Notes,
-                clips: vec![notes_clip(1, 0, 2 * BAR, bass_line())],
-                take_groups: Vec::new(),
-            }],
+            vec![Lane::notes().with_clips(vec![notes_clip(1, 0, 2 * BAR, bass_line())])],
         ),
         track(
             "audio-track",

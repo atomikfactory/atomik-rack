@@ -6,7 +6,7 @@
 use crate::commands::FreezeMenu;
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
-use atomik_ui::arrangement::{AudioMenu, OrgMenu};
+use atomik_ui::arrangement::{AudioMenu, LaneMenu, OrgMenu};
 use atomik_ui::chord_edit::{
     ARP_GATES, ARP_OCTAVES, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection, strum_ticks,
 };
@@ -43,6 +43,8 @@ pub struct MenuEnable {
     pub track_can_chase: bool,
     /// Track header: the track chases notes (the item is checked).
     pub track_chase: bool,
+    /// Track header: what the selected note lane allows (add, rename, delete, mute).
+    pub lane: LaneMenu,
     /// Track header and folder row: what the selected tracks and folder allow.
     pub org: OrgMenu,
     /// Clip: what the selected audio clips allow.
@@ -416,6 +418,17 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     checked: Some(e.track_chase),
                 },
                 Spec::Separator,
+                item("sequencer.add_note_lane", e.lane.can_add),
+                item("sequencer.rename_note_lane", e.lane.can_rename),
+                item("sequencer.delete_note_lane", e.lane.can_delete),
+                Spec::Item {
+                    command: "sequencer.toggle_lane_mute",
+                    arg: None,
+                    label: None,
+                    enabled: e.lane.can_rename,
+                    checked: Some(e.lane.muted),
+                },
+                Spec::Separator,
                 item("sequencer.freeze_track", e.freeze.can_freeze),
                 item("sequencer.unfreeze_track", e.freeze.can_unfreeze),
                 Spec::Separator,
@@ -783,6 +796,10 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 Some("Fold Automation Lanes"),
                 Some("Unfold Automation Lanes")
             ]
@@ -812,6 +829,63 @@ mod tests {
             ..MenuEnable::default()
         };
         assert_eq!(chase(&note_track), (true, Some(true)));
+    }
+
+    #[test]
+    fn the_track_header_menu_lists_the_lane_items_after_chase_notes() {
+        let items = |e: &MenuEnable| -> Vec<(&'static str, bool, Option<bool>)> {
+            specs(ContextTarget::TrackHeader, e)
+                .into_iter()
+                .filter_map(|s| match s {
+                    Spec::Item {
+                        command,
+                        enabled,
+                        checked,
+                        ..
+                    } if command.ends_with("_note_lane")
+                        || command == "sequencer.toggle_lane_mute"
+                        || command == "sequencer.toggle_chase" =>
+                    {
+                        Some((command, enabled, checked))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let none = items(&MenuEnable::default());
+        let ids: Vec<_> = none.iter().map(|i| i.0).collect();
+        assert_eq!(
+            ids,
+            [
+                "sequencer.toggle_chase",
+                "sequencer.add_note_lane",
+                "sequencer.rename_note_lane",
+                "sequencer.delete_note_lane",
+                "sequencer.toggle_lane_mute"
+            ]
+        );
+        assert!(none[1..].iter().all(|i| !i.1), "nothing selected: all off");
+        let several = MenuEnable {
+            lane: LaneMenu {
+                can_add: true,
+                can_rename: true,
+                can_delete: true,
+                muted: true,
+            },
+            ..MenuEnable::default()
+        };
+        let list = items(&several);
+        assert!(list[1..].iter().all(|i| i.1));
+        assert_eq!(list[4].2, Some(true), "Mute Lane is checked when muted");
+        let one = MenuEnable {
+            lane: LaneMenu {
+                can_add: true,
+                can_rename: true,
+                ..LaneMenu::default()
+            },
+            ..MenuEnable::default()
+        };
+        assert!(!items(&one)[3].1, "Delete needs a second lane");
     }
 
     #[test]

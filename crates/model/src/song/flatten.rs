@@ -5,6 +5,10 @@
 //!   clip hides every earlier one where they overlap. A clip is audible on its span
 //!   `[start, start + length)` minus the spans of all later unmuted clips. Muted clips neither
 //!   play nor hide anything. Audible spans of one lane never overlap.
+//! - **Note lanes.** A track's note lanes flatten one by one with the rules below (clips of
+//!   different lanes never hide each other) and a muted lane contributes nothing. The notes of
+//!   the lanes merge, sorted by `(tick, key)` with the earlier lane first at an equal tick and
+//!   key; the controller points of a kind merge by tick, the later lane winning at an equal tick.
 //! - **Content mapping.** At song tick `t` a clip shows content position
 //!   `u = offset + (t - start)`; with `loop_length = Some(n)` the content window `[0, n)`
 //!   repeats, so the position is `u mod n` and each repetition is a separate piece.
@@ -109,29 +113,30 @@ fn audible_pieces(lane: &Lane) -> Vec<(&Clip, i64, i64, i64)> {
         .collect()
 }
 
-/// The notes a track's note lane plays, as `(song tick, length, key, velocity)` sorted by
-/// `(tick, key)` (rules in the module docs). Track mute and solo are not applied here; see
+/// The notes a track's unmuted note lanes play, as `(song tick, length, key, velocity)` sorted
+/// by `(tick, key)` (rules in the module docs). The lanes' notes merge; at an equal tick and key
+/// the earlier lane comes first. Track mute and solo are not applied here; see
 /// [`effective_tracks`].
 pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
-    let Some(lane) = track.lanes.iter().find(|l| l.kind.is_notes()) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for (clip, s, e, cs) in audible_pieces(lane) {
-        let ClipContent::Notes(notes) = &clip.content else {
-            continue;
-        };
-        let ce = cs + (e - s);
-        let from = notes.partition_point(|n| n.tick < cs);
-        for n in notes[from..].iter().take_while(|n| n.tick < ce) {
-            let tick = clip.grid.map_or(n.tick, |g| g.swung(n.tick));
-            if n.muted || tick >= ce {
-                continue; // muted, or swung out of the piece
+    for lane in track.note_lanes().filter(|l| !l.muted) {
+        for (clip, s, e, cs) in audible_pieces(lane) {
+            let ClipContent::Notes(notes) = &clip.content else {
+                continue;
+            };
+            let ce = cs + (e - s);
+            let from = notes.partition_point(|n| n.tick < cs);
+            for n in notes[from..].iter().take_while(|n| n.tick < ce) {
+                let tick = clip.grid.map_or(n.tick, |g| g.swung(n.tick));
+                if n.muted || tick >= ce {
+                    continue; // muted, or swung out of the piece
+                }
+                let t = s + (tick - cs);
+                out.push((t, n.length.min(e - t), n.key, n.velocity));
             }
-            let t = s + (tick - cs);
-            out.push((t, n.length.min(e - t), n.key, n.velocity));
         }
     }
+    // Stable: equal `(tick, key)` keep the lane order.
     out.sort_by_key(|&(t, _, k, _)| (t, k));
     out
 }
@@ -196,13 +201,43 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
 /// One kind's flattened controller points: `(song tick, value, curve)`.
 pub type FlatController = (ControllerKind, Vec<(i64, f32, Curve)>);
 
-/// The controller data a track's note lane plays: for each [`ControllerKind`] in use (sorted by
-/// kind) the points `(song tick, value, curve)` with strictly increasing ticks (rules in the
-/// module docs). Empty without controller lanes. Track mute and solo are not applied here.
+/// The controller data a track's unmuted note lanes play: for each [`ControllerKind`] in use
+/// (sorted by kind) the points `(song tick, value, curve)` with strictly increasing ticks
+/// (rules in the module docs). The lanes' points of a kind merge by tick; at an equal tick the
+/// later lane wins. Empty without controller lanes. Track mute and solo are not applied here.
 pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
-    let Some(lane) = track.lanes.iter().find(|l| l.kind.is_notes()) else {
-        return Vec::new();
-    };
+    let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
+    let mut lanes = track.note_lanes().filter(|l| !l.muted);
+    let first = lanes.next().map(lane_controllers).unwrap_or_default();
+    // One lane is the common case and needs no merge.
+    let rest: Vec<_> = lanes.map(lane_controllers).collect();
+    if rest.is_empty() {
+        by_kind = first;
+    } else {
+        for map in std::iter::once(first).chain(rest) {
+            for (kind, points) in map {
+                by_kind.entry(kind).or_default().extend(points);
+            }
+        }
+        for points in by_kind.values_mut() {
+            // Stable by tick, so of two points at one tick the later lane's comes last: keep it.
+            points.sort_by_key(|p| p.0);
+            let mut merged: Vec<(i64, f32, Curve)> = Vec::with_capacity(points.len());
+            for p in points.drain(..) {
+                match merged.last_mut() {
+                    Some(last) if last.0 == p.0 => *last = p,
+                    _ => merged.push(p),
+                }
+            }
+            *points = merged;
+        }
+    }
+    by_kind.retain(|_, v| !v.is_empty());
+    by_kind.into_iter().collect()
+}
+
+/// The controller points of one note lane, per kind.
+fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> {
     let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
     for (clip, s, e, cs) in audible_pieces(lane) {
         let ce = cs + (e - s);
@@ -232,8 +267,7 @@ pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
             }
         }
     }
-    by_kind.retain(|_, v| !v.is_empty());
-    by_kind.into_iter().collect()
+    by_kind
 }
 
 /// The tracks that play: unmuted tracks, and if any track is soloed, only the soloed ones

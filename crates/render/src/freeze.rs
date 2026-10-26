@@ -61,7 +61,8 @@ pub struct FreezeRequest {
     pub device: DeviceKey,
     /// How many of the channel's insert effects the render includes (`0`: the instrument alone).
     pub effects: usize,
-    /// Render only these clips of the track (bounce in place); `None` renders the track.
+    /// Render only these clips of the track (bounce in place), a muted note lane that holds one
+    /// included; `None` renders the track, leaving its muted note lanes out.
     pub clips: Option<Vec<ClipId>>,
     /// The span to render, `[start, end)` in ticks.
     pub span: (i64, i64),
@@ -146,6 +147,8 @@ pub fn render_freeze(
             let keep: BTreeSet<ClipId> = keep.iter().copied().collect();
             for lane in &mut t.lanes {
                 lane.clips.retain(|c| keep.contains(&c.id));
+                // The clips were chosen on purpose: a muted lane that holds one still plays.
+                lane.muted &= lane.clips.is_empty();
             }
         }
     }

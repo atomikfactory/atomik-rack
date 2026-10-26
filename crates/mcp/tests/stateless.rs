@@ -758,3 +758,61 @@ fn project_inspect_lists_the_warp_of_an_audio_clip() {
     assert_eq!(w["transpose_cents"], -300);
     assert_eq!(w["markers"], 1);
 }
+
+#[test]
+fn project_inspect_lists_the_note_lanes_with_index_label_name_and_mute() {
+    let mut s = server();
+    // The demo project with two more note lanes on its first track: one named and muted, one plain.
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let lanes = v["song"]["tracks"][0]["lanes"].as_array_mut().unwrap();
+    lanes.insert(
+        1,
+        json!({"kind": "notes", "name": "Strings", "muted": true, "clips": []}),
+    );
+    lanes.insert(2, json!({"kind": "notes", "clips": []}));
+    let path = tmp("note-lanes.atomik");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let lanes = r.parsed()["song"]["tracks"][0]["lanes"].clone();
+    assert_eq!(
+        (lanes[0]["index"].as_u64(), lanes[0]["label"].as_str()),
+        (Some(0), Some("Notes"))
+    );
+    assert!(lanes[0].get("name").is_none() && lanes[0].get("muted").is_none());
+    assert_eq!(
+        (
+            lanes[1]["index"].as_u64(),
+            lanes[1]["label"].as_str(),
+            lanes[1]["name"].as_str()
+        ),
+        (Some(1), Some("Strings"), Some("Strings"))
+    );
+    assert_eq!(lanes[1]["muted"], true);
+    assert_eq!(lanes[2]["label"], "Notes 3");
+    assert!(lanes[2].get("name").is_none() && lanes[2].get("muted").is_none());
+}
+
+#[test]
+fn project_inspect_leaves_the_other_lane_kinds_as_they_were() {
+    let mut s = server();
+    let r = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    let tracks = r["song"]["tracks"].as_array().unwrap();
+    let lanes: Vec<&Value> = tracks
+        .iter()
+        .flat_map(|t| t["lanes"].as_array().unwrap())
+        .filter(|l| l["kind"].as_str().unwrap().starts_with("automation"))
+        .collect();
+    assert!(!lanes.is_empty());
+    assert!(
+        lanes
+            .iter()
+            .all(|l| l.get("label").is_none() && l.get("muted").is_none())
+    );
+}

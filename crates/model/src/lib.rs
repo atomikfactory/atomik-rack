@@ -139,9 +139,10 @@ use rack_columns::Placement;
 pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
-    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_GAIN_POINTS, MAX_MARKER_NAME,
-    MAX_TICK, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song,
-    SongCommand, StepGrid, StepResolution, TempoEvent, Track, empty_song,
+    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_GAIN_POINTS,
+    MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK, MAX_TRACK_HEIGHT,
+    MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song, SongCommand, StepGrid,
+    StepResolution, TempoEvent, Track, empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub use takes::{CompSegment, TakeGroup};

@@ -102,6 +102,13 @@ pub(crate) enum Edit {
         old: Option<WriteMode>,
         new: Option<WriteMode>,
     },
+    /// The name and mute state of a note lane (`(name, muted)`).
+    LaneMeta {
+        device: DeviceKey,
+        lane: usize,
+        old: (Option<String>, bool),
+        new: (Option<String>, bool),
+    },
     /// A track's frozen state (see [`crate::freeze`]).
     Frozen {
         device: DeviceKey,
@@ -489,6 +496,17 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::LaneMeta {
+                device,
+                lane,
+                old,
+                new,
+            } => Edit::LaneMeta {
+                device,
+                lane,
+                old: new,
+                new: old,
+            },
             Edit::Frozen { device, old, new } => Edit::Frozen {
                 device,
                 old: new,
@@ -797,6 +815,14 @@ impl Edit {
             }
             Edit::TrackChase { device, new, .. } => {
                 track_mut(doc, device).chase = *new;
+                vec![SyncOp::SongChanged]
+            }
+            Edit::LaneMeta {
+                device, lane, new, ..
+            } => {
+                let lane = &mut track_mut(doc, device).lanes[*lane];
+                lane.name.clone_from(&new.0);
+                lane.muted = new.1;
                 vec![SyncOp::SongChanged]
             }
             Edit::Frozen { device, new, .. } => {

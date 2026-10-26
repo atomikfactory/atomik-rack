@@ -384,3 +384,73 @@ fn the_clip_file_of_the_core_matches_the_converter() {
         track_file(&c.doc().song, track, "Lead")
     );
 }
+
+#[test]
+fn import_midi_into_a_track_goes_on_its_selected_note_lane() {
+    let tmp = Tmp::new("lane");
+    let mut source = song_core();
+    source.export_midi(MidiExport::Song, &tmp.path("song.mid"));
+    let mut c = core();
+    add_synth(&mut c, "pad", "Pad");
+    c.apply_command(Command::Song(SongCommand::AddNoteLane {
+        device: key("pad"),
+        name: None,
+    }))
+    .unwrap();
+    c.arrangement_mut().set_selected_track(Some(key("pad")));
+    c.arrangement_mut().set_selected_lane(&key("pad"), 1);
+    c.import_midi(&tmp.path("song.mid"), false);
+    let pad = c.doc().song.track(&key("pad")).unwrap();
+    assert!(pad.lanes[0].clips.is_empty());
+    assert_eq!(pad.lanes[1].clips.len(), 1);
+    assert_eq!(
+        c.arrangement.selected_clips(),
+        vec![pad.lanes[1].clips[0].id]
+    );
+}
+
+#[test]
+fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
+    let mut c = core();
+    add_synth(&mut c, "pad", "Pad");
+    add_clip(&mut c, "pad", 0, vec![Note::new(0, PPQ, 60, vel(100))]);
+    c.apply_command(Command::Song(SongCommand::AddNoteLane {
+        device: key("pad"),
+        name: None,
+    }))
+    .unwrap();
+    let clip = Clip {
+        id: ClipId(0),
+        start: 0,
+        length: BAR,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        grid: None,
+        scale: None,
+        controllers: Vec::new(),
+        content: ClipContent::Notes(vec![Note::new(PPQ, PPQ, 64, vel(100))]),
+    };
+    c.apply_command(Command::Song(SongCommand::AddClip {
+        device: key("pad"),
+        lane: 1,
+        clip,
+    }))
+    .unwrap();
+    let keys = |c: &AppCore<RecordingSink>| {
+        let song = &c.doc().song;
+        let track = song.track(&key("pad")).unwrap();
+        let midi = read_song(&track_file(song, track, "Pad")).unwrap();
+        let mut keys: Vec<u8> = midi.merged().notes.iter().map(|n| n.key).collect();
+        keys.sort_unstable();
+        keys
+    };
+    assert_eq!(keys(&c), vec![60, 64], "both lanes play");
+    c.apply_command(Command::Song(SongCommand::SetLaneMuted {
+        device: key("pad"),
+        lane: 1,
+        muted: true,
+    }))
+    .unwrap();
+    assert_eq!(keys(&c), vec![60], "the muted lane is left out");
+}

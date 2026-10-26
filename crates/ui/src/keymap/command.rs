@@ -770,6 +770,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd(
+        "sequencer.add_note_lane",
+        "Add Note Lane",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.audio_crossfade",
         "Audio Crossfade",
         G::Sequencer,
@@ -916,6 +924,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.bounce_in_place_mute",
         "Bounce in Place and Mute Originals",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.delete_note_lane",
+        "Delete Note Lane",
         G::Sequencer,
         C::Sequencer,
     )
@@ -1084,6 +1100,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.rename_note_lane",
+        "Rename Note Lane...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.select_next_clip",
         "Select Next Clip",
         G::Sequencer,
@@ -1162,6 +1186,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.toggle_folder",
         "Collapse or Expand Folder",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.toggle_lane_mute",
+        "Mute Lane",
         G::Sequencer,
         C::Sequencer,
     )

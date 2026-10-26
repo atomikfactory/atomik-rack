@@ -2,9 +2,7 @@
 //! track has a cutoff automation lane), a loop over bars 1–4.
 
 use super::*;
-use atomik_model::{
-    AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, LaneKind, Note, Track,
-};
+use atomik_model::{AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, Note, Track};
 use atomik_ui::keymap::{Os, Roles};
 use atomik_ui::kurbo::Rect;
 use atomik_ui::{ArrangementView, PianoRollView, TransportBar};
@@ -136,39 +134,17 @@ pub fn song_doc() -> RackDoc {
             ap(4 * BAR - PPQ, 2400.0, Curve::Linear),
         ],
     );
-    let mut lead_track = track(
-        "lead",
-        vec![Lane {
-            kind: LaneKind::Notes,
-            clips: vec![lead],
-            take_groups: Vec::new(),
-        }],
-    );
+    let mut lead_track = track("lead", vec![Lane::notes().with_clips(vec![lead])]);
     lead_track.muted = true;
-    let mut keys_track = track(
-        "keys",
-        vec![Lane {
-            kind: LaneKind::Notes,
-            clips: vec![keys_clip],
-            take_groups: Vec::new(),
-        }],
-    );
+    let mut keys_track = track("keys", vec![Lane::notes().with_clips(vec![keys_clip])]);
     keys_track.solo = true;
     keys_track.armed = true;
     doc.song.tracks = vec![
         track(
             "bass",
             vec![
-                Lane {
-                    kind: LaneKind::Notes,
-                    clips: vec![notes_clip(1, 0, 4 * BAR, bass_line()), looped],
-                    take_groups: Vec::new(),
-                },
-                Lane {
-                    kind: LaneKind::Automation("filter.cutoff".into()),
-                    clips: vec![cutoff],
-                    take_groups: Vec::new(),
-                },
+                Lane::notes().with_clips(vec![notes_clip(1, 0, 4 * BAR, bass_line()), looped]),
+                Lane::automation("filter.cutoff").with_clips(vec![cutoff]),
             ],
         ),
         lead_track,

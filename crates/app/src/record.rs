@@ -218,6 +218,8 @@ struct TakeNote {
 #[derive(Debug, Clone)]
 pub struct Take {
     tracks: BTreeMap<DeviceInstanceId, DeviceKey>,
+    /// The note lane each armed track records to (picked in the arrangement when the take began).
+    lanes: BTreeMap<DeviceKey, usize>,
     loop_range: Option<(i64, i64)>,
     /// The song's meter map: a clip is rounded out to its bar lines.
     meter: MeterTable,
@@ -232,15 +234,18 @@ pub struct Take {
 }
 
 impl Take {
-    /// A take on `tracks` (engine id → device key), with the song loop range when the loop
-    /// is enabled, and the song's meter map (the bar lines a clip is rounded to).
+    /// A take on `tracks` (engine id, device key and the note lane it records to), with the song
+    /// loop range when the loop is enabled, and the song's meter map (the bar lines a clip is
+    /// rounded to).
     pub fn new(
-        tracks: impl IntoIterator<Item = (DeviceInstanceId, DeviceKey)>,
+        tracks: impl IntoIterator<Item = (DeviceInstanceId, DeviceKey, usize)>,
         loop_range: Option<(i64, i64)>,
         meter: MeterTable,
     ) -> Self {
+        let tracks: Vec<_> = tracks.into_iter().collect();
         Self {
-            tracks: tracks.into_iter().collect(),
+            lanes: tracks.iter().map(|(_, k, l)| (k.clone(), *l)).collect(),
+            tracks: tracks.into_iter().map(|(id, k, _)| (id, k)).collect(),
             loop_range: loop_range.filter(|(s, e)| s < e),
             meter,
             origin: None,
@@ -249,6 +254,11 @@ impl Take {
             controllers: BTreeMap::new(),
             pending: Vec::new(),
         }
+    }
+
+    /// The note lane each armed track records to.
+    pub fn lanes(&self) -> &BTreeMap<DeviceKey, usize> {
+        &self.lanes
     }
 
     /// The armed devices.
@@ -351,7 +361,7 @@ impl Take {
 
     /// Ends the take at `stop` (the transport position when recording stopped): closes held
     /// notes there and returns one clip per (device, lap) with notes, in device then lap
-    /// order, ready for `SongCommand::AddClip` on lane 0.
+    /// order, ready for `SongCommand::AddClip` on the track's lane ([`Self::lanes`]).
     pub fn finish(mut self, stop: SongPosition, quantize: InputQuantize) -> Vec<(DeviceKey, Clip)> {
         let stop_lap = self.lap(stop.loop_count);
         let held: Vec<(DeviceInstanceId, u8)> = self.held.keys().copied().collect();

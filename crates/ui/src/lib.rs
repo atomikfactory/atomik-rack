@@ -356,7 +356,8 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, LaneButton, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, TrackButton,
+    ArrangementView, AudioHandle, LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT,
+    TrackButton,
 };
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
