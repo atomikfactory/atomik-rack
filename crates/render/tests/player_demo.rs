@@ -11,6 +11,10 @@
 //! * **Arp**, an arpeggiator fed by a note clip (an A minor chord for four bars) and cabled to
 //!   the Arp Voice synth: up-down over two octaves at 1/16T.
 //!
+//! * **Filter Sweep**, a CV sequencer: a 16-step 1/16 line cabled to the **Lead** synth, and its
+//!   curve A (a rising ramp with slides) cabled to the Lead's cutoff CV, so the filter opens
+//!   over each pass.
+//!
 //! The song is four bars at 120 BPM. Regenerate the project after an intentional change with:
 //!
 //! ```text
@@ -19,8 +23,9 @@
 
 use atomik_core::PPQ;
 use atomik_model::{
-    Cable, Clip, ClipContent, ClipId, Command, DeviceKey, Document, Note, PatternDoc, RackDoc,
-    SeqResolution, SocketRef, SongCommand, StepDoc, empty_doc, load_project, save_project,
+    Cable, Clip, ClipContent, ClipId, Command, CurvePatternDoc, CurveStepDoc, DeviceKey, Document,
+    Note, PatternDoc, RackDoc, SeqResolution, SocketRef, SongCommand, StepDoc, empty_doc,
+    load_project, save_project,
 };
 use atomik_render::default_registry;
 use atomik_render::project::{ProjectOptions, render_doc_in, render_project_file};
@@ -143,7 +148,43 @@ pub fn demo_patterns() -> [PatternDoc; 2] {
     ]
 }
 
-/// The demo project: sequencer and arpeggiator cabled to two synths.
+/// The notes of the Filter Sweep line: `(step, key)`.
+const SWEEP: [(usize, u8); 8] = [
+    (0, 45),
+    (2, 45),
+    (4, 52),
+    (6, 50),
+    (8, 45),
+    (10, 57),
+    (12, 55),
+    (14, 52),
+];
+
+/// The Filter Sweep pattern: the line above, and curve A rising from -100 to 100 over the 16
+/// steps (every other step slides into the next), curve B a slow pulse.
+pub fn sweep_pattern() -> (PatternDoc, CurvePatternDoc) {
+    let notes: Vec<_> = SWEEP
+        .iter()
+        .map(|&(i, k)| (i, k, 100, 70, 100, false))
+        .collect();
+    let mut curves = CurvePatternDoc::default();
+    for i in 0..16usize {
+        curves.rows[0][i] = CurveStepDoc {
+            value: (-100 + i as i32 * 13) as i8,
+            slide: i % 2 == 0,
+        };
+        curves.rows[1][i] = CurveStepDoc {
+            value: if i % 4 < 2 { 60 } else { -60 },
+            slide: false,
+        };
+    }
+    (
+        pattern_of("Sweep", 16, SeqResolution::Sixteenth, 0, &notes),
+        curves,
+    )
+}
+
+/// The demo project: sequencer and arpeggiator cabled to two synths, a CV sequencer to a third.
 pub fn demo_doc() -> RackDoc {
     let mut b = Builder {
         doc: Document::new(empty_doc()),
@@ -200,6 +241,38 @@ pub fn demo_doc() -> RackDoc {
     ] {
         b.set("arp", p, v);
     }
+    b.add("atomik.cv-sequencer", "cv", "Filter Sweep");
+    let (sweep, curves) = sweep_pattern();
+    b.apply(Command::SetPattern {
+        device: key("cv"),
+        index: 0,
+        pattern: sweep,
+        merge: None,
+    });
+    b.apply(Command::SetCurves {
+        device: key("cv"),
+        index: 0,
+        curves,
+        merge: None,
+    });
+    b.add("atomik.poly-synth", "lead", "Lead");
+    for (p, v) in [
+        ("osc1.wave", 1.0),
+        ("osc.mix", 0.0),
+        ("voices", 1.0),
+        ("filter.cutoff", 500.0),
+        ("filter.resonance", 0.3),
+        ("cv.cutoff_amount", 36.0),
+        ("env.amp.attack", 3.0),
+        ("env.amp.decay", 200.0),
+        ("env.amp.sustain", 0.7),
+        ("env.amp.release", 80.0),
+        ("master.level", -14.0),
+    ] {
+        b.set("lead", p, v);
+    }
+    b.connect(("cv", "notes_out"), ("lead", "notes_in"));
+    b.connect(("cv", "curve_a_cv_out"), ("lead", "cutoff_cv_in"));
     b.connect(("seq", "notes_out"), ("bass", "notes_in"));
     b.connect(("seq", "pitch_cv_out"), ("voice", "cutoff_cv_in"));
     b.connect(("arp", "notes_out"), ("voice", "notes_in"));
@@ -417,4 +490,42 @@ fn the_arpeggiated_chord_sounds_on_its_own_and_the_bass_line_stays_quiet_without
     assert!(rms(&quiet.channels[0], 0, 96_000) > 1e-3);
     assert!(rms(&only_arp.channels[0], 0, 96_000) > 1e-3);
     assert!(bits(&quiet) != bits(&bounce(&doc, 512, 0)));
+}
+
+#[test]
+fn the_cv_sequencer_curve_opens_the_lead_filter_bit_identically() {
+    let (_, doc) = registry_and_doc();
+    let has = |from: &str, s: &str, to: &str, t: &str| {
+        doc.cables
+            .iter()
+            .any(|c| c.from == sref(&key(from), s) && c.to == sref(&key(to), t))
+    };
+    assert!(has("cv", "curve_a_cv_out", "lead", "cutoff_cv_in"));
+    assert!(has("cv", "notes_out", "lead", "notes_in"));
+    // The Lead alone.
+    let mut solo = doc.clone();
+    for d in ["bass", "voice"] {
+        set_param(&mut solo, d, "master.level", -96.0);
+    }
+    let with_curve = bounce(&solo, 512, 0);
+    assert!(
+        rms(&with_curve.channels[0], 0, 96_000) > 1e-3,
+        "the Lead plays"
+    );
+    // Without the curve the same notes sound different: the curve reaches the cutoff.
+    let mut flat = solo.clone();
+    flat.devices
+        .iter_mut()
+        .find(|d| d.key == key("cv"))
+        .unwrap()
+        .curves = None;
+    assert!(bits(&bounce(&flat, 512, 0)) != bits(&with_curve));
+    // Identical across blocks and workers.
+    let reference = bits(&with_curve);
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bits(&bounce(&solo, block, workers)) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
 }
