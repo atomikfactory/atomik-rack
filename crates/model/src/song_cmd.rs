@@ -76,6 +76,15 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
     }
 }
 
+/// A new, empty note track for `device`, entering at the top of the player chain that already
+/// feeds the device (its own device when none does).
+pub(crate) fn new_note_track(doc: &RackDoc, registry: &Registry, device: DeviceKey) -> Track {
+    Track {
+        notes_to: crate::workflow_create::stack_top(doc, registry, &device),
+        ..new_track(device)
+    }
+}
+
 /// A new, empty audio track for `device`: just the audio lane.
 pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
     Track {
@@ -792,7 +801,7 @@ pub(crate) fn plan(
                 new: Some(if audio {
                     new_audio_track(device)
                 } else {
-                    new_track(device)
+                    new_note_track(doc, registry, device)
                 }),
             }
         }
@@ -953,7 +962,7 @@ pub(crate) fn plan(
                     new: Some(lane),
                 },
                 None => {
-                    let mut track = new_track(device);
+                    let mut track = new_note_track(doc, registry, device);
                     track.lanes.push(lane);
                     Edit::Track {
                         index: song.tracks.len(),

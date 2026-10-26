@@ -434,9 +434,10 @@ pub(crate) fn plan(
         WorkflowCommand::AssignSend { effect } => {
             plain(workflow_create::assign_send(doc, registry, &effect))
         }
-        WorkflowCommand::DisconnectDevices { keys } => {
-            plain(workflow_create::disconnect_devices(doc, &keys))
-        }
+        WorkflowCommand::DisconnectDevices { keys } => plain(
+            workflow_create::disconnect_devices(doc, &keys)
+                .map(|e| workflow_create::with_entries(doc, registry, e)),
+        ),
         WorkflowCommand::DuplicateDevices { keys } => {
             plain(duplicate_devices(doc, registry, &keys))
         }
@@ -458,7 +459,9 @@ pub(crate) fn plan(
         WorkflowCommand::DuplicateTrack { device } => {
             plain(duplicate_track(doc, registry, &device))
         }
-        WorkflowCommand::DisconnectDevice { key } => plain(disconnect_device(doc, &key)),
+        WorkflowCommand::DisconnectDevice { key } => plain(
+            disconnect_device(doc, &key).map(|e| workflow_create::with_entries(doc, registry, e)),
+        ),
         WorkflowCommand::PasteClips {
             track,
             lane,

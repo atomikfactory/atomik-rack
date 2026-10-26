@@ -1322,7 +1322,11 @@ impl Document {
                 new: color,
                 key,
             },
-            Command::Connect(cable) => container_cmd::connect(doc, registry, &cable)?,
+            Command::Connect(cable) => workflow_create::with_entries(
+                doc,
+                registry,
+                container_cmd::connect(doc, registry, &cable)?,
+            ),
             Command::Disconnect { to } if to.device.0.contains('/') => {
                 container_cmd::disconnect(doc, registry, &to)?
             }
@@ -1339,11 +1343,12 @@ impl Document {
                     .cloned()
                     .map(Edit::Disconnect)
                     .collect();
-                match cables.len() {
+                let cut = match cables.len() {
                     0 => return Err(ModelError::BadCable(format!("{to} is not connected"))),
                     1 => cables.remove(0),
                     _ => Edit::Compound(cables),
-                }
+                };
+                workflow_create::with_entries(doc, registry, cut)
             }
             Command::SetParam {
                 key, param, value, ..

@@ -5,9 +5,10 @@ mod common;
 
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Command, CreateOptions, CreateTarget, DeviceKey, Document, PROJECT_VERSION, WorkflowCommand,
-    empty_doc, load_project, save_project,
+    Command, CreateOptions, CreateSource, CreateTarget, DeviceKey, Document, PROJECT_VERSION,
+    SongCommand, WorkflowCommand, empty_doc, load_project, save_project,
 };
+use common::audio::{audio_registry, with_audio_track};
 use common::song::add_track;
 use common::workflow::*;
 use common::*;
@@ -84,17 +85,15 @@ fn stacked(reg: &Registry) -> (Document, [String; 3]) {
 fn create_player_on_an_instrument_cables_it_and_moves_the_track_entry() {
     let reg = registry();
     let mut d = doc_with_synth(&reg);
-    // A cable that already feeds the instrument is taken over: `seq -> arp -> synth`.
+    // A player already cabled in is the entry; the new one goes above it: `arp -> seq -> synth`.
     run(&mut d, &reg, [add(0, SEQ, Some("seq"))]);
     run(&mut d, &reg, [connect("seq:notes_out", "synth:notes_in")]);
     one_step(&mut d, &reg, player(ARP, "synth"));
     let arp = of_type(&d, ARP).remove(0);
-    // Above the instrument in the rack.
-    assert_eq!(index(&d, &arp) + 1, index(&d, "synth"));
-    assert!(has_cable(&d, &format!("{arp}:notes_out"), "synth:notes_in"));
-    assert!(has_cable(&d, "seq:notes_out", &format!("{arp}:notes_in")));
-    assert!(!has_cable(&d, "seq:notes_out", "synth:notes_in"));
-    // The track stays the instrument's and enters at the player.
+    assert_eq!(index(&d, &arp) + 1, index(&d, "seq"));
+    assert!(has_cable(&d, &format!("{arp}:notes_out"), "seq:notes_in"));
+    assert!(has_cable(&d, "seq:notes_out", "synth:notes_in"));
+    // The track stays the instrument's and enters at the new player.
     assert_eq!(entry(&d, "synth"), Some(arp));
     assert_eq!(d.doc().song.tracks.len(), 1);
 }
@@ -320,7 +319,7 @@ fn undo_restores_cables_and_entry() {
         "one undo restores cables, devices and entry"
     );
     assert!(d.doc().devices.iter().all(|x| x.type_id != ARP));
-    assert_eq!(entry(&d, "synth"), None);
+    assert_eq!(entry(&d, "synth").as_deref(), Some("seq"));
     d.redo(&reg).unwrap();
     assert!(entry(&d, "synth").is_some());
 }
@@ -466,4 +465,243 @@ fn the_player_shape_is_exactly_the_player_types() {
             "{type_id}"
         );
     }
+}
+
+// ---------------------------------------------------------------- tracks and hand cabling
+
+const CHORD: &str = "atomik.key-chord";
+
+/// `synth` with two players cabled by hand and no track: `chord -> arp -> synth`.
+fn hand_stacked(reg: &Registry) -> Document {
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        reg,
+        [
+            add(0, SYNTH, Some("synth")),
+            add(1, ARP, Some("arp")),
+            add(2, CHORD, Some("chord")),
+            connect("chord:notes_out", "arp:notes_in"),
+            connect("arp:notes_out", "synth:notes_in"),
+        ],
+    );
+    d
+}
+
+/// `hand_stacked` with the synth's track.
+fn hand_stacked_with_track(reg: &Registry) -> Document {
+    let mut d = hand_stacked(reg);
+    run(&mut d, reg, [add_track("synth")]);
+    d
+}
+
+#[test]
+fn add_track_on_an_instrument_fed_by_players_enters_at_the_top() {
+    let reg = registry();
+    let mut d = hand_stacked(&reg);
+    one_step(&mut d, &reg, add_track("synth"));
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+}
+
+#[test]
+fn add_track_on_an_instrument_without_players_has_no_entry() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &reg,
+        [add(0, SYNTH, Some("synth")), add_track("synth")],
+    );
+    assert_eq!(entry(&d, "synth"), None);
+}
+
+#[test]
+fn add_automation_lane_that_creates_the_track_enters_at_the_top() {
+    let reg = registry();
+    let mut d = hand_stacked(&reg);
+    one_step(
+        &mut d,
+        &reg,
+        Command::Song(SongCommand::AddAutomationLane {
+            device: key("synth"),
+            param: "filter.cutoff".into(),
+        }),
+    );
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+}
+
+#[test]
+fn create_instrument_gives_its_new_track_no_entry() {
+    let reg = console_registry();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &reg,
+        [wf(WorkflowCommand::CreateInstrument {
+            index: usize::MAX,
+            source: CreateSource::Type(SYNTH.into()),
+            key: Some(key("synth")),
+            options: CreateOptions::default(),
+        })],
+    );
+    assert!(d.doc().song.track(&key("synth")).is_some());
+    assert_eq!(entry(&d, "synth"), None);
+}
+
+#[test]
+fn auto_route_creating_a_track_for_a_stacked_instrument_enters_at_the_top() {
+    let reg = console_registry();
+    let mut d = hand_stacked(&reg);
+    assert!(d.doc().song.track(&key("synth")).is_none());
+    one_step(
+        &mut d,
+        &reg,
+        wf(WorkflowCommand::AutoRoute {
+            devices: keys_of(&["synth"]),
+            options: CreateOptions::default(),
+        }),
+    );
+    assert!(d.doc().song.track(&key("synth")).unwrap().armed);
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+}
+
+#[test]
+fn connect_a_player_into_a_tracks_instrument_moves_the_entry_up() {
+    let reg = registry();
+    let mut d = doc_with_synth(&reg);
+    run(&mut d, &reg, [add(1, ARP, Some("arp"))]);
+    one_step(&mut d, &reg, connect("arp:notes_out", "synth:notes_in"));
+    assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
+    d.undo(&reg).unwrap();
+    assert_eq!(entry(&d, "synth"), None, "undo restores the old entry");
+}
+
+#[test]
+fn connect_a_second_player_above_the_first_moves_the_entry_again() {
+    let reg = registry();
+    let mut d = doc_with_synth(&reg);
+    run(
+        &mut d,
+        &reg,
+        [
+            add(1, ARP, Some("arp")),
+            add(2, CHORD, Some("chord")),
+            connect("arp:notes_out", "synth:notes_in"),
+        ],
+    );
+    assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
+    one_step(&mut d, &reg, connect("chord:notes_out", "arp:notes_in"));
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+    d.undo(&reg).unwrap();
+    assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
+}
+
+#[test]
+fn connect_a_chain_into_a_tracks_instrument_enters_at_the_top_of_the_chain() {
+    let reg = registry();
+    let mut d = doc_with_synth(&reg);
+    run(
+        &mut d,
+        &reg,
+        [
+            add(1, ARP, Some("arp")),
+            add(2, CHORD, Some("chord")),
+            connect("chord:notes_out", "arp:notes_in"),
+        ],
+    );
+    assert_eq!(entry(&d, "synth"), None);
+    one_step(&mut d, &reg, connect("arp:notes_out", "synth:notes_in"));
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+}
+
+#[test]
+fn disconnect_between_the_top_player_and_the_rest_moves_the_entry_back_down() {
+    let reg = registry();
+    let mut d = hand_stacked_with_track(&reg);
+    assert_eq!(entry(&d, "synth").as_deref(), Some("chord"));
+    one_step(
+        &mut d,
+        &reg,
+        Command::Disconnect {
+            to: sock("arp:notes_in"),
+        },
+    );
+    assert_eq!(
+        entry(&d, "synth").as_deref(),
+        Some("arp"),
+        "the entry is what still feeds the instrument"
+    );
+}
+
+#[test]
+fn disconnect_the_last_cable_into_the_instrument_clears_the_entry() {
+    let reg = registry();
+    let mut d = hand_stacked_with_track(&reg);
+    one_step(
+        &mut d,
+        &reg,
+        Command::Disconnect {
+            to: sock("synth:notes_in"),
+        },
+    );
+    assert_eq!(entry(&d, "synth"), None);
+}
+
+#[test]
+fn disconnect_devices_that_cuts_the_entry_off_moves_it_down() {
+    let reg = registry();
+    let mut d = hand_stacked_with_track(&reg);
+    one_step(
+        &mut d,
+        &reg,
+        wf(WorkflowCommand::DisconnectDevices {
+            keys: keys_of(&["arp"]),
+        }),
+    );
+    assert_eq!(entry(&d, "synth"), None);
+}
+
+#[test]
+fn connect_a_player_into_a_device_that_is_nobody_s_entry_keeps_the_entries() {
+    let reg = registry();
+    let mut d = doc_with_synth(&reg);
+    run(
+        &mut d,
+        &reg,
+        [add(1, SAMPLER, Some("sampler")), add(2, ARP, Some("arp"))],
+    );
+    one_step(&mut d, &reg, connect("arp:notes_out", "sampler:notes_in"));
+    assert_eq!(entry(&d, "synth"), None);
+    assert!(d.doc().song.track(&key("sampler")).is_none());
+}
+
+#[test]
+fn connect_above_the_top_of_a_stack_moves_the_entry_to_the_new_top() {
+    let reg = registry();
+    let mut d = hand_stacked_with_track(&reg);
+    run(&mut d, &reg, [add(3, FILTER, Some("filter"))]);
+    run(
+        &mut d,
+        &reg,
+        [connect("filter:notes_out", "chord:notes_in")],
+    );
+    assert_eq!(entry(&d, "synth").as_deref(), Some("filter"));
+}
+
+#[test]
+fn connecting_players_leaves_an_audio_track_alone() {
+    let reg = audio_registry();
+    let mut d = with_audio_track(&reg);
+    run(
+        &mut d,
+        &reg,
+        [
+            add(0, SYNTH, Some("synth")),
+            add_track("synth"),
+            add(0, ARP, Some("arp")),
+            connect("arp:notes_out", "synth:notes_in"),
+        ],
+    );
+    assert_eq!(entry(&d, "synth").as_deref(), Some("arp"));
+    assert_eq!(entry(&d, "audio-track"), None);
 }
