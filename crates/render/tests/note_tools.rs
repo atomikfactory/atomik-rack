@@ -232,3 +232,79 @@ fn key_chord_bounce_is_bit_identical_across_block_sizes_and_workers() {
         );
     }
 }
+
+fn through_device(type_id: &str, set: &[(&str, f32)]) -> RackDoc {
+    let mut b = Builder::new();
+    b.synth();
+    b.add(type_id, "fx");
+    for (p, v) in set {
+        b.set("fx", p, *v);
+    }
+    b.connect(("fx", "notes_out"), ("synth", "notes_in"));
+    b.clip("fx", &NOTES);
+    b.doc.doc().clone()
+}
+
+#[test]
+fn repeater_bounce_is_bit_identical_across_block_sizes() {
+    let doc = through_device(
+        "atomik.note-repeater",
+        &[
+            ("time.sync", 4.0),
+            ("repeats", 5.0),
+            ("velocity.decay", 0.3),
+            ("pitch.step", 2.0),
+            ("pitch.scale", 1.0),
+            ("scale.kind", 1.0),
+            ("gate", 0.7),
+        ],
+    );
+    let reference = bounce(&doc, 512, 0);
+    assert!(
+        reference.iter().any(|b| f32::from_bits(*b).abs() > 1e-3),
+        "audible"
+    );
+    // The echoes are not a no-op.
+    assert!(bounce(&straight(&NOTES), 512, 0) != reference);
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
+#[test]
+fn delay_bounce_is_bit_identical_across_block_sizes_with_swing_and_humanize() {
+    let doc = through_device(
+        "atomik.note-delay",
+        &[
+            ("delay.sync", 3.0),
+            ("swing", 60.0),
+            ("humanize.time", 15.0),
+            ("humanize.velocity", 20.0),
+            ("random.seed", 42.0),
+        ],
+    );
+    let reference = bounce(&doc, 512, 0);
+    assert!(
+        reference.iter().any(|b| f32::from_bits(*b).abs() > 1e-3),
+        "audible"
+    );
+    assert!(bounce(&straight(&NOTES), 512, 0) != reference);
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
+#[test]
+fn delay_of_zero_bounces_like_the_clip_and_a_repeat_adds_to_it() {
+    let direct = bounce(&straight(&NOTES), 512, 0);
+    let none = through_device("atomik.note-delay", &[("delay.sync", 0.0)]);
+    assert!(bounce(&none, 512, 0) == direct, "no delay, no change");
+    let shifted = through_device("atomik.note-delay", &[("delay.sync", 7.0)]);
+    assert!(bounce(&shifted, 512, 0) != direct);
+}
