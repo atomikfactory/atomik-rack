@@ -667,14 +667,20 @@ The player device of an audio track. It has no sound of its own: the engine rend
 |---|---|---|---|---|---|
 | `monitor` | 0 off, 1 auto, 2 on | 1 | choice | Linear | yes |
 | `internal.monitor_live` | 0 or 1 | 0 | toggle | Linear | yes |
+| `rec_gain` | -60..+24 dB (the bottom is off) | 0 | dB | Decibel | no |
+| `rec_clip_safe` | 0 or 1 | 0 | toggle | Linear | yes |
 
 `internal.monitor_live` is set by the app (1 while the track is armed). The UI hides it and it is neither saved nor undoable, like `internal.solo_silence`.
+
+`rec_gain` and `rec_clip_safe` are the track's **recording input** settings: ordinary stored, undoable params, set from the transport bar while the track is armed (see below). A project written before they existed has neither stored and loads at 0 dB with clip-safe off, which records and monitors exactly as it did.
 
 ### Behaviour (as built)
 
 - **Output.** `out = playback + input × monitor_gain`, per channel. Without playback (transport stopped, or no song) only the monitored input is heard.
 - **Monitoring.** `monitor_gain` is 1 when `monitor` is on, or when it is auto and `internal.monitor_live` is 1; otherwise 0. With off the input never passes, even while armed.
-- **Smoothing.** A change of the monitor gain is a 5 ms linear crossfade. The first batch after the device is prepared or reset snaps without a ramp.
+- **Input gain.** `rec_gain` scales the monitored input (`monitor_gain` is the linear gain when the monitor is on, 0 when it is off), so the performer hears the level that is recorded. The app applies the same gain to the signal written to the take (the engine's record tap, see ARCHITECTURE.md 2.6), before it is written. 0 dB is bit-exact: a track at the default plays and records as before.
+- **Clip-safe.** `rec_clip_safe` does nothing in the device: it switches the limiter of the *take* (ARCHITECTURE.md 2.6). The monitor is never limited.
+- **Smoothing.** A change of the monitor gain, including a turn of `rec_gain`, is a 5 ms linear crossfade. The first batch after the device is prepared or reset snaps without a ramp.
 - **Clips.** Clip audio is not stretched when the tempo changes unless the clip is warped (Audio > Warp, see ARCHITECTURE.md 2.18); a clip's start follows the tempo map and an unwarped clip's audio plays in real time. Fades are linear or equal power; mono assets play on both channels, and for more than two channels the first two are played.
 - **Latency.** None (a single stage). The 64-frame engine FIFO and the interface latencies are accounted for by recording, not by the device.
 
