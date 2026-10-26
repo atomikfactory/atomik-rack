@@ -1102,6 +1102,55 @@ Moves every note event later in time and never adds a note. Source: [crates/devi
 
 ---
 
+## CV Sequencer: `atomik.cv-sequencer` (Utility, "Players")
+
+The step sequencer's note row plus two rows of control voltage, with patterns that can be chained. It takes the **same pattern data** as the step sequencer (the rack panel, the grid editor, the pattern clipboard and the pattern commands work unchanged) and, per pattern, two **curve rows** A and B of 64 steps: a value from -100 to 100 % and a slide flag (`CvSeqData`, registered with `register_with_curves`; the document side is `RackDevice.curves`, `"curves"` in the project file, project format 32). Sources: [crates/devices/src/cv_sequencer.rs](../crates/devices/src/cv_sequencer.rs), [crates/devices/src/chain_clock.rs](../crates/devices/src/chain_clock.rs), the shared note rules in [crates/devices/src/note_clock.rs](../crates/devices/src/note_clock.rs).
+
+### Sockets
+
+The six of the step sequencer (`notes_in`, `notes_out`, `gate_cv_out`, `pitch_cv_out`, `velocity_cv_out`, `trig_cv_out`) and `curve_a_cv_out` (id 6) and `curve_b_cv_out` (id 7): CV outputs of the two rows (-1 to 1 bipolar, 0 to 1 unipolar, times the amount).
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `pattern` | 1 to 8 | 1 | none | Linear | yes |
+| `pattern.switch` | 0-1: now, at-end | 1 (at-end) | choice | Linear | yes |
+| `chain` | 1 to 8 | 1 | none | Linear | yes |
+| `transpose` | -24 to 24 | 0 | semitones | Linear | yes |
+| `follow` | 0-1: off, transpose | 0 (off) | choice | Linear | yes |
+| `probability.amount` | 0 to 1 | 1 | percent | Linear | no |
+| `random.seed` | 0 to 999 | 0 | none | Linear | yes |
+| `velocity.scale` | 0 to 2 | 1 | none | Linear | no |
+| `gate.scale` | 0.25 to 2 | 1 | none | Linear | no |
+| `curve_a.polarity` | 0-1: bipolar, unipolar | 0 | choice | Linear | yes |
+| `curve_b.polarity` | 0-1: bipolar, unipolar | 0 | choice | Linear | yes |
+| `curve_a.amount` | 0 to 1 | 1 | percent | Linear | no |
+| `curve_b.amount` | 0 to 1 | 1 | percent | Linear | no |
+| `mute` | 0 to 1 | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Notes.** Played by the step sequencer's rules (one shared function): gate, tie, probability, `transpose`, `follow`, `velocity.scale`, `gate.scale`, the same CV outputs. For a chain of one pattern with an even length the note row is the step sequencer's, event for event.
+- **Chain.** `chain` patterns play in order from `pattern`, wrapping at the pattern count (3 patterns, `pattern` 3, `chain` 3: 3, 1, 2), each in its own resolution and swing, then the chain repeats. The position is a pure function of the tick: the chain repeats every *P* ticks (the sum of each pattern's length times its step size), step *k* of a pass starts at its pattern's origin plus the swing rule counted from the pattern's first step. A locate or a loop wrap therefore lands on the step a continuous run would have reached, in any block size. A pattern of odd length restarts its swing at each pass (the step sequencer continues it). A change of `pattern` or `chain` with `at-end` is adopted at the start of the next pass of the running chain (at once when stopped or after a jump); `now` at the next batch.
+- **Curves.** A row holds its step's value for the whole step; a step with *slide* ramps linearly to the next step's value (the first step of the next pattern at the end of a pattern, of the chain pass at its end) over its own length. Each sample's value is computed from that sample's tick, nothing accumulates. -100..100 % is output as -1..1 (`bipolar`) or (v + 1) / 2 (`unipolar`), times `curve_x.amount`. A pattern without stored curves, or data without curves, outputs the flat zero row (0 bipolar, 0.5 unipolar).
+- **Stop, mute, bypass.** On stop the gate drops (notes close) and the curves **hold their last value**; the held value follows `polarity` and `amount` changes. `mute` silences the notes only; the curves keep running. **Bypassed**, notes pass through as in the other players and the curves hold their last value; before anything has played they output 0.
+- **Note safety, RT.** As the step sequencer: notes close on stop, jump, mute, `AllOff`, bypass and `reset`; nothing allocates in `process`.
+- **Meter values:** the pattern of the last started step (0-based), its step index, 1 while the transport runs.
+
+### Panel and editor
+
+The panel is the step sequencer's, three rack units high, with a strip of each curve row under the preview. The grid editor shows two more lanes, CURVE A and CURVE B: press sets the step's value (centre line = 0), drag paints columns, **Alt-click** toggles the step's slide.
+
+### Starting points
+
+- **Filter sweep.** Curve A a ramp from -100 to 100 over 16 steps with slides, `curve_a_cv_out` cabled to a synth's `cutoff_cv_in` (the `player-demo` project does this).
+- **Acid line.** Slides on every other step of curve B and `curve_b_cv_out` to `pitch_cv_in` at 24 semitones, with `gate` 100 % on the note row.
+- **Gate pump.** Curve B a 4-step square (60 / -60), unipolar, to a synth's `level_cv_in`.
+
+---
+
 ## Container: `atomik.container` (Container, "Containers")
 
 A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.
