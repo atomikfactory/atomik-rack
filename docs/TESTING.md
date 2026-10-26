@@ -180,6 +180,15 @@ Hand checks, not automated (they need another program or a real window):
 - Import a long, dense file (a few hundred thousand events) and check that the window stays responsive and that undo removes it in one step.
 - Try File > Import MIDI with a note track selected and with nothing selected, and the three Export MIDI entries with and without a selection, in the in-window menu and, on macOS, the native one.
 
+## Player stacks
+
+`crates/model/tests/player_stack.rs` covers `CreatePlayer` (cables, the entry, the rack column, one undo step, the plain add), the second player, deleting players with and without bridging, pasting a track, the stale entry and format 31 (round trip, version 30 files, refusals). `crates/render/tests/player_stack.rs` checks the engine input (notes to the entry, automation with the instrument, two tracks at one player), that a bounce and a freeze through a stack equal the edited clip bit for bit at blocks 64, 333, 512 and 1000 and workers 0 to 3, and that a stale entry plays the track's own device. The app tests cover the live keyboard, the audition, the song the engine receives and recording; the UI tests the browser (Shift, the setting, rack drops).
+
+Hand checks, not automated:
+
+- Select a synth, add an arpeggiator and a note filter from the browser, hold a chord on a MIDI keyboard with the track armed and listen to the stack; delete the middle player and hear the rest keep playing; undo the creation and check that the rack, the cables and the entry are back.
+- Record a few bars through an arpeggiator on an armed track: the clip holds the notes you played, not the arpeggio. Freeze the track and compare with the live sound.
+
 ## Note lanes
 
 Each layer has its tests. `crates/model/tests/note_lanes.rs` covers the four commands (one undo step each, every refusal changing nothing, a proptest that random adds, removes and moves keep the lanes contiguous and undo restores them), `ClipMove.lane` and `PasteClips.lane`, and the flattening (a proptest that splitting a lane's clips across lanes flattens identically, mute, the tie rule). The project tests round-trip format 30 byte for byte and refuse each bad shape. `crates/render` bounces two lanes bit for bit like one lane, silences a muted lane, renders a muted lane's clips in Bounce in Place and leaves it out of a freeze, and `crates/engine` checks chase from a second lane. `crates/ui/tests/note_lanes.rs` drives the rows, headers, mute button, chip, selected lane, clip creation on a lane, drags between lanes, rename and the lane commands; the app tests record to the selected lane (and fall back when it is deleted), import and paste on it, open a third-lane clip in the piano roll and export MIDI with lanes merged; the MCP tests read the lane fields and add, rename and mute a lane in a session.
