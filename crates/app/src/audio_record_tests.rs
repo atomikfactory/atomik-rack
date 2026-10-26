@@ -117,20 +117,24 @@ fn a_track_without_input_cables_has_no_input() {
 }
 
 #[test]
-fn the_tap_covers_the_sorted_union_of_the_channels() {
+fn every_track_gets_its_own_tap_channels_and_strip() {
+    // Two tracks may record the same host channel: each has its own gain, so its own copy.
     let plan = plan_tap(&[
         (key("a"), TrackInput::Stereo(3, 2)),
         (key("b"), TrackInput::Mono(2)),
         (key("c"), TrackInput::Stereo(0, 1)),
     ]);
-    assert_eq!(plan.channels, vec![0, 1, 2, 3]);
+    let hosts: Vec<usize> = plan.channels.iter().map(|c| c.host).collect();
+    let strips: Vec<usize> = plan.channels.iter().map(|c| c.strip).collect();
     assert_eq!(
-        plan.tracks[0].tap_index,
-        vec![3, 2],
-        "left from 3, right from 2"
+        hosts,
+        vec![3, 2, 2, 0, 1],
+        "left from 3, right from 2, in track order"
     );
+    assert_eq!(strips, vec![0, 0, 1, 2, 2]);
+    assert_eq!(plan.tracks[0].tap_index, vec![0, 1]);
     assert_eq!(plan.tracks[1].tap_index, vec![2]);
-    assert_eq!(plan.tracks[2].tap_index, vec![0, 1]);
+    assert_eq!(plan.tracks[2].tap_index, vec![3, 4]);
     assert_eq!(plan_tap(&[]), TapPlan::default());
 }
 
@@ -362,4 +366,127 @@ fn a_lap_shorter_than_the_gap_to_the_next_tick_is_dropped() {
     // Frame 101, one frame long: the next tick starts at frame 102.
     assert_eq!(place_lap(101, 1, &frames_of_tick), None);
     assert_eq!(place_lap(10, 0, &frames_of_tick), None);
+}
+
+// ---------------------------------------------------------------- input gain and clip-safe
+
+fn set_param(doc: &mut Document, track: &DeviceKey, param: &str, value: f32, merge: Option<u64>) {
+    doc.apply(
+        Command::SetParam {
+            key: track.clone(),
+            param: param.to_owned(),
+            value,
+            merge,
+        },
+        &default_registry(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_new_track_records_at_unity_with_clip_safe_off() {
+    let (doc, track) = doc_with_track(2);
+    let s = input_settings(doc.doc(), &track, &default_registry());
+    assert_eq!(s, InputSettings::default());
+    assert_eq!((s.gain_db, s.clip_safe), (0.0, false));
+    assert_eq!(
+        s.gain().to_bits(),
+        1.0f32.to_bits(),
+        "0 dB is exactly unity"
+    );
+    // A device that is not an audio track reads the defaults too.
+    let other = input_settings(doc.doc(), &key("nope"), &default_registry());
+    assert_eq!(other, InputSettings::default());
+}
+
+#[test]
+fn the_settings_follow_the_params_and_map_to_a_linear_gain() {
+    let (mut doc, track) = doc_with_track(2);
+    set_param(&mut doc, &track, REC_GAIN_PARAM, 6.0, None);
+    set_param(&mut doc, &track, REC_CLIP_SAFE_PARAM, 1.0, None);
+    let s = input_settings(doc.doc(), &track, &default_registry());
+    assert_eq!((s.gain_db, s.clip_safe), (6.0, true));
+    assert!((s.gain() - 1.995_262_3).abs() < 1.0e-6);
+    // The ends: the bottom is off, the top is +24 dB, past it is clamped (a typed value).
+    let at = |db| {
+        InputSettings {
+            gain_db: db,
+            clip_safe: false,
+        }
+        .gain()
+    };
+    assert_eq!(at(-60.0), 0.0);
+    assert_eq!(at(-80.0), 0.0);
+    assert!((at(24.0) - 15.848_932).abs() < 1.0e-4);
+    assert_eq!(at(40.0).to_bits(), at(24.0).to_bits());
+    assert_eq!(at(f32::NAN), 1.0);
+}
+
+#[test]
+fn a_gain_drag_is_one_undo_step_and_the_settings_save_and_load() {
+    use atomik_model::{load_project, save_project};
+    let (mut doc, track) = doc_with_track(2);
+    let reg = default_registry();
+    for db in [1.0, 2.5, 4.0, 7.5] {
+        set_param(&mut doc, &track, REC_GAIN_PARAM, db, Some(9));
+    }
+    set_param(&mut doc, &track, REC_CLIP_SAFE_PARAM, 1.0, None);
+    let text = save_project(doc.doc());
+    let loaded = load_project(&text, &reg).unwrap();
+    let s = input_settings(&loaded, &track, &reg);
+    assert_eq!((s.gain_db, s.clip_safe), (7.5, true));
+    assert_eq!(save_project(&loaded), text, "canonical round trip");
+    // The clip-safe switch is its own step; the four drag moves are one.
+    assert!(doc.undo(&reg).is_some());
+    assert!(!input_settings(doc.doc(), &track, &reg).clip_safe);
+    assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 7.5);
+    assert!(doc.undo(&reg).is_some());
+    assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 0.0);
+    assert!(doc.redo(&reg).is_some());
+    assert_eq!(input_settings(doc.doc(), &track, &reg).gain_db, 7.5);
+}
+
+#[test]
+fn a_project_saved_before_the_settings_existed_loads_at_unity() {
+    use atomik_model::{load_project, save_project};
+    let (doc, track) = doc_with_track(2);
+    let reg = default_registry();
+    let text = save_project(doc.doc());
+    // A track left at the defaults stores nothing for them (an older file looks the same).
+    assert!(!text.contains(REC_GAIN_PARAM), "{text}");
+    let loaded = load_project(&text, &reg).unwrap();
+    assert_eq!(
+        input_settings(&loaded, &track, &reg),
+        InputSettings::default()
+    );
+}
+
+#[test]
+fn the_meter_reads_the_loudest_channel_of_the_input_times_the_gain() {
+    let peaks = [0.1, 0.5, 0.25];
+    let unity = InputSettings::default();
+    assert_eq!(input_peak(&peaks, TrackInput::Mono(1), unity), 0.5);
+    assert_eq!(input_peak(&peaks, TrackInput::Stereo(0, 2), unity), 0.25);
+    let hot = InputSettings {
+        gain_db: 6.0,
+        clip_safe: false,
+    };
+    assert!((input_peak(&peaks, TrackInput::Mono(1), hot) - 0.5 * hot.gain()).abs() < 1.0e-7);
+    assert!(input_peak(&peaks, TrackInput::Mono(1), hot) < 1.0);
+    let hotter = InputSettings {
+        gain_db: 12.0,
+        clip_safe: true,
+    };
+    assert!(
+        input_peak(&peaks, TrackInput::Mono(1), hotter) > 1.0,
+        "over full scale"
+    );
+    // A channel the host does not have, a NaN and an off gain read silence.
+    assert_eq!(input_peak(&peaks, TrackInput::Mono(9), unity), 0.0);
+    assert_eq!(input_peak(&[f32::NAN], TrackInput::Mono(0), unity), 0.0);
+    let off = InputSettings {
+        gain_db: -60.0,
+        clip_safe: false,
+    };
+    assert_eq!(input_peak(&peaks, TrackInput::Mono(1), off), 0.0);
 }

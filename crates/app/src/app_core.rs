@@ -2148,6 +2148,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Converts newly captured notes with the latest transport state.
     fn feed_take(&mut self, state: &TransportState) {
+        self.feed_take_inputs();
         self.feed_audio_take(state);
         self.advance_automation(state);
         let Some(take) = &mut self.take else {

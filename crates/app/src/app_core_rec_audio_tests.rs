@@ -761,3 +761,132 @@ fn a_slow_disk_costs_counted_underruns_but_never_blocks_the_audio_thread() {
 fn test_now() -> std::time::Instant {
     std::time::Instant::now()
 }
+
+// ---------------------------------------------------------------- input gain and clip-safe
+
+fn set_input_param(core: &mut AppCore<impl EngineSink>, key: &DeviceKey, param: &str, v: f32) {
+    core.apply_command(Command::SetParam {
+        key: key.clone(),
+        param: param.to_owned(),
+        value: v,
+        merge: None,
+    })
+    .unwrap();
+}
+
+/// Records `frames` frames of the mono input `input` on the armed tracks of `core` and returns
+/// each track's clip data in song order.
+fn record_mono(
+    core: &mut AppCore<OfflineSink>,
+    keys: &[DeviceKey],
+    frames: usize,
+    mut during: impl FnMut(&mut AppCore<OfflineSink>, usize),
+) -> Vec<AudioData> {
+    for k in keys {
+        arm(core, k, true);
+    }
+    core.transport_action(TransportAction::ToggleRecord);
+    pump(core, 4_800, 480);
+    let mut done = 0;
+    while done < frames {
+        during(core, done);
+        pump(core, 480, 480);
+        done += 480;
+    }
+    core.transport_action(TransportAction::Stop);
+    pump(core, 4_800, 480);
+    core.wait_background();
+    keys.iter()
+        .map(|k| {
+            let list = clips(core, k);
+            let (hash, _) = asset_of(&list[0]);
+            bundle_of(core).load(hash).unwrap()
+        })
+        .collect()
+}
+
+fn mono_core(input: impl Fn(usize, u64) -> f32 + 'static) -> AppCore<OfflineSink> {
+    let mut doc = empty_doc();
+    doc.input_channels = 1;
+    let mut sink = OfflineSink::new();
+    sink.input = Box::new(input);
+    AppCore::with_doc(sink, doc, None)
+}
+
+#[test]
+fn the_take_holds_the_input_gain_exactly() {
+    let mut core = mono_core(|_, _| 0.25);
+    let key = add_audio_track(&mut core, "Mic");
+    set_input_param(&mut core, &key, "rec_gain", 6.0);
+    let take = record_mono(&mut core, &[key], 24_000, |_, _| {}).remove(0);
+    assert!(take.frames() > 24_000);
+    let want = (0.25f32 * atomik_core::db_to_gain(6.0)).to_bits();
+    assert!(
+        take.channels[0].iter().all(|s| s.to_bits() == want),
+        "every sample is the input times the gain, from the first frame"
+    );
+}
+
+#[test]
+fn a_gain_turned_during_the_take_glides_and_is_in_the_file_from_the_next_batch() {
+    let mut core = mono_core(|_, _| 0.1);
+    let key = add_audio_track(&mut core, "Mic");
+    let k = key.clone();
+    let take = record_mono(&mut core, &[key], 48_000, |c, done| {
+        if done == 24_000 {
+            set_input_param(c, &k, "rec_gain", 12.0);
+        }
+    })
+    .remove(0);
+    let y = &take.channels[0];
+    let to = 0.1 * atomik_core::db_to_gain(12.0);
+    assert!(y[..16_000].iter().all(|s| s.to_bits() == 0.1f32.to_bits()));
+    assert!(y[y.len() - 8_000..].iter().all(|s| (s - to).abs() < 1.0e-4));
+    // Monotone and no jump bigger than a hundredth of the move between two frames.
+    let step = (to - 0.1) / 100.0;
+    for w in y.windows(2) {
+        assert!(
+            w[1] >= w[0] - 1.0e-7 && w[1] - w[0] < step,
+            "{} -> {}",
+            w[0],
+            w[1]
+        );
+    }
+}
+
+#[test]
+fn clip_safe_takes_never_pass_full_scale_and_the_plain_take_keeps_its_overs() {
+    let hot = |_: usize, f: u64| 0.9 * (f as f32 * 0.03).sin();
+    let mut core = mono_core(hot);
+    let safe = add_audio_track(&mut core, "Safe");
+    let plain = add_audio_track(&mut core, "Plain");
+    for k in [&safe, &plain] {
+        set_input_param(&mut core, k, "rec_gain", 12.0);
+    }
+    set_input_param(&mut core, &safe, "rec_clip_safe", 1.0);
+    let takes = record_mono(&mut core, &[safe, plain], 24_000, |_, _| {});
+    let peak = |d: &AudioData| d.channels[0].iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert!(peak(&takes[0]) <= 1.0, "clip-safe: {}", peak(&takes[0]));
+    assert!(peak(&takes[0]) > 0.95);
+    assert!(
+        peak(&takes[1]) > 3.0,
+        "the same input at +12 dB with clip-safe off keeps its overs: {}",
+        peak(&takes[1])
+    );
+}
+
+#[test]
+fn two_tracks_on_the_same_input_each_keep_their_own_gain() {
+    let mut core = mono_core(|_, _| 0.2);
+    let a = add_audio_track(&mut core, "A");
+    let b = add_audio_track(&mut core, "B");
+    set_input_param(&mut core, &b, "rec_gain", -6.0);
+    let takes = record_mono(&mut core, &[a, b], 12_000, |_, _| {});
+    assert!(
+        takes[0].channels[0]
+            .iter()
+            .all(|s| s.to_bits() == 0.2f32.to_bits())
+    );
+    let want = (0.2f32 * atomik_core::db_to_gain(-6.0)).to_bits();
+    assert!(takes[1].channels[0].iter().all(|s| s.to_bits() == want));
+}

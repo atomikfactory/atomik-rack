@@ -24,8 +24,8 @@ use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, Engine, EngineConfig, EngineError, EngineHandle, EngineOptions,
     FrameClock, MeterReading, Meters, RecordTap as EngineRecordTap, RoutingPlan, SongInput,
-    SongSnapshot, Topology, TransportCommand, TransportState, WorkerConfig,
-    new_engine_with_options,
+    SongSnapshot, TapChannel, TapControls, Topology, TransportCommand, TransportState,
+    WorkerConfig, new_engine_with_options,
 };
 use atomik_midi_io::MidiError;
 use std::sync::Arc;
@@ -641,13 +641,14 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
 
     fn start_audio_record(
         &mut self,
-        channels: &[usize],
+        channels: &[TapChannel],
         capacity_frames: usize,
+        controls: Arc<TapControls>,
     ) -> Option<EngineRecordTap> {
         self.running
             .as_mut()?
             .handle
-            .record_tap(channels, capacity_frames)
+            .record_tap_gained(channels, capacity_frames, controls)
             .ok()
     }
 

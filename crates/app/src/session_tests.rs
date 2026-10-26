@@ -604,10 +604,20 @@ fn the_record_tap_needs_a_running_engine() {
     let fake = Fake::default();
     let mut s = LiveSession::new(&fake, settings(), false);
     s.reset(&config_in(48_000.0, 2));
-    assert!(s.start_audio_record(&[0, 1], 4_096).is_none());
+    let controls = Arc::new(TapControls::new(1));
+    let both = [
+        TapChannel { host: 0, strip: 0 },
+        TapChannel { host: 1, strip: 0 },
+    ];
+    assert!(
+        s.start_audio_record(&both, 4_096, controls.clone())
+            .is_none()
+    );
     s.set_enabled(true);
     s.reset(&config_in(48_000.0, 2));
-    let tap = s.start_audio_record(&[1], 4_096).expect("tap");
+    let tap = s
+        .start_audio_record(&both[1..], 4_096, controls)
+        .expect("tap");
     assert_eq!(tap.channels(), 1);
     s.stop_audio_record();
     assert_eq!(s.stream_underruns(), 0);

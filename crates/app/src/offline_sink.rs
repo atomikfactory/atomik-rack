@@ -9,8 +9,8 @@ use atomik_core::{NoteKind, ParamId, Tempo};
 use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, Engine, EngineConfig, EngineError, EngineHandle, MeterReading,
-    Meters, RecordTap, RoutingPlan, SongInput, SongSnapshot, Topology, TransportCommand,
-    TransportState, new_engine,
+    Meters, RecordTap, RoutingPlan, SongInput, SongSnapshot, TapChannel, TapControls, Topology,
+    TransportCommand, TransportState, new_engine,
 };
 use std::sync::Arc;
 
@@ -255,12 +255,17 @@ impl EngineSink for OfflineSink {
 
     fn start_audio_record(
         &mut self,
-        channels: &[usize],
+        channels: &[TapChannel],
         capacity_frames: usize,
+        controls: Arc<TapControls>,
     ) -> Option<RecordTap> {
         self.handle
             .as_mut()?
-            .record_tap(channels, self.tap_capacity.unwrap_or(capacity_frames))
+            .record_tap_gained(
+                channels,
+                self.tap_capacity.unwrap_or(capacity_frames),
+                controls,
+            )
             .ok()
     }
 
