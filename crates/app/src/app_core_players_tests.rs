@@ -769,6 +769,46 @@ fn live_keyboard_on_an_armed_track_plays_through_the_stack() {
 }
 
 #[test]
+fn a_hand_cabled_stack_takes_the_armed_tracks_live_notes_whatever_the_order() {
+    // The stack exists first, the track is made after: it enters at the top.
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SYNTH, "synth");
+    add(&mut c, ARP, "arp");
+    add(&mut c, "atomik.key-chord", "chord");
+    c.apply_command(cable(("chord", "notes_out"), ("arp", "notes_in")))
+        .unwrap();
+    c.apply_command(cable(("arp", "notes_out"), ("synth", "notes_in")))
+        .unwrap();
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+        device: key("synth"),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetTrackFlags {
+        device: key("synth"),
+        muted: false,
+        solo: false,
+        armed: true,
+    }))
+    .unwrap();
+    c.select(Some(key("synth")));
+    assert_eq!(
+        c.notes_target().unwrap().0,
+        c.device_id(&key("chord")).unwrap()
+    );
+    // The track exists first, the player is cabled in by hand afterwards: the entry follows.
+    let mut c = stack_core();
+    add(&mut c, ARP, "arp");
+    let synth = c.device_id(&key("synth")).unwrap();
+    assert_eq!(c.notes_target().unwrap().0, synth);
+    c.apply_command(cable(("arp", "notes_out"), ("synth", "notes_in")))
+        .unwrap();
+    c.select(Some(key("synth")));
+    assert_eq!(
+        c.notes_target().unwrap().0,
+        c.device_id(&key("arp")).unwrap()
+    );
+}
+#[test]
 fn a_stale_entry_plays_the_track_device_live() {
     let mut c = stack_core();
     let arp = create_player(&mut c, ARP, "synth");
