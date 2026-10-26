@@ -263,6 +263,7 @@ pub fn seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: Some(panel),
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: None,
         plugin: None,

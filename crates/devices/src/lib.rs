@@ -22,6 +22,7 @@ mod cv_in;
 pub mod distortion;
 pub mod drum_machine;
 pub mod eq;
+pub mod key_chord;
 pub mod line_mixer;
 pub mod loop_slicer;
 pub mod macro_bank;
@@ -58,8 +59,9 @@ pub fn panel_layout(type_id: &str) -> Option<&'static atomik_device_sdk::PanelLa
 
 /// Type ids of the note players (step sequencer, arpeggiator). They are `DeviceKind::Utility`; a
 /// browser that groups by kind can list these under a "Players" heading with this hook.
-pub const PLAYER_TYPE_IDS: [&str; 3] = [
+pub const PLAYER_TYPE_IDS: [&str; 4] = [
     "atomik.arpeggiator",
+    "atomik.key-chord",
     "atomik.note-filter",
     "atomik.step-sequencer",
 ];
@@ -95,6 +97,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_samples(sampler::factory())?;
     registry.register_with_samples(drum_machine::factory())?;
     registry.register_with_samples(loop_slicer::factory())?;
+    registry.register(key_chord::factory())?;
     registry.register(line_mixer::factory())?;
     registry.register_with_player_data(step_sequencer::factory())?;
     registry.register(stereo_delay::factory())?;
@@ -127,7 +130,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 26] = [
+    const TYPE_IDS: [&str; 27] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -138,6 +141,7 @@ mod tests {
         "atomik.distortion",
         "atomik.drum-machine",
         "atomik.eq",
+        "atomik.key-chord",
         "atomik.line-mixer",
         "atomik.loop-slicer",
         "atomik.macro-bank",

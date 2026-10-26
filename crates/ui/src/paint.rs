@@ -297,6 +297,8 @@ pub struct PanelInfo<'a> {
     pub io: crate::io_panel::IoInfo<'a>,
     /// Master panel: the effect on each return and the key-in state.
     pub master: crate::master_panel::MasterInfo<'a>,
+    /// Key & Chord panel: the FROM CLIP button is enabled (the open clip has a scale).
+    pub from_clip: bool,
 }
 
 /// Fold button centre in panel coordinates.
@@ -711,6 +713,9 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     &info.player,
                     info.accent,
                 );
+            }
+            if let (Some(panel), Some(_)) = (info.spec.key_chord, info.device) {
+                crate::key_chord_panel::paint_panel(c, theme, &panel, info.from_clip);
             }
             if let (Some(arp), Some(device)) = (info.spec.arp, info.device) {
                 crate::arp_panel::paint_panel(

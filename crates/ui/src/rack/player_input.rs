@@ -220,6 +220,12 @@ impl RackView {
             PlayerBtn::Seq(sb) => self.seq_down(i, sb, modifiers, clicks, out),
             PlayerBtn::Mode(m) => self.choose(i, "mode", m, out),
             PlayerBtn::Rate(m) => self.choose(i, "rate", m, out),
+            PlayerBtn::FromClip => {
+                if let Some(scale) = self.clip_scale {
+                    let cmd = crate::key_chord_panel::from_clip_command(&key, scale);
+                    out.push(UiAction::Command(cmd));
+                }
+            }
             PlayerBtn::OctaveDec | PlayerBtn::OctaveInc => {
                 let now = self.param_value(i, "octaves").round() as i32;
                 let next = if b == PlayerBtn::OctaveInc {

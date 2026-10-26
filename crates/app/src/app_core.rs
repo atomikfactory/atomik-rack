@@ -739,6 +739,8 @@ impl<S: EngineSink> AppCore<S> {
         self.view.sync(doc, &self.registry);
         self.arrangement.sync(doc, &self.registry);
         self.piano_roll.sync(doc, &self.registry);
+        self.view
+            .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
         self.sample_editor.sync(doc, &self.registry);
         self.step_editor.sync(doc, &self.registry);
         self.slice_editor.sync(doc, &self.registry);
@@ -1894,7 +1896,15 @@ impl<S: EngineSink> AppCore<S> {
             self.piano_roll.open(id);
             self.piano_clip = Some(id);
             self.piano_roll.sync(self.document.doc(), &self.registry);
+            self.sync_clip_scale();
         }
+    }
+
+    /// Tells the rack the scale of the clip open in the piano roll (the FROM CLIP button of a
+    /// Key & Chord panel is enabled by it).
+    fn sync_clip_scale(&mut self) {
+        let scale = self.piano_clip.and_then(|_| self.piano_roll.scale());
+        self.view.set_clip_scale(scale);
     }
 
     /// Opens the piano roll on the first selected note clip of the arrangement, else the
@@ -1936,6 +1946,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn close_piano_roll(&mut self) {
         self.piano_roll.close();
         self.piano_clip = None;
+        self.sync_clip_scale();
     }
 
     // ------------------------------------------------------------------ transport

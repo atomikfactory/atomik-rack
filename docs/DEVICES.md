@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-six original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator and note filter), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-seven original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter and key & chord), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -986,6 +986,48 @@ Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless p
 
 ---
 
+## Key & Chord: `atomik.key-chord` (Utility, "Players")
+
+Locks the notes of `notes_in` to a scale and plays chords from single notes onto `notes_out`: one stateless per-event map. Source: [crates/devices/src/key_chord.rs](../crates/devices/src/key_chord.rs).
+
+### Sockets
+
+`notes_in` (id 0, input) and `notes_out` (id 1, output). No CV sockets, no pattern data.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `scale.root` | 0-11: C, C#, D, D#, E, F, F#, G, G#, A, A#, B | 0 (C) | choice | Linear | yes |
+| `scale.kind` | 0-15, the scale kinds in the piano roll's order (Chromatic, Major, Natural Minor, Harmonic Minor, Melodic Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Major Pentatonic, Minor Pentatonic, Blues, Whole Tone, Phrygian Dominant, Hungarian Minor) | 1 (Major) | choice | Linear | yes |
+| `scale.mode` | 0-2: off, snap, filter | 1 (snap) | choice | Linear | yes |
+| `scale.snap` | 0-2: nearest, up, down | 0 (nearest) | choice | Linear | yes |
+| `chord` | 0-24: Off, Triad, 7th, 9th (diatonic), then the 21 chord kinds of the piano roll's chord menu (Major, Minor, Diminished, Augmented, Sus2, Sus4, 6, m6, 7, maj7, m7, m7b5, dim7, 9, maj9, m9, add9, 11, 13, Power (5), Octave) | 0 (Off) | choice | Linear | yes |
+| `chord.inversion` | 0 to 3 | 0 | none | Linear | yes |
+| `chord.voicing` | 0-3: close, open, drop-2, bass | 0 (close) | choice | Linear | yes |
+| `chord.octave` | -2 to 2 | 0 | octaves | Linear | yes |
+| `chord.velocity` | 0 to 1 (shown 0 to 100 %) | 1 | percent | Linear | no |
+| `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+
+The choice labels are the labels of `atomik_core::theory` (`ScaleKind::label`, `DiatonicSize::label`, `ChordKind::label`); a test pins them equal, so the device, the piano roll and the panel read the same scales and chords.
+
+### Behaviour
+
+- **Order of the stages.** Scale, chord, voicing, octave shift.
+- **Scale.** `off` leaves the key alone. `snap` moves it into the scale: `nearest` takes the nearest in-scale key and ties go **down** (the piano roll's rule), `up` and `down` take the first in-scale key at or above or below it, and fall back to the other side when the range ends first (a note is never lost to the range). `filter` drops an out-of-scale note, and its Off with it. The chromatic scale never restricts anything.
+- **Chord.** `Triad`, `7th` and `9th` stack scale degrees 1, 3, 5 (, 7, 9) on the (snapped) key, so the chord follows the key of the scale. A chromatic scale has no degrees: the three choices then stack the major, major seventh and major ninth shapes on the key. The 21 fixed kinds stack their semitone intervals on the key. `chord.inversion` moves the lowest note up an octave per step, at most `notes - 1` steps, and only for chords of three or more notes (a power chord or an octave keeps its position).
+- **Voicing**, on the sorted keys: `open` raises the second, fourth, ... note an octave; `drop-2` lowers the second highest note an octave (chords of three or more notes); `bass` adds the chord root an octave below. With `chord` off, `bass` doubles the note an octave below and the others do nothing.
+- **Octave.** `chord.octave` shifts the whole chord by octaves. Any note outside 0..=127 is **dropped**, not clamped; keys that land on one pitch are one note; at most eight notes sound per key.
+- **Velocity.** Every note on the root's pitch class keeps the played velocity exactly (the played note, an inverted root, the `bass` note). The other notes get `chord.velocity` times that, at least 1/127; at 0 they are not played at all.
+- **Other events.** Pitch bend, controllers and channel pressure pass. Polyphonic pressure and per-note expressions follow the lowest note the input key sounded and are dropped when it sounds nothing. Offsets are kept: every note of a chord starts and ends at the offset of the input event.
+- **Param changes while keys are held** release the old chord exactly: the device remembers the notes each input key sent, so the Off releases those, whatever the scale, chord or voicing are now. Chords of different keys that share a pitch keep it sounding until the last of them is released (a key struck again while it sounds is closed and started again). The new values apply to the next On.
+- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On is dropped before an Off ever is.
+- **Bypass.** The common [player bypass](#player-bypass).
+- **FROM CLIP.** The panel has a FROM CLIP button: it sets `scale.root` and `scale.kind` to the scale of the clip open in the piano roll, as one undo step. It is dim, and does nothing, while no clip is open or the clip has no scale. The scale is the clip's own (`Clip.scale`), so a scale edited in the piano roll reaches the device with one click.
+- **Starting points.** *Lock to minor* (`scale.kind` Natural Minor, `scale.mode` filter), *Triads in key* (`chord` Triad), *Stabs (7th, open)* (`chord` 7th, `chord.voicing` open, `chord.velocity` 0.7).
+
+---
+
 ## Container: `atomik.container` (Container, "Containers")
 
 A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.
@@ -1075,7 +1117,7 @@ VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe an
 
 ## Player bypass
 
-The step sequencer, the arpeggiator and the note filter end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
+The step sequencer, the arpeggiator, the note filter and Key & Chord end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
 
 - **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0 and it holds no state.
 - **The switch.** A change of the param is adopted at the start of the next batch: the notes the player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the player's own state (the held set, the pattern position) is cleared, and a key that is held at the switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing doubles on either side.

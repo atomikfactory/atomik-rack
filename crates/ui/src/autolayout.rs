@@ -140,6 +140,8 @@ pub struct PanelSpec {
     pub seq: Option<crate::seq_panel::SeqPanel>,
     /// The arpeggiator panel of an `atomik.arpeggiator` (see [`crate::arp_panel`]).
     pub arp: Option<crate::arp_panel::ArpPanel>,
+    /// The Key & Chord panel of an `atomik.key-chord` (see [`crate::key_chord_panel`]).
+    pub key_chord: Option<crate::key_chord_panel::KeyChordPanel>,
     /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
     pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
     /// The container panel of an `atomik.container` (see
@@ -280,7 +282,27 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
     } else {
         0.0
     };
-    let front = front_groups(desc);
+    layout_with(desc, reserve, samples, group_prefix)
+}
+
+/// Like [`auto_layout`] with a `strip` wide column kept free at the left of the content area
+/// (for a panel's own button) and `prefix_of` choosing the section of each param key instead of
+/// [`group_prefix`]. The caller places what goes into the strip.
+pub(crate) fn auto_layout_with_strip(
+    desc: &DeviceDescriptor,
+    strip: f64,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+) -> PanelSpec {
+    layout_with(desc, strip + SECTION_GAP, false, prefix_of)
+}
+
+fn layout_with(
+    desc: &DeviceDescriptor,
+    reserve: f64,
+    samples: bool,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+) -> PanelSpec {
+    let front = front_groups(desc, prefix_of);
     let back = back_groups(desc);
     let units = (1..=MAX_UNITS)
         .find(|&u| {
@@ -297,6 +319,7 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: None,
         plugin: None,
@@ -335,7 +358,7 @@ pub(crate) struct Group {
     pub(crate) min_w: f64,
 }
 
-fn front_groups(desc: &DeviceDescriptor) -> Vec<Group> {
+fn front_groups(desc: &DeviceDescriptor, prefix_of: for<'a> fn(&'a str) -> &'a str) -> Vec<Group> {
     let mut groups: Vec<(&str, Group)> = Vec::new();
     let strip_bypass = has_strip_bypass(desc);
     for (i, p) in desc.params.iter().enumerate() {
@@ -346,7 +369,7 @@ fn front_groups(desc: &DeviceDescriptor) -> Vec<Group> {
         if atomik_model::console::is_internal_param(p.key) {
             continue;
         }
-        let prefix = group_prefix(p.key);
+        let prefix = prefix_of(p.key);
         let (w, h) = cell_size(choose_widget(p));
         let item = (i, w, h);
         match groups.iter_mut().find(|(k, _)| *k == prefix) {
@@ -739,6 +762,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: None,
         plugin: None,
@@ -873,6 +897,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: None,
         plugin: None,
@@ -926,6 +951,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         fx: None,
         seq: None,
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: None,
         plugin: None,
