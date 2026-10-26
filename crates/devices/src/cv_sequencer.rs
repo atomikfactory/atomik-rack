@@ -290,7 +290,7 @@ impl CvSequencer {
 
     fn build_chain(&self) -> ChainClock {
         ChainClock::new(
-            self.data.as_deref().map(|d| d.notes()),
+            self.data.as_deref().and_then(|d| d.notes()),
             self.cur,
             self.cur_chain,
         )
@@ -302,7 +302,7 @@ impl CvSequencer {
         let sd = self
             .data
             .as_deref()
-            .and_then(|d| d.notes().pattern(cs.pattern))
+            .and_then(|d| d.notes()?.pattern(cs.pattern))
             .map(|p| p.steps[cs.index]);
         (sd, cs)
     }

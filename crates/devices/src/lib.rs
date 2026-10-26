@@ -22,6 +22,7 @@ pub mod container;
 mod cv_in;
 pub mod cv_sequencer;
 pub mod distortion;
+pub mod drum_generator;
 pub mod drum_machine;
 pub mod eq;
 pub mod key_chord;
@@ -64,9 +65,10 @@ pub fn panel_layout(type_id: &str) -> Option<&'static atomik_device_sdk::PanelLa
 
 /// Type ids of the note players (step sequencer, arpeggiator). They are `DeviceKind::Utility`; a
 /// browser that groups by kind can list these under a "Players" heading with this hook.
-pub const PLAYER_TYPE_IDS: [&str; 7] = [
+pub const PLAYER_TYPE_IDS: [&str; 8] = [
     "atomik.arpeggiator",
     "atomik.cv-sequencer",
+    "atomik.drum-generator",
     "atomik.key-chord",
     "atomik.note-delay",
     "atomik.note-filter",
@@ -108,6 +110,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(key_chord::factory())?;
     registry.register(line_mixer::factory())?;
     registry.register_with_curves(cv_sequencer::factory())?;
+    registry.register_with_drums(drum_generator::factory())?;
     registry.register_with_player_data(step_sequencer::factory())?;
     registry.register(stereo_delay::factory())?;
     registry.register(reverb::factory())?;
@@ -141,7 +144,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 30] = [
+    const TYPE_IDS: [&str; 31] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -151,6 +154,7 @@ mod tests {
         "atomik.container",
         "atomik.cv-sequencer",
         "atomik.distortion",
+        "atomik.drum-generator",
         "atomik.drum-machine",
         "atomik.eq",
         "atomik.key-chord",
@@ -191,10 +195,13 @@ mod tests {
             );
             assert_eq!(
                 r.takes_player_data(id),
-                id == "atomik.step-sequencer" || id == "atomik.cv-sequencer",
+                id == "atomik.step-sequencer"
+                    || id == "atomik.cv-sequencer"
+                    || id == "atomik.drum-generator",
                 "{id}"
             );
             assert_eq!(r.takes_curves(id), id == "atomik.cv-sequencer", "{id}");
+            assert_eq!(r.takes_drums(id), id == "atomik.drum-generator", "{id}");
         }
     }
 
@@ -285,7 +292,11 @@ mod tests {
                     assert!(assert_no_alloc(|| h.device_mut().swap_samples(Some(first))).is_none());
                 }
                 if r.takes_player_data(id) {
-                    let first = crate::test_support::seq_player_data(1);
+                    let first = if r.takes_drums(id) {
+                        crate::test_support::drum_player_data(1)
+                    } else {
+                        crate::test_support::seq_player_data(1)
+                    };
                     assert!(
                         assert_no_alloc(|| h.device_mut().swap_player_data(Some(first))).is_none()
                     );
@@ -320,7 +331,11 @@ mod tests {
                     h.process(); // guarded by assert_no_alloc inside the harness
                 }
                 if r.takes_player_data(id) {
-                    let next = crate::test_support::seq_player_data(2);
+                    let next = if r.takes_drums(id) {
+                        crate::test_support::drum_player_data(2)
+                    } else {
+                        crate::test_support::seq_player_data(2)
+                    };
                     let back = assert_no_alloc(|| h.device_mut().swap_player_data(Some(next)));
                     assert!(back.is_some());
                     drop(back);

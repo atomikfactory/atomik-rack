@@ -67,6 +67,8 @@ pub struct Registry {
     players: BTreeSet<&'static str>,
     /// Types that take curve rows with their pattern data.
     curved: BTreeSet<&'static str>,
+    /// Types that take drum pattern data.
+    drummed: BTreeSet<&'static str>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
     /// sorted static list and its counts do not change.
     plugins: BTreeMap<String, DeviceFactory>,
@@ -135,6 +137,19 @@ impl Registry {
     /// Whether `type_id` was registered with [`Registry::register_with_curves`].
     pub fn takes_curves(&self, type_id: &str) -> bool {
         self.curved.contains(type_id)
+    }
+
+    /// Registers a factory whose devices take drum pattern data ([`crate::PlayerData::Drums`]);
+    /// such a type is also listed by [`Registry::takes_player_data`].
+    pub fn register_with_drums(&mut self, factory: DeviceFactory) -> Result<(), RegistryError> {
+        self.register_with_player_data(factory)?;
+        self.drummed.insert(factory.descriptor.type_id);
+        Ok(())
+    }
+
+    /// Whether `type_id` was registered with [`Registry::register_with_drums`].
+    pub fn takes_drums(&self, type_id: &str) -> bool {
+        self.drummed.contains(type_id)
     }
 
     /// Registers a plugin device type. Non-RT; `&mut self` on the thread that
@@ -319,6 +334,20 @@ mod tests {
         let mut plain = Registry::new();
         plain.register_with_player_data(factory()).unwrap();
         assert!(!plain.takes_curves("test.good"));
+    }
+
+    #[test]
+    fn registry_marks_types_that_take_drums() {
+        let mut r = Registry::new();
+        assert!(!r.takes_drums("test.good"));
+        assert_eq!(r.register_with_drums(factory()), Ok(()));
+        assert!(r.takes_drums("test.good"));
+        assert!(
+            r.takes_player_data("test.good"),
+            "drum data is pattern data"
+        );
+        assert!(!r.takes_curves("test.good"));
+        assert!(!r.takes_drums("test.other"));
     }
 
     #[test]

@@ -54,7 +54,7 @@ impl Device for Holder {
         let count = self
             .data
             .as_deref()
-            .map_or(0, |d| u32::from(d.notes().count));
+            .map_or(0, |d| u32::from(d.notes().map_or(0, |n| n.count)));
         if let Some(slot) = self.seen.get((ctx.time.frame / 64) as usize) {
             slot.store(count, Ordering::Relaxed);
         }

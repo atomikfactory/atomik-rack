@@ -61,6 +61,7 @@ fn data_calls(calls: &[SinkCall]) -> Vec<(u32, Option<u8>)> {
                 data.as_ref().map(|d| match &**d {
                     PlayerData::StepSeq(s) => s.patterns[0].steps[0].key,
                     PlayerData::CvSeq(s) => s.notes.patterns[0].steps[0].key,
+                    PlayerData::Drums(d) => d.patterns[0].lanes[0].key,
                 }),
             )),
             _ => None,
