@@ -27,11 +27,17 @@ const BUTTON_H: f64 = 26.0;
 const TEMPO_TEXT_MAX: usize = 7;
 /// `32/16`.
 const METER_TEXT_MAX: usize = 5;
-/// The decimals of the tempo readout (`.00`) take this much of its right end: a drag or a wheel
-/// there steps hundredths, on the rest whole BPM.
-const TEMPO_DECIMALS_W: f64 = 24.0;
+/// Font size of the tempo readout.
+const TEMPO_SIZE: f32 = 13.0;
 /// The tempo's right padding in its readout.
 const LCD_PAD: f64 = 8.0;
+/// The width of the painted decimals (`.00`) at the right end of the tempo readout, from the
+/// same advance estimate the readout is laid out with: a drag or a wheel there steps hundredths,
+/// on the rest whole BPM.
+fn tempo_decimals_w() -> f64 {
+    crate::paint::estimate_width(".00", TEMPO_SIZE)
+}
+
 /// Whole-BPM step with Shift (tenths).
 const TEMPO_FINE: f64 = 0.1;
 /// Merge ids of the transport's drags start here (the views use multiples of 2^40 up to 12).
@@ -291,7 +297,7 @@ impl TransportBar {
     /// A point on the decimals of the tempo readout.
     pub fn tempo_decimals_point(&self) -> Point {
         let r = self.lcd_rects()[2];
-        pt(r.x1 - LCD_PAD - TEMPO_DECIMALS_W / 2.0, r.center().y)
+        pt(r.x1 - LCD_PAD - tempo_decimals_w() / 2.0, r.center().y)
     }
 
     /// A point on the beats-per-bar part of the signature readout.
@@ -447,7 +453,7 @@ impl TransportBar {
     fn field_at(&self, pos: Point) -> Option<Field> {
         let [_, _, tempo, meter] = self.lcd_rects();
         if tempo.contains(pos) {
-            Some(if pos.x >= tempo.x1 - LCD_PAD - TEMPO_DECIMALS_W {
+            Some(if pos.x >= tempo.x1 - LCD_PAD - tempo_decimals_w() {
                 Field::TempoDecimals
             } else {
                 Field::TempoWhole
@@ -799,8 +805,8 @@ impl TransportBar {
         c.text(
             &TextRun::new(
                 tempo_text,
-                pt(tempo_r.x1 - 8.0, tempo_r.y1 - 7.0),
-                13.0,
+                pt(tempo_r.x1 - LCD_PAD, tempo_r.y1 - 7.0),
+                TEMPO_SIZE,
                 lcd_text,
             )
             .weight(600)

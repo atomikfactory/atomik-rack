@@ -234,7 +234,7 @@ The locator clicks win over the razor in the ruler. In the grid the playhead and
 | Mouse wheel | Transport bar, time signature | One notch is one step of the field under the pointer |
 | Press and drag up or down | Snap selector of the arrangement and the piano roll | Steps through the resolutions in the order of the selector, 5 pixels per step, no wrap; a click without movement still cycles forward on release, a right click back |
 | Mouse wheel | Snap selector of the arrangement and the piano roll | One notch is one resolution |
-| Press and drag up or down, mouse wheel | A value of the quantize panel (grid, strength, swing, groove, humanize, seed, slots) | Steps the value, 5 pixels or one notch per step |
+| Press and drag up or down, mouse wheel | A value of the quantize, Audio to Notes, Strip Silence and Warp panels (every row with a - and + button) | Steps the value, 5 pixels or one notch per step |
 | Double-click | Transport bar, BPM or time signature | Types the value (Enter commits, Esc cancels) |
 
 Up increases and down decreases, and a value stops at the end of its range.

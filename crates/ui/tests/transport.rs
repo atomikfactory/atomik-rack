@@ -516,3 +516,21 @@ fn a_double_click_still_types_after_the_drag_support() {
     assert!(a.is_empty());
     assert!(v.is_editing_meter());
 }
+
+#[test]
+fn the_decimals_zone_is_as_wide_as_the_painted_decimals() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    // The readout is 92 wide with 8 px of padding; the text is laid out at 13 px.
+    let right = v.tempo_center().x + 46.0 - 8.0;
+    let w = atomik_ui::paint::estimate_width(".00", 13.0);
+    let y = v.tempo_center().y;
+    let at = |x: f64| Point::new(x, y);
+    let step = |v: &mut atomik_ui::TransportBar, x: f64| {
+        let a = v.handle(&wheel(at(x), 1.0, Modifiers::NONE), &doc, &reg);
+        tempo_maps(&a)[0][0].bpm
+    };
+    assert_eq!(step(&mut v, right - w + 0.5), 120.01);
+    assert_eq!(step(&mut v, right - w - 0.5), 121.0);
+    assert!((v.tempo_decimals_point().x - (right - w / 2.0)).abs() < 1e-9);
+}
