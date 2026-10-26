@@ -306,6 +306,77 @@ pub fn place(
     }
 }
 
+/// How far a cascaded window is offset from the main window, in desktop units.
+const CASCADE: i32 = 32;
+
+/// Decides where a detached window opens: [`place`] when it has a usable saved geometry, else a
+/// monitor the other open app windows (`occupied`, the main window included) are not on.
+///
+/// The monitors are taken left to right (then top to bottom), starting after the one the main
+/// window is on (`primary` when its rect is absent) and wrapping. The first free one gets the
+/// window maximised, with the default size centred on it as the restored bounds. When every
+/// monitor is used, or there is only one, the window is not maximised: it is cascaded
+/// 32 desktop units down and right from the main window, at the default size, clamped onto
+/// that monitor. A window is on the monitor that holds the centre of its rect.
+pub fn place_detached(
+    saved: Option<&WindowGeom>,
+    default_size: (f64, f64),
+    min_size: (f64, f64),
+    monitors: &[MonitorInfo],
+    primary: usize,
+    occupied: &[WindowRect],
+) -> Placement {
+    if saved.is_some_and(WindowGeom::usable) {
+        return place(saved, default_size, min_size, monitors, primary);
+    }
+    let mut order: Vec<usize> = (0..monitors.len())
+        .filter(|&i| monitors[i].usable())
+        .collect();
+    order.sort_by_key(|&i| (monitors[i].x, monitors[i].y));
+    let holding = |r: &WindowRect| {
+        let centre = (r.x + r.width / 2.0, r.y + r.height / 2.0);
+        order.iter().copied().find(|&i| {
+            let m = &monitors[i];
+            centre.0 >= f64::from(m.x)
+                && centre.0 < f64::from(m.x) + f64::from(m.width)
+                && centre.1 >= f64::from(m.y)
+                && centre.1 < f64::from(m.y) + f64::from(m.height)
+        })
+    };
+    let main = occupied.iter().find(|r| r.kind == WindowKind::Main);
+    let main_monitor = main
+        .and_then(holding)
+        .or_else(|| order.contains(&primary).then_some(primary))
+        .or_else(|| order.first().copied());
+    let Some(main_monitor) = main_monitor else {
+        return place(None, default_size, min_size, monitors, primary);
+    };
+    let used: Vec<usize> = occupied.iter().filter_map(holding).collect();
+    let start = order.iter().position(|&i| i == main_monitor).unwrap_or(0);
+    let free = (1..order.len())
+        .map(|k| order[(start + k) % order.len()])
+        .find(|i| !used.contains(i));
+    if let Some(free) = free {
+        let mut placement = place(None, default_size, min_size, monitors, free);
+        placement.maximised = true;
+        return placement;
+    }
+
+    let mut placement = place(None, default_size, min_size, monitors, main_monitor);
+    let m = &monitors[main_monitor];
+    let (w, h) = (placement.size.0 * m.unit(), placement.size.1 * m.unit());
+    let from = main.map_or((f64::from(m.x), f64::from(m.y)), |r| (r.x, r.y));
+    let clamp = |at: f64, origin: i32, extent: u32, size: f64| {
+        let max = (f64::from(origin) + f64::from(extent) - size).max(f64::from(origin));
+        at.clamp(f64::from(origin), max).floor() as i32
+    };
+    placement.pos = Some((
+        clamp(from.0 + f64::from(CASCADE), m.x, m.width, w),
+        clamp(from.1 + f64::from(CASCADE), m.y, m.height, h),
+    ));
+    placement
+}
+
 /// Converts a pointer position local to a window into desktop units.
 ///
 /// `origin` is the window's inner top left in desktop units, `scale` its scale factor and

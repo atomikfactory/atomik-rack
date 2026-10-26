@@ -444,7 +444,20 @@ impl App {
                 .map_or(DETACHED_SIZE, |s| (s.width, s.height)),
         };
         let saved = self.shell.saved_geom(kind);
-        let placement = windows::place(saved.as_ref(), default, MIN_SIZE, &monitors, primary);
+        let placement = if kind == WindowKind::Main {
+            windows::place(saved.as_ref(), default, MIN_SIZE, &monitors, primary)
+        } else {
+            // A detached window with nothing saved goes to a monitor the app is not on yet.
+            let occupied = self.desktop_rects().unwrap_or_default();
+            windows::place_detached(
+                saved.as_ref(),
+                default,
+                MIN_SIZE,
+                &monitors,
+                primary,
+                &occupied,
+            )
+        };
         let mut attributes = Window::default_attributes()
             .with_title(self.shell.title_in(kind))
             .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))

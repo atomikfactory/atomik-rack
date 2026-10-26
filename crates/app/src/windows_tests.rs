@@ -451,3 +451,121 @@ fn ui_state_sanitized_drops_unusable_window_geometry() {
     assert_eq!(s.windows.rack.geom, None);
     assert!(s.windows.console.geom.is_some());
 }
+
+fn three() -> Vec<MonitorInfo> {
+    vec![
+        mon("A", 0, 0, 1920, 1080, 1.0),
+        mon("B", 1920, 0, 1920, 1080, 1.0),
+        mon("C", 3840, 0, 1920, 1080, 1.0),
+    ]
+}
+
+/// An open app window of `kind` at `(x, y)` on the desktop, 800x600.
+fn open(kind: WindowKind, x: f64, y: f64) -> WindowRect {
+    rect(kind, (x, y), (800.0, 600.0), 1.0, DesktopSpace::Physical)
+}
+
+#[test]
+fn place_detached_three_monitors_rack_and_console_take_the_two_free_ones() {
+    let monitors = three();
+    let mut occupied = vec![open(WindowKind::Main, 100.0, 100.0)];
+    let rack = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(rack.pos, Some((1920 + 320, 180)));
+    assert!(rack.maximised);
+    occupied.push(open(WindowKind::Rack, 2000.0, 100.0));
+    let console = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(console.pos, Some((3840 + 320, 180)));
+    assert!(console.maximised);
+}
+
+#[test]
+fn place_detached_two_monitors_rack_goes_to_the_second_and_console_cascades() {
+    let monitors = two();
+    let mut occupied = vec![open(WindowKind::Main, 100.0, 100.0)];
+    let rack = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(rack.pos, Some((1920 + 320, 180)));
+    assert!(rack.maximised);
+    occupied.push(open(WindowKind::Rack, 2000.0, 100.0));
+    let console = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(console.pos, Some((132, 132)));
+    assert_eq!(console.size, DEFAULT);
+    assert!(!console.maximised);
+}
+
+#[test]
+fn place_detached_one_monitor_cascades_from_the_main_window() {
+    let monitors = vec![mon("A", 0, 0, 1920, 1080, 1.0)];
+    let occupied = [open(WindowKind::Main, 100.0, 100.0)];
+    let p = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(p.pos, Some((132, 132)));
+    assert_eq!(p.size, DEFAULT);
+    assert!(!p.maximised);
+}
+
+#[test]
+fn place_detached_cascade_is_clamped_onto_the_monitor() {
+    let monitors = vec![mon("A", 0, 0, 1920, 1080, 1.0)];
+    let occupied = [open(WindowKind::Main, 900.0, 500.0)];
+    let p = place_detached(None, DEFAULT, MIN, &monitors, 0, &occupied);
+    assert_eq!(p.pos, Some((640, 360)));
+}
+
+#[test]
+fn place_detached_main_on_the_right_monitor_wraps_to_the_left() {
+    let monitors = two();
+    let occupied = [open(WindowKind::Main, 2000.0, 100.0)];
+    let p = place_detached(None, DEFAULT, MIN, &monitors, 1, &occupied);
+    assert_eq!(p.pos, Some((320, 180)));
+    assert!(p.maximised);
+}
+
+#[test]
+fn place_detached_main_on_the_middle_monitor_rack_goes_right_then_console_left() {
+    let monitors = three();
+    let mut occupied = vec![open(WindowKind::Main, 2000.0, 100.0)];
+    let rack = place_detached(None, DEFAULT, MIN, &monitors, 1, &occupied);
+    assert_eq!(rack.pos, Some((3840 + 320, 180)));
+    occupied.push(open(WindowKind::Rack, 3900.0, 100.0));
+    let console = place_detached(None, DEFAULT, MIN, &monitors, 1, &occupied);
+    assert_eq!(console.pos, Some((320, 180)));
+}
+
+#[test]
+fn place_detached_monitors_are_ordered_left_to_right_whatever_the_list_order() {
+    let monitors = vec![
+        mon("C", 3840, 0, 1920, 1080, 1.0),
+        mon("A", 0, 0, 1920, 1080, 1.0),
+        mon("B", 1920, 0, 1920, 1080, 1.0),
+    ];
+    let occupied = [open(WindowKind::Main, 100.0, 100.0)];
+    let p = place_detached(None, DEFAULT, MIN, &monitors, 1, &occupied);
+    assert_eq!(p.pos, Some((1920 + 320, 180)));
+}
+
+#[test]
+fn place_detached_saved_geometry_wins_over_a_free_monitor() {
+    let g = WindowGeom {
+        monitor: Some("A".into()),
+        ..geom(300, 200, 800.0, 600.0)
+    };
+    let occupied = [open(WindowKind::Main, 100.0, 100.0)];
+    let p = place_detached(Some(&g), DEFAULT, MIN, &three(), 0, &occupied);
+    assert_eq!(p.pos, Some((300, 200)));
+    assert_eq!(p.size, (800.0, 600.0));
+    assert!(!p.maximised);
+}
+
+#[test]
+fn place_detached_unusable_saved_geometry_counts_as_none() {
+    let g = geom(300, 200, 0.0, 0.0);
+    let occupied = [open(WindowKind::Main, 100.0, 100.0)];
+    let p = place_detached(Some(&g), DEFAULT, MIN, &two(), 0, &occupied);
+    assert!(p.maximised);
+    assert_eq!(p.pos, Some((1920 + 320, 180)));
+}
+
+#[test]
+fn place_detached_no_monitors_leaves_position_to_the_os() {
+    let p = place_detached(None, DEFAULT, MIN, &[], 0, &[]);
+    assert_eq!(p.pos, None);
+}

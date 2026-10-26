@@ -333,6 +333,7 @@ The window code in `platform/` is not unit-tested (it needs a window and a GPU);
 
 - Detach and attach both panes from the View menu, with their shortcuts, and by closing the window. The pane returns to the main window; the main window never ends up empty.
 - Quit with a pane detached and start again: the windows reopen where they were, with their sizes and maximised state, and so does the main window. Maximise a window, quit, start: still maximised, and restoring it gives the size from before.
+- First detach with no saved geometry (delete the `windows` key of `ui-state.json`): with three monitors the rack opens maximised on the next monitor to the right of the main window (wrapping to the left), and the mixer on the one after; with two, the mixer opens cascaded 32 units down and right from the main window, not maximised; with one monitor, both cascade. Closing the window and detaching again brings it back where it was.
 - Unplug (or switch off) the monitor a window was on and start: the window comes back on a visible monitor.
 - Transport, undo and save keys work from the main, the rack and the mixer windows. F5, F6 and F7 raise the windows while the panes are detached; Shift+F5 and the mixer's MAX maximise the mixer window.
 - Drag a file from the file browser into the detached rack, and onto a sampler panel in it; drag a library item into the detached rack; drag out of the main window and back (the hover cancels where it leaves). Drop an OS file onto each window.
