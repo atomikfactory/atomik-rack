@@ -14,10 +14,13 @@
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
-//!   "console_notice_seen": false }
+//!   "console_notice_seen": false,
+//!   "windows": { "rack": { "detached": true, "geom": { "x": 40, "y": 60, "width": 1200.0,
+//!                "height": 700.0, "maximised": false, "monitor": "DISPLAY1" } } } }
 //! ```
 
 use crate::record::InputQuantize;
+use crate::windows::WindowsState;
 use atomik_ui::FileBrowserView;
 use atomik_ui::arrangement::clamp_track_zoom;
 use atomik_ui::key_rows::Fold;
@@ -84,6 +87,9 @@ pub struct UiState {
     pub file_browser_auto_preview: bool,
     /// The folder the file list showed last.
     pub file_browser_folder: Option<PathBuf>,
+    /// Which panes live in their own window and where every window was. An absent key means
+    /// everything attached.
+    pub windows: WindowsState,
 }
 
 impl Default for UiState {
@@ -110,6 +116,7 @@ impl Default for UiState {
             file_browser_tree_fraction: DEFAULT_TREE_FRACTION,
             file_browser_auto_preview: true,
             file_browser_folder: None,
+            windows: WindowsState::default(),
         }
     }
 }
@@ -167,6 +174,7 @@ impl UiState {
             file_browser_tree_fraction,
             track_zoom,
             piano_roll_key_height,
+            windows: self.windows.sanitized(),
             ..self
         }
     }
