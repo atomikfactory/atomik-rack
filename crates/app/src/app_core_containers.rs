@@ -101,6 +101,12 @@ pub(super) fn notes_device(doc: &RackDoc, key: &DeviceKey) -> Option<(DeviceKey,
     }
 }
 
+/// Where the notes sent to `key` enter: the entry of its track (the top of its player stack, see
+/// [`RackDoc::notes_entry`]), else `key` itself.
+pub(super) fn entry_of<'a>(doc: &'a RackDoc, key: &'a DeviceKey) -> &'a DeviceKey {
+    doc.song.track(key).map_or(key, |t| doc.notes_entry(t))
+}
+
 /// The flat devices a `DeviceAdded(key)` inserts, in the expansion's order: a container's inside
 /// (its split and every inner device), else the device itself.
 pub(super) fn subtree<'a>(

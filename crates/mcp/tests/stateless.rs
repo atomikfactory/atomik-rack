@@ -201,6 +201,39 @@ fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
 }
 
 #[test]
+fn project_inspect_reports_where_a_track_with_a_player_stack_enters() {
+    use atomik_model::{
+        Command, CreateOptions, CreateTarget, Document, WorkflowCommand, load_project,
+    };
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut d = Document::new(load_project(&text, &reg).unwrap());
+    let device = d.doc().song.tracks[0].device.clone();
+    d.apply(
+        Command::Workflow(WorkflowCommand::CreatePlayer {
+            type_id: "atomik.arpeggiator".into(),
+            target: CreateTarget::Selected(device.clone()),
+            options: CreateOptions::default(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let player = d.doc().song.tracks[0].notes_to.clone().expect("an entry");
+    let path = tmp("stack.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let tracks = r.parsed()["song"]["tracks"].clone();
+    assert_eq!(tracks[0]["notes_to"], json!(player.as_str()));
+    assert_eq!(tracks[0]["device"], json!(device.as_str()));
+    assert!(
+        tracks[1].get("notes_to").is_none(),
+        "only a stacked track has it"
+    );
+}
+
+#[test]
 fn project_inspect_describes_a_project_and_a_patch() {
     let mut s = server();
     let p = call(

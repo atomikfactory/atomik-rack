@@ -1774,8 +1774,16 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ live notes
 
-    /// The notes input of device `key` in the engine, if it has one.
+    /// The notes input in the engine that takes the notes sent to device `key`: for a device
+    /// with a track, where the track's notes enter (the top of its player stack), else, or when
+    /// that cannot take notes, its own.
     fn target_of(&self, key: &DeviceKey) -> Option<Target> {
+        let entry = containers::entry_of(self.doc(), key);
+        [entry, key].into_iter().find_map(|k| self.own_target_of(k))
+    }
+
+    /// The notes input of device `key` in the engine, if it has one.
+    fn own_target_of(&self, key: &DeviceKey) -> Option<Target> {
         // A container's notes go through its `~split` device.
         let (flat, type_id) = containers::notes_device(self.doc(), key)?;
         let socket = notes_input(self.registry.get(&type_id)?.descriptor)?;
@@ -2087,9 +2095,11 @@ impl<S: EngineSink> AppCore<S> {
             .iter()
             .filter(|t| t.armed && !audio.contains(&t.device))
             .filter_map(|t| {
-                let flat = containers::flat_key(self.document.doc(), &t.device);
+                // The take records what is played into the track's entry: the input notes,
+                // before the players of its stack.
+                let (entry, _) = self.target_of(&t.device)?;
                 let lane = self.arrangement.record_lane(&t.device);
-                Some((*self.ids.get(&flat)?, t.device.clone(), lane))
+                Some((entry, t.device.clone(), lane))
             })
             .collect();
         let loop_range = song.loop_enabled.then_some(song.loop_range);

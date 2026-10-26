@@ -134,6 +134,18 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 Some(format!("Created {name} with {}", parts.join(" and ")))
             }
+            WorkflowCommand::CreatePlayer { .. } => {
+                // The device its notes go on to: the head of the stack it was put on.
+                let below = doc
+                    .cables
+                    .iter()
+                    .find(|c| &c.from.device == key && c.from.socket == "notes_out")?
+                    .to
+                    .device
+                    .clone();
+                let below = doc.device(&below).map_or("the device", |d| &d.name);
+                Some(format!("Created {name} above {below}"))
+            }
             WorkflowCommand::CreateEffect { .. } | WorkflowCommand::CreateEffectAt { .. } => {
                 // Created with the master selected: the first free send/return.
                 if let Some(slot) = doc.console.return_slot(key) {
