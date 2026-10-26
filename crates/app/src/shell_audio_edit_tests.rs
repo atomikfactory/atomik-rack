@@ -244,3 +244,20 @@ fn the_panel_cannot_apply_without_an_audio_clip_and_paints() {
     assert!(dl.texts().contains(&"STRIP SILENCE"));
     let _ = MenuEntry::Separator;
 }
+
+#[test]
+fn reverse_on_a_warped_clip_turns_the_warp_off_and_reverses() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.set_focus(Pane::Arrangement);
+    s.execute(AppCommand::AudioWarp);
+    assert!(audio(&s, id).warp.enabled, "warp is on");
+    s.execute(AppCommand::AudioReverse);
+    let a = audio(&s, id);
+    assert!(a.reverse, "the clip is reversed");
+    assert!(!a.warp.active(), "and no longer warped");
+    s.core_mut().undo();
+    let a = audio(&s, id);
+    assert!(!a.reverse && a.warp.enabled, "one undo restores both");
+}
