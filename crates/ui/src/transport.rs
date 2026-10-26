@@ -21,6 +21,10 @@ use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_M
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
+mod inspector;
+use inspector::Inspector;
+pub use inspector::{InspClip, InspectorField, InspectorSource};
+
 /// Recommended height of the bar, logical pixels.
 pub const TRANSPORT_HEIGHT: f64 = 44.0;
 const BUTTON_W: f64 = 34.0;
@@ -172,6 +176,8 @@ pub struct TransportBar {
     meter_edit_event: usize,
     hover: Option<TransportButton>,
     drag: Option<ValueDrag>,
+    /// The clip inspector at the right of the readouts.
+    insp: Inspector,
     next_merge: u64,
     focused: bool,
     repaint: bool,
@@ -199,6 +205,7 @@ impl TransportBar {
             meter_edit_event: 0,
             hover: None,
             drag: None,
+            insp: Inspector::default(),
             next_merge: TRANSPORT_MERGE_BASE,
             focused: false,
             repaint: true,
@@ -272,7 +279,7 @@ impl TransportBar {
 
     /// True while a drag on the tempo or the signature is held.
     pub fn is_dragging(&self) -> bool {
-        self.drag.is_some()
+        self.drag.is_some() || self.is_dragging_inspector()
     }
 
     /// Centre of a button.
@@ -596,6 +603,7 @@ impl TransportBar {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::PointerMove { pos, modifiers } => {
                 self.drag_to(pos.y, modifiers.shift, &mut out);
+                self.inspector_drag_to(pos.y, modifiers.shift, &mut out);
                 let h = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos));
@@ -621,6 +629,9 @@ impl TransportBar {
                 if self.meter_editing.is_some() {
                     self.commit_meter(&mut out);
                 }
+                if self.insp.is_editing() {
+                    self.inspector_commit(&mut out);
+                }
                 if let Some(b) = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos))
@@ -637,6 +648,8 @@ impl TransportBar {
                     self.begin_tempo_edit(None);
                 } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
                     self.begin_meter_edit();
+                } else if let Some(field) = self.inspector_field_at(*pos) {
+                    out.extend(self.inspector_press(field, *clicks, pos.y));
                 } else if let Some(field) = self.field_at(*pos) {
                     self.begin_drag(field, pos.y);
                 }
@@ -652,14 +665,22 @@ impl TransportBar {
                     }
                     self.repaint = true;
                 }
+                self.inspector_release(&mut out);
             }
             UiEvent::Wheel {
                 delta,
                 pos,
                 modifiers,
-            } if self.editing.is_none() && self.meter_editing.is_none() && self.drag.is_none() => {
+            } if self.editing.is_none()
+                && self.meter_editing.is_none()
+                && self.drag.is_none()
+                && !self.insp.is_editing()
+                && !self.is_dragging_inspector() =>
+            {
                 if let Some(field) = self.field_at(*pos) {
                     self.wheel_field(field, wheel_steps(delta.y), modifiers.shift, &mut out);
+                } else if let Some(field) = self.inspector_field_at(*pos) {
+                    self.inspector_wheel(field, wheel_steps(delta.y), modifiers.shift, &mut out);
                 }
             }
             UiEvent::Key {
@@ -696,7 +717,7 @@ impl TransportBar {
                 "Time signature: drag or scroll a number, double-click to type",
             ));
         }
-        None
+        self.inspector_help(pos)
     }
 
     fn button_help(b: TransportButton, rect: Rect) -> Help {
@@ -713,6 +734,10 @@ impl TransportBar {
     }
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        if self.insp.is_editing() {
+            self.inspector_key(key, out);
+            return;
+        }
         if let Some((text, fresh)) = &mut self.meter_editing {
             match key {
                 Key::Char(c) if c.is_ascii_digit() || *c == '/' => {
@@ -869,6 +894,7 @@ impl TransportBar {
             .weight(600)
             .align(Align::Center),
         );
+        self.paint_inspector(c, doc);
         if self.focused {
             sp::line(c, b.x0, b.y0 + 0.5, b.x1, b.y0 + 0.5, t.focus);
         }

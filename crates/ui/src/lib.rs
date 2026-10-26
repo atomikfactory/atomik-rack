@@ -94,8 +94,10 @@
 //! - **Routing.** Send a pointer event to the view whose bounds contain it, except while a
 //!   view `is_dragging()`: keep sending it every pointer event until the button is released.
 //!   Send key events to the focused view (the last one clicked; call `set_focused`). While
-//!   [`TransportBar::is_editing_tempo`] or [`TransportBar::is_editing_meter`] is true, send
-//!   keys to the transport bar.
+//!   [`TransportBar::is_editing_tempo`], [`TransportBar::is_editing_meter`] or
+//!   [`TransportBar::is_editing_inspector`] is true, send keys to the transport bar. Feed the bar
+//!   the selection with [`TransportBar::set_inspector`] (from
+//!   [`ArrangementView::audio_inspector`]) whenever the views sync.
 //! - **Actions.** `Command` / `EndMerge` / `Undo` / `Redo` as for the rack.
 //!   [`UiAction::OpenPianoRoll`]: call [`PianoRollView::open`] and show it in place of the
 //!   arrangement; [`UiAction::ClosePianoRoll`]: show the arrangement again.
@@ -401,7 +403,10 @@ pub use step_editor::{StepEditorView, VelocityLevel};
 pub use text::{ShapedGlyph, ShapedRun, TextEngine};
 pub use theme::Theme;
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
-pub use transport::{TransportBar, TransportButton, TransportState, transport_shortcut};
+pub use transport::{
+    InspClip, InspectorField, InspectorSource, TransportBar, TransportButton, TransportState,
+    transport_shortcut,
+};
 pub use vello;
 pub use vello::{kurbo, peniko};
 pub use viewport::{Tool, ViewportState};

@@ -2585,6 +2585,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             if self.core.transport_bar().is_editing_tempo()
                 || self.core.transport_bar().is_editing_meter()
+                || self.core.transport_bar().is_editing_inspector()
             {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
@@ -4776,6 +4777,10 @@ mod organise_tests;
 #[cfg(test)]
 #[path = "shell_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "shell_inspector_tests.rs"]
+mod inspector_tests;
 
 #[cfg(test)]
 #[path = "shell_notes_tests.rs"]

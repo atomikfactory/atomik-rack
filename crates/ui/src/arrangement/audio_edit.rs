@@ -89,6 +89,43 @@ impl ArrangementView {
         }
     }
 
+    /// What the transport bar's clip inspector shows: the selected audio clips (with the rate
+    /// and the length in frames of each), or the selected audio track when no clip is, or
+    /// nothing.
+    pub fn audio_inspector(&self) -> crate::InspectorSource {
+        let clips: Vec<crate::InspClip> = self
+            .selected_audio()
+            .into_iter()
+            .map(|(c, a)| {
+                let rate = self
+                    .assets
+                    .get(&a.asset)
+                    .map_or(DEFAULT_RATE, |m| m.sample_rate);
+                crate::InspClip {
+                    id: c.id,
+                    start: c.start,
+                    length: c.length,
+                    muted: c.muted,
+                    content: a.clone(),
+                    rate,
+                    frames: self
+                        .tempo
+                        .frame_at(c.start + c.length, rate)
+                        .saturating_sub(self.tempo.frame_at(c.start, rate)),
+                }
+            })
+            .collect();
+        if !clips.is_empty() {
+            return crate::InspectorSource::Clips(clips);
+        }
+        match self.selected_track() {
+            Some(d) if self.song.track(d).is_some_and(|t| t.is_audio()) => {
+                crate::InspectorSource::Track(d.clone())
+            }
+            _ => crate::InspectorSource::None,
+        }
+    }
+
     /// The selected audio clips with their content, in song order.
     fn selected_audio(&self) -> Vec<(&Clip, &AudioClipContent)> {
         self.selected_in_order()
