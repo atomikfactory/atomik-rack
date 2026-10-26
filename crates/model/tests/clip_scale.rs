@@ -54,7 +54,7 @@ fn a_minor() -> Scale {
 
 #[test]
 fn the_project_version_is_sixteen() {
-    assert_eq!(PROJECT_VERSION, 32);
+    assert_eq!(PROJECT_VERSION, 33);
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn a_scale_round_trips_canonically_and_names_its_kind() {
     );
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 32);
+    assert_eq!(v["version"], 33);
     let clip = &v["song"]["tracks"][0]["lanes"][0]["clips"][0];
     assert_eq!(
         clip["scale"],

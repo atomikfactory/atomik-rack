@@ -21,6 +21,8 @@ mod container_io;
 pub mod controller;
 mod curves;
 mod curves_cmd;
+mod drums;
+mod drums_cmd;
 mod expand;
 pub mod freeze;
 pub mod groove;
@@ -70,6 +72,7 @@ pub use container::{
     boundary_sockets, scoped_cable, split_path,
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
+pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
 pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
@@ -236,6 +239,10 @@ pub struct RackDevice {
     /// sequencer starts with none). Pattern `i` of the curves goes with pattern `i` of
     /// [`RackDevice::steps`].
     pub curves: Option<CurveDoc>,
+    /// Drum generator patterns; `Some` exactly on devices whose type takes drum data
+    /// (`Registry::takes_drums`), `None` on every other device. A new generator starts with
+    /// [`DrumDoc::default`]; such a device has no [`RackDevice::steps`].
+    pub drums: Option<DrumDoc>,
     /// A container's inside: `Some` exactly on devices whose type is a
     /// `DeviceKind::Container`, `None` on every other device. See [`ContainerDoc`].
     pub inner: Option<Box<ContainerDoc>>,
@@ -516,6 +523,74 @@ pub enum Command {
         curves: CurvePatternDoc,
         /// Drag-merge group, or `None` for a standalone step.
         merge: Option<u64>,
+    },
+    /// Set one step of one lane of drum pattern `index` of a drum generator (one undo step): a
+    /// `velocity` of 0 clears the hit. The device must take drum data (`Registry::takes_drums`);
+    /// a rejected command changes nothing. Consecutive `SetDrumStep` and `SetDrumPattern` with the
+    /// same `merge` id on the same device and pattern merge into one undo step (velocity drags).
+    /// Reports [`SyncOp::PatternsChanged`].
+    SetDrumStep {
+        /// The drum generator.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// Lane, 0..16.
+        lane: u8,
+        /// Step, 0..64.
+        step: u8,
+        /// Velocity, 0..=127 (0 = no hit).
+        velocity: u8,
+        /// Probability in percent, 0..=100.
+        prob: u8,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Replace the key, role and mute of one lane of drum pattern `index` (one undo step).
+    /// Reports [`SyncOp::PatternsChanged`].
+    SetDrumLane {
+        /// The drum generator.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// Lane, 0..16.
+        lane: u8,
+        /// The new key, role and mute.
+        setting: DrumLaneDoc,
+    },
+    /// Replace drum pattern `index` as a whole (paste, clear, rename; one undo step). The pattern
+    /// must be valid (see [`DrumPatternDoc::check`]). Reports [`SyncOp::PatternsChanged`].
+    SetDrumPattern {
+        /// The drum generator.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// The new pattern.
+        pattern: DrumPatternDoc,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
+    /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a drum generator (one undo step);
+    /// refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
+    AddDrumPattern {
+        /// The drum generator.
+        device: DeviceKey,
+    },
+    /// Append a copy of drum pattern `index` (one undo step); refused at [`MAX_PATTERNS`].
+    /// Reports [`SyncOp::PatternsChanged`].
+    DuplicateDrumPattern {
+        /// The drum generator.
+        device: DeviceKey,
+        /// The pattern to copy.
+        index: u8,
+    },
+    /// Remove drum pattern `index` (one undo step); the last pattern cannot be removed, and the
+    /// `pattern` param is lowered when it would point past the end. Reports
+    /// [`SyncOp::PatternsChanged`].
+    RemoveDrumPattern {
+        /// The drum generator.
+        device: DeviceKey,
+        /// The pattern to remove.
+        index: u8,
     },
     /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a sequencer (one
     /// undo step); refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
@@ -801,6 +876,8 @@ enum MergeKey {
     Pattern(u64, DeviceKey, u8),
     /// `SetCurves` on one pattern of one device.
     Curves(u64, DeviceKey, u8),
+    /// `SetDrumStep` or `SetDrumPattern` on one pattern of one device.
+    Drums(u64, DeviceKey, u8),
     /// `SetSplits` on one container.
     Splits(u64, DeviceKey),
     /// `SetMacro` on one target (container, macro, device, param).
@@ -899,6 +976,18 @@ impl Document {
                 merge: Some(m),
                 ..
             } => Some(MergeKey::Curves(*m, device.clone(), *index)),
+            Command::SetDrumStep {
+                device,
+                index,
+                merge: Some(m),
+                ..
+            }
+            | Command::SetDrumPattern {
+                device,
+                index,
+                merge: Some(m),
+                ..
+            } => Some(MergeKey::Drums(*m, device.clone(), *index)),
             Command::Container(ContainerCommand::SetSplits {
                 container,
                 merge: Some(m),
@@ -944,6 +1033,9 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Curves { new, .. }), Edit::Curves { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Drums { new, .. }), Edit::Drums { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             (Some(Edit::ConsoleVcas { new, .. }), Edit::ConsoleVcas { new: latest, .. })
@@ -1067,6 +1159,12 @@ impl Document {
                             | Command::SetZones { .. }
                             | Command::SetPattern { .. }
                             | Command::SetCurves { .. }
+                            | Command::SetDrumStep { .. }
+                            | Command::SetDrumLane { .. }
+                            | Command::SetDrumPattern { .. }
+                            | Command::AddDrumPattern { .. }
+                            | Command::RemoveDrumPattern { .. }
+                            | Command::DuplicateDrumPattern { .. }
                             | Command::AddPattern { .. }
                             | Command::RemovePattern { .. }
                             | Command::DuplicatePattern { .. }
@@ -1304,6 +1402,12 @@ impl Document {
             | Command::AddPattern { .. }
             | Command::RemovePattern { .. }
             | Command::DuplicatePattern { .. }) => steps_cmd::plan(doc, registry, command)?,
+            command @ (Command::SetDrumStep { .. }
+            | Command::SetDrumLane { .. }
+            | Command::SetDrumPattern { .. }
+            | Command::AddDrumPattern { .. }
+            | Command::RemoveDrumPattern { .. }
+            | Command::DuplicateDrumPattern { .. }) => drums_cmd::plan(doc, registry, command)?,
             Command::Container(c) => container_cmd::plan(doc, registry, c)?,
             Command::Plugin(c) => plugin_cmd::plan(doc, registry, c)?,
             Command::RegisterAsset { .. } => unreachable!("handled before planning"),

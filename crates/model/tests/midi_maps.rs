@@ -585,9 +585,9 @@ fn bad_preset_files_are_refused_with_their_json_path() {
 fn mappings_round_trip_in_format_28_in_a_stable_text() {
     let (d, r) = mapped();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 32);
+    assert_eq!(PROJECT_VERSION, 33);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 32);
+    assert_eq!(v["version"], 33);
     let maps = &v["midi_maps"];
     assert_eq!(maps.as_array().unwrap().len(), 7);
     assert_eq!(maps[0]["id"], 1);
@@ -631,12 +631,12 @@ fn a_project_without_mappings_differs_from_its_version_27_file_in_the_version_li
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("midi_maps"));
-    let v27 = text.replace("\"version\": 32", "\"version\": 27");
+    let v27 = text.replace("\"version\": 33", "\"version\": 27");
     let loaded = load_project(&v27, &r).unwrap();
     assert!(loaded.midi_maps.is_empty());
     assert_eq!(save_project(&loaded), text);
     // Before the format a file has no field for them.
-    let with = save_project(mapped().0.doc()).replace("\"version\": 32", "\"version\": 27");
+    let with = save_project(mapped().0.doc()).replace("\"version\": 33", "\"version\": 27");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("midi_maps"), "{e}");
 }

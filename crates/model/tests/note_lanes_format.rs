@@ -72,7 +72,7 @@ fn refused(reg: &Registry, text: &str) -> String {
 
 #[test]
 fn the_project_version_is_thirty_one() {
-    assert_eq!(PROJECT_VERSION, 32);
+    assert_eq!(PROJECT_VERSION, 33);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn load_project_version_29_file_loads_one_note_lane_and_resaves_as_30() {
     assert_eq!(loaded.song.tracks[0].note_lane_count(), 1);
     // A project of single unnamed lanes differs from its version 29 file in the version line.
     assert_eq!(save_project(&loaded), new);
-    assert_eq!(new.replacen("\"version\": 32", "\"version\": 29", 1), old);
+    assert_eq!(new.replacen("\"version\": 33", "\"version\": 29", 1), old);
 }
 
 #[test]

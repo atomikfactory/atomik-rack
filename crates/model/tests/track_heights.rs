@@ -171,7 +171,7 @@ fn heights_round_trip_canonically() {
     .unwrap();
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 32);
+    assert_eq!(v["version"], 33);
     assert_eq!(
         v["song"]["track_heights"],
         json!({"lead": 24, "synth": 150})

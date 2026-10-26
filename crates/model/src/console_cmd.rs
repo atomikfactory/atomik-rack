@@ -350,6 +350,7 @@ fn master_device(key: DeviceKey, name: String) -> RackDevice {
         zones: Vec::new(),
         steps: None,
         curves: None,
+        drums: None,
         inner: None,
         plugin: None,
         column: 0,

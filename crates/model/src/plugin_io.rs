@@ -406,6 +406,8 @@ pub(crate) fn stand_in_registry(
             copy.register_with_samples(factory).map_err(fail)?;
         } else if registry.takes_curves(t) {
             copy.register_with_curves(factory).map_err(fail)?;
+        } else if registry.takes_drums(t) {
+            copy.register_with_drums(factory).map_err(fail)?;
         } else if registry.takes_player_data(t) {
             copy.register_with_player_data(factory).map_err(fail)?;
         } else {

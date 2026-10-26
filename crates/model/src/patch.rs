@@ -186,6 +186,11 @@ pub(crate) const DEVICE_FIELDS_V32: &[&str] = &[
     "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
     "inner", "plugin",
 ];
+/// Project format v33 adds `drums`.
+pub(crate) const DEVICE_FIELDS_V33: &[&str] = &[
+    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
+    "drums", "inner", "plugin",
+];
 
 /// How the device objects of a file are read.
 #[derive(Clone, Copy)]
@@ -456,6 +461,9 @@ pub(crate) fn load_device(
                 if !registry.takes_player_data(type_id) {
                     return Err(steps_path.error(format!("{type_id} does not take pattern data")));
                 }
+                if registry.takes_drums(type_id) {
+                    return Err(steps_path.error(format!("{type_id} takes drum data, not steps")));
+                }
                 Some(crate::project::load_steps(v, &steps_path)?)
             }
             None => None,
@@ -467,6 +475,16 @@ pub(crate) fn load_device(
                     return Err(curves_path.error(format!("{type_id} does not take curves")));
                 }
                 Some(crate::project::load_curves(v, &curves_path)?)
+            }
+            None => None,
+        },
+        drums: match obj.get("drums") {
+            Some(v) => {
+                let drums_path = path.field("drums");
+                if !registry.takes_drums(type_id) {
+                    return Err(drums_path.error(format!("{type_id} does not take drum data")));
+                }
+                Some(crate::project::load_drums(v, &drums_path)?)
             }
             None => None,
         },
@@ -683,6 +701,14 @@ pub(crate) fn write_device(
 {p}\"curves\": "
         );
         crate::project::write_curves(w, curves, &p);
+    }
+    if let Some(drums) = d.drums.as_ref().filter(|_| project) {
+        let _ = write!(
+            w,
+            ",
+{p}\"drums\": "
+        );
+        crate::project::write_drums(w, drums, &p);
     }
     if let Some(inner) = d.inner.as_ref().filter(|_| project) {
         let _ = write!(w, ",\n{p}\"inner\": ");
