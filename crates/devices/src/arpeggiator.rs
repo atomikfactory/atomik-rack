@@ -20,6 +20,9 @@
 //!   transport, change of clock source), `AllOff`, and a `reset` leaves an `AllOff` for the next
 //!   batch. A released key does not cut its note: the scheduled gate end closes it.
 //! * **Velocity** is the key's input velocity (`input`) or `velocity.fixed`.
+//! * **Bypass** (`bypass`, last param): the arpeggiator closes what it sent and its input set, then
+//!   `notes_in` goes straight to `notes_out` (see `crate::note_fx::PlayerBypass`). A key held at a
+//!   switch is not retriggered: it is ignored until its own Off.
 //! * **Meter values:** the number of held keys, then the next 8 keys the arpeggiator will play (0 =
 //!   none; in chord mode the lowest key of the chord).
 
@@ -31,9 +34,12 @@ use atomik_device_sdk::{
 };
 use atomik_dsp::rng::{below, hash64};
 
+use crate::bypass::bypass_param;
 use crate::note_clock::{
-    Grid, JumpTracker, NOTES_IN, NoteCore, PLAYER_SOCKETS, Segment, StepHost, run_segment, seed_mix,
+    Grid, JumpTracker, NOTES_IN, NOTES_OUT, NoteCore, PLAYER_SOCKETS, Segment, StepHost,
+    run_segment, seed_mix,
 };
+use crate::note_fx::PlayerBypass;
 
 const fn param(
     id: u32,
@@ -71,8 +77,9 @@ const P_VEL_MODE: u32 = 6;
 const P_VEL_FIXED: u32 = 7;
 const P_RUN: u32 = 8;
 const P_SEED: u32 = 9;
+const P_BYPASS: u32 = 10;
 
-static PARAMS: [ParamDescriptor; 10] = [
+static PARAMS: [ParamDescriptor; 11] = [
     param(P_MODE, "mode", "Mode", (0.0, 5.0, 0.0), MODES, true),
     param(P_RATE, "rate", "Rate", (0.0, 6.0, 3.0), RATES, true),
     param(
@@ -125,6 +132,7 @@ static PARAMS: [ParamDescriptor; 10] = [
         Unit::None,
         true,
     ),
+    bypass_param(P_BYPASS),
 ];
 
 /// Static description of the arpeggiator.
@@ -320,6 +328,7 @@ fn pick(mode: Mode, sorted: &[u8], order: &[u8], octaves: u32, n: u64, rnd: u64)
 pub struct Arpeggiator {
     core: NoteCore,
     clock: JumpTracker,
+    bypass: PlayerBypass,
     seed: u64,
     seed_mix: u64,
     // Params.
@@ -355,6 +364,7 @@ impl Arpeggiator {
         Self {
             core: NoteCore::new(),
             clock: JumpTracker::new(),
+            bypass: PlayerBypass::new(),
             seed: 0,
             seed_mix: 0,
             mode: Mode::Up,
@@ -599,6 +609,9 @@ impl Device for Arpeggiator {
 
     fn reset(&mut self) {
         self.core.reset();
+        if self.bypass.reset() {
+            self.core.flush_alloff = true;
+        }
         self.clock.invalidate();
         self.set.clear();
         self.cycle = 0;
@@ -629,16 +642,36 @@ impl Device for Arpeggiator {
             P_SEED => {
                 self.seed_mix = seed_mix(self.seed, plain.round().clamp(0.0, 999.0) as u16);
             }
+            P_BYPASS => self.bypass.set_param(plain),
             _ => {}
         }
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         let time = ctx.time;
-        self.inbuf.clear();
-        self.inbuf.extend_from_slice(ctx.notes_in(NOTES_IN));
-        self.in_cursor = 0;
         self.core.begin_batch(ctx);
+        if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
+            // The switch closes what the arpeggiator sent and starts it from nothing.
+            self.core.close_all(ctx, 0);
+            self.set.clear();
+            self.cycle = 0;
+            self.clock.invalidate();
+            self.int_valid = false;
+            self.unlatch = false;
+        }
+        self.inbuf.clear();
+        self.in_cursor = 0;
+        for i in 0..ctx.notes_in(NOTES_IN).len() {
+            let e = ctx.notes_in(NOTES_IN)[i];
+            if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
+                self.inbuf.push(e);
+            }
+        }
+        if self.bypass.is_active() {
+            self.update_preview();
+            self.core.end_batch(ctx);
+            return;
+        }
         if self.unlatch {
             self.unlatch = false;
             self.set.unlatch();
