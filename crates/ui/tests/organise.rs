@@ -7,9 +7,10 @@
 mod support;
 
 use atomik_device_sdk::Registry;
-use atomik_model::{Command, DeviceKey, Document, SongCommand};
+use atomik_model::{ClipId, Command, DeviceKey, Document, SongCommand};
 use atomik_ui::arrangement::{
     FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
+    TRACK_INDENT, TRACK_LIST_WIDTH,
 };
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::Point;
@@ -557,6 +558,93 @@ fn double_clicking_a_note_lane_label_still_renames_the_lane() {
         [SongCommand::RenameLane { lane: 1, .. }]
     ));
     assert!(commands(&actions).len() == 1, "no track rename");
+}
+
+// ------------------------------------------------------------------ indent
+
+/// `bass` and `lead` in "Folder 1", then `lead` alone in a folder inside it: `bass` is at depth
+/// 1, `lead` at depth 2, `keys` and `pad` at the top.
+fn nested() -> (Document, Registry, ArrangementView) {
+    let (mut d, reg, mut v) = grouped();
+    d.apply(
+        Command::Song(SongCommand::GroupTracks {
+            devices: vec![key("lead")],
+            name: "Inner".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    (d, reg, v)
+}
+
+fn mute_x(v: &ArrangementView, device: &str) -> f64 {
+    v.track_button_center(&key(device), TrackButton::Mute)
+        .unwrap()
+        .x
+}
+
+#[test]
+fn header_indent_moves_the_controls_of_a_folder_track_right_by_a_step_per_level() {
+    let (_, _, v) = nested();
+    assert_eq!(
+        (v.track_depth(&key("bass")), v.track_depth(&key("lead"))),
+        (1, 2)
+    );
+    let top = mute_x(&v, "pad");
+    assert!((mute_x(&v, "bass") - top - TRACK_INDENT).abs() < 1e-9);
+    assert!((mute_x(&v, "lead") - top - 2.0 * TRACK_INDENT).abs() < 1e-9);
+    let chevron = |d: &str| {
+        v.track_button_center(&key(d), TrackButton::Expand)
+            .unwrap()
+            .x
+    };
+    assert!((chevron("lead") - chevron("pad") - 2.0 * TRACK_INDENT).abs() < 1e-9);
+    let name = |d: &str| v.track_name_center(&key(d)).unwrap().x;
+    assert!(name("lead") > name("pad"), "the name starts further right");
+}
+
+#[test]
+fn header_indent_does_not_move_the_clip_area() {
+    let (_, _, nested) = nested();
+    let (_, _, flat) = setup();
+    for id in [1, 2, 3] {
+        let (a, b) = (nested.clip_rect(ClipId(id)), flat.clip_rect(ClipId(id)));
+        assert_eq!(a.map(|r| (r.x0, r.x1)), b.map(|r| (r.x0, r.x1)));
+    }
+}
+
+#[test]
+fn header_indent_hit_testing_follows_the_shifted_buttons() {
+    let (mut d, reg, mut v) = nested();
+    for button in [TrackButton::Mute, TrackButton::Solo, TrackButton::Arm] {
+        let at = v.track_button_center(&key("lead"), button).unwrap();
+        let actions = click(&d, &reg, &mut v, at);
+        let cmds = song_cmds(&actions);
+        assert!(
+            matches!(cmds.as_slice(), [SongCommand::SetTrackFlags { device, .. }] if *device == key("lead")),
+            "{button:?}: {cmds:?}"
+        );
+        apply(&mut d, &reg, &mut v, &actions);
+    }
+}
+
+#[test]
+fn header_indent_keeps_every_button_inside_the_header() {
+    let (_, _, v) = nested();
+    let limit = v.bounds().x0 + TRACK_LIST_WIDTH;
+    for d in ["bass", "lead", "pad"] {
+        for b in [
+            TrackButton::Expand,
+            TrackButton::Mute,
+            TrackButton::Solo,
+            TrackButton::Arm,
+            TrackButton::AddLane,
+        ] {
+            let r = v.track_button_center(&key(d), b).unwrap();
+            assert!(r.x < limit - 6.0, "{d} {b:?} at {}", r.x);
+        }
+    }
 }
 
 #[test]

@@ -10,6 +10,9 @@
 //!   them have the flag, a press sets the flag on all of them unless all have it already, and
 //!   the audio is the tracks' own mute and solo, nothing more. Its timeline part shows the
 //!   clips of the folder's tracks as thin bars, whether it is collapsed or not.
+//! * The header of a track in a folder is **indented**: its content moves right by
+//!   [`TRACK_INDENT`] per level of nesting (three at most), the clips stay where they are. The
+//!   folder guides stay at the left edge.
 //! * A **track's name** is typed in its header: a double-click on the name, or `sequencer.rename_track`
 //!   on the selected track. The edit is the one of the folder names (Enter or a press elsewhere
 //!   commits, Escape cancels) and commits the mixer's `Command::Rename`, so a bus or a channel is
@@ -59,6 +62,11 @@ pub const HEIGHT_SMALL: u16 = 32;
 pub const HEIGHT_LARGE: u16 = 120;
 /// How far each level of nesting moves a folder's controls to the right.
 const DEPTH_STEP: f64 = 8.0;
+/// How far each level of nesting moves the content of a track header to the right.
+pub const TRACK_INDENT: f64 = 10.0;
+/// The deepest level the header indent follows: the content of a track nested deeper sits where
+/// this one does, so the controls still fit in the track list.
+const MAX_INDENT_LEVELS: usize = 3;
 /// Longest a track's name can be typed in the header (the console's limit for a bus name).
 const MAX_TRACK_NAME_CHARS: usize = atomik_model::console::MAX_BUS_NAME_CHARS;
 /// Longest first line of a comment the tooltip shows, in characters.
@@ -268,6 +276,14 @@ impl ArrangementView {
         })
     }
 
+    /// How far the content of a track's header (and of its lanes' headers) is moved right:
+    /// [`TRACK_INDENT`] per level of folder it is in, up to [`MAX_INDENT_LEVELS`]. The clips do
+    /// not move.
+    pub(super) fn track_indent(&self, track: usize) -> f64 {
+        let depth = self.og.shape.get(track).map_or(0, |s| s.0);
+        depth.min(MAX_INDENT_LEVELS) as f64 * TRACK_INDENT
+    }
+
     /// The nesting depth of a track (0 at the top level).
     pub fn track_depth(&self, device: &DeviceKey) -> usize {
         self.song
@@ -433,7 +449,7 @@ impl ArrangementView {
     /// The name of a track in its header row `hr`: where a double-click renames it. It is on
     /// the first line of the header, or the only one of a compact row.
     pub(super) fn track_name_rect(&self, hr: Rect, track: usize) -> Rect {
-        let x = hr.x0 + 28.0;
+        let x = hr.x0 + 28.0 + self.track_indent(track);
         let cy = if hr.height() < super::COMPACT_BELOW {
             hr.y0 + hr.height() / 2.0
         } else {
@@ -456,7 +472,7 @@ impl ArrangementView {
             TRACK_LIST_WIDTH - 62.0
         };
         let frozen = if tr.frozen.is_some() { 16.0 } else { 0.0 };
-        (base - frozen).max(16.0)
+        (base - frozen - self.track_indent(track)).max(16.0)
     }
 
     /// What a press on the name of a track header is, when it is on it.
@@ -1233,7 +1249,7 @@ impl ArrangementView {
     /// The fold chevron at the left of an automation lane header.
     pub(super) fn paint_lane_fold(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
         let t = &self.st.base;
-        let r = self.lane_button_rect(hr, LaneButton::Fold);
+        let r = self.lane_button_rect(hr, track, LaneButton::Fold);
         let ctr = r.center();
         let folded = self.is_lane_folded(track, lane);
         let mut chev = BezPath::new();
@@ -1262,18 +1278,19 @@ impl ArrangementView {
         accent: Color,
     ) {
         let st = &self.st;
+        let x = hr.x0 + self.track_indent(track);
         sp::rect(c, hr, st.header_lane);
         sp::rect(
             c,
-            Rect::new(hr.x0 + 16.0, hr.y0 + 3.0, hr.x0 + 18.0, hr.y1 - 3.0),
+            Rect::new(x + 16.0, hr.y0 + 3.0, x + 18.0, hr.y1 - 3.0),
             accent.with_alpha(0.7),
         );
         self.paint_lane_fold(c, hr, track, lane);
-        let name = fit_label(self.param_of(track, lane).name, 150.0, 9.0);
+        let name = fit_label(self.param_of(track, lane).name, 150.0 - (x - hr.x0), 9.0);
         sp::label(
             c,
             &name,
-            hr.x0 + 26.0,
+            x + 26.0,
             hr.center().y + 3.0,
             9.0,
             st.base.text_muted,

@@ -66,7 +66,7 @@ pub use lanes::LaneMenu;
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
 pub use organise::{
     FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
-    OrgMenu,
+    OrgMenu, TRACK_INDENT,
 };
 pub use takes::{TAKE_GROUP_HEIGHT, TAKE_ROW_HEIGHT, take_color};
 pub use tempo::TempoMenu;
@@ -781,10 +781,11 @@ impl ArrangementView {
 
     /// The rectangle of a control in the header row `row` of an automation lane. The controls
     /// sit at the right end of the header, centred vertically.
-    fn lane_button_rect(&self, row: Rect, button: LaneButton) -> Rect {
+    fn lane_button_rect(&self, row: Rect, track: usize, button: LaneButton) -> Rect {
         let (x, cy) = (self.bounds.x0, row.y0 + row.height() / 2.0);
+        let indent = self.track_indent(track);
         match button {
-            LaneButton::Fold => Rect::new(x + 3.0, cy - 7.0, x + 15.0, cy + 7.0),
+            LaneButton::Fold => Rect::new(x + indent + 3.0, cy - 7.0, x + indent + 15.0, cy + 7.0),
             LaneButton::Mute => self.lane_mute_rect(row, 1),
             LaneButton::Mode => Rect::new(x + 134.0, cy - 8.0, x + 168.0, cy + 8.0),
             LaneButton::Arm => Rect::new(x + 174.0, cy - 8.0, x + 194.0, cy + 8.0),
@@ -1099,7 +1100,7 @@ impl ArrangementView {
             return None;
         }
         let rr = self.row_rect(self.row_of(track, 0)?);
-        button_shown(rr, button).then(|| self.button_rect(rr, button).center())
+        button_shown(rr, button).then(|| self.track_button_rect(rr, track, button).center())
     }
 
     /// Centre of a control in the header of the automation lane of `param` on `device`'s track
@@ -1113,7 +1114,7 @@ impl ArrangementView {
         let track = self.song.tracks.iter().position(|t| &t.device == device)?;
         let lane = self.song.tracks[track].automation_lane(param)?;
         let rr = self.row_rect(self.row_of(track, lane)?);
-        Some(self.lane_button_rect(rr, button).center())
+        Some(self.lane_button_rect(rr, track, button).center())
     }
 
     /// Centre of the "+ track" row of a device that can have a track but has none.
@@ -1664,6 +1665,29 @@ impl ArrangementView {
         }
     }
 
+    /// A control's rectangle in the header of track `track`, whose first lane is the row `row`:
+    /// [`Self::button_rect`] moved right by the track's indent. The buttons that sit before the
+    /// right end of the header move with it; the input selector gives up width instead, and the
+    /// monitor button, at the right end, stays. A compact row moves its buttons by at most
+    /// [`COMPACT_SHIFT`], so the last one stays inside the header.
+    fn track_button_rect(&self, row: Rect, track: usize, button: TrackButton) -> Rect {
+        let r = self.button_rect(row, button);
+        let indent = self.track_indent(track);
+        let by = |dx: f64| Rect::new(r.x0 + dx, r.y0, r.x1 + dx, r.y1);
+        match button {
+            TrackButton::Expand | TrackButton::AddLane => by(indent),
+            TrackButton::Mute | TrackButton::Solo | TrackButton::Arm => {
+                by(if row.height() < COMPACT_BELOW {
+                    indent.min(COMPACT_SHIFT)
+                } else {
+                    indent
+                })
+            }
+            TrackButton::Input => Rect::new(r.x0 + indent, r.y0, r.x1, r.y1),
+            TrackButton::Monitor => r,
+        }
+    }
+
     fn find_clip(&self, id: ClipId) -> Option<(usize, usize, &Clip)> {
         find_clip(&self.song, id)
     }
@@ -1863,7 +1887,9 @@ impl ArrangementView {
                     }
                     if lane == 0 {
                         for &b in self.header_buttons(track) {
-                            if button_shown(rr, b) && self.button_rect(rr, b).contains(pos) {
+                            if button_shown(rr, b)
+                                && self.track_button_rect(rr, track, b).contains(pos)
+                            {
                                 return Hit::Button(track, b);
                             }
                         }
@@ -1888,7 +1914,7 @@ impl ArrangementView {
                             &[LaneButton::Fold, LaneButton::Arm, LaneButton::Mode]
                         };
                         for &b in buttons {
-                            if self.lane_button_rect(rr, b).contains(pos) {
+                            if self.lane_button_rect(rr, track, b).contains(pos) {
                                 return Hit::LaneButton(track, lane, b);
                             }
                         }
@@ -2509,7 +2535,7 @@ impl ArrangementView {
                 let Some(row) = self.row_of(track, 0) else {
                     return;
                 };
-                let br = self.button_rect(self.row_rect(row), TrackButton::AddLane);
+                let br = self.track_button_rect(self.row_rect(row), track, TrackButton::AddLane);
                 let menu = Menu {
                     device: t.device.clone(),
                     kind: MenuKind::Param,
@@ -2530,7 +2556,7 @@ impl ArrangementView {
                 let Some(row) = self.row_of(track, 0) else {
                     return;
                 };
-                let br = self.button_rect(self.row_rect(row), TrackButton::Input);
+                let br = self.track_button_rect(self.row_rect(row), track, TrackButton::Input);
                 let menu = Menu {
                     device,
                     kind: MenuKind::Input(options.clone()),
@@ -4952,22 +4978,16 @@ impl ArrangementView {
                         self.paint_folded_lane_header(c, hr, *track, *lane, accent);
                     } else {
                         sp::rect(c, hr, st.header_lane);
+                        let x = hr.x0 + self.track_indent(*track);
                         sp::rect(
                             c,
-                            Rect::new(hr.x0 + 16.0, hr.y0 + 6.0, hr.x0 + 18.0, hr.y1 - 6.0),
+                            Rect::new(x + 16.0, hr.y0 + 6.0, x + 18.0, hr.y1 - 6.0),
                             accent.with_alpha(0.7),
                         );
                         let p = self.param_of(*track, *lane);
-                        let name = fit_label(p.name, LANE_NAME_WIDTH, 10.0);
-                        sp::label(
-                            c,
-                            &name,
-                            hr.x0 + 26.0,
-                            hr.y0 + 21.0,
-                            10.0,
-                            t.text,
-                            Align::Start,
-                        );
+                        let name_w = LANE_NAME_WIDTH - (x - hr.x0);
+                        let name = fit_label(p.name, name_w, 10.0);
+                        sp::label(c, &name, x + 26.0, hr.y0 + 21.0, 10.0, t.text, Align::Start);
                         let range = format!(
                             "{} – {}",
                             crate::widget::format_value(&p, p.min),
@@ -4975,8 +4995,8 @@ impl ArrangementView {
                         );
                         sp::label(
                             c,
-                            &fit_label(&range, LANE_NAME_WIDTH, 8.0),
-                            hr.x0 + 26.0,
+                            &fit_label(&range, name_w, 8.0),
+                            x + 26.0,
                             hr.y0 + 35.0,
                             8.0,
                             t.text_muted,
@@ -5017,7 +5037,7 @@ impl ArrangementView {
         let armed = self.armed_lanes.contains(&(device.clone(), param.clone()));
         let hovered = |b| self.hover == Some(Hit::LaneButton(track, lane, b));
         let mode = self.song.write_mode(&device, &param);
-        let mr = self.lane_button_rect(hr, LaneButton::Mode);
+        let mr = self.lane_button_rect(hr, track, LaneButton::Mode);
         sp::button(c, st, mr, "", None, hovered(LaneButton::Mode));
         sp::label(
             c,
@@ -5028,7 +5048,7 @@ impl ArrangementView {
             if armed { t.text } else { t.text_muted },
             Align::Center,
         );
-        let ar = self.lane_button_rect(hr, LaneButton::Arm);
+        let ar = self.lane_button_rect(hr, track, LaneButton::Arm);
         sp::button(
             c,
             st,
@@ -5061,7 +5081,7 @@ impl ArrangementView {
         sp::line(c, hr.x0, hr.y0 + 0.5, hr.x1, hr.y0 + 0.5, t.bevel_light);
         sp::rect(c, Rect::new(hr.x0, hr.y0, hr.x0 + 4.0, hr.y1), accent);
         // Expand chevron (dim when the track has no automation lanes).
-        let er = self.button_rect(hr, TrackButton::Expand);
+        let er = self.track_button_rect(hr, track, TrackButton::Expand);
         let expanded = !self.collapsed.contains(&tr.device);
         let has_lanes = tr.lanes.len() > tr.note_lane_count().max(1);
         let col = if has_lanes {
@@ -5091,10 +5111,11 @@ impl ArrangementView {
         } else {
             hr.y0 + 21.0
         };
-        c.text(&TextRun::new(name, pt(hr.x0 + 30.0, name_y), 11.5, t.text).weight(600));
+        let name_x = hr.x0 + 30.0 + self.track_indent(track);
+        c.text(&TextRun::new(name, pt(name_x, name_y), 11.5, t.text).weight(600));
         if frozen {
             // The ice mark after the name: the track plays its render.
-            let x = hr.x0 + 30.0 + name_width + 7.0;
+            let x = name_x + name_width + 7.0;
             sp::snowflake(c, pt(x, name_y - 4.0), 5.0, ICE);
         }
         let hovered = |b| self.hover == Some(Hit::Button(track, b));
@@ -5106,7 +5127,7 @@ impl ArrangementView {
             sp::button(
                 c,
                 st,
-                self.button_rect(hr, b),
+                self.track_button_rect(hr, track, b),
                 label,
                 on.then_some(lit),
                 hovered(b),
@@ -5118,7 +5139,7 @@ impl ArrangementView {
         if tr.is_audio() {
             let header = self.audio_header(&tr.device);
             let input = header.map_or(InputSel::Off, |h| h.input);
-            let ir = self.button_rect(hr, TrackButton::Input);
+            let ir = self.track_button_rect(hr, track, TrackButton::Input);
             sp::lcd(c, st, ir, hovered(TrackButton::Input).then_some(t.focus));
             let label = fit_label(&audio::input_label(input), ir.width() - 8.0, 9.0);
             sp::label(
@@ -5148,7 +5169,7 @@ impl ArrangementView {
                 Align::Center,
             );
         } else {
-            let ar = self.button_rect(hr, TrackButton::AddLane);
+            let ar = self.track_button_rect(hr, track, TrackButton::AddLane);
             sp::button(c, st, ar, "", None, hovered(TrackButton::AddLane));
             sp::label(
                 c,
@@ -5327,6 +5348,9 @@ fn value_range(r: Rect) -> (f64, f64) {
 
 /// Room for the name of an automation lane in its header, left of the write controls.
 const LANE_NAME_WIDTH: f64 = 104.0;
+/// The most a compact header (one line) moves its M, S and R buttons for the indent: the last
+/// one ends 4 px inside the track list.
+const COMPACT_SHIFT: f64 = 24.0;
 
 /// The short label of a write mode on the lane header.
 fn mode_label(mode: WriteMode) -> &'static str {
