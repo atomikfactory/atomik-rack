@@ -493,6 +493,21 @@ impl ContextMenu {
         }
     }
 
+    /// What the menu looks like: the highlighted row and the open submenu row of every panel,
+    /// outermost first. Two equal looks paint the same, so a caller repaints only when it
+    /// changes (a pointer move inside one row, or in the padding, changes nothing).
+    pub fn look(&self) -> Vec<(Option<usize>, Option<usize>)> {
+        let mut out = Vec::new();
+        let mut at = self;
+        loop {
+            out.push((at.hover, at.open.as_ref().map(|o| o.row)));
+            match &at.open {
+                Some(o) => at = &o.menu,
+                None => return out,
+            }
+        }
+    }
+
     /// Whether a pointer switch is waiting for its delay (the caller keeps ticking).
     pub fn has_pending(&self) -> bool {
         self.pending.is_some() || self.open.as_ref().is_some_and(|o| o.menu.has_pending())

@@ -3182,7 +3182,6 @@ impl<B: AudioBackend> Shell<B> {
     /// item runs its command as a key would (in the pane the menu belongs to); Escape or a
     /// click elsewhere closes it.
     fn context_menu_event(&mut self, window: WindowKind, event: &UiEvent) -> Vec<ShellRequest> {
-        self.repaint = true;
         let Some(open) = &mut self.context_menu else {
             return Vec::new();
         };
@@ -3191,6 +3190,7 @@ impl<B: AudioBackend> Shell<B> {
         if open.window != window && pointer_pos(event).is_some() {
             if matches!(event, UiEvent::PointerDown { .. }) {
                 self.context_menu = None;
+                self.repaint = true;
             }
             return Vec::new();
         }
@@ -3207,17 +3207,27 @@ impl<B: AudioBackend> Shell<B> {
         }
         if open.menu.wants_close(event) {
             self.context_menu = None;
+            self.repaint = true;
             return Vec::new();
         }
         let pane = open.pane;
+        // Only a change of what the menu shows repaints: a pointer move inside one row does
+        // not, and repainting the window behind the menu is the costly part.
+        let before = open.menu.look();
         match open.menu.handle(event) {
             MenuOutcome::Run { command, arg } => {
                 self.context_menu = None;
+                self.repaint = true;
                 self.set_focus(pane);
                 self.run_command(&command, arg.as_deref())
                     .unwrap_or_default()
             }
-            MenuOutcome::Consumed | MenuOutcome::Ignored => Vec::new(),
+            MenuOutcome::Consumed | MenuOutcome::Ignored => {
+                if open.menu.look() != before {
+                    self.repaint = true;
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -4733,6 +4743,10 @@ mod marker_tests;
 #[cfg(test)]
 #[path = "shell_scale_tests.rs"]
 mod scale_tests;
+
+#[cfg(test)]
+#[path = "shell_menu_perf_tests.rs"]
+mod menu_perf_tests;
 
 #[cfg(test)]
 #[path = "shell_organise_tests.rs"]
