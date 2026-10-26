@@ -60,6 +60,8 @@ pub const KEY_ZOOM_STEP: f64 = 1.25;
 const HEADER_HEIGHT: f64 = TOP_BAR_HEIGHT + SCALE_BAR_HEIGHT;
 const VEL_PAD: f64 = 8.0;
 const EDGE_PX: f64 = 5.0;
+/// How far from the playhead's line a press still grabs it.
+const PLAYHEAD_GRAB: f64 = 3.0;
 const DRAG_THRESHOLD: f64 = 3.0;
 const SCROLL_STEP: f64 = 36.0;
 const ZOOM_STEP: f64 = 1.15;
@@ -162,6 +164,8 @@ pub struct NoteTools {
 enum Hit {
     Top(Option<TopItem>),
     Ruler,
+    /// The playhead's line in the grid (a drag locates).
+    Playhead,
     Keys(u8),
     Note(usize, SpanPart),
     Grid,
@@ -243,6 +247,12 @@ enum Drag {
         start: Point,
         merge: u64,
         moved: bool,
+    },
+    /// Dragging the playhead: every new snapped tick is located.
+    Playhead {
+        /// The pointer's offset from the playhead (content ticks) at the press.
+        grab: i64,
+        last: i64,
     },
     Keys {
         key: u8,
@@ -437,13 +447,14 @@ impl PianoRollView {
         self.repaint = true;
     }
 
-    /// The mouse cursor to show: a horizontal resize cursor over a note's edge (and during an
-    /// edge drag), a move cursor over a note body with Select (and during a move), a crosshair
+    /// The mouse cursor to show: a horizontal resize cursor over a note's edge or the playhead's
+    /// line (and during an edge or playhead drag), a move cursor over a note body with Select (and during a move), a crosshair
     /// for the pencil over the grid (and while drawing or banding).
     pub fn cursor(&self) -> CursorHint {
         match &self.drag {
             Drag::Resize { .. } | Drag::ResizeStart { .. } => return CursorHint::ResizeHorizontal,
             Drag::Move { .. } => return CursorHint::Move,
+            Drag::Playhead { .. } => return CursorHint::ResizeHorizontal,
             Drag::Draw { .. } | Drag::Band { .. } => return CursorHint::Crosshair,
             Drag::None => {}
             _ => return CursorHint::Default,
@@ -454,6 +465,7 @@ impl PianoRollView {
                 CursorHint::ResizeHorizontal
             }
             Hit::Note(_, SpanPart::Body) if tool == Tool::Select => CursorHint::Move,
+            Hit::Playhead => CursorHint::ResizeHorizontal,
             Hit::Grid if tool == Tool::Pencil => CursorHint::Crosshair,
             _ => CursorHint::Default,
         }
@@ -1078,7 +1090,24 @@ impl PianoRollView {
                 return Hit::Note(i, part);
             }
         }
+        // The playhead's line, only where no note was hit, with the Select tool and clear of
+        // the grid's left edge (a stopped playhead sits there, and a band starts there).
+        if self.vp.shown_tool() == Tool::Select
+            && self.playhead_content().is_some_and(|t| {
+                let x = self.axis.tick_to_x(t);
+                x - g.x0 > PLAYHEAD_GRAB && (x - pos.x).abs() <= PLAYHEAD_GRAB
+            })
+        {
+            return Hit::Playhead;
+        }
         Hit::Grid
+    }
+
+    /// The playhead in content ticks (`None` while it is outside the clip's windows).
+    fn playhead_content(&self) -> Option<i64> {
+        self.clip
+            .as_ref()
+            .and_then(|c| seq_edit::song_to_content(c, self.playhead))
     }
 
     fn velocity_bar_at(&self, x: f64) -> Option<usize> {
@@ -1257,7 +1286,13 @@ impl PianoRollView {
         let primary = button == PointerButton::Primary;
         let step = self.step(modifiers);
         let tool = self.vp.effective_tool(modifiers);
-        match self.hit(pos) {
+        let hit = match self.hit(pos) {
+            // The other buttons and the Shift and Ctrl gestures (band, toggle) reach the grid
+            // under the line.
+            Hit::Playhead if !primary || modifiers.shift || modifiers.command() => Hit::Grid,
+            h => h,
+        };
+        match hit {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
             Hit::Top(Some(TopItem::Snap)) => self.snap = self.snap.cycle(primary),
             // The same settings as Cmd+K: the quantize panel's last ones. A right click (or the
@@ -1302,6 +1337,14 @@ impl PianoRollView {
                 let c = snap_round(self.axis.x_to_tick(pos.x), step);
                 let t = self.content_to_song(c).max(0);
                 out.push(UiAction::Transport(TransportAction::Locate(t)));
+                self.drag = Drag::Playhead { grab: 0, last: t };
+            }
+            Hit::Playhead => {
+                let at = self.playhead_content().unwrap_or(0);
+                self.drag = Drag::Playhead {
+                    grab: self.axis.x_to_tick(pos.x) - at,
+                    last: self.playhead,
+                };
             }
             Hit::Keys(key) if primary => {
                 out.extend(self.audition(key, true));
@@ -1639,6 +1682,15 @@ impl PianoRollView {
             self.ctl_move(pos, modifiers, out);
             return;
         }
+        if let Drag::Playhead { grab, last } = self.drag {
+            let c = snap_round(self.axis.x_to_tick(pos.x) - grab, self.step(modifiers));
+            let t = self.content_to_song(c).max(0);
+            if t != last {
+                self.drag = Drag::Playhead { grab, last: t };
+                out.push(UiAction::Transport(TransportAction::Locate(t)));
+            }
+            return;
+        }
         let step = self.step(modifiers);
         let min = seq_edit::min_length(step, MIN_TICKS);
         let axis = self.axis;
@@ -1672,7 +1724,7 @@ impl PianoRollView {
         self.repaint = true;
         let mut new_sel: Option<BTreeSet<usize>> = None;
         match &mut self.drag {
-            Drag::None | Drag::Ctl { .. } => {}
+            Drag::None | Drag::Ctl { .. } | Drag::Playhead { .. } => {}
             Drag::Pan { last } => {
                 let d = *last - pos;
                 *last = pos;
@@ -1842,7 +1894,7 @@ impl PianoRollView {
     fn pointer_up(&mut self, out: &mut Vec<UiAction>) {
         self.repaint = true;
         match std::mem::replace(&mut self.drag, Drag::None) {
-            Drag::None | Drag::Pan { .. } | Drag::Band { .. } => {}
+            Drag::None | Drag::Pan { .. } | Drag::Band { .. } | Drag::Playhead { .. } => {}
             Drag::Keys { key } => out.extend(self.audition(key, false)),
             Drag::Draw { notes, .. } => {
                 for n in &notes {

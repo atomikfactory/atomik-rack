@@ -207,6 +207,25 @@ fn changes(from: Profile, to: Profile, os: Os) -> String {
     out
 }
 
+/// The pointer gestures of the song views that carry a modifier or a grab of their own. The
+/// snap step is the one of the snap button; the no-snap hold is Ctrl+Alt (Alt alone in the
+/// legacy profile).
+const POINTER_GESTURES: &str = "## Pointer gestures: playhead, locators and markers
+
+| Gesture | Where | Result |
+|---|---|---|
+| Press and drag | Arrangement ruler | Locates the snapped position under the pointer and keeps locating while the pointer moves (not before zero) |
+| Drag the playhead | Arrangement (ruler flag, or its line in the grid) and piano roll (its line in the grid, or the ruler) | Moves the playhead by the distance dragged, snapped |
+| Drag a loop edge | Arrangement ruler, lower band | Moves the left or the right locator, snapped, with one snap step left between them; the loop is set on release |
+| `Alt+click` | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
+| `Ctrl+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| Drag a marker line | Arrangement grid, while the marker strip is shown | Moves the marker, as dragging its label in the strip does |
+| `Ctrl+Alt` held | While dragging any of these | No snap |
+
+The locator clicks win over the razor in the ruler. In the grid the playhead and the marker lines are grabbed within three pixels of the line, with the Select tool, without Shift or `Ctrl` held, and never over the edge, fade, point or mute controls of a clip or a note; elsewhere the press does what it did before.
+
+";
+
 /// The sheet for `profiles` on `oses`; `user` (a `--keymap` file) is applied on top when given.
 /// With both profiles the sheet also lists what the standard profile changed.
 pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) -> String {
@@ -232,6 +251,7 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          `F5` included, still runs as usual. While the panel's search or tag field has focus, \
          only Esc, function keys and the chords with the primary modifier run commands.\n\n",
     );
+    out.push_str(POINTER_GESTURES);
     if profiles.contains(&Profile::Legacy)
         && profiles.contains(&Profile::Standard)
         && let Some(os) = oses.first()
