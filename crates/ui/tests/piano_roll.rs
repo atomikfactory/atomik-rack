@@ -642,3 +642,28 @@ fn right_click_on_a_note_with_pencil_still_removes_it() {
     assert_eq!(c[0].0.len(), bass_line().len() - 1);
     assert!(!c[0].0.contains(&bass_line()[1]));
 }
+
+#[test]
+fn dragging_or_wheeling_the_snap_selector_steps_the_resolutions() {
+    use atomik_ui::UiEvent;
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let s = v.snap_button_center();
+    let end = Point::new(s.x, s.y - 10.0);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(s), mv(end), up(end)]);
+    assert_eq!(v.snap(), Snap::Sixteenth);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(s), up(s)]);
+    assert_eq!(
+        v.snap(),
+        Snap::ThirtySecond,
+        "a click cycles forward as before"
+    );
+    let wheel = |dy: f64| UiEvent::Wheel {
+        delta: Vec2::new(0.0, dy),
+        pos: s,
+        modifiers: Modifiers::NONE,
+    };
+    let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    assert_eq!(v.snap(), Snap::Sixteenth);
+}

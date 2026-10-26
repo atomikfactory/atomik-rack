@@ -25,6 +25,7 @@ use crate::paint::fit_label;
 use crate::quantize_panel::QuantizeAction;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
 use crate::viewport::{Tool, ViewportState};
@@ -180,6 +181,11 @@ enum Hit {
 #[derive(Debug, Clone)]
 enum Drag {
     None,
+    /// Dragging the snap selector: up steps through the resolutions, a press without a drag
+    /// cycles forward on release.
+    Snap {
+        steps: StepDrag,
+    },
     Draw {
         start: Point,
         base: Vec<Note>,
@@ -1235,7 +1241,9 @@ impl PianoRollView {
                 pos,
                 modifiers,
             } => {
-                if modifiers.zooms_vertically() {
+                if self.hit(*pos) == Hit::Top(Some(TopItem::Snap)) {
+                    self.snap = self.snap.offset(wheel_steps(delta.y));
+                } else if modifiers.zooms_vertically() {
                     // Alt or Ctrl+Shift + wheel: the key zoom, the key under the pointer
                     // stays under it.
                     self.zoom_keys_to(
@@ -1294,7 +1302,12 @@ impl PianoRollView {
         };
         match hit {
             Hit::Top(Some(TopItem::Tool(t))) if primary => self.set_tool(t),
-            Hit::Top(Some(TopItem::Snap)) => self.snap = self.snap.cycle(primary),
+            Hit::Top(Some(TopItem::Snap)) if primary => {
+                self.drag = Drag::Snap {
+                    steps: StepDrag::new(pos.y),
+                }
+            }
+            Hit::Top(Some(TopItem::Snap)) => self.snap = self.snap.cycle(false),
             // The same settings as Cmd+K: the quantize panel's last ones. A right click (or the
             // neighbouring button) opens that panel.
             Hit::Top(Some(TopItem::Quantize)) if primary => self.quantize(out),
@@ -1694,6 +1707,14 @@ impl PianoRollView {
             self.ctl_move(pos, modifiers, out);
             return;
         }
+        if let Drag::Snap { steps } = &mut self.drag {
+            let n = steps.update(pos.y, PX_PER_STEP);
+            if n != 0 {
+                self.snap = self.snap.offset(n);
+            }
+            self.repaint = true;
+            return;
+        }
         if let Drag::Playhead { grab, last } = self.drag {
             let c = snap_round(self.axis.x_to_tick(pos.x) - grab, self.step(modifiers));
             let t = self.content_to_song(c).max(0);
@@ -1736,7 +1757,7 @@ impl PianoRollView {
         self.repaint = true;
         let mut new_sel: Option<BTreeSet<usize>> = None;
         match &mut self.drag {
-            Drag::None | Drag::Ctl { .. } | Drag::Playhead { .. } => {}
+            Drag::None | Drag::Ctl { .. } | Drag::Playhead { .. } | Drag::Snap { .. } => {}
             Drag::Pan { last } => {
                 let d = *last - pos;
                 *last = pos;
@@ -1907,6 +1928,11 @@ impl PianoRollView {
         self.repaint = true;
         match std::mem::replace(&mut self.drag, Drag::None) {
             Drag::None | Drag::Pan { .. } | Drag::Band { .. } | Drag::Playhead { .. } => {}
+            Drag::Snap { steps } => {
+                if !steps.moved() {
+                    self.snap = self.snap.cycle(true);
+                }
+            }
             Drag::Keys { key } => out.extend(self.audition(key, false)),
             Drag::Draw { notes, .. } => {
                 for n in &notes {

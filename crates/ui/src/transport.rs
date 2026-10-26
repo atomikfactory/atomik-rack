@@ -11,9 +11,10 @@ use crate::action::{TransportAction, UiAction};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::step_drag::{PX_PER_STEP, StepDrag, step_index, wheel_steps};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
-use atomik_core::{TempoPoint, TempoTable};
+use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, TempoPoint, TempoTable};
 use atomik_device_sdk::Registry;
 use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
@@ -26,6 +27,68 @@ const BUTTON_H: f64 = 26.0;
 const TEMPO_TEXT_MAX: usize = 7;
 /// `32/16`.
 const METER_TEXT_MAX: usize = 5;
+/// The decimals of the tempo readout (`.00`) take this much of its right end: a drag or a wheel
+/// there steps hundredths, on the rest whole BPM.
+const TEMPO_DECIMALS_W: f64 = 24.0;
+/// The tempo's right padding in its readout.
+const LCD_PAD: f64 = 8.0;
+/// Whole-BPM step with Shift (tenths).
+const TEMPO_FINE: f64 = 0.1;
+/// Merge ids of the transport's drags start here (the views use multiples of 2^40 up to 12).
+pub const TRANSPORT_MERGE_BASE: u64 = 13 << 40;
+
+/// The part of a readout a drag or the wheel changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Field {
+    /// The whole BPM (tenths with Shift).
+    TempoWhole,
+    /// The two decimals of the BPM.
+    TempoDecimals,
+    /// Beats per bar.
+    MeterNum,
+    /// The beat unit (2, 4, 8, 16).
+    MeterDen,
+}
+
+/// A drag on a readout: the value is tracked here so the drag never depends on the document
+/// catching up between two moves.
+#[derive(Debug, Clone, Copy)]
+struct ValueDrag {
+    field: Field,
+    steps: StepDrag,
+    /// The tempo or meter event the drag changes (fixed at the press).
+    event: usize,
+    bpm: f64,
+    num: u8,
+    den: u8,
+    /// The last value sent, so a drag held against the end of the range sends nothing.
+    sent: (f64, u8, u8),
+    merge: u64,
+    changed: bool,
+}
+
+/// The BPM `notches` steps from `bpm` on `field`: whole BPM (tenths when `fine`) or hundredths,
+/// clamped to the tempo range and rounded to hundredths.
+fn step_bpm(bpm: f64, field: Field, notches: i32, fine: bool) -> f64 {
+    let step = match field {
+        Field::TempoDecimals => 0.01,
+        _ if fine => TEMPO_FINE,
+        _ => 1.0,
+    };
+    let v = (bpm + f64::from(notches) * step).clamp(TEMPO_MIN, TEMPO_MAX);
+    (v * 100.0).round() / 100.0
+}
+
+/// Beats per bar `notches` steps from `num`, within 1..=32.
+fn step_num(num: u8, notches: i32) -> u8 {
+    (i32::from(num) + notches).clamp(1, i32::from(MAX_BEATS_PER_BAR)) as u8
+}
+
+/// The beat unit `notches` steps through 2, 4, 8, 16 from `den` (no wrap).
+fn step_den(den: u8, notches: i32) -> u8 {
+    let at = BEAT_UNITS.iter().position(|d| *d == den).unwrap_or(1);
+    BEAT_UNITS[step_index(at, notches, BEAT_UNITS.len())]
+}
 
 /// The transport state shown by the bar (owned by the app).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -101,6 +164,8 @@ pub struct TransportBar {
     /// The meter change the typed signature goes to (fixed when the entry starts).
     meter_edit_event: usize,
     hover: Option<TransportButton>,
+    drag: Option<ValueDrag>,
+    next_merge: u64,
     focused: bool,
     repaint: bool,
 }
@@ -126,6 +191,8 @@ impl TransportBar {
             meter_editing: None,
             meter_edit_event: 0,
             hover: None,
+            drag: None,
+            next_merge: TRANSPORT_MERGE_BASE,
             focused: false,
             repaint: true,
         }
@@ -196,9 +263,9 @@ impl TransportBar {
         self.repaint
     }
 
-    /// Never drags (pointer events can be routed by bounds alone).
+    /// True while a drag on the tempo or the signature is held.
     pub fn is_dragging(&self) -> bool {
-        false
+        self.drag.is_some()
     }
 
     /// Centre of a button.
@@ -214,6 +281,29 @@ impl TransportBar {
     /// Centre of the meter readout (double-click to type a signature).
     pub fn meter_center(&self) -> Point {
         self.lcd_rects()[3].center()
+    }
+
+    /// A point on the whole-BPM part of the tempo readout.
+    pub fn tempo_whole_point(&self) -> Point {
+        self.tempo_center()
+    }
+
+    /// A point on the decimals of the tempo readout.
+    pub fn tempo_decimals_point(&self) -> Point {
+        let r = self.lcd_rects()[2];
+        pt(r.x1 - LCD_PAD - TEMPO_DECIMALS_W / 2.0, r.center().y)
+    }
+
+    /// A point on the beats-per-bar part of the signature readout.
+    pub fn meter_num_point(&self) -> Point {
+        let r = self.lcd_rects()[3];
+        pt(r.center().x - 8.0, r.center().y)
+    }
+
+    /// A point on the beat-unit part of the signature readout.
+    pub fn meter_den_point(&self) -> Point {
+        let r = self.lcd_rects()[3];
+        pt(r.center().x + 8.0, r.center().y)
     }
 
     /// The position readouts: (bars.beats.ticks, mm:ss.mmm).
@@ -327,6 +417,14 @@ impl TransportBar {
 
     /// The command that sets the BPM of event `event` (`None` when nothing changes).
     fn tempo_cmd(&self, event: usize, bpm: f64) -> Option<UiAction> {
+        let map = self.tempo_map_with(event, bpm)?;
+        Some(UiAction::Command(Command::Song(SongCommand::SetTempoMap(
+            map,
+        ))))
+    }
+
+    /// The tempo map with event `event` at `bpm` (clamped); `None` when nothing changes.
+    fn tempo_map_with(&self, event: usize, bpm: f64) -> Option<Vec<TempoEvent>> {
         let bpm = bpm.clamp(TEMPO_MIN, TEMPO_MAX);
         if !bpm.is_finite() || (bpm - self.event_bpm(event)).abs() < 1e-9 {
             return None;
@@ -336,9 +434,116 @@ impl TransportBar {
             Some(e) => e.bpm = bpm,
             None => map.push(TempoEvent::step(0, bpm)),
         }
-        Some(UiAction::Command(Command::Song(SongCommand::SetTempoMap(
-            map,
-        ))))
+        Some(map)
+    }
+
+    /// The meter map with change `event` set to `num`/`den`; `None` when invalid or unchanged.
+    fn meter_map_with(&self, event: usize, num: u8, den: u8) -> Option<Vec<MeterEvent>> {
+        let map = crate::tempo_lane::set_meter(&self.meter, event, num, den)?;
+        (map != self.meter).then_some(map)
+    }
+
+    /// The readout field under `pos`, if it is one.
+    fn field_at(&self, pos: Point) -> Option<Field> {
+        let [_, _, tempo, meter] = self.lcd_rects();
+        if tempo.contains(pos) {
+            Some(if pos.x >= tempo.x1 - LCD_PAD - TEMPO_DECIMALS_W {
+                Field::TempoDecimals
+            } else {
+                Field::TempoWhole
+            })
+        } else if meter.contains(pos) {
+            Some(if pos.x < meter.center().x {
+                Field::MeterNum
+            } else {
+                Field::MeterDen
+            })
+        } else {
+            None
+        }
+    }
+
+    /// A press on a readout field: the drag starts from the value in effect at the playhead.
+    fn begin_drag(&mut self, field: Field, y: f64) {
+        let event = match field {
+            Field::TempoWhole | Field::TempoDecimals => self.event_at_playhead(),
+            Field::MeterNum | Field::MeterDen => self
+                .meter_event_at_playhead()
+                .min(self.meter.len().saturating_sub(1)),
+        };
+        let bpm = self.event_bpm(event);
+        let (num, den) = self.meter.get(event).map_or((4, 4), |e| (e.num, e.den));
+        self.drag = Some(ValueDrag {
+            field,
+            steps: StepDrag::new(y),
+            event,
+            bpm,
+            num,
+            den,
+            sent: (bpm, num, den),
+            merge: self.next_merge,
+            changed: false,
+        });
+        self.next_merge += 1;
+    }
+
+    /// The pointer moved with a drag held: steps the value and sends it live (Shift: the fine
+    /// step of the whole BPM).
+    fn drag_to(&mut self, y: f64, fine: bool, out: &mut Vec<UiAction>) {
+        let Some(mut d) = self.drag else { return };
+        let n = d.steps.update(y, PX_PER_STEP);
+        if n != 0 {
+            match d.field {
+                Field::TempoWhole | Field::TempoDecimals => {
+                    d.bpm = step_bpm(d.bpm, d.field, n, fine);
+                }
+                Field::MeterNum => d.num = step_num(d.num, n),
+                Field::MeterDen => d.den = step_den(d.den, n),
+            }
+            if (d.bpm, d.num, d.den) != d.sent {
+                d.sent = (d.bpm, d.num, d.den);
+                let merge = d.merge;
+                let cmd = match d.field {
+                    Field::TempoWhole | Field::TempoDecimals => self
+                        .tempo_map_with(d.event, d.bpm)
+                        .map(|map| SongCommand::DragTempoMap { map, merge }),
+                    Field::MeterNum | Field::MeterDen => self
+                        .meter_map_with(d.event, d.num, d.den)
+                        .map(|map| SongCommand::DragMeterMap { map, merge }),
+                };
+                if let Some(c) = cmd {
+                    d.changed = true;
+                    out.push(UiAction::Command(Command::Song(c)));
+                }
+            }
+            self.repaint = true;
+        }
+        self.drag = Some(d);
+    }
+
+    /// One wheel event over a readout field: one notch is one step.
+    fn wheel_field(&self, field: Field, notches: i32, fine: bool, out: &mut Vec<UiAction>) {
+        match field {
+            Field::TempoWhole | Field::TempoDecimals => {
+                let at = self.event_at_playhead();
+                let v = step_bpm(self.event_bpm(at), field, notches, fine);
+                out.extend(self.tempo_cmd(at, v));
+            }
+            Field::MeterNum | Field::MeterDen => {
+                let at = self
+                    .meter_event_at_playhead()
+                    .min(self.meter.len().saturating_sub(1));
+                let (num, den) = self.meter.get(at).map_or((4, 4), |e| (e.num, e.den));
+                let (num, den) = match field {
+                    Field::MeterNum => (step_num(num, notches), den),
+                    _ => (num, step_den(den, notches)),
+                };
+                out.extend(
+                    self.meter_map_with(at, num, den)
+                        .map(|m| UiAction::Command(Command::Song(SongCommand::SetMeterMap(m)))),
+                );
+            }
+        }
     }
 
     /// The command that sets the signature of meter change `event` to `text` (`3/4`, or `3`
@@ -382,7 +587,8 @@ impl TransportBar {
         let mut out = Vec::new();
         match event {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
-            UiEvent::PointerMove { pos, .. } => {
+            UiEvent::PointerMove { pos, modifiers } => {
+                self.drag_to(pos.y, modifiers.shift, &mut out);
                 let h = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos));
@@ -424,18 +630,30 @@ impl TransportBar {
                     self.begin_tempo_edit(None);
                 } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
                     self.begin_meter_edit();
+                } else if let Some(field) = self.field_at(*pos) {
+                    self.begin_drag(field, pos.y);
                 }
                 self.repaint = true;
+            }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                if let Some(d) = self.drag.take() {
+                    if d.changed {
+                        out.push(UiAction::EndMerge);
+                    }
+                    self.repaint = true;
+                }
             }
             UiEvent::Wheel {
                 delta,
                 pos,
                 modifiers,
-            } if self.lcd_rects()[2].contains(*pos) && self.editing.is_none() => {
-                let step = if modifiers.shift { 0.1 } else { 1.0 };
-                let at = self.event_at_playhead();
-                let v = ((self.event_bpm(at) + delta.y.signum() * step) * 100.0).round() / 100.0;
-                out.extend(self.tempo_cmd(at, v));
+            } if self.editing.is_none() && self.meter_editing.is_none() && self.drag.is_none() => {
+                if let Some(field) = self.field_at(*pos) {
+                    self.wheel_field(field, wheel_steps(delta.y), modifiers.shift, &mut out);
+                }
             }
             UiEvent::Key {
                 key,

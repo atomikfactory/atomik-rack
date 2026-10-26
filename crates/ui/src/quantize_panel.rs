@@ -44,6 +44,7 @@ use crate::canvas::{Align, Canvas};
 use crate::event::{PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
 use atomik_core::PPQ;
 use atomik_model::groove::{MAX_GROOVE_SLOTS, SWING_MAX, SWING_MIN};
@@ -265,6 +266,8 @@ pub struct QuantizeView {
     can_extract: bool,
     scroll: usize,
     hover: Option<Point>,
+    /// A drag on a value: the row and the vertical travel (up steps the value up).
+    drag: Option<(QuantizeRow, StepDrag)>,
     repaint: bool,
 }
 
@@ -283,6 +286,7 @@ impl QuantizeView {
             can_extract: false,
             scroll: 0,
             hover: None,
+            drag: None,
             repaint: true,
         }
     }
@@ -441,6 +445,30 @@ impl QuantizeView {
         self.repaint = true;
     }
 
+    /// Steps a row by `n` places (negative: down), one place at a time.
+    fn step_by(&mut self, row: QuantizeRow, n: i32) {
+        for _ in 0..n.abs() {
+            self.step(row, n.signum());
+        }
+    }
+
+    /// The row whose value box is under `pos`, when dragging it makes sense (not the toggle).
+    fn draggable_value_at(&self, pos: Point) -> Option<QuantizeRow> {
+        QuantizeRow::TOP
+            .into_iter()
+            .chain([QuantizeRow::ExtractStep, QuantizeRow::ExtractSlots])
+            .find(|r| {
+                *r != QuantizeRow::SnapEnds
+                    && self.row_enabled(*r)
+                    && self.value_rect(*r).contains(pos)
+            })
+    }
+
+    /// True while a value is being dragged.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     // ------------------------------------------------------------------ geometry
 
     /// The panel box.
@@ -579,6 +607,19 @@ impl QuantizeView {
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
                 self.repaint = true;
+                if let Some((row, steps)) = &mut self.drag {
+                    let (row, n) = (*row, steps.update(pos.y, PX_PER_STEP));
+                    if n != 0 {
+                        self.step_by(row, n);
+                    }
+                }
+            }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                self.drag = None;
+                self.repaint = true;
             }
             UiEvent::PointerLeave => {
                 self.hover = None;
@@ -592,16 +633,18 @@ impl QuantizeView {
                 self.repaint = true;
                 if let Some(action) = self.click(*pos) {
                     out.push(UiAction::Quantize(action));
+                } else if let Some(row) = self.draggable_value_at(*pos) {
+                    self.drag = Some((row, StepDrag::new(pos.y)));
                 }
             }
             UiEvent::Wheel { pos, delta, .. } => {
                 self.repaint = true;
-                let dir = if delta.y > 0.0 { 1 } else { -1 };
+                let dir = wheel_steps(delta.y);
                 let rows = QuantizeRow::TOP
                     .into_iter()
                     .chain([QuantizeRow::ExtractStep, QuantizeRow::ExtractSlots]);
                 if let Some(row) = rows.into_iter().find(|r| self.row_rect(*r).contains(*pos)) {
-                    self.step(row, dir);
+                    self.step_by(row, dir);
                 } else if delta.y != 0.0 {
                     let max = self.library().len().saturating_sub(LIB_ROWS);
                     self.scroll =
