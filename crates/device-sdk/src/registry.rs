@@ -65,6 +65,8 @@ pub struct Registry {
     sampled: BTreeSet<&'static str>,
     /// Types that take pattern data.
     players: BTreeSet<&'static str>,
+    /// Types that take curve rows with their pattern data.
+    curved: BTreeSet<&'static str>,
     /// Dynamically registered plugin types. Kept apart from `factories`, so the
     /// sorted static list and its counts do not change.
     plugins: BTreeMap<String, DeviceFactory>,
@@ -119,6 +121,20 @@ impl Registry {
     /// Whether `type_id` was registered with [`Registry::register_with_player_data`].
     pub fn takes_player_data(&self, type_id: &str) -> bool {
         self.players.contains(type_id)
+    }
+
+    /// Registers a factory whose devices take pattern data and curve rows
+    /// ([`crate::PlayerData::CvSeq`]); such a type is also listed by
+    /// [`Registry::takes_player_data`].
+    pub fn register_with_curves(&mut self, factory: DeviceFactory) -> Result<(), RegistryError> {
+        self.register_with_player_data(factory)?;
+        self.curved.insert(factory.descriptor.type_id);
+        Ok(())
+    }
+
+    /// Whether `type_id` was registered with [`Registry::register_with_curves`].
+    pub fn takes_curves(&self, type_id: &str) -> bool {
+        self.curved.contains(type_id)
     }
 
     /// Registers a plugin device type. Non-RT; `&mut self` on the thread that
@@ -287,6 +303,22 @@ mod tests {
         let mut sampled = Registry::new();
         sampled.register_with_samples(factory()).unwrap();
         assert!(!sampled.takes_player_data("test.good"));
+    }
+
+    #[test]
+    fn registry_marks_types_that_take_curves() {
+        let mut r = Registry::new();
+        assert!(!r.takes_curves("test.good"));
+        assert_eq!(r.register_with_curves(factory()), Ok(()));
+        assert!(r.takes_curves("test.good"));
+        assert!(
+            r.takes_player_data("test.good"),
+            "curves come with pattern data"
+        );
+        assert!(!r.takes_curves("test.other"));
+        let mut plain = Registry::new();
+        plain.register_with_player_data(factory()).unwrap();
+        assert!(!plain.takes_curves("test.good"));
     }
 
     #[test]

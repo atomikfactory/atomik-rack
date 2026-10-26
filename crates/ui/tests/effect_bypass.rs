@@ -19,8 +19,9 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
-const PLAYERS: [&str; 6] = [
+const PLAYERS: [&str; 7] = [
     "atomik.arpeggiator",
+    "atomik.cv-sequencer",
     "atomik.step-sequencer",
     "atomik.note-filter",
     "atomik.key-chord",

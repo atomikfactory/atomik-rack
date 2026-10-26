@@ -148,6 +148,24 @@ fn router_close_all_emits_offs_ascending_and_clears() {
 }
 
 #[test]
+fn router_press_of_a_swallowed_key_that_still_sounds_releases_it_first() {
+    let mut r = NoteRouter::new();
+    let mut out = buf();
+    r.on(&mut out, 0, 51, &[(51, 0.5)]);
+    r.swallow_held();
+    // A fresh press while the first note still sounds: close it, then play again (a stream
+    // of such presses would otherwise outgrow the per-key table).
+    for _ in 0..12 {
+        r.on(&mut out, 1, 51, &[(51, 0.5)]);
+        r.swallow_held();
+    }
+    r.on(&mut out, 1, 51, &[(51, 0.5)]);
+    r.off(&mut out, 2, 51);
+    assert!(!r.any_sounding());
+    assert_eq!(seen(&out).last(), Some(&(2, K::Off(51))));
+}
+
+#[test]
 fn router_swallow_held_ignores_the_off_of_keys_down() {
     let mut r = NoteRouter::new();
     let mut out = buf();

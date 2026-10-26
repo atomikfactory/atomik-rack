@@ -18,7 +18,10 @@
 //!   full the oldest entry is closed at once.
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
-use atomik_device_sdk::{Direction, ProcessContext, SocketDescriptor, SocketId, SocketKind};
+use atomik_device_sdk::{
+    Direction, ProcessContext, SocketDescriptor, SocketId, SocketKind, StepData,
+};
+use atomik_dsp::rng::{hash64, unit_f64};
 
 /// `notes_in` socket (both players).
 pub(crate) const NOTES_IN: SocketId = SocketId(0);
@@ -95,6 +98,35 @@ pub(crate) static PLAYER_SOCKETS: [SocketDescriptor; 6] = [
     ),
 ];
 
+/// `curve_a_cv_out` socket (CV sequencer).
+pub(crate) const CURVE_A_CV: SocketId = SocketId(6);
+/// `curve_b_cv_out` socket (CV sequencer).
+pub(crate) const CURVE_B_CV: SocketId = SocketId(7);
+
+/// The eight sockets of the CV sequencer: the six player sockets, then its two curve outputs.
+pub(crate) static CV_SEQUENCER_SOCKETS: [SocketDescriptor; 8] = [
+    PLAYER_SOCKETS[0],
+    PLAYER_SOCKETS[1],
+    PLAYER_SOCKETS[2],
+    PLAYER_SOCKETS[3],
+    PLAYER_SOCKETS[4],
+    PLAYER_SOCKETS[5],
+    sock(
+        6,
+        "curve_a_cv_out",
+        "Curve A CV out",
+        SocketKind::Cv,
+        Direction::Output,
+    ),
+    sock(
+        7,
+        "curve_b_cv_out",
+        "Curve B CV out",
+        SocketKind::Cv,
+        Direction::Output,
+    ),
+];
+
 /// Golden-ratio constant mixing `random.seed` into the device seed.
 const SEED_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 
@@ -104,7 +136,7 @@ pub(crate) fn seed_mix(device_seed: u64, random_seed: u16) -> u64 {
 }
 
 /// Tolerance in frames when mapping a tick to a frame.
-const EPS_FRAMES: f64 = 1e-6;
+pub(crate) const EPS_FRAMES: f64 = 1e-6;
 /// Slots of the pending-off table.
 pub(crate) const PENDING_CAP: usize = 64;
 /// Upper bound of driver iterations per segment (a safety net, never reached in practice).
@@ -152,7 +184,12 @@ impl Grid {
     /// at least 1 tick, never past the next step's start; 100 % (or more) is legato, ending
     /// exactly at the next step's start.
     pub fn gate_end(self, tick: f64, k: i64, pct: f64) -> f64 {
-        let next = self.start(k + 1);
+        self.gate_end_to(tick, self.start(k + 1), pct)
+    }
+
+    /// [`Grid::gate_end`] for a step whose successor starts at `next` (the next pattern of a
+    /// chain starts off this grid).
+    pub fn gate_end_to(self, tick: f64, next: f64, pct: f64) -> f64 {
         if pct >= 100.0 {
             return next;
         }
@@ -534,10 +571,144 @@ impl NoteCore {
     }
 }
 
+/// Keys held on `notes_in`, most recent last (the `follow` transpose reads the last one).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HeldKeys {
+    keys: [u8; 128],
+    n: usize,
+}
+
+impl HeldKeys {
+    pub const fn new() -> Self {
+        Self {
+            keys: [0; 128],
+            n: 0,
+        }
+    }
+
+    /// Forgets every key.
+    pub fn clear(&mut self) {
+        self.n = 0;
+    }
+
+    /// `key` goes down: it becomes the most recent.
+    pub fn press(&mut self, key: u8) {
+        self.release(key);
+        if self.n < self.keys.len() {
+            self.keys[self.n] = key;
+            self.n += 1;
+        }
+    }
+
+    /// `key` comes up.
+    pub fn release(&mut self, key: u8) {
+        if let Some(i) = self.keys[..self.n].iter().position(|k| *k == key) {
+            self.keys.copy_within(i + 1..self.n, i);
+            self.n -= 1;
+        }
+    }
+
+    /// The most recent key minus 60 when `follow` is on and a key is held, else 0.
+    pub fn follow_offset(&self, follow: bool) -> i32 {
+        if follow && self.n > 0 {
+            i32::from(self.keys[self.n - 1]) - 60
+        } else {
+            0
+        }
+    }
+}
+
+/// What a played step needs besides its own data: the params of the note row, shared by the
+/// step sequencer and the CV sequencer so both play a step the same way.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StepRules {
+    pub mute: bool,
+    pub transpose: i32,
+    /// Added to the key: the most recent held key minus 60 when `follow` is on, else 0.
+    pub follow_offset: i32,
+    pub prob_amount: f64,
+    pub vel_scale: f64,
+    pub gate_scale: f64,
+    pub seed_mix: u64,
+}
+
+impl StepRules {
+    /// Whether a step with probability `prob` percent plays at global step number `k`.
+    pub fn prob_pass(&self, k: i64, prob: u8) -> bool {
+        if prob >= 100 && self.prob_amount >= 1.0 {
+            return true;
+        }
+        let eff = f64::from(prob) * self.prob_amount;
+        eff > 0.0 && unit_f64(hash64(self.seed_mix, k as u64, 0)) * 100.0 < eff
+    }
+}
+
+/// Plays step `k` (`step` is its data, `None` when there is none) that starts at `tick`, is due
+/// at `frame` and whose successor starts at `next_start`: probability, key, velocity, gate, tie
+/// and trig. `held_tie` is the key tied into this step by the previous one; on return it holds
+/// the key this step ties into the next.
+pub(crate) fn play_step(
+    core: &mut NoteCore,
+    ctx: &mut ProcessContext<'_>,
+    held_tie: &mut Option<u8>,
+    rules: &StepRules,
+    step: Option<StepData>,
+    at: StepAt,
+) {
+    let hold = held_tie.take();
+    let played = step.filter(|sd| !rules.mute && sd.on && rules.prob_pass(at.k, sd.prob));
+    let Some(sd) = played else {
+        if let Some(hk) = hold {
+            core.release_hold(ctx, at.frame, hk);
+        }
+        return;
+    };
+    let key = (i32::from(sd.key) + rules.transpose + rules.follow_offset).clamp(0, 127) as u8;
+    let vel7 = ((f64::from(sd.velocity) * rules.vel_scale).round() as i64).clamp(1, 127);
+    let velocity = vel7 as f32 / 127.0;
+    let end = if sd.tie {
+        f64::INFINITY
+    } else {
+        let pct = (f64::from(sd.gate) * rules.gate_scale).min(100.0);
+        at.grid.gate_end_to(at.tick, at.next_start, pct)
+    };
+    match hold {
+        Some(hk) if hk == key && core.retarget_hold(hk, end) => {}
+        Some(hk) => {
+            core.note_on(ctx, at.frame, key, velocity, end);
+            core.release_hold(ctx, at.frame, hk);
+        }
+        None => core.note_on(ctx, at.frame, key, velocity, end),
+    }
+    core.trigger(ctx, at.frame, key, velocity);
+    if sd.tie {
+        *held_tie = Some(key);
+    }
+}
+
+/// Where and when a step plays.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StepAt {
+    /// The global step number (the probability hash input).
+    pub k: i64,
+    /// The grid of the step's pattern.
+    pub grid: Grid,
+    /// The step's start tick.
+    pub tick: f64,
+    /// The successor's start tick (the end of a legato note).
+    pub next_start: f64,
+    /// The frame the step is due at.
+    pub frame: usize,
+}
+
 /// A device driven by the step grid; [`run_segment`] calls it in time order.
 pub(crate) trait StepHost {
     /// The grid the next step lies on.
     fn grid(&self) -> Grid;
+    /// The start tick of step `k`; the grid's own rule unless the host plays a chain of grids.
+    fn start_of(&self, k: i64) -> f64 {
+        self.grid().start(k)
+    }
     /// The next step number to play.
     fn next_step(&self) -> i64;
     /// Sets the next step number (the driver sets `k + 1` before calling [`StepHost::on_step`];
@@ -557,7 +728,7 @@ pub(crate) fn run_segment<H: StepHost>(host: &mut H, seg: &Segment) {
     for _ in 0..MAX_ITERATIONS {
         let off = host.earliest_off().map(|t| seg.frame_of(t));
         let k = host.next_step();
-        let tick = host.grid().start(k);
+        let tick = host.start_of(k);
         let frame = seg.frame_of(tick);
         if let Some(fo) = off
             && fo < seg.b

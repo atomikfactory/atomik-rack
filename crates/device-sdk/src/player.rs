@@ -137,11 +137,66 @@ impl StepSeqData {
     }
 }
 
+/// One step of a curve row of the CV sequencer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CurveStep {
+    /// Value in percent, -100..=100.
+    pub value: i8,
+    /// Ramps linearly to the next step's value over this step instead of holding.
+    pub slide: bool,
+}
+
+/// Curve rows per pattern of the CV sequencer (A and B).
+pub const CURVE_ROWS: usize = 2;
+
+/// The data of a CV sequencer: the step sequencer's note patterns plus, per pattern, two curve
+/// rows of [`MAX_STEPS`] steps (a step at or beyond the pattern's length is kept, never played).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CvSeqData {
+    /// The note row, played like the step sequencer's.
+    pub notes: StepSeqData,
+    /// `curves[pattern][row][step]`; all [`MAX_PATTERNS`] slots are present.
+    pub curves: [[[CurveStep; MAX_STEPS]; CURVE_ROWS]; MAX_PATTERNS],
+}
+
+impl Default for CvSeqData {
+    fn default() -> Self {
+        Self {
+            notes: StepSeqData::default(),
+            curves: [[[CurveStep::default(); MAX_STEPS]; CURVE_ROWS]; MAX_PATTERNS],
+        }
+    }
+}
+
 /// Immutable data for a note-player device.
+// The value only ever lives in an `Arc` ([`PlayerDataRef`]), so the size of the smaller variants
+// costs nothing worth a second allocation.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlayerData {
     /// Step sequencer patterns.
     StepSeq(StepSeqData),
+    /// CV sequencer: note patterns and curve rows.
+    CvSeq(CvSeqData),
+}
+
+impl PlayerData {
+    /// The note patterns every variant carries.
+    pub fn notes(&self) -> &StepSeqData {
+        match self {
+            Self::StepSeq(d) => d,
+            Self::CvSeq(d) => &d.notes,
+        }
+    }
+
+    /// Curve row `row` of pattern `pattern`; `None` for data without curves (the device then
+    /// plays flat zeros) or beyond the arrays.
+    pub fn curve(&self, pattern: usize, row: usize) -> Option<&[CurveStep; MAX_STEPS]> {
+        match self {
+            Self::StepSeq(_) => None,
+            Self::CvSeq(d) => d.curves.get(pattern)?.get(row),
+        }
+    }
 }
 
 /// Shared player data, as it travels to a device.
@@ -177,6 +232,34 @@ mod tests {
         };
         assert!(d.pattern(7).is_some());
         assert!(d.pattern(8).is_none());
+    }
+
+    #[test]
+    fn cv_seq_defaults_to_flat_curves_and_one_pattern() {
+        let d = CvSeqData::default();
+        assert_eq!(d.notes, StepSeqData::default());
+        assert!(d.curves.iter().flatten().flatten().all(|s| *s
+            == CurveStep {
+                value: 0,
+                slide: false
+            }));
+    }
+
+    #[test]
+    fn player_data_reads_notes_and_curves_of_either_variant() {
+        let plain = PlayerData::StepSeq(StepSeqData::default());
+        assert_eq!(plain.notes().count, 1);
+        assert!(plain.curve(0, 0).is_none());
+        let mut cv = CvSeqData::default();
+        cv.curves[2][1][5] = CurveStep {
+            value: -40,
+            slide: true,
+        };
+        let d = PlayerData::CvSeq(cv);
+        assert_eq!(d.notes().count, 1);
+        assert_eq!(d.curve(2, 1).unwrap()[5].value, -40);
+        assert!(d.curve(MAX_PATTERNS, 0).is_none());
+        assert!(d.curve(0, CURVE_ROWS).is_none());
     }
 
     #[test]

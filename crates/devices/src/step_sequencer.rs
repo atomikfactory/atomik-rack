@@ -35,15 +35,14 @@ use atomik_core::{
     BATCH, MAX_EVENTS_PER_BATCH, NoteEvent, NoteKind, ParamDescriptor, ParamId, Taper, Unit,
 };
 use atomik_device_sdk::{
-    Device, DeviceDescriptor, DeviceFactory, DeviceKind, PatternData, PlayerData, PlayerDataRef,
-    PrepareInfo, ProcessContext, StepData,
+    Device, DeviceDescriptor, DeviceFactory, DeviceKind, PatternData, PlayerDataRef, PrepareInfo,
+    ProcessContext, StepData,
 };
-use atomik_dsp::rng::{hash64, unit_f64};
 
 use crate::bypass::bypass_param;
 use crate::note_clock::{
-    Grid, JumpTracker, NOTES_IN, NOTES_OUT, NoteCore, PLAYER_SOCKETS, Segment, StepHost,
-    run_segment, seed_mix,
+    Grid, HeldKeys, JumpTracker, NOTES_IN, NOTES_OUT, NoteCore, PLAYER_SOCKETS, Segment, StepAt,
+    StepHost, StepRules, play_step, run_segment, seed_mix,
 };
 use crate::note_fx::PlayerBypass;
 
@@ -163,9 +162,6 @@ pub fn factory() -> DeviceFactory {
     }
 }
 
-/// Keys held on `notes_in` (for `follow`), most recent last.
-const HELD_CAP: usize = 128;
-
 /// The step sequencer device.
 pub struct StepSequencer {
     data: Option<PlayerDataRef>,
@@ -193,8 +189,7 @@ pub struct StepSequencer {
     // Inputs.
     inbuf: Vec<NoteEvent>,
     in_cursor: usize,
-    held: [u8; HELD_CAP],
-    held_n: usize,
+    held: HeldKeys,
     // Display.
     last_step_idx: u32,
     running: bool,
@@ -226,20 +221,16 @@ impl StepSequencer {
             held_tie: None,
             inbuf: Vec::with_capacity(MAX_EVENTS_PER_BATCH),
             in_cursor: 0,
-            held: [0; HELD_CAP],
-            held_n: 0,
+            held: HeldKeys::new(),
             last_step_idx: 0,
             running: false,
         }
     }
 
     fn pattern(&self, index: usize) -> Option<&PatternData> {
-        match self.data.as_deref()? {
-            PlayerData::StepSeq(d) => {
-                let last = usize::from(d.count).max(1) - 1;
-                d.pattern(index.min(last))
-            }
-        }
+        let d = self.data.as_deref()?.notes();
+        let last = usize::from(d.count).max(1) - 1;
+        d.pattern(index.min(last))
     }
 
     /// The grid of the playing pattern (the current grid when there is no data).
@@ -262,19 +253,15 @@ impl StepSequencer {
         Some((p.steps[idx], idx as u32))
     }
 
-    fn prob_pass(&self, k: i64, prob: u8) -> bool {
-        if prob >= 100 && self.prob_amount >= 1.0 {
-            return true;
-        }
-        let eff = f64::from(prob) * self.prob_amount;
-        eff > 0.0 && unit_f64(hash64(self.seed_mix, k as u64, 0)) * 100.0 < eff
-    }
-
-    fn follow_offset(&self) -> i32 {
-        if self.follow && self.held_n > 0 {
-            i32::from(self.held[self.held_n - 1]) - 60
-        } else {
-            0
+    fn rules(&self) -> StepRules {
+        StepRules {
+            mute: self.mute,
+            transpose: self.transpose,
+            follow_offset: self.held.follow_offset(self.follow),
+            prob_amount: self.prob_amount,
+            vel_scale: self.vel_scale,
+            gate_scale: self.gate_scale,
+            seed_mix: self.seed_mix,
         }
     }
 
@@ -288,29 +275,16 @@ impl StepSequencer {
             }
             self.in_cursor += 1;
             match e.kind {
-                NoteKind::On { key, .. } => {
-                    self.held_remove(key);
-                    if self.held_n < HELD_CAP {
-                        self.held[self.held_n] = key;
-                        self.held_n += 1;
-                    }
-                }
-                NoteKind::Off { key } => self.held_remove(key),
+                NoteKind::On { key, .. } => self.held.press(key),
+                NoteKind::Off { key } => self.held.release(key),
                 NoteKind::AllOff => {
-                    self.held_n = 0;
+                    self.held.clear();
                     self.core.close_all(ctx, at);
                     self.held_tie = None;
                 }
                 // Channel messages and expressions are ignored.
                 _ => {}
             }
-        }
-    }
-
-    fn held_remove(&mut self, key: u8) {
-        if let Some(i) = self.held[..self.held_n].iter().position(|k| *k == key) {
-            self.held.copy_within(i + 1..self.held_n, i);
-            self.held_n -= 1;
         }
     }
 
@@ -379,41 +353,19 @@ impl StepHost for Run<'_, '_> {
                 return;
             }
         }
-        let hold = s.held_tie.take();
-        let mut played = None;
-        if let Some((sd, idx)) = s.step_at(k) {
+        let step = s.step_at(k).map(|(sd, idx)| {
             s.last_step_idx = idx;
-            if !s.mute && sd.on && s.prob_pass(k, sd.prob) {
-                played = Some(sd);
-            }
-        }
-        let Some(sd) = played else {
-            if let Some(hk) = hold {
-                s.core.release_hold(self.ctx, frame, hk);
-            }
-            return;
+            sd
+        });
+        let rules = s.rules();
+        let at = StepAt {
+            k,
+            grid: s.grid,
+            tick,
+            next_start: s.grid.start(k + 1),
+            frame,
         };
-        let key = (i32::from(sd.key) + s.transpose + s.follow_offset()).clamp(0, 127) as u8;
-        let vel7 = ((f64::from(sd.velocity) * s.vel_scale).round() as i64).clamp(1, 127);
-        let velocity = vel7 as f32 / 127.0;
-        let end = if sd.tie {
-            f64::INFINITY
-        } else {
-            let pct = (f64::from(sd.gate) * s.gate_scale).min(100.0);
-            s.grid.gate_end(tick, k, pct)
-        };
-        match hold {
-            Some(hk) if hk == key && s.core.retarget_hold(hk, end) => {}
-            Some(hk) => {
-                s.core.note_on(self.ctx, frame, key, velocity, end);
-                s.core.release_hold(self.ctx, frame, hk);
-            }
-            None => s.core.note_on(self.ctx, frame, key, velocity, end),
-        }
-        s.core.trigger(self.ctx, frame, key, velocity);
-        if sd.tie {
-            s.held_tie = Some(key);
-        }
+        play_step(&mut s.core, self.ctx, &mut s.held_tie, &rules, step, at);
     }
 }
 
@@ -437,7 +389,7 @@ impl Device for StepSequencer {
         }
         self.clock.invalidate();
         self.held_tie = None;
-        self.held_n = 0;
+        self.held.clear();
         self.next_step = 0;
         self.cur = self.queued;
         self.close_pending = false;
@@ -476,7 +428,7 @@ impl Device for StepSequencer {
             self.core.close_all(ctx, 0);
             self.clock.invalidate();
             self.held_tie = None;
-            self.held_n = 0;
+            self.held.clear();
             self.running = false;
             self.close_pending = false;
             self.cur = self.queued;
