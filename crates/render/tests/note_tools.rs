@@ -183,3 +183,52 @@ fn note_filter_key_range_bounces_like_the_clip_without_the_other_notes() {
     let filtered = through_filter(&[("key.high", 55.0)]);
     assert!(bounce(&filtered, 512, 0) == direct);
 }
+
+fn through_key_chord(set: &[(&str, f32)]) -> RackDoc {
+    let mut b = Builder::new();
+    b.synth();
+    b.add("atomik.key-chord", "kc");
+    for (p, v) in set {
+        b.set("kc", p, *v);
+    }
+    b.connect(("kc", "notes_out"), ("synth", "notes_in"));
+    b.clip("kc", &NOTES);
+    b.doc.doc().clone()
+}
+
+#[test]
+fn key_chord_snap_bounces_like_the_clip_snapped_into_the_scale() {
+    // C natural minor: E (52) is between E flat and F and snaps down to E flat (51).
+    let snapped: Vec<_> = NOTES
+        .iter()
+        .map(|&(s, l, k, v)| (s, l, if k == 52 { 51 } else { k }, v))
+        .collect();
+    let direct = bounce(&straight(&snapped), 512, 0);
+    assert!(
+        direct.iter().any(|b| f32::from_bits(*b).abs() > 1e-3),
+        "audible"
+    );
+    let through = through_key_chord(&[("scale.kind", 2.0)]);
+    assert!(bounce(&through, 512, 0) == direct, "snapped like the clip");
+    // The chord is not a no-op.
+    let chord = through_key_chord(&[("scale.kind", 2.0), ("chord", 1.0)]);
+    assert!(bounce(&chord, 512, 0) != direct);
+}
+
+#[test]
+fn key_chord_bounce_is_bit_identical_across_block_sizes_and_workers() {
+    let doc = through_key_chord(&[
+        ("scale.root", 2.0),
+        ("scale.kind", 5.0),
+        ("chord", 2.0),
+        ("chord.voicing", 1.0),
+        ("chord.velocity", 0.6),
+    ]);
+    let reference = bounce(&doc, 512, 0);
+    for (block, workers) in [(64, 0), (333, 0), (512, 2), (1000, 3)] {
+        assert!(
+            bounce(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
