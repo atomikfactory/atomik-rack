@@ -434,3 +434,37 @@ fn the_edit_menu_quantize_applies_the_last_settings_to_the_selection() {
     assert_eq!(off_eighth(&s, id), [0, 0, 0]);
     assert!(!s.quantize_open(), "no panel for the menu item");
 }
+
+#[test]
+fn dragging_a_value_in_the_panel_steps_it_and_leaves_the_undo_history_alone() {
+    let mut s = shell();
+    s.execute(AppCommand::QuantizeOptions);
+    let grid = s.quantize_view().unwrap().values().grid;
+    let p = s
+        .quantize_view()
+        .unwrap()
+        .value_rect(QuantizeRow::Grid)
+        .center();
+    let at = |dy: f64| atomik_ui::kurbo::Point::new(p.x, p.y + dy);
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    s.handle(&UiEvent::PointerMove {
+        pos: at(-10.0),
+        modifiers: Modifiers::NONE,
+    });
+    s.handle(&UiEvent::PointerUp {
+        pos: at(-10.0),
+        button: atomik_ui::PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    assert_eq!(s.quantize_view().unwrap().values().grid, grid + 2);
+    assert!(
+        !s.core().document().can_undo(),
+        "the panel's settings are not the song"
+    );
+    assert_eq!(s.quantize_values().grid, grid + 2, "and the app keeps them");
+}

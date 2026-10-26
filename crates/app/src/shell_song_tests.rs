@@ -389,3 +389,76 @@ fn transport_menu_lists_the_transport_and_quantize_choices() {
     assert_eq!(s.core().input_quantize(), InputQuantize::Sixteenth);
     assert_eq!(s.menu_state().quantize, InputQuantize::Sixteenth);
 }
+
+/// Presses on `from`, moves to each offset (up is negative) and releases at the last.
+fn drag_by(s: &mut Shell<NullBackend>, from: Point, dys: &[f64]) {
+    s.handle(&down(from));
+    let mut last = from;
+    for dy in dys {
+        last = Point::new(from.x, from.y + dy);
+        s.handle(&moved(last));
+    }
+    s.handle(&up(last));
+}
+
+#[test]
+fn dragging_the_tempo_changes_it_live_and_is_one_undo_step() {
+    let mut s = shell();
+    let before = s.core().doc().tempo_bpm;
+    let p = s.core().transport_bar().tempo_center();
+    s.handle(&down(p));
+    s.handle(&moved(Point::new(p.x, p.y - 10.0)));
+    assert!(
+        (s.core().doc().tempo_bpm - (before + 2.0)).abs() < 1e-9,
+        "applied while the button is still down"
+    );
+    s.handle(&moved(Point::new(p.x, p.y - 30.0)));
+    s.handle(&up(Point::new(p.x, p.y - 30.0)));
+    assert!((s.core().doc().tempo_bpm - (before + 6.0)).abs() < 1e-9);
+    assert_eq!(s.core().doc().song.tempo[0].bpm, before + 6.0);
+    s.execute(AppCommand::Undo);
+    assert!(
+        (s.core().doc().tempo_bpm - before).abs() < 1e-9,
+        "the whole drag undoes at once"
+    );
+    assert!(!s.core().document().can_undo(), "and it was a single step");
+}
+
+#[test]
+fn dragging_a_tempo_decimal_or_the_signature_is_one_undo_step_each() {
+    let mut s = shell();
+    let before = s.core().doc().tempo_bpm;
+    let dec = s.core().transport_bar().tempo_decimals_point();
+    drag_by(&mut s, dec, &[-5.0, -10.0, -15.0]);
+    assert!((s.core().doc().tempo_bpm - (before + 0.03)).abs() < 1e-9);
+    let num = s.core().transport_bar().meter_num_point();
+    drag_by(&mut s, num, &[-5.0, -10.0, -15.0]);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m[0].num, m[0].den), (7, 4));
+    let den = s.core().transport_bar().meter_den_point();
+    drag_by(&mut s, den, &[-5.0, -10.0]);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m[0].num, m[0].den), (7, 16));
+    s.execute(AppCommand::Undo);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m[0].num, m[0].den), (7, 4));
+    s.execute(AppCommand::Undo);
+    let m = &s.core().doc().song.meter;
+    assert_eq!((m[0].num, m[0].den), (4, 4));
+    s.execute(AppCommand::Undo);
+    assert!((s.core().doc().tempo_bpm - before).abs() < 1e-9);
+    assert!(!s.core().document().can_undo());
+}
+
+#[test]
+fn the_wheel_over_the_tempo_steps_whole_bpm() {
+    let mut s = shell();
+    let before = s.core().doc().tempo_bpm;
+    let p = s.core().transport_bar().tempo_center();
+    s.handle(&UiEvent::Wheel {
+        delta: atomik_ui::kurbo::Vec2::new(0.0, 1.0),
+        pos: p,
+        modifiers: Modifiers::NONE,
+    });
+    assert!((s.core().doc().tempo_bpm - (before + 1.0)).abs() < 1e-9);
+}
