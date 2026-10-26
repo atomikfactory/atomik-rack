@@ -869,3 +869,185 @@ fn creating_a_player_selects_it_and_names_the_device_it_sits_above() {
     );
     assert_eq!(c.view().selected(), Some(&second));
 }
+
+// ------------------------------------------------------------------ the drum generator
+
+const DRUMS: &str = "atomik.drum-generator";
+
+fn drum_calls(calls: &[SinkCall]) -> Vec<atomik_device_sdk::DrumData> {
+    calls
+        .iter()
+        .filter_map(|x| match x {
+            SinkCall::PlayerData { data: Some(d), .. } => d.drums().copied(),
+            _ => None,
+        })
+        .collect()
+}
+
+fn set_param<S: EngineSink>(c: &mut AppCore<S>, device: &str, param: &str, value: f32) {
+    c.apply_command(Command::SetParam {
+        key: key(device),
+        param: param.into(),
+        value,
+        merge: None,
+    })
+    .unwrap();
+}
+
+fn drum_pattern<S: EngineSink>(
+    c: &AppCore<S>,
+    device: &str,
+    index: usize,
+) -> atomik_model::DrumPatternDoc {
+    c.doc()
+        .device(&key(device))
+        .unwrap()
+        .drums
+        .as_ref()
+        .unwrap()
+        .patterns[index]
+        .clone()
+}
+
+#[test]
+fn a_drum_generator_gets_drum_data_and_every_drum_edit_swaps_it() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, DRUMS, "g");
+    let first = drum_calls(&c.sink_mut().take());
+    assert_eq!(first.len(), 1, "the data goes out with the device");
+    assert_eq!(first[0].count, 1);
+    c.apply_command(Command::SetDrumStep {
+        device: key("g"),
+        index: 0,
+        lane: 2,
+        step: 4,
+        velocity: 99,
+        prob: 100,
+        merge: None,
+    })
+    .unwrap();
+    let edited = drum_calls(&c.sink_mut().take());
+    assert_eq!(edited.len(), 1, "one swap per edit");
+    assert_eq!(edited[0].patterns[0].steps[2][4].velocity, 99);
+    c.undo();
+    let undone = drum_calls(&c.sink_mut().take());
+    assert_eq!(
+        undone[0].patterns[0].steps[2][4].velocity, 0,
+        "undo swaps it back"
+    );
+}
+
+#[test]
+fn generate_writes_the_edited_pattern_from_the_style_density_and_seed_in_one_undo_step() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, DRUMS, "g");
+    set_param(&mut c, "g", "style", 1.0);
+    set_param(&mut c, "g", "density", 0.2);
+    set_param(&mut c, "g", "random.seed", 7.0);
+    let blank = drum_pattern(&c, "g", 0);
+    c.sink_mut().take();
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 0,
+        randomise: false,
+    });
+    let written = drum_pattern(&c, "g", 0);
+    assert_ne!(written, blank);
+    assert!(
+        written.steps[0][0].velocity > 0,
+        "the broken beat starts on a kick"
+    );
+    assert_eq!(written.name, blank.name);
+    assert_eq!(written.lanes, blank.lanes);
+    assert_eq!(drum_calls(&c.sink_mut().take()).len(), 1, "one swap");
+    // The same params write the same pattern again; undo restores the blank one first.
+    c.undo();
+    assert_eq!(drum_pattern(&c, "g", 0), blank, "one undo step");
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 0,
+        randomise: false,
+    });
+    assert_eq!(
+        drum_pattern(&c, "g", 0),
+        written,
+        "deterministic for a seed"
+    );
+    // The params follow the pattern the generator would write by itself.
+    let by_hand = atomik_devices::drum_generator::generate_pattern(
+        &blank.to_data(),
+        atomik_devices::drum_generator::DrumStyle::BrokenBeat,
+        0.2,
+        7,
+    );
+    assert_eq!(
+        written.steps,
+        atomik_model::DrumPatternDoc::from_data(&by_hand, "").steps
+    );
+}
+
+#[test]
+fn randomise_moves_the_seed_up_and_writes_another_pattern_in_one_undo_step() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, DRUMS, "g");
+    set_param(&mut c, "g", "random.seed", 7.0);
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 0,
+        randomise: false,
+    });
+    let seven = drum_pattern(&c, "g", 0);
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 0,
+        randomise: true,
+    });
+    let eight = drum_pattern(&c, "g", 0);
+    let seed = c.doc().device(&key("g")).unwrap().params["random.seed"];
+    assert_eq!(seed, 8.0);
+    assert_ne!(eight.steps, seven.steps);
+    c.undo();
+    assert_eq!(
+        drum_pattern(&c, "g", 0),
+        seven,
+        "the pattern and the seed in one step"
+    );
+    assert_eq!(
+        c.doc().device(&key("g")).unwrap().params["random.seed"],
+        7.0
+    );
+    // 999 wraps to 0.
+    set_param(&mut c, "g", "random.seed", 999.0);
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 0,
+        randomise: true,
+    });
+    assert_eq!(
+        c.doc().device(&key("g")).unwrap().params["random.seed"],
+        0.0
+    );
+}
+
+#[test]
+fn generate_refuses_other_devices_and_missing_patterns() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SEQ, "seq");
+    add(&mut c, DRUMS, "g");
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("seq"),
+        index: 0,
+        randomise: false,
+    });
+    assert!(c.last_rejection().unwrap().contains("not a drum generator"));
+    c.handle_action(UiAction::GenerateDrums {
+        device: key("g"),
+        index: 3,
+        randomise: false,
+    });
+    assert!(c.last_rejection().unwrap().contains("no pattern 4"));
+    assert_eq!(
+        drum_pattern(&c, "g", 0),
+        atomik_model::DrumPatternDoc::default()
+    );
+}
