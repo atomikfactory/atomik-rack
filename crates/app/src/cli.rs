@@ -1,6 +1,7 @@
 //! Command-line options of `atomik`.
 
 use crate::settings::{AudioSettings, HostChoice};
+use crate::windows::WindowKind;
 use atomik_ui::keymap::{Os, Profile, UserKeymap, sheet};
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -142,6 +143,10 @@ pub struct Cli {
     /// Debug: show the console maximised at start (as Shift+F5).
     #[arg(long)]
     pub console_max: bool,
+    /// Debug: open these panes in windows of their own at start (`rack`, `console`, or both
+    /// as `rack,console`), as View > Detach Rack and Detach Mixer.
+    #[arg(long, value_name = "PANES", value_delimiter = ',', value_parser = parse_detach)]
+    pub detach: Vec<WindowKind>,
     /// Debug: show the file browser at start (as F4), on `DIR` when given.
     #[arg(long = "file-browser", value_name = "DIR", num_args = 0..=1)]
     pub file_browser: Option<Option<PathBuf>>,
@@ -192,6 +197,14 @@ impl Cli {
         } else {
             atomik_model::new_project_doc()
         }
+    }
+}
+
+fn parse_detach(name: &str) -> Result<WindowKind, String> {
+    match name.to_ascii_lowercase().as_str() {
+        "rack" => Ok(WindowKind::Rack),
+        "console" | "mixer" => Ok(WindowKind::Console),
+        _ => Err(format!("unknown pane {name:?} (expected rack, console)")),
     }
 }
 
@@ -656,6 +669,27 @@ mod tests {
         let cli = parse(&["demo.atomik", "--console"]);
         assert!(cli.console && !cli.console_max);
         assert!(parse(&["--console-max"]).console_max);
+    }
+
+    #[test]
+    fn cli_detach_parses_rack_and_console() {
+        assert!(parse(&[]).detach.is_empty());
+        assert_eq!(parse(&["--detach", "rack"]).detach, [WindowKind::Rack]);
+        assert_eq!(
+            parse(&["--detach", "rack,console"]).detach,
+            [WindowKind::Rack, WindowKind::Console]
+        );
+        assert_eq!(parse(&["--detach", "mixer"]).detach, [WindowKind::Console]);
+    }
+
+    #[test]
+    fn cli_detach_rejects_unknown() {
+        let bad = |args: &[&str]| {
+            Cli::try_parse_from(std::iter::once("atomik").chain(args.iter().copied())).is_err()
+        };
+        assert!(bad(&["--detach", "main"]));
+        assert!(bad(&["--detach", "rack,sidebar"]));
+        assert!(bad(&["--detach"]));
     }
 
     #[test]

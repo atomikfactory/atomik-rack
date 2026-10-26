@@ -6,5 +6,6 @@ pub mod gpu;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod plugin_windows;
+mod window_logic;
 
 pub use app::run;

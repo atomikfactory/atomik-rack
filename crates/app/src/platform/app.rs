@@ -1,7 +1,9 @@
-//! The winit 0.30 application: one window, event translation, frame pacing, dialogs.
+//! The winit 0.30 application: the main window and the detached rack and mixer windows, event
+//! translation and routing, frame pacing, dialogs.
 
 use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
 use super::plugin_windows::PluginWindows;
+use super::window_logic;
 use crate::app_core::{AppCore, default_registry};
 use crate::cli::Cli;
 use crate::clicks::ClickCounter;
@@ -17,11 +19,13 @@ use crate::stress::{
 };
 use crate::translate::{self, FileDrag};
 use crate::ui_state::ui_state_path;
+use crate::windows::{self, MonitorInfo, WindowHit, WindowKind, WindowRect, ZOrder};
 use atomik_model::DeviceKey;
 use atomik_ui::TransportAction;
 use atomik_ui::keymap::Os;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{CursorHint, Modifiers, SceneCache, SceneCanvas, TextEngine, UiEvent};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -236,6 +240,16 @@ pub fn run(cli: Cli) -> Result<(), String> {
             shell.execute(AppCommand::ToggleFileBrowser);
         }
     }
+    // Panes in windows of their own at start, on top of the ones ui-state.json restored.
+    for kind in &cli.detach {
+        let command = match kind {
+            WindowKind::Console => AppCommand::DetachConsole,
+            WindowKind::Main | WindowKind::Rack => AppCommand::DetachRack,
+        };
+        if *kind != WindowKind::Main && !shell.detached(*kind) {
+            shell.execute(command);
+        }
+    }
     if cli.play {
         shell.execute(AppCommand::Transport(TransportAction::Play));
     }
@@ -249,20 +263,18 @@ pub fn run(cli: Cli) -> Result<(), String> {
         .map(|s| now + Duration::from_secs_f64(s));
     let mut app = App {
         shell,
-        window: None,
         gpu: GpuContext::new(),
-        surface: None,
-        scene: Scene::new(),
+        windows: BTreeMap::new(),
+        ids: BTreeMap::new(),
+        zorder: ZOrder::default(),
+        last_focused: WindowKind::Main,
+        drag_noted: false,
         text: TextEngine::new(),
-        cache: SceneCache::new(),
         modifiers: Modifiers::NONE,
         mod_events: translate::ModifierTracker::default(),
         buttons: translate::PointerMap::default(),
         os: Os::host(),
-        pointer: Point::ZERO,
-        cursor: CursorHint::Default,
         clicks: ClickCounter::new(),
-        drag: FileDrag::new(),
         epoch: now,
         next_status: now,
         screenshot: cli.screenshot.clone(),
@@ -271,7 +283,6 @@ pub fn run(cli: Cli) -> Result<(), String> {
             .quit_after
             .filter(|s| s.is_finite() && *s >= 0.0)
             .map(|s| now + Duration::from_secs_f64(s)),
-        title: String::new(),
         stopped: false,
         plugin_windows: PluginWindows::default(),
         #[cfg(target_os = "macos")]
@@ -284,14 +295,44 @@ pub fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// The size the main window opens with when nothing was saved (logical units).
+const MAIN_SIZE: (f64, f64) = (1280.0, 860.0);
+/// The size a detached window opens with when the shell has none to say.
+const DETACHED_SIZE: (f64, f64) = (1280.0, 720.0);
+/// The smallest a window can be (logical units).
+const MIN_SIZE: (f64, f64) = (480.0, 320.0);
+/// Said once per drag when the OS gives no positions to find the window under the pointer.
+const WAYLAND_DRAG_NOTE: &str = "Drag between windows is not available on Wayland";
+
+/// One window of the app: the OS window, its surface and everything it paints and remembers.
+struct AppWindow {
+    /// Dropped before `window`: the surface keeps its own handle to the window.
+    surface: Option<WindowSurface>,
+    window: Arc<Window>,
+    scene: Scene,
+    cache: SceneCache,
+    /// The pointer in this window's logical units.
+    pointer: Point,
+    /// The OS file drag over this window.
+    file_drag: FileDrag,
+    /// The cursor last set on the window.
+    cursor: CursorHint,
+    title: String,
+}
+
 struct App {
     shell: Shell<SystemBackend>,
-    window: Option<Arc<Window>>,
     gpu: GpuContext,
-    surface: Option<WindowSurface>,
-    scene: Scene,
+    /// The open windows; the main window is created at start and lives to the end.
+    windows: BTreeMap<WindowKind, AppWindow>,
+    ids: BTreeMap<WindowId, WindowKind>,
+    /// The windows by focus, to find the one under the pointer during a drag.
+    zorder: ZOrder,
+    /// The window that last had the focus: the parent of the dialogs.
+    last_focused: WindowKind,
+    /// The note about drags between windows was said for this drag.
+    drag_noted: bool,
     text: TextEngine,
-    cache: SceneCache,
     modifiers: Modifiers,
     /// Emits `UiEvent::ModifiersChanged` once per real modifier change.
     mod_events: translate::ModifierTracker,
@@ -299,23 +340,41 @@ struct App {
     buttons: translate::PointerMap,
     /// The OS whose keys apply.
     os: Os,
-    pointer: Point,
-    /// The cursor last set on the window.
-    cursor: CursorHint,
     clicks: ClickCounter,
-    drag: FileDrag,
     epoch: Instant,
     next_status: Instant,
     screenshot: Option<PathBuf>,
     /// When set, the screenshot waits until then (else it is taken at the first frame).
     screenshot_at: Option<Instant>,
     quit_at: Option<Instant>,
-    title: String,
     stopped: bool,
     /// The plugin editor windows (separate top-level windows).
     plugin_windows: PluginWindows,
     #[cfg(target_os = "macos")]
     native: Option<super::native_menu::NativeMenus>,
+}
+
+/// The monitors as [`MonitorInfo`] and the index of the primary one.
+fn monitors(event_loop: &ActiveEventLoop) -> (Vec<MonitorInfo>, usize) {
+    let handles: Vec<_> = event_loop.available_monitors().collect();
+    let infos = handles
+        .iter()
+        .map(|m| {
+            let (p, s) = (m.position(), m.size());
+            window_logic::monitor_info(
+                m.name(),
+                (p.x, p.y),
+                (s.width, s.height),
+                m.scale_factor(),
+                window_logic::desktop_space(),
+            )
+        })
+        .collect();
+    let primary = event_loop
+        .primary_monitor()
+        .and_then(|p| handles.iter().position(|m| *m == p))
+        .unwrap_or(0);
+    (infos, primary)
 }
 
 impl App {
@@ -324,6 +383,10 @@ impl App {
             return;
         }
         self.stopped = true;
+        // The geometry the shell saves is the last one the windows had.
+        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.report_geom(kind);
+        }
         self.shell.shutdown();
         self.shell.poll_status();
         eprintln!("atomik: at exit: {}", self.shell.status_text());
@@ -333,31 +396,218 @@ impl App {
         self.shell.core_mut().shutdown_plugins();
     }
 
-    fn scale(&self) -> f64 {
-        self.window.as_ref().map_or(1.0, |w| w.scale_factor())
+    /// The window the dialogs belong to: the one that last had the focus.
+    fn parent_window(&self) -> Option<&Window> {
+        self.windows
+            .get(&self.last_focused)
+            .or_else(|| self.windows.get(&WindowKind::Main))
+            .map(|w| w.window.as_ref())
     }
 
-    fn paint_scene(&mut self) {
-        self.scene.reset();
-        let mut canvas =
-            SceneCanvas::new(&mut self.scene, &mut self.text).with_cache(&mut self.cache);
-        self.shell.paint(&mut canvas);
-        self.cache.trim();
+    /// Opens and closes the OS windows to match what the shell wants (call after every call
+    /// into the shell). A window that cannot be opened is attached again.
+    fn sync_windows(&mut self, event_loop: &ActiveEventLoop) {
+        if self.stopped {
+            return;
+        }
+        let open: Vec<_> = self.windows.keys().copied().collect();
+        let plan = windows::reconcile(&open, &self.shell.windows_wanted());
+        for kind in plan.close {
+            self.close_window(kind);
+        }
+        for kind in plan.create {
+            if let Err(e) = self.create_window(event_loop, kind) {
+                eprintln!("atomik: cannot create the {kind:?} window: {e}");
+                if kind == WindowKind::Main {
+                    event_loop.exit();
+                } else {
+                    self.shell.window_closed(kind);
+                }
+            }
+        }
     }
 
-    fn redraw(&mut self) {
-        let Some(window) = self.window.clone() else {
+    /// Opens the window of `kind`: placed from its saved geometry and the monitors of the
+    /// moment, told its scale and size, with a surface.
+    fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        kind: WindowKind,
+    ) -> Result<(), String> {
+        let space = window_logic::desktop_space();
+        let (monitors, primary) = monitors(event_loop);
+        let default = match kind {
+            WindowKind::Main => MAIN_SIZE,
+            _ => self
+                .shell
+                .window_size(kind)
+                .map_or(DETACHED_SIZE, |s| (s.width, s.height)),
+        };
+        let saved = self.shell.saved_geom(kind);
+        let placement = windows::place(saved.as_ref(), default, MIN_SIZE, &monitors, primary);
+        let mut attributes = Window::default_attributes()
+            .with_title(self.shell.title_in(kind))
+            .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))
+            .with_min_inner_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
+            .with_maximized(placement.maximised);
+        if let Some(pos) = placement.pos {
+            attributes = attributes.with_position(window_logic::position_for(space, pos));
+        }
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|e| e.to_string())?,
+        );
+        let scale = window.scale_factor();
+        let size = window.inner_size();
+        let surface = self
+            .gpu
+            .create_surface(Arc::clone(&window), size.width, size.height)?;
+        self.shell.handle_in(kind, &UiEvent::ScaleChanged(scale));
+        self.shell
+            .handle_in(kind, &UiEvent::Resize(translate::logical_size(size, scale)));
+        if kind == WindowKind::Main {
+            // The owner of the editors that live in a plugin's own process (sandbox).
+            self.shell
+                .core_mut()
+                .set_plugin_editor_owner(super::plugin_windows::owner_of(&window));
+        }
+        self.ids.insert(window.id(), kind);
+        self.zorder.focus(kind);
+        self.windows.insert(
+            kind,
+            AppWindow {
+                surface: Some(surface),
+                window: Arc::clone(&window),
+                scene: Scene::new(),
+                cache: SceneCache::new(),
+                pointer: Point::ZERO,
+                file_drag: FileDrag::new(),
+                cursor: CursorHint::Default,
+                title: self.shell.title_in(kind),
+            },
+        );
+        self.report_geom(kind);
+        window.request_redraw();
+        Ok(())
+    }
+
+    /// Closes the window of `kind` (the shell attached its pane).
+    fn close_window(&mut self, kind: WindowKind) {
+        self.windows.remove(&kind);
+        self.ids.retain(|_, k| *k != kind);
+        self.zorder.remove(kind);
+        if self.last_focused == kind {
+            self.last_focused = WindowKind::Main;
+        }
+    }
+
+    /// Tells the shell where the window of `kind` is (it saves it).
+    fn report_geom(&mut self, kind: WindowKind) {
+        let Some(w) = self.windows.get(&kind) else {
+            return;
+        };
+        let window = &w.window;
+        if window.is_minimized() == Some(true) {
+            return;
+        }
+        let size = window.inner_size();
+        let outer = window.outer_position().ok().map(|p| (p.x, p.y));
+        let geom = window_logic::geom_of(
+            window_logic::desktop_space(),
+            outer,
+            (size.width, size.height),
+            window.scale_factor(),
+            window.is_maximized(),
+            window.current_monitor().and_then(|m| m.name()),
+        );
+        if let Some(geom) = geom {
+            self.shell.window_moved(kind, geom);
+        }
+    }
+
+    /// Every window's rect on the desktop; `None` when the OS gives no positions (Wayland).
+    fn desktop_rects(&self) -> Option<Vec<WindowRect>> {
+        self.windows
+            .iter()
+            .map(|(kind, w)| {
+                let origin = w.window.inner_position().ok()?;
+                let size = w.window.inner_size();
+                Some(window_logic::window_rect(
+                    *kind,
+                    (origin.x, origin.y),
+                    (size.width, size.height),
+                    w.window.scale_factor(),
+                    window_logic::desktop_space(),
+                ))
+            })
+            .collect()
+    }
+
+    /// The window under a pointer that is at `pos` in `kind`'s window, during a drag that
+    /// can cross windows: the front window of the app that holds the point, or `None`.
+    fn window_under_pointer(&mut self, kind: WindowKind, pos: Point) -> Option<WindowHit> {
+        let rects = self.desktop_rects();
+        let Some(rects) = rects.filter(|r| r.iter().any(|r| r.kind == kind)) else {
+            // No positions: the pointer is over its own window or over nothing of the app.
+            let size = self.shell.window_size(kind)?;
+            let hit = window_logic::local_hit(kind, pos, (size.width, size.height));
+            if hit.is_none() && self.windows.len() > 1 && !self.drag_noted {
+                self.drag_noted = true;
+                self.shell.notify(WAYLAND_DRAG_NOTE);
+            }
+            return hit;
+        };
+        let own = rects.iter().find(|r| r.kind == kind)?;
+        let point = windows::to_desktop(
+            own.space,
+            (own.x, own.y),
+            own.scale,
+            (pos.x * own.scale, pos.y * own.scale),
+        );
+        windows::window_under(&rects, point, &self.zorder)
+    }
+
+    /// Hands one event of `kind`'s window to the shell. During a drag of files the window under
+    /// the pointer is worked out here, since the OS keeps sending the events to the window
+    /// that got the press.
+    fn dispatch(&mut self, kind: WindowKind, event: &UiEvent) -> Vec<ShellRequest> {
+        let Some(pos) = window_logic::pointer_of(event).filter(|_| self.shell.cross_window_drag())
+        else {
+            self.drag_noted = false;
+            return self.shell.handle_in(kind, event);
+        };
+        let under = self.window_under_pointer(kind, pos);
+        self.shell.handle_routed(kind, event, under)
+    }
+
+    /// Paints `kind`'s window into its scene.
+    fn paint_scene(&mut self, kind: WindowKind) {
+        let Some(w) = self.windows.get_mut(&kind) else {
+            return;
+        };
+        w.scene.reset();
+        let mut canvas = SceneCanvas::new(&mut w.scene, &mut self.text).with_cache(&mut w.cache);
+        self.shell.paint_in(kind, &mut canvas);
+        w.cache.trim();
+    }
+
+    fn redraw(&mut self, kind: WindowKind) {
+        let Some(window) = self.windows.get(&kind).map(|w| Arc::clone(&w.window)) else {
             return;
         };
         let size = window.inner_size();
         if size.width == 0 || size.height == 0 {
             return; // minimized
         }
-        self.paint_scene();
-        let result = match &mut self.surface {
+        self.paint_scene(kind);
+        let Some(w) = self.windows.get_mut(&kind) else {
+            return;
+        };
+        let result = match &mut w.surface {
             Some(surface) => {
                 self.gpu.resize(surface, size.width, size.height);
-                self.gpu.render(surface, &self.scene, Color::BLACK)
+                self.gpu.render(surface, &w.scene, Color::BLACK)
             }
             None => return,
         };
@@ -365,12 +615,12 @@ impl App {
             FrameResult::Presented | FrameResult::Skipped => {}
             FrameResult::Reconfigured => window.request_redraw(),
             FrameResult::Lost => {
-                self.surface = None;
+                w.surface = None;
                 match self
                     .gpu
                     .create_surface(Arc::clone(&window), size.width, size.height)
                 {
-                    Ok(surface) => self.surface = Some(surface),
+                    Ok(surface) => w.surface = Some(surface),
                     Err(e) => eprintln!("atomik: {e}"),
                 }
                 window.request_redraw();
@@ -378,52 +628,78 @@ impl App {
         }
     }
 
-    fn take_screenshot(&mut self, path: &std::path::Path) {
-        let (w, h) = self.shell.physical_size();
-        self.paint_scene();
-        // The scene was painted, but the window has not shown it yet.
-        self.shell.core_mut().view_mut().request_repaint();
-        match render_offscreen(&self.scene, Color::BLACK, w, h)
-            .and_then(|pixels| write_png(path, &pixels, w, h))
-        {
-            Ok(()) => eprintln!("atomik: screenshot {w}x{h} written to {}", path.display()),
-            Err(e) => eprintln!("atomik: screenshot failed: {e}"),
+    /// Renders every open window offscreen: `base` for the main window, `base-rack` and
+    /// `base-console` (before the extension) for the detached ones.
+    fn take_screenshots(&mut self, base: &std::path::Path) {
+        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
+            let Some((w, h)) = self.shell.physical_size_in(kind) else {
+                continue;
+            };
+            self.paint_scene(kind);
+            // The scene was painted, but the window has not shown it yet.
+            self.shell.core_mut().view_mut().request_repaint();
+            let path = window_logic::screenshot_path(base, kind);
+            let Some(window) = self.windows.get(&kind) else {
+                continue;
+            };
+            match render_offscreen(&window.scene, Color::BLACK, w, h)
+                .and_then(|pixels| write_png(&path, &pixels, w, h))
+            {
+                Ok(()) => eprintln!("atomik: screenshot {w}x{h} written to {}", path.display()),
+                Err(e) => eprintln!("atomik: screenshot failed: {e}"),
+            }
         }
     }
 
-    fn update_title(&mut self) {
-        let title = self.shell.title();
-        if title != self.title {
-            if let Some(w) = &self.window {
-                w.set_title(&title);
+    /// Sets each window's title when it changed.
+    fn update_titles(&mut self) {
+        for (kind, w) in &mut self.windows {
+            if let Some(title) = window_logic::changed(&w.title, &self.shell.title_in(*kind)) {
+                w.window.set_title(&title);
+                w.title = title;
             }
-            self.title = title;
+        }
+    }
+
+    /// Shows the cursor the shell asks for in each window (set only when it changes).
+    fn update_cursors(&mut self) {
+        for (kind, w) in &mut self.windows {
+            if let Some(hint) = window_logic::changed(&w.cursor, &self.shell.cursor_in(*kind)) {
+                w.window.set_cursor(translate::cursor_icon(hint));
+                w.cursor = hint;
+            }
+        }
+    }
+
+    /// Asks for a redraw of every window that has something to paint.
+    fn request_redraws(&self) {
+        for (kind, w) in &self.windows {
+            if self.shell.needs_repaint_in(*kind) {
+                w.window.request_redraw();
+            }
         }
     }
 
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
+        self.sync_windows(event_loop);
         self.handle_requests(event_loop, requests);
-        self.update_title();
-        self.update_cursor();
+        self.sync_windows(event_loop);
+        self.update_titles();
+        self.update_cursors();
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native {
             native.update(&self.shell.menu_model());
         }
-        if self.shell.needs_repaint()
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
-        }
+        self.request_redraws();
     }
 
-    /// Shows the cursor the shell asks for (set only when it changes).
-    fn update_cursor(&mut self) {
-        let hint = self.shell.cursor();
-        if hint != self.cursor
-            && let Some(w) = &self.window
-        {
-            w.set_cursor(translate::cursor_icon(hint));
-            self.cursor = hint;
+    /// Brings the window of `kind` forward and gives it the keyboard.
+    fn focus_window(&self, kind: WindowKind) {
+        if let Some(w) = self.windows.get(&kind) {
+            if w.window.is_minimized() == Some(true) {
+                w.window.set_minimized(false);
+            }
+            w.window.focus_window();
         }
     }
 
@@ -436,8 +712,8 @@ impl App {
                         .add_filter("Atomik Rack project or patch", &["atomik", "json"])
                         .add_filter("Atomik Rack project", &["atomik"])
                         .add_filter("Atomik Rack patch", &["json"]);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.open_file(&path);
@@ -447,8 +723,8 @@ impl App {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Import audio")
                         .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(paths) = dialog.pick_files() {
                         self.shell.import_files(paths);
@@ -462,8 +738,8 @@ impl App {
                             "Import MIDI"
                         })
                         .add_filter("MIDI files", &crate::midi_file::MIDI_EXTENSIONS);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.import_midi(&path, as_song);
@@ -474,8 +750,8 @@ impl App {
                         .set_title(format!("Export MIDI {}", what.word()))
                         .add_filter("MIDI file", &["mid"])
                         .set_file_name(format!("{}.mid", self.shell.midi_export_name(what)));
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(mut path) = dialog.save_file() {
                         if path.extension().is_none() {
@@ -488,8 +764,8 @@ impl App {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Load samples")
                         .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(paths) = dialog.pick_files() {
                         self.shell.load_samples(paths);
@@ -512,8 +788,8 @@ impl App {
                         .set_title(title)
                         .add_filter(filter, &[ext])
                         .set_file_name(format!("{stem}.{ext}"));
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(mut path) = dialog.save_file() {
                         if path.extension().is_none() {
@@ -531,8 +807,8 @@ impl App {
                         .set_title("Export keyboard shortcuts")
                         .add_filter("Atomik keymap", &["json"])
                         .set_file_name("keymap.json");
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(mut path) = dialog.save_file() {
                         if path.extension().is_none() {
@@ -545,8 +821,8 @@ impl App {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Import keyboard shortcuts")
                         .add_filter("Atomik keymap", &["json"]);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.import_keymap_from(&path);
@@ -556,8 +832,8 @@ impl App {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Locate the audio file")
                         .add_filter("Audio files", &crate::audio_import::AUDIO_EXTENSIONS);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.relink_file(path);
@@ -571,8 +847,8 @@ impl App {
                     if let Some(dir) = self.shell.midi_preset_dir() {
                         dialog = dialog.set_directory(dir);
                     }
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(mut path) = dialog.save_file() {
                         if path.extension().is_none() {
@@ -588,8 +864,8 @@ impl App {
                     if let Some(dir) = self.shell.midi_preset_dir() {
                         dialog = dialog.set_directory(dir);
                     }
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.import_midi_preset_from(&path);
@@ -598,8 +874,8 @@ impl App {
                 ShellRequest::PickRelinkFolder => {
                     let mut dialog =
                         rfd::FileDialog::new().set_title("Search a folder for the missing audio");
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(folder) = dialog.pick_folder() {
                         self.shell.relink_search_folder(folder);
@@ -607,8 +883,8 @@ impl App {
                 }
                 ShellRequest::PickPluginFolder => {
                     let mut dialog = rfd::FileDialog::new().set_title("Add a plugin folder");
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(folder) = dialog.pick_folder() {
                         self.shell.add_plugin_folder(folder);
@@ -616,8 +892,8 @@ impl App {
                 }
                 ShellRequest::PickLibraryFolder => {
                     let mut dialog = rfd::FileDialog::new().set_title("Choose the library folder");
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if let Some(folder) = dialog.pick_folder() {
                         self.shell.set_library_folder(folder);
@@ -629,8 +905,8 @@ impl App {
                         .set_title("Unsaved changes")
                         .set_description("The rack has unsaved changes. Discard them?")
                         .set_buttons(rfd::MessageButtons::YesNo);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if dialog.show() == rfd::MessageDialogResult::Yes {
                         let more = self.shell.confirmed(command);
@@ -643,16 +919,19 @@ impl App {
                         .set_title("Unsaved changes")
                         .set_description("The rack has unsaved changes. Discard them?")
                         .set_buttons(rfd::MessageButtons::YesNo);
-                    if let Some(w) = &self.window {
-                        dialog = dialog.set_parent(w.as_ref());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
                     }
                     if dialog.show() == rfd::MessageDialogResult::Yes {
                         self.shell.open_file(&path);
                     }
                 }
-                // The detached windows are opened by the platform windows work (Agent C);
-                // until then there is no other window to bring forward or maximise.
-                ShellRequest::FocusWindow(_) | ShellRequest::ToggleMaximise(_) => {}
+                ShellRequest::FocusWindow(kind) => self.focus_window(kind),
+                ShellRequest::ToggleMaximise(kind) => {
+                    if let Some(w) = self.windows.get(&kind) {
+                        w.window.set_maximized(!w.window.is_maximized());
+                    }
+                }
                 ShellRequest::Quit => {
                     self.shutdown();
                     event_loop.exit();
@@ -661,68 +940,50 @@ impl App {
         }
     }
 
-    /// Hands the collected file drag events to the shell (as one event, see [`FileDrag`]).
-    fn flush_files(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(event) = self.drag.flush(self.pointer) {
-            self.ui(event_loop, event);
+    /// Hands the file drag events collected for `kind`'s window to the shell (as one event, see
+    /// [`FileDrag`]), at that window's pointer.
+    fn flush_files(&mut self, event_loop: &ActiveEventLoop, kind: WindowKind) {
+        let Some(w) = self.windows.get_mut(&kind) else {
+            return;
+        };
+        if let Some(event) = w.file_drag.flush(w.pointer) {
+            self.ui(event_loop, kind, event);
         }
     }
 
-    fn ui(&mut self, event_loop: &ActiveEventLoop, event: UiEvent) {
-        let requests = self.shell.handle(&event);
+    fn flush_all_files(&mut self, event_loop: &ActiveEventLoop) {
+        for kind in self.windows.keys().copied().collect::<Vec<_>>() {
+            self.flush_files(event_loop, kind);
+        }
+    }
+
+    fn ui(&mut self, event_loop: &ActiveEventLoop, kind: WindowKind, event: UiEvent) {
+        let requests = self.dispatch(kind, &event);
         self.after_event(event_loop, requests);
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if !self.windows.is_empty() {
             return;
         }
-        let attributes = Window::default_attributes()
-            .with_title(self.shell.title())
-            .with_inner_size(LogicalSize::new(1280.0, 860.0))
-            .with_min_inner_size(LogicalSize::new(480.0, 320.0));
-        let window = match event_loop.create_window(attributes) {
-            Ok(w) => Arc::new(w),
-            Err(e) => {
-                eprintln!("atomik: cannot create the window: {e}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let scale = window.scale_factor();
-        let size = window.inner_size();
-        self.shell.handle(&UiEvent::ScaleChanged(scale));
-        self.shell
-            .handle(&UiEvent::Resize(translate::logical_size(size, scale)));
-        match self
-            .gpu
-            .create_surface(Arc::clone(&window), size.width, size.height)
-        {
-            Ok(surface) => self.surface = Some(surface),
-            Err(e) => {
-                eprintln!("atomik: {e}");
-                event_loop.exit();
-                return;
-            }
+        // The main window and the panes that were detached when the app last closed.
+        self.sync_windows(event_loop);
+        if !self.windows.contains_key(&WindowKind::Main) {
+            return;
         }
         #[cfg(target_os = "macos")]
         {
             self.native = super::native_menu::NativeMenus::attach(&self.shell.menu_model());
         }
-        // The owner of the editors that live in a plugin's own process (sandbox).
-        self.shell
-            .core_mut()
-            .set_plugin_editor_owner(super::plugin_windows::owner_of(&window));
-        self.window = Some(Arc::clone(&window));
-        self.update_title();
+        self.update_titles();
         if self.screenshot_at.is_none()
             && let Some(path) = self.screenshot.take()
         {
-            self.take_screenshot(&path);
+            self.take_screenshots(&path);
         }
-        window.request_redraw();
+        self.request_redraws();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -731,55 +992,84 @@ impl ApplicationHandler for App {
             self.plugin_windows.event(id, event, self.shell.core_mut());
             return;
         }
-        let scale = self.scale();
+        let Some(&kind) = self.ids.get(&id) else {
+            return;
+        };
         match &event {
             WindowEvent::HoveredFile(path) => {
-                self.drag.hovered(path.clone());
+                if let Some(w) = self.windows.get_mut(&kind) {
+                    w.file_drag.hovered(path.clone());
+                }
                 return;
             }
             WindowEvent::HoveredFileCancelled => {
-                self.drag.hover_cancelled();
+                if let Some(w) = self.windows.get_mut(&kind) {
+                    w.file_drag.hover_cancelled();
+                }
                 return;
             }
             WindowEvent::DroppedFile(path) => {
-                self.drag.dropped(path.clone());
+                if let Some(w) = self.windows.get_mut(&kind) {
+                    w.file_drag.dropped(path.clone());
+                }
                 return;
             }
             // Anything else ends the group: keep the order of events.
-            _ => self.flush_files(event_loop),
+            _ => self.flush_files(event_loop, kind),
         }
+        let Some((scale, pointer)) = self
+            .windows
+            .get(&kind)
+            .map(|w| (w.window.scale_factor(), w.pointer))
+        else {
+            return;
+        };
         match event {
             WindowEvent::CloseRequested => {
-                let requests = self.shell.execute(AppCommand::Quit);
-                self.after_event(event_loop, requests);
+                if kind == WindowKind::Main {
+                    let requests = self.shell.execute(AppCommand::Quit);
+                    self.after_event(event_loop, requests);
+                } else {
+                    // Closing a detached window attaches its pane again.
+                    self.shell.window_closed(kind);
+                    self.after_event(event_loop, Vec::new());
+                }
             }
             WindowEvent::Resized(size) => {
-                if let Some(surface) = &mut self.surface {
+                if let Some(w) = self.windows.get_mut(&kind)
+                    && let Some(surface) = &mut w.surface
+                {
                     self.gpu.resize(surface, size.width, size.height);
                 }
                 self.ui(
                     event_loop,
+                    kind,
                     UiEvent::Resize(translate::logical_size(size, scale)),
                 );
+                self.report_geom(kind);
             }
+            WindowEvent::Moved(_) => self.report_geom(kind),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.ui(event_loop, UiEvent::ScaleChanged(scale_factor));
+                self.ui(event_loop, kind, UiEvent::ScaleChanged(scale_factor));
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.modifiers = translate::modifiers(m.state());
                 if let Some(event) = self.mod_events.update(m.state()) {
-                    self.ui(event_loop, event);
+                    self.ui(event_loop, kind, event);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.pointer = translate::logical(position, scale);
+                let pointer = translate::logical(position, scale);
+                if let Some(w) = self.windows.get_mut(&kind) {
+                    w.pointer = pointer;
+                }
                 let event = UiEvent::PointerMove {
-                    pos: self.pointer,
+                    pos: pointer,
                     modifiers: self.modifiers,
                 };
-                self.ui(event_loop, event);
+                self.ui(event_loop, kind, event);
             }
-            WindowEvent::CursorLeft { .. } => self.ui(event_loop, UiEvent::PointerLeave),
+            WindowEvent::CursorLeft { .. } => self.ui(event_loop, kind, UiEvent::PointerLeave),
             WindowEvent::MouseInput { state, button, .. } => {
                 let mapped = match state {
                     ElementState::Pressed => self.buttons.press(button, self.modifiers, self.os),
@@ -792,27 +1082,27 @@ impl ApplicationHandler for App {
                     ElementState::Pressed => {
                         let at = clock::now().saturating_duration_since(self.epoch);
                         UiEvent::PointerDown {
-                            pos: self.pointer,
+                            pos: pointer,
                             button,
                             modifiers,
-                            clicks: self.clicks.press(at, self.pointer, button),
+                            clicks: self.clicks.press(at, pointer, button),
                         }
                     }
                     ElementState::Released => UiEvent::PointerUp {
-                        pos: self.pointer,
+                        pos: pointer,
                         button,
                         modifiers,
                     },
                 };
-                self.ui(event_loop, event);
+                self.ui(event_loop, kind, event);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let event = UiEvent::Wheel {
                     delta: translate::wheel(delta, scale),
-                    pos: self.pointer,
+                    pos: pointer,
                     modifiers: self.modifiers,
                 };
-                self.ui(event_loop, event);
+                self.ui(event_loop, kind, event);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let key = translate::key_event(
@@ -826,19 +1116,29 @@ impl ApplicationHandler for App {
                     modifiers: self.modifiers,
                     pressed: event.state.is_pressed(),
                 };
-                self.ui(event_loop, event);
+                self.ui(event_loop, kind, event);
             }
-            WindowEvent::RedrawRequested => self.redraw(),
+            WindowEvent::RedrawRequested => self.redraw(kind),
             WindowEvent::Focused(false) => {
                 // The releases of the keys held now will never arrive.
                 self.modifiers = Modifiers::NONE;
                 self.mod_events.reset();
                 self.shell.focus_lost();
             }
-            WindowEvent::Occluded(false) | WindowEvent::Focused(true) => {
+            WindowEvent::Focused(true) => {
+                self.zorder.focus(kind);
+                self.last_focused = kind;
+                self.shell.window_focused(kind);
                 self.shell.core_mut().view_mut().request_repaint();
-                if let Some(w) = &self.window {
-                    w.request_redraw();
+                self.after_event(event_loop, Vec::new());
+                if let Some(w) = self.windows.get(&kind) {
+                    w.window.request_redraw();
+                }
+            }
+            WindowEvent::Occluded(false) => {
+                self.shell.core_mut().view_mut().request_repaint();
+                if let Some(w) = self.windows.get(&kind) {
+                    w.window.request_redraw();
                 }
             }
             _ => {}
@@ -846,7 +1146,7 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.flush_files(event_loop);
+        self.flush_all_files(event_loop);
         let now = clock::now();
         if self.quit_at.is_some_and(|t| now >= t) {
             self.shutdown();
@@ -876,21 +1176,19 @@ impl ApplicationHandler for App {
         // Meters and their ballistics use the monotonic time since start.
         self.shell
             .frame_at(now.saturating_duration_since(self.epoch).as_secs_f64());
+        self.sync_windows(event_loop);
         if self.screenshot_at.is_some_and(|t| now >= t)
             && let Some(path) = self.screenshot.take()
         {
             self.screenshot_at = None;
-            self.take_screenshot(&path);
+            self.take_screenshots(&path);
         }
         if now >= self.next_status {
             self.next_status = now + STATUS_PERIOD;
             self.shell.poll_status();
         }
-        if self.shell.needs_repaint()
-            && let Some(w) = &self.window
-        {
-            w.request_redraw();
-        }
+        // Only the windows with something new repaint: the meters redraw the console's window.
+        self.request_redraws();
         // Audio imports and loads finish on worker threads: poll them even without a stream.
         let running = self.shell.core().sink().is_running()
             || self.shell.is_busy()
