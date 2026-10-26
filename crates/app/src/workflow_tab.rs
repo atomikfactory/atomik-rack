@@ -33,6 +33,8 @@ pub enum Pref {
     FollowSong,
     /// Automation follows the selection.
     FollowSelection,
+    /// Buttons show a help tooltip.
+    ShowTooltips,
 }
 
 /// One switch.
@@ -106,6 +108,7 @@ impl WorkflowTab {
             Pref::CreateKeepsBrowserOpen => self.prefs.create_keeps_browser_open,
             Pref::FollowSong => self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection,
+            Pref::ShowTooltips => self.prefs.show_tooltips,
         }
     }
 
@@ -117,6 +120,7 @@ impl WorkflowTab {
             }
             Pref::FollowSong => self.prefs.follow_song = !self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection = !self.prefs.follow_selection,
+            Pref::ShowTooltips => self.prefs.show_tooltips = !self.prefs.show_tooltips,
         }
     }
 
@@ -146,6 +150,11 @@ impl WorkflowTab {
                 Pref::FollowSelection,
                 "Automation follows the selection",
                 "Touching a control shows its lane in the arrangement (an empty lane is added; no data is written).",
+            ),
+            (
+                Pref::ShowTooltips,
+                "Show tooltips",
+                "A button says what it does, with its shortcut, after the pointer rests on it.",
             ),
         ] {
             toggles.push(Toggle {

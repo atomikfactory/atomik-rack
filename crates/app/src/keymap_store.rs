@@ -52,6 +52,8 @@ pub struct WorkflowPrefs {
     pub follow_song: bool,
     /// The arrangement shows the automation lane of the parameter being touched (default off).
     pub follow_selection: bool,
+    /// Buttons show a short help text after the pointer rests on them (default on).
+    pub show_tooltips: bool,
     /// The rack is shown (the F6 layout flag; view state, not part of the project).
     pub rack_visible: bool,
     /// The one-time notice of the keys that moved with the standard keymap was shown.
@@ -70,6 +72,7 @@ impl Default for WorkflowPrefs {
             create_keeps_browser_open: false,
             follow_song: false,
             follow_selection: false,
+            show_tooltips: true,
             rack_visible: true,
             keys_notice_seen: false,
             library_folder: None,
@@ -97,6 +100,7 @@ impl WorkflowPrefs {
             ),
             follow_song: flag("follow_song", defaults.follow_song),
             follow_selection: flag("follow_selection", defaults.follow_selection),
+            show_tooltips: flag("show_tooltips", defaults.show_tooltips),
             rack_visible: flag("rack_visible", defaults.rack_visible),
             keys_notice_seen: flag("keys_notice_seen", defaults.keys_notice_seen),
             library_folder: obj
@@ -110,6 +114,7 @@ impl WorkflowPrefs {
                     !matches!(
                         k.as_str(),
                         "auto_route"
+                            | "show_tooltips"
                             | "create_keeps_browser_open"
                             | "follow_song"
                             | "follow_selection"
@@ -136,6 +141,7 @@ impl WorkflowPrefs {
             "follow_selection".into(),
             Value::Bool(self.follow_selection),
         );
+        map.insert("show_tooltips".into(), Value::Bool(self.show_tooltips));
         map.insert("rack_visible".into(), Value::Bool(self.rack_visible));
         map.insert(
             "keys_notice_seen".into(),
@@ -478,6 +484,31 @@ mod tests {
         assert_eq!(l.value, WorkflowPrefs::default());
         assert!(l.status.unwrap().contains("workflow.json.bad"));
         assert!(d.join("workflow.json.bad").exists());
+    }
+
+    #[test]
+    fn show_tooltips_is_on_by_default_and_round_trips_through_workflow_json() {
+        assert!(WorkflowPrefs::default().show_tooltips);
+        // A file from before the preference has it on.
+        assert!(WorkflowPrefs::from_json("{}").unwrap().show_tooltips);
+        // A wrongly typed value is the default too.
+        assert!(
+            WorkflowPrefs::from_json(r#"{"show_tooltips": 3}"#)
+                .unwrap()
+                .show_tooltips
+        );
+        let d = dir("tooltips");
+        let p = d.join(WORKFLOW_FILE);
+        let off = WorkflowPrefs {
+            show_tooltips: false,
+            ..WorkflowPrefs::default()
+        };
+        save_workflow(&p, &off).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("\"show_tooltips\": false"), "{text}");
+        assert_eq!(load_workflow(&p).value, off);
+        // The unknown fields of a newer build are kept and this one is not one of them.
+        assert!(off.extra.is_empty());
     }
 
     #[test]

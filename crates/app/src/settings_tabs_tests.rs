@@ -703,7 +703,7 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.toggles.len(), 4);
+    assert_eq!(l.toggles.len(), 5);
     let labels: Vec<&str> = l.toggles.iter().map(|t| t.label).collect();
     assert_eq!(
         labels,
@@ -711,10 +711,12 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
             "Auto-route new devices",
             "Create keeps the browser open",
             "Follow song while playing",
-            "Automation follows the selection"
+            "Automation follows the selection",
+            "Show tooltips"
         ]
     );
     assert!(!l.toggles[3].on, "following the selection starts off");
+    assert!(l.toggles[4].on, "tooltips start on");
     assert!(l.toggles[0].on && !l.toggles[1].on);
     down(&mut d, l.toggles[0].rect.center());
     down(&mut d, l.toggles[1].rect.center());
@@ -723,6 +725,9 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let l = d.workflow_layout(VIEW).unwrap();
     down(&mut d, l.toggles[3].rect.center());
     assert!(d.preferences().unwrap().1.follow_selection);
+    let l = d.workflow_layout(VIEW).unwrap();
+    down(&mut d, l.toggles[4].rect.center());
+    assert!(!d.preferences().unwrap().1.show_tooltips);
     let again = d.workflow_layout(VIEW).unwrap();
     assert!(!again.toggles[0].on && again.toggles[1].on);
     assert!(matches!(
