@@ -59,6 +59,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::CommandOutcome;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use crate::wave_paint::max_wave_zoom;
 use crate::zone_edit::{self, Edges, Field, Marker};
 use atomik_audio_file::PeakPyramid;
@@ -751,6 +752,44 @@ impl SampleEditorView {
             Marker::Start | Marker::End => true,
             Marker::LoopStart | Marker::LoopEnd => z.loop_mode != LoopMode::Off,
             Marker::Crossfade => z.loop_mode != LoopMode::Off && z.crossfade > 0,
+        }
+    }
+
+    /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let l = self.layout();
+        match self.hit(pos) {
+            Hit::Close => Some(Help::new(l.close, "Close the sample editor")),
+            Hit::Load => Some(Help::new(l.load, "Load an audio file as a new zone")),
+            Hit::Loop(m) => Some(Help::new(
+                self.loop_rect(m),
+                match m {
+                    LoopMode::Off => "No loop: the sample plays once",
+                    LoopMode::Forward => "Loop forward between the loop markers",
+                    LoopMode::PingPong => "Loop back and forth between the loop markers",
+                },
+            )),
+            Hit::Trigger(m) => Some(Help::new(
+                self.trigger_rect(m),
+                match m {
+                    TriggerMode::Gate => "Gate: the sample plays while the key is held",
+                    TriggerMode::OneShot => {
+                        "One shot: the sample plays to its end after a key press"
+                    }
+                },
+            )),
+            Hit::Field(f) => Some(Help::new(
+                self.field_rect(f),
+                format!(
+                    "{}: drag or scroll to change, double-click to reset",
+                    f.label()
+                ),
+            )),
+            _ => None,
         }
     }
 

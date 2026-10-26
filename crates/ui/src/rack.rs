@@ -41,6 +41,7 @@ mod container_input;
 mod device_drag;
 mod drum_input;
 mod fx_input;
+mod help;
 mod io_input;
 mod navigator;
 pub use navigator::NAVIGATOR_WIDTH;
@@ -531,6 +532,8 @@ pub struct RackView {
     pages: BTreeMap<DeviceKey, usize>,
     /// The pattern name (or macro name) being edited on a panel.
     rename: Option<Rename>,
+    /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
+    button_tips: bool,
     /// The container whose inside is shown: the local keys from the top level down (empty =
     /// the top level). View state, not in the document.
     scope: Vec<DeviceKey>,
@@ -678,6 +681,7 @@ impl RackView {
             drum_clip: None,
             pages: BTreeMap::new(),
             rename: None,
+            button_tips: true,
             scope: Vec::new(),
             scope_names: Vec::new(),
             pending_scope: None,
@@ -733,6 +737,15 @@ impl RackView {
     /// Whether console devices are shown in the rack.
     pub fn show_console_devices(&self) -> bool {
         self.show_console
+    }
+
+    /// Shows or hides the hover tooltips of the buttons the rack explains by itself (BYPASS,
+    /// a return's EDIT). The names of jacks and presets and the value readout of a drag stay.
+    pub fn set_button_tips(&mut self, on: bool) {
+        if on != self.button_tips {
+            self.button_tips = on;
+            self.repaint = true;
+        }
     }
 
     /// Draws the console links (channel `out` and `send{k}` to the master) as cables, or hides
@@ -2248,7 +2261,7 @@ impl RackView {
                 Some(h @ (Hit::IoCell(..) | Hit::IoClip(..) | Hit::IoHeader(_))) => {
                     self.io_tooltip(h)
                 }
-                Some(h @ Hit::ReturnEdit(..)) => self.return_edit_tooltip(h),
+                Some(h @ Hit::ReturnEdit(..)) if self.button_tips => self.return_edit_tooltip(h),
                 Some(Hit::Preset(i, n)) => self.preset_name(i, n),
                 // A control a macro drives says what it shows and who moves it.
                 Some(Hit::Control(i, slot)) => {
@@ -2261,7 +2274,7 @@ impl RackView {
                         u16::from(m) + 1
                     ))
                 }
-                Some(Hit::Bypass(i)) => {
+                Some(Hit::Bypass(i)) if self.button_tips => {
                     let player = self.devices[i]
                         .desc
                         .as_ref()

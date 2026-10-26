@@ -74,6 +74,7 @@ use crate::keymap::CommandOutcome;
 use crate::seq_edit;
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use crate::zone_edit::note_name;
 use atomik_core::PPQ;
 use atomik_device_sdk::Registry;
@@ -731,6 +732,35 @@ impl StepEditorView {
         let l = self.layout();
         let k = ((x - self.bounds.x0 - HEADER_WIDTH + self.scroll_x) / l.cell_w).floor();
         k.clamp(0.0, f64::from(self.grid().steps - 1)) as u16
+    }
+
+    /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let l = self.layout();
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        match self.hit(pos) {
+            Hit::Close => help(l.close, "Close the step editor"),
+            Hit::NewPattern => help(self.new_pattern_rect(), "Create the first pattern"),
+            Hit::Resolution(r) => help(self.res_rect(r), "Step length of the grid"),
+            Hit::Steps(s) => help(self.steps_rect(s), "Number of steps in the pattern"),
+            Hit::Swing => help(
+                self.swing_rect(),
+                "Swing: drag or scroll to change, double-click to reset",
+            ),
+            Hit::Level(lv) => help(
+                self.level_rect(lv),
+                match lv {
+                    VelocityLevel::Soft => "New steps are soft",
+                    VelocityLevel::Medium => "New steps are medium",
+                    VelocityLevel::Hard => "New steps are hard",
+                },
+            ),
+            Hit::None | Hit::Header(_) | Hit::Cell(..) => None,
+        }
     }
 
     fn hit(&self, pos: Point) -> Hit {

@@ -14,6 +14,7 @@ use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, step_index, wheel_steps};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, format_bbt, format_time, tick_to_seconds};
+use crate::tooltip::Help;
 use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, TempoPoint, TempoTable};
 use atomik_device_sdk::Registry;
 use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_MIN, TempoEvent};
@@ -669,6 +670,46 @@ impl TransportBar {
             _ => {}
         }
         out
+    }
+
+    /// What the button or readout at `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !self.bounds.contains(pos) {
+            return None;
+        }
+        if let Some(b) = BUTTONS
+            .into_iter()
+            .find(|b| self.button_rect(*b).contains(pos))
+        {
+            return Some(Self::button_help(b, self.button_rect(b)));
+        }
+        let [_, _, tempo, meter] = self.lcd_rects();
+        if tempo.contains(pos) {
+            return Some(Help::new(
+                tempo,
+                "Tempo in BPM: drag or scroll to change (Shift: fine), double-click to type",
+            ));
+        }
+        if meter.contains(pos) {
+            return Some(Help::new(
+                meter,
+                "Time signature: drag or scroll a number, double-click to type",
+            ));
+        }
+        None
+    }
+
+    fn button_help(b: TransportButton, rect: Rect) -> Help {
+        let help =
+            |text: &'static str, command: &'static str| Help::new(rect, text).with_command(command);
+        match b {
+            TransportButton::ReturnToZero => help("Return to the start", "transport.go_start"),
+            TransportButton::Stop => help("Stop", "transport.stop"),
+            TransportButton::Play => help("Play, or stop while playing", "transport.play_stop"),
+            TransportButton::Record => help("Record into the armed tracks", "transport.record"),
+            TransportButton::Loop => help("Loop the loop range on or off", "transport.loop"),
+            TransportButton::Metronome => help("Metronome click on or off", "transport.metronome"),
+        }
     }
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {

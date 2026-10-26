@@ -66,6 +66,7 @@ use crate::keymap::CommandOutcome;
 use crate::sample_editor::{FIELD_HEIGHT, FIELD_WIDTH, TOP_BAR_HEIGHT};
 use crate::seq_paint::SeqTheme;
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use crate::wave_paint::max_wave_zoom;
 use crate::zone_edit::{self, Field};
 use atomik_audio_file::PeakPyramid;
@@ -782,6 +783,49 @@ impl SliceEditorView {
             previous,
             self.min_len(),
         ))
+    }
+
+    /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let l = self.layout();
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        match self.hit(pos) {
+            Hit::Close => help(l.close, "Close the slice editor"),
+            Hit::Load => help(l.load, "Load another audio file to slice"),
+            Hit::EmptyLoad => help(l.empty_load, "Load an audio file to slice"),
+            Hit::ModeTransients => help(
+                l.mode_transients,
+                "Slice at the transients the sensitivity finds",
+            ),
+            Hit::ModeGrid => help(l.mode_grid, "Slice on an even grid"),
+            Hit::Sens => help(
+                l.sens,
+                "Sensitivity: drag or scroll to change, double-click to reset",
+            ),
+            Hit::Div(d) => {
+                let i = DIVISIONS.iter().position(|(x, _)| *x == d)?;
+                help(l.divs[i], "Grid division: slices per beat")
+            }
+            Hit::Beats => help(
+                l.beats,
+                "Length of the loop in beats: drag or scroll to change, double-click to reset",
+            ),
+            Hit::SliceButton => help(l.slice_button, "Slice the loop and map the slices to keys"),
+            Hit::ToTrack => help(l.to_track, "Lay the slices out as notes on a new track"),
+            Hit::Field(f) => Some(Help::new(
+                self.field_rect(f),
+                format!(
+                    "{}: drag or scroll to change, double-click to reset",
+                    f.label()
+                ),
+            )),
+            Hit::Reverse => help(self.reverse_rect(), "Play the selected slice backwards"),
+            Hit::None | Hit::Marker(_) | Hit::Slice(_) => None,
+        }
     }
 
     fn hit(&self, pos: Point) -> Hit {

@@ -33,6 +33,7 @@ use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
+use crate::tooltip::{Help, stepper_help};
 use crate::zone_edit::note_name;
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -414,6 +415,33 @@ impl NotesView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button or value under `pos` does, for its tooltip (`None` during a drag and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if self.drag.is_some() {
+            return None;
+        }
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        if self.close_rect().contains(pos) {
+            return help(self.close_rect(), "Close the panel; the settings are kept");
+        }
+        if self.apply_rect().contains(pos) {
+            return help(
+                self.apply_rect(),
+                "Turn the selected audio clip into notes (one undo step)",
+            );
+        }
+        NotesRow::ALL.into_iter().find_map(|row| {
+            let rects = (
+                self.minus_rect(row),
+                self.value_rect(row),
+                self.plus_rect(row),
+            );
+            let numeric = !matches!(row, NotesRow::Mode | NotesRow::OpenHats | NotesRow::Target);
+            stepper_help(pos, row.title(), rects, numeric)
+        })
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

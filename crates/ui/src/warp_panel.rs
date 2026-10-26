@@ -32,6 +32,7 @@ use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
+use crate::tooltip::{Help, stepper_help};
 use atomik_model::{WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpMode, WarpSettings};
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -353,6 +354,51 @@ impl WarpView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button or value under `pos` does, for its tooltip (`None` during a drag and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if self.drag.is_some() {
+            return None;
+        }
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        if self.close_rect().contains(pos) {
+            return help(self.close_rect(), "Close the panel; the settings are kept");
+        }
+        if self.apply_rect().contains(pos) {
+            return help(
+                self.apply_rect(),
+                "Apply these warp settings to the selected clips (one undo step)",
+            );
+        }
+        if self.detect_rect().contains(pos) {
+            return help(
+                self.detect_rect(),
+                "Estimate the source tempo from the transients of the clip",
+            );
+        }
+        for (up, text) in [
+            (false, "Halve the source tempo"),
+            (true, "Double the source tempo"),
+        ] {
+            if self.factor_rect(up).contains(pos) {
+                return help(self.factor_rect(up), text);
+            }
+        }
+        WarpRow::ALL.into_iter().find_map(|row| {
+            let rects = (
+                self.minus_rect(row),
+                self.value_rect(row),
+                self.plus_rect(row),
+            );
+            stepper_help(
+                pos,
+                row.title(),
+                rects,
+                !matches!(row, WarpRow::Warp | WarpRow::Mode),
+            )
+        })
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

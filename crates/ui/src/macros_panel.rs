@@ -32,6 +32,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use atomik_model::{DeviceKey, MAX_MACRO_NAME_CHARS};
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -497,6 +498,55 @@ impl MacrosView {
     }
 
     // ------------------------------------------------------------------ events
+
+    /// What the button under `pos` does, for its tooltip.
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if self.rename.is_some() {
+            return None;
+        }
+        let hit = self.hit(pos)?;
+        let help = |r: Rect, text: &'static str| Some(Help::new(r, text));
+        match hit {
+            Hit::Close => help(self.close_rect(), "Close the panel"),
+            Hit::NewBank => help(self.new_bank_rect(), "Start a new bank of eight macros"),
+            Hit::Bank(i) => help(self.bank_rect(i), "Show this bank of macros"),
+            Hit::Name(n) | Hit::Bar(n) | Hit::Learn(n) | Hit::Clear(n) => {
+                let at = self.items().iter().position(|i| *i == Item::Macro(n))?;
+                let row = self.item_rect(at)?;
+                let c = self.macro_columns(row);
+                let (x, text) = match hit {
+                    Hit::Name(_) => (c.name, "Click to rename this macro"),
+                    Hit::Bar(_) => (c.bar, "Click to set the macro's value"),
+                    Hit::Learn(_) => (c.learn, "Learn: move a knob or key to control this macro"),
+                    _ => (c.clear, "Remove every parameter this macro drives"),
+                };
+                help(self.cell(row, x), text)
+            }
+            Hit::Target(n, j)
+            | Hit::Min(n, j)
+            | Hit::Max(n, j)
+            | Hit::Invert(n, j)
+            | Hit::Remove(n, j) => {
+                let at = self.items().iter().position(|i| *i == Item::Assign(n, j))?;
+                let row = self.item_rect(at)?;
+                let c = self.assign_columns(row);
+                let (x, text) = match hit {
+                    Hit::Target(..) => (c.target, "Show this parameter in the rack"),
+                    Hit::Min(..) => (
+                        c.min,
+                        "Parameter value at the macro's minimum: click to raise, right-click to lower",
+                    ),
+                    Hit::Max(..) => (
+                        c.max,
+                        "Parameter value at the macro's maximum: click to raise, right-click to lower",
+                    ),
+                    Hit::Invert(..) => (c.invert, "Invert the direction of the parameter"),
+                    _ => (c.remove, "Stop this macro driving the parameter"),
+                };
+                help(self.cell(row, x), text)
+            }
+        }
+    }
 
     /// Handles one event and returns what the app must do.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<UiAction> {

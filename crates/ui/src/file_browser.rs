@@ -41,6 +41,7 @@
 //! waiting for the pointer.
 
 mod field;
+mod help;
 mod input;
 mod layout;
 mod menu;

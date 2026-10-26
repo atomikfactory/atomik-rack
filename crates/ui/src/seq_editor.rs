@@ -57,6 +57,7 @@ use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::seq_paint::SeqTheme;
 use crate::seq_panel::{self, PlayState, RenameKey};
 use crate::theme::Theme;
+use crate::tooltip::Help;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     CURVE_VALUE_MAX, Command, CurveDoc, CurvePatternDoc, DeviceKey, MAX_PATTERNS, MAX_STEPS,
@@ -842,6 +843,50 @@ impl SeqEditorView {
 
     fn value_at_y(&self, lane: Lane, y: f64) -> u8 {
         value_in(&self.layout(), lane, y)
+    }
+
+    /// What the button or field under `pos` does, for its tooltip (`None` during a gesture and
+    /// away from a button).
+    pub fn help_at(&self, pos: Point) -> Option<Help> {
+        if !matches!(self.drag, Drag::None) {
+            return None;
+        }
+        let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));
+        match self.hit(pos) {
+            Hit::Close => help(self.layout().close, "Close the sequencer editor"),
+            Hit::Slot(i) => Some(Help::new(
+                self.slot_rect(usize::from(i)),
+                format!("Edit pattern {}", u32::from(i) + 1),
+            )),
+            Hit::Button(b) => help(
+                self.pattern_button_rect(b),
+                match b {
+                    PatternButton::Add => "Add an empty pattern",
+                    PatternButton::Duplicate => "Add a copy of the edited pattern",
+                    PatternButton::Remove => "Remove the edited pattern",
+                    PatternButton::Copy => "Copy the edited pattern",
+                    PatternButton::Paste => "Paste the copied pattern into the edited one",
+                    PatternButton::Clear => "Clear the steps of the edited pattern",
+                },
+            ),
+            Hit::LengthDec => help(self.length_rect(0), "One step shorter"),
+            Hit::LengthInc => help(self.length_rect(2), "One step longer"),
+            Hit::LengthField => help(
+                self.length_rect(1),
+                "Pattern length in steps: drag or scroll to change, double-click to reset",
+            ),
+            Hit::Resolution(r) => help(self.res_rect(r), "Step length of the pattern"),
+            Hit::Swing => help(
+                self.swing_rect(),
+                "Swing: drag or scroll to change, double-click to reset",
+            ),
+            Hit::None
+            | Hit::Key(_)
+            | Hit::Note(..)
+            | Hit::Lane(..)
+            | Hit::Curve(..)
+            | Hit::Tie(_) => None,
+        }
     }
 
     fn hit(&self, pos: Point) -> Hit {

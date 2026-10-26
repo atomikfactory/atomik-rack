@@ -52,6 +52,7 @@ use vello::peniko::Color;
 
 mod audio_edit;
 mod heights;
+mod help;
 mod lanes;
 mod markers;
 mod organise;

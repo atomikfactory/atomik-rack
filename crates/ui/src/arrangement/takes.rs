@@ -116,12 +116,12 @@ impl ArrangementView {
 
     /// The chevron and label area of a group row's header: the click target that opens and
     /// closes the take rows.
-    fn group_toggle_rect(&self, row: Rect) -> Rect {
+    pub(super) fn group_toggle_rect(&self, row: Rect) -> Rect {
         Rect::new(row.x0, row.y0, row.x0 + 132.0, row.y1)
     }
 
     /// The FLATTEN button of a group row's header.
-    fn flatten_rect(&self, row: Rect) -> Rect {
+    pub(super) fn flatten_rect(&self, row: Rect) -> Rect {
         Rect::new(
             row.x0 + TRACK_LIST_WIDTH - 66.0,
             row.y0 + 2.0,
@@ -131,7 +131,7 @@ impl ArrangementView {
     }
 
     /// The cross that deletes a take, in a take row's header.
-    fn take_delete_rect(&self, row: Rect) -> Rect {
+    pub(super) fn take_delete_rect(&self, row: Rect) -> Rect {
         Rect::new(
             row.x0 + TRACK_LIST_WIDTH - 28.0,
             row.y0 + 3.0,
