@@ -8,10 +8,12 @@ use crate::tier1::{self, bounce_json};
 use crate::tool::{Args, ToolOutput, definition};
 use atomik_app::AppCore;
 use atomik_app::app_core::MidiExport;
+use atomik_app::app_core::Pane;
 use atomik_app::commands::AppCommand;
 use atomik_app::session::{LiveSession, SystemBackend};
 use atomik_app::settings::AudioSettings;
 use atomik_app::shell::{Shell, ShellOptions, ShellRequest};
+use atomik_app::windows::WindowKind;
 use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
 use atomik_ui::cpu_canvas::CpuCanvas;
 use atomik_ui::display_list::Op;
@@ -109,6 +111,11 @@ pub const TOOLS: &[Tool] = &[
         definition: close_def,
         run: close,
     },
+    Tool {
+        name: "session_window",
+        definition: window_def,
+        run: window_tool,
+    },
 ];
 
 /// The open headless app.
@@ -173,6 +180,7 @@ impl Session {
     pub fn status_json(&mut self, include_params: bool) -> Value {
         let state = self.shell.menu_state();
         let (pw, ph) = self.shell.physical_size();
+        let windows = self.windows_json();
         json!({
             "title": self.shell.title(),
             "dirty": self.shell.core().is_dirty(),
@@ -198,29 +206,96 @@ impl Session {
                 "physical": [pw, ph],
                 "os": os_name(self.os),
             },
+            "windows": windows,
             "midi": crate::midi_tools::status_json(self),
             "document": tier1::doc_json(self.shell.core().doc(), include_params),
         })
     }
 
-    /// Paints the shell into a display list (after a frame, so the layout is current).
-    pub fn display_list(&mut self) -> DisplayList {
+    /// The open windows: the main one, then each detached pane's.
+    fn windows_json(&self) -> Vec<Value> {
+        let focused = self.shell.focused_window();
+        self.shell
+            .windows_wanted()
+            .into_iter()
+            .filter_map(|kind| {
+                let size = self.shell.window_size(kind)?;
+                let (pw, ph) = self.shell.physical_size_in(kind)?;
+                Some(json!({
+                    "kind": window_name(kind),
+                    "detached": self.shell.detached(kind),
+                    "logical": {"width": size.width, "height": size.height},
+                    "scale": self.shell.window_scale(kind),
+                    "physical": {"width": pw, "height": ph},
+                    "focused": focused == kind,
+                }))
+            })
+            .collect()
+    }
+
+    /// Whether `kind` is open; the error names the window and the command that opens it.
+    fn require_window(&self, kind: WindowKind) -> Result<(), String> {
+        if self.shell.window_size(kind).is_some() {
+            return Ok(());
+        }
+        let name = window_name(kind);
+        Err(format!(
+            "the {name} window is not open: run view.detach_{name}"
+        ))
+    }
+
+    /// Paints a window into a display list (after a frame, so the layout is current).
+    pub fn display_list(&mut self, window: WindowKind) -> DisplayList {
         self.shell.frame();
         let mut list = DisplayList::new();
-        self.shell.paint(&mut list);
+        self.shell.paint_in(window, &mut list);
         list
     }
 
-    /// Delivers `events` in order, then runs a frame; returns the requests the shell raised.
-    pub fn feed(&mut self, events: &[UiEvent]) -> Vec<ShellRequest> {
+    /// Delivers `events` to `window` in order, then runs a frame; returns the requests the shell
+    /// raised.
+    pub fn feed(&mut self, window: WindowKind, events: &[UiEvent]) -> Vec<ShellRequest> {
         let mut requests = Vec::new();
         for e in events {
-            requests.extend(self.shell.handle(e));
+            requests.extend(self.shell.handle_in(window, e));
         }
         self.shell.frame();
         requests
     }
 }
+
+fn window_name(kind: WindowKind) -> &'static str {
+    match kind {
+        WindowKind::Main => "main",
+        WindowKind::Rack => "rack",
+        WindowKind::Console => "console",
+    }
+}
+
+/// The `window` argument (`main` when it is left out), checked against the open windows.
+fn window_arg(session: &Session, args: &Args) -> Result<WindowKind, String> {
+    let kind = parse_window(args.opt_str("window")?)?;
+    session.require_window(kind)?;
+    Ok(kind)
+}
+
+fn parse_window(name: Option<&str>) -> Result<WindowKind, String> {
+    match name {
+        None | Some("main") => Ok(WindowKind::Main),
+        Some("rack") => Ok(WindowKind::Rack),
+        Some("console") => Ok(WindowKind::Console),
+        Some(other) => Err(format!(
+            "window must be main, rack or console, not `{other}`"
+        )),
+    }
+}
+
+/// The `window` argument of the input and picture tools.
+const WINDOW_ARG: (&str, &str, &str) = (
+    "window",
+    "string",
+    "main (default), rack or console: the window to act on. The rack and the console are windows while detached (view.detach_rack, view.detach_console).",
+);
 
 fn os_name(os: Os) -> &'static str {
     match os {
@@ -665,8 +740,9 @@ fn pointer_def() -> Value {
         "session_pointer",
         "Pointer input in logical pixels (the screenshot divided by its scale): move, down, up, \
 click, double_click, drag (from x,y to to_x,to_y), wheel (dx, dy in notches, positive y up), \
-leave. Find where to aim with session_texts.",
+leave. Find where to aim with session_texts. With `window`, the position is in that window.",
         &[
+            WINDOW_ARG,
             (
                 "action",
                 "string",
@@ -733,6 +809,7 @@ fn button(args: &Args) -> Result<PointerButton, String> {
 fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let action = args.str("action")?;
     let session = server.require_session()?;
+    let window = window_arg(session, args)?;
     let mods = modifiers(args, session.os)?;
     let button = button(args)?;
     let pos = |xn: &str, yn: &str| -> Result<Point, String> {
@@ -815,10 +892,23 @@ fn pointer(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             modifiers: Modifiers::NONE,
         });
     }
-    let requests = session.feed(&events);
+    let requests = session.feed(window, &events);
+    let pane = last.and_then(|p| match window {
+        WindowKind::Main => session.shell().hit_pane(p),
+        _ => {
+            let pane = if window == WindowKind::Rack {
+                Pane::Rack
+            } else {
+                Pane::Console
+            };
+            let (_, rect) = session.shell().pane_rect(pane)?;
+            rect.contains(p).then_some(pane)
+        }
+    });
     Ok(ToolOutput::json(&json!({
         "action": action,
-        "pane_under_pointer": last.and_then(|p| session.shell().hit_pane(p)).map(|p| format!("{p:?}")),
+        "window": window_name(window),
+        "pane_under_pointer": pane.map(|p| format!("{p:?}")),
         "requests": requests.into_iter().map(request_json).collect::<Vec<_>>(),
         "status_text": session.shell().status_text(),
         "dirty": session.shell().core().is_dirty(),
@@ -834,8 +924,9 @@ fn key_def() -> Value {
 character. Keys: a single character, Escape, Enter, Space, Backspace, Delete, Tab, Up, Down, \
 Left, Right, PageUp, PageDown, Home, End, Insert, F1..F24, Digit0..Digit9 (physical, for Alt \
 chords), Numpad0..Numpad9. The keymap decides what a chord does (session_commands shows the \
-shortcuts).",
+shortcuts). With `window`, the key comes from that window (one that does not have the focus takes it first).",
         &[
+            WINDOW_ARG,
             ("key", "string", "The key to press."),
             ("text", "string", "Characters to type instead of a key."),
             (
@@ -901,6 +992,7 @@ pub fn parse_key(name: &str) -> Result<Key, String> {
 
 fn key(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let session = server.require_session()?;
+    let window = window_arg(session, args)?;
     let mods = modifiers(args, session.os)?;
     let mut events = Vec::new();
     let press = |key: Key, modifiers: Modifiers| {
@@ -937,8 +1029,9 @@ fn key(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
             }
         }
     }
-    let requests = session.feed(&events);
+    let requests = session.feed(window, &events);
     Ok(ToolOutput::json(&json!({
+        "window": window_name(window),
         "requests": requests.into_iter().map(request_json).collect::<Vec<_>>(),
         "status_text": session.shell().status_text(),
         "dirty": session.shell().core().is_dirty(),
@@ -951,8 +1044,9 @@ fn texts_def() -> Value {
     definition(
         "session_texts",
         "Every text the UI draws right now, with its position in logical pixels (the baseline \
-anchor) and size: the cheap way to read the screen and to find where to click.",
+anchor) and size: the cheap way to read the screen and to find where to click. `window` reads a detached window instead of the main one.",
         &[
+            WINDOW_ARG,
             (
                 "contains",
                 "string",
@@ -995,8 +1089,12 @@ fn texts(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let needle = args.opt_str("contains")?.map(str::to_lowercase);
     let limit = args.opt_u64("limit")?.unwrap_or(300) as usize;
     let session = server.require_session()?;
-    let scale = session.scale;
-    let list = session.display_list();
+    let window = window_arg(session, args)?;
+    let scale = session
+        .shell()
+        .window_scale(window)
+        .unwrap_or(session.scale);
+    let list = session.display_list(window);
     let all = list_texts(&list, scale);
     let matching: Vec<_> = all
         .iter()
@@ -1014,6 +1112,7 @@ fn texts(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         })
         .collect();
     Ok(ToolOutput::json(&json!({
+        "window": window_name(window),
         "total": matching.len(),
         "shown": shown.len(),
         "texts": shown,
@@ -1026,8 +1125,11 @@ fn screenshot_def() -> Value {
     definition(
         "session_screenshot",
         "A PNG of the window as the app paints it (CPU rasteriser, so it matches the app closely \
-but is not the GPU output). Returned as an image; `save_to` also writes the file.",
-        &[("save_to", "string", "Also write the PNG to this path.")],
+but is not the GPU output). Returned as an image; `save_to` also writes the file. `window` shoots a detached window at its own size.",
+        &[
+            WINDOW_ARG,
+            ("save_to", "string", "Also write the PNG to this path."),
+        ],
         &[],
     )
 }
@@ -1038,14 +1140,18 @@ fn screenshot(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         .map(|p| server.paths().write(p))
         .transpose()?;
     let session = server.require_session()?;
+    let window = window_arg(session, args)?;
     session.shell_mut().frame();
-    let (w, h) = session.shell().physical_size();
+    let (w, h) = session
+        .shell()
+        .physical_size_in(window)
+        .ok_or("the window is not open")?;
     let (w16, h16) = (
         u16::try_from(w).map_err(|_| "window too wide to rasterise")?,
         u16::try_from(h).map_err(|_| "window too tall to rasterise")?,
     );
     let mut canvas = CpuCanvas::new(w16, h16, &mut session.text);
-    session.shell.paint(&mut canvas);
+    session.shell.paint_in(window, &mut canvas);
     let png = canvas
         .finish()
         .into_png()
@@ -1054,11 +1160,81 @@ fn screenshot(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         std::fs::write(path, &png).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     Ok(ToolOutput::json(&json!({
+        "window": window_name(window),
         "width": w, "height": h,
-        "scale": session.scale,
+        "scale": session.shell().window_scale(window),
         "saved_to": save_to.map(|p| p.to_string_lossy().into_owned()),
     }))
     .with_png(png))
+}
+
+// -------------------------------------------------------------- session_window
+
+fn window_def() -> Value {
+    definition(
+        "session_window",
+        "Plays the operating system for the windows of the session: `focus` gives a window the keyboard focus (the keys then go to its pane), `close` closes a detached window, which attaches its pane to the main window again (the same as view.detach_rack or view.detach_console), `resize` resizes a window to `width` x `height` logical pixels. The main window cannot be closed here: session_close ends the session. Detach with session_command view.detach_rack or view.detach_console. Returns the open windows, as session_status lists them.",
+        &[
+            ("action", "string", "focus, close or resize."),
+            (
+                "window",
+                "string",
+                "main, rack or console: the window to act on.",
+            ),
+            ("width", "number", "resize: the logical width (200..8192)."),
+            (
+                "height",
+                "number",
+                "resize: the logical height (200..8192).",
+            ),
+        ],
+        &["action", "window"],
+    )
+}
+
+fn window_tool(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    let action = args.str("action")?;
+    if !matches!(action, "focus" | "close" | "resize") {
+        return Err(format!(
+            "action must be focus, close or resize, not `{action}`"
+        ));
+    }
+    let kind = parse_window(Some(args.str("window")?))?;
+    let size = if action == "resize" {
+        let (w, h) = (args.f64("width")?, args.f64("height")?);
+        if !(200.0..=8192.0).contains(&w) || !(200.0..=8192.0).contains(&h) {
+            return Err("width and height must be 200..=8192".to_string());
+        }
+        Some(Size::new(w, h))
+    } else {
+        None
+    };
+    let session = server.require_session()?;
+    session.require_window(kind)?;
+    match (action, size) {
+        ("focus", _) => session.shell_mut().window_focused(kind),
+        ("close", _) => {
+            if kind == WindowKind::Main {
+                return Err(
+                    "the main window cannot be closed here: session_close ends the session"
+                        .to_string(),
+                );
+            }
+            session.shell_mut().window_closed(kind);
+        }
+        (_, Some(size)) => {
+            session.feed(kind, &[UiEvent::Resize(size)]);
+            if kind == WindowKind::Main {
+                session.logical = size;
+            }
+        }
+        _ => {}
+    }
+    session.shell_mut().frame();
+    Ok(ToolOutput::json(&json!({
+        "action": action,
+        "windows": session.windows_json(),
+    })))
 }
 
 // ---------------------------------------------------------------- session_set_param
