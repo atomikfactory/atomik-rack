@@ -55,6 +55,7 @@ pub fn device(k: &str, type_id: &str, name: &str) -> RackDevice {
         color: None,
         zones: Vec::new(),
         steps: None,
+        curves: None,
         inner: None,
         plugin: None,
         column: 0,

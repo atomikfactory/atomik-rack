@@ -283,6 +283,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
             params: BTreeMap::from([("monitor".to_owned(), 0.0)]),
             zones: Vec::new(),
             steps: None,
+            curves: None,
             plugin: None,
             frozen: false,
         });
@@ -355,6 +356,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
         Command::SetParam { key, .. } => device_frozen(key),
         Command::SetZones { device, .. }
         | Command::SetPattern { device, .. }
+        | Command::SetCurves { device, .. }
         | Command::AddPattern { device }
         | Command::RemovePattern { device, .. }
         | Command::DuplicatePattern { device, .. } => device_frozen(device),

@@ -1,6 +1,8 @@
 //! Planning of the pattern commands: `SetPattern`, `AddPattern`,
-//! `RemovePattern` and `DuplicatePattern`. Each becomes one reversible [`Edit`].
+//! `RemovePattern` and `DuplicatePattern` (and `SetCurves`, planned in `curves_cmd`). Each
+//! becomes one reversible [`Edit`].
 
+use crate::curves::{CurveDoc, CurvePatternDoc};
 use crate::history::Edit;
 use crate::steps::{MAX_NAME_CHARS, MAX_PATTERNS, PatternDoc, StepSeqDoc};
 use crate::{Command, DeviceKey, ModelError, RackDoc, rules};
@@ -9,7 +11,7 @@ use atomik_device_sdk::Registry;
 /// The device param that selects the playing pattern (1-based).
 const PATTERN_PARAM: &str = "pattern";
 
-fn bad(message: impl Into<String>) -> ModelError {
+pub(crate) fn bad(message: impl Into<String>) -> ModelError {
     ModelError::BadPatterns(message.into())
 }
 
@@ -56,6 +58,27 @@ fn steps(key: DeviceKey, old: Option<StepSeqDoc>, new: StepSeqDoc) -> Edit {
     }
 }
 
+/// The edit that keeps the stored curves of `key` with their patterns when `follow` changes the
+/// pattern list; `None` when no curves are stored or nothing changes.
+fn curves_edit(doc: &RackDoc, key: &DeviceKey, follow: impl FnOnce(&mut CurveDoc)) -> Option<Edit> {
+    let old = rules::resolve(doc, key).ok()?.curves.clone()?;
+    let mut new = old.clone();
+    follow(&mut new);
+    (new != old).then(|| Edit::Curves {
+        key: key.clone(),
+        old: Some(old),
+        new: Some(new),
+    })
+}
+
+/// `edit` together with the curve edit that goes with it, as one undo step.
+fn with_curves(edit: Edit, curves: Option<Edit>) -> Edit {
+    match curves {
+        Some(c) => Edit::Compound(vec![edit, c]),
+        None => edit,
+    }
+}
+
 /// Plans one pattern command.
 ///
 /// # Panics
@@ -98,8 +121,19 @@ pub(crate) fn plan(
                 .chars()
                 .take(MAX_NAME_CHARS)
                 .collect();
+            let count = new.patterns.len();
             new.patterns.push(copy);
-            Ok(steps(device, old, new))
+            // The copy of the curves lands at the same new index.
+            let curves = curves_edit(doc, &device, |c| {
+                if i < c.patterns.len() && count < MAX_PATTERNS {
+                    while c.patterns.len() < count {
+                        c.patterns.push(CurvePatternDoc::default());
+                    }
+                    let copy = c.patterns[i].clone();
+                    c.patterns.insert(count, copy);
+                }
+            });
+            Ok(with_curves(steps(device, old, new), curves))
         }
         Command::RemovePattern { device, index } => {
             let (old, mut new) = current(doc, registry, &device)?;
@@ -109,7 +143,15 @@ pub(crate) fn plan(
             }
             new.patterns.remove(i);
             let count = new.patterns.len();
-            let edit = steps(device.clone(), old, new);
+            let curves = curves_edit(doc, &device, |c| {
+                if i < c.patterns.len() {
+                    c.patterns.remove(i);
+                    if c.patterns.is_empty() {
+                        c.patterns.push(CurvePatternDoc::default());
+                    }
+                }
+            });
+            let edit = with_curves(steps(device.clone(), old, new), curves);
             // The `pattern` param must keep pointing at a pattern: lower it in the same step.
             let d = rules::resolve(doc, &device)?;
             let Some(p) = registry
@@ -133,6 +175,7 @@ pub(crate) fn plan(
                 edit,
             ]))
         }
+        command @ Command::SetCurves { .. } => crate::curves_cmd::plan(doc, registry, command),
         other => unreachable!("not a pattern command: {other:?}"),
     }
 }

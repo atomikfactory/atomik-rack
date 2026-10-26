@@ -596,7 +596,7 @@ fn project_with(a: AudioClipContent) -> (String, atomik_device_sdk::Registry) {
 
 #[test]
 fn the_new_fields_round_trip_and_defaults_are_omitted() {
-    assert_eq!(PROJECT_VERSION, 31);
+    assert_eq!(PROJECT_VERSION, 32);
     let (plain, reg) = project_with(audio(1));
     assert!(!plain.contains("reverse") && !plain.contains("envelope") && !plain.contains("xfade"));
     let rich = AudioClipContent {

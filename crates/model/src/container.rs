@@ -583,6 +583,12 @@ impl ContainerDoc {
                     ModelError::BadZones(format!("{} does not take samples", d.type_id)),
                 ));
             }
+            if d.curves.is_some() && !registry.takes_curves(&d.type_id) {
+                return Err(v(
+                    dev("curves"),
+                    ModelError::BadPatterns(format!("{} does not take curves", d.type_id)),
+                ));
+            }
             if d.steps.is_some() && !registry.takes_player_data(&d.type_id) {
                 return Err(v(
                     dev("steps"),
@@ -846,6 +852,7 @@ pub(crate) fn new_device(
         steps: registry
             .takes_player_data(desc.type_id)
             .then(crate::StepSeqDoc::default),
+        curves: None,
         inner: (desc.kind == DeviceKind::Container).then(Box::default),
         plugin: None,
         column: 0,

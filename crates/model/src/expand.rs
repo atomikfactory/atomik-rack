@@ -33,8 +33,8 @@ use crate::container::{
     BOUNDARY_KEY, ContainerDoc, MACRO_COUNT, NoteSplit, SPLIT_TYPE, find_relative, notes_input,
 };
 use crate::{
-    AutomationPoint, Cable, DeviceKey, INTERFACE_KEY, PluginDoc, RackDevice, RackDoc, SocketRef,
-    StepSeqDoc, ZoneDoc,
+    AutomationPoint, Cable, CurveDoc, DeviceKey, INTERFACE_KEY, PluginDoc, RackDevice, RackDoc,
+    SocketRef, StepSeqDoc, ZoneDoc,
 };
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
@@ -53,6 +53,8 @@ pub struct ExpandedDevice {
     pub zones: Vec<ZoneDoc>,
     /// Step sequencer patterns.
     pub steps: Option<StepSeqDoc>,
+    /// CV sequencer curves.
+    pub curves: Option<CurveDoc>,
     /// A plugin device's document: the app and the bounce build the real
     /// plugin (or its stand-in) from it. `None` for every other device.
     pub plugin: Option<Box<PluginDoc>>,
@@ -333,6 +335,7 @@ impl<'a> Builder<'a> {
                     params,
                     zones: d.zones.clone(),
                     steps: d.steps.clone(),
+                    curves: d.curves.clone(),
                     plugin: d.plugin.clone(),
                     frozen: false,
                 });
@@ -350,6 +353,7 @@ impl<'a> Builder<'a> {
                 params: split_params(&inner.splits),
                 zones: Vec::new(),
                 steps: None,
+                curves: None,
                 plugin: None,
                 frozen: false,
             });

@@ -7,12 +7,13 @@
 //! ([`PlayerData`]) from the document, so the app and the renderer build it the same way.
 
 use atomik_device_sdk::{
-    PatternData, PlayerData, PlayerDataRef, Registry, SeqResolution as SdkResolution, StepData,
-    StepSeqData,
+    CvSeqData, PatternData, PlayerData, PlayerDataRef, Registry, SeqResolution as SdkResolution,
+    StepData, StepSeqData,
 };
 use std::sync::Arc;
 
 use crate::RackDevice;
+use crate::curves::{CurveDoc, flat_data};
 
 /// Patterns per sequencer.
 pub const MAX_PATTERNS: usize = 8;
@@ -282,22 +283,42 @@ impl StepSeqDoc {
     /// The engine hand-over value for these patterns (a valid document is assumed); unused
     /// pattern slots hold the SDK default.
     pub fn to_player_data(&self) -> PlayerData {
+        PlayerData::StepSeq(self.to_step_seq_data())
+    }
+
+    /// The note patterns as the engine's [`StepSeqData`].
+    pub fn to_step_seq_data(&self) -> StepSeqData {
         let mut seq = StepSeqData::default();
         for (slot, pattern) in seq.patterns.iter_mut().zip(&self.patterns) {
             *slot = pattern.to_data();
         }
         seq.count = self.patterns.len().clamp(1, MAX_PATTERNS) as u8;
-        PlayerData::StepSeq(seq)
+        seq
     }
 }
 
 /// The pattern data the engine gets for `device`, or `None` when its type takes none. A
-/// sequencer without stored `steps` gets the default (one empty pattern).
+/// sequencer without stored `steps` gets the default (one empty pattern); a type that takes
+/// curves (`Registry::takes_curves`) gets [`PlayerData::CvSeq`] with its curves (flat when none
+/// are stored), any other [`PlayerData::StepSeq`].
 pub fn player_data_for(device: &RackDevice, registry: &Registry) -> Option<PlayerDataRef> {
-    registry.takes_player_data(&device.type_id).then(|| {
-        Arc::new(device.steps.as_ref().map_or_else(
-            || StepSeqDoc::default().to_player_data(),
-            |s| s.to_player_data(),
-        ))
-    })
+    if !registry.takes_player_data(&device.type_id) {
+        return None;
+    }
+    let notes = device
+        .steps
+        .as_ref()
+        .map_or_else(StepSeqDoc::default, Clone::clone)
+        .to_step_seq_data();
+    Some(Arc::new(if registry.takes_curves(&device.type_id) {
+        PlayerData::CvSeq(CvSeqData {
+            notes,
+            curves: device
+                .curves
+                .as_ref()
+                .map_or_else(flat_data, CurveDoc::to_data),
+        })
+    } else {
+        PlayerData::StepSeq(notes)
+    }))
 }

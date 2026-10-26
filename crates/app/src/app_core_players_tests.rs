@@ -60,8 +60,7 @@ fn data_calls(calls: &[SinkCall]) -> Vec<(u32, Option<u8>)> {
                 id.0,
                 data.as_ref().map(|d| match &**d {
                     PlayerData::StepSeq(s) => s.patterns[0].steps[0].key,
-                    #[allow(unreachable_patterns)]
-                    _ => 0,
+                    PlayerData::CvSeq(s) => s.notes.patterns[0].steps[0].key,
                 }),
             )),
             _ => None,
@@ -206,7 +205,9 @@ fn the_default_pattern_is_sent_for_a_sequencer_without_edits() {
             _ => None,
         })
         .unwrap();
-    let PlayerData::StepSeq(s) = &*data;
+    let PlayerData::StepSeq(s) = &*data else {
+        panic!("a step sequencer gets StepSeq data")
+    };
     assert_eq!(s.count, 1);
     assert_eq!(s.patterns[0].length, 16);
 }

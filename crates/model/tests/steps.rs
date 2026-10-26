@@ -642,7 +642,9 @@ fn the_model_derives_the_engine_pattern_data() {
     second.length = 64;
     second.swing = 75;
     d.apply(set(1, second, None), &r).unwrap();
-    let PlayerData::StepSeq(seq) = data(d.doc(), &r, "q").unwrap();
+    let PlayerData::StepSeq(seq) = data(d.doc(), &r, "q").unwrap() else {
+        panic!("a step sequencer gets StepSeq data")
+    };
     assert_eq!(seq.count, 2);
     let p0 = seq.pattern(0).unwrap();
     assert_eq!(
@@ -677,7 +679,9 @@ fn only_player_devices_have_pattern_data() {
     // A sequencer loaded without `steps` still gets the default data (an empty pattern).
     let mut doc = d.doc().clone();
     doc.devices[3].steps = None;
-    let PlayerData::StepSeq(s) = data(&doc, &r, "q").unwrap();
+    let PlayerData::StepSeq(s) = data(&doc, &r, "q").unwrap() else {
+        panic!("a step sequencer gets StepSeq data")
+    };
     assert_eq!(s, atomik_device_sdk::StepSeqData::default());
 }
 
