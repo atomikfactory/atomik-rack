@@ -239,6 +239,10 @@ The locator clicks win over the razor in the ruler. In the grid the playhead and
 
 Up increases and down decreases, and a value stops at the end of its range.
 
+## Tooltips
+
+Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip under it that says what the button does, with the shortcut of its command when it has one (printed as the menus print it, so a key you rebind in Settings, Keyboard shows at once). The tooltip hides on a press, a key, the wheel, or when the pointer leaves the button. Settings, Workflow, **Show tooltips** (on by default) switches them off; the value readout shown while a knob or fader is dragged stays.
+
 ";
 
 /// The sheet for `profiles` on `oses`; `user` (a `--keymap` file) is applied on top when given.

@@ -80,7 +80,7 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 | `session_status` | `include_params` | Title, unsaved changes, status line, focused and lower pane, undo and redo availability, window size, `windows` (per open window: `kind`, `detached`, `logical`, `scale`, `physical`, `focused`), and the document (as `project_inspect`). |
 | `session_commands` | `menu`, `query`, `enabled_only` | The menu commands: menu, label, `id`, shortcut, checked, enabled. |
 | `session_command` | `id`, `arg`, `confirm`, `wait` | Runs a menu command as the menu or its shortcut would; `arg` is the argument of the commands that take one the menu cannot spell, the id of a VCA group for `mixer.add_to_vca` and `mixer.delete_vca` (ids are in `session_status`, `document.console.vcas`; the Mixer menu commands act on the selection of the focused pane), or the id or the name of a snapshot for `mixer.recall_snapshot`, `mixer.update_snapshot`, `mixer.compare_snapshot` and `mixer.delete_snapshot` (`<snapshot>:<scope>` for a scoped recall; `mixer.store_snapshot` takes the new snapshot's name). A command that needs a native dialog (`file.open`...) or the "discard unsaved changes" confirmation is reported in `requests` and does not run silently; `confirm: true` accepts the discard. A freeze or bounce renders on a worker and the session has no frame loop, so the call waits for the render to finish unless `wait` is `false` (the answer then has `waited` and the render's `message`, for example `Froze Lead`). |
-| `session_pointer` | `window`, `action`, `x`, `y`, `to_x`, `to_y`, `steps`, `dx`, `dy`, `button`, `modifiers` | `move`, `down`, `up`, `click`, `double_click`, `drag`, `wheel`, `leave`. |
+| `session_pointer` | `window`, `action`, `x`, `y`, `to_x`, `to_y`, `steps`, `dx`, `dy`, `button`, `modifiers`, `wait` | `move`, `down`, `up`, `click`, `double_click`, `drag`, `wheel`, `leave`. `wait` (seconds) lets the pointer rest where it is, which is how a tooltip appears (after 0.6 s on a button); the answer has `tooltip` (its text, with the shortcut) or null. |
 | `session_key` | `window`, `key` or `text`, `modifiers` | Presses and releases a key, or types characters. |
 | `session_texts` | `window`, `contains`, `limit` | Every text the UI draws, with its position and size. |
 | `session_screenshot` | `window`, `save_to` | A PNG of the window as the app paints it, returned as an image; `save_to` also writes the file. With `window` it is that window, at its own physical size. |
@@ -129,6 +129,11 @@ These are the QA steps this project expects for a change, in the order to do the
 4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`, and a folder, colour, comment or `notes_to` (the device its notes enter, the top of its player stack) when it has one), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
 5. If the edit should change the sound (or must not), `session_bounce` with `reference` set to the bounce of the file you opened.
 6. Turn what you proved into a headless test (`crates/app/src/shell_*_tests.rs`, `crates/ui/tests/workflow_*.rs`) before the PR is done.
+
+
+**Tooltips**
+
+Move the pointer onto a button with `session_pointer` `action: "move"` and `wait: 1`: the answer's `tooltip` is the text a user would see (the shortcut comes from the keymap, so rebind a key first with `keymap.json` and `session_open` to see it change), and `session_texts` and `session_screenshot` show the box. `leave`, a click, a key or the wheel hides it. `Show tooltips` is in Settings, Workflow (`workflow.json`: `"show_tooltips": false`), and with it off `tooltip` stays null.
 
 **Detached windows**
 
