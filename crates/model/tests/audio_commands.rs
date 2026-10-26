@@ -966,3 +966,86 @@ fn a_cable_batch_is_validated_in_order_and_rejected_as_a_whole() {
     // An empty batch is rejected (it would record an empty step).
     rejects(&mut d, Command::Batch(Vec::new()), &reg);
 }
+
+// ---- the clip inspector's edits (fades, transpose on several clips) -----------------------------
+
+fn set_audio(
+    d: &Document,
+    id: atomik_model::ClipId,
+    f: impl Fn(&mut AudioClipContent),
+    merge: Option<u64>,
+) -> Command {
+    let c = doc_clip(d.doc(), id);
+    let ClipContent::Audio(a) = &c.content else {
+        panic!("not audio")
+    };
+    let mut a = a.clone();
+    f(&mut a);
+    sc(SongCommand::SetAudioClip {
+        id,
+        start: c.start,
+        length: c.length,
+        muted: c.muted,
+        content: a,
+        merge,
+    })
+}
+
+fn two_clips(reg: &Registry) -> (Document, atomik_model::ClipId, atomik_model::ClipId) {
+    let mut d = with_audio_track(reg);
+    d.apply(add_audio_clip("audio-track", 0, 15_360, 1), reg)
+        .unwrap();
+    let a = last(&d);
+    d.apply(add_audio_clip("audio-track", 30_720, 15_360, 2), reg)
+        .unwrap();
+    (d.clone(), a, last(&d))
+}
+
+#[test]
+fn a_fade_drag_over_two_clips_is_one_merge_group_and_one_undo_step() {
+    let reg = audio_registry();
+    let (mut d, a, b) = two_clips(&reg);
+    let before = d.doc().clone();
+    // Three moves of a drag, each sent to both clips under one merge id.
+    for fade in [100u64, 200, 300] {
+        for id in [a, b] {
+            let cmd = set_audio(&d, id, |c| c.fade_in = fade, Some(9));
+            d.apply(cmd, &reg).unwrap();
+        }
+    }
+    for id in [a, b] {
+        let ClipContent::Audio(c) = &doc_clip(d.doc(), id).content else {
+            panic!()
+        };
+        assert_eq!(c.fade_in, 300);
+    }
+    d.undo(&reg).unwrap();
+    assert_eq!(
+        d.doc(),
+        &before,
+        "one undo reverts the whole drag on both clips"
+    );
+}
+
+#[test]
+fn a_transpose_batch_over_two_clips_is_one_undo_step() {
+    let reg = audio_registry();
+    let (mut d, a, b) = two_clips(&reg);
+    let before = d.doc().clone();
+    let cmds = [a, b]
+        .map(|id| set_audio(&d, id, |c| c.warp.transpose_cents = 700, None))
+        .to_vec();
+    d.apply(Command::Batch(cmds), &reg).unwrap();
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn a_reversed_clip_refuses_a_transposition() {
+    let reg = audio_registry();
+    let (mut d, a, _) = two_clips(&reg);
+    let cmd = set_audio(&d, a, |c| c.reverse = true, None);
+    d.apply(cmd, &reg).unwrap();
+    let cmd = set_audio(&d, a, |c| c.warp.transpose_cents = 100, None);
+    rejects(&mut d, cmd, &reg);
+}
