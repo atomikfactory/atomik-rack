@@ -578,6 +578,76 @@ fn recording_turns_live_notes_into_a_clip_on_stop() {
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }
 
+/// A track that enters at the top of a player stack records what is played into that entry (the
+/// input notes, before the players), into its own clip.
+#[test]
+fn recording_through_a_player_stack_records_the_input_notes() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: "atomik.arpeggiator".into(),
+            target: atomik_model::CreateTarget::Selected(key("a")),
+            options: atomik_model::CreateOptions::default(),
+        }),
+    );
+    let arp = c
+        .doc()
+        .song
+        .track(&key("a"))
+        .unwrap()
+        .notes_to
+        .clone()
+        .unwrap();
+    let entry = c.device_id(&arp).unwrap();
+    assert_ne!(entry, id(1));
+    c.set_input_quantize(InputQuantize::Sixteenth);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    assert_eq!(calls[0], SinkCall::Recording(vec![entry]));
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: entry,
+            kind: NoteKind::On {
+                key: 45,
+                velocity: 0.9,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: entry,
+            kind: NoteKind::Off { key: 45 },
+            frame: frame(2 * PPQ),
+        },
+    ];
+    c.frame();
+    c.sink_mut().state = TransportState {
+        tick: BAR,
+        engine_frame: frame(BAR),
+        song_frame: frame(BAR) - 1000,
+        ..start
+    };
+    transport(&mut c, TransportAction::Stop);
+    let lane = &c.doc().song.track(&key("a")).unwrap().lanes[0];
+    assert_eq!(
+        lane.clips.len(),
+        1,
+        "the take lands on the instrument's track"
+    );
+    let ClipContent::Notes(notes) = &lane.clips[0].content else {
+        panic!("note clip")
+    };
+    assert_eq!((notes.len(), notes[0].key), (1, 45));
+}
+
 /// Pitch bend and a CC recorded with the notes land in the clip's controller lanes, reach the
 /// engine's song input and undo with the take.
 #[test]

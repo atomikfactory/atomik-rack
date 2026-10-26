@@ -648,3 +648,180 @@ fn a_sequencer_cabled_into_an_arpeggiator_plays_live_like_the_bounce() {
     let live = play(&mut core, reference[0].len(), 512);
     assert!(same_bits(&live, &reference));
 }
+
+// ------------------------------------------------------------------ player stacks
+
+fn stack_core() -> AppCore<RecordingSink> {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, SYNTH, "synth");
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddTrack {
+        device: key("synth"),
+    }))
+    .unwrap();
+    c.apply_command(Command::Song(atomik_model::SongCommand::SetTrackFlags {
+        device: key("synth"),
+        muted: false,
+        solo: false,
+        armed: true,
+    }))
+    .unwrap();
+    c.select(Some(key("synth")));
+    c
+}
+
+fn create_player<S: EngineSink>(c: &mut AppCore<S>, type_id: &str, selected: &str) -> DeviceKey {
+    let before: Vec<DeviceKey> = c.doc().devices.iter().map(|d| d.key.clone()).collect();
+    c.apply_command(Command::Workflow(
+        atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: type_id.into(),
+            target: atomik_model::CreateTarget::Selected(key(selected)),
+            options: atomik_model::CreateOptions::default(),
+        },
+    ))
+    .unwrap();
+    c.doc()
+        .devices
+        .iter()
+        .map(|d| d.key.clone())
+        .find(|k| !before.contains(k))
+        .expect("a new device")
+}
+
+#[test]
+fn live_keyboard_on_an_armed_track_plays_through_the_stack() {
+    let mut c = stack_core();
+    let synth = c.device_id(&key("synth")).unwrap();
+    assert_eq!(c.notes_target().unwrap().0, synth);
+    let arp = create_player(&mut c, ARP, "synth");
+    let arp_id = c.device_id(&arp).unwrap();
+    // The new player is selected, the track is still armed: the keys reach the player.
+    assert_eq!(c.view().selected(), Some(&arp));
+    let (id, socket) = c.notes_target().unwrap();
+    assert_eq!(id, arp_id);
+    assert_eq!(
+        socket,
+        atomik_render::project::notes_input(c.registry.get(ARP).unwrap().descriptor).unwrap()
+    );
+    // Whatever is selected, an armed track plays through its stack.
+    c.select(Some(key("synth")));
+    assert_eq!(c.notes_target().unwrap().0, arp_id);
+    // Auditioning the instrument goes through the stack too.
+    c.sink_mut().take();
+    c.handle_action(UiAction::Audition {
+        device: key("synth"),
+        key: 60,
+        on: true,
+    });
+    let targets: Vec<_> = c
+        .sink_mut()
+        .take()
+        .iter()
+        .filter_map(|x| match x {
+            SinkCall::LiveNote { target, .. } => Some(target.0),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(targets, vec![arp_id]);
+}
+
+#[test]
+fn a_stale_entry_plays_the_track_device_live() {
+    let mut c = stack_core();
+    let arp = create_player(&mut c, ARP, "synth");
+    let mut doc = c.doc().clone();
+    doc.devices.retain(|d| d.key != arp);
+    doc.cables.clear();
+    // A hand-edited project: the entry names a device that is not there.
+    let mut c = AppCore::with_doc(RecordingSink::new(), doc, None);
+    assert_eq!(
+        c.doc().song.track(&key("synth")).unwrap().notes_to.as_ref(),
+        Some(&arp)
+    );
+    c.select(Some(key("synth")));
+    let synth = c.device_id(&key("synth")).unwrap();
+    assert_eq!(c.notes_target().unwrap().0, synth);
+    // An entry that is there but takes no notes (an effect) plays the track's device too.
+    let mut doc = c.doc().clone();
+    add(&mut c, "atomik.stereo-delay", "delay");
+    doc.devices
+        .push(c.doc().device(&key("delay")).unwrap().clone());
+    doc.song
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("synth"))
+        .unwrap()
+        .notes_to = Some(key("delay"));
+    let mut c = AppCore::with_doc(RecordingSink::new(), doc, None);
+    c.select(Some(key("synth")));
+    let synth = c.device_id(&key("synth")).unwrap();
+    assert_eq!(c.notes_target().unwrap().0, synth);
+}
+
+#[test]
+fn the_song_sent_to_the_engine_enters_at_the_player() {
+    let mut c = stack_core();
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddClip {
+        device: key("synth"),
+        lane: 0,
+        clip: atomik_model::Clip {
+            id: atomik_model::ClipId(0),
+            start: 0,
+            length: 4 * atomik_core::PPQ,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            scale: None,
+            controllers: Vec::new(),
+            grid: None,
+            content: atomik_model::ClipContent::Notes(vec![atomik_model::Note::new(
+                0,
+                atomik_core::PPQ,
+                60,
+                0.8,
+            )]),
+        },
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    let arp = create_player(&mut c, ARP, "synth");
+    let arp_id = c.device_id(&arp).unwrap();
+    let calls = c.sink_mut().take();
+    let song = calls
+        .iter()
+        .rev()
+        .find_map(|x| match x {
+            SinkCall::Song(s) => Some(s),
+            _ => None,
+        })
+        .expect("the song is sent again when the entry moves");
+    let entry: Vec<_> = song.tracks.iter().filter(|t| t.device == arp_id).collect();
+    assert_eq!(entry.len(), 1);
+    assert_eq!(entry[0].notes.len(), 1);
+    let synth = c.device_id(&key("synth")).unwrap();
+    assert!(
+        song.tracks
+            .iter()
+            .filter(|t| t.device == synth)
+            .all(|t| t.notes.is_empty())
+    );
+}
+
+#[test]
+fn creating_a_player_selects_it_and_names_the_device_it_sits_above() {
+    let mut c = stack_core();
+    let arp = create_player(&mut c, ARP, "synth");
+    let name = c.doc().device(&arp).unwrap().name.clone();
+    let synth_name = c.doc().device(&key("synth")).unwrap().name.clone();
+    assert_eq!(
+        c.last_rejection(),
+        Some(format!("Created {name} above {synth_name}").as_str())
+    );
+    // The next one goes on the same stack, above the first.
+    let second = create_player(&mut c, SEQ, &arp.0);
+    let second_name = c.doc().device(&second).unwrap().name.clone();
+    assert_eq!(
+        c.last_rejection(),
+        Some(format!("Created {second_name} above {name}").as_str())
+    );
+    assert_eq!(c.view().selected(), Some(&second));
+}

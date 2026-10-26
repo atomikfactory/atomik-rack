@@ -406,6 +406,13 @@ pub struct Track {
     /// Notes that span the play position start sounding on play, locate and loop wrap. On by
     /// default; a track that plays only from its note starts turns it off.
     pub chase: bool,
+    /// Where the track's notes enter, when not at its own device: the top of a stack of note
+    /// players above the instrument (see [`crate::WorkflowCommand::CreatePlayer`]). `None` (the
+    /// default, and the only value of a track written before project format 31) is the track's
+    /// own device. The track stays the instrument's: its channel, its automation and its freeze.
+    /// A device that is not in the document any more counts as `None`
+    /// ([`crate::RackDoc::notes_entry`]).
+    pub notes_to: Option<DeviceKey>,
     /// The track is frozen: its instrument and the first effects of its channel's insert chain
     /// are rendered to the audio held here, which plays instead of them (see
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.

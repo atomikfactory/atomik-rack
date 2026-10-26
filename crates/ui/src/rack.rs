@@ -3223,6 +3223,10 @@ impl RackView {
         index: usize,
         modifiers: Modifiers,
     ) -> UiAction {
+        // A note player is created on the stack of the selection (Shift adds it unrouted).
+        if self.scope.is_empty() && crate::browser::is_player(type_id) {
+            return self.create_player_action(type_id, modifiers);
+        }
         // At the top level an instrument or an effect is created through the creation chain
         //; inside a container, and for every other device, it is a plain add.
         match self.creation_of(kind) {
@@ -3283,6 +3287,23 @@ impl RackView {
                     .map_or(CreateTarget::Nothing, CreateTarget::Selected),
                 key: None,
                 options,
+            },
+        }))
+    }
+
+    /// The creation command of a note player: the stack of the selected device, route = the
+    /// setting, inverted by Shift.
+    fn create_player_action(&self, type_id: &str, modifiers: Modifiers) -> UiAction {
+        UiAction::Command(Command::Workflow(WorkflowCommand::CreatePlayer {
+            type_id: type_id.to_string(),
+            target: self
+                .selected
+                .clone()
+                .map_or(CreateTarget::Nothing, CreateTarget::Selected),
+            options: CreateOptions {
+                route: self.auto_route != modifiers.shift,
+                skip_track: false,
+                disarm: Vec::new(),
             },
         }))
     }

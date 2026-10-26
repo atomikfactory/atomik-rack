@@ -451,6 +451,7 @@ impl<S: EngineSink> AppCore<S> {
                 | WorkflowCommand::CreateInstrumentAt { .. }
                 | WorkflowCommand::CreateEffect { .. }
                 | WorkflowCommand::CreateEffectAt { .. }
+                | WorkflowCommand::CreatePlayer { .. }
                 | WorkflowCommand::AutoRoute { .. }
         ) {
             pre.scope_keys = doc
@@ -568,6 +569,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::CreateInstrumentAt { .. }
             | WorkflowCommand::CreateEffect { .. }
             | WorkflowCommand::CreateEffectAt { .. }
+            | WorkflowCommand::CreatePlayer { .. }
             | WorkflowCommand::AutoRoute { .. } => self.created(command, &pre),
             WorkflowCommand::RemoveDevices { .. }
             | WorkflowCommand::DeleteDevices { .. }

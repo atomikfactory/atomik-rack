@@ -46,8 +46,8 @@ use crate::song_cmd::{
 };
 use crate::workflow_cmd::WorkflowCommand;
 use crate::{
-    Cable, Command, ConsoleCommand, DeviceKey, InsertEffect, ModelError, RackDoc, SocketRef,
-    insert_chain,
+    Cable, Command, ConsoleCommand, CreateTarget, DeviceKey, InsertEffect, ModelError, RackDoc,
+    SocketRef, insert_chain,
 };
 use atomik_device_sdk::Registry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -106,6 +106,7 @@ impl Track {
             solo: self.solo,
             armed: false,
             chase: false,
+            notes_to: None,
             frozen: None,
             lanes: vec![Lane::audio().with_clips(vec![frozen.clip()])],
         })
@@ -416,7 +417,11 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                     }
                 })
             }
-            WorkflowCommand::DisconnectDevice { key } => device_frozen(key),
+            WorkflowCommand::CreatePlayer {
+                target: CreateTarget::Selected(key),
+                ..
+            }
+            | WorkflowCommand::DisconnectDevice { key } => device_frozen(key),
             WorkflowCommand::DisconnectDevices { keys } => keys.iter().find_map(device_frozen),
             _ => None,
         },

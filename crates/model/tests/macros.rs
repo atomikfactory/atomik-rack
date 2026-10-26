@@ -690,9 +690,9 @@ fn channel_strip_params_can_be_driven_except_solo() {
 fn macros_round_trip_in_format_29_in_a_stable_text() {
     let (d, r) = mapped();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 30);
+    assert_eq!(PROJECT_VERSION, 31);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 30);
+    assert_eq!(v["version"], 31);
     let m = &v["macros"];
     let assigns = m["assigns"].as_array().unwrap();
     assert_eq!(assigns.len(), 3);
@@ -717,12 +717,12 @@ fn a_project_without_macros_differs_from_its_version_28_file_in_the_version_line
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("\"macros\""));
-    let v28 = text.replace("\"version\": 30", "\"version\": 28");
+    let v28 = text.replace("\"version\": 31", "\"version\": 28");
     let loaded = load_project(&v28, &r).unwrap();
     assert!(loaded.macros.is_empty());
     assert_eq!(save_project(&loaded), text);
     // Before the format a file has no field for them.
-    let with = save_project(mapped().0.doc()).replace("\"version\": 30", "\"version\": 28");
+    let with = save_project(mapped().0.doc()).replace("\"version\": 31", "\"version\": 28");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("macros"), "{e}");
 }

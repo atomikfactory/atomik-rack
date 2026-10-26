@@ -177,6 +177,58 @@ fn push_macro_lane(
     }
 }
 
+/// Adds `track` to `tracks`. A device has one engine track (the engine refuses two for one
+/// input): a track for a device that has one already (a player two tracks enter at, a device
+/// a macro drives) joins it. Its notes are added; of the controller lanes and the automation
+/// lanes only those the first track lacks are, and the first track's chase flag stays.
+fn push_track(tracks: &mut Vec<SongTrack>, track: SongTrack) {
+    let Some(first) = tracks
+        .iter_mut()
+        .find(|t| t.device == track.device && t.notes_socket == track.notes_socket)
+    else {
+        tracks.push(track);
+        return;
+    };
+    first.notes.extend(track.notes);
+    for lane in track.controllers {
+        if !first.controllers.iter().any(|c| c.kind == lane.kind) {
+            first.controllers.push(lane);
+        }
+    }
+    for lane in track.automation {
+        if !first.automation.iter().any(|a| a.param == lane.param) {
+            first.automation.push(lane);
+        }
+    }
+}
+
+/// Where the notes of `track` go when they do not enter its own device: the Notes input of the
+/// device its `notes_to` names (a container through its split). `None` for a track that enters
+/// its own device, and for an entry that cannot take notes (it is not in the rack, has no
+/// engine id or no Notes input): that track plays its own device.
+fn entry_input(
+    doc: &RackDoc,
+    registry: &Registry,
+    expanded: Option<&ExpandedRack>,
+    id_of: &impl Fn(&DeviceKey) -> Option<DeviceInstanceId>,
+    track: &atomik_model::song::Track,
+) -> Option<(DeviceInstanceId, SocketId)> {
+    let entry = doc.notes_entry(track);
+    if *entry == track.device {
+        return None;
+    }
+    let device = doc.device(entry)?;
+    let (flat, type_id) = match (expanded, device.inner.is_some()) {
+        (Some(exp), true) => (
+            exp.alias.get(entry)?.clone(),
+            atomik_model::SPLIT_TYPE.to_string(),
+        ),
+        _ => (entry.clone(), device.type_id.clone()),
+    };
+    let desc = registry.get(&type_id)?.descriptor;
+    Some((id_of(&flat)?, notes_input(desc)?))
+}
+
 fn song_fade_curve(curve: FadeCurve) -> SongFadeCurve {
     match curve {
         FadeCurve::Linear => SongFadeCurve::Linear,
@@ -330,14 +382,47 @@ pub fn song_input_with_warps(
                     .collect(),
             })
             .collect();
-        tracks.push(SongTrack {
-            device,
-            notes_socket,
-            chase: track.chase,
-            notes,
-            automation,
-            controllers,
-        });
+        // Notes enter where the track says (the top of its players); the track's own device
+        // keeps its automation on a track of its own, as a macro lane does.
+        match entry_input(doc, registry, expanded.as_ref(), &id_of, track) {
+            Some((entry, entry_socket)) => {
+                if !automation.is_empty() {
+                    push_track(
+                        &mut tracks,
+                        SongTrack {
+                            device,
+                            notes_socket,
+                            chase: true,
+                            notes: Vec::new(),
+                            automation,
+                            controllers: Vec::new(),
+                        },
+                    );
+                }
+                push_track(
+                    &mut tracks,
+                    SongTrack {
+                        device: entry,
+                        notes_socket: entry_socket,
+                        chase: track.chase,
+                        notes,
+                        automation: Vec::new(),
+                        controllers,
+                    },
+                );
+            }
+            None => push_track(
+                &mut tracks,
+                SongTrack {
+                    device,
+                    notes_socket,
+                    chase: track.chase,
+                    notes,
+                    automation,
+                    controllers,
+                },
+            ),
+        }
     }
     // A macro bank drives top-level devices, which may have a track of their own: the lane joins
     // it (a target without one gets an automation-only track). A frozen target plays its render.

@@ -161,6 +161,25 @@ impl<'r> Planner<'r> {
 
     /// Removes device `key`, its song track (first) and its cables.
     pub(crate) fn remove_device(&mut self, key: &DeviceKey) -> Result<(), ModelError> {
+        // A track whose notes entered at this device enters at the next one down the note
+        // cables now (at its own device when that is the next, or when there is none).
+        let next = crate::workflow_create::notes_successor(&self.scratch, self.registry, key);
+        let entering: Vec<DeviceKey> = self
+            .scratch
+            .song
+            .tracks
+            .iter()
+            .filter(|t| t.notes_to.as_ref() == Some(key))
+            .map(|t| t.device.clone())
+            .collect();
+        for device in entering {
+            let new = next.clone().filter(|n| *n != device);
+            self.push(Edit::TrackEntry {
+                device,
+                old: Some(key.clone()),
+                new,
+            });
+        }
         if let Some(t) = self
             .scratch
             .song

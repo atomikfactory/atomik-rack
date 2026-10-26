@@ -339,7 +339,8 @@ fn add_device_slot_action_for_an_effect_and_a_utility_differ() {
 #[test]
 fn add_device_action_for_adds_below_the_selection_else_at_the_end() {
     let (doc, reg, mut v) = two_columns();
-    let at_end = v.add_device_action_for(desc(&reg, "atomik.arpeggiator"), &doc, Modifiers::NONE);
+    let mixer = desc(&reg, "atomik.line-mixer");
+    let at_end = v.add_device_action_for(mixer, &doc, Modifiers::NONE);
     assert!(
         matches!(
             at_end,
@@ -348,13 +349,31 @@ fn add_device_action_for_adds_below_the_selection_else_at_the_end() {
         "{at_end:?}"
     );
     v.set_selected(Some(key("synth")));
-    let below = v.add_device_action_for(desc(&reg, "atomik.arpeggiator"), &doc, Modifiers::NONE);
+    let below = v.add_device_action_for(mixer, &doc, Modifiers::NONE);
     assert!(
         matches!(
             below,
             UiAction::Command(Command::AddDevice { index: 1, .. })
         ),
         "{below:?}"
+    );
+}
+
+#[test]
+fn add_device_action_for_a_player_creates_it_on_the_stack_of_the_selection() {
+    let (doc, reg, mut v) = two_columns();
+    let arp = desc(&reg, "atomik.arpeggiator");
+    v.set_selected(Some(key("synth")));
+    let a = v.add_device_action_for(arp, &doc, Modifiers::NONE);
+    assert!(
+        matches!(
+            &a,
+            UiAction::Command(Command::Workflow(WorkflowCommand::CreatePlayer { type_id, target, options }))
+                if type_id == "atomik.arpeggiator"
+                    && *target == atomik_model::CreateTarget::Selected(key("synth"))
+                    && options.route
+        ),
+        "{a:?}"
     );
 }
 

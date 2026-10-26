@@ -600,6 +600,11 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 "device": t.device.as_str(), "muted": t.muted, "solo": t.solo,
                 "armed": t.armed, "chase": t.chase, "lanes": lanes,
             });
+            if let Some(entry) = &t.notes_to {
+                // The top of the track's player stack: where its notes enter, when not at its
+                // own device.
+                track["notes_to"] = json!(entry.as_str());
+            }
             if let Some(g) = doc.song.track_group(&t.device) {
                 track["folder"] = json!(g);
             }

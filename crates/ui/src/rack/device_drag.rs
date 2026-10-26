@@ -243,7 +243,12 @@ impl RackView {
         slot: RackSlot,
         modifiers: Modifiers,
     ) -> UiAction {
-        match self.creation_of(kind) {
+        // A player dropped at a slot stays where it was put and is not cabled: the stack is
+        // built from the selection by the browser's add.
+        let create = self
+            .creation_of(kind)
+            .filter(|_| !crate::browser::is_player(type_id));
+        match create {
             Some(create) => self.create_action_at(
                 CreateSource::Type(type_id.to_string()),
                 create,

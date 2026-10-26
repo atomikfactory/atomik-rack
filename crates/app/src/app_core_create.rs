@@ -80,7 +80,8 @@ impl<S: EngineSink> AppCore<S> {
             WorkflowCommand::CreateInstrument { options, .. }
             | WorkflowCommand::CreateInstrumentAt { options, .. }
             | WorkflowCommand::CreateEffect { options, .. }
-            | WorkflowCommand::CreateEffectAt { options, .. } => options.route,
+            | WorkflowCommand::CreateEffectAt { options, .. }
+            | WorkflowCommand::CreatePlayer { options, .. } => options.route,
             _ => true,
         };
         if !routed {
@@ -132,6 +133,18 @@ impl<S: EngineSink> AppCore<S> {
                     return None;
                 }
                 Some(format!("Created {name} with {}", parts.join(" and ")))
+            }
+            WorkflowCommand::CreatePlayer { .. } => {
+                // The device its notes go on to: the head of the stack it was put on.
+                let below = doc
+                    .cables
+                    .iter()
+                    .find(|c| &c.from.device == key && c.from.socket == "notes_out")?
+                    .to
+                    .device
+                    .clone();
+                let below = doc.device(&below).map_or("the device", |d| &d.name);
+                Some(format!("Created {name} above {below}"))
             }
             WorkflowCommand::CreateEffect { .. } | WorkflowCommand::CreateEffectAt { .. } => {
                 // Created with the master selected: the first free send/return.
