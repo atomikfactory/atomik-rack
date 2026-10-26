@@ -132,6 +132,7 @@ fn the_track_menu_follows_the_selection() {
             "Rename Folder\u{2026}",
             "Move Track Up",
             "Move Track Down",
+            "Rename Track\u{2026}",
             "Track Comment\u{2026}",
             "Add Note Lane",
             "Rename Note Lane\u{2026}",
@@ -473,4 +474,27 @@ fn folders_colours_comments_and_folds_survive_saving_and_opening() {
     assert_eq!(t.core().doc().song.org, before);
     assert!(t.core().arrangement().track_hidden(&key("a")));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn rename_track_from_the_menu_types_the_name_in_one_undo_step() {
+    let mut s = shell();
+    s.core_mut()
+        .arrangement_mut()
+        .set_selected_track(Some(key("b")));
+    s.set_focus(Pane::Rack);
+    s.execute(AppCommand::RenameTrack);
+    assert_eq!(s.focus, Pane::Arrangement, "the focus follows the typing");
+    assert!(s.core().arrangement().is_text_owner());
+    for _ in 0..40 {
+        tap(&mut s, "Backspace");
+    }
+    for chord in ["l", "o", "w"] {
+        tap(&mut s, chord);
+    }
+    tap(&mut s, "Enter");
+    let name = |s: &Shell<NullBackend>| s.core().doc().device(&key("b")).unwrap().name.clone();
+    assert_eq!(name(&s), "low");
+    assert!(s.core_mut().undo());
+    assert_ne!(name(&s), "low");
 }

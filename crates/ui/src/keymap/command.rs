@@ -1110,6 +1110,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.rename_track",
+        "Rename Track...",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.save_clip_to_library",
         "Save Clip to Library",
         G::Sequencer,

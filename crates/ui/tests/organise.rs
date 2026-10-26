@@ -7,16 +7,17 @@
 mod support;
 
 use atomik_device_sdk::Registry;
-use atomik_model::{Command, DeviceKey, Document, SongCommand};
+use atomik_model::{ClipId, Command, DeviceKey, Document, SongCommand};
 use atomik_ui::arrangement::{
     FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
+    TRACK_INDENT, TRACK_LIST_WIDTH,
 };
 use atomik_ui::keymap::CommandOutcome;
 use atomik_ui::kurbo::Point;
 use atomik_ui::timeline::Snap;
 use atomik_ui::{
     ArrangementView, ContextTarget, DisplayList, Key, LaneButton, Modifiers, PointerButton,
-    TextEngine, UiAction, UiEvent,
+    TextEngine, TrackButton, UiAction, UiEvent,
 };
 use std::path::PathBuf;
 use support::cpu::CpuCanvas;
@@ -412,6 +413,238 @@ fn a_press_outside_the_field_commits_the_typed_name() {
         }]
     );
     assert!(!v.is_text_owner());
+}
+
+#[test]
+fn double_clicking_a_track_name_renames_it_and_enter_commits() {
+    let (mut d, reg, mut v) = setup();
+    assert!(!v.is_text_owner());
+    let at = v.track_name_center(&key("pad")).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    assert!(v.is_text_owner(), "the name is typed");
+    assert_eq!(v.org_edit_text(), Some("Pad"));
+    for _ in 0..3 {
+        v.handle(&press(Key::Backspace, Modifiers::NONE), d.doc(), &reg);
+    }
+    type_text(&d, &reg, &mut v, "Pad Wash");
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert_eq!(
+        commands(&actions),
+        [Command::Rename {
+            key: key("pad"),
+            name: "Pad Wash".into()
+        }]
+    );
+    assert!(!v.is_text_owner());
+    apply(&mut d, &reg, &mut v, &actions);
+    assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad Wash");
+    // One undo step puts the name back.
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad");
+}
+
+#[test]
+fn track_rename_escape_blank_and_unchanged_emit_nothing() {
+    let (d, reg, mut v) = setup();
+    assert!(v.begin_track_rename(&key("pad")));
+    type_text(&d, &reg, &mut v, "x");
+    let actions = v.handle(&press(Key::Escape, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty() && !v.is_text_owner());
+    assert!(v.begin_track_rename(&key("pad")));
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty(), "unchanged");
+    assert!(v.begin_track_rename(&key("pad")));
+    for _ in 0..8 {
+        v.handle(&press(Key::Backspace, Modifiers::NONE), d.doc(), &reg);
+    }
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty(), "a blank name cancels");
+    assert!(!v.begin_track_rename(&key("nobody")), "no such track");
+}
+
+#[test]
+fn track_rename_press_outside_the_field_commits_the_typed_name() {
+    let (d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    type_text(&d, &reg, &mut v, "2");
+    let away = v.track_header_center(&key("keys")).unwrap();
+    let away = Point::new(away.x, away.y + 1.0);
+    let actions = click(&d, &reg, &mut v, away);
+    assert_eq!(
+        commands(&actions),
+        [Command::Rename {
+            key: key("pad"),
+            name: "Pad2".into()
+        }]
+    );
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn track_rename_text_is_capped_like_a_bus_name() {
+    let (d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    type_text(&d, &reg, &mut v, &"a".repeat(80));
+    assert_eq!(v.org_edit_text().map(|t| t.chars().count()), Some(32));
+}
+
+#[test]
+fn double_clicking_the_header_away_from_the_name_does_not_rename() {
+    let (d, reg, mut v) = setup();
+    let mute = v
+        .track_button_center(&key("pad"), TrackButton::Mute)
+        .unwrap();
+    let blank = Point::new(mute.x + 100.0, mute.y + 12.0);
+    let name = v.track_name_center(&key("pad")).unwrap();
+    for at in [blank, Point::new(name.x, name.y + 14.0)] {
+        run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+        assert!(!v.is_text_owner(), "no editor at {at:?}");
+    }
+}
+
+#[test]
+fn double_clicking_a_track_name_selects_the_track() {
+    let (d, reg, mut v) = setup();
+    let at = v.track_name_center(&key("keys")).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    assert_eq!(v.selected_tracks(), [key("keys")]);
+}
+
+#[test]
+fn rename_track_command_types_the_selected_tracks_name() {
+    let (mut d, reg, mut v) = setup();
+    assert_eq!(
+        command(&d, &reg, &mut v, "sequencer.rename_track", None),
+        CommandOutcome::Declined,
+        "no track selected"
+    );
+    v.set_selected_track(Some(key("keys")));
+    do_command(&mut d, &reg, &mut v, "sequencer.rename_track", None);
+    assert!(v.is_text_owner());
+    assert_eq!(v.org_edit_text(), Some("Keys"));
+}
+
+#[test]
+fn track_rename_closes_when_its_track_goes_away() {
+    let (mut d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    d.apply(
+        Command::Song(SongCommand::RemoveTrack { device: key("pad") }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn double_clicking_a_note_lane_label_still_renames_the_lane() {
+    let (mut d, reg, mut v) = setup();
+    d.apply(
+        Command::Song(SongCommand::AddNoteLane {
+            device: key("pad"),
+            name: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    let at = v.note_lane_header_center(&key("pad"), 1).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    type_text(&d, &reg, &mut v, "!");
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(matches!(
+        song_cmds(&actions).as_slice(),
+        [SongCommand::RenameLane { lane: 1, .. }]
+    ));
+    assert!(commands(&actions).len() == 1, "no track rename");
+}
+
+// ------------------------------------------------------------------ indent
+
+/// `bass` and `lead` in "Folder 1", then `lead` alone in a folder inside it: `bass` is at depth
+/// 1, `lead` at depth 2, `keys` and `pad` at the top.
+fn nested() -> (Document, Registry, ArrangementView) {
+    let (mut d, reg, mut v) = grouped();
+    d.apply(
+        Command::Song(SongCommand::GroupTracks {
+            devices: vec![key("lead")],
+            name: "Inner".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    (d, reg, v)
+}
+
+fn mute_x(v: &ArrangementView, device: &str) -> f64 {
+    v.track_button_center(&key(device), TrackButton::Mute)
+        .unwrap()
+        .x
+}
+
+#[test]
+fn header_indent_moves_the_controls_of_a_folder_track_right_by_a_step_per_level() {
+    let (_, _, v) = nested();
+    assert_eq!(
+        (v.track_depth(&key("bass")), v.track_depth(&key("lead"))),
+        (1, 2)
+    );
+    let top = mute_x(&v, "pad");
+    assert!((mute_x(&v, "bass") - top - TRACK_INDENT).abs() < 1e-9);
+    assert!((mute_x(&v, "lead") - top - 2.0 * TRACK_INDENT).abs() < 1e-9);
+    let chevron = |d: &str| {
+        v.track_button_center(&key(d), TrackButton::Expand)
+            .unwrap()
+            .x
+    };
+    assert!((chevron("lead") - chevron("pad") - 2.0 * TRACK_INDENT).abs() < 1e-9);
+    let name = |d: &str| v.track_name_center(&key(d)).unwrap().x;
+    assert!(name("lead") > name("pad"), "the name starts further right");
+}
+
+#[test]
+fn header_indent_does_not_move_the_clip_area() {
+    let (_, _, nested) = nested();
+    let (_, _, flat) = setup();
+    for id in [1, 2, 3] {
+        let (a, b) = (nested.clip_rect(ClipId(id)), flat.clip_rect(ClipId(id)));
+        assert_eq!(a.map(|r| (r.x0, r.x1)), b.map(|r| (r.x0, r.x1)));
+    }
+}
+
+#[test]
+fn header_indent_hit_testing_follows_the_shifted_buttons() {
+    let (mut d, reg, mut v) = nested();
+    for button in [TrackButton::Mute, TrackButton::Solo, TrackButton::Arm] {
+        let at = v.track_button_center(&key("lead"), button).unwrap();
+        let actions = click(&d, &reg, &mut v, at);
+        let cmds = song_cmds(&actions);
+        assert!(
+            matches!(cmds.as_slice(), [SongCommand::SetTrackFlags { device, .. }] if *device == key("lead")),
+            "{button:?}: {cmds:?}"
+        );
+        apply(&mut d, &reg, &mut v, &actions);
+    }
+}
+
+#[test]
+fn header_indent_keeps_every_button_inside_the_header() {
+    let (_, _, v) = nested();
+    let limit = v.bounds().x0 + TRACK_LIST_WIDTH;
+    for d in ["bass", "lead", "pad"] {
+        for b in [
+            TrackButton::Expand,
+            TrackButton::Mute,
+            TrackButton::Solo,
+            TrackButton::Arm,
+            TrackButton::AddLane,
+        ] {
+            let r = v.track_button_center(&key(d), b).unwrap();
+            assert!(r.x < limit - 6.0, "{d} {b:?} at {}", r.x);
+        }
+    }
 }
 
 #[test]

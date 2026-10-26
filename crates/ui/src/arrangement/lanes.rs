@@ -124,13 +124,13 @@ impl ArrangementView {
     }
 
     /// The label area of lane `lane`'s header (a double-click renames, a click picks the lane).
-    pub(super) fn lane_label_rect(&self, hr: Rect, lane: usize) -> Rect {
+    pub(super) fn lane_label_rect(&self, hr: Rect, track: usize, lane: usize) -> Rect {
         if lane == 0 {
             let x = hr.x0 + TRACK_LIST_WIDTH;
             Rect::new(x - 46.0, hr.y0 + 33.0, x - 24.0, hr.y0 + 49.0)
         } else {
             Rect::new(
-                hr.x0 + 18.0,
+                hr.x0 + 18.0 + self.track_indent(track),
                 hr.y0,
                 self.lane_mute_rect(hr, lane).x0 - 2.0,
                 hr.y1,
@@ -153,7 +153,7 @@ impl ArrangementView {
         if self.lane_mute_rect(hr, lane).contains(pos) {
             return Some(Hit::LaneButton(track, lane, LaneButton::Mute));
         }
-        self.lane_label_rect(hr, lane)
+        self.lane_label_rect(hr, track, lane)
             .contains(pos)
             .then_some(Hit::NoteLaneHeader(track, lane))
     }
@@ -192,7 +192,7 @@ impl ArrangementView {
             return None;
         }
         self.is_note_lane(track, lane)
-            .then(|| self.lane_label_rect(hr, lane).center())
+            .then(|| self.lane_label_rect(hr, track, lane).center())
     }
 
     /// Centre of a control in the header of note lane `lane` of `device`'s track: the M button
@@ -350,19 +350,20 @@ impl ArrangementView {
         let st = &self.st;
         let t = &st.base;
         let tr = &self.song.tracks[track];
+        let x = hr.x0 + self.track_indent(track);
         sp::rect(c, hr, st.header_lane);
         sp::rect(
             c,
-            Rect::new(hr.x0 + 16.0, hr.y0 + 6.0, hr.x0 + 18.0, hr.y1 - 6.0),
+            Rect::new(x + 16.0, hr.y0 + 6.0, x + 18.0, hr.y1 - 6.0),
             accent.with_alpha(0.7),
         );
         let label = fit_label(
             &tr.lane_label(lane),
-            self.lane_label_rect(hr, lane).width(),
+            self.lane_label_rect(hr, track, lane).width(),
             10.0,
         );
         let cy = hr.y0 + hr.height() / 2.0 + 3.5;
-        sp::label(c, &label, hr.x0 + 26.0, cy, 10.0, t.text, Align::Start);
+        sp::label(c, &label, x + 26.0, cy, 10.0, t.text, Align::Start);
         self.paint_lane_mute(c, hr, track, lane);
         if self.selected_note_lane(track) == Some(lane) {
             c.stroke_with(
@@ -379,7 +380,7 @@ impl ArrangementView {
             return;
         }
         let st = &self.st;
-        let label = self.lane_label_rect(hr, 0);
+        let label = self.lane_label_rect(hr, track, 0);
         let selected = self.selected_note_lane(track) == Some(0);
         let hot = self.hover == Some(Hit::NoteLaneHeader(track, 0));
         let shape = RoundedRect::from_rect(label, 2.0);
