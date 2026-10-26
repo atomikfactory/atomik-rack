@@ -31,6 +31,8 @@
         { "command": "view.toggle_console", "context": "global", "chords": ["F5"], "os": { "mac": ["F5", "Cmd+Alt+Digit5"] } },
         { "command": "view.maximise_console", "context": "global", "chords": ["Shift+F5"] },
         { "command": "view.toggle_rack", "context": "global", "chords": ["F6"], "os": { "mac": ["F6", "Cmd+Alt+Digit6"] } },
+        { "command": "view.detach_console", "context": "global", "chords": ["Cmd+Shift+F5"] },
+        { "command": "view.detach_rack", "context": "global", "chords": ["Cmd+Shift+F6"] },
         { "command": "view.sequencer_only", "context": "global", "chords": ["F7"], "os": { "mac": ["F7", "Cmd+Alt+Digit7"] } },
         { "command": "view.toggle_editor", "context": "global", "chords": ["F8", "Shift+Tab"], "os": { "mac": ["F8", "Shift+Tab", "Cmd+Alt+Digit8"] } },
         { "command": "view.toggle_flip", "context": "global", "chords": ["Tab"] },

@@ -356,6 +356,8 @@ mod tests {
             marker_list: false,
             rack_navigator: true,
             rack: true,
+            rack_detached: false,
+            console_detached: false,
             sequencer_only: false,
             editor: false,
             missing_audio: false,
