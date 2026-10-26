@@ -1,4 +1,5 @@
-//! vello on wgpu (through `vello::wgpu`): the window surface and the offscreen screenshot.
+//! vello on wgpu (through `vello::wgpu`): one shared context, a surface per window, and the
+//! offscreen screenshot.
 //!
 //! Not unit-tested (needs a GPU); it compiles on every target and the user checks it.
 
@@ -38,16 +39,30 @@ fn params(base: Color, width: u32, height: u32) -> RenderParams {
     }
 }
 
-/// The window's GPU state.
-pub struct Gpu {
+/// The GPU state every window shares: one instance and adapter, one device, and one vello
+/// renderer per device (the renderer's pipelines are built once, not once per window).
+pub struct GpuContext {
     context: RenderContext,
-    surface: RenderSurface<'static>,
-    renderer: Renderer,
+    /// Indexed like `context.devices`; created the first time a surface uses the device.
+    renderers: Vec<Option<Renderer>>,
 }
 
-impl std::fmt::Debug for Gpu {
+impl std::fmt::Debug for GpuContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Gpu")
+        f.debug_struct("GpuContext")
+            .field("devices", &self.context.devices.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// One window's surface. Drawn with the [`GpuContext`] that created it.
+pub struct WindowSurface {
+    surface: RenderSurface<'static>,
+}
+
+impl std::fmt::Debug for WindowSurface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowSurface")
             .field(
                 "size",
                 &(self.surface.config.width, self.surface.config.height),
@@ -56,61 +71,101 @@ impl std::fmt::Debug for Gpu {
     }
 }
 
-impl Gpu {
-    /// Creates the surface (vsync: `AutoVsync`) and the renderer for `window`.
-    pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
-        let mut context = RenderContext::new();
-        let surface = pollster::block_on(context.create_surface(
+impl Default for GpuContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GpuContext {
+    /// An empty context: the device is picked when the first surface is created.
+    pub fn new() -> Self {
+        Self {
+            context: RenderContext::new(),
+            renderers: Vec::new(),
+        }
+    }
+
+    /// Creates the surface (vsync: `AutoVsync`) for `window`, and the renderer of its device
+    /// when no window has needed it yet.
+    pub fn create_surface(
+        &mut self,
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowSurface, String> {
+        let surface = pollster::block_on(self.context.create_surface(
             window,
             width.max(1),
             height.max(1),
             wgpu::PresentMode::AutoVsync,
         ))
         .map_err(|e| format!("GPU surface: {e}"))?;
-        let device = &context.devices[surface.dev_id].device;
-        let renderer =
-            Renderer::new(device, renderer_options()).map_err(|e| format!("renderer: {e}"))?;
-        Ok(Self {
-            context,
-            surface,
-            renderer,
-        })
+        self.renderer_for(surface.dev_id)?;
+        Ok(WindowSurface { surface })
     }
 
-    /// Resizes the surface (physical pixels).
-    pub fn resize(&mut self, width: u32, height: u32) {
+    /// The renderer of device `dev_id`, built on first use.
+    fn renderer_for(&mut self, dev_id: usize) -> Result<&mut Renderer, String> {
+        if self.renderers.len() <= dev_id {
+            self.renderers.resize_with(dev_id + 1, || None);
+        }
+        let slot = &mut self.renderers[dev_id];
+        if slot.is_none() {
+            let device = &self.context.devices[dev_id].device;
+            *slot = Some(
+                Renderer::new(device, renderer_options()).map_err(|e| format!("renderer: {e}"))?,
+            );
+        }
+        slot.as_mut().ok_or_else(|| "renderer".to_string())
+    }
+
+    /// Resizes `surface` (physical pixels).
+    pub fn resize(&mut self, surface: &mut WindowSurface, width: u32, height: u32) {
         let (w, h) = (width.max(1), height.max(1));
-        if (w, h) != (self.surface.config.width, self.surface.config.height) {
-            self.context.resize_surface(&mut self.surface, w, h);
+        let s = &mut surface.surface;
+        if (w, h) != (s.config.width, s.config.height) {
+            self.context.resize_surface(s, w, h);
         }
     }
 
     /// Renders `scene` at the surface size and presents it.
-    pub fn render(&mut self, scene: &Scene, base: Color) -> FrameResult {
-        let handle = &self.context.devices[self.surface.dev_id];
-        let (device, queue) = (&handle.device, &handle.queue);
-        let texture = match self.surface.surface.get_current_texture() {
+    pub fn render(
+        &mut self,
+        surface: &mut WindowSurface,
+        scene: &Scene,
+        base: Color,
+    ) -> FrameResult {
+        let surface = &mut surface.surface;
+        let texture = match surface.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
                 return FrameResult::Skipped;
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.context.configure_surface(&self.surface);
+                self.context.configure_surface(surface);
                 return FrameResult::Reconfigured;
             }
             wgpu::CurrentSurfaceTexture::Lost => return FrameResult::Lost,
             #[allow(unreachable_patterns)] // Future variants: skip the frame.
             _ => return FrameResult::Skipped,
         };
-        let (w, h) = (self.surface.config.width, self.surface.config.height);
-        if self
-            .renderer
+        if self.renderer_for(surface.dev_id).is_err() {
+            return FrameResult::Skipped;
+        }
+        let Some(renderer) = self.renderers[surface.dev_id].as_mut() else {
+            return FrameResult::Skipped;
+        };
+        let handle = &self.context.devices[surface.dev_id];
+        let (device, queue) = (&handle.device, &handle.queue);
+        let (w, h) = (surface.config.width, surface.config.height);
+        if renderer
             .render_to_texture(
                 device,
                 queue,
                 scene,
-                &self.surface.target_view,
+                &surface.target_view,
                 &params(base, w, h),
             )
             .is_err()
@@ -123,9 +178,9 @@ impl Gpu {
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.surface
+        surface
             .blitter
-            .copy(device, &mut encoder, &self.surface.target_view, &view);
+            .copy(device, &mut encoder, &surface.target_view, &view);
         queue.submit([encoder.finish()]);
         queue.present(texture);
         FrameResult::Presented

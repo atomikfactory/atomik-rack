@@ -1,6 +1,6 @@
 //! The winit 0.30 application: one window, event translation, frame pacing, dialogs.
 
-use super::gpu::{FrameResult, Gpu, render_offscreen, write_png};
+use super::gpu::{FrameResult, GpuContext, WindowSurface, render_offscreen, write_png};
 use super::plugin_windows::PluginWindows;
 use crate::app_core::{AppCore, default_registry};
 use crate::cli::Cli;
@@ -250,7 +250,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let mut app = App {
         shell,
         window: None,
-        gpu: None,
+        gpu: GpuContext::new(),
+        surface: None,
         scene: Scene::new(),
         text: TextEngine::new(),
         cache: SceneCache::new(),
@@ -286,7 +287,8 @@ pub fn run(cli: Cli) -> Result<(), String> {
 struct App {
     shell: Shell<SystemBackend>,
     window: Option<Arc<Window>>,
-    gpu: Option<Gpu>,
+    gpu: GpuContext,
+    surface: Option<WindowSurface>,
     scene: Scene,
     text: TextEngine,
     cache: SceneCache,
@@ -352,10 +354,10 @@ impl App {
             return; // minimized
         }
         self.paint_scene();
-        let result = match &mut self.gpu {
-            Some(gpu) => {
-                gpu.resize(size.width, size.height);
-                gpu.render(&self.scene, Color::BLACK)
+        let result = match &mut self.surface {
+            Some(surface) => {
+                self.gpu.resize(surface, size.width, size.height);
+                self.gpu.render(surface, &self.scene, Color::BLACK)
             }
             None => return,
         };
@@ -363,9 +365,12 @@ impl App {
             FrameResult::Presented | FrameResult::Skipped => {}
             FrameResult::Reconfigured => window.request_redraw(),
             FrameResult::Lost => {
-                self.gpu = None;
-                match Gpu::new(Arc::clone(&window), size.width, size.height) {
-                    Ok(gpu) => self.gpu = Some(gpu),
+                self.surface = None;
+                match self
+                    .gpu
+                    .create_surface(Arc::clone(&window), size.width, size.height)
+                {
+                    Ok(surface) => self.surface = Some(surface),
                     Err(e) => eprintln!("atomik: {e}"),
                 }
                 window.request_redraw();
@@ -691,8 +696,11 @@ impl ApplicationHandler for App {
         self.shell.handle(&UiEvent::ScaleChanged(scale));
         self.shell
             .handle(&UiEvent::Resize(translate::logical_size(size, scale)));
-        match Gpu::new(Arc::clone(&window), size.width, size.height) {
-            Ok(gpu) => self.gpu = Some(gpu),
+        match self
+            .gpu
+            .create_surface(Arc::clone(&window), size.width, size.height)
+        {
+            Ok(surface) => self.surface = Some(surface),
             Err(e) => {
                 eprintln!("atomik: {e}");
                 event_loop.exit();
@@ -746,8 +754,8 @@ impl ApplicationHandler for App {
                 self.after_event(event_loop, requests);
             }
             WindowEvent::Resized(size) => {
-                if let Some(gpu) = &mut self.gpu {
-                    gpu.resize(size.width, size.height);
+                if let Some(surface) = &mut self.surface {
+                    self.gpu.resize(surface, size.width, size.height);
                 }
                 self.ui(
                     event_loop,
