@@ -280,6 +280,8 @@ impl NoteFilter {
         }
     }
 
+    // The exact comparisons detect the untouched defaults.
+    #[allow(clippy::float_cmp)]
     /// The output note of an input `On`, or `None` when a filter drops it.
     fn map_on(&self, key: u8, velocity: f32) -> Option<(u8, f32)> {
         let k = i32::from(key);
