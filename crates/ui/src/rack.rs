@@ -940,6 +940,7 @@ impl RackView {
             (Some(d), _) if type_id == autolayout::DRUM_TYPE => autolayout::drum_layout(d),
             (Some(d), _) if type_id == autolayout::SLICER_TYPE => autolayout::slicer_layout(d),
             (Some(d), _) if type_id == seq_panel::SEQ_TYPE => seq_panel::seq_layout(d),
+            (Some(d), _) if type_id == seq_panel::CV_SEQ_TYPE => seq_panel::cv_seq_layout(d),
             (Some(d), _) if type_id == container_panel::CONTAINER_TYPE => {
                 container_panel::container_layout(d)
             }

@@ -1,5 +1,6 @@
 //! The sequencer grid editor: a pane that replaces the arrangement and edits
-//! the patterns of one step sequencer as a grid of steps.
+//! the patterns of one step sequencer or CV sequencer as a grid of steps (the CV sequencer also
+//! shows its two curve lanes).
 //!
 //! Hosting follows [`crate::StepEditorView`]: on [`UiAction::OpenSeqEditor`] call
 //! [`SeqEditorView::open`] (then [`SeqEditorView::set_pattern_index`] with the panel's
@@ -23,6 +24,8 @@
 //! VEL        bar per step
 //! GATE       bar per step
 //! PROB       bar per step
+//! CURVE A    bar per step from the zero line, -100..100 %   (CV sequencer only)
+//! CURVE B    bar per step from the zero line, -100..100 %   (CV sequencer only)
 //! ```
 //!
 //! # Interaction
@@ -34,6 +37,10 @@
 //!   keyboard, starting centred on the pattern's range ([`SeqEditorView::key_range`]).
 //! * **Bar lanes.** Press sets the step's value from the pointer height, a drag paints every
 //!   column it passes (velocity 1..=127, gate 1..=100 %, probability 0..=100 %).
+//! * **Curve lanes** (CV sequencer): press sets the step's value from the pointer height
+//!   (-100 % at the bottom, 0 on the centre line, 100 % at the top), a drag paints every column
+//!   it passes; Alt-click toggles the step's slide (the value ramps to the next step's over its
+//!   length; a slide shows as a line to the next bar). Every edit is a `Command::SetCurves`.
 //! * **Tie row.** A click on the junction between two steps toggles the tie of the left one.
 //! * **Toolbar.** `-`/`+`, a drag (4 px per step) or the wheel set the length 1..=64 (steps
 //!   past the length keep their data); the resolution buttons set the step length; the swing
@@ -52,15 +59,18 @@ use crate::seq_panel::{self, PlayState, RenameKey};
 use crate::theme::Theme;
 use atomik_device_sdk::Registry;
 use atomik_model::{
-    Command, DeviceKey, MAX_PATTERNS, MAX_STEPS, PatternDoc, RackDoc, SeqResolution, StepDoc,
+    CURVE_VALUE_MAX, Command, CurveDoc, CurvePatternDoc, DeviceKey, MAX_PATTERNS, MAX_STEPS,
+    PatternDoc, RackDoc, SeqResolution, StepDoc,
 };
 use vello::kurbo::{Point, Rect};
 use vello::peniko::Color;
 
 mod paint;
 
-/// The device type the grid editor edits.
+/// The step sequencer type the grid editor edits.
 pub const SEQ_TYPE: &str = seq_panel::SEQ_TYPE;
+/// The CV sequencer type: edited like the step sequencer, with two more lanes.
+pub const CV_SEQ_TYPE: &str = seq_panel::CV_SEQ_TYPE;
 /// Velocity levels and bar lanes: height of one bar lane.
 pub const LANE_HEIGHT: f64 = 40.0;
 /// Height of the tie row.
@@ -189,6 +199,8 @@ enum Hit {
     Key(u8),
     Note(usize, u8),
     Lane(Lane, usize),
+    /// Curve row (0 = A, 1 = B) and step.
+    Curve(u8, usize),
     Tie(usize),
 }
 
@@ -209,6 +221,16 @@ struct LaneDrag {
     lane: Lane,
     base: PatternDoc,
     last: PatternDoc,
+    merge: u64,
+    last_step: usize,
+    emitted: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CurveDrag {
+    row: usize,
+    base: CurvePatternDoc,
+    last: CurvePatternDoc,
     merge: u64,
     last_step: usize,
     emitted: bool,
@@ -238,6 +260,7 @@ enum Drag {
     Audition(u8),
     Note(Box<NoteDrag>),
     Lane(Box<LaneDrag>),
+    Curve(Box<CurveDrag>),
     Field(Box<FieldDrag>),
 }
 
@@ -254,6 +277,8 @@ struct Layout {
     velocity: Rect,
     gate: Rect,
     probability: Rect,
+    /// Curve rows A and B (empty for a step sequencer).
+    curves: [Rect; 2],
     avail_w: f64,
     cell_w: f64,
 }
@@ -279,6 +304,10 @@ pub struct SeqEditorView {
     patterns: Vec<PatternDoc>,
     /// The `pattern` param of the device (1-based plain value).
     pattern_param: f32,
+    /// The device is a CV sequencer: the curve lanes are shown.
+    is_cv: bool,
+    /// The curves of the device, as last synced (`None` is flat).
+    curves: Option<CurveDoc>,
     meters: Vec<f32>,
     clipboard: Option<PatternDoc>,
     rename: Option<Rename>,
@@ -310,6 +339,8 @@ impl SeqEditorView {
             index: 0,
             patterns: Vec::new(),
             pattern_param: 1.0,
+            is_cv: false,
+            curves: None,
             meters: Vec::new(),
             clipboard: None,
             rename: None,
@@ -331,6 +362,8 @@ impl SeqEditorView {
         if self.device.as_ref() != Some(&device) {
             self.index = 0;
             self.patterns.clear();
+            self.is_cv = false;
+            self.curves = None;
             self.meters.clear();
             self.scroll_x = 0.0;
             self.scroll_y = 0.0;
@@ -346,13 +379,15 @@ impl SeqEditorView {
     pub fn close(&mut self) {
         self.device = None;
         self.patterns.clear();
+        self.is_cv = false;
+        self.curves = None;
         self.present = false;
         self.drag = Drag::None;
         self.rename = None;
         self.repaint = true;
     }
 
-    /// The step sequencer being edited.
+    /// The sequencer being edited.
     pub fn device(&self) -> Option<&DeviceKey> {
         self.device.as_ref()
     }
@@ -429,6 +464,18 @@ impl SeqEditorView {
     /// The edited pattern, as last synced.
     pub fn pattern(&self) -> Option<&PatternDoc> {
         self.patterns.get(self.index)
+    }
+
+    /// Whether the curve lanes are shown (the open device is a CV sequencer).
+    pub fn has_curve_lanes(&self) -> bool {
+        self.present && self.is_cv
+    }
+
+    /// The curve rows of the edited pattern, as last synced (flat when the device has none).
+    pub fn curve_pattern(&self) -> CurvePatternDoc {
+        self.curves
+            .as_ref()
+            .map_or_else(CurvePatternDoc::default, |c| c.pattern(self.index))
     }
 
     /// The pattern clipboard (COPY, PASTE).
@@ -562,6 +609,21 @@ impl SeqEditorView {
         self.lane_point(Lane::Probability, step, frac)
     }
 
+    fn curve_inner(&self, row: usize) -> Rect {
+        self.layout().curves[row.min(1)].inset(-2.0)
+    }
+
+    /// The point of curve row `row` (0 = A, 1 = B) at `step` for a value in percent
+    /// (-100..=100; may lie outside the visible lanes when scrolled).
+    pub fn curve_point(&self, row: usize, step: usize, value: f64) -> Point {
+        let r = self.curve_inner(row);
+        let x = self.cell_x(step) + self.layout().cell_w / 2.0;
+        Point::new(
+            x,
+            r.center().y - value.clamp(-100.0, 100.0) / 100.0 * r.height() / 2.0,
+        )
+    }
+
     /// The tie toggle between `step` and the next one.
     pub fn tie_center(&self, step: usize) -> Point {
         let l = self.layout();
@@ -654,7 +716,9 @@ impl SeqEditorView {
     /// Reads the open step sequencer and its edited pattern from the document. Emits nothing.
     pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
         let Some(key) = &self.device else { return };
-        let dev = doc.resolve(key).filter(|d| d.type_id == SEQ_TYPE);
+        let dev = doc
+            .resolve(key)
+            .filter(|d| seq_panel::takes_step_doc(&d.type_id));
         let Some(d) = dev else {
             if self.present || !self.patterns.is_empty() {
                 self.present = false;
@@ -666,6 +730,8 @@ impl SeqEditorView {
             return;
         };
         let patterns = d.steps.clone().unwrap_or_default().patterns;
+        let is_cv = d.type_id == CV_SEQ_TYPE;
+        let curves = d.curves.clone().filter(|_| is_cv);
         let mut index = self.index;
         if let Some(w) = self.want
             && w < patterns.len()
@@ -679,6 +745,8 @@ impl SeqEditorView {
         let first = self.patterns.is_empty();
         if !self.present
             || self.patterns != patterns
+            || self.is_cv != is_cv
+            || self.curves != curves
             || self.index != index
             || self.name != d.name
             || self.accent != accent
@@ -687,6 +755,8 @@ impl SeqEditorView {
             self.present = true;
             self.index = index;
             self.patterns = patterns;
+            self.is_cv = is_cv;
+            self.curves = curves;
             self.name.clone_from(&d.name);
             self.accent = accent;
             self.pattern_param = param;
@@ -717,7 +787,14 @@ impl SeqEditorView {
         let patterns = rect(b.x0, top.y1, b.x1, top.y1 + TOOLBAR_HEIGHT);
         let settings = rect(b.x0, patterns.y1, b.x1, patterns.y1 + TOOLBAR_HEIGHT);
         let ruler = rect(b.x0, settings.y1, b.x1, settings.y1 + RULER_HEIGHT);
-        let probability = rect(b.x0, b.y1 - LANE_HEIGHT, b.x1, b.y1);
+        let curve_h = if self.present && self.is_cv {
+            LANE_HEIGHT
+        } else {
+            0.0
+        };
+        let curve_b = rect(b.x0, b.y1 - curve_h, b.x1, b.y1);
+        let curve_a = rect(b.x0, curve_b.y0 - curve_h, b.x1, curve_b.y0);
+        let probability = rect(b.x0, curve_a.y0 - LANE_HEIGHT, b.x1, curve_a.y0);
         let gate = rect(b.x0, probability.y0 - LANE_HEIGHT, b.x1, probability.y0);
         let velocity = rect(b.x0, gate.y0 - LANE_HEIGHT, b.x1, gate.y0);
         let tie = rect(b.x0, velocity.y0 - TIE_HEIGHT, b.x1, velocity.y0);
@@ -735,6 +812,7 @@ impl SeqEditorView {
             velocity,
             gate,
             probability,
+            curves: [curve_a, curve_b],
             avail_w,
             cell_w,
         }
@@ -839,6 +917,13 @@ impl SeqEditorView {
                 return Hit::Lane(lane, self.step_at_x(pos.x));
             }
         }
+        if self.is_cv {
+            for (row, r) in l.curves.iter().enumerate() {
+                if r.contains(pos) && in_grid {
+                    return Hit::Curve(row as u8, self.step_at_x(pos.x));
+                }
+            }
+        }
         Hit::None
     }
 
@@ -853,6 +938,15 @@ impl SeqEditorView {
             device: self.device.clone()?,
             index: self.index as u8,
             pattern,
+            merge,
+        }))
+    }
+
+    fn set_curves(&self, curves: CurvePatternDoc, merge: Option<u64>) -> Option<UiAction> {
+        Some(UiAction::Command(Command::SetCurves {
+            device: self.device.clone()?,
+            index: self.index as u8,
+            curves,
             merge,
         }))
     }
@@ -913,7 +1007,7 @@ impl SeqEditorView {
         &mut self,
         pos: Point,
         button: PointerButton,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
         clicks: u8,
         out: &mut Vec<UiAction>,
     ) {
@@ -968,6 +1062,9 @@ impl SeqEditorView {
             }
             Hit::Note(step, key) => self.note_down(&p, step, key, out),
             Hit::Lane(lane, step) => self.lane_down(&p, lane, step, pos, out),
+            Hit::Curve(row, step) => {
+                self.curve_down(usize::from(row), step, pos, modifiers.alt, out);
+            }
             Hit::Tie(step) => {
                 let mut q = p;
                 q.steps[step].tie = !q.steps[step].tie;
@@ -1147,6 +1244,41 @@ impl SeqEditorView {
         self.drag = Drag::Lane(Box::new(drag));
     }
 
+    /// A press in a curve lane: Alt toggles the step's slide, else it sets the value and starts
+    /// a painting drag.
+    fn curve_down(
+        &mut self,
+        row: usize,
+        step: usize,
+        pos: Point,
+        alt: bool,
+        out: &mut Vec<UiAction>,
+    ) {
+        let base = self.curve_pattern();
+        if alt {
+            let mut q = base;
+            q.rows[row][step].slide = !q.rows[row][step].slide;
+            out.extend(self.set_curves(q, None));
+            return;
+        }
+        let merge = self.merge_id();
+        let v = curve_value_in(self.curve_inner(row), pos.y);
+        let q = with_curve(&base, row, step, step, v);
+        let mut drag = CurveDrag {
+            row,
+            base: base.clone(),
+            last: q.clone(),
+            merge,
+            last_step: step,
+            emitted: false,
+        };
+        if q != base {
+            out.extend(self.set_curves(q, Some(merge)));
+            drag.emitted = true;
+        }
+        self.drag = Drag::Curve(Box::new(drag));
+    }
+
     fn pointer_move(&mut self, pos: Point, modifiers: Modifiers, out: &mut Vec<UiAction>) {
         if matches!(self.drag, Drag::None) {
             let h = self.hit(pos);
@@ -1161,9 +1293,26 @@ impl SeqEditorView {
         let key_here = self.key_at_y(pos.y);
         let layout = self.layout();
         let mut emit: Option<(PatternDoc, u64)> = None;
+        let mut emit_curves: Option<(CurvePatternDoc, u64)> = None;
         let mut audition: Option<(u8, u8, u8)> = None;
+        let curve_inners = [self.curve_inner(0), self.curve_inner(1)];
         match &mut self.drag {
             Drag::None | Drag::Audition(_) => {}
+            Drag::Curve(d) => {
+                let v = curve_value_in(curve_inners[d.row], pos.y);
+                let (a, b) = match step_here.cmp(&d.last_step) {
+                    std::cmp::Ordering::Greater => (d.last_step + 1, step_here),
+                    std::cmp::Ordering::Less => (step_here, d.last_step - 1),
+                    std::cmp::Ordering::Equal => (step_here, step_here),
+                };
+                let q = with_curve(&d.last, d.row, a, b, v);
+                d.last_step = step_here;
+                if q != d.last {
+                    d.last = q.clone();
+                    d.emitted = true;
+                    emit_curves = Some((q, d.merge));
+                }
+            }
             Drag::Note(d) => {
                 if key_here != d.key {
                     audition = Some((d.key, key_here, d.velocity));
@@ -1224,6 +1373,9 @@ impl SeqEditorView {
         if let Some((q, merge)) = emit {
             out.extend(self.set(q, Some(merge)));
         }
+        if let Some((q, merge)) = emit_curves {
+            out.extend(self.set_curves(q, Some(merge)));
+        }
     }
 
     fn pointer_up(&mut self, out: &mut Vec<UiAction>) {
@@ -1245,6 +1397,11 @@ impl SeqEditorView {
                 }
             }
             Drag::Lane(d) => {
+                if d.emitted {
+                    out.push(UiAction::EndMerge);
+                }
+            }
+            Drag::Curve(d) => {
                 if d.emitted {
                     out.push(UiAction::EndMerge);
                 }
@@ -1271,6 +1428,12 @@ impl SeqEditorView {
             Drag::Lane(d) => {
                 if d.emitted {
                     out.extend(self.set(d.base, Some(d.merge)));
+                    out.push(UiAction::EndMerge);
+                }
+            }
+            Drag::Curve(d) => {
+                if d.emitted {
+                    out.extend(self.set_curves(d.base, Some(d.merge)));
                     out.push(UiAction::EndMerge);
                 }
             }
@@ -1313,6 +1476,7 @@ impl SeqEditorView {
         let l = self.layout();
         let in_grid_area = [l.notes, l.ruler, l.tie, l.velocity, l.gate, l.probability]
             .iter()
+            .chain(&l.curves)
             .any(|r| r.contains(pos));
         if in_grid_area {
             if modifiers.shift || dx.abs() > 1e-9 {
@@ -1373,6 +1537,23 @@ fn value_in(l: &Layout, lane: Lane, y: f64) -> u8 {
     .inset(-2.0);
     let frac = ((r.y1 - y) / r.height().max(1.0)).clamp(0.0, 1.0);
     (frac * lane.max()).round().clamp(lane.min(), lane.max()) as u8
+}
+
+/// The curve value in percent at a logical y of a lane's inner rectangle (0 on the centre line,
+/// the maximum at the top, the minimum at the bottom).
+fn curve_value_in(inner: Rect, y: f64) -> i8 {
+    let frac = (inner.center().y - y) / (inner.height() / 2.0).max(1.0);
+    let max = f64::from(CURVE_VALUE_MAX);
+    (frac * max).round().clamp(-max, max) as i8
+}
+
+/// `p` with the value of curve row `row` at steps `a..=b` set to `v`.
+fn with_curve(p: &CurvePatternDoc, row: usize, a: usize, b: usize, v: i8) -> CurvePatternDoc {
+    let mut q = p.clone();
+    for s in &mut q.rows[row][a..=b.min(MAX_STEPS - 1)] {
+        s.value = v;
+    }
+    q
 }
 
 /// The auto-scaled key range of a pattern: its used keys with room around them, at least

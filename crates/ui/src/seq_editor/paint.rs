@@ -28,6 +28,12 @@ pub(super) fn paint(v: &SeqEditorView, c: &mut dyn Canvas) {
             for lane in [Lane::Velocity, Lane::Gate, Lane::Probability] {
                 bar_lane(v, c, p, lane);
             }
+            if v.is_cv {
+                let curves = v.curve_pattern();
+                for row in 0..2 {
+                    curve_lane(v, c, p, &curves, row);
+                }
+            }
             cursor(v, c, p);
         }
         _ => sp::label(
@@ -456,6 +462,90 @@ fn bar_lane(v: &SeqEditorView, c: &mut dyn Canvas, p: &PatternDoc, lane: Lane) {
             sp::label(
                 c,
                 &(value as u32).to_string(),
+                x + l.cell_w / 2.0,
+                r.y0 + 9.0,
+                7.0,
+                st.base.text_muted,
+                Align::Center,
+            );
+        }
+    }
+    c.pop_clip();
+}
+
+/// A curve lane: the zero line, a bar per step from it to the value, and a line from the bar
+/// top to the next bar's top on a step that slides.
+fn curve_lane(
+    v: &SeqEditorView,
+    c: &mut dyn Canvas,
+    p: &PatternDoc,
+    curves: &atomik_model::CurvePatternDoc,
+    row: usize,
+) {
+    let st = &v.st;
+    let l = v.layout();
+    let r = l.curves[row];
+    sp::rect(c, r, st.lane);
+    sp::rect(
+        c,
+        Rect::new(r.x0, r.y0, r.x0 + HEADER_WIDTH, r.y1),
+        st.header,
+    );
+    sp::line(c, r.x0, r.y0 + 0.5, r.x1, r.y0 + 0.5, st.separator);
+    sp::label(
+        c,
+        if row == 0 { "CURVE A" } else { "CURVE B" },
+        r.x0 + 6.0,
+        r.y0 + 14.0,
+        8.0,
+        st.base.text_muted,
+        Align::Start,
+    );
+    c.push_clip(
+        &Rect::new(
+            r.x0 + HEADER_WIDTH,
+            r.y0,
+            r.x0 + HEADER_WIDTH + l.avail_w,
+            r.y1,
+        )
+        .into(),
+    );
+    grid_lines(v, c, p, r.y0, r.y1);
+    let mid = r.center().y;
+    sp::line(
+        c,
+        r.x0 + HEADER_WIDTH,
+        mid,
+        r.x0 + HEADER_WIDTH + l.avail_w,
+        mid,
+        st.separator,
+    );
+    let tint = if row == 0 {
+        v.accent
+    } else {
+        mix(v.accent, st.base.highlight, 0.6)
+    };
+    let steps = &curves.rows[row];
+    let n = usize::from(p.length);
+    for (k, s) in steps.iter().take(n).enumerate() {
+        let x = v.cell_x(k);
+        let top = v.curve_point(row, k, f64::from(s.value)).y;
+        let (y0, y1) = if top < mid { (top, mid) } else { (mid, top) };
+        let bar = Rect::new(x + 2.0, y0, x + l.cell_w - 2.0, y1.max(y0 + 1.5));
+        sp::rect(c, bar, tint);
+        if s.slide {
+            let next = steps[(k + 1) % n];
+            let to = v.curve_point(row, k + 1, f64::from(next.value)).y;
+            c.stroke_with(
+                Line::new(pt(x + l.cell_w / 2.0, top), pt(x + l.cell_w * 1.5, to)),
+                1.5,
+                st.base.text,
+            );
+        }
+        if l.cell_w >= 24.0 {
+            sp::label(
+                c,
+                &s.value.to_string(),
                 x + l.cell_w / 2.0,
                 r.y0 + 9.0,
                 7.0,
