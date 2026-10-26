@@ -344,6 +344,13 @@ impl Snap {
         }
     }
 
+    /// The resolution `steps` places along [`Self::ALL`] (positive: later in the selector),
+    /// stopping at the ends: what a drag or the wheel on the selector does.
+    pub fn offset(self, steps: i32) -> Snap {
+        let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        Self::ALL[crate::step_drag::step_index(i, steps, Self::ALL.len())]
+    }
+
     /// The next resolution in [`Self::ALL`] (wrapping); `forward = false` goes back.
     pub fn cycle(self, forward: bool) -> Snap {
         let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
@@ -904,6 +911,10 @@ mod tests {
             s = s.cycle(true);
         }
         assert_eq!(s, Snap::Bar, "the cycle visits every value and wraps");
+        assert_eq!(Snap::Beat.offset(2), Snap::Sixteenth);
+        assert_eq!(Snap::Sixteenth.offset(-2), Snap::Beat);
+        assert_eq!(Snap::Off.offset(3), Snap::Off, "the ends stop, no wrap");
+        assert_eq!(Snap::Bar.offset(-1), Snap::Bar);
     }
 
     #[test]

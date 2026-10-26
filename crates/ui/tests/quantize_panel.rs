@@ -365,3 +365,29 @@ fn preview_png() {
     std::fs::write(&path, png).unwrap();
     println!("wrote {}", path.display());
 }
+
+#[test]
+fn dragging_a_value_up_or_down_steps_it_and_a_click_changes_nothing() {
+    let mut v = view();
+    let at = v.value_rect(QuantizeRow::Swing).center();
+    let to = |dy: f64| Point::new(at.x, at.y + dy);
+    v.handle(&down(at));
+    assert!(v.is_dragging());
+    v.handle(&mv(to(-15.0)));
+    assert_eq!(v.values().swing, 53, "5 px per step, up increases");
+    v.handle(&mv(to(-5.0)));
+    assert_eq!(v.values().swing, 51, "and down decreases");
+    v.handle(&up(to(-5.0)));
+    assert!(!v.is_dragging());
+    v.handle(&mv(to(-100.0)));
+    assert_eq!(v.values().swing, 51, "a released pointer drags nothing");
+    // A grid drag steps the list in order; a click on the value box changes nothing.
+    let grid = v.value_rect(QuantizeRow::Grid).center();
+    let before = v.values().grid;
+    v.handle(&down(grid));
+    v.handle(&up(grid));
+    assert_eq!(v.values().grid, before);
+    v.handle(&down(grid));
+    v.handle(&mv(Point::new(grid.x, grid.y - 10.0)));
+    assert_eq!(v.values().grid, before + 2);
+}

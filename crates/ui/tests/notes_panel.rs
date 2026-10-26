@@ -166,3 +166,44 @@ fn audio_to_notes_is_a_menu_command_in_the_registry_without_a_key() {
     assert!(r.validate("sequencer.audio_to_notes", None));
     assert!(r.get("sequencer.audio_to_notes").unwrap().menu);
 }
+
+/// Presses on a value box, drags by `dy` pixels (up is negative) and releases.
+fn drag_value(handle: &mut dyn FnMut(&UiEvent), at: Point, dy: f64) {
+    let to = Point::new(at.x, at.y + dy);
+    handle(&support::down(at));
+    handle(&support::mv(to));
+    handle(&support::up(to));
+}
+
+#[test]
+fn dragging_a_value_steps_it_in_the_notes_silence_and_warp_panels() {
+    use atomik_ui::{SilenceRow, SilenceValues, SilenceView, WarpRow, WarpValues, WarpView};
+    let mut n = view();
+    let at = n.value_rect(NotesRow::Sensitivity).center();
+    drag_value(&mut |e| drop(n.handle(e)), at, -10.0);
+    assert_eq!(
+        n.values().sensitivity,
+        60,
+        "up, 5 px a step, 5 percent each"
+    );
+    assert!(!n.is_dragging());
+    let at = n.value_rect(NotesRow::MinNote).center();
+    drag_value(&mut |e| drop(n.handle(e)), at, 5.0);
+    assert_eq!(n.values().min_note_ms, 45);
+
+    let mut s = SilenceView::new(Theme::dark(), SilenceValues::default());
+    let at = s.value_rect(SilenceRow::Threshold).center();
+    drag_value(&mut |e| drop(s.handle(e)), at, -15.0);
+    assert_eq!(s.values().threshold_db, -37);
+    drag_value(&mut |e| drop(s.handle(e)), at, 5.0);
+    assert_eq!(s.values().threshold_db, -38);
+
+    let mut w = WarpView::new(Theme::dark(), WarpValues::default());
+    let at = w.value_rect(WarpRow::Tempo).center();
+    let before = w.values().bpm_tenths;
+    drag_value(&mut |e| drop(w.handle(e)), at, -10.0);
+    assert!(w.values().bpm_tenths > before);
+    let up_to = w.values().bpm_tenths;
+    drag_value(&mut |e| drop(w.handle(e)), at, 10.0);
+    assert!(w.values().bpm_tenths < up_to);
+}

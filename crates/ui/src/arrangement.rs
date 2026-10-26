@@ -31,6 +31,7 @@ use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::tempo_lane::{self as lane, TEMPO_LANE_HEIGHT};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, PPQ, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
@@ -459,6 +460,11 @@ enum Drag {
         moved: bool,
         emitted: bool,
         last: Vec<AutomationPoint>,
+    },
+    /// Dragging the snap selector: up steps through the resolutions, a press without a drag
+    /// cycles forward on release.
+    Snap {
+        steps: StepDrag,
     },
     /// Dragging the playhead: every new snapped tick is located.
     Playhead {
@@ -2266,7 +2272,12 @@ impl ArrangementView {
                 });
             }
             Hit::TrackEdge(track) if primary => self.height_down(track, pos, clicks, out),
-            Hit::Snap => self.snap = self.snap.cycle(primary),
+            Hit::Snap if primary => {
+                self.drag = Drag::Snap {
+                    steps: StepDrag::new(pos.y),
+                }
+            }
+            Hit::Snap => self.snap = self.snap.cycle(false),
             Hit::Tool(t) if primary => self.set_tool(t),
             Hit::RulerLabel if primary && tool == Tool::Razor => {
                 // The razor in the ruler splits every track at the snapped position.
@@ -2948,6 +2959,14 @@ impl ArrangementView {
             self.repaint = true;
             return;
         }
+        if let Drag::Snap { steps } = &mut self.drag {
+            let n = steps.update(pos.y, PX_PER_STEP);
+            if n != 0 {
+                self.snap = self.snap.offset(n);
+            }
+            self.repaint = true;
+            return;
+        }
         if let Drag::HScroll { grab } = self.drag {
             self.hscroll_to(pos.x - grab);
             self.vp.manual_scroll();
@@ -2992,6 +3011,7 @@ impl ArrangementView {
             | Drag::Marquee { .. }
             | Drag::Pan { .. }
             | Drag::HScroll { .. }
+            | Drag::Snap { .. }
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::Meter { .. }
@@ -3309,6 +3329,11 @@ impl ArrangementView {
         self.repaint = true;
         match drag {
             Drag::None | Drag::Pan { .. } | Drag::HScroll { .. } | Drag::Playhead { .. } => {}
+            Drag::Snap { steps } => {
+                if !steps.moved() {
+                    self.snap = self.snap.cycle(true);
+                }
+            }
             Drag::LoopEdge {
                 original,
                 range,
@@ -3445,6 +3470,10 @@ impl ArrangementView {
     fn wheel(&mut self, dx: f64, dy: f64, pos: Point, modifiers: Modifiers) {
         self.repaint = true;
         if self.list_wheel(dy, pos) {
+            return;
+        }
+        if self.hit(pos) == Hit::Snap {
+            self.snap = self.snap.offset(wheel_steps(dy));
             return;
         }
         if let Some(m) = &mut self.menu

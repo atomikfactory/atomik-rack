@@ -27,6 +27,7 @@ use crate::canvas::{Align, Canvas};
 use crate::event::{PointerButton, UiEvent};
 use crate::paint::fit_label;
 use crate::seq_paint::{self as sp, SeqTheme};
+use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
 use vello::kurbo::{Affine, Point, Rect};
 
@@ -143,6 +144,8 @@ pub struct SilenceView {
     target: String,
     can_apply: bool,
     hover: Option<Point>,
+    /// A drag on a value: the row and the vertical travel (up steps the value up).
+    drag: Option<(SilenceRow, StepDrag)>,
     repaint: bool,
 }
 
@@ -157,6 +160,7 @@ impl SilenceView {
             target: String::new(),
             can_apply: false,
             hover: None,
+            drag: None,
             repaint: true,
         }
     }
@@ -293,6 +297,11 @@ impl SilenceView {
         Rect::new(p.x0 + PAD, y, p.x0 + PAD + 120.0, y + BTN_H + 4.0)
     }
 
+    /// True while a value is being dragged.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
     // ------------------------------------------------------------------ events
 
     /// Handles one event and returns what the app must do.
@@ -302,6 +311,19 @@ impl SilenceView {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::PointerMove { pos, .. } => {
                 self.hover = Some(*pos);
+                self.repaint = true;
+                if let Some((row, steps)) = &mut self.drag {
+                    let (row, n) = (*row, steps.update(pos.y, PX_PER_STEP));
+                    for _ in 0..n.abs() {
+                        self.step(row, n.signum());
+                    }
+                }
+            }
+            UiEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } => {
+                self.drag = None;
                 self.repaint = true;
             }
             UiEvent::PointerLeave => {
@@ -316,11 +338,16 @@ impl SilenceView {
                 self.repaint = true;
                 if let Some(action) = self.click(*pos) {
                     out.push(UiAction::StripSilence(action));
+                } else if let Some(row) = SilenceRow::ALL
+                    .into_iter()
+                    .find(|r| self.value_rect(*r).contains(*pos))
+                {
+                    self.drag = Some((row, StepDrag::new(pos.y)));
                 }
             }
             UiEvent::Wheel { pos, delta, .. } => {
                 self.repaint = true;
-                let dir = if delta.y > 0.0 { 1 } else { -1 };
+                let dir = wheel_steps(delta.y);
                 if let Some(row) = SilenceRow::ALL
                     .into_iter()
                     .find(|r| self.row_rect(*r).contains(*pos))

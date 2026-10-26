@@ -18,6 +18,21 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 
 The locator clicks win over the razor in the ruler. In the grid the playhead and the marker lines are grabbed within three pixels of the line, with the Select tool, without Shift or `Ctrl` held, and never over the edge, fade, point or mute controls of a clip or a note; elsewhere the press does what it did before.
 
+## Pointer gestures: values
+
+| Gesture | Where | Result |
+|---|---|---|
+| Press and drag up or down | Transport bar, BPM | Changes the field under the pointer live, 5 pixels per step: 1 BPM on the whole part (0.1 with `Shift`), 0.01 on the two decimals; the whole drag is one undo step |
+| Mouse wheel | Transport bar, BPM | One notch is one step of the field under the pointer, as for the drag |
+| Press and drag up or down | Transport bar, time signature | Steps the beats per bar (1 to 32) on the left of the slash or the beat unit (2, 4, 8, 16) on the right; one undo step per drag |
+| Mouse wheel | Transport bar, time signature | One notch is one step of the field under the pointer |
+| Press and drag up or down | Snap selector of the arrangement and the piano roll | Steps through the resolutions in the order of the selector, 5 pixels per step, no wrap; a click without movement still cycles forward on release, a right click back |
+| Mouse wheel | Snap selector of the arrangement and the piano roll | One notch is one resolution |
+| Press and drag up or down, mouse wheel | A value of the quantize, Audio to Notes, Strip Silence and Warp panels (every row with a - and + button) | Steps the value, 5 pixels or one notch per step |
+| Double-click | Transport bar, BPM or time signature | Types the value (Enter commits, Esc cancels) |
+
+Up increases and down decreases, and a value stops at the end of its range.
+
 ## Moved keys: standard keys against the legacy keys (Windows)
 
 | Command | Atomik legacy keys | Standard keys |

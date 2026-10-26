@@ -773,3 +773,56 @@ fn clicking_the_scrollbar_end_jumps_but_stays_within_the_content() {
     let _ = run(|e| v.handle(e, &doc, &reg), &[down(end), up(end)]);
     assert!((v.scroll_ticks() - far).abs() < 1e-6);
 }
+
+// ---------------------------------------------------------------- snap selector drag and wheel
+
+#[test]
+fn dragging_the_snap_selector_steps_the_resolutions_and_a_click_still_cycles() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let s = v.snap_button_center();
+    // Up 10 px: two places along the selector (Beat -> Eighth -> Sixteenth).
+    let ev = [
+        down(s),
+        mv(Point::new(s.x, s.y - 10.0)),
+        up(Point::new(s.x, s.y - 10.0)),
+    ];
+    let a = run(|e| v.handle(e, &doc, &reg), &ev);
+    assert_eq!(v.snap(), Snap::Sixteenth);
+    assert!(a.is_empty(), "the snap is view state: {a:?}");
+    // Down past the first entry stops there; the release is not a click.
+    let ev = [
+        down(s),
+        mv(Point::new(s.x, s.y + 100.0)),
+        up(Point::new(s.x, s.y + 100.0)),
+    ];
+    let _ = run(|e| v.handle(e, &doc, &reg), &ev);
+    assert_eq!(v.snap(), Snap::Bar);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(s), up(s)]);
+    assert_eq!(
+        v.snap(),
+        Snap::Beat,
+        "a click without movement cycles forward"
+    );
+}
+
+#[test]
+fn the_wheel_over_the_snap_selector_steps_one_resolution_per_notch() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    v.set_snap(Snap::Beat);
+    let s = v.snap_button_center();
+    let wheel = |dy: f64| UiEvent::Wheel {
+        delta: Vec2::new(0.0, dy),
+        pos: s,
+        modifiers: Modifiers::NONE,
+    };
+    let _ = v.handle(&wheel(1.0), &doc, &reg);
+    assert_eq!(v.snap(), Snap::Eighth);
+    let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    assert_eq!(v.snap(), Snap::Bar);
+    let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    assert_eq!(v.snap(), Snap::Bar, "no wrap at the ends");
+}

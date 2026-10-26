@@ -342,6 +342,7 @@ pub mod seq_panel;
 pub mod sidechain;
 pub mod silence_panel;
 pub mod slice_editor;
+pub mod step_drag;
 pub mod step_editor;
 pub mod tempo_lane;
 pub mod text;
