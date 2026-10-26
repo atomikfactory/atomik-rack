@@ -4663,6 +4663,10 @@ mod midimap_tests;
 mod macros_tests;
 
 #[cfg(test)]
+#[path = "shell_key_chord_tests.rs"]
+mod key_chord_tests;
+
+#[cfg(test)]
 #[path = "shell_sampler_tests.rs"]
 mod sampler_tests;
 
