@@ -2211,3 +2211,40 @@ fn a_note_lane_is_added_renamed_and_muted_with_the_track_menu_commands() {
     }
     assert_eq!(notes(&lanes(&mut s)).len(), 1);
 }
+
+#[test]
+fn a_track_is_renamed_by_double_clicking_its_name_in_the_arrangement() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // The name in the arrangement's track list (the left column), not the rack's.
+    let header = |s: &mut Server, name: &str| {
+        let texts = ok(s, "session_texts", json!({"contains": name, "limit": 100}));
+        texts["texts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["text"] == name && t["x"].as_f64().unwrap() < 100.0)
+            .unwrap_or_else(|| panic!("no header {name:?}: {texts}"))
+            .clone()
+    };
+    let bass = header(&mut s, "Bass");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "double_click", "x": bass["x"].as_f64().unwrap() + 10.0,
+               "y": bass["y"].as_f64().unwrap() - 3.0}),
+    );
+    for _ in 0.."Bass".len() {
+        ok(&mut s, "session_key", json!({"key": "Backspace"}));
+    }
+    ok(&mut s, "session_key", json!({"text": "Low End"}));
+    ok(&mut s, "session_key", json!({"key": "Enter"}));
+    header(&mut s, "Low End");
+    // The rename is one undo step.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    header(&mut s, "Bass");
+}

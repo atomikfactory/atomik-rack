@@ -16,7 +16,7 @@ use atomik_ui::kurbo::Point;
 use atomik_ui::timeline::Snap;
 use atomik_ui::{
     ArrangementView, ContextTarget, DisplayList, Key, LaneButton, Modifiers, PointerButton,
-    TextEngine, UiAction, UiEvent,
+    TextEngine, TrackButton, UiAction, UiEvent,
 };
 use std::path::PathBuf;
 use support::cpu::CpuCanvas;
@@ -412,6 +412,151 @@ fn a_press_outside_the_field_commits_the_typed_name() {
         }]
     );
     assert!(!v.is_text_owner());
+}
+
+#[test]
+fn double_clicking_a_track_name_renames_it_and_enter_commits() {
+    let (mut d, reg, mut v) = setup();
+    assert!(!v.is_text_owner());
+    let at = v.track_name_center(&key("pad")).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    assert!(v.is_text_owner(), "the name is typed");
+    assert_eq!(v.org_edit_text(), Some("Pad"));
+    for _ in 0..3 {
+        v.handle(&press(Key::Backspace, Modifiers::NONE), d.doc(), &reg);
+    }
+    type_text(&d, &reg, &mut v, "Pad Wash");
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert_eq!(
+        commands(&actions),
+        [Command::Rename {
+            key: key("pad"),
+            name: "Pad Wash".into()
+        }]
+    );
+    assert!(!v.is_text_owner());
+    apply(&mut d, &reg, &mut v, &actions);
+    assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad Wash");
+    // One undo step puts the name back.
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().device(&key("pad")).unwrap().name, "Pad");
+}
+
+#[test]
+fn track_rename_escape_blank_and_unchanged_emit_nothing() {
+    let (d, reg, mut v) = setup();
+    assert!(v.begin_track_rename(&key("pad")));
+    type_text(&d, &reg, &mut v, "x");
+    let actions = v.handle(&press(Key::Escape, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty() && !v.is_text_owner());
+    assert!(v.begin_track_rename(&key("pad")));
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty(), "unchanged");
+    assert!(v.begin_track_rename(&key("pad")));
+    for _ in 0..8 {
+        v.handle(&press(Key::Backspace, Modifiers::NONE), d.doc(), &reg);
+    }
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(actions.is_empty(), "a blank name cancels");
+    assert!(!v.begin_track_rename(&key("nobody")), "no such track");
+}
+
+#[test]
+fn track_rename_press_outside_the_field_commits_the_typed_name() {
+    let (d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    type_text(&d, &reg, &mut v, "2");
+    let away = v.track_header_center(&key("keys")).unwrap();
+    let away = Point::new(away.x, away.y + 1.0);
+    let actions = click(&d, &reg, &mut v, away);
+    assert_eq!(
+        commands(&actions),
+        [Command::Rename {
+            key: key("pad"),
+            name: "Pad2".into()
+        }]
+    );
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn track_rename_text_is_capped_like_a_bus_name() {
+    let (d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    type_text(&d, &reg, &mut v, &"a".repeat(80));
+    assert_eq!(v.org_edit_text().map(|t| t.chars().count()), Some(32));
+}
+
+#[test]
+fn double_clicking_the_header_away_from_the_name_does_not_rename() {
+    let (d, reg, mut v) = setup();
+    let mute = v
+        .track_button_center(&key("pad"), TrackButton::Mute)
+        .unwrap();
+    let blank = Point::new(mute.x + 100.0, mute.y + 12.0);
+    let name = v.track_name_center(&key("pad")).unwrap();
+    for at in [blank, Point::new(name.x, name.y + 14.0)] {
+        run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+        assert!(!v.is_text_owner(), "no editor at {at:?}");
+    }
+}
+
+#[test]
+fn double_clicking_a_track_name_selects_the_track() {
+    let (d, reg, mut v) = setup();
+    let at = v.track_name_center(&key("keys")).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    assert_eq!(v.selected_tracks(), [key("keys")]);
+}
+
+#[test]
+fn rename_track_command_types_the_selected_tracks_name() {
+    let (mut d, reg, mut v) = setup();
+    assert_eq!(
+        command(&d, &reg, &mut v, "sequencer.rename_track", None),
+        CommandOutcome::Declined,
+        "no track selected"
+    );
+    v.set_selected_track(Some(key("keys")));
+    do_command(&mut d, &reg, &mut v, "sequencer.rename_track", None);
+    assert!(v.is_text_owner());
+    assert_eq!(v.org_edit_text(), Some("Keys"));
+}
+
+#[test]
+fn track_rename_closes_when_its_track_goes_away() {
+    let (mut d, reg, mut v) = setup();
+    v.begin_track_rename(&key("pad"));
+    d.apply(
+        Command::Song(SongCommand::RemoveTrack { device: key("pad") }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    assert!(!v.is_text_owner());
+}
+
+#[test]
+fn double_clicking_a_note_lane_label_still_renames_the_lane() {
+    let (mut d, reg, mut v) = setup();
+    d.apply(
+        Command::Song(SongCommand::AddNoteLane {
+            device: key("pad"),
+            name: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    let at = v.note_lane_header_center(&key("pad"), 1).unwrap();
+    run(&d, &reg, &mut v, &[down(at, Modifiers::NONE, 2), up(at)]);
+    type_text(&d, &reg, &mut v, "!");
+    let actions = v.handle(&press(Key::Enter, Modifiers::NONE), d.doc(), &reg);
+    assert!(matches!(
+        song_cmds(&actions).as_slice(),
+        [SongCommand::RenameLane { lane: 1, .. }]
+    ));
+    assert!(commands(&actions).len() == 1, "no track rename");
 }
 
 #[test]

@@ -281,6 +281,8 @@ enum Hit {
     LaneButton(usize, usize, LaneButton),
     /// The label of the header of note lane `lane` of track `track` (also the chip of lane 0).
     NoteLaneHeader(usize, usize),
+    /// The name in the header of track `i` (a double-click types a new one).
+    TrackName(usize),
     Header(usize),
     AddTrack(DeviceKey),
     AddAudio,
@@ -1871,6 +1873,9 @@ impl ArrangementView {
                         if let Some(h) = self.note_lane_header_hit(rr, track, 0, pos) {
                             return h;
                         }
+                        if let Some(h) = self.track_name_hit(rr, track, pos) {
+                            return h;
+                        }
                     } else if self.is_extra_note_lane(track, lane) {
                         return self
                             .note_lane_header_hit(rr, track, lane, pos)
@@ -2269,8 +2274,12 @@ impl ArrangementView {
                 self.selected_track = None;
                 self.takes_down(&hit, pos, modifiers, doc, registry, out);
             }
-            Hit::FolderToggle(_) | Hit::FolderButton(..) | Hit::Folder(_) | Hit::Comment(_) => {
-                self.folder_down(&hit, pos, button, clicks, out);
+            Hit::FolderToggle(_)
+            | Hit::FolderButton(..)
+            | Hit::Folder(_)
+            | Hit::TrackName(_)
+            | Hit::Comment(_) => {
+                self.folder_down(&hit, pos, button, modifiers, clicks, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
@@ -2290,22 +2299,7 @@ impl ArrangementView {
                 id,
                 part,
             } => self.clip_down(track, lane, id, part, pos, button, modifiers, clicks, out),
-            Hit::Header(track) => {
-                // A click on a track header selects the track (the clip selection gives way).
-                let device = self.song.tracks[track].device.clone();
-                if primary && (modifiers.shift || modifiers.command()) {
-                    // Shift or Ctrl adds the track to the selection.
-                    self.toggle_selected_track(&device);
-                    return;
-                }
-                self.set_selected_track(Some(device));
-                if button == PointerButton::Secondary {
-                    out.push(UiAction::ContextMenu {
-                        target: ContextTarget::TrackHeader,
-                        at: pos,
-                    });
-                }
-            }
+            Hit::Header(track) => self.header_down(track, button, modifiers, pos, out),
             Hit::Lane { track, lane } if button == PointerButton::Secondary => {
                 self.pick_note_lane(track, lane);
                 out.push(UiAction::ContextMenu {
@@ -2361,6 +2355,31 @@ impl ArrangementView {
                 };
             }
             _ => {}
+        }
+    }
+
+    /// A press on a track header: selects the track (the clip selection gives way), Shift or Ctrl
+    /// adds it to the selection, and a right click opens the header menu.
+    fn header_down(
+        &mut self,
+        track: usize,
+        button: PointerButton,
+        modifiers: Modifiers,
+        pos: Point,
+        out: &mut Vec<UiAction>,
+    ) {
+        let device = self.song.tracks[track].device.clone();
+        if button == PointerButton::Primary && (modifiers.shift || modifiers.command()) {
+            // Shift or Ctrl adds the track to the selection.
+            self.toggle_selected_track(&device);
+            return;
+        }
+        self.set_selected_track(Some(device));
+        if button == PointerButton::Secondary {
+            out.push(UiAction::ContextMenu {
+                target: ContextTarget::TrackHeader,
+                at: pos,
+            });
         }
     }
 
@@ -5064,15 +5083,8 @@ impl ArrangementView {
         chev.close_path();
         c.fill_with(chev, col);
         let compact = hr.height() < COMPACT_BELOW;
-        let has_comment = !self.song.track_comment(&tr.device).is_empty();
         let frozen = tr.frozen.is_some();
-        let name_width = if compact {
-            76.0
-        } else if has_comment {
-            TRACK_LIST_WIDTH - 62.0
-        } else {
-            TRACK_LIST_WIDTH - 44.0
-        } - if frozen { 16.0 } else { 0.0 };
+        let name_width = self.track_name_width(hr, track);
         let name = fit_label(&sp::track_name(doc, &tr.device), name_width, 11.5);
         let name_y = if compact {
             hr.y0 + hr.height() / 2.0 + 4.0

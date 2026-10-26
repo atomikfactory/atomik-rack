@@ -3570,6 +3570,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RenameFolder
             | AppCommand::MoveTrackUp
             | AppCommand::MoveTrackDown
+            | AppCommand::RenameTrack
             | AppCommand::TrackComment
             | AppCommand::AddNoteLane
             | AppCommand::RenameNoteLane

@@ -439,6 +439,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.ungroup_tracks", e.org.in_folder),
                 item("sequencer.move_track_up", e.org.can_move_up),
                 item("sequencer.move_track_down", e.org.can_move_down),
+                item("sequencer.rename_track", e.org.track_selected),
                 item("sequencer.track_comment", e.org.track_selected),
                 Spec::Separator,
             ]);
@@ -815,6 +816,7 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
+                None,
                 None,
                 None,
                 None,
@@ -1251,6 +1253,7 @@ mod tests {
         let none = state(&MenuEnable::default(), ContextTarget::TrackHeader);
         assert_eq!(on(&none, "sequencer.group_tracks"), Some(false));
         assert_eq!(on(&none, "sequencer.track_comment"), Some(false));
+        assert_eq!(on(&none, "sequencer.rename_track"), Some(false));
         let track = MenuEnable {
             org: OrgMenu {
                 can_group: true,

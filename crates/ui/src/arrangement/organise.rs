@@ -10,6 +10,11 @@
 //!   them have the flag, a press sets the flag on all of them unless all have it already, and
 //!   the audio is the tracks' own mute and solo, nothing more. Its timeline part shows the
 //!   clips of the folder's tracks as thin bars, whether it is collapsed or not.
+//! * A **track's name** is typed in its header: a double-click on the name, or `sequencer.rename_track`
+//!   on the selected track. The edit is the one of the folder names (Enter or a press elsewhere
+//!   commits, Escape cancels) and commits the mixer's `Command::Rename`, so a bus or a channel is
+//!   renamed in the console too; a blank or unchanged name does nothing. A note lane's label has its
+//!   own double-click (`RenameLane`).
 //! * A **selected track** is outlined; shift-click or ctrl-click on a header adds a track to the
 //!   selection and a click on a folder row selects the folder (its tracks count as selected).
 //!   Group Tracks takes the selected tracks, or the tracks of the selected clips.
@@ -54,6 +59,8 @@ pub const HEIGHT_SMALL: u16 = 32;
 pub const HEIGHT_LARGE: u16 = 120;
 /// How far each level of nesting moves a folder's controls to the right.
 const DEPTH_STEP: f64 = 8.0;
+/// Longest a track's name can be typed in the header (the console's limit for a bus name).
+const MAX_TRACK_NAME_CHARS: usize = atomik_model::console::MAX_BUS_NAME_CHARS;
 /// Longest first line of a comment the tooltip shows, in characters.
 const TIP_CHARS: usize = 80;
 
@@ -132,6 +139,8 @@ pub(super) enum EditTarget {
     Comment(DeviceKey),
     /// The name of a note lane of a track.
     Lane(DeviceKey, usize),
+    /// The name of a track's device (a channel or a bus: the console's rename).
+    Track(DeviceKey),
 }
 
 /// A text being typed: one line, Enter commits, Escape cancels.
@@ -318,7 +327,7 @@ impl ArrangementView {
         }
         let gone = match self.og.edit.as_ref().map(|e| &e.target) {
             Some(EditTarget::Folder(g)) => song.org.group(*g).is_none(),
-            Some(EditTarget::Comment(d)) => song.track(d).is_none(),
+            Some(EditTarget::Comment(d) | EditTarget::Track(d)) => song.track(d).is_none(),
             Some(EditTarget::Lane(d, lane)) => song.track(d).is_none_or(|t| !t.is_note_lane(*lane)),
             None => false,
         };
@@ -421,6 +430,42 @@ impl ArrangementView {
         Some(Rect::new(x, cy - 7.0, x + 12.0, cy + 7.0))
     }
 
+    /// The name of a track in its header row `hr`: where a double-click renames it. It is on
+    /// the first line of the header, or the only one of a compact row.
+    pub(super) fn track_name_rect(&self, hr: Rect, track: usize) -> Rect {
+        let x = hr.x0 + 28.0;
+        let cy = if hr.height() < super::COMPACT_BELOW {
+            hr.y0 + hr.height() / 2.0
+        } else {
+            hr.y0 + 17.0
+        };
+        let w = self.track_name_width(hr, track) + 4.0;
+        Rect::new(x, cy - 9.0, x + w, cy + 9.0)
+    }
+
+    /// How wide the name of a track may be in its header before the buttons and marks.
+    pub(super) fn track_name_width(&self, hr: Rect, track: usize) -> f64 {
+        let Some(tr) = self.song.tracks.get(track) else {
+            return 0.0;
+        };
+        let base = if hr.height() < super::COMPACT_BELOW {
+            76.0
+        } else if self.song.track_comment(&tr.device).is_empty() {
+            TRACK_LIST_WIDTH - 44.0
+        } else {
+            TRACK_LIST_WIDTH - 62.0
+        };
+        let frozen = if tr.frozen.is_some() { 16.0 } else { 0.0 };
+        (base - frozen).max(16.0)
+    }
+
+    /// What a press on the name of a track header is, when it is on it.
+    pub(super) fn track_name_hit(&self, hr: Rect, track: usize, pos: Point) -> Option<Hit> {
+        self.track_name_rect(hr, track)
+            .contains(pos)
+            .then_some(Hit::TrackName(track))
+    }
+
     /// The text field of the edit in progress: over the folder's name, or over the header of the
     /// track whose comment is typed.
     fn edit_rect(&self) -> Option<Rect> {
@@ -456,6 +501,17 @@ impl ArrangementView {
                     bottom,
                 ))
             }
+            EditTarget::Track(d) => {
+                let track = self.song.tracks.iter().position(|t| &t.device == d)?;
+                let hr = self.row_rect(self.row_of(track, 0)?);
+                let name = self.track_name_rect(hr, track);
+                Some(Rect::new(
+                    name.x0 - 3.0,
+                    name.y0 - 1.0,
+                    hr.x0 + TRACK_LIST_WIDTH - 6.0,
+                    name.y1 + 1.0,
+                ))
+            }
             EditTarget::Comment(d) => {
                 let track = self.song.tracks.iter().position(|t| &t.device == d)?;
                 let hr = self.row_rect(self.row_of(track, 0)?);
@@ -475,6 +531,13 @@ impl ArrangementView {
     }
 
     // ------------------------------------------------------------------ points for hosts
+
+    /// The centre of the name of a track's header (where a double-click renames the track).
+    pub fn track_name_center(&self, device: &DeviceKey) -> Option<Point> {
+        let track = self.song.tracks.iter().position(|t| &t.device == device)?;
+        let hr = self.row_rect(self.row_of(track, 0)?);
+        Some(self.track_name_rect(hr, track).center())
+    }
 
     /// The centre of a folder row's header, away from its buttons (the name).
     pub fn folder_header_center(&self, group: u32) -> Option<Point> {
@@ -570,6 +633,7 @@ impl ArrangementView {
         hit: &Hit,
         pos: Point,
         button: PointerButton,
+        modifiers: Modifiers,
         clicks: u8,
         out: &mut Vec<UiAction>,
     ) -> bool {
@@ -601,6 +665,9 @@ impl ArrangementView {
                     }));
                 }
             }
+            Hit::TrackName(track) => {
+                self.track_name_down(*track, button, modifiers, clicks, pos, out);
+            }
             Hit::Comment(track) if button == PointerButton::Primary => {
                 if let Some(d) = self.song.tracks.get(*track).map(|t| t.device.clone()) {
                     self.set_selected_track(Some(d.clone()));
@@ -610,6 +677,26 @@ impl ArrangementView {
             _ => return false,
         }
         true
+    }
+
+    /// A press on the name of a track header: it picks the track like any press on the header
+    /// (Shift or Ctrl adds it to the selection, a right click opens the header menu), and a
+    /// double-click with the primary button types the name.
+    fn track_name_down(
+        &mut self,
+        track: usize,
+        button: PointerButton,
+        modifiers: Modifiers,
+        clicks: u8,
+        pos: Point,
+        out: &mut Vec<UiAction>,
+    ) {
+        self.header_down(track, button, modifiers, pos, out);
+        let plain = !(modifiers.shift || modifiers.command());
+        if button == PointerButton::Primary && plain && clicks >= 2 {
+            let device = self.song.tracks[track].device.clone();
+            self.begin_track_rename(&device);
+        }
     }
 
     /// M, S or R on a folder: every track of it in one batch.
@@ -674,6 +761,21 @@ impl ArrangementView {
         true
     }
 
+    /// Starts typing a track's name: the name of the device it plays, as the console renames a
+    /// channel or a bus. False when there is no such track.
+    pub fn begin_track_rename(&mut self, device: &DeviceKey) -> bool {
+        if self.song.track(device).is_none() {
+            return false;
+        }
+        let name = self
+            .device_sig
+            .iter()
+            .find(|d| &d.0 == device)
+            .map_or_else(|| device.0.clone(), |d| d.2.clone());
+        self.start_edit(EditTarget::Track(device.clone()), name);
+        true
+    }
+
     /// Starts typing a track's comment. False when there is no such track.
     pub fn begin_comment_edit(&mut self, device: &DeviceKey) -> bool {
         if self.song.track(device).is_none() {
@@ -731,6 +833,16 @@ impl ArrangementView {
             EditTarget::Lane(device, lane) => {
                 out.extend(self.lane_rename_command(&device, lane, text));
             }
+            EditTarget::Track(key) => {
+                // A blank name cancels; the model checks the rest (a bus name must be unique).
+                if text.is_empty() {
+                    return;
+                }
+                out.push(UiAction::Command(Command::Rename {
+                    key,
+                    name: text.to_owned(),
+                }));
+            }
             EditTarget::Comment(device) => {
                 let comment: String = text.chars().take(MAX_TRACK_COMMENT).collect();
                 let comment = comment.trim_end().to_owned();
@@ -771,6 +883,7 @@ impl ArrangementView {
                 EditTarget::Folder(_) => MAX_GROUP_NAME,
                 EditTarget::Comment(_) => MAX_TRACK_COMMENT,
                 EditTarget::Lane(..) => MAX_LANE_NAME_CHARS,
+                EditTarget::Track(_) => MAX_TRACK_NAME_CHARS,
             };
             if e.text.chars().count() < max {
                 e.text.push(c);
@@ -834,6 +947,10 @@ impl ArrangementView {
                     _ => CommandOutcome::Declined,
                 }
             }
+            "sequencer.rename_track" => match self.selected_track.clone() {
+                Some(d) if self.begin_track_rename(&d) => CommandOutcome::Handled(Vec::new()),
+                _ => CommandOutcome::Declined,
+            },
             "sequencer.track_comment" => match self.selected_track.clone() {
                 Some(d) if self.begin_comment_edit(&d) => CommandOutcome::Handled(Vec::new()),
                 _ => CommandOutcome::Declined,

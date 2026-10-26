@@ -226,6 +226,8 @@ pub enum AppCommand {
     MoveTrackUp,
     /// Track ▸ Move Track Down.
     MoveTrackDown,
+    /// Track ▸ Rename Track…: type the name of the selected track.
+    RenameTrack,
     /// Track ▸ Track Comment…: type the selected track's comment.
     TrackComment,
     /// Track > Add Note Lane: one more note lane on the selected track.
@@ -430,6 +432,7 @@ impl AppCommand {
             AppCommand::RenameFolder => ("sequencer.rename_folder", None),
             AppCommand::MoveTrackUp => ("sequencer.move_track_up", None),
             AppCommand::MoveTrackDown => ("sequencer.move_track_down", None),
+            AppCommand::RenameTrack => ("sequencer.rename_track", None),
             AppCommand::TrackComment => ("sequencer.track_comment", None),
             AppCommand::AddNoteLane => ("sequencer.add_note_lane", None),
             AppCommand::RenameNoteLane => ("sequencer.rename_note_lane", None),
@@ -624,6 +627,7 @@ impl AppCommand {
             ("sequencer.rename_folder", None) => AppCommand::RenameFolder,
             ("sequencer.move_track_up", None) => AppCommand::MoveTrackUp,
             ("sequencer.move_track_down", None) => AppCommand::MoveTrackDown,
+            ("sequencer.rename_track", None) => AppCommand::RenameTrack,
             ("sequencer.track_comment", None) => AppCommand::TrackComment,
             ("sequencer.add_note_lane", None) => AppCommand::AddNoteLane,
             ("sequencer.rename_note_lane", None) => AppCommand::RenameNoteLane,
@@ -1354,6 +1358,11 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.org.can_move_down,
                 ),
                 enabled(
+                    "Rename Track\u{2026}",
+                    AppCommand::RenameTrack,
+                    state.org.track_selected,
+                ),
+                enabled(
                     "Track Comment\u{2026}",
                     AppCommand::TrackComment,
                     state.org.track_selected,
@@ -1757,6 +1766,7 @@ mod tests {
             AppCommand::RenameFolder,
             AppCommand::MoveTrackUp,
             AppCommand::MoveTrackDown,
+            AppCommand::RenameTrack,
             AppCommand::TrackComment,
             AppCommand::AddNoteLane,
             AppCommand::RenameNoteLane,
@@ -2273,6 +2283,7 @@ mod tests {
                 "Rename Folder\u{2026}",
                 "Move Track Up",
                 "Move Track Down",
+                "Rename Track\u{2026}",
                 "Track Comment\u{2026}",
                 "Add Note Lane",
                 "Rename Note Lane\u{2026}",
