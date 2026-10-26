@@ -385,9 +385,19 @@ impl ArrangementView {
             "sequencer.audio_reverse" => {
                 let to = !self.audio_menu().reversed;
                 Box::new(move |_, a, _| {
-                    (a.reverse != to).then(|| AudioClipContent {
-                        reverse: to,
-                        ..a.clone()
+                    // A reversed clip cannot be warped or transposed, so reversing a warped
+                    // clip switches the warp off (its mode, tempo and markers stay).
+                    (a.reverse != to).then(|| {
+                        let mut warp = a.warp.clone();
+                        if to {
+                            warp.enabled = false;
+                            warp.transpose_cents = 0;
+                        }
+                        AudioClipContent {
+                            reverse: to,
+                            warp,
+                            ..a.clone()
+                        }
                     })
                 })
             }
