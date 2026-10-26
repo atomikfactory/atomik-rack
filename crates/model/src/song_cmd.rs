@@ -70,6 +70,7 @@ pub(crate) fn new_track(device: DeviceKey) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        notes_to: None,
         frozen: None,
         lanes: vec![Lane::notes()],
     }
@@ -83,6 +84,7 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        notes_to: None,
         frozen: None,
         lanes: vec![Lane::audio()],
     }

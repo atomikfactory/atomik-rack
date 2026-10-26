@@ -105,7 +105,7 @@ pub use workflow::{
 pub use workflow_cmd::{ClipMove, WorkflowCommand};
 pub use workflow_create::{
     CreateOptions, CreateSource, CreateTarget, RouteNote, SEND_SLOTS_FULL, effect_route_note,
-    first_free_send_slot,
+    first_free_send_slot, is_note_player,
 };
 pub use zones::{
     PAD_COUNT, PAD_KEY_BASE, ZoneDoc, auto_map, fill_empty_pads, pad_key, pad_of_key, pad_zones,
@@ -1320,6 +1320,18 @@ impl RackDoc {
     /// The device `key`, if present.
     pub fn device(&self, key: &DeviceKey) -> Option<&RackDevice> {
         self.devices.iter().find(|d| &d.key == key)
+    }
+
+    /// The device the notes of `track` enter: its `notes_to` (the top of its player stack) when
+    /// that is a top-level device of the document, else the track's own device. A `notes_to`
+    /// that names a device that is gone (an older code path, a hand-edited file) is not an
+    /// error: the track plays its own device.
+    pub fn notes_entry<'a>(&'a self, track: &'a Track) -> &'a DeviceKey {
+        track
+            .notes_to
+            .as_ref()
+            .filter(|k| **k != track.device && self.device(k).is_some())
+            .unwrap_or(&track.device)
     }
 
     /// The effective plain value of a param: the stored value, or the descriptor default when

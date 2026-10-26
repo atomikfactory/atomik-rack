@@ -531,9 +531,9 @@ fn grouped() -> (Document, Registry) {
 fn groups_round_trip_in_format_26_in_a_stable_text() {
     let (d, r) = grouped();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 30);
+    assert_eq!(PROJECT_VERSION, 31);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 30);
+    assert_eq!(v["version"], 31);
     assert_eq!(v["console"]["vcas"][0]["name"], "Drums");
     assert_eq!(v["console"]["vcas"][0]["level_db"], -4.5);
     assert_eq!(v["console"]["vcas"][0]["mute"], true);
@@ -554,12 +554,12 @@ fn a_project_without_groups_differs_from_its_version_25_file_in_the_version_line
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("vcas"));
-    let v25 = text.replace("\"version\": 30", "\"version\": 25");
+    let v25 = text.replace("\"version\": 31", "\"version\": 25");
     let loaded = load_project(&v25, &r).unwrap();
     assert!(loaded.console.vcas.is_empty());
     assert_eq!(save_project(&loaded), text);
     // A file before the format has no field for them.
-    let with = save_project(grouped().0.doc()).replace("\"version\": 30", "\"version\": 25");
+    let with = save_project(grouped().0.doc()).replace("\"version\": 31", "\"version\": 25");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("vcas"), "{e}");
 }

@@ -290,6 +290,7 @@ fn lone_clip_track(clip: &Clip) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        notes_to: None,
         frozen: None,
         lanes: vec![Lane::notes().with_clips(vec![Clip {
             start: 0,

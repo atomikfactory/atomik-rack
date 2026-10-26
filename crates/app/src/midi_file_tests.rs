@@ -41,6 +41,7 @@ fn track(device: &str, clips: Vec<Clip>) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        notes_to: None,
         frozen: None,
         lanes: vec![Lane::notes().with_clips(clips)],
     }

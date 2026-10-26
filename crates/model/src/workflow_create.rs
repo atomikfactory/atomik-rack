@@ -44,7 +44,7 @@ use crate::{
     console_cmd, rules,
 };
 use atomik_device_sdk::{
-    DeviceDescriptor, DeviceKind, PluginLayout, PluginRef, Registry, SocketKind,
+    DeviceDescriptor, DeviceKind, Direction, PluginLayout, PluginRef, Registry, SocketKind,
 };
 use std::collections::BTreeMap;
 
@@ -626,6 +626,171 @@ fn route_after_device(
     Some(p.finish())
 }
 
+// ------------------------------------------------------------------------- player stacks
+
+/// The key of the first Notes socket of `desc` in `direction`.
+fn notes_socket(desc: &DeviceDescriptor, direction: Direction) -> Option<&'static str> {
+    desc.sockets
+        .iter()
+        .find(|s| s.kind == SocketKind::Notes && s.direction == direction)
+        .map(|s| s.key)
+}
+
+/// True for a note player: a utility that takes notes on `notes_in` and hands them on from
+/// `notes_out` (the shape every type of `atomik_devices::PLAYER_TYPE_IDS` has, and no other
+/// device has).
+pub fn is_note_player(desc: &DeviceDescriptor) -> bool {
+    let notes = |key: &str, direction: Direction| {
+        desc.socket_by_key(key)
+            .is_some_and(|s| s.kind == SocketKind::Notes && s.direction == direction)
+    };
+    desc.kind == DeviceKind::Utility
+        && notes("notes_in", Direction::Input)
+        && notes("notes_out", Direction::Output)
+}
+
+/// True when top-level device `key` is a note player.
+fn is_player_device(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> bool {
+    doc.device(key)
+        .and_then(|d| registry.descriptor(&d.type_id))
+        .is_some_and(is_note_player)
+}
+
+/// True when `end` is a Notes socket of its device.
+fn is_notes_socket(doc: &RackDoc, registry: &Registry, end: &SocketRef) -> bool {
+    doc.device(&end.device)
+        .and_then(|d| registry.descriptor(&d.type_id))
+        .and_then(|desc| desc.socket_by_key(&end.socket))
+        .is_some_and(|s| s.kind == SocketKind::Notes)
+}
+
+/// The device `device` hands its notes to: where its first Notes output cable goes.
+pub(crate) fn notes_successor(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Option<DeviceKey> {
+    doc.cables
+        .iter()
+        .find(|c| &c.from.device == device && is_notes_socket(doc, registry, &c.from))
+        .map(|c| c.to.device.clone())
+        .filter(|d| doc.device(d).is_some())
+}
+
+/// The head of the stack a selection stands for, with the key of its Notes input: from the
+/// selection down the note cables through the players to the end of the chain (the
+/// instrument), then up to where its track's notes enter. A track decides it (its entry);
+/// without one the head is the topmost player that feeds the chain. `None` when the head has
+/// no Notes input.
+fn stack_head(
+    doc: &RackDoc,
+    registry: &Registry,
+    selected: &DeviceKey,
+) -> Option<(DeviceKey, &'static str)> {
+    let limit = doc.devices.len();
+    let mut bottom = selected.clone();
+    for _ in 0..limit {
+        if !is_player_device(doc, registry, &bottom) {
+            break;
+        }
+        match notes_successor(doc, registry, &bottom) {
+            Some(next) if next != *selected => bottom = next,
+            _ => break,
+        }
+    }
+    let head = match doc.song.track(&bottom) {
+        Some(track) => doc.notes_entry(track).clone(),
+        None => {
+            let mut top = bottom.clone();
+            for _ in 0..limit {
+                let feeder = doc
+                    .cables
+                    .iter()
+                    .find(|c| c.to.device == top && is_notes_socket(doc, registry, &c.to))
+                    .map(|c| c.from.device.clone());
+                match feeder {
+                    Some(f) if f != bottom && is_player_device(doc, registry, &f) => top = f,
+                    _ => break,
+                }
+            }
+            top
+        }
+    };
+    let desc = registry.descriptor(&doc.device(&head)?.type_id)?;
+    Some((head, notes_socket(desc, Direction::Input)?))
+}
+
+/// `CreatePlayer`.
+pub(crate) fn create_player(
+    doc: &RackDoc,
+    registry: &Registry,
+    type_id: &str,
+    target: &CreateTarget,
+    options: &CreateOptions,
+) -> Result<Edit, ModelError> {
+    let source = CreateSource::Type(type_id.to_owned());
+    let (desc, key) = prepare(doc, registry, &source, None)?;
+    if !is_note_player(desc) {
+        return Err(bad_scope(format!("{} is not a note player", desc.name)));
+    }
+    let plain = || -> Result<Edit, ModelError> {
+        let mut p = Planner::new(doc, registry);
+        let add = add_edit(&p, &source, after_selection(doc, target), key.clone())?;
+        p.push(add);
+        Ok(p.finish())
+    };
+    let selected = match target {
+        CreateTarget::Selected(k) if options.route && !k.0.contains('/') => k,
+        _ => return plain(),
+    };
+    let routed = stack_head(doc, registry, selected)
+        .and_then(|(head, head_in)| route_player(doc, registry, (desc, &key), (&head, head_in)));
+    match routed {
+        Some(edit) => Ok(edit),
+        None => plain(),
+    }
+}
+
+/// The new player `key` above `head` in its column: cabled into `head_in` of the head, taking
+/// over the cable that fed it, and the entry of every track that entered at the head.
+fn route_player(
+    doc: &RackDoc,
+    registry: &Registry,
+    (desc, key): (&DeviceDescriptor, &DeviceKey),
+    (head, head_in): (&DeviceKey, &str),
+) -> Option<Edit> {
+    let new_in = notes_socket(desc, Direction::Input)?;
+    let new_out = notes_socket(desc, Direction::Output)?;
+    let at = doc.resolve_slot(doc.slot_of(head)?).ok()?;
+    let mut p = Planner::new(doc, registry);
+    let add = add_edit(
+        &p,
+        &CreateSource::Type(desc.type_id.to_owned()),
+        at.index,
+        key.clone(),
+    )
+    .ok()?;
+    p.push(add);
+    let head_input = console_cmd::at(head, head_in);
+    if let Some(old) = doc.cables.iter().find(|c| c.to == head_input).cloned() {
+        p.push(Edit::Disconnect(old.clone()));
+        p.connect(console_cmd::wire(old.from, console_cmd::at(key, new_in)))
+            .ok()?;
+    }
+    p.connect(console_cmd::wire(console_cmd::at(key, new_out), head_input))
+        .ok()?;
+    for track in &doc.song.tracks {
+        if doc.notes_entry(track) == head {
+            p.push(Edit::TrackEntry {
+                device: track.device.clone(),
+                old: track.notes_to.clone(),
+                new: Some(key.clone()),
+            });
+        }
+    }
+    Some(rack_columns::place_new_device(doc, at, p.finish()))
+}
+
 // ------------------------------------------------------------------------------ auto-route
 
 /// `AutoRoute`: applies the creation rules to devices that lack them, in rack order, as one
@@ -875,6 +1040,10 @@ pub(crate) fn bridge_cables(doc: &RackDoc, registry: &Registry, key: &DeviceKey)
     let Ok(desc) = rules::descriptor(registry, &device.type_id) else {
         return Vec::new();
     };
+    // A note player has no audio: it is its note path that stays.
+    if is_note_player(desc) {
+        return bridge_notes(doc, registry, key);
+    }
     // Only a device that passes audio through (an effect, a utility, a container) has a path to
     // keep; a mixer or an instrument is removed plainly.
     if !matches!(
@@ -933,6 +1102,35 @@ pub(crate) fn bridge_cables(doc: &RackDoc, registry: &Registry, key: &DeviceKey)
             });
         }
     }
+    bridge.sort();
+    bridge.dedup();
+    bridge
+}
+
+/// The cables that keep the note path of player `key` when it goes away: the source of its Notes
+/// input is cabled to every device its Notes output feeds. Empty without a source or a
+/// destination.
+fn bridge_notes(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> Vec<Cable> {
+    let Some(input) = doc
+        .cables
+        .iter()
+        .find(|c| &c.to.device == key && is_notes_socket(doc, registry, &c.to))
+    else {
+        return Vec::new();
+    };
+    let mut bridge: Vec<Cable> = doc
+        .cables
+        .iter()
+        .filter(|c| {
+            &c.from.device == key
+                && is_notes_socket(doc, registry, &c.from)
+                && c.to.device != input.from.device
+        })
+        .map(|c| Cable {
+            from: input.from.clone(),
+            to: c.to.clone(),
+        })
+        .collect();
     bridge.sort();
     bridge.dedup();
     bridge

@@ -268,6 +268,24 @@ pub enum WorkflowCommand {
         /// Routing options (`skip_track` and `disarm` do not apply to effects).
         options: CreateOptions,
     },
+    /// Creates a note player (any type of `atomik_devices::PLAYER_TYPE_IDS`) on top of a stack:
+    /// with an instrument, or a player of its chain, selected, the new player goes **above the
+    /// head of the chain** (the device its track's notes enter: the top player, else the
+    /// instrument) in the same rack column, is cabled `new.notes_out -> head.notes_in` and takes
+    /// over the cable that fed the head (`old_source -> new.notes_in`), and every track whose
+    /// entry was the head gets `notes_to = new` (one undo step). The chain is found through the
+    /// note cables: from the selection down to the instrument, and without a track up through
+    /// the players that feed it. A selection with no Notes input (or `options.route == false`,
+    /// or anything that cannot be cabled) only adds the player after the selection, as
+    /// `AddDevice` does. A device that is not a note player is rejected.
+    CreatePlayer {
+        /// The player's type.
+        type_id: String,
+        /// The selection the stack is found from.
+        target: CreateTarget,
+        /// `route` off adds the player only.
+        options: CreateOptions,
+    },
     /// Applies the creation rules to existing devices that lack them, in
     /// one step: an instrument gets its console channel and its armed song track, a loose
     /// stereo effect goes to the next free insert of the nearest channel before it (or is cabled
@@ -376,6 +394,13 @@ pub(crate) fn plan(
             )?;
             Ok((rack_columns::place_new_device(doc, at, edit), None))
         }
+        WorkflowCommand::CreatePlayer {
+            type_id,
+            target,
+            options,
+        } => plain(workflow_create::create_player(
+            doc, registry, &type_id, &target, &options,
+        )),
         WorkflowCommand::CreateEffectAt {
             slot,
             source,
@@ -807,6 +832,8 @@ fn paste_tracks(
         let mut track = t.clone();
         track.device = new.clone();
         track.armed = false;
+        // The entry follows a copied player; one that was not copied is left behind.
+        track.notes_to = t.notes_to.as_ref().and_then(|k| map.get(k).cloned());
         for lane in &mut track.lanes {
             for c in &mut lane.clips {
                 c.id = ClipId(next);

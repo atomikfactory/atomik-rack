@@ -22,6 +22,7 @@ fn track_of(lanes: Vec<Lane>) -> Track {
         solo: false,
         armed: false,
         chase: true,
+        notes_to: None,
         frozen: None,
         lanes,
     }

@@ -95,6 +95,12 @@ pub(crate) enum Edit {
         old: bool,
         new: bool,
     },
+    /// Where a track's notes enter (`None`: its own device).
+    TrackEntry {
+        device: DeviceKey,
+        old: Option<DeviceKey>,
+        new: Option<DeviceKey>,
+    },
     /// Write mode of an automation lane (`None` is the default).
     LaneWrite {
         device: DeviceKey,
@@ -496,6 +502,11 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::TrackEntry { device, old, new } => Edit::TrackEntry {
+                device,
+                old: new,
+                new: old,
+            },
             Edit::LaneMeta {
                 device,
                 lane,
@@ -815,6 +826,10 @@ impl Edit {
             }
             Edit::TrackChase { device, new, .. } => {
                 track_mut(doc, device).chase = *new;
+                vec![SyncOp::SongChanged]
+            }
+            Edit::TrackEntry { device, new, .. } => {
+                track_mut(doc, device).notes_to.clone_from(new);
                 vec![SyncOp::SongChanged]
             }
             Edit::LaneMeta {

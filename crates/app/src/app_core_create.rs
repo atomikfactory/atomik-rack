@@ -80,7 +80,8 @@ impl<S: EngineSink> AppCore<S> {
             WorkflowCommand::CreateInstrument { options, .. }
             | WorkflowCommand::CreateInstrumentAt { options, .. }
             | WorkflowCommand::CreateEffect { options, .. }
-            | WorkflowCommand::CreateEffectAt { options, .. } => options.route,
+            | WorkflowCommand::CreateEffectAt { options, .. }
+            | WorkflowCommand::CreatePlayer { options, .. } => options.route,
             _ => true,
         };
         if !routed {

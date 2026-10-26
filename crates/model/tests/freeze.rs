@@ -304,6 +304,12 @@ fn a_frozen_track_and_what_it_freezes_cannot_be_edited() {
             from: 0,
             to: 1,
         }),
+        // A player on a frozen instrument would cable into it and move its track's entry.
+        Command::Workflow(atomik_model::WorkflowCommand::CreatePlayer {
+            type_id: ARP.into(),
+            target: atomik_model::CreateTarget::Selected(key("synth")),
+            options: atomik_model::CreateOptions::default(),
+        }),
     ];
     for command in refused {
         let before = d.doc().clone();
@@ -787,10 +793,10 @@ fn a_frozen_track_round_trips_canonically() {
     let mut d = rack(&reg, 2);
     let fx = chain_keys(&d, &reg);
     freeze(&mut d, &reg, fx.clone());
-    assert_eq!(PROJECT_VERSION, 30);
+    assert_eq!(PROJECT_VERSION, 31);
     let text = saved(&d);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 30);
+    assert_eq!(v["version"], 31);
     let track = &v["song"]["tracks"][0];
     assert_eq!(track["frozen"]["start"], 0);
     assert_eq!(track["frozen"]["length"], 2 * BAR);
@@ -809,23 +815,23 @@ fn a_project_before_freezing_loads_and_saves_with_only_the_version_changed() {
     let reg = audio_registry();
     let d = rack(&reg, 1);
     let text = saved(&d);
-    let old = text.replace("\"version\": 30", "\"version\": 24");
+    let old = text.replace("\"version\": 31", "\"version\": 24");
     let loaded = load_project(&old, &reg).unwrap();
     assert_eq!(&loaded, d.doc());
     assert_eq!(save_project(&loaded), text);
     assert_eq!(
-        text.replace("\"version\": 30", "\"version\": 24"),
+        text.replace("\"version\": 31", "\"version\": 24"),
         old,
         "the files differ in the version line alone"
     );
     // A version 24 file knows no frozen state.
     let mut d = rack(&reg, 0);
     freeze(&mut d, &reg, vec![]);
-    let old = saved(&d).replace("\"version\": 30", "\"version\": 24");
+    let old = saved(&d).replace("\"version\": 31", "\"version\": 24");
     let e = load_project(&old, &reg).expect_err("frozen before 25");
     assert!(e.to_string().contains("frozen"), "{e}");
     // And a newer file than this reader is refused.
-    let newer = saved(&d).replace("\"version\": 30", "\"version\": 31");
+    let newer = saved(&d).replace("\"version\": 31", "\"version\": 32");
     assert!(load_project(&newer, &reg).is_err());
 }
 
