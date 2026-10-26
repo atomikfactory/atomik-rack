@@ -14,6 +14,11 @@
 //!   `rec_clip_safe` params go to the tap's strip of that track when the take starts and every
 //!   UI frame after ([`AppCore::feed_take_inputs`]), so the file holds the gained (and, with
 //!   clip-safe, limited) signal and a change is heard in the take from the next batch on.
+//! * **Input meter** ([`AppCore::feed_rec_input`]): every frame the transport bar gets the
+//!   post-gain peak of each armed track's input (the host input's peak, which the Audio I/O
+//!   meters already read, times the track's gain; the peak of a scaled signal is the scaled
+//!   peak) and the track it shows: the selected track when it is armed, else the first armed
+//!   audio track. It works while armed and not recording, so the level can be set before a take.
 //! * **While recording** every UI frame notes the first and the latest *playing* transport
 //!   state (as MIDI recording does), which anchor the engine-frame to song-position conversion.
 //! * **Stop or locate** ([`AppCore::finish_take`]): the writer is told where the take ends and
@@ -50,11 +55,14 @@
 
 use super::*;
 use crate::audio_import::{Loaded, ticks_for_frames};
-use crate::audio_record::{TAP_SECONDS, input_settings, place_lap, plan_tap, track_input};
+use crate::audio_record::{
+    TAP_SECONDS, input_peak, input_settings, place_lap, plan_tap, track_input,
+};
 use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
 use atomik_engine::TapControls;
 use atomik_model::song::AUDIO_TRACK_TYPE;
 use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId};
+use atomik_ui::RecInput;
 use std::sync::mpsc::Sender;
 
 /// Frames after the last transport state seen that a finished take still records (on top of the
@@ -212,6 +220,43 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(rec) = &self.audio.recording {
             self.set_strip_controls(&rec.controls, &rec.strips);
         }
+    }
+
+    /// Feeds the transport bar's recording input (module docs): the focus track with its
+    /// settings and the post-gain peaks of every armed audio track, at `now_seconds` (any
+    /// monotonic clock). Call once per frame, after [`Self::feed_io_meters`].
+    pub fn feed_rec_input(&mut self, now_seconds: f64) {
+        let armed = self.armed_audio_tracks();
+        let focus = self
+            .arrangement
+            .selected_track()
+            .filter(|t| armed.contains(t))
+            .or_else(|| armed.first())
+            .cloned();
+        let source = focus.map(|device| {
+            let settings = input_settings(self.doc(), &device, &self.registry);
+            RecInput {
+                name: self
+                    .doc()
+                    .device(&device)
+                    .map_or_else(|| device.0.clone(), |d| d.name.clone()),
+                device,
+                gain_db: settings.gain_db,
+                clip_safe: settings.clip_safe,
+            }
+        });
+        let host = self.host_input_peaks();
+        let peaks: Vec<(DeviceKey, f32)> = armed
+            .iter()
+            .map(|key| {
+                let peak = track_input(self.doc(), key).map_or(0.0, |input| {
+                    input_peak(host, input, input_settings(self.doc(), key, &self.registry))
+                });
+                (key.clone(), peak)
+            })
+            .collect();
+        self.transport_bar.set_rec_input(source);
+        self.transport_bar.feed_rec_peaks(&peaks, now_seconds);
     }
 
     /// Notes the transport states of a running audio take.

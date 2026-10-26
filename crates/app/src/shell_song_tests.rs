@@ -462,3 +462,52 @@ fn the_wheel_over_the_tempo_steps_whole_bpm() {
     });
     assert!((s.core().doc().tempo_bpm - (before + 1.0)).abs() < 1e-9);
 }
+
+#[test]
+fn the_recording_input_of_an_armed_audio_track_is_set_from_the_transport_bar() {
+    use atomik_ui::RecInputPart;
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddAudioTrack { name: None }))
+        .unwrap();
+    let key = s.core().doc().song.tracks[0].device.clone();
+    // Not armed: no section.
+    s.frame_at(0.0);
+    assert!(!s.core().transport_bar().rec_input_visible());
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::SetTrackFlags {
+            device: key.clone(),
+            muted: false,
+            solo: false,
+            armed: true,
+        }))
+        .unwrap();
+    s.frame_at(0.1);
+    assert!(s.core().transport_bar().rec_input_visible());
+    let param =
+        |s: &Shell<NullBackend>, p: &str| s.core().doc().param_value(&key, p, s.core().registry());
+    let gain = s
+        .core()
+        .transport_bar()
+        .rec_input_point(RecInputPart::Gain)
+        .unwrap();
+    // 20 px up is four half-decibel steps, applied live, one undo step.
+    drag_by(&mut s, gain, &[-5.0, -10.0, -20.0]);
+    assert_eq!(param(&s, "rec_gain"), Some(2.0));
+    s.execute(AppCommand::Undo);
+    assert_eq!(
+        param(&s, "rec_gain"),
+        Some(0.0),
+        "the whole drag undoes at once"
+    );
+    s.execute(AppCommand::Redo);
+    assert_eq!(param(&s, "rec_gain"), Some(2.0));
+    let safe = s
+        .core()
+        .transport_bar()
+        .rec_input_point(RecInputPart::Safe)
+        .unwrap();
+    s.handle(&down(safe));
+    s.handle(&up(safe));
+    assert_eq!(param(&s, "rec_clip_safe"), Some(1.0));
+}

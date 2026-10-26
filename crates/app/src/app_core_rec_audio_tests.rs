@@ -890,3 +890,88 @@ fn two_tracks_on_the_same_input_each_keep_their_own_gain() {
     let want = (0.2f32 * atomik_core::db_to_gain(-6.0)).to_bits();
     assert!(takes[1].channels[0].iter().all(|s| s.to_bits() == want));
 }
+
+// ---------------------------------------------------------------- the input meter
+
+#[test]
+fn the_transport_bar_shows_the_post_gain_input_level_before_any_take() {
+    let mut core = mono_core(|_, _| 0.5);
+    let key = add_audio_track(&mut core, "Mic");
+    set_input_param(&mut core, &key, "rec_gain", 6.0);
+    // Not armed: no section, nothing metered.
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.0);
+    assert!(core.transport_bar().rec_input().is_none());
+    arm(&mut core, &key, true);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.1);
+    let bar = core.transport_bar();
+    let shown = bar.rec_input().expect("the armed track");
+    assert_eq!(
+        (shown.device.clone(), shown.name.as_str()),
+        (key.clone(), "Mic")
+    );
+    assert_eq!((shown.gain_db, shown.clip_safe), (6.0, false));
+    // 0.5 at +6 dB is 0.9976: -0.02 dBFS, just under the lamp.
+    let (level, hold) = bar.rec_level_db();
+    assert!(
+        (level + 0.02).abs() < 0.01 && (hold + 0.02).abs() < 0.01,
+        "{level}"
+    );
+    assert!(!bar.rec_clip_latched());
+    // Turn it up: the meter reads the new gain and the lamp latches, and it stays.
+    set_input_param(&mut core, &key, "rec_gain", 8.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.2);
+    assert!(core.transport_bar().rec_clip_latched());
+    set_input_param(&mut core, &key, "rec_gain", -20.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.3);
+    assert!(
+        core.transport_bar().rec_clip_latched(),
+        "until it is clicked"
+    );
+    // Disarmed: the section goes.
+    arm(&mut core, &key, false);
+    core.feed_rec_input(0.4);
+    assert!(core.transport_bar().rec_input().is_none());
+}
+
+#[test]
+fn the_input_shown_is_the_selected_armed_track_else_the_first_armed_one() {
+    let mut core = mono_core(|_, _| 0.1);
+    let a = add_audio_track(&mut core, "A");
+    let b = add_audio_track(&mut core, "B");
+    let c = add_audio_track(&mut core, "C");
+    arm(&mut core, &b, true);
+    arm(&mut core, &c, true);
+    core.feed_rec_input(0.0);
+    let shown =
+        |core: &AppCore<OfflineSink>| core.transport_bar().rec_input().unwrap().device.clone();
+    assert_eq!(shown(&core), b, "the first armed track");
+    core.arrangement_mut().set_selected_track(Some(c.clone()));
+    core.feed_rec_input(0.1);
+    assert_eq!(shown(&core), c, "the selected armed track");
+    core.arrangement_mut().set_selected_track(Some(a));
+    core.feed_rec_input(0.2);
+    assert_eq!(shown(&core), b, "an unarmed selection does not count");
+}
+
+#[test]
+fn a_track_without_input_cables_reads_silence() {
+    let mut core = mono_core(|_, _| 0.9);
+    let key = add_audio_track(&mut core, "Mic");
+    for socket in ["in_l", "in_r"] {
+        core.apply_command(Command::Disconnect {
+            to: atomik_model::SocketRef {
+                device: key.clone(),
+                socket: socket.to_owned(),
+            },
+        })
+        .unwrap();
+    }
+    arm(&mut core, &key, true);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.0);
+    assert_eq!(core.transport_bar().rec_level_db().0, -60.0);
+}
