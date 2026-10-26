@@ -16,7 +16,11 @@ const ROW_H: f64 = 36.0;
 /// Type ids of the note players (step sequencer, arpeggiator): the browser lists them together
 /// at the end as the "Players" group. Mirrors `atomik_devices::PLAYER_TYPE_IDS` (the UI does not
 /// depend on the devices crate; a test pins the two lists together).
-pub const PLAYER_TYPE_IDS: [&str; 2] = ["atomik.arpeggiator", "atomik.step-sequencer"];
+pub const PLAYER_TYPE_IDS: [&str; 3] = [
+    "atomik.arpeggiator",
+    "atomik.note-filter",
+    "atomik.step-sequencer",
+];
 
 /// Type ids of the modulators (CV sources): the browser lists them together as the "Modulators"
 /// group, after the other devices and before the players. Mirrors
