@@ -19,9 +19,6 @@
 //!
 //! Everything is allocation-free and fixed size (HI-1).
 
-// The router and the emitter are used by the stateless players that build on this module.
-#![allow(dead_code)]
-
 use atomik_core::{NoteBuffer, NoteEvent, NoteKind};
 
 /// Keys per map (all MIDI keys).
@@ -104,6 +101,8 @@ impl NoteRouter {
         self.refc.iter().any(|c| *c > 0)
     }
 
+    // Used by the players that mute or hold (and the tests); the note filter does not need it.
+    #[allow(dead_code)]
     /// Whether the input key `in_key` is down.
     pub fn is_held(&self, in_key: u8) -> bool {
         self.held[usize::from(in_key & 0x7F)]
@@ -186,6 +185,7 @@ impl NoteRouter {
 
     /// Input keys that are down are ignored until their Off (used after a bypass or a mute, so
     /// a key held across the switch is not retriggered).
+    #[allow(dead_code)] // for the players that mute; the bypass keeps its own held set
     pub fn swallow_held(&mut self) {
         self.swallow = self.held;
     }

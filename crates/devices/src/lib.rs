@@ -30,6 +30,7 @@ pub mod mastering;
 pub mod mod_source;
 pub mod modulation;
 mod note_clock;
+pub mod note_filter;
 mod note_fx;
 pub mod note_split;
 pub mod phase_meter;
@@ -57,7 +58,11 @@ pub fn panel_layout(type_id: &str) -> Option<&'static atomik_device_sdk::PanelLa
 
 /// Type ids of the note players (step sequencer, arpeggiator). They are `DeviceKind::Utility`; a
 /// browser that groups by kind can list these under a "Players" heading with this hook.
-pub const PLAYER_TYPE_IDS: [&str; 2] = ["atomik.arpeggiator", "atomik.step-sequencer"];
+pub const PLAYER_TYPE_IDS: [&str; 3] = [
+    "atomik.arpeggiator",
+    "atomik.note-filter",
+    "atomik.step-sequencer",
+];
 
 /// Whether `type_id` is a note player (see [`PLAYER_TYPE_IDS`]).
 pub fn is_player(type_id: &str) -> bool {
@@ -102,6 +107,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(mastering::factory())?;
     registry.register(mod_source::factory())?;
     registry.register(modulation::factory())?;
+    registry.register(note_filter::factory())?;
     registry.register(note_split::factory())?;
     registry.register(phase_meter::factory())?;
     registry.register(bus::factory())?;
@@ -121,7 +127,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 25] = [
+    const TYPE_IDS: [&str; 26] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -139,6 +145,7 @@ mod tests {
         "atomik.mastering",
         "atomik.mod-source",
         "atomik.modulation",
+        "atomik.note-filter",
         "atomik.note-split",
         "atomik.phase-meter",
         "atomik.poly-synth",

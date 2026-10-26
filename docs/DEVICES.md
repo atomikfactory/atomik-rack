@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-five original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer and arpeggiator), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-six original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator and note filter), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -941,6 +941,51 @@ The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, 
 - **Note safety.** Notes are closed on a jump (locate, loop wrap, start or stop), `AllOff` (which also clears the set); the pending-off table (64 notes) closes the oldest note if a chord overflows it; a `reset` leaves an `AllOff` for the next batch.
 - **Meter values:** the held key count, then the next 8 keys it will play (0 = none; in chord mode the lowest key of the chord).
 
+## Note Filter: `atomik.note-filter` (Utility, "Players")
+
+Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless per-event map. Source: [crates/devices/src/note_filter.rs](../crates/devices/src/note_filter.rs).
+
+### Sockets
+
+`notes_in` (id 0, input) and `notes_out` (id 1, output). No CV sockets, no pattern data.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `transpose` | -48 to 48 | 0 | semitones | Linear | yes |
+| `octave` | -4 to 4 | 0 | octaves | Linear | yes |
+| `key.low` | 0 to 127 | 0 | none | Linear | yes |
+| `key.high` | 0 to 127 | 127 | none | Linear | yes |
+| `key.mode` | 0-2: inside, outside, fold | 0 (inside) | choice | Linear | yes |
+| `velocity.low` | 1 to 127 | 1 | none | Linear | yes |
+| `velocity.high` | 1 to 127 | 127 | none | Linear | yes |
+| `velocity.scale` | 0 to 2 (shown 0 to 200 %) | 1 | percent | Linear | no |
+| `velocity.offset` | -127 to 127 | 0 | none | Linear | yes |
+| `velocity.curve` | -1 to 1 | 0 | none | Linear | no |
+| `velocity.fixed` | 0 to 127 (0 = off) | 0 | none | Linear | yes |
+| `pass.bend` | 0 or 1 | 1 | toggle | Linear | yes |
+| `pass.cc` | 0 or 1 | 1 | toggle | Linear | yes |
+| `pass.pressure` | 0 or 1 | 1 | toggle | Linear | yes |
+| `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+
+`key.low` and `key.high` swap their roles when `key.low` is the larger, and so do the two velocity limits.
+
+### Behaviour
+
+- **Order of the stages.** Event filter, key range, velocity range, transpose, velocity shaping, output range.
+- **Key range** tests the *input* key. `inside` passes `key.low..=key.high`, `outside` passes every other key, `fold` passes every key and folds the *output* key by octaves into the range (a range narrower than an octave drops the keys that no octave lands in).
+- **Transpose** adds `transpose + 12 * octave` semitones to the key. A result outside 0..=127 is **dropped**, not clamped, because clamping would merge keys. The Off of a dropped note is dropped with it.
+- **Velocity range** tests the input velocity on the 1..=127 scale; notes outside it, and their Offs, vanish.
+- **Velocity shaping.** With `curve`, `scale`, `offset` and `fixed` at their defaults the velocity passes unchanged (no rounding to a MIDI step). Otherwise `v` in 0..1 goes through `f = v / (v + (1 - v) * e)` with `e = 2^(-2 * curve)` (a positive curve lifts soft notes), then `round(127 * f * scale + offset)` clamped to 1..=127; `velocity.fixed` above 0 replaces the result.
+- **Other events.** Pitch bend, controllers and channel pressure pass unless `pass.bend`, `pass.cc` or `pass.pressure` is off (which also covers polyphonic pressure). Polyphonic pressure and per-note expressions follow the *output* key of their input key and are dropped when that key is not sounding. Offsets are kept.
+- **Param changes while keys are held** never leave a stuck or doubled note: the device remembers which key each input key sent, so the Off releases the pitch the On used, whatever `transpose` is now. Two input keys that land on one output key retrigger it and only the last Off closes it. The new values apply to the next On.
+- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On is dropped before an Off ever is.
+- **Bypass.** The common [player bypass](#player-bypass).
+- **Starting points.** *Octave up* (`octave` 1), *Kick only* (`key.low` and `key.high` 36), *Soft layer* (`velocity.high` 80), *Velocity flatten* (`velocity.fixed` 100).
+
+---
+
 ## Container: `atomik.container` (Container, "Containers")
 
 A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.
@@ -1030,7 +1075,7 @@ VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe an
 
 ## Player bypass
 
-The step sequencer and the arpeggiator end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
+The step sequencer, the arpeggiator and the note filter end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
 
 - **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0 and it holds no state.
 - **The switch.** A change of the param is adopted at the start of the next batch: the notes the player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the player's own state (the held set, the pattern position) is cleared, and a key that is held at the switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing doubles on either side.
