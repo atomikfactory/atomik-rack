@@ -1151,6 +1151,63 @@ The panel is the step sequencer's, three rack units high, with a strip of each c
 
 ---
 
+## Drum Generator: `atomik.drum-generator` (Utility, "Players")
+
+A drum pattern player that varies what is written. It plays up to 8 patterns of 16 lanes (one key each, by default the 16 pads of the [drum machine](#drum-machine-atomikdrum-machine-instrument), keys 36 to 51) and 1 to 64 steps, on the step sequencer's clock, and adds density, variation, fills and accents on top of the written hits. The data is `DrumData` (`PlayerData::Drums`, registered with `register_with_drums`); the document side is `RackDevice.drums` (`"drums"` in the project file, project format 33). A drum generator has no step patterns (`steps`). Sources: [crates/devices/src/drum_generator.rs](../crates/devices/src/drum_generator.rs), the rules in [crates/devices/src/drum_generator/algo.rs](../crates/devices/src/drum_generator/algo.rs), the pattern writer in [crates/devices/src/drum_generator/generate.rs](../crates/devices/src/drum_generator/generate.rs).
+
+### Sockets
+
+The six of the step sequencer: `notes_in` (id 0), `notes_out` (1), `gate_cv_out` (2), `pitch_cv_out` (3), `velocity_cv_out` (4), `trig_cv_out` (5). The gate is high while a hit sounds, the trig pulses at every step that hits, pitch and velocity follow the loudest hit of that step.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `pattern` | 1 to 8 | 1 | none | Linear | yes |
+| `pattern.switch` | 0-1: now, at-end | 1 (at-end) | choice | Linear | yes |
+| `density` | -1 to 1 | 0 | percent | Linear | no |
+| `variation` | 0 to 1 | 0 | percent | Linear | no |
+| `fill.every` | 0-4: off, 1, 2, 4, 8 bars | 0 (off) | choice | Linear | yes |
+| `fill.amount` | 0 to 1 | 0.5 | percent | Linear | no |
+| `velocity.scale` | 0 to 2 | 1 | none | Linear | no |
+| `accent` | 0 to 1 | 0 | percent | Linear | no |
+| `gate` | 0.05 to 1 | 0.25 | percent | Linear | no |
+| `random.seed` | 0 to 999 | 0 | none | Linear | yes |
+| `style` | 0-3: four on the floor, broken beat, half time, straight | 0 | choice | Linear | yes |
+| `mute` | 0 to 1 | 0 | toggle | Linear | yes |
+| `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
+
+### Behaviour (as built)
+
+- **Clock.** As the step sequencer: the step number comes from the transport tick, so a locate lands on the right step and a loop whose length is a multiple of the pattern repeats it in phase. A pattern has its own length, resolution (1/4 to 1/32T) and swing. `pattern.switch` at-end adopts a changed `pattern` when the global step is a multiple of the playing pattern's length (at once when stopped or after a jump), `now` at the next batch.
+- **Hits.** A lane hits at a step when its written velocity is above 0 and its probability passes, at that velocity (`velocity.scale` multiplies it, 1 to 127), for `gate` of a step (never past the next step). Every lane plays its own key; a muted lane plays nothing. Two lanes on one key close each other's hit first, so a receiver never sees two Ons of one key.
+- **A pure function of the position.** What a lane plays at a step depends only on the step, the pattern, the params, the seed and the time signature, never on what played before, so a bounce is bit-identical at any block size and worker count. Every chance is `hash64(seed, step, slot)`; `random.seed` mixes into it.
+- **Role weights.** Each lane has a role (kick, snare, clap, closed hat, open hat, tom low / mid / high, cymbal, percussion; by default the role of the lane's key in the usual kit layout). A weight from 0 to 1 says how much a role belongs at a bar position: the kick on the beat starts, snare and clap on the backbeats (beats 2 and 4 of 4/4), the hats on every eighth and sixteenth, the toms late in the bar, a cymbal on the downbeat. The table is in `algo.rs`.
+- **Density.** Above 0, an empty step gains a hit with chance `density x weight`; below 0, a hit is removed with chance `|density| x (1 - weight)`. Density never changes the velocity of a written hit, never adds a hit when negative and never removes one when positive.
+- **Variation.** A bar is varied with chance `variation` (drawn per bar). In a varied bar a hit of any lane but the kick may move one step later (when that step is empty) and an empty snare or hat step may gain a ghost note at 30 to 50 % velocity.
+- **Fill.** Bars are counted from tick 0 with the time signature of the batch (3/4 bars are 3 beats long); a meter change mid-song shifts the count. The last bar of each `fill.every` group has a fill in its last `fill.amount` part: snare, clap and toms gain hits of rising velocity, hats and cymbals are thinned, and the kick hits on the bar's last beat.
+- **Accent.** A hit on a position where its role's weight is 0.8 or more is boosted by up to 50 % (`accent`).
+- **Mute, bypass, note safety.** `mute` closes everything and plays nothing while the clock runs; bypassed, `notes_in` passes through as in the other players. Hits close on stop, jump, mute, bypass, `AllOff` and `reset`; a swap of the pattern data never cuts a sounding hit. Nothing allocates in `process`.
+- **Meter values:** the playing pattern (0-based), the step index of the last started step, 1 while the transport runs.
+
+### Generate and Randomise
+
+`style` is only used by the panel's **GENERATE** button (the device itself ignores it): it writes the steps of the edited pattern from the role templates of the style (kick, snare or clap, hats and open hats on a bar of sixteenths; only the first lane of each role gets the template), thinned or thickened by `density` and jittered by `random.seed` (`atomik_devices::drum_generator::generate_pattern`, a pure function, so a seed always writes the same pattern). **RANDOMISE** is GENERATE with `random.seed` moved up by one (999 wraps to 0). Both are one undo step, and the lanes, length, resolution, swing and name of the pattern stay. The live `density` also applies on top of what is written.
+
+### Panel
+
+Four rack units: eight pattern slots (click edits, Ctrl/Cmd-click also plays it, double-click renames), the name line, ADD / DUP / DEL / COPY / PASTE / CLEAR, GENERATE and RANDOMISE, the twelve knobs, and the grid of 16 lanes by 16 steps with a page selector (1-16, 17-32, 33-48 and 49-64, the pages beyond the length are dim) and a length stepper (Shift steps by four). A click on a cell toggles the step, a vertical drag sets its velocity (one undo step), the small square at the left of a lane mutes it, and the column of the playing step is lit from the meter values. The lane labels are the pad names of the drum machine the generator is cabled to (directly or through other players) for the keys 36 to 51, else the note names. Resolution and swing of a pattern are stored but have no control yet.
+
+### Starting points
+
+Press GENERATE after choosing them (a pattern is written from the style, so the same settings always give the same pattern):
+
+- **Four on the floor.** `style` four on the floor (the default).
+- **Broken beat.** `style` broken beat, `density` 0.2, `variation` 0.4.
+- **Half time.** `style` half time, `fill.every` 4 bars, `accent` 0.5.
+
+---
+
 ## Container: `atomik.container` (Container, "Containers")
 
 A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.

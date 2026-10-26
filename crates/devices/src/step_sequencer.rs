@@ -228,7 +228,7 @@ impl StepSequencer {
     }
 
     fn pattern(&self, index: usize) -> Option<&PatternData> {
-        let d = self.data.as_deref()?.notes();
+        let d = self.data.as_deref()?.notes()?;
         let last = usize::from(d.count).max(1) - 1;
         d.pattern(index.min(last))
     }

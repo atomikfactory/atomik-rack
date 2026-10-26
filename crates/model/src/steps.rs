@@ -300,10 +300,16 @@ impl StepSeqDoc {
 /// The pattern data the engine gets for `device`, or `None` when its type takes none. A
 /// sequencer without stored `steps` gets the default (one empty pattern); a type that takes
 /// curves (`Registry::takes_curves`) gets [`PlayerData::CvSeq`] with its curves (flat when none
-/// are stored), any other [`PlayerData::StepSeq`].
+/// are stored), any other [`PlayerData::StepSeq`]. A type that takes drum data
+/// (`Registry::takes_drums`) gets [`PlayerData::Drums`] from its [`RackDevice::drums`] (one empty
+/// pattern when none are stored).
 pub fn player_data_for(device: &RackDevice, registry: &Registry) -> Option<PlayerDataRef> {
     if !registry.takes_player_data(&device.type_id) {
         return None;
+    }
+    if registry.takes_drums(&device.type_id) {
+        let drums = device.drums.clone().unwrap_or_default();
+        return Some(Arc::new(drums.to_player_data()));
     }
     let notes = device
         .steps

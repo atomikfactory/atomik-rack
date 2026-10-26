@@ -386,6 +386,15 @@ impl RackView {
             },
             UiAction::SlicesToTrack { device } => UiAction::SlicesToTrack { device: k(device) },
             UiAction::OpenSeqEditor { device } => UiAction::OpenSeqEditor { device: k(device) },
+            UiAction::GenerateDrums {
+                device,
+                index,
+                randomise,
+            } => UiAction::GenerateDrums {
+                device: k(device),
+                index,
+                randomise,
+            },
             UiAction::ControlMenu { device, param, at } => UiAction::ControlMenu {
                 device: k(device),
                 param,
@@ -499,6 +508,54 @@ impl RackView {
                 index,
                 curves,
                 merge,
+            },
+            Command::SetDrumStep {
+                device,
+                index,
+                lane,
+                step,
+                velocity,
+                prob,
+                merge,
+            } => Command::SetDrumStep {
+                device: k(device),
+                index,
+                lane,
+                step,
+                velocity,
+                prob,
+                merge,
+            },
+            Command::SetDrumLane {
+                device,
+                index,
+                lane,
+                setting,
+            } => Command::SetDrumLane {
+                device: k(device),
+                index,
+                lane,
+                setting,
+            },
+            Command::SetDrumPattern {
+                device,
+                index,
+                pattern,
+                merge,
+            } => Command::SetDrumPattern {
+                device: k(device),
+                index,
+                pattern,
+                merge,
+            },
+            Command::AddDrumPattern { device } => Command::AddDrumPattern { device: k(device) },
+            Command::RemoveDrumPattern { device, index } => Command::RemoveDrumPattern {
+                device: k(device),
+                index,
+            },
+            Command::DuplicateDrumPattern { device, index } => Command::DuplicateDrumPattern {
+                device: k(device),
+                index,
             },
             other => other,
         })

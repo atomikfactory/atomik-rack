@@ -39,7 +39,8 @@
 use super::AppCore;
 use crate::sink::EngineSink;
 use crate::target::Target;
-use atomik_model::DeviceKey;
+use atomik_devices::drum_generator::{DrumStyle, generate_pattern};
+use atomik_model::{Command, DeviceKey, DrumPatternDoc};
 use atomik_ui::SeqEditorView;
 
 /// Whether devices of `type_id` are edited as step patterns (the step sequencer and the CV
@@ -161,6 +162,58 @@ impl<S: EngineSink> AppCore<S> {
         };
         let result = self.sink.set_device_player_data(id, Some(data));
         self.engine_result(result);
+    }
+
+    // ------------------------------------------------------------------ drum generator
+
+    /// GENERATE or RANDOMISE on a drum generator panel: writes the steps of pattern `index` from
+    /// the device's `style`, `density` and `random.seed` params ([`generate_pattern`], a pure
+    /// function of them, so the same seed writes the same pattern) as one undo step. RANDOMISE
+    /// first moves `random.seed` up by one (999 wraps to 0) in the same step. The lanes, the
+    /// length, the grid and the name of the pattern stay.
+    pub fn generate_drums(&mut self, device: DeviceKey, index: u8, randomise: bool) {
+        let Some(dev) = self
+            .doc()
+            .resolve(&device)
+            .filter(|d| self.registry.takes_drums(&d.type_id))
+        else {
+            return self.reject(format!("{device} is not a drum generator"));
+        };
+        let Some(desc) = self.registry.get(&dev.type_id).map(|f| f.descriptor) else {
+            return;
+        };
+        let value = |key: &str| {
+            desc.param_by_key(key).map_or(0.0, |p| {
+                p.clamp(dev.params.get(key).copied().unwrap_or(p.default))
+            })
+        };
+        let seed = value("random.seed").round() as u16;
+        let seed = if randomise { (seed + 1) % 1000 } else { seed };
+        let density = (f64::from(value("density")) * 100.0).round() / 100.0;
+        let style = DrumStyle::from_index(value("style").round() as usize);
+        let drums = dev.drums.clone().unwrap_or_default();
+        let Some(current) = drums.patterns.get(usize::from(index)) else {
+            return self.reject(format!("{device} has no pattern {}", index + 1));
+        };
+        let written = generate_pattern(&current.to_data(), style, density, u64::from(seed));
+        let pattern = DrumPatternDoc::from_data(&written, current.name.clone());
+        let mut batch = Vec::with_capacity(2);
+        if randomise {
+            batch.push(Command::SetParam {
+                key: device.clone(),
+                param: "random.seed".into(),
+                value: f32::from(seed),
+                merge: None,
+            });
+        }
+        batch.push(Command::SetDrumPattern {
+            device,
+            index,
+            pattern,
+            merge: None,
+        });
+        self.document.end_merge();
+        let _ = self.apply_command(Command::Batch(batch));
     }
 
     // ------------------------------------------------------------------ audition

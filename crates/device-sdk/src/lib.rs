@@ -19,8 +19,9 @@ pub use descriptor::{
 };
 pub use panel::{ControlKind, PanelControl, PanelLayout, PanelSocket, RACK_UNIT, RACK_WIDTH};
 pub use player::{
-    CURVE_ROWS, CurveStep, CvSeqData, MAX_PATTERNS, MAX_STEPS, PatternData, PlayerData,
-    PlayerDataRef, SeqResolution, StepData, StepSeqData,
+    CURVE_ROWS, CurveStep, CvSeqData, DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole,
+    DrumStep, MAX_PATTERNS, MAX_STEPS, PatternData, PlayerData, PlayerDataRef, SeqResolution,
+    StepData, StepSeqData,
 };
 pub use plugin::{
     CLAP_PREFIX, Channels, MAX_INTERNED_DESCRIPTORS, MAX_PLUGIN_PARAMS, PluginFormat,

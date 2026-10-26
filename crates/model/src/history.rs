@@ -5,6 +5,7 @@ use crate::WriteMode;
 use crate::console::{CompareState, ConsoleBus, ConsoleChannel, MixerSnapshot, VcaGroup};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
 use crate::curves::CurveDoc;
+use crate::drums::DrumDoc;
 use crate::freeze::Frozen;
 use crate::groove::Groove;
 use crate::macros::MacroSet;
@@ -272,6 +273,12 @@ pub(crate) enum Edit {
         key: DeviceKey,
         old: Option<CurveDoc>,
         new: Option<CurveDoc>,
+    },
+    /// A drum generator's patterns (`None` is "none stored").
+    Drums {
+        key: DeviceKey,
+        old: Option<DrumDoc>,
+        new: Option<DrumDoc>,
     },
     /// The interface's input channel count.
     InputChannels {
@@ -619,6 +626,11 @@ impl Edit {
                 new: old,
             },
             Edit::Curves { key, old, new } => Edit::Curves {
+                key,
+                old: new,
+                new: old,
+            },
+            Edit::Drums { key, old, new } => Edit::Drums {
                 key,
                 old: new,
                 new: old,
@@ -1057,6 +1069,12 @@ impl Edit {
             }
             Edit::Curves { key, new, .. } => {
                 device_mut(doc, key).curves.clone_from(new);
+                vec![SyncOp::PatternsChanged {
+                    device: key.clone(),
+                }]
+            }
+            Edit::Drums { key, new, .. } => {
+                device_mut(doc, key).drums.clone_from(new);
                 vec![SyncOp::PatternsChanged {
                     device: key.clone(),
                 }]

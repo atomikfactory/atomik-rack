@@ -419,3 +419,26 @@ pub fn seq_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
     }
     std::sync::Arc::new(PlayerData::StepSeq(d))
 }
+
+/// Drum pattern data with a kick on the beats, a snare on the backbeats and hats on the eighths
+/// (a 16-step 1/16 pattern; the kick moves one step later per `variant`), for harness checks.
+pub fn drum_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
+    use atomik_device_sdk::{DrumData, DrumStep, PlayerData};
+    let mut d = DrumData::default();
+    let hit = |velocity| DrumStep {
+        velocity,
+        prob: 100,
+    };
+    for i in 0..16usize {
+        if i % 4 == usize::from(variant) % 4 {
+            d.patterns[0].steps[0][i] = hit(110);
+        }
+        if i % 8 == 4 {
+            d.patterns[0].steps[2][i] = hit(100);
+        }
+        if i % 2 == 0 {
+            d.patterns[0].steps[6][i] = hit(80);
+        }
+    }
+    std::sync::Arc::new(PlayerData::Drums(d))
+}

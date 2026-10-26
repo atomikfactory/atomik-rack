@@ -678,9 +678,9 @@ fn saved() -> (Document, Registry) {
 fn snapshots_round_trip_in_format_27_in_a_stable_text() {
     let (d, r) = saved();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 32);
+    assert_eq!(PROJECT_VERSION, 33);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 32);
+    assert_eq!(v["version"], 33);
     let snaps = &v["console"]["snapshots"];
     assert_eq!(snaps[0]["name"], "A");
     assert_eq!(snaps[1]["name"], "Chorus 2");
@@ -712,12 +712,12 @@ fn a_project_without_snapshots_differs_from_its_version_26_file_in_the_version_l
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("snapshots"));
-    let v26 = text.replace("\"version\": 32", "\"version\": 26");
+    let v26 = text.replace("\"version\": 33", "\"version\": 26");
     let loaded = load_project(&v26, &r).unwrap();
     assert!(loaded.console.snapshots.is_empty());
     assert_eq!(save_project(&loaded), text);
     // A file before the format has no field for them.
-    let with = save_project(saved().0.doc()).replace("\"version\": 32", "\"version\": 26");
+    let with = save_project(saved().0.doc()).replace("\"version\": 33", "\"version\": 26");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("snapshots"), "{e}");
 }

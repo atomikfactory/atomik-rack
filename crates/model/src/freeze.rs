@@ -284,6 +284,7 @@ pub(crate) fn apply(doc: &RackDoc, x: &mut ExpandedRack) {
             zones: Vec::new(),
             steps: None,
             curves: None,
+            drums: None,
             plugin: None,
             frozen: false,
         });
@@ -357,6 +358,12 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
         Command::SetZones { device, .. }
         | Command::SetPattern { device, .. }
         | Command::SetCurves { device, .. }
+        | Command::SetDrumStep { device, .. }
+        | Command::SetDrumLane { device, .. }
+        | Command::SetDrumPattern { device, .. }
+        | Command::AddDrumPattern { device }
+        | Command::RemoveDrumPattern { device, .. }
+        | Command::DuplicateDrumPattern { device, .. }
         | Command::AddPattern { device }
         | Command::RemovePattern { device, .. }
         | Command::DuplicatePattern { device, .. } => device_frozen(device),

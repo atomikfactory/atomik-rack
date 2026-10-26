@@ -302,6 +302,7 @@ pub mod controller_lane;
 pub mod cpu_canvas;
 pub mod cursor;
 pub mod display_list;
+pub mod drum_gen_panel;
 pub mod event;
 pub mod file_browser;
 pub mod fx;

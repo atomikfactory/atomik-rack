@@ -583,6 +583,11 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::CloseStepEditor => self.close_step_editor(),
             UiAction::CreateStepClip { device } => self.create_step_clip(device),
             UiAction::OpenSeqEditor { device } => self.open_seq_editor(device),
+            UiAction::GenerateDrums {
+                device,
+                index,
+                randomise,
+            } => self.generate_drums(device, index, randomise),
             UiAction::OpenContainerEditor { device, macros } => {
                 self.open_container_editor(device, macros)
             }

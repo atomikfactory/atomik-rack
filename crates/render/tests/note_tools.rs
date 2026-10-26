@@ -308,3 +308,101 @@ fn delay_of_zero_bounces_like_the_clip_and_a_repeat_adds_to_it() {
     let shifted = through_device("atomik.note-delay", &[("delay.sync", 7.0)]);
     assert!(bounce(&shifted, 512, 0) != direct);
 }
+
+// ---------------------------------------------------------------- drum generator
+
+/// The `drum-demo` project (a drum machine loaded with five procedurally generated sounds on
+/// the keys 36, 38, 39, 42 and 46) with its clip removed and a drum generator `gen` cabled to
+/// the drum machine, playing a generated pattern with `set` applied.
+fn generator_into_drums(set: &[(&str, f32)]) -> RackDoc {
+    let reg = default_registry();
+    let text = std::fs::read_to_string(demo_root().join("drum-demo.atomik")).unwrap();
+    let mut doc = atomik_model::load_project(&text, &reg).unwrap();
+    for track in &mut doc.song.tracks {
+        for lane in &mut track.lanes {
+            lane.clips.clear();
+        }
+    }
+    let mut b = Builder {
+        doc: Document::new(doc),
+    };
+    b.add("atomik.drum-generator", "gen");
+    b.connect(("gen", "notes_out"), ("drums", "notes_in"));
+    let base = atomik_model::DrumPatternDoc::default();
+    let written = atomik_devices::drum_generator::generate_pattern(
+        &base.to_data(),
+        atomik_devices::drum_generator::DrumStyle::BrokenBeat,
+        0.0,
+        3,
+    );
+    let mut pattern = atomik_model::DrumPatternDoc::from_data(&written, "Broken");
+    pattern.swing = 20;
+    b.apply(Command::SetDrumPattern {
+        device: key("gen"),
+        index: 0,
+        pattern,
+        merge: None,
+    });
+    for (p, v) in set {
+        b.set("gen", p, *v);
+    }
+    b.doc.doc().clone()
+}
+
+fn demo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/projects/drum-demo")
+}
+
+fn bounce_in_bundle(doc: &RackDoc, block: usize, workers: u16) -> Vec<u32> {
+    let options = ProjectOptions {
+        host_block: NonZeroUsize::new(block).unwrap(),
+        workers,
+        loop_count: None,
+    };
+    let r = render_doc_in(doc, &default_registry(), &options, Some(&demo_root())).unwrap();
+    r.channels.iter().flatten().map(|x| x.to_bits()).collect()
+}
+
+fn audible(bits: &[u32]) -> bool {
+    bits.iter().any(|b| f32::from_bits(*b).abs() > 1e-3)
+}
+
+#[test]
+fn drum_generator_bounce_into_a_drum_machine_is_bit_identical_across_blocks_and_workers() {
+    let set = [
+        ("density", 0.3),
+        ("variation", 0.6),
+        ("fill.every", 1.0),
+        ("fill.amount", 0.5),
+        ("accent", 0.4),
+        ("random.seed", 11.0),
+    ];
+    let doc = generator_into_drums(&set);
+    let reference = bounce_in_bundle(&doc, 512, 0);
+    assert!(audible(&reference), "the drum machine sounds");
+    for (block, workers) in [(64, 0), (333, 0), (512, 2)] {
+        assert!(
+            bounce_in_bundle(&doc, block, workers) == reference,
+            "block {block}, workers {workers}"
+        );
+    }
+}
+
+#[test]
+fn drum_generator_params_and_mute_change_what_the_drum_machine_plays() {
+    let plain = bounce_in_bundle(&generator_into_drums(&[]), 512, 0);
+    assert!(audible(&plain));
+    // Density and a changed seed play other hits; a muted generator plays nothing.
+    let denser = bounce_in_bundle(&generator_into_drums(&[("density", 0.8)]), 512, 0);
+    assert!(denser != plain, "density adds hits");
+    let seeded = bounce_in_bundle(
+        &generator_into_drums(&[("density", 0.8), ("random.seed", 5.0)]),
+        512,
+        0,
+    );
+    assert!(seeded != denser, "the seed draws other hits");
+    let muted = bounce_in_bundle(&generator_into_drums(&[("mute", 1.0)]), 512, 0);
+    assert!(!audible(&muted), "mute plays nothing");
+    // The same project bounces to the same samples twice.
+    assert!(bounce_in_bundle(&generator_into_drums(&[]), 512, 0) == plain);
+}

@@ -46,7 +46,7 @@ The plugin sandbox (each plugin instance in its own process), release pipeline a
 New original devices built from the existing DSP blocks, grouped by the gap they fill.
 
 - **Utility and CV.** An LFO is done; still missing are a CV mixer and merger, a splitter, an attenuator and inverter, a CV math device, a quantizer with scales, a sample-and-hold, a slew limiter, a gate and trigger processor, and an audio-rate envelope follower.
-- **Pattern and note tools.** A CV pattern sequencer, a scale and chord device, a note echo and a note delay, a note transposer and filter, and a drum pattern generator.
+- **Pattern and note tools.** Done: a note filter (transpose and key and velocity filters), a key and chord device, a note repeater and a note delay, a CV sequencer with two curve rows and chained patterns, a drum generator, a bypass on every player, and players that stack on an instrument. Still to come: recording a player's output into a clip (send to track), copy and paste of CV curves with their pattern, and controls for a drum pattern's resolution and swing.
 - **Instruments.** A wavetable synth, an FM synth, a granular sampler, a physical-modelling instrument, an organ, a monosynth with a mod matrix, and a semi-modular synth built from the CV devices.
 - **Effects.** Pitch shifter, vocoder, tape and saturation, rotary speaker, auto-filter and envelope filter, gate and expander, transient shaper, de-esser, a standalone limiter, a multiband dynamics device, a convolution reverb with an impulse browser, a tuner, and a stereo imager.
 - **Instrument patches.** A real patch format for every device: save, browse, tag and audition patches, with factory banks that ship with the application.

@@ -589,6 +589,18 @@ impl ContainerDoc {
                     ModelError::BadPatterns(format!("{} does not take curves", d.type_id)),
                 ));
             }
+            if d.drums.is_some() && !registry.takes_drums(&d.type_id) {
+                return Err(v(
+                    dev("drums"),
+                    ModelError::BadPatterns(format!("{} does not take drum data", d.type_id)),
+                ));
+            }
+            if d.steps.is_some() && registry.takes_drums(&d.type_id) {
+                return Err(v(
+                    dev("steps"),
+                    ModelError::BadPatterns(format!("{} takes drum data, not steps", d.type_id)),
+                ));
+            }
             if d.steps.is_some() && !registry.takes_player_data(&d.type_id) {
                 return Err(v(
                     dev("steps"),
@@ -849,10 +861,12 @@ pub(crate) fn new_device(
         folded: false,
         color: None,
         zones: Vec::new(),
-        steps: registry
-            .takes_player_data(desc.type_id)
+        steps: (registry.takes_player_data(desc.type_id) && !registry.takes_drums(desc.type_id))
             .then(crate::StepSeqDoc::default),
         curves: None,
+        drums: registry
+            .takes_drums(desc.type_id)
+            .then(crate::DrumDoc::default),
         inner: (desc.kind == DeviceKind::Container).then(Box::default),
         plugin: None,
         column: 0,

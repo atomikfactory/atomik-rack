@@ -234,6 +234,45 @@ fn project_inspect_reports_where_a_track_with_a_player_stack_enters() {
 }
 
 #[test]
+fn project_inspect_counts_the_drum_patterns_of_a_drum_generator() {
+    use atomik_model::{Command, Document, empty_doc};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let mut d = Document::new(empty_doc());
+    for (index, type_id, key) in [
+        (0, "atomik.drum-generator", "gen"),
+        (1, "atomik.step-sequencer", "seq"),
+    ] {
+        d.apply(
+            Command::AddDevice {
+                index,
+                type_id: type_id.into(),
+                key: Some(atomik_model::DeviceKey(key.into())),
+            },
+            &reg,
+        )
+        .unwrap();
+    }
+    d.apply(
+        Command::AddDrumPattern {
+            device: atomik_model::DeviceKey("gen".into()),
+        },
+        &reg,
+    )
+    .unwrap();
+    let path = tmp("drums.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let devices = r.parsed()["devices"].clone();
+    assert_eq!(devices[0]["type_id"], "atomik.drum-generator");
+    assert_eq!(devices[0]["drum_patterns"], 2);
+    assert_eq!(devices[0]["step_sequencer"], false);
+    assert_eq!(devices[1]["drum_patterns"], 0);
+    assert_eq!(devices[1]["step_sequencer"], true);
+}
+
+#[test]
 fn project_inspect_describes_a_project_and_a_patch() {
     let mut s = server();
     let p = call(

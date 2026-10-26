@@ -338,6 +338,7 @@ mod tests {
                 zones: Vec::new(),
                 steps: None,
                 curves: None,
+                drums: None,
                 inner: None,
                 plugin: None,
                 column: i % columns,

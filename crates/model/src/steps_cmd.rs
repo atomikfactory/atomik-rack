@@ -23,6 +23,12 @@ fn current(
     key: &DeviceKey,
 ) -> Result<(Option<StepSeqDoc>, StepSeqDoc), ModelError> {
     let d = rules::resolve(doc, key)?;
+    if registry.takes_drums(&d.type_id) {
+        return Err(bad(format!(
+            "{key} ({}) takes drum data, use the drum pattern commands",
+            d.type_id
+        )));
+    }
     if !registry.takes_player_data(&d.type_id) {
         return Err(bad(format!(
             "{key} ({}) does not take pattern data",
@@ -152,30 +158,41 @@ pub(crate) fn plan(
                 }
             });
             let edit = with_curves(steps(device.clone(), old, new), curves);
-            // The `pattern` param must keep pointing at a pattern: lower it in the same step.
-            let d = rules::resolve(doc, &device)?;
-            let Some(p) = registry
-                .get(&d.type_id)
-                .and_then(|f| f.descriptor.param_by_key(PATTERN_PARAM))
-            else {
-                return Ok(edit);
-            };
-            let stored = d.params.get(PATTERN_PARAM).copied();
-            if stored.unwrap_or(p.default) <= count as f32 {
-                return Ok(edit);
-            }
-            Ok(Edit::Compound(vec![
-                Edit::Param {
-                    key: device,
-                    param: PATTERN_PARAM.to_owned(),
-                    old: stored,
-                    new: Some(p.clamp(count as f32)),
-                    default: p.default,
-                },
-                edit,
-            ]))
+            lower_pattern_param(doc, registry, &device, count, edit)
         }
         command @ Command::SetCurves { .. } => crate::curves_cmd::plan(doc, registry, command),
         other => unreachable!("not a pattern command: {other:?}"),
     }
+}
+
+/// `edit` (a pattern removal that leaves `count` patterns), with the `pattern` param lowered in
+/// the same undo step when it would point past the end.
+pub(crate) fn lower_pattern_param(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+    count: usize,
+    edit: Edit,
+) -> Result<Edit, ModelError> {
+    let d = rules::resolve(doc, device)?;
+    let Some(p) = registry
+        .get(&d.type_id)
+        .and_then(|f| f.descriptor.param_by_key(PATTERN_PARAM))
+    else {
+        return Ok(edit);
+    };
+    let stored = d.params.get(PATTERN_PARAM).copied();
+    if stored.unwrap_or(p.default) <= count as f32 {
+        return Ok(edit);
+    }
+    Ok(Edit::Compound(vec![
+        Edit::Param {
+            key: device.clone(),
+            param: PATTERN_PARAM.to_owned(),
+            old: stored,
+            new: Some(p.clamp(count as f32)),
+            default: p.default,
+        },
+        edit,
+    ]))
 }

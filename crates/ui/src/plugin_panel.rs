@@ -238,6 +238,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,

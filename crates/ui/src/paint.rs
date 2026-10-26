@@ -628,7 +628,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     let label = crate::modsrc_panel::modsrc_label(p.key)
                         .unwrap_or_else(|| autolayout::control_label(p));
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
-                } else if info.spec.seq.is_some() || info.spec.arp.is_some() {
+                } else if info.spec.seq.is_some()
+                    || info.spec.arp.is_some()
+                    || info.spec.drum_gen.is_some()
+                {
                     let label = crate::seq_panel::player_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
@@ -667,6 +670,20 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     c,
                     theme,
                     &seq,
+                    device,
+                    pattern,
+                    &info.player,
+                    info.accent,
+                );
+            }
+            if let (Some(panel), Some(device)) = (info.spec.drum_gen, info.device) {
+                let pattern = desc
+                    .param_by_key("pattern")
+                    .map_or(1.0, |p| current_value(device, p));
+                crate::drum_gen_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
                     device,
                     pattern,
                     &info.player,

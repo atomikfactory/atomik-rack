@@ -5,8 +5,8 @@ mod common;
 
 use atomik_device_sdk::{PlayerData, Registry};
 use atomik_model::{
-    Command, CurveDoc, CurvePatternDoc, CurveStepDoc, Document, ModelError, PROJECT_VERSION,
-    PatternDoc, RackDoc, StepDoc, empty_doc, load_project, player_data_for, save_project,
+    Command, CurveDoc, CurvePatternDoc, CurveStepDoc, Document, ModelError, PatternDoc, RackDoc,
+    StepDoc, empty_doc, load_project, player_data_for, save_project,
 };
 use common::*;
 use serde_json::{Value, json};
@@ -81,17 +81,12 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 }
 
 #[test]
-fn the_format_is_version_32() {
-    assert_eq!(PROJECT_VERSION, 32);
-}
-
-#[test]
 fn curves_round_trip() {
     let r = registry();
     let d = project(&r);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 32);
+    assert_eq!(v["version"], 33);
     let devices = v["devices"].as_array().unwrap();
     assert!(devices[0].get("curves").is_none(), "the synth has none");
     assert!(devices[2].get("curves").is_none(), "nor the step sequencer");
@@ -161,7 +156,7 @@ fn old_projects_load_without_curves() {
         plain.apply(add(i, t, Some(k)), &r).unwrap();
     }
     let text = save_project(plain.doc());
-    let old = text.replacen("\"version\": 32", "\"version\": 31", 1);
+    let old = text.replacen("\"version\": 33", "\"version\": 31", 1);
     assert_ne!(old, text);
     let doc = load_project(&old, &r).unwrap();
     assert_eq!(device(&doc, "c").curves, None);
