@@ -778,6 +778,9 @@ impl<S: EngineSink> AppCore<S> {
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         self.slice_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
+        // The clip inspector shows what the arrangement has selected.
+        self.transport_bar
+            .set_inspector(self.arrangement.audio_inspector());
         self.transport_bar.sync(doc, &self.registry);
         self.console.sync(doc, &self.registry);
         // The sampler was removed: the arrangement shows again.
@@ -2512,6 +2515,10 @@ mod marker_tests;
 #[cfg(test)]
 #[path = "app_core_audio_edit_tests.rs"]
 mod audio_edit_tests;
+
+#[cfg(test)]
+#[path = "app_core_inspector_tests.rs"]
+mod inspector_tests;
 
 #[cfg(test)]
 #[path = "app_core_warp_tests.rs"]
