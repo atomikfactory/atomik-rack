@@ -25,6 +25,7 @@ fn shell_with(os: Os, profile: Option<Profile>, settings: Option<PathBuf>) -> Sh
             settings_path: settings,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
@@ -503,6 +504,7 @@ fn the_vertical_zooms_are_saved_in_the_window_state_and_restored_at_start() {
                 settings_path: None,
                 ui_state_path: Some(path.clone()),
                 library_path: None,
+                library_root: None,
             },
         );
         s.handle(&UiEvent::Resize(Size::new(1100.0, 800.0)));

@@ -16,6 +16,7 @@ fn shell_with(in_window_menu: bool, settings_path: Option<PathBuf>) -> Shell<Nul
             settings_path,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(2.0));

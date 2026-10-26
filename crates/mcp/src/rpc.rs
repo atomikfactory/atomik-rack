@@ -17,7 +17,7 @@ const INVALID_PARAMS: i64 = -32602;
 /// What the model reads once, when it connects.
 const INSTRUCTIONS: &str = "Atomik Rack QA tools. Stateless: list_devices, project_inspect, \
 validate, bounce (project or patch to WAV, with the audio report), analyze_audio, compare_audio \
-(against a reference render), list_plugins. Stateful (one headless app at a time): session_open, \
+(against a reference render), list_plugins, library_list (the items of a library folder). Stateful (one headless app at a time): session_open, \
 then session_commands / session_command (menu commands), session_pointer and session_key (input), \
 session_texts (every text the UI draws, with positions), session_screenshot (PNG), session_status, \
 session_set_param (turn a device's knob: a channel strip's trim, polarity, parallel compressor or an insert's bypass), session_meters (what the spectrum and phase meter devices show at a position), session_bounce (render what the session holds), session_save, session_close. The session has no \
@@ -41,6 +41,7 @@ pub fn all_tools() -> impl Iterator<Item = &'static Tool> {
         .chain(session::TOOLS.iter())
         .chain(crate::midi_tools::TOOLS.iter())
         .chain(crate::macro_tools::TOOLS.iter())
+        .chain(crate::library_tools::TOOLS.iter())
 }
 
 /// The server state: the folders it may touch and the open session.

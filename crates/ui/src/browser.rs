@@ -4,6 +4,7 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::plugin_data::{FailedFileInfo, PluginEntryInfo, PluginEntryStatus, format_badge};
 use crate::theme::Theme;
 use atomik_device_sdk::{DeviceDescriptor, DeviceKind, PluginKindHint, Registry};
+use atomik_library::{FileKind, FileRow, ItemInfo};
 use vello::kurbo::{Circle, Line, Point, Rect, RoundedRect};
 
 /// Width of the browser panel in logical units.
@@ -212,6 +213,50 @@ fn group_of(type_id: &str) -> u8 {
 /// Type id of the audio-track device (hidden from the browser).
 pub const AUDIO_TRACK_TYPE: &str = "atomik.audio-track";
 
+/// Whether a device type is offered for creation by hand: the filter of the device browser and
+/// of the library's device rows. `show_console` is the console toggle and `scope_depth` how
+/// deep inside containers the rack view is (0 at the top).
+pub fn is_offered(desc: &DeviceDescriptor, show_console: bool, scope_depth: usize) -> bool {
+    let console = desc.type_id == crate::console_layout::CHANNEL_TYPE
+        || desc.type_id == crate::console_layout::MASTER_TYPE;
+    // Console devices are never offered inside a container.
+    (!console || (show_console && scope_depth == 0))
+        // Audio tracks are created as tracks (AddAudioTrack), never dropped into the rack.
+        && desc.type_id != AUDIO_TRACK_TYPE
+        // Output buses are created by the console, never from the browser (even with the
+        // console toggle on).
+        && desc.type_id != crate::console_layout::BUS_TYPE
+        // Internal devices are created by the container expansion, never by hand.
+        && !is_internal(desc.type_id)
+        // A container may not nest deeper than the limit.
+        && (desc.type_id != CONTAINER_TYPE || scope_depth < atomik_model::MAX_CONTAINER_DEPTH)
+}
+
+/// The rows of the library's **Devices** section: every device the browser offers at the top
+/// of the rack (without the console), in the browser's order, as virtual rows whose path is
+/// [`atomik_library::device_uri`] (never a file) and whose category and detail are the kind
+/// label (`INSTRUMENT`, `EFFECT`, `PLAYER`, ...).
+pub fn device_rows(registry: &Registry) -> Vec<FileRow> {
+    let browser = Browser::default();
+    browser
+        .rows(registry)
+        .into_iter()
+        .map(|d| FileRow {
+            path: atomik_library::device_uri(d.type_id),
+            name: d.name.to_string(),
+            kind: FileKind::Device,
+            size: 0,
+            info: None,
+            item: Some(ItemInfo {
+                detail: kind_label(d).to_string(),
+                category: kind_label(d).to_string(),
+            }),
+            favorite: false,
+            tags: Vec::new(),
+        })
+        .collect()
+}
+
 impl Browser {
     /// Matching descriptors in registry (type id) order, the players next as their
     /// own group, the containers last. Inside a container (see
@@ -220,21 +265,7 @@ impl Browser {
         let mut rows: Vec<&'static DeviceDescriptor> = registry
             .type_ids()
             .filter_map(|id| registry.get(id).map(|f| f.descriptor))
-            .filter(|d| {
-                let console = d.type_id == crate::console_layout::CHANNEL_TYPE
-                    || d.type_id == crate::console_layout::MASTER_TYPE;
-                // Console devices are never offered inside a container.
-                !console || (self.show_console && self.scope_depth == 0)
-            })
-            // Audio tracks are created as tracks (AddAudioTrack), never dropped into the rack.
-            .filter(|d| d.type_id != AUDIO_TRACK_TYPE)
-            // Output buses are created by the console, never from the browser (even with the
-            // console toggle on).
-            .filter(|d| d.type_id != crate::console_layout::BUS_TYPE)
-            // Internal devices are created by the container expansion, never by hand.
-            .filter(|d| !is_internal(d.type_id))
-            // A container may not nest deeper than the limit.
-            .filter(|d| d.type_id != CONTAINER_TYPE || !self.at_nesting_limit())
+            .filter(|d| is_offered(d, self.show_console, self.scope_depth))
             .filter(|d| self.create.is_none_or(|k| k.accepts(d)))
             .filter(|d| matches(d, &self.query))
             .collect();
@@ -690,6 +721,68 @@ mod tests {
         assert!(!ids(&browser).contains(&CONTAINER_TYPE));
         assert_eq!(browser.hint(), Some(NESTING_HINT));
         assert!(ids(&browser).contains(&"atomik.poly-synth"));
+    }
+
+    #[test]
+    fn device_rows_are_the_browsers_top_level_devices_as_virtual_rows() {
+        let reg = registry();
+        let rows = device_rows(&reg);
+        let browser = Browser::default();
+        let expect: Vec<&DeviceDescriptor> = browser.rows(&reg);
+        assert!(!rows.is_empty());
+        assert_eq!(rows.len(), expect.len());
+        for (row, d) in rows.iter().zip(expect) {
+            assert_eq!(atomik_library::device_type_of(&row.path), Some(d.type_id));
+            assert_eq!(row.name, d.name);
+            assert_eq!(row.kind, FileKind::Device);
+            assert_eq!((row.size, row.info, row.favorite), (0, None, false));
+            let item = row.item.as_ref().expect("devices carry their info");
+            assert_eq!(item.category, kind_label(d));
+            assert_eq!(item.detail, item.category);
+        }
+    }
+
+    #[test]
+    fn device_rows_leave_out_what_the_browser_hides_and_keep_containers_and_players() {
+        let reg = registry();
+        let ids: Vec<String> = device_rows(&reg)
+            .iter()
+            .filter_map(|r| atomik_library::device_type_of(&r.path).map(str::to_string))
+            .collect();
+        for hidden in [
+            AUDIO_TRACK_TYPE,
+            "atomik.bus",
+            "atomik.channel",
+            "atomik.master",
+            "atomik.note-split",
+        ] {
+            assert!(!ids.iter().any(|i| i == hidden), "{hidden}");
+        }
+        for shown in [CONTAINER_TYPE, "atomik.arpeggiator", "atomik.mod-source"] {
+            assert!(ids.iter().any(|i| i == shown), "{shown}");
+        }
+        let kinds: Vec<String> = device_rows(&reg)
+            .into_iter()
+            .filter_map(|r| r.item.map(|i| i.category))
+            .collect();
+        assert!(kinds.iter().any(|k| k == "PLAYER") && kinds.iter().any(|k| k == "CONTAINER"));
+    }
+
+    #[test]
+    fn is_offered_applies_the_browsers_filters_to_one_descriptor() {
+        let reg = registry();
+        let d = |id: &str| reg.get(id).unwrap().descriptor;
+        assert!(is_offered(d("atomik.poly-synth"), false, 0));
+        assert!(!is_offered(d("atomik.channel"), false, 0));
+        assert!(is_offered(d("atomik.channel"), true, 0));
+        assert!(!is_offered(d("atomik.channel"), true, 1));
+        assert!(!is_offered(d(AUDIO_TRACK_TYPE), true, 0));
+        assert!(is_offered(d(CONTAINER_TYPE), false, 0));
+        assert!(!is_offered(
+            d(CONTAINER_TYPE),
+            false,
+            atomik_model::MAX_CONTAINER_DEPTH
+        ));
     }
 
     #[test]

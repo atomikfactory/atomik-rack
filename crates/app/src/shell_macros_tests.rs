@@ -21,6 +21,7 @@ fn shell() -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));

@@ -1,18 +1,27 @@
 //! The file browser's worker threads and every disk access it makes besides the library file.
 //!
-//! Three threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
-//! and tag places, the drives, and walks folders for the recursive search; `atomik-probe` reads
-//! audio headers; `atomik-preview` decodes the file being previewed into the engine's ring.
-//! They answer over one channel of [`BrowseMsg`]s which [`crate::AppCore`] drains with
-//! `try_recv` every frame. Each submitted job ends with exactly one [`BrowseMsg::Done`] (also
-//! when it panics or the result is stale), so the core can count jobs in flight.
+//! Four threads, all message-passing: `atomik-browse` lists folders, sub-folders, favourite
+//! and tag places, the drives, and walks folders for the recursive search and the library
+//! sections; `atomik-probe` reads audio headers and summarises library items; `atomik-library`
+//! copies the audio of a saved library item beside it; `atomik-preview` decodes the file being
+//! previewed into the engine's ring. They answer over one channel of [`BrowseMsg`]s which
+//! [`crate::AppCore`] drains with `try_recv` every frame. Each submitted job ends with exactly
+//! one [`BrowseMsg::Done`] (also when it panics or the result is stale), so the core can count
+//! jobs in flight.
 //!
-//! Nothing here writes, moves or deletes a user file: the functions only read directories,
-//! metadata and audio files.
+//! Nothing here moves or deletes a user file, and the only thing written is the audio copied
+//! into the sibling bundle of an item just saved to the library ([`copy_assets`]): the
+//! functions otherwise only read directories, metadata, audio files and small library items.
+//! A device URI (the virtual path of a built-in device row) is never a file:
+//! [`split_devices`] takes it out before any lookup, and the probe and stat functions skip it
+//! again.
 
-use atomik_audio_file::{StreamDecoder, probe_file};
+use atomik_audio_file::{Bundle, StreamDecoder, probe_file};
 use atomik_engine::PreviewFeed;
-use atomik_library::{AudioInfo, FileKind, FileRow, classify, natural_cmp};
+use atomik_library::{
+    AudioInfo, FileKind, FileRow, ItemInfo, LibrarySection, classify, device_type_of, natural_cmp,
+};
+use atomik_model::{ItemKind, summarize_item};
 use atomik_ui::TreeChild;
 use std::collections::{BTreeSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -32,6 +41,8 @@ pub(crate) const PROBE_BATCH: usize = 256;
 const FIRST_CHUNK: usize = 2_048;
 /// Frames of every later chunk.
 const CHUNK: usize = 8_192;
+/// The largest library item whose text the probe reads (bigger files get no detail).
+pub(crate) const ITEM_PROBE_MAX: u64 = 8 * 1024 * 1024;
 /// Paths probed between two looks at the request channel (newer requests go first).
 const PROBE_SLICE: usize = 16;
 
@@ -42,8 +53,12 @@ pub(crate) enum BrowseJob {
     List { generation: u64, path: PathBuf },
     /// Sub-folders of `path` for the tree.
     Children(PathBuf),
-    /// Audio files below `root` at depth 2 and deeper, streamed in batches.
-    Walk { generation: u64, root: PathBuf },
+    /// Rows below `root`, streamed in batches (see [`WalkScope`]).
+    Walk {
+        generation: u64,
+        root: PathBuf,
+        scope: WalkScope,
+    },
     /// Rows for these files (favourites and tag places); missing files are left out.
     Stat {
         generation: u64,
@@ -51,6 +66,17 @@ pub(crate) enum BrowseJob {
     },
     /// Drives (or `/`) and the home folder.
     Roots,
+}
+
+/// What a walk lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WalkScope {
+    /// The audio files and items at depth 2 and deeper (the recursive search; the folder
+    /// itself is listed by [`BrowseJob::List`]).
+    Below,
+    /// The items of one library section at any depth from the root, no folders and nothing
+    /// else.
+    Section(LibrarySection),
 }
 
 /// An answer from a worker.
@@ -75,12 +101,49 @@ pub(crate) enum BrowseMsg {
     Roots(Vec<PathBuf>),
     /// Probed headers.
     Info(Vec<(PathBuf, AudioInfo)>),
+    /// Summaries of library items.
+    ItemInfo(Vec<(PathBuf, ItemInfo)>),
     /// The decoder of this preview opened; its length when stated.
     PreviewTotal { path: PathBuf, frames: Option<u64> },
     /// A preview could not be decoded (or broke off).
     PreviewFailed { path: PathBuf, error: String },
+    /// The audio of a saved library item was copied (or could not be).
+    AssetsCopied {
+        name: String,
+        section: LibrarySection,
+        path: PathBuf,
+        report: CopyReport,
+    },
     /// One submitted job (or probe request) ended.
     Done,
+}
+
+/// The audio of a library item just saved, to copy beside it.
+#[derive(Debug)]
+pub(crate) struct CopyAssets {
+    /// The item's name, for the message that comes back.
+    pub(crate) name: String,
+    /// The section the item went to.
+    pub(crate) section: LibrarySection,
+    /// The item file.
+    pub(crate) path: PathBuf,
+    /// The bundle of the project the audio is in (`None`: it has none).
+    pub(crate) from: Option<Bundle>,
+    /// The item's sibling bundle folder (`<item stem>/`; its `Audio/` gets the files).
+    pub(crate) to_root: PathBuf,
+    /// The asset ids to copy.
+    pub(crate) hashes: Vec<String>,
+}
+
+/// What [`copy_assets`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct CopyReport {
+    /// Files written.
+    pub(crate) copied: usize,
+    /// Assets the project's bundle does not hold (not copied).
+    pub(crate) missing: usize,
+    /// The first write error, if any.
+    pub(crate) error: Option<String>,
 }
 
 /// A request for the `atomik-preview` thread.
@@ -96,30 +159,35 @@ pub(crate) struct Workers {
     browse: Sender<BrowseJob>,
     probe: Sender<Vec<PathBuf>>,
     preview: Sender<PreviewJob>,
-    /// Answers of all three workers.
+    library: Sender<CopyAssets>,
+    /// Answers of all four workers.
     pub(crate) rx: Receiver<BrowseMsg>,
     /// Bumped by the core whenever a listing is replaced; walks stop when theirs is stale.
     pub(crate) generation: Arc<AtomicU64>,
 }
 
 impl Workers {
-    /// Starts the three threads.
+    /// Starts the four threads.
     pub(crate) fn spawn() -> Self {
         let (tx, rx) = channel();
         let generation = Arc::new(AtomicU64::new(0));
         let (browse, browse_rx) = channel();
         let (probe, probe_rx) = channel();
         let (preview, preview_rx) = channel();
+        let (library, library_rx) = channel();
         let t = tx.clone();
         let g = Arc::clone(&generation);
         spawn_named("atomik-browse", move || browse_thread(&browse_rx, &t, &g));
         let t = tx.clone();
         spawn_named("atomik-probe", move || probe_thread(&probe_rx, &t));
+        let t = tx.clone();
+        spawn_named("atomik-library", move || library_thread(&library_rx, &t));
         spawn_named("atomik-preview", move || preview_thread(&preview_rx, &tx));
         Self {
             browse,
             probe,
             preview,
+            library,
             rx,
             generation,
         }
@@ -138,6 +206,11 @@ impl Workers {
     /// Hands a preview to the decoder thread; false when the thread is gone.
     pub(crate) fn preview(&self, job: PreviewJob) -> bool {
         self.preview.send(job).is_ok()
+    }
+
+    /// Hands the audio of a saved item to the copy thread; false when the thread is gone.
+    pub(crate) fn copy_assets(&self, job: CopyAssets) -> bool {
+        self.library.send(job).is_ok()
     }
 
     /// The current generation.
@@ -225,7 +298,11 @@ fn run_job(
             ctx.tx.send(BrowseMsg::Stats { generation, rows }).is_ok()
         }
         BrowseJob::Roots => ctx.tx.send(BrowseMsg::Roots(roots())).is_ok(),
-        BrowseJob::Walk { generation, root } => walk(ctx, generation, &root, rx, backlog),
+        BrowseJob::Walk {
+            generation,
+            root,
+            scope,
+        } => walk(ctx, generation, &root, scope, rx, backlog),
     }
 }
 
@@ -265,6 +342,7 @@ fn row_of(entry: &std::fs::DirEntry, follow: bool) -> Option<FileRow> {
         kind,
         size: if is_dir { 0 } else { size },
         info: None,
+        item: None,
         favorite: false,
         tags: Vec::new(),
     })
@@ -312,11 +390,55 @@ fn disk_spelling(path: &Path) -> PathBuf {
     }
 }
 
-/// Rows for existing audio files; missing or non-audio paths are skipped.
+/// Splits the paths of a collection into real paths and the type ids of device URIs: a URI
+/// is built from the registry on the UI thread and must never be looked up on the disk.
+pub(crate) fn split_devices(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<String>) {
+    let mut files = Vec::new();
+    let mut devices = Vec::new();
+    for path in paths {
+        match device_type_of(path) {
+            Some(id) => devices.push(id.to_string()),
+            None => files.push(path.clone()),
+        }
+    }
+    (files, devices)
+}
+
+/// The item kind a row kind is summarised as (`None` for folders, audio and devices).
+pub(crate) fn item_kind_of(kind: FileKind) -> Option<ItemKind> {
+    match kind {
+        FileKind::Patch => Some(ItemKind::Patch),
+        FileKind::Container => Some(ItemKind::Container),
+        FileKind::Clip => Some(ItemKind::Clip),
+        FileKind::Project => Some(ItemKind::Project),
+        FileKind::Folder | FileKind::Audio(_) | FileKind::Device => None,
+    }
+}
+
+/// The detail of the library item at `path`: its text is read (up to [`ITEM_PROBE_MAX`]
+/// bytes) and summarised. `None` for a file that is too big, unreadable or not that kind of
+/// item.
+pub(crate) fn item_info(path: &Path, kind: FileKind) -> Option<ItemInfo> {
+    let kind = item_kind_of(kind)?;
+    if std::fs::metadata(path).ok()?.len() > ITEM_PROBE_MAX {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let summary = summarize_item(kind, &text)?;
+    Some(ItemInfo {
+        detail: summary.detail,
+        category: String::new(),
+    })
+}
+
+/// Rows for existing audio files and items; missing or other paths are skipped.
 pub(crate) fn stat_files(paths: &[PathBuf]) -> Vec<FileRow> {
     paths
         .iter()
         .filter_map(|path| {
+            if device_type_of(path).is_some() {
+                return None;
+            }
             let meta = std::fs::metadata(path).ok()?;
             if meta.is_dir() {
                 return None;
@@ -331,6 +453,7 @@ pub(crate) fn stat_files(paths: &[PathBuf]) -> Vec<FileRow> {
                 kind,
                 size: meta.len(),
                 info: None,
+                item: None,
                 favorite: false,
                 tags: Vec::new(),
             })
@@ -364,18 +487,21 @@ pub(crate) fn roots() -> Vec<PathBuf> {
     out
 }
 
-/// Streams the audio files below `root` (depth 2 and deeper) in batches until done, capped or
-/// stale. Jobs that arrive meanwhile run at once (the tree must not wait for a long walk);
+/// Streams the rows below `root` in batches (`scope` says which) until done, capped or stale. Jobs that arrive meanwhile run at once (the tree must not wait for a long walk);
 /// another walk waits in `backlog` (it is newer, so this one is stale anyway).
 fn walk(
     ctx: &BrowseCtx<'_>,
     generation: u64,
     root: &Path,
+    scope: WalkScope,
     rx: &Receiver<BrowseJob>,
     backlog: &mut VecDeque<BrowseJob>,
 ) -> bool {
     let stale = || ctx.generation.load(Ordering::Acquire) != generation;
-    let mut dirs: Vec<PathBuf> = sub_dirs(root);
+    let mut dirs: Vec<PathBuf> = match scope {
+        WalkScope::Below => sub_dirs(root),
+        WalkScope::Section(_) => vec![root.to_path_buf()],
+    };
     let mut batch: Vec<FileRow> = Vec::new();
     let mut total = 0usize;
     while let Some(dir) = dirs.pop() {
@@ -408,6 +534,8 @@ fn walk(
             };
             if row.kind == FileKind::Folder {
                 sub.push(row.path);
+            } else if matches!(scope, WalkScope::Section(section) if !section.accepts(row.kind)) {
+                continue;
             } else {
                 batch.push(row);
                 total += 1;
@@ -486,19 +614,38 @@ fn probe_thread(rx: &Receiver<Vec<PathBuf>>, tx: &Sender<BrowseMsg>) {
             enqueue(&mut queue, &mut queued, paths);
         }
         let mut results: Vec<(PathBuf, AudioInfo)> = Vec::new();
+        let mut items: Vec<(PathBuf, ItemInfo)> = Vec::new();
         for _ in 0..PROBE_SLICE {
             let Some(path) = queue.pop_front() else {
                 break;
             };
             queued.remove(&path);
-            if let Ok(Ok(info)) = catch_unwind(AssertUnwindSafe(|| probe_file(&path))) {
-                results.push((path, info));
+            // A device URI is not a file; nothing about it is read.
+            if device_type_of(&path).is_some() {
+                continue;
             }
-            if results.len() >= PROBE_BATCH {
+            match classify(&path, false).filter(|k| k.is_item()) {
+                Some(kind) => {
+                    if let Ok(Some(info)) =
+                        catch_unwind(AssertUnwindSafe(|| item_info(&path, kind)))
+                    {
+                        items.push((path, info));
+                    }
+                }
+                None => {
+                    if let Ok(Ok(info)) = catch_unwind(AssertUnwindSafe(|| probe_file(&path))) {
+                        results.push((path, info));
+                    }
+                }
+            }
+            if results.len() + items.len() >= PROBE_BATCH {
                 break;
             }
         }
         if !results.is_empty() && tx.send(BrowseMsg::Info(results)).is_err() {
+            return;
+        }
+        if !items.is_empty() && tx.send(BrowseMsg::ItemInfo(items)).is_err() {
             return;
         }
     }
@@ -521,6 +668,91 @@ fn finish_requests(tx: &Sender<BrowseMsg>, requests: &mut usize) -> bool {
         }
     }
     true
+}
+
+// -------------------------------------------------------------------------------- library
+
+fn library_thread(rx: &Receiver<CopyAssets>, tx: &Sender<BrowseMsg>) {
+    while let Ok(job) = rx.recv() {
+        let report =
+            catch_unwind(AssertUnwindSafe(|| copy_assets(&job))).unwrap_or_else(|_| CopyReport {
+                error: Some("the copy stopped unexpectedly".into()),
+                ..CopyReport::default()
+            });
+        let CopyAssets {
+            name,
+            section,
+            path,
+            ..
+        } = job;
+        let msg = BrowseMsg::AssetsCopied {
+            name,
+            section,
+            path,
+            report,
+        };
+        if tx.send(msg).is_err() || tx.send(BrowseMsg::Done).is_err() {
+            return;
+        }
+    }
+}
+
+/// Copies `<hash>.wav` of every asset from the project's bundle into `<to_root>/Audio/`
+/// (the item's sibling bundle, the layout a project bundle has). Assets the bundle lacks are
+/// counted, files already there are kept, and each file arrives through a temporary name so
+/// no partial file is ever visible. Nothing is made when there is nothing to copy.
+pub(crate) fn copy_assets(job: &CopyAssets) -> CopyReport {
+    let mut report = CopyReport::default();
+    let Some(from) = &job.from else {
+        report.missing = job.hashes.len();
+        return report;
+    };
+    let present: Vec<&String> = job
+        .hashes
+        .iter()
+        .filter(|h| from.asset_path(h).is_file())
+        .collect();
+    report.missing = job.hashes.len() - present.len();
+    if present.is_empty() {
+        return report;
+    }
+    let to = std::fs::create_dir_all(job.to_root.join("Audio"))
+        .map_err(|e| e.to_string())
+        .and_then(|()| Bundle::open(&job.to_root).map_err(|e| e.to_string()));
+    let to = match to {
+        Ok(to) => to,
+        Err(e) => {
+            report.error = Some(format!("{}: {e}", job.to_root.display()));
+            return report;
+        }
+    };
+    for hash in present {
+        let dst = to.asset_path(hash);
+        if dst.is_file() {
+            continue;
+        }
+        match copy_atomic(&from.asset_path(hash), &dst) {
+            Ok(()) => report.copied += 1,
+            Err(e) => {
+                report
+                    .error
+                    .get_or_insert(format!("{}: {e}", dst.display()));
+            }
+        }
+    }
+    report
+}
+
+/// Copies `src` to `dst` through a temporary file in the same folder, then renames.
+pub(crate) fn copy_atomic(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mut tmp = dst.as_os_str().to_owned();
+    tmp.push(".tmp~");
+    let tmp = PathBuf::from(tmp);
+    let result = std::fs::copy(src, &tmp).and_then(|_| std::fs::rename(&tmp, dst));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 // --------------------------------------------------------------------------------- preview
@@ -635,6 +867,8 @@ fn decode_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use atomik_audio_file::Bundle;
+    use atomik_library::device_uri;
     use std::sync::mpsc::channel;
 
     fn tmp(tag: &str) -> PathBuf {
@@ -666,7 +900,14 @@ mod tests {
             generation: &shared,
             cap,
         };
-        assert!(walk(&ctx, generation, root, &jobs_rx, &mut VecDeque::new()));
+        assert!(walk(
+            &ctx,
+            generation,
+            root,
+            WalkScope::Below,
+            &jobs_rx,
+            &mut VecDeque::new()
+        ));
         drop(tx);
         rx.try_iter()
             .map(|m| match m {
@@ -799,6 +1040,141 @@ mod tests {
         let dir = tmp("stale");
         touch(&dir.join("a"), "one.wav");
         assert!(walk_batches(&dir, 1, 2).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn walk_section(root: &Path, section: LibrarySection) -> Vec<String> {
+        let (tx, rx) = channel();
+        let (_jobs_tx, jobs_rx) = channel();
+        let shared = AtomicU64::new(1);
+        let ctx = BrowseCtx {
+            tx: &tx,
+            generation: &shared,
+            cap: WALK_CAP,
+        };
+        let scope = WalkScope::Section(section);
+        assert!(walk(&ctx, 1, root, scope, &jobs_rx, &mut VecDeque::new()));
+        drop(tx);
+        let mut names: Vec<String> = rx
+            .try_iter()
+            .flat_map(|m| match m {
+                BrowseMsg::Walked { rows, .. } => rows,
+                other => panic!("unexpected {other:?}"),
+            })
+            .map(|r| r.name)
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn walk_of_a_section_starts_at_the_root_and_keeps_only_its_items() {
+        let dir = tmp("section");
+        touch(&dir, "top.atomikpatch");
+        touch(&dir, "top.atomikclip");
+        touch(&dir.join("a"), "one.atomikpatch");
+        touch(&dir.join("a").join("b"), "two.ATOMIKPATCH");
+        touch(&dir.join("a"), "kick.wav");
+        touch(&dir.join("a"), "note.txt");
+        touch(&dir.join(".hid"), "no.atomikpatch");
+        assert_eq!(
+            walk_section(&dir, LibrarySection::Patches),
+            ["one.atomikpatch", "top.atomikpatch", "two.ATOMIKPATCH"]
+        );
+        assert_eq!(
+            walk_section(&dir, LibrarySection::Clips),
+            ["top.atomikclip"]
+        );
+        assert!(walk_section(&dir.join("missing"), LibrarySection::Patches).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn item_info_summarises_a_small_item_and_refuses_the_rest() {
+        let dir = tmp("iteminfo");
+        std::fs::write(
+            dir.join("a.atomikpatch"),
+            r#"{"devices":[{"name":"Delay"}]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("bad.atomikpatch"), "not json").unwrap();
+        let info = item_info(&dir.join("a.atomikpatch"), FileKind::Patch).unwrap();
+        assert_eq!(info.detail, "1 device: Delay");
+        assert!(info.category.is_empty());
+        assert_eq!(
+            item_info(&dir.join("bad.atomikpatch"), FileKind::Patch),
+            None
+        );
+        assert_eq!(
+            item_info(&dir.join("gone.atomikpatch"), FileKind::Patch),
+            None
+        );
+        // Over the size limit nothing is read.
+        let big = dir.join("big.atomikpatch");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(ITEM_PROBE_MAX + 1).unwrap();
+        assert_eq!(item_info(&big, FileKind::Patch), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stat_files_leaves_device_uris_out() {
+        let dir = tmp("staturi");
+        touch(&dir, "a.wav");
+        let rows = stat_files(&[device_uri("atomik.poly-synth"), dir.join("a.wav")]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "a.wav");
+        assert_eq!(
+            split_devices(&[device_uri("atomik.delay"), dir.join("a.wav")]),
+            (vec![dir.join("a.wav")], vec!["atomik.delay".to_string()])
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn copy_assets_copies_the_present_assets_and_counts_the_missing() {
+        let dir = tmp("copy");
+        let from = Bundle::create(&dir.join("song")).unwrap();
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        std::fs::write(from.asset_path(&a), b"audio").unwrap();
+        let job = CopyAssets {
+            name: "Kit".into(),
+            section: LibrarySection::Patches,
+            path: dir.join("lib/Kit.atomikpatch"),
+            from: Some(from),
+            to_root: dir.join("lib/Kit"),
+            hashes: vec![a.clone(), b, "not-a-hash".into()],
+        };
+        let report = copy_assets(&job);
+        assert_eq!((report.copied, report.missing, report.error), (1, 2, None));
+        let copied = dir.join("lib/Kit/Audio").join(format!("{a}.wav"));
+        assert_eq!(std::fs::read(&copied).unwrap(), b"audio");
+        let left: Vec<String> = std::fs::read_dir(dir.join("lib/Kit/Audio"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, [format!("{a}.wav")], "no temporary file is left");
+        // Again: what is there stays and is not copied twice.
+        let again = copy_assets(&job);
+        assert_eq!((again.copied, again.missing), (0, 2));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn copy_assets_without_a_source_bundle_counts_everything_missing() {
+        let dir = tmp("copy-none");
+        let job = CopyAssets {
+            name: "Kit".into(),
+            section: LibrarySection::Patches,
+            path: dir.join("Kit.atomikpatch"),
+            from: None,
+            to_root: dir.join("Kit"),
+            hashes: vec!["a".repeat(64)],
+        };
+        let report = copy_assets(&job);
+        assert_eq!((report.copied, report.missing), (0, 1));
+        assert!(!dir.join("Kit").exists(), "nothing to copy, nothing made");
         let _ = std::fs::remove_dir_all(dir);
     }
 

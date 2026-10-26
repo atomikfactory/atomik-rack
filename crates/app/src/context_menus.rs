@@ -28,6 +28,8 @@ pub struct MenuEnable {
     pub join: bool,
     /// Arrangement: a selected clip is a note clip (Open in the editor).
     pub open_clip: bool,
+    /// Arrangement: exactly one clip is selected and it is a note clip (Save Clip to Library).
+    pub save_clip: bool,
     /// Arrangement: every selected clip is muted ("Unmute" instead of "Mute").
     pub clips_muted: bool,
     /// Piano roll: every selected note is muted ("Unmute Notes" instead of "Mute Notes").
@@ -389,6 +391,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.assign_send", e.assign_send),
                 item("rack.disconnect", e.selection),
                 item("rack.go_to_track", e.has_track),
+                item("rack.save_to_library", e.selection && !e.master_only),
             ]);
             v
         }
@@ -476,6 +479,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.open_clip", e.open_clip),
                 item("sequencer.split_at_playhead", true),
                 item("sequencer.join", e.join),
+                item("sequencer.save_clip_to_library", e.save_clip),
                 Spec::Separator,
                 item("sequencer.toggle_mute", e.selection).labelled(if e.clips_muted {
                     "Unmute"
@@ -698,8 +702,31 @@ mod tests {
                 "rack.assign_send",
                 "rack.disconnect",
                 "rack.go_to_track",
+                "rack.save_to_library",
             ]
         );
+    }
+
+    #[test]
+    fn save_to_library_needs_a_selection_that_is_not_the_master_alone() {
+        let on = |e: &MenuEnable| {
+            ids(ContextTarget::Device, e)
+                .into_iter()
+                .find(|(c, _)| *c == "rack.save_to_library")
+                .unwrap()
+                .1
+        };
+        assert!(!on(&MenuEnable::default()), "nothing selected");
+        let some = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        assert!(on(&some));
+        let master = MenuEnable {
+            master_only: true,
+            ..some
+        };
+        assert!(!on(&master), "the Master Section cannot be saved");
     }
 
     #[test]
@@ -902,6 +929,24 @@ mod tests {
         e.open_clip = true;
         let list = ids(ContextTarget::Clip, &e);
         assert!(on(&list, "sequencer.join") && on(&list, "sequencer.open_clip"));
+    }
+
+    #[test]
+    fn the_clip_menu_enables_save_to_library_for_one_note_clip() {
+        let on = |e: &MenuEnable| {
+            ids(ContextTarget::Clip, e)
+                .into_iter()
+                .find(|(c, _)| *c == "sequencer.save_clip_to_library")
+                .unwrap()
+                .1
+        };
+        let mut e = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        assert!(!on(&e), "not exactly one note clip");
+        e.save_clip = true;
+        assert!(on(&e));
     }
 
     fn labels(target: ContextTarget, e: &MenuEnable) -> Vec<(&'static str, Option<&'static str>)> {

@@ -5,10 +5,22 @@
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
 use crate::keymap_store::WorkflowPrefs;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
-use atomik_ui::{Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
+use std::path::PathBuf;
 
 const ROW: f64 = 48.0;
 const GAP: f64 = 8.0;
+const BUTTON_W: f64 = 84.0;
+
+/// `text` with its head cut when longer than [`PATH_CHARS`] characters.
+fn shorten(text: &str) -> String {
+    let count = text.chars().count();
+    if count <= PATH_CHARS {
+        return text.to_string();
+    }
+    let tail: String = text.chars().skip(count - (PATH_CHARS - 1)).collect();
+    format!("…{tail}")
+}
 
 /// Which preference a switch edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,11 +50,29 @@ pub struct Toggle {
     pub on: bool,
 }
 
+/// The library folder row: the folder in use and its two buttons.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LibraryRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The folder as shown (shortened from the left), or the note that the default is used.
+    pub path: String,
+    /// **Choose...**: asks the platform for a folder.
+    pub choose: Rect,
+    /// **Default**: goes back to the default folder.
+    pub default: Rect,
+}
+
+/// Longest folder text shown, in characters; a longer path keeps its tail.
+const PATH_CHARS: usize = 44;
+
 /// Where the tab's parts are.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowLayout {
     /// The switches, top to bottom.
     pub toggles: Vec<Toggle>,
+    /// The library folder row under them.
+    pub library: LibraryRow,
     /// The note under them.
     pub note: (Point, String),
 }
@@ -63,6 +93,11 @@ impl WorkflowTab {
     /// The edited preferences.
     pub fn prefs(&self) -> &WorkflowPrefs {
         &self.prefs
+    }
+
+    /// Sets the library folder draft (`None`: the default folder).
+    pub(crate) fn set_library_folder(&mut self, folder: Option<PathBuf>) {
+        self.prefs.library_folder = folder;
     }
 
     fn get(&self, pref: Pref) -> bool {
@@ -122,8 +157,24 @@ impl WorkflowTab {
             });
             y += ROW + GAP;
         }
+        let library = LibraryRow {
+            rect: Rect::new(x0, y, x0 + inner, y + ROW),
+            path: self.prefs.library_folder.as_ref().map_or_else(
+                || "the default folder (Documents/Atomik Rack/Library)".to_string(),
+                |p| shorten(&p.to_string_lossy()),
+            ),
+            default: Rect::new(x0 + inner - BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+            choose: Rect::new(
+                x0 + inner - 2.0 * BUTTON_W - GAP,
+                y + 10.0,
+                x0 + inner - BUTTON_W - GAP,
+                y + 38.0,
+            ),
+        };
+        y += ROW + GAP;
         WorkflowLayout {
             toggles,
+            library,
             note: (
                 Point::new(x0, y + 12.0),
                 "Saved in workflow.json next to settings.json when you press Apply.".to_string(),
@@ -148,11 +199,14 @@ impl WorkflowTab {
                 button: PointerButton::Primary,
                 ..
             } => {
-                let hit = self
-                    .layout(panel)
-                    .toggles
-                    .into_iter()
-                    .find(|t| t.rect.contains(*pos));
+                let layout = self.layout(panel);
+                if layout.library.choose.contains(*pos) {
+                    return TabOutcome::PickLibraryFolder;
+                }
+                if layout.library.default.contains(*pos) {
+                    self.prefs.library_folder = None;
+                }
+                let hit = layout.toggles.into_iter().find(|t| t.rect.contains(*pos));
                 if let Some(t) = hit {
                     self.flip(t.pref);
                 }
@@ -192,6 +246,40 @@ impl WorkflowTab {
                 11.0,
                 theme.text_muted,
             ));
+        }
+        let lib = &l.library;
+        canvas.text(&TextRun::new(
+            "Library folder",
+            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 20.0),
+            13.0,
+            theme.text,
+        ));
+        canvas.text(&TextRun::new(
+            lib.path.clone(),
+            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 38.0),
+            11.0,
+            theme.text_muted,
+        ));
+        for (r, label) in [(lib.choose, "Choose..."), (lib.default, "Default")] {
+            let shape = RoundedRect::from_rect(r, 6.0);
+            let lit = self.hover.is_some_and(|p| r.contains(p));
+            canvas.fill_with(
+                shape,
+                if lit {
+                    theme.selection
+                } else {
+                    theme.browser_row
+                },
+            );
+            canvas.text(
+                &TextRun::new(
+                    label,
+                    Point::new(r.center().x, r.y0 + 18.5),
+                    12.0,
+                    theme.text,
+                )
+                .align(Align::Center),
+            );
         }
         canvas.text(&TextRun::new(
             l.note.1.clone(),

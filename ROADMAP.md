@@ -53,7 +53,7 @@ New original devices built from the existing DSP blocks, grouped by the gap they
 
 ## Phase 6: Library and projects
 
-- **Library of devices, patches and projects.** The browser handles audio files today; devices, patches, containers, clips and projects remain.
+- **Library of devices, patches and projects.** Done: the browser lists the built-in devices and the patches, containers, clips and projects of a library folder; Save to Library writes the selected devices, a container or a note clip with their samples; items load by double click or drag as one undo step, and projects open after the unsaved-changes question. Still to come: factory content, previews of clips and patches, and deleting items from the browser.
 - **Project templates and a start screen.** Templates for common set-ups and a recent-projects list.
 - **Collect and relocate.** Copy every file a project uses into its bundle, and relocate a project without breaking its links.
 - **Song information.** Notes, credits and a version history inside the project.

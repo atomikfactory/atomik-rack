@@ -6,13 +6,17 @@ use super::{FileBrowserView, Gesture, Hover, Pane, tree};
 use crate::action::Place;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::paint::fit_label;
-use atomik_library::{FileKind, FileRow, SortKey};
+use atomik_library::{FileKind, FileRow, LibrarySection, SortKey};
 use vello::kurbo::{Affine, BezPath, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
 const ROW_FONT: f32 = 11.0;
 const TREE_FONT: f32 = 10.0;
 const SMALL_FONT: f32 = 9.0;
+
+/// What an empty library section says.
+const EMPTY_SECTION_HINT: &str =
+    "Nothing saved yet: right-click a device or clip and choose Save to Library";
 
 fn baseline(r: Rect, size: f32) -> f64 {
     r.center().y + f64::from(size) * 0.35
@@ -280,7 +284,7 @@ impl FileBrowserView {
                 );
             }
             tree::Key::Folder { .. } => folder_glyph(c, ix, cy, t.text_muted),
-            tree::Key::Heading(_) => {}
+            tree::Key::Heading(_) | tree::Key::Library(_) => {}
         }
         let lx = ix + 11.0;
         let count = item.count.map(|n| n.to_string());
@@ -334,7 +338,7 @@ impl FileBrowserView {
         if let Some(e) = &self.entry {
             let label = match e.kind {
                 super::EntryKind::NewTag => "New tag",
-                super::EntryKind::RenameTag(_) => "Rename",
+                super::EntryKind::RenameTag(_) | super::EntryKind::RenameItem => "Rename",
             };
             c.text(&TextRun::new(
                 label,
@@ -391,6 +395,7 @@ impl FileBrowserView {
                 }
                 Some(Place::Favorites) => self.paint_place_title(c, bar, "Favourites"),
                 Some(Place::Tag(tag)) => self.paint_place_title(c, bar, &format!("#{tag}")),
+                Some(Place::Library(section)) => self.paint_place_title(c, bar, section.title()),
                 None => self.paint_place_title(c, bar, "No folder"),
             }
         }
@@ -491,10 +496,15 @@ impl FileBrowserView {
             self.list_scroll,
         );
         if self.view.is_empty() {
-            let msg = if self.rows.is_empty() {
-                "Nothing here"
-            } else {
+            let msg = if !self.rows.is_empty() {
                 "No match"
+            } else if matches!(
+                self.location,
+                Some(Place::Library(s)) if s != LibrarySection::Devices
+            ) {
+                EMPTY_SECTION_HINT
+            } else {
+                "Nothing here"
             };
             c.text(
                 &TextRun::new(
@@ -561,7 +571,18 @@ impl FileBrowserView {
             );
         }
         let name_x = cols.name.0 + 4.0;
-        let name_w = cols.name.1 - name_x - 4.0;
+        // An item shares the width of the name, duration, rate and size columns with its detail.
+        let item = r.kind.is_item();
+        let right = if item {
+            cols.size.or(cols.rate).map_or(cols.duration.1, |c| c.1)
+        } else {
+            cols.name.1
+        };
+        let name_w = if item {
+            (right - name_x - 8.0) * 0.5
+        } else {
+            cols.name.1 - name_x - 4.0
+        };
         let name = fit_label(&r.name, name_w, ROW_FONT);
         let text_w = est_width(&name, ROW_FONT);
         let mut run = TextRun::new(name, pt(name_x, baseline(rect, ROW_FONT)), ROW_FONT, t.text);
@@ -587,6 +608,20 @@ impl FileBrowserView {
             cx += w + 4.0;
         }
         if is_folder {
+            return;
+        }
+        if item {
+            let detail = r.item.as_ref().map_or("", |i| i.detail.as_str());
+            let w = right - name_x - name_w - 12.0;
+            c.text(
+                &TextRun::new(
+                    fit_label(detail, w, SMALL_FONT),
+                    pt(right, baseline(rect, SMALL_FONT)),
+                    SMALL_FONT,
+                    t.text_muted,
+                )
+                .align(Align::End),
+            );
             return;
         }
         let secs = r.info.as_ref().and_then(|i| i.duration_secs());

@@ -342,6 +342,7 @@ dependencies = [
  "atomik-app",
  "atomik-core",
  "atomik-device-sdk",
+ "atomik-library",
  "atomik-model",
  "atomik-plugin-host",
  "atomik-render",

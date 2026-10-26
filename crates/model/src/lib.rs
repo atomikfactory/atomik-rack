@@ -9,6 +9,7 @@
 mod audio_edit;
 mod audio_notes;
 pub mod automation_rec;
+mod clip_io;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
@@ -23,6 +24,7 @@ pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 mod history;
+mod library_io;
 mod macros;
 mod macros_io;
 mod midi_import;
@@ -116,6 +118,7 @@ pub use audio_edit::{
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use automation_rec::WriteMode;
+pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,
     MAX_VCA_NAME_CHARS, MAX_VCAS, VCA_PALETTE, VcaFeed, VcaGroup, clamp_vca_db,
@@ -131,6 +134,7 @@ pub use console_snapshot::{
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 use history::Edit;
+pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
     OutlineKind, TrackGroup,

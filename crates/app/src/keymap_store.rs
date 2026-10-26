@@ -56,6 +56,9 @@ pub struct WorkflowPrefs {
     pub rack_visible: bool,
     /// The one-time notice of the keys that moved with the standard keymap was shown.
     pub keys_notice_seen: bool,
+    /// The library folder the user chose (`None`: the default, see
+    /// [`crate::settings::default_library_dir`]).
+    pub library_folder: Option<PathBuf>,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -69,6 +72,7 @@ impl Default for WorkflowPrefs {
             follow_selection: false,
             rack_visible: true,
             keys_notice_seen: false,
+            library_folder: None,
             extra: BTreeMap::new(),
         }
     }
@@ -95,6 +99,11 @@ impl WorkflowPrefs {
             follow_selection: flag("follow_selection", defaults.follow_selection),
             rack_visible: flag("rack_visible", defaults.rack_visible),
             keys_notice_seen: flag("keys_notice_seen", defaults.keys_notice_seen),
+            library_folder: obj
+                .get("library_folder")
+                .and_then(Value::as_str)
+                .filter(|p| !p.is_empty())
+                .map(PathBuf::from),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -106,6 +115,7 @@ impl WorkflowPrefs {
                             | "follow_selection"
                             | "rack_visible"
                             | "keys_notice_seen"
+                            | "library_folder"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -131,6 +141,12 @@ impl WorkflowPrefs {
             "keys_notice_seen".into(),
             Value::Bool(self.keys_notice_seen),
         );
+        if let Some(folder) = &self.library_folder {
+            map.insert(
+                "library_folder".into(),
+                Value::String(folder.to_string_lossy().into_owned()),
+            );
+        }
         for (k, v) in &self.extra {
             map.insert(k.clone(), v.clone());
         }
@@ -403,6 +419,34 @@ mod tests {
         };
         assert_eq!(WorkflowPrefs::from_json(&w.to_json()).unwrap(), w);
         assert!(w.to_json().contains("\"keys_notice_seen\": true"));
+    }
+
+    #[test]
+    fn the_library_folder_defaults_to_none_and_round_trips() {
+        assert_eq!(WorkflowPrefs::default().library_folder, None);
+        assert_eq!(WorkflowPrefs::from_json("{}").unwrap().library_folder, None);
+        let w = WorkflowPrefs {
+            library_folder: Some(PathBuf::from("D:/Sounds/Library")),
+            ..WorkflowPrefs::default()
+        };
+        let text = w.to_json();
+        assert!(text.contains("\"library_folder\""), "{text}");
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        // Default is not written; a wrongly typed or empty value means the default.
+        assert!(
+            !WorkflowPrefs::default()
+                .to_json()
+                .contains("library_folder")
+        );
+        for bad in [r#"{"library_folder": 3}"#, r#"{"library_folder": ""}"#] {
+            assert_eq!(WorkflowPrefs::from_json(bad).unwrap().library_folder, None);
+        }
+        assert!(
+            WorkflowPrefs::from_json(r#"{"library_folder": 3}"#)
+                .unwrap()
+                .extra
+                .is_empty()
+        );
     }
 
     #[test]

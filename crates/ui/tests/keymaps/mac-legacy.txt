@@ -35,6 +35,7 @@ files.open | files | Enter
 files.page_down | files | PageDown
 files.page_up | files | PageUp
 files.parent | files | Backspace, Opt+Up
+files.rename | files | F2
 files.right | files | Right
 files.search | files | Cmd+F
 files.select_all | files | Cmd+A

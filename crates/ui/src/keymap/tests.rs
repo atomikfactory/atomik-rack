@@ -995,6 +995,7 @@ fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
         ("Backspace", "files.parent"),
         ("Alt+Up", "files.parent"),
         ("F", "files.favorite"),
+        ("F2", "files.rename"),
         ("Cmd+F", "files.search"),
         ("Cmd+A", "files.select_all"),
     ];
@@ -1041,7 +1042,7 @@ fn files_commands_are_in_their_own_group_and_context() {
         .iter()
         .filter(|d| d.id.starts_with("files."))
         .collect();
-    assert_eq!(files.len(), 15);
+    assert_eq!(files.len(), 16);
     for d in files {
         assert_eq!(d.group, Group::Files, "{}", d.id);
         assert_eq!(d.context, Context::Files, "{}", d.id);

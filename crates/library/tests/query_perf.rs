@@ -28,6 +28,7 @@ fn rows() -> Vec<FileRow> {
                 kind: FileKind::Audio(AudioFormat::Wav),
                 size: 1000,
                 info: None,
+                item: None,
                 favorite: i % 11 == 0,
                 tags: if i % 5 == 0 {
                     vec!["808".to_string(), "Drums".to_string()]

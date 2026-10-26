@@ -311,6 +311,7 @@ pub mod interface;
 pub mod io_panel;
 pub mod key_rows;
 pub mod keymap;
+mod library_drop;
 pub mod macro_marks;
 pub mod macros_panel;
 pub mod marker_edit;
@@ -359,6 +360,7 @@ pub use arrangement::{
     ArrangementView, AudioHandle, LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT,
     TrackButton,
 };
+pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
 pub use console_meter::ChannelMeters;

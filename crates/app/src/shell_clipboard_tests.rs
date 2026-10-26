@@ -25,6 +25,7 @@ fn shell_for(os: Os) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
@@ -330,6 +331,7 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.assign_send",
             "rack.disconnect",
             "rack.go_to_track",
+            "rack.save_to_library",
         ]
     );
     let text = |id: &str| {
@@ -480,6 +482,73 @@ fn go_to_track_from_the_device_menu_selects_the_track_in_the_arrangement() {
     assert!(s.core().arrangement().selected_clips().is_empty());
 }
 
+fn library_in(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "atomik-shell-clipboard-library-{}-{tag}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+#[test]
+fn save_to_library_from_the_device_menu_writes_the_selected_device_as_a_patch() {
+    let lib = library_in("device");
+    let mut s = rack3();
+    s.set_library_default(Some(lib.clone()));
+    let before = atomik_model::save_project(s.core().doc());
+    open_menu_on(&mut s, "a");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.save_to_library")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(lib.join("Patches/Poly Synth.atomikpatch").is_file());
+    assert_eq!(atomik_model::save_project(s.core().doc()), before);
+    let _ = std::fs::remove_dir_all(lib);
+}
+
+#[test]
+fn save_to_library_is_off_for_the_master_section_alone() {
+    let mut s = rack3();
+    s.core_mut().view_mut().set_show_console_devices(true);
+    s.core_mut().after_view_change();
+    let master = s.core().doc().console.master.clone().unwrap();
+    s.core_mut()
+        .view_mut()
+        .set_selection(std::slice::from_ref(&master), None);
+    s.open_context_menu(Pane::Rack, ContextTarget::Device, Point::new(300.0, 300.0));
+    let items: Vec<_> = s
+        .context_menu()
+        .unwrap()
+        .items()
+        .map(|i| (i.command.clone(), i.enabled))
+        .collect();
+    let on = |id: &str| items.iter().find(|(c, _)| c == id).unwrap().1;
+    assert!(!on("rack.save_to_library"));
+    assert!(on("create.instrument"));
+}
+
+#[test]
+fn save_clip_to_library_from_the_clip_menu_writes_the_clip_file() {
+    let lib = library_in("clip");
+    let mut s = with_clips();
+    s.set_library_default(Some(lib.clone()));
+    let r = s.core().arrangement().clip_rect(ClipId(1)).unwrap();
+    let items = open_menu(&mut s, r.center());
+    let enabled = |id: &str| items.iter().find(|(c, _, _)| c == id).unwrap().2;
+    assert!(enabled("sequencer.save_clip_to_library"), "one note clip");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("sequencer.save_clip_to_library")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(lib.join("Clips/Poly Synth bar 1.atomikclip").is_file());
+    let _ = std::fs::remove_dir_all(lib);
+}
+
 // ------------------------------------------------------------------ arrangement and roll
 
 fn with_clips() -> Shell<NullBackend> {
@@ -584,6 +653,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.save_clip_to_library",
             "sequencer.toggle_mute",
             "edit.quantize_options",
             "sequencer.bounce_in_place",

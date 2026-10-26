@@ -1,6 +1,6 @@
 //! What the UI asks the app to do.
 
-use atomik_model::{ClipId, Command, DeviceKey};
+use atomik_model::{ClipId, Command, DeviceKey, RackSlot};
 use std::path::PathBuf;
 
 /// An action emitted by the views' `handle` methods ([`crate::RackView`],
@@ -138,6 +138,34 @@ pub enum UiAction {
         device: DeviceKey,
         /// The key under the pointer on the editor's key map.
         at_key: Option<u8>,
+    },
+    /// A library item was dropped on the rack, from the operating system or from the file
+    /// browser's own drag: insert it at `slot`. `path` is a patch or container item file or
+    /// a device URI ([`atomik_library::device_uri`]); the UI never reads it. With
+    /// `container: None` the slot is a top-level rack slot (a column of the rack and the
+    /// index among its devices; the column after the last one makes a new column); inside
+    /// a container the drop names the container and `slot.column` is 0 with the index among
+    /// its devices. One undo step; the app refuses what cannot be inserted.
+    InsertLibrary {
+        /// The item file or the device URI.
+        path: PathBuf,
+        /// The path key of the container the rack view was inside, `None` at the top level.
+        container: Option<DeviceKey>,
+        /// Where it goes.
+        slot: RackSlot,
+    },
+    /// A note clip item was dropped on a note lane of the arrangement: paste it on lane `lane`
+    /// (an index into the track's lanes, always a note lane) of `track` at the snapped song
+    /// tick `tick` (never negative). One undo step; a drop anywhere else emits nothing.
+    InsertLibraryClip {
+        /// The `.atomikclip` file.
+        path: PathBuf,
+        /// The track's instrument device.
+        track: DeviceKey,
+        /// The note lane (`Track::is_note_lane`).
+        lane: usize,
+        /// Song tick of the clip's start.
+        tick: i64,
     },
     /// Open the step editor on this drum machine (the drum panel's Edit button, or a
     /// double-click on its pad grid): call [`crate::StepEditorView::open`] with `device` and
@@ -443,6 +471,10 @@ pub enum Place {
     Favorites,
     /// Every file with this tag.
     Tag(String),
+    /// One section of the library: the built-in devices (rows the host builds with
+    /// [`crate::device_rows`]) or the items saved in `<library folder>/<Section>` (listed
+    /// recursively; a missing folder is an empty list).
+    Library(atomik_library::LibrarySection),
 }
 
 /// A request from [`crate::FileBrowserView`] (see [`UiAction::Browse`]).
@@ -496,8 +528,26 @@ pub enum BrowseAction {
     /// Remove a bookmark.
     RemovePlace(PathBuf),
     /// The pointer dragged these files past the drag threshold: the app takes the drag over
-    /// and delivers it to the pane under the pointer as a file hover/drop.
+    /// and delivers it to the pane under the pointer as a file hover/drop. Library items and
+    /// device URIs ride along (see [`atomik_library::device_uri`]).
     DragFiles(Vec<PathBuf>),
+    /// Enter or a double-click on a library item row (a patch, container, clip or project
+    /// file, or a device URI): load it where the app's rules say (the rack, the selected
+    /// track, or as the open project).
+    Load(PathBuf),
+    /// "Open as Project" on a patch, container or project item: open the file as a project
+    /// (the app asks about unsaved changes first).
+    OpenProject(PathBuf),
+    /// Rename a library item: `path` is the file, `to` the new name as typed (without the
+    /// extension). Only offered for files inside the library folder
+    /// ([`crate::FileBrowserView::set_library_folder`]); the app renames the file (and a
+    /// sibling asset bundle), refuses a taken name and lists the section again.
+    RenameItem {
+        /// The item file.
+        path: PathBuf,
+        /// The new file stem as typed.
+        to: String,
+    },
     /// These visible audio rows have no `AudioInfo` yet: probe them (each path is requested
     /// once until the rows are replaced).
     RequestInfo(Vec<PathBuf>),

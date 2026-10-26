@@ -30,6 +30,7 @@ fn row_strategy() -> impl Strategy<Value = FileRow> {
                     channels: 1,
                     frames: Some(f),
                 }),
+                item: None,
                 favorite: false,
                 tags: Vec::new(),
             }

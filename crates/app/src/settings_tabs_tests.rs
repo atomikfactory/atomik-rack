@@ -736,6 +736,38 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
 }
 
 #[test]
+fn the_workflow_tab_library_row_chooses_and_resets_the_folder() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Workflow);
+    let l = d.workflow_layout(VIEW).unwrap();
+    assert!(l.library.path.contains("default"), "{}", l.library.path);
+    // Choose asks the platform for a folder; the dialog stays open.
+    assert_eq!(
+        down(&mut d, l.library.choose.center()),
+        DialogOutcome::PickLibraryFolder
+    );
+    assert_eq!(d.preferences().unwrap().1.library_folder, None);
+    // The picked folder goes into the draft and shows.
+    d.set_library_folder(Some(PathBuf::from("D:/Sounds/Library")));
+    let l = d.workflow_layout(VIEW).unwrap();
+    assert!(l.library.path.contains("Library"), "{}", l.library.path);
+    assert_eq!(
+        d.preferences().unwrap().1.library_folder,
+        Some(PathBuf::from("D:/Sounds/Library"))
+    );
+    // Default clears it.
+    assert_eq!(
+        down(&mut d, l.library.default.center()),
+        DialogOutcome::Open
+    );
+    assert_eq!(d.preferences().unwrap().1.library_folder, None);
+    // The row sits inside the panel and above the Apply and Cancel buttons.
+    let panel = d.panel(VIEW);
+    let (apply, _) = d.buttons(VIEW);
+    assert!(l.library.rect.y1 <= apply.y0 && l.library.rect.y0 >= panel.y0);
+}
+
+#[test]
 fn other_workflow_fields_survive_the_dialog() {
     let prefs = WorkflowPrefs::from_json(r#"{"auto_route": false, "layout_note": 7}"#).unwrap();
     let d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default()).with_preferences(

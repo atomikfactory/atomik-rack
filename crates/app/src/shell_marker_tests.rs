@@ -24,6 +24,7 @@ fn shell_for(os: Os, profile: Option<Profile>) -> Shell<NullBackend> {
             settings_path: None,
             ui_state_path: None,
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::ScaleChanged(1.0));
@@ -122,6 +123,7 @@ fn the_saved_view_state_is_restored_at_start() {
             settings_path: None,
             ui_state_path: Some(path),
             library_path: None,
+            library_root: None,
         },
     );
     s.handle(&UiEvent::Resize(Size::new(1200.0, 800.0)));

@@ -12,6 +12,7 @@
 //!   `session_open`, `session_commands`, `session_command`, `session_pointer`, `session_key`,
 //!   `session_texts`, `session_screenshot`, `session_status`, `session_save`, `session_set_param`,
 //!   `session_meters`, `session_bounce`, `session_close`.
+//! - [`library_tools`]: `library_list`, the items of a library folder.
 //! - [`macro_tools`]: macro banks and assignments (`session_macros`) and the search over every
 //!   parameter (`param_search` on a file, `session_param_search` in the session).
 //! - [`midi_tools`]: the MIDI control tools of the session: `session_midi_input`,
@@ -23,6 +24,7 @@
 
 pub mod analysis;
 pub mod b64;
+pub mod library_tools;
 pub mod macro_tools;
 pub mod midi_tools;
 pub mod rpc;

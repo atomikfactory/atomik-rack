@@ -339,6 +339,24 @@ pub fn config_dir(os: TargetOs, env: &dyn Fn(&str) -> Option<OsString>) -> Optio
     }
 }
 
+/// The library folder used when the user has not chosen one: `Atomik Rack/Library` in the
+/// documents folder (`USERPROFILE`, `HOME`, `XDG_DOCUMENTS_DIR`). `None` when the needed
+/// variable is missing or empty.
+pub fn default_library_dir(
+    os: TargetOs,
+    env: &dyn Fn(&str) -> Option<OsString>,
+) -> Option<PathBuf> {
+    let var = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let documents = match os {
+        TargetOs::Windows => var("USERPROFILE").map(|d| d.join("Documents")),
+        TargetOs::MacOs => var("HOME").map(|h| h.join("Documents")),
+        TargetOs::Other => {
+            var("XDG_DOCUMENTS_DIR").or_else(|| var("HOME").map(|h| h.join("Documents")))
+        }
+    };
+    documents.map(|d| d.join("Atomik Rack").join("Library"))
+}
+
 /// The settings file path for this OS and process environment.
 pub fn default_settings_path() -> Option<PathBuf> {
     config_dir(TargetOs::current(), &|k| std::env::var_os(k)).map(|d| d.join(SETTINGS_FILE))
@@ -650,6 +668,38 @@ mod tests {
         assert_eq!(config_dir(TargetOs::Windows, &env(&[])), None);
         assert_eq!(config_dir(TargetOs::MacOs, &env(&[("HOME", "")])), None);
         assert_eq!(config_dir(TargetOs::Other, &env(&[])), None);
+    }
+
+    #[test]
+    fn default_library_dir_follows_platform_conventions() {
+        let win = env(&[("USERPROFILE", "profile/example")]);
+        assert_eq!(
+            default_library_dir(TargetOs::Windows, &win),
+            Some(PathBuf::from("profile/example").join("Documents/Atomik Rack/Library"))
+        );
+        let mac = env(&[("HOME", "/Users/example")]);
+        assert_eq!(
+            default_library_dir(TargetOs::MacOs, &mac),
+            Some(PathBuf::from(
+                "/Users/example/Documents/Atomik Rack/Library"
+            ))
+        );
+        let xdg = env(&[("HOME", "/home/me"), ("XDG_DOCUMENTS_DIR", "/docs")]);
+        assert_eq!(
+            default_library_dir(TargetOs::Other, &xdg),
+            Some(PathBuf::from("/docs/Atomik Rack/Library"))
+        );
+        let home = env(&[("HOME", "/home/me"), ("XDG_DOCUMENTS_DIR", "")]);
+        assert_eq!(
+            default_library_dir(TargetOs::Other, &home),
+            Some(PathBuf::from("/home/me/Documents/Atomik Rack/Library"))
+        );
+        assert_eq!(default_library_dir(TargetOs::Windows, &env(&[])), None);
+        assert_eq!(
+            default_library_dir(TargetOs::MacOs, &env(&[("HOME", "")])),
+            None
+        );
+        assert_eq!(default_library_dir(TargetOs::Other, &env(&[])), None);
     }
 
     #[test]

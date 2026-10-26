@@ -630,6 +630,24 @@ impl<S: EngineSink> AppCore<S> {
                 target,
                 tick,
             } => self.import_audio(paths, target, tick),
+            UiAction::InsertLibrary {
+                path,
+                container,
+                slot,
+            } => self.load_library_item(&path, LoadTarget::Rack { container, slot }),
+            UiAction::InsertLibraryClip {
+                path,
+                track,
+                lane,
+                tick,
+            } => self.load_library_item(
+                &path,
+                LoadTarget::Track {
+                    device: track,
+                    lane,
+                    tick,
+                },
+            ),
             // `UiAction` is non-exhaustive: later phases may add actions.
             _ => {}
         }
@@ -2313,6 +2331,10 @@ mod io_ops;
 #[path = "app_core_browser.rs"]
 mod browser;
 
+#[path = "app_core_library.rs"]
+mod library;
+pub use library::LoadTarget;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
@@ -2428,6 +2450,10 @@ mod starter_tests;
 #[cfg(test)]
 #[path = "app_core_browser_tests.rs"]
 mod browser_tests;
+
+#[cfg(test)]
+#[path = "app_core_library_tests.rs"]
+mod library_tests;
 
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]

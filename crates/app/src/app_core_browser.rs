@@ -14,20 +14,26 @@
 //! * A preview starts on the UI thread: the ring is created, its stream goes to the engine at
 //!   once and the feed goes to the decoder thread, so the sound begins as soon as the first
 //!   chunk is decoded. The panel shows progress from the stream's monitor.
+//! * The library sections list from the library folder: **Devices** is built from the registry on
+//!   the UI thread (virtual rows whose path is a device URI), the other sections are a walk over
+//!   `<library>/<Section>` that keeps the items of the section. A device URI is never handed to
+//!   a worker as a path: collections split them off ([`split_devices`]) and the probe skips them.
 //! * Library changes mark the database dirty; the next frame hands a JSON snapshot to the saver
 //!   thread (one write in flight, the newest snapshot wins).
 
-use super::AppCore;
-use crate::browser_workers::{BrowseJob, BrowseMsg, PreviewJob, Workers, home_dir};
+use super::{AppCore, LoadTarget};
+use crate::browser_workers::{
+    BrowseJob, BrowseMsg, CopyAssets, PreviewJob, WalkScope, Workers, home_dir, split_devices,
+};
 use crate::library_store::{LibrarySaver, Loaded, load};
 use crate::sink::EngineSink;
 use atomik_engine::{PreviewMonitor, preview_channel};
 #[cfg(test)]
-use atomik_library::AudioInfo;
-use atomik_library::{FileRow, LibraryDb, PathKey, Tag};
+use atomik_library::{AudioInfo, ItemInfo};
+use atomik_library::{FileRow, LibraryDb, LibrarySection, PathKey, Tag, classify, device_type_of};
 #[cfg(test)]
 use atomik_ui::TreeChild;
-use atomik_ui::{BrowseAction, FileBrowserView, Place, PlacesData};
+use atomik_ui::{BrowseAction, FileBrowserView, Place, PlacesData, device_rows};
 use std::path::PathBuf;
 
 /// The preview that is playing (or about to).
@@ -48,8 +54,10 @@ pub(crate) enum ViewCall {
     AppendRows(Vec<FileRow>),
     PatchMarks(Vec<(PathBuf, bool, Vec<String>)>),
     PatchInfo(Vec<(PathBuf, AudioInfo)>),
+    PatchItemInfo(Vec<(PathBuf, ItemInfo)>),
     SetPlaces(PlacesData),
     SetChildren(PathBuf, Vec<TreeChild>),
+    Select(PathBuf),
 }
 
 /// The browser's worker channels, generations, preview and library state.
@@ -66,6 +74,9 @@ pub(crate) struct BrowserState {
     roots: Vec<PathBuf>,
     db: LibraryDb,
     lib_path: Option<PathBuf>,
+    /// The library folder (`<root>/Patches`, `Containers`, `Clips`, `Projects`); `None` while
+    /// unknown.
+    library_root: Option<PathBuf>,
     /// The database changed since the last snapshot was handed to the saver.
     dirty: bool,
     /// The file must not be overwritten this session (newer version, unreadable).
@@ -74,12 +85,32 @@ pub(crate) struct BrowserState {
     workers: Option<Workers>,
     /// Jobs submitted whose `Done` has not arrived.
     jobs: usize,
+    /// A saved library item to select once the list that shows it arrives.
+    select_after: Option<PathBuf>,
+    /// The row of `select_after` is a new item: its rename entry opens when it is selected.
+    offer_name: bool,
+    /// A project the user asked to open from the library: the shell asks about unsaved
+    /// changes, then opens it.
+    open_request: Option<PathBuf>,
+    /// The item file the last Save to Library wrote.
+    last_saved: Option<PathBuf>,
+    /// The panel started a rename entry the user should type into.
+    focus_request: bool,
+    /// The device rows of the favourites or tag place being listed (built from the registry,
+    /// shown with the answer of the stat job).
+    collection_devices: Vec<FileRow>,
     /// Paths of the audio rows the list holds (to patch marks after a library change).
     shown_paths: Vec<PathBuf>,
     preview: Option<ActivePreview>,
     /// Every push into the panel (tests).
     #[cfg(test)]
     pub(crate) trace: Vec<ViewCall>,
+    /// The paths of every stat job submitted (tests).
+    #[cfg(test)]
+    pub(crate) stat_paths: Vec<Vec<PathBuf>>,
+    /// Every path queued for the probe worker (tests).
+    #[cfg(test)]
+    pub(crate) probed: Vec<PathBuf>,
     /// The last `set_preview` (tests).
     #[cfg(test)]
     pub(crate) last_preview: Option<(Option<PathBuf>, f32)>,
@@ -96,15 +127,26 @@ impl Default for BrowserState {
             roots: Vec::new(),
             db: LibraryDb::new(),
             lib_path: None,
+            library_root: None,
             dirty: false,
             locked: false,
             saver: None,
             workers: None,
             jobs: 0,
+            select_after: None,
+            offer_name: false,
+            open_request: None,
+            last_saved: None,
+            focus_request: false,
+            collection_devices: Vec::new(),
             shown_paths: Vec::new(),
             preview: None,
             #[cfg(test)]
             trace: Vec::new(),
+            #[cfg(test)]
+            stat_paths: Vec::new(),
+            #[cfg(test)]
+            probed: Vec::new(),
             #[cfg(test)]
             last_preview: None,
         }
@@ -200,6 +242,91 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// The library folder, or `None` while unknown.
+    pub fn library_root(&self) -> Option<PathBuf> {
+        self.browser.library_root.clone()
+    }
+
+    /// Sets the library folder (the shell resolves it from the run's option, the Workflow
+    /// setting and the default). The panel is told, so it renames only below it, and a library
+    /// section on show is listed again.
+    pub fn set_library_root(&mut self, root: Option<PathBuf>) {
+        if self.browser.library_root == root {
+            return;
+        }
+        self.browser.library_root.clone_from(&root);
+        self.file_browser.set_library_folder(root);
+        if self.browser.shown
+            && let Some(place @ Place::Library(_)) = self.file_browser.location().cloned()
+        {
+            self.show(place);
+        }
+    }
+
+    /// Shows the library `section` and selects the row of `path` once it is listed, when the
+    /// panel shows. Returns whether it did (otherwise the caller says so in the status line).
+    pub(super) fn show_saved(&mut self, section: LibrarySection, path: PathBuf) -> bool {
+        self.browser.last_saved = Some(path.clone());
+        if !self.browser.visible {
+            return false;
+        }
+        self.show(Place::Library(section));
+        self.browser.select_after = Some(path);
+        self.browser.offer_name = true;
+        true
+    }
+
+    /// Lists the shown place again and selects the row of the renamed item `path` once it is
+    /// there (without opening another rename entry).
+    pub(super) fn show_renamed(&mut self, path: PathBuf) {
+        if let Some(place) = self.file_browser.location().cloned() {
+            self.show(place);
+            self.browser.select_after = Some(path);
+            self.browser.offer_name = false;
+        }
+    }
+
+    /// The favourite flag and tags of `path` in the library database (tests).
+    #[cfg(test)]
+    pub(crate) fn library_mark(&self, path: &std::path::Path) -> atomik_library::Mark {
+        self.browser.db.mark(path)
+    }
+
+    /// Moves the favourite flag and tags of a renamed item to its new path and tells the panel.
+    pub(super) fn library_moved(&mut self, from: &std::path::Path, to: &std::path::Path) {
+        if self.browser.db.move_path(from, to) {
+            self.library_changed(&[from.to_path_buf(), to.to_path_buf()]);
+        }
+    }
+
+    /// A project (or an item to open as one) was picked in the library: the shell takes it
+    /// once, asks about unsaved changes and opens it.
+    pub fn take_open_request(&mut self) -> Option<PathBuf> {
+        self.browser.open_request.take()
+    }
+
+    /// True once after the panel opened a rename entry (a saved item's name): the shell gives
+    /// the panel the keys.
+    pub fn take_browser_focus_request(&mut self) -> bool {
+        std::mem::take(&mut self.browser.focus_request)
+    }
+
+    /// The item file the last Save to Library wrote (its audio may still be copying).
+    pub fn last_saved_item(&self) -> Option<&std::path::Path> {
+        self.browser.last_saved.as_deref()
+    }
+
+    pub(super) fn request_open(&mut self, path: PathBuf) {
+        self.browser.open_request = Some(path);
+    }
+
+    /// Hands the audio of a saved library item to the copy worker.
+    pub(super) fn copy_item_assets(&mut self, job: CopyAssets) {
+        if self.browser.workers().copy_assets(job) {
+            self.browser.jobs += 1;
+        }
+    }
+
     /// Tells the core whether the panel shows. The first show lists the tree roots and the
     /// last (or home) folder; hiding stops a preview.
     pub fn set_file_browser_visible(&mut self, visible: bool) {
@@ -266,7 +393,14 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             BrowseAction::ListChildren(path) => self.submit(BrowseJob::Children(path)),
-            BrowseAction::Preview(path) => self.start_preview(path),
+            BrowseAction::Preview(path) => {
+                // Only audio is previewed: not a device row, not a patch or a clip.
+                let audio = device_type_of(&path).is_none()
+                    && !classify(&path, false).is_some_and(atomik_library::FileKind::is_item);
+                if audio {
+                    self.start_preview(path);
+                }
+            }
             BrowseAction::StopPreview => self.stop_preview(),
             BrowseAction::ToggleFavorite(paths) => {
                 if self.browser.db.toggle_favorite(&paths) {
@@ -318,6 +452,10 @@ impl<S: EngineSink> AppCore<S> {
             BrowseAction::SetAutoPreview(_)
             | BrowseAction::DragFiles(_)
             | BrowseAction::LayoutChanged => {}
+            // Loading, opening and renaming library items is the library work of the app.
+            BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
+            BrowseAction::OpenProject(path) => self.open_library_project(&path),
+            BrowseAction::RenameItem { path, to } => self.rename_library_item(&path, &to),
         }
     }
 
@@ -365,12 +503,23 @@ impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ listings
 
     fn submit(&mut self, job: BrowseJob) {
+        #[cfg(test)]
+        if let BrowseJob::Stat { paths, .. } = &job {
+            self.browser.stat_paths.push(paths.clone());
+        }
         if self.browser.workers().browse(job) {
             self.browser.jobs += 1;
         }
     }
 
     fn queue_probe(&mut self, paths: Vec<PathBuf>) {
+        // A device URI is not a file: nothing is read for it.
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|p| device_type_of(p).is_none())
+            .collect();
+        #[cfg(test)]
+        self.browser.probed.extend(paths.iter().cloned());
         if !paths.is_empty() && self.browser.workers().probe(paths) {
             self.browser.jobs += 1;
         }
@@ -378,6 +527,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Shows `place`: the view switches at once, the rows follow from a worker.
     fn show(&mut self, place: Place) {
+        self.browser.select_after = None;
         let generation = self.browser.workers().bump();
         self.file_browser.set_location(place.clone());
         match place {
@@ -391,19 +541,53 @@ impl<S: EngineSink> AppCore<S> {
                     self.submit(BrowseJob::Walk {
                         generation,
                         root: path,
+                        scope: WalkScope::Below,
                     });
                 }
             }
             Place::Favorites => {
                 let paths = self.browser.db.favorites().iter().map(path_of).collect();
-                self.submit(BrowseJob::Stat { generation, paths });
+                self.show_collection(generation, paths);
             }
             Place::Tag(name) => {
                 let paths: Vec<PathBuf> = Tag::new(&name)
                     .map(|tag| self.browser.db.tagged(&tag).iter().map(path_of).collect())
                     .unwrap_or_default();
-                self.submit(BrowseJob::Stat { generation, paths });
+                self.show_collection(generation, paths);
             }
+            Place::Library(section) => self.show_library(generation, section),
+        }
+    }
+
+    /// Lists a favourites or tag place: the files from a stat job, the device rows from the
+    /// registry (a device that no longer exists is left out like a missing file).
+    fn show_collection(&mut self, generation: u64, paths: Vec<PathBuf>) {
+        let (files, devices) = split_devices(&paths);
+        self.browser.collection_devices = device_rows(&self.registry)
+            .into_iter()
+            .filter(|r| device_type_of(&r.path).is_some_and(|id| devices.iter().any(|d| d == id)))
+            .collect();
+        self.submit(BrowseJob::Stat {
+            generation,
+            paths: files,
+        });
+    }
+
+    /// Lists a library section. Devices come from the registry at once; the other sections
+    /// are empty until the walk over `<library>/<Section>` delivers (no folder, no rows).
+    fn show_library(&mut self, generation: u64, section: LibrarySection) {
+        let Some(folder) = section.folder_name() else {
+            self.set_rows(device_rows(&self.registry));
+            return;
+        };
+        self.set_rows(Vec::new());
+        if let Some(root) = &self.browser.library_root {
+            let root = root.join(folder);
+            self.submit(BrowseJob::Walk {
+                generation,
+                root,
+                scope: WalkScope::Section(section),
+            });
         }
     }
 
@@ -463,13 +647,21 @@ impl<S: EngineSink> AppCore<S> {
                     }
                 }
             },
-            BrowseMsg::Stats { generation, rows } if generation == current => self.set_rows(rows),
+            BrowseMsg::Stats {
+                generation,
+                mut rows,
+            } if generation == current => {
+                let mut all = std::mem::take(&mut self.browser.collection_devices);
+                all.append(&mut rows);
+                self.set_rows(all);
+            }
             BrowseMsg::Walked { generation, rows } if generation == current => {
                 let rows = self.decorated(rows);
                 self.browser
                     .shown_paths
                     .extend(rows.iter().map(|r| r.path.clone()));
                 self.view_rows(rows, true);
+                self.select_pending();
             }
             BrowseMsg::Listed { .. } | BrowseMsg::Stats { .. } | BrowseMsg::Walked { .. } => {}
             BrowseMsg::Children { path, children } => {
@@ -488,6 +680,19 @@ impl<S: EngineSink> AppCore<S> {
                 self.browser.trace.push(ViewCall::PatchInfo(info.clone()));
                 self.file_browser.patch_info(&info);
             }
+            BrowseMsg::ItemInfo(info) => {
+                #[cfg(test)]
+                self.browser
+                    .trace
+                    .push(ViewCall::PatchItemInfo(info.clone()));
+                self.file_browser.patch_item_info(&info);
+            }
+            BrowseMsg::AssetsCopied {
+                name,
+                section,
+                path,
+                report,
+            } => self.library_audio_copied(&name, section, path, &report),
             BrowseMsg::PreviewTotal { path, frames } => {
                 if let Some(active) = self.browser.preview.as_mut().filter(|a| a.path == path) {
                     active.total = frames;
@@ -509,6 +714,22 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             BrowseMsg::Done => self.browser.jobs = self.browser.jobs.saturating_sub(1),
+        }
+    }
+
+    /// Selects the saved item the list was waiting for, once its row is there.
+    fn select_pending(&mut self) {
+        let Some(path) = self.browser.select_after.clone() else {
+            return;
+        };
+        if self.file_browser.select_path(&path) {
+            // A saved item is offered a name: the rename entry opens on its row.
+            if self.browser.offer_name && self.file_browser.begin_rename(&path) {
+                self.browser.focus_request = true;
+            }
+            #[cfg(test)]
+            self.browser.trace.push(ViewCall::Select(path));
+            self.browser.select_after = None;
         }
     }
 

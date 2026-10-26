@@ -290,7 +290,11 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    fn paste_devices(&mut self, snapshot: DeviceSnapshot, pane: Pane) -> Result<(), String> {
+    pub(super) fn paste_devices(
+        &mut self,
+        snapshot: DeviceSnapshot,
+        pane: Pane,
+    ) -> Result<(), String> {
         let (container, at) = match pane {
             Pane::Arrangement => {
                 let at = self
@@ -326,22 +330,7 @@ impl<S: EngineSink> AppCore<S> {
                         });
                     }
                 }
-                let at = {
-                    let scope = self.doc().scope_devices(container.as_ref());
-                    let primary = self.view.primary().map(|k| {
-                        k.0.rsplit('/')
-                            .next()
-                            .map(str::to_string)
-                            .unwrap_or_default()
-                    });
-                    match (scope, primary) {
-                        (Some(devices), Some(p)) => devices
-                            .iter()
-                            .position(|d| d.key.0 == p)
-                            .map_or(usize::MAX, |i| i + 1),
-                        _ => usize::MAX,
-                    }
-                };
+                let at = self.rack_add_index(container.as_ref());
                 (container, at)
             }
         };
@@ -352,8 +341,27 @@ impl<S: EngineSink> AppCore<S> {
         })
     }
 
+    /// Where a device added with no position goes in `container` (`None`: the top level): below
+    /// the primary selected device when it is in that scope, else the end.
+    pub(super) fn rack_add_index(&self, container: Option<&DeviceKey>) -> usize {
+        let scope = self.doc().scope_devices(container);
+        let primary = self.view.primary().map(|k| {
+            k.0.rsplit('/')
+                .next()
+                .map(str::to_string)
+                .unwrap_or_default()
+        });
+        match (scope, primary) {
+            (Some(devices), Some(p)) => devices
+                .iter()
+                .position(|d| d.key.0 == p)
+                .map_or(usize::MAX, |i| i + 1),
+            _ => usize::MAX,
+        }
+    }
+
     /// Applies a workflow command, reporting a rejection as the message the refusal needs.
-    fn apply_workflow(&mut self, command: WorkflowCommand) -> Result<(), String> {
+    pub(super) fn apply_workflow(&mut self, command: WorkflowCommand) -> Result<(), String> {
         // A rejection is already reported by `apply_command`: the empty message tells the
         // caller not to report it a second time.
         self.apply_command(Command::Workflow(command))
@@ -367,7 +375,8 @@ impl<S: EngineSink> AppCore<S> {
     /// what the command will create.
     pub(super) fn workflow_pre(&mut self, command: &WorkflowCommand) -> WorkflowPre {
         let assets: Option<&std::collections::BTreeMap<String, AssetMeta>> = match command {
-            WorkflowCommand::PasteDevices { snapshot, .. } => Some(&snapshot.assets),
+            WorkflowCommand::PasteDevices { snapshot, .. }
+            | WorkflowCommand::PasteDevicesAt { snapshot, .. } => Some(&snapshot.assets),
             WorkflowCommand::PasteClips { clips, .. } => Some(&clips.assets),
             _ => None,
         };

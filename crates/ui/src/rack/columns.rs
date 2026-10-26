@@ -61,8 +61,11 @@ impl RackView {
     }
 
     /// Whether a drag that can drop a device is in progress (a device moved past the
-    /// threshold, or a browser row dragged out).
+    /// threshold, a browser row dragged out, or a library item hovering over the rack).
     pub(super) fn drop_drag_active(&self) -> bool {
+        if self.lib_drop {
+            return true;
+        }
         match &self.drag {
             Drag::Move { start, at, .. } => (*at - *start).hypot() > MOVE_THRESHOLD,
             Drag::Browser { active, .. } => *active,

@@ -1,5 +1,6 @@
 //! File rows and their classification.
 
+use crate::item::{CLIP_EXT, CONTAINER_EXT, ItemInfo, PATCH_EXT, PROJECT_EXT};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -18,23 +19,51 @@ pub enum AudioFormat {
     Ogg,
 }
 
-/// What a browser row is. Files that are neither folders nor audio are not rows.
+/// What a browser row is. Files that are neither folders, audio nor library items are not rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum FileKind {
     /// A directory.
     Folder,
     /// An audio file of the given format.
     Audio(AudioFormat),
+    /// A patch item (`.atomikpatch`).
+    Patch,
+    /// A container item (`.atomikcontainer`).
+    Container,
+    /// A note clip item (`.atomikclip`).
+    Clip,
+    /// A project file (`.atomik`).
+    Project,
+    /// A built-in device: a virtual row whose path is a device URI, never a file.
+    Device,
+}
+
+impl FileKind {
+    /// Whether the row is a library item (anything but a folder or an audio file).
+    pub fn is_item(self) -> bool {
+        !matches!(self, Self::Folder | Self::Audio(_))
+    }
 }
 
 /// Classifies a directory entry: folders are always rows, files only when their extension
-/// (case-insensitive) is a supported audio format. Returns `None` for everything else.
+/// (case-insensitive) is a supported audio format or a library item. Returns `None` for
+/// everything else. Never returns [`FileKind::Device`].
 pub fn classify(path: &Path, is_dir: bool) -> Option<FileKind> {
     if is_dir {
         return Some(FileKind::Folder);
     }
     let ext = path.extension()?.to_str()?;
     let is = |candidates: &[&str]| candidates.iter().any(|c| ext.eq_ignore_ascii_case(c));
+    for (candidate, kind) in [
+        (PATCH_EXT, FileKind::Patch),
+        (CONTAINER_EXT, FileKind::Container),
+        (CLIP_EXT, FileKind::Clip),
+        (PROJECT_EXT, FileKind::Project),
+    ] {
+        if is(&[candidate]) {
+            return Some(kind);
+        }
+    }
     let format = if is(&["wav", "wave"]) {
         AudioFormat::Wav
     } else if is(&["aif", "aiff", "aifc"]) {
@@ -74,7 +103,7 @@ impl AudioInfo {
     }
 }
 
-/// One entry of a browser listing (a folder or an audio file).
+/// One entry of a browser listing (a folder, an audio file or a library item).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileRow {
     /// Absolute path.
@@ -87,6 +116,9 @@ pub struct FileRow {
     pub size: u64,
     /// Header data, filled in later by the probe worker.
     pub info: Option<AudioInfo>,
+    /// Detail and category of a library item, filled in later by the probe worker (devices
+    /// carry theirs from the start).
+    pub item: Option<ItemInfo>,
     /// Favourite flag from the library database.
     pub favorite: bool,
     /// Tags from the library database, in display order.

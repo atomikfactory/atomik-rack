@@ -186,9 +186,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
             in_window_menu: !cfg!(target_os = "macos"),
             ui_state_path: settings_path.as_deref().map(ui_state_path),
             library_path: settings_path.as_deref().map(crate::ui_state::library_path),
+            library_root: cli.library.clone(),
             settings_path,
         },
     );
+    shell.set_library_default(crate::settings::default_library_dir(
+        crate::settings::TargetOs::current(),
+        &|k| std::env::var_os(k),
+    ));
     // Creating a plugin blocks this thread: show LOADING one frame before it starts.
     shell.core_mut().set_plugin_load_paints_first(true);
     if let Some(path) = cli.keymap.clone() {
@@ -604,6 +609,15 @@ impl App {
                         self.shell.add_plugin_folder(folder);
                     }
                 }
+                ShellRequest::PickLibraryFolder => {
+                    let mut dialog = rfd::FileDialog::new().set_title("Choose the library folder");
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.set_library_folder(folder);
+                    }
+                }
                 ShellRequest::ConfirmDiscard(command) => {
                     let mut dialog = rfd::MessageDialog::new()
                         .set_level(rfd::MessageLevel::Warning)
@@ -616,6 +630,19 @@ impl App {
                     if dialog.show() == rfd::MessageDialogResult::Yes {
                         let more = self.shell.confirmed(command);
                         self.handle_requests(event_loop, more);
+                    }
+                }
+                ShellRequest::ConfirmDiscardOpen(path) => {
+                    let mut dialog = rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title("Unsaved changes")
+                        .set_description("The rack has unsaved changes. Discard them?")
+                        .set_buttons(rfd::MessageButtons::YesNo);
+                    if let Some(w) = &self.window {
+                        dialog = dialog.set_parent(w.as_ref());
+                    }
+                    if dialog.show() == rfd::MessageDialogResult::Yes {
+                        self.shell.open_file(&path);
                     }
                 }
                 ShellRequest::Quit => {

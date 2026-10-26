@@ -164,7 +164,7 @@ pub const MIN_REST_WIDTH: f64 = 400.0;
 pub const MIN_PANE_HEIGHT: f64 = 80.0;
 
 /// Something only the platform layer can do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellRequest {
     /// Show an open-file dialog (projects and patches), then call [`Shell::open_file`].
     PickOpenFile,
@@ -203,9 +203,15 @@ pub enum ShellRequest {
     PickImportMidiPreset,
     /// The rack has unsaved changes: ask, then call [`Shell::confirmed`] with the command.
     ConfirmDiscard(AppCommand),
+    /// A project was picked in the library (or dropped on the window) and the rack has unsaved
+    /// changes: ask, then call [`Shell::open_file`] with the path.
+    ConfirmDiscardOpen(PathBuf),
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
+    /// Show a folder dialog (the Workflow tab's Library folder Choose...), then call
+    /// [`Shell::set_library_folder`] with the picked folder.
+    PickLibraryFolder,
     /// Show a save-file dialog for the keymap (the Keyboard tab's Export), then call
     /// [`Shell::export_keymap_to`].
     PickExportKeymap,
@@ -232,6 +238,9 @@ pub struct ShellOptions {
     /// Where the file browser's library (favourites, tags, bookmarks) is kept
     /// (`<config dir>/library.json`; `None`: in memory only).
     pub library_path: Option<PathBuf>,
+    /// The library folder for this run (`--library`; tests and the MCP server), taking
+    /// precedence over the Workflow tab's choice and the default (`None`: those).
+    pub library_root: Option<PathBuf>,
 }
 
 /// Where the window's parts are, in logical pixels.
@@ -352,6 +361,10 @@ pub struct Shell<B: AudioBackend> {
     roles: Roles,
     /// The workflow preferences.
     workflow: WorkflowPrefs,
+    /// The library folder forced for this run ([`ShellOptions::library_root`]).
+    library_override: Option<PathBuf>,
+    /// The folder used when neither the override nor the Workflow tab names one.
+    library_default: Option<PathBuf>,
     /// Modification time and size of `keymap.json` as last read or written, to notice edits.
     keymap_stamp: Option<(SystemTime, u64)>,
     /// The layout F7 (sequencer only) replaced, to restore on the next F7.
@@ -436,6 +449,7 @@ impl<B: AudioBackend> Shell<B> {
         startup_notes.extend(built.report.summary());
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
         let options_library_path = options.library_path.clone();
+        let library_override = options.library_root.clone();
         let mut shell = Self {
             core,
             menubar: options.in_window_menu.then(MenuBar::new),
@@ -479,6 +493,8 @@ impl<B: AudioBackend> Shell<B> {
             user_keymap,
             roles: built.roles,
             workflow,
+            library_override,
+            library_default: None,
             keymap_stamp,
             seq_only_prev: None,
             browser_edge: 0.0,
@@ -487,6 +503,7 @@ impl<B: AudioBackend> Shell<B> {
         shell.core.set_roles(&shell.roles);
         shell.configure_surface();
         shell.core.set_library_path(options_library_path);
+        shell.sync_library_root();
         // Before anything saves the window state: a save copies the panel's values.
         shell.restore_file_browser();
         shell.apply_workflow_to_views();
@@ -1286,6 +1303,41 @@ impl<B: AudioBackend> Shell<B> {
         &self.workflow
     }
 
+    /// The library folder in use: the run's override, else the one chosen in the Workflow tab,
+    /// else the default; `None` when none of them is known.
+    pub fn library_root(&self) -> Option<PathBuf> {
+        self.library_override
+            .clone()
+            .or_else(|| self.workflow.library_folder.clone())
+            .or_else(|| self.library_default.clone())
+    }
+
+    /// Sets the folder used when the user has not chosen one (the platform passes
+    /// [`crate::settings::default_library_dir`]).
+    pub fn set_library_default(&mut self, folder: Option<PathBuf>) {
+        self.library_default = folder;
+        self.sync_library_root();
+    }
+
+    /// Hands the library folder in use to the core and the browser panel.
+    fn sync_library_root(&mut self) {
+        let root = self.library_root();
+        self.core.set_library_root(root);
+    }
+
+    /// The library folder picked in the folder dialog: into the open settings dialog's draft
+    /// (applied with its Apply), else applied and saved at once.
+    pub fn set_library_folder(&mut self, folder: PathBuf) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_library_folder(Some(folder));
+        } else {
+            self.workflow.library_folder = Some(folder);
+            self.save_workflow();
+            self.sync_library_root();
+        }
+        self.repaint = true;
+    }
+
     /// The OS whose keys and texts apply.
     pub fn os(&self) -> Os {
         self.os
@@ -1328,6 +1380,7 @@ impl<B: AudioBackend> Shell<B> {
             self.workflow = workflow;
             self.save_workflow();
             self.apply_workflow_to_views();
+            self.sync_library_root();
         }
     }
 
@@ -1923,6 +1976,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Handles one window event (logical units).
     pub fn handle(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
         let mut requests = self.handle_event_inner(event);
+        self.sync_library_ui();
         self.save_zoom_state();
         requests.append(&mut self.pending);
         requests
@@ -1955,20 +2009,36 @@ impl<B: AudioBackend> Shell<B> {
             }
         }
         match event {
-            UiEvent::FileHover { .. } => {
-                if let Some(pane) = target {
+            UiEvent::FileHover { paths, .. } => {
+                // Library items hover only over the panes that take them.
+                let takes = matches!(target, Some(Pane::Rack | Pane::Arrangement))
+                    || !paths.iter().any(|p| is_library_item(p));
+                if let Some(pane) = target
+                    && takes
+                {
                     self.forward(pane, event);
                 }
             }
             UiEvent::FileDrop { pos, paths } => {
-                // MIDI files import as File > Import MIDI does, wherever they land; the audio
-                // files among them go on to the pane under the pointer.
-                let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = paths
-                    .iter()
-                    .cloned()
+                // A project opens (after the question about unsaved changes) wherever it
+                // lands, a MIDI file imports as File > Import MIDI does, and a library item
+                // goes to the rack or the arrangement: none of them is audio. The audio files
+                // among them go on to the pane under the pointer.
+                let (projects, rest): (Vec<PathBuf>, Vec<PathBuf>) =
+                    paths.iter().cloned().partition(|p| is_project_item(p));
+                if let Some(project) = projects.into_iter().next() {
+                    self.open_project_request(project);
+                }
+                let (midi, rest): (Vec<PathBuf>, Vec<PathBuf>) = rest
+                    .into_iter()
                     .partition(|p| crate::midi_file::is_midi_path(p));
                 for path in &midi {
                     self.core.import_midi_tracks(path);
+                }
+                let (items, rest): (Vec<PathBuf>, Vec<PathBuf>) =
+                    rest.into_iter().partition(|p| is_library_item(p));
+                if !items.is_empty() {
+                    self.drop_library_items(target, *pos, items);
                 }
                 if rest.is_empty() {
                     if let Some(pane) = target {
@@ -1993,6 +2063,34 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Library items dropped at `pos`: the rack takes devices, patches and containers, the
+    /// arrangement a clip on a note lane; anything else is refused with a message. Never
+    /// audio.
+    fn drop_library_items(&mut self, target: Option<Pane>, pos: Point, items: Vec<PathBuf>) {
+        let event = UiEvent::FileDrop { pos, paths: items };
+        let actions = match target {
+            Some(pane @ (Pane::Rack | Pane::Arrangement)) => self.forward(pane, &event),
+            _ => Vec::new(),
+        };
+        let inserted = actions.iter().any(|a| {
+            matches!(
+                a,
+                UiAction::InsertLibrary { .. } | UiAction::InsertLibraryClip { .. }
+            )
+        });
+        if !inserted {
+            let UiEvent::FileDrop { paths, .. } = &event else {
+                return;
+            };
+            let message = if paths.iter().any(|p| is_clip_item(p)) {
+                "Drop a clip on a note lane of an instrument track"
+            } else {
+                "Drop devices and patches on the rack"
+            };
+            self.notify(message);
         }
     }
 
@@ -2361,6 +2459,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 DialogOutcome::ExportKeymap => return vec![ShellRequest::PickExportKeymap],
                 DialogOutcome::ImportKeymap => return vec![ShellRequest::PickImportKeymap],
+                DialogOutcome::PickLibraryFolder => return vec![ShellRequest::PickLibraryFolder],
             }
             return Vec::new();
         }
@@ -2580,6 +2679,8 @@ impl<B: AudioBackend> Shell<B> {
                     self.set_focus(Pane::Arrangement);
                 }
             }
+            ("rack.save_to_library", None) => self.core.save_selection_to_library(),
+            ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
             ("view.cables_cycle", None) => {
                 let view = self.core.view_mut();
                 let next = match view.cable_visibility() {
@@ -2894,6 +2995,8 @@ impl<B: AudioBackend> Shell<B> {
                 let notes = core.piano_roll().notes();
                 !sel.is_empty() && sel.iter().all(|i| notes.get(*i).is_some_and(|n| n.muted))
             },
+            save_clip: matches!(clips.as_slice(), [id]
+                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes())),
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)
@@ -3188,6 +3291,26 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.layout_view();
         self.set_focus(Pane::PluginParams);
+    }
+
+    /// Moves what the library asked of the core to the shell: a project to open, which waits
+    /// for the answer about unsaved changes.
+    fn sync_library_ui(&mut self) {
+        if let Some(path) = self.core.take_open_request() {
+            self.open_project_request(path);
+        }
+        if self.core.take_browser_focus_request() && self.ui.file_browser_visible {
+            self.set_focus(Pane::FileBrowser);
+        }
+    }
+
+    /// Opens the project `path` now, or asks first when the rack has unsaved changes.
+    fn open_project_request(&mut self, path: PathBuf) {
+        if self.core.is_dirty() {
+            self.pending.push(ShellRequest::ConfirmDiscardOpen(path));
+        } else {
+            self.open_file(&path);
+        }
     }
 
     /// Feeds the plugin views what the core knows and moves what the core asks for to the
@@ -3912,6 +4035,7 @@ impl<B: AudioBackend> Shell<B> {
         let busy = self.core.is_busy();
         self.core.frame();
         self.sync_plugin_ui();
+        self.sync_library_ui();
         self.sync_relink();
         self.sync_midi_maps();
         self.sync_macros();
@@ -4251,6 +4375,7 @@ fn files_key(id: &str, os: Os) -> Option<(Key, Modifiers)> {
         "files.toggle_preview" => (Key::Space, Modifiers::NONE),
         "files.parent" => (Key::Backspace, Modifiers::NONE),
         "files.favorite" => (Key::Char('f'), Modifiers::NONE),
+        "files.rename" => (Key::F(2), Modifiers::NONE),
         "files.search" => (Key::Char('f'), command),
         "files.select_all" => (Key::Char('a'), command),
         _ => return None,
@@ -4266,6 +4391,30 @@ fn drag_label(paths: &[PathBuf]) -> String {
         ),
         many => format!("{} files", many.len()),
     }
+}
+
+/// Whether `path` is a library item the rack or the arrangement takes: a device row, a patch,
+/// a container or a clip. A project is not (it opens).
+fn is_library_item(path: &Path) -> bool {
+    atomik_library::device_type_of(path).is_some()
+        || matches!(
+            atomik_library::classify(path, false),
+            Some(
+                atomik_library::FileKind::Patch
+                    | atomik_library::FileKind::Container
+                    | atomik_library::FileKind::Clip
+            )
+        )
+}
+
+/// Whether `path` is a note clip item.
+fn is_clip_item(path: &Path) -> bool {
+    atomik_library::classify(path, false) == Some(atomik_library::FileKind::Clip)
+}
+
+/// Whether `path` is a project file (`.atomik`).
+fn is_project_item(path: &Path) -> bool {
+    atomik_library::classify(path, false) == Some(atomik_library::FileKind::Project)
 }
 
 fn pointer_pos(event: &UiEvent) -> Option<Point> {
@@ -4401,3 +4550,7 @@ mod warp_tests;
 #[cfg(test)]
 #[path = "shell_freeze_tests.rs"]
 mod freeze_tests;
+
+#[cfg(test)]
+#[path = "shell_library_tests.rs"]
+mod library_tests;

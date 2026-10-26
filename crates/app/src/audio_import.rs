@@ -425,6 +425,50 @@ pub(crate) fn spawn_load(
         .map(|_| ())
 }
 
+/// Brings the asset `hash` of a library item's bundle `from` into `to` (a file copy, unless
+/// `to` has it already) and loads it.
+fn adopt_asset(from: &Path, to: &Bundle, hash: &str, threshold: u64) -> Result<Loaded, String> {
+    if !to.exists(hash) {
+        let source = Bundle::open(from)
+            .map_err(|_| "the item has no audio folder".to_string())?
+            .asset_path(hash);
+        if !source.is_file() {
+            return Err("the item does not hold this audio".to_string());
+        }
+        std::fs::create_dir_all(to.audio_dir()).map_err(|e| e.to_string())?;
+        crate::browser_workers::copy_atomic(&source, &to.asset_path(hash))
+            .map_err(|e| e.to_string())?;
+    }
+    load_asset(to, hash, threshold)
+}
+
+/// Starts a worker that adopts the assets `hashes` of the item bundle `from` into `to`: it
+/// copies the files `to` lacks, then loads them (a failure comes back as a failed load of that
+/// asset, which the core lists as missing).
+pub(crate) fn spawn_adopt(
+    tx: Sender<Msg>,
+    generation: u64,
+    from: PathBuf,
+    to: Bundle,
+    threshold: u64,
+    hashes: Vec<String>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-adopt".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            for hash in hashes {
+                let result = adopt_asset(&from, &to, &hash, threshold);
+                let _ = tx.send(Msg::Loaded {
+                    generation,
+                    hash,
+                    result,
+                });
+            }
+        })
+        .map(|_| ())
+}
+
 /// The whole asset `hash` of `bundle` as a sampler buffer, always in RAM whatever its size.
 pub(crate) fn load_sample_buffer(bundle: &Bundle, hash: &str) -> Result<Arc<SampleBuffer>, String> {
     let data = bundle.load(hash).map_err(|e| e.to_string())?;

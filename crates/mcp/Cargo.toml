@@ -20,6 +20,8 @@ path = "src/main.rs"
 [dependencies]
 atomik-core.workspace = true
 atomik-device-sdk.workspace = true
+# Library item kinds and the search words of `library_list`.
+atomik-library.workspace = true
 atomik-model.workspace = true
 # Bounces: the same code as the `atomik-render` program.
 atomik-render.workspace = true

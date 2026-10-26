@@ -26,6 +26,7 @@ use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::keymap::{CommandOutcome, Roles};
+use crate::library_drop;
 use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
 use crate::seq_edit::{self, Selection, SpanPart};
@@ -621,6 +622,8 @@ pub struct ArrangementView {
     input_channels: u16,
     audio_headers: Vec<AudioHeader>,
     drop_hover: Option<DropHover>,
+    /// A library clip hovering over a note lane: track, lane and snapped tick.
+    clip_hover: Option<(DeviceKey, usize, i64)>,
 }
 
 /// The header state of an audio track, derived from the document (cables and params).
@@ -696,6 +699,7 @@ impl ArrangementView {
             input_channels: 0,
             audio_headers: Vec::new(),
             drop_hover: None,
+            clip_hover: None,
         }
     }
 
@@ -1153,11 +1157,7 @@ impl ArrangementView {
     /// [`UiAction::ImportAudio`]. `None` outside the track area (ruler, corner, outside the
     /// view). A pointer in the track list counts as the left edge of the timeline.
     pub fn drop_target_at(&self, pos: Point) -> Option<(ImportTarget, i64)> {
-        if !self.bounds.contains(pos) || pos.y < self.lanes_top() {
-            return None;
-        }
-        let x = pos.x.max(self.axis.x0);
-        let tick = snap_round(self.axis.x_to_tick(x), self.step(Modifiers::NONE)).max(0);
+        let tick = self.drop_tick_at(pos)?;
         let target = match self.row_at(pos.y).map(|r| &r.kind) {
             Some(RowKind::Lane { track, .. }) if self.song.tracks[*track].is_audio() => {
                 ImportTarget::ExistingTrack(self.song.tracks[*track].device.clone())
@@ -1165,6 +1165,37 @@ impl ArrangementView {
             _ => ImportTarget::NewTracks,
         };
         Some((target, tick))
+    }
+
+    /// The snapped tick of a drop at `pos`, `None` outside the track area (see
+    /// [`Self::drop_target_at`]).
+    fn drop_tick_at(&self, pos: Point) -> Option<i64> {
+        if !self.bounds.contains(pos) || pos.y < self.lanes_top() {
+            return None;
+        }
+        let x = pos.x.max(self.axis.x0);
+        Some(snap_round(self.axis.x_to_tick(x), self.step(Modifiers::NONE)).max(0))
+    }
+
+    /// Where a library clip dropped at the pointer would go: the track, the note lane under the
+    /// pointer (an index into the track's lanes) and the snapped tick; see
+    /// [`UiAction::InsertLibraryClip`]. `None` anywhere but on a note lane row (an audio or
+    /// automation lane, a header or folder row, the ruler, outside the view). A pointer in the
+    /// track list counts as the left edge of the timeline.
+    pub fn clip_drop_target_at(&self, pos: Point) -> Option<(DeviceKey, usize, i64)> {
+        let tick = self.drop_tick_at(pos)?;
+        let Some(RowKind::Lane { track, lane }) = self.row_at(pos.y).map(|r| &r.kind) else {
+            return None;
+        };
+        let t = &self.song.tracks[*track];
+        t.is_note_lane(*lane)
+            .then(|| (t.device.clone(), *lane, tick))
+    }
+
+    /// The marker state while a library clip hovers over a note lane: the track, the lane and
+    /// the snapped tick the clip would land on.
+    pub fn clip_drop_hover(&self) -> Option<(DeviceKey, usize, i64)> {
+        self.clip_hover.clone()
     }
 
     /// The drop indicator state while files hover over the view: the target and snapped tick.
@@ -1991,10 +2022,27 @@ impl ArrangementView {
             } => self.key(key, *modifiers, &mut out),
             UiEvent::Key { .. } => {}
             UiEvent::FileHover { pos, paths } => self.file_hover(*pos, paths),
-            UiEvent::FileHoverCancel => self.set_drop_hover(None),
+            UiEvent::FileHoverCancel => {
+                self.set_drop_hover(None);
+                self.set_clip_hover(None);
+            }
             UiEvent::FileDrop { pos, paths } => {
                 self.set_drop_hover(None);
-                if !paths.is_empty()
+                self.set_clip_hover(None);
+                // Library items are never imported as audio: a clip lands on a note lane,
+                // every other item (and a clip anywhere else) is refused.
+                if paths.iter().any(|p| library_drop::is_library(p)) {
+                    if let Some(path) = library_drop::clip_item(paths)
+                        && let Some((track, lane, tick)) = self.clip_drop_target_at(*pos)
+                    {
+                        out.push(UiAction::InsertLibraryClip {
+                            path: path.clone(),
+                            track,
+                            lane,
+                            tick,
+                        });
+                    }
+                } else if !paths.is_empty()
                     && let Some((target, tick)) = self.drop_target_at(*pos)
                 {
                     out.push(UiAction::ImportAudio {
@@ -2008,7 +2056,21 @@ impl ArrangementView {
         out
     }
 
+    fn set_clip_hover(&mut self, hover: Option<(DeviceKey, usize, i64)>) {
+        if self.clip_hover != hover {
+            self.clip_hover = hover;
+            self.repaint = true;
+        }
+    }
+
     fn file_hover(&mut self, pos: Point, paths: &[std::path::PathBuf]) {
+        if paths.iter().any(|p| library_drop::is_library(p)) {
+            self.set_drop_hover(None);
+            let target = library_drop::clip_item(paths).and_then(|_| self.clip_drop_target_at(pos));
+            self.set_clip_hover(target);
+            return;
+        }
+        self.set_clip_hover(None);
         let hover = if paths.is_empty() {
             None
         } else {
@@ -4086,6 +4148,7 @@ impl ArrangementView {
         }
         self.paint_drag_overlays(c, doc, tl);
         self.paint_drop_hint(c, doc, tl);
+        self.paint_clip_drop_hint(c, doc, tl);
         self.paint_marker_lines(c, tl);
         let col = if self.recording {
             st.record
@@ -4187,6 +4250,33 @@ impl ArrangementView {
                 vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
                 2.0,
                 st.selection,
+            );
+        }
+    }
+
+    /// The marker of a library clip hovering over a note lane: the lane highlighted and an
+    /// insertion line at the snapped tick.
+    fn paint_clip_drop_hint(&self, c: &mut dyn Canvas, doc: &RackDoc, tl: Rect) {
+        let Some((device, lane, tick)) = &self.clip_hover else {
+            return;
+        };
+        let Some(area) = self.lane_rect(device, *lane) else {
+            return;
+        };
+        let accent = sp::device_accent(&self.st.base, doc, device);
+        let shape = RoundedRect::from_rect(area.inset(-1.0), 3.0);
+        c.fill_with(shape, accent.with_alpha(0.14));
+        c.stroke(
+            &shape.into(),
+            &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
+            &accent.into(),
+        );
+        let x = self.axis.tick_to_x(*tick).round() + 0.5;
+        if x >= tl.x0 && x <= tl.x1 {
+            c.stroke_with(
+                vello::kurbo::Line::new(pt(x, area.y0), pt(x, area.y1)),
+                2.0,
+                self.st.selection,
             );
         }
     }

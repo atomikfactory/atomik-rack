@@ -189,19 +189,9 @@ impl RackView {
         modifiers: Modifiers,
     ) -> Option<UiAction> {
         match row {
-            BrowserRow::Device(d) => Some(match self.creation_of(d.kind) {
-                Some(kind) => self.create_action_at(
-                    CreateSource::Type(d.type_id.to_string()),
-                    kind,
-                    slot,
-                    modifiers,
-                ),
-                None => UiAction::Command(Command::AddDeviceAt {
-                    slot,
-                    type_id: d.type_id.to_string(),
-                    key: None,
-                }),
-            }),
+            BrowserRow::Device(d) => {
+                Some(self.device_slot_action(d.type_id, d.kind, slot, modifiers))
+            }
             BrowserRow::Plugin(n) => {
                 let e = self.plugin_catalog.get(*n)?;
                 let kind = match e.kind {
@@ -231,6 +221,40 @@ impl RackView {
                 })
             }
             _ => None,
+        }
+    }
+
+    /// The action that adds the built-in device `desc` at a rack slot, as dropping its browser
+    /// row does (top level only): through the creation chain for an instrument or an effect,
+    /// else a plain add. For callers that hold a device by type, such as the library's rows.
+    pub fn add_device_slot_action_for(
+        &self,
+        desc: &atomik_device_sdk::DeviceDescriptor,
+        slot: RackSlot,
+        modifiers: Modifiers,
+    ) -> UiAction {
+        self.device_slot_action(desc.type_id, desc.kind, slot, modifiers)
+    }
+
+    fn device_slot_action(
+        &self,
+        type_id: &str,
+        kind: atomik_device_sdk::DeviceKind,
+        slot: RackSlot,
+        modifiers: Modifiers,
+    ) -> UiAction {
+        match self.creation_of(kind) {
+            Some(create) => self.create_action_at(
+                CreateSource::Type(type_id.to_string()),
+                create,
+                slot,
+                modifiers,
+            ),
+            None => UiAction::Command(Command::AddDeviceAt {
+                slot,
+                type_id: type_id.to_string(),
+                key: None,
+            }),
         }
     }
 
