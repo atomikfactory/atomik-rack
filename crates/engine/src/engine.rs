@@ -50,7 +50,7 @@ use crate::graph::{DeviceInstanceId, EngineConfig, Graph};
 use crate::live::LiveNoteSender;
 use crate::plan::{Node, RenderPlan, mix_seed};
 use crate::player::{AutomationHold, Player, TransportCell};
-use crate::record::{RecordTap, TapRt};
+use crate::record::{RecordTap, TapChannel, TapControls, TapRt};
 use crate::stream::{REQUEST_CAPACITY, StreamControl, StreamStats};
 use crate::workers::Pool;
 use atomik_core::{BATCH, Batch, NoteKind, ParamId, Tempo, TimeInfo};
@@ -812,6 +812,24 @@ impl EngineHandle {
         capacity_frames: usize,
     ) -> Result<RecordTap, EngineError> {
         let (rt, tap) = crate::record::new_tap(channels, capacity_frames);
+        self.push(0, ControlOp::Tap(Some(rt)))?;
+        Ok(tap)
+    }
+
+    /// [`EngineHandle::record_tap`] with a gain and a clip-safe limiter per track: channel `k`
+    /// reads host input `channels[k].host` and goes through strip `channels[k].strip` of
+    /// `controls` before it is written (see [`TapControls`]). The caller keeps the `Arc` and
+    /// changes the strips' settings while the tap runs.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`].
+    pub fn record_tap_gained(
+        &mut self,
+        channels: &[TapChannel],
+        capacity_frames: usize,
+        controls: Arc<TapControls>,
+    ) -> Result<RecordTap, EngineError> {
+        let (rt, tap) = crate::record::new_gained_tap(channels, controls, capacity_frames);
         self.push(0, ControlOp::Tap(Some(rt)))?;
         Ok(tap)
     }

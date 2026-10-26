@@ -16,6 +16,9 @@
 //!   `engine_frame` of the stream. Channels beyond the engine's input count read as silence.
 //! * If the ring has no room for a whole record the batch is dropped and counted
 //!   ([`RecordTap::overflow_frames`], in frames); nothing blocks or allocates.
+//! * A tap made with `EngineHandle::record_tap_gained` sends every channel through a *strip*
+//!   (one per recorded track) before it is written: the strip's gain, then, when its clip-safe
+//!   switch is on, a safety limiter. See [`TapControls`].
 //! * [`RecordTap::drain`] copies out whole records that are *contiguous* in engine frames, so
 //!   the returned start tag is exact; a gap (overflow) ends the run, and the next call starts
 //!   at the first frame after the gap.
@@ -23,7 +26,174 @@
 use atomik_core::{BATCH, Batch};
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+/// One channel of a gained tap: the host input it reads and the strip it goes through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TapChannel {
+    /// Host input channel (0-based; a channel past the engine's inputs reads silence).
+    pub host: usize,
+    /// The strip (the recorded track) whose gain and limiter the channel goes through. The
+    /// channels of one strip are limited together, so a stereo take keeps its image.
+    pub strip: usize,
+}
+
+/// The live settings of the strips of a gained record tap: written by the app (any thread, any
+/// time), read by the audio thread once per batch. Wait-free both ways.
+///
+/// # Gain
+/// The linear gain of a strip is applied to the recorded signal first (before the limiter; the
+/// track's monitor path applies the same gain, so a performer hears what the take gets). A
+/// change glides: every batch the gain moves a quarter of the way to its target (a few
+/// milliseconds), and inside a batch it ramps linearly from the old to the new value, so there
+/// is no zipper and no step. The first batch of a tap starts at the target.
+///
+/// # Clip-safe
+/// With the switch on, the strip's output never exceeds 0 dBFS: a feed-forward peak limiter
+/// with instant attack and a release of about 40 ms (a time constant of
+/// [`LIMIT_RELEASE_FRAMES`] frames) takes the gain down just enough that the loudest channel
+/// of the strip at each frame is at most 1.0, and a final clamp makes the bound exact whatever
+/// the rounding. It is deterministic (no look-ahead, one gain-reduction value of state per
+/// strip) and it does not touch a take that stays below 0 dBFS, not by a bit. Without the
+/// switch the take keeps its overs: the written files are 32-bit float, so nothing is lost, but
+/// the take clips at the output.
+pub struct TapControls {
+    strips: Box<[StripControl]>,
+}
+
+struct StripControl {
+    /// Linear gain, f32 bits.
+    gain: AtomicU32,
+    safe: AtomicBool,
+}
+
+/// Highest linear gain a strip takes (+36 dB, past the +24 dB of the model's range).
+const MAX_GAIN: f32 = 64.0;
+
+/// Time constant of the clip-safe release, in frames (about 43 ms at 48 kHz).
+pub const LIMIT_RELEASE_FRAMES: f32 = 2048.0;
+
+impl TapControls {
+    /// `strips` strips at unity gain with clip-safe off.
+    pub fn new(strips: usize) -> Self {
+        Self {
+            strips: (0..strips)
+                .map(|_| StripControl {
+                    gain: AtomicU32::new(1.0f32.to_bits()),
+                    safe: AtomicBool::new(false),
+                })
+                .collect(),
+        }
+    }
+
+    /// Number of strips.
+    pub fn len(&self) -> usize {
+        self.strips.len()
+    }
+
+    /// True when there are no strips.
+    pub fn is_empty(&self) -> bool {
+        self.strips.is_empty()
+    }
+
+    /// Sets the linear `gain` (clamped to `0..=64`; not a number reads 1) and the clip-safe
+    /// switch of `strip`; a strip that does not exist is ignored.
+    pub fn set(&self, strip: usize, gain: f32, clip_safe: bool) {
+        let Some(s) = self.strips.get(strip) else {
+            return;
+        };
+        let gain = if gain.is_nan() {
+            1.0
+        } else {
+            gain.clamp(0.0, MAX_GAIN)
+        };
+        s.gain.store(gain.to_bits(), Ordering::Relaxed);
+        s.safe.store(clip_safe, Ordering::Relaxed);
+    }
+
+    /// The linear gain and clip-safe switch of `strip` as last set (`None`: no such strip).
+    pub fn get(&self, strip: usize) -> Option<(f32, bool)> {
+        let s = self.strips.get(strip)?;
+        Some((
+            f32::from_bits(s.gain.load(Ordering::Relaxed)),
+            s.safe.load(Ordering::Relaxed),
+        ))
+    }
+}
+
+impl std::fmt::Debug for TapControls {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TapControls")
+            .field("strips", &self.strips.len())
+            .finish()
+    }
+}
+
+/// The audio thread's state of a gained tap.
+struct Strips {
+    controls: Arc<TapControls>,
+    /// The strip of each tapped channel.
+    of: Vec<usize>,
+    /// Current gain per strip.
+    gain: Vec<f32>,
+    /// Gain at the end of this batch per strip (scratch).
+    next: Vec<f32>,
+    /// The limiter's gain reduction per strip (1 = none).
+    limit: Vec<f32>,
+    /// The first batch has not run: gains start at their targets.
+    fresh: bool,
+}
+
+impl Strips {
+    /// Moves every strip's gain towards its target for this batch.
+    fn glide(&mut self) {
+        for (s, c) in self.controls.strips.iter().enumerate() {
+            let target = f32::from_bits(c.gain.load(Ordering::Relaxed));
+            if self.fresh {
+                self.gain[s] = target;
+            }
+            let from = self.gain[s];
+            self.next[s] = if (target - from).abs() <= 1.0e-6 * target.abs().max(1.0e-3) {
+                target
+            } else {
+                from + (target - from) * 0.25
+            };
+        }
+        self.fresh = false;
+    }
+
+    /// The clip-safe pass over the words of one record (blocks of [`BATCH`] words per channel
+    /// after the two header words).
+    fn limit(&mut self, record: &mut [u32]) {
+        for (s, c) in self.controls.strips.iter().enumerate() {
+            if !c.safe.load(Ordering::Relaxed) {
+                self.limit[s] = 1.0;
+                continue;
+            }
+            let mut gr = self.limit[s];
+            for n in 0..BATCH {
+                let mut peak = 0.0f32;
+                for (k, &of) in self.of.iter().enumerate() {
+                    if of == s {
+                        let v = f32::from_bits(record[2 + k * BATCH + n]);
+                        peak = peak.max(if v.is_finite() { v.abs() } else { 0.0 });
+                    }
+                }
+                let need = if peak > 1.0 { 1.0 / peak } else { 1.0 };
+                gr = (gr + (1.0 - gr) / LIMIT_RELEASE_FRAMES).min(need);
+                for (k, &of) in self.of.iter().enumerate() {
+                    if of == s {
+                        let w = &mut record[2 + k * BATCH + n];
+                        let v = f32::from_bits(*w);
+                        let v = if v.is_finite() { v * gr } else { 0.0 };
+                        *w = v.clamp(-1.0, 1.0).to_bits();
+                    }
+                }
+            }
+            self.limit[s] = gr;
+        }
+    }
+}
 
 /// The audio-thread half of a tap (travels through the control queue).
 pub(crate) struct TapRt {
@@ -31,6 +201,8 @@ pub(crate) struct TapRt {
     channels: Vec<usize>,
     record: Vec<u32>,
     overflow: Arc<AtomicU64>,
+    /// Gain and limiter per strip; `None`: the plain copy.
+    strips: Option<Strips>,
 }
 
 impl TapRt {
@@ -42,16 +214,30 @@ impl TapRt {
         }
         self.record[0] = frame as u32;
         self.record[1] = (frame >> 32) as u32;
+        if let Some(st) = &mut self.strips {
+            st.glide();
+        }
         for (k, &ch) in self.channels.iter().enumerate() {
             let dst = &mut self.record[2 + k * BATCH..2 + (k + 1) * BATCH];
-            match inputs.get(ch) {
-                Some(src) => {
+            match (inputs.get(ch), &self.strips) {
+                (Some(src), Some(st)) => {
+                    let (from, to) = (st.gain[st.of[k]], st.next[st.of[k]]);
+                    for (n, (d, s)) in dst.iter_mut().zip(src).enumerate() {
+                        let g = from + (to - from) * ((n + 1) as f32 / BATCH as f32);
+                        *d = (s * g).to_bits();
+                    }
+                }
+                (Some(src), None) => {
                     for (d, s) in dst.iter_mut().zip(src) {
                         *d = s.to_bits();
                     }
                 }
-                None => dst.fill(0.0f32.to_bits()),
+                (None, _) => dst.fill(0.0f32.to_bits()),
             }
+        }
+        if let Some(st) = &mut self.strips {
+            st.limit(&mut self.record);
+            st.gain.clone_from_slice(&st.next);
         }
         if self.tx.push_entire_slice(&self.record).is_err() {
             self.overflow.fetch_add(BATCH as u64, Ordering::Relaxed);
@@ -79,6 +265,38 @@ impl std::fmt::Debug for RecordTap {
 /// Creates both halves: the tap sized for `capacity_frames` (rounded up to whole batches, at
 /// least one) of `channels`.
 pub(crate) fn new_tap(channels: &[usize], capacity_frames: usize) -> (Box<TapRt>, RecordTap) {
+    new_tap_with(channels, None, capacity_frames)
+}
+
+/// [`new_tap`] with strips: channel `k` reads host `channels[k].host` and goes through strip
+/// `channels[k].strip` of `controls` (a strip past the last one uses the last).
+pub(crate) fn new_gained_tap(
+    channels: &[TapChannel],
+    controls: Arc<TapControls>,
+    capacity_frames: usize,
+) -> (Box<TapRt>, RecordTap) {
+    let hosts: Vec<usize> = channels.iter().map(|c| c.host).collect();
+    let n = controls.len();
+    let of: Vec<usize> = channels
+        .iter()
+        .map(|c| c.strip.min(n.saturating_sub(1)))
+        .collect();
+    let strips = (n > 0).then(|| Strips {
+        controls,
+        of,
+        gain: vec![1.0; n],
+        next: vec![1.0; n],
+        limit: vec![1.0; n],
+        fresh: true,
+    });
+    new_tap_with(&hosts, strips, capacity_frames)
+}
+
+fn new_tap_with(
+    channels: &[usize],
+    strips: Option<Strips>,
+    capacity_frames: usize,
+) -> (Box<TapRt>, RecordTap) {
     let words = 2 + channels.len() * BATCH;
     let records = capacity_frames.div_ceil(BATCH).max(1);
     let (tx, rx) = RingBuffer::new(records * words);
@@ -88,6 +306,7 @@ pub(crate) fn new_tap(channels: &[usize], capacity_frames: usize) -> (Box<TapRt>
         channels: channels.to_vec(),
         record: vec![0; words],
         overflow: Arc::clone(&overflow),
+        strips,
     };
     let tap = RecordTap {
         rx,

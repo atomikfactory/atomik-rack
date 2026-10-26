@@ -45,7 +45,7 @@ pub use player::HOLD_CAPACITY;
 pub use preview::{
     PREVIEW_RING_FRAMES, PreviewFeed, PreviewMonitor, PreviewStream, preview_channel,
 };
-pub use record::RecordTap;
+pub use record::{LIMIT_RELEASE_FRAMES, RecordTap, TapChannel, TapControls};
 pub use seq::{
     SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,
     SongSnapshot, SongTempo, SongTrack, TransportCommand, TransportState, compile_song,
