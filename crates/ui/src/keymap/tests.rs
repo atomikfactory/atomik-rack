@@ -1119,3 +1119,22 @@ fn script_the_panel_keys_win_over_play_and_delete() {
     )
     .unwrap();
 }
+
+#[test]
+fn default_keymap_detach_chords_no_conflict() {
+    for os in Os::ALL {
+        let k = km(Profile::Standard, os);
+        let rack = first(k.resolve(&chord("Cmd+Shift+F6", os), &stack(&[Context::Global])));
+        assert_eq!(rack.command, "view.detach_rack", "{os:?}");
+        let mixer = first(k.resolve(&chord("Cmd+Shift+F5", os), &stack(&[Context::Global])));
+        assert_eq!(mixer.command, "view.detach_console", "{os:?}");
+        // The plain F5 and F6 keep their commands.
+        let f6 = first(k.resolve(&chord("F6", os), &stack(&[Context::Global])));
+        assert_eq!(f6.command, "view.toggle_rack");
+        assert!(find_conflicts(&k).is_empty(), "{os:?}");
+        for text in ["Cmd+Shift+F5", "Cmd+Shift+F6"] {
+            let c = Chord::parse(text).unwrap();
+            assert_eq!(reserved(os, Context::Global, &c), None, "{text} on {os:?}");
+        }
+    }
+}

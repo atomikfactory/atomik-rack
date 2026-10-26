@@ -13,6 +13,18 @@
 //! bottom; the rack is hidden. The divider position and the pane flags are app state
 //! ([`UiState`], `ui-state.json`), not project data.
 //!
+//! # Windows
+//!
+//! The rack and the console can leave the main window (View ▸ Detach Rack / Detach Mixer, see
+//! the `shell_windows` module): the layout above then leaves them out, and each detached pane
+//! fills a window of its own. The shell stays the one owner of the document and the views and
+//! knows each open window's size and scale; the platform opens the windows
+//! ([`Shell::windows_wanted`]) and sends each one's events with [`Shell::handle_in`]
+//! (and [`Shell::handle_routed`] while a file drag can cross windows), paints each with
+//! [`Shell::paint_in`] and reports focus and geometry ([`Shell::window_focused`],
+//! [`Shell::window_moved`]). The keys are global: the focused pane decides the keymap context
+//! whatever window it is in.
+//!
 //! # Console hosting
 //!
 //! The console view follows the `atomik-ui` hosting contract: it gets its bounds and scale
@@ -126,6 +138,7 @@ use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
 use crate::status::status_text;
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
+use crate::windows::{WindowHit, WindowKind};
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
 use atomik_ui::ContextTarget;
 use atomik_ui::CursorHint;
@@ -144,6 +157,7 @@ use atomik_ui::{
     RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction,
     WarpValues, WarpView,
 };
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -218,6 +232,12 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Bring a window to the front and give it the keyboard focus (restoring it if it is
+    /// minimised).
+    FocusWindow(WindowKind),
+    /// Maximise a window, or restore it if it is maximised (the console's MAX button and
+    /// Shift+F5 while the console is detached).
+    ToggleMaximise(WindowKind),
     /// Close the window and exit.
     Quit,
 }
@@ -262,16 +282,19 @@ pub struct Layout {
 /// A drag of files that left the file browser: the shell owns it until the release.
 struct FileDrag {
     paths: Vec<PathBuf>,
-    /// Where the pointer last was (the label follows it); `None` before the first move.
-    pos: Option<Point>,
+    /// Where the pointer last was, in the window it is over (the label follows it); `None`
+    /// before the first move or while it is over no window.
+    pos: Option<(WindowKind, Point)>,
     /// Esc was pressed: nothing is delivered any more; the release ends the gesture.
     cancelled: bool,
 }
 
-/// An open context menu and the pane whose selection its commands work on.
+/// An open context menu, the pane whose selection its commands work on and the window it is
+/// open in.
 struct OpenContextMenu {
     menu: ContextMenu,
     pane: Pane,
+    window: WindowKind,
 }
 
 /// What holds the pointer between a press and its release.
@@ -299,13 +322,19 @@ pub struct Shell<B: AudioBackend> {
     surface_applied: SurfaceSettings,
     ui_state_path: Option<PathBuf>,
     ui: UiState,
-    size: Size,
-    scale: f64,
+    /// The open windows: the main window always, a detached pane's while it is detached.
+    wins: BTreeMap<WindowKind, WinState>,
     status: String,
     repaint: bool,
-    capture: Option<Capture>,
-    hover: Option<Pane>,
+    /// What holds the pointer, and the window the press happened in.
+    capture: Option<(WindowKind, Capture)>,
     focus: Pane,
+    /// The window that has the OS focus (the keys come from it).
+    focused: WindowKind,
+    /// A window moved or resized since the geometry was last written.
+    geom_dirty: bool,
+    /// When (the `frame_at` clock) the geometry was last written.
+    geom_saved_at: f64,
     /// Requests raised outside `handle`'s own flow (view actions); returned by the next
     /// `handle`.
     pending: Vec<ShellRequest>,
@@ -393,8 +422,8 @@ fn stamp_of(path: &Path) -> Option<(SystemTime, u64)> {
 impl<B: AudioBackend> std::fmt::Debug for Shell<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Shell")
-            .field("size", &self.size)
-            .field("scale", &self.scale)
+            .field("size", &self.size())
+            .field("scale", &self.scale())
             .field("status", &self.status)
             .field("ui", &self.ui)
             .field("focus", &self.focus)
@@ -459,13 +488,14 @@ impl<B: AudioBackend> Shell<B> {
             surface_applied: SurfaceSettings::default(),
             ui_state_path: options.ui_state_path,
             ui,
-            size: Size::new(1280.0, 800.0),
-            scale: 1.0,
+            wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
             repaint: true,
             capture: None,
-            hover: None,
             focus: Pane::Rack,
+            focused: WindowKind::Main,
+            geom_dirty: false,
+            geom_saved_at: f64::NEG_INFINITY,
             pending: Vec::new(),
             load_device: None,
             banner,
@@ -506,6 +536,7 @@ impl<B: AudioBackend> Shell<B> {
         shell.sync_library_root();
         // Before anything saves the window state: a save copies the panel's values.
         shell.restore_file_browser();
+        shell.restore_windows();
         shell.apply_workflow_to_views();
         // The rack's console display preferences (shown unless the user
         // switched them off).
@@ -677,7 +708,7 @@ impl<B: AudioBackend> Shell<B> {
         }
         let theme = self.core.view().theme().clone();
         let mut view = RelinkView::new(theme);
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.relink = Some(view);
         self.sync_relink();
@@ -715,7 +746,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_silence(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = SilenceView::new(theme, self.silence_values.clone());
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.silence = Some(view);
         self.sync_silence();
@@ -760,7 +791,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_notes(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = NotesView::new(theme, self.notes_values.clone());
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.notes = Some(view);
         self.sync_notes();
@@ -821,7 +852,7 @@ impl<B: AudioBackend> Shell<B> {
             .warp_values()
             .unwrap_or_else(|| self.warp_values.clone());
         let mut view = WarpView::new(theme, values);
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.warp = Some(view);
         self.sync_warp();
@@ -883,7 +914,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_quantize(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = QuantizeView::new(theme, self.quantize_values.clone());
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         self.quantize = Some(view);
         self.sync_quantize();
@@ -995,7 +1026,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_midi_maps(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = MidiMapsView::new(theme);
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         view.set_rows(self.core.midi_map_rows());
         self.midi_maps = Some(view);
@@ -1055,7 +1086,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_macros(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = MacrosView::new(theme);
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         view.set_banks(self.core.macro_bank_rows(), self.core.macro_bank().as_ref());
         self.macros_panel = Some(view);
@@ -1100,7 +1131,7 @@ impl<B: AudioBackend> Shell<B> {
     fn open_param_search(&mut self) {
         let theme = self.core.view().theme().clone();
         let mut view = ParamSearchView::new(theme);
-        view.set_scale(self.scale);
+        view.set_scale(self.scale());
         view.set_bounds(self.plugin_modal_rect());
         let (rows, total) = self.core.param_search("");
         view.set_rows(rows, total);
@@ -1135,13 +1166,19 @@ impl<B: AudioBackend> Shell<B> {
                 self.param_search = None;
                 match self.core.search_reveal(row) {
                     Some(Revealed::Console) => {
-                        if !self.console_shown() {
-                            self.execute(AppCommand::ToggleConsole);
+                        if !self.console_visible() {
+                            self.execute_command(AppCommand::ToggleConsole);
+                        } else if self.console_detached() {
+                            self.pending
+                                .push(ShellRequest::FocusWindow(WindowKind::Console));
                         }
                         self.set_focus(Pane::Console);
                     }
                     Some(Revealed::Rack) => {
-                        if !self.workflow.rack_visible {
+                        if self.rack_detached() {
+                            self.pending
+                                .push(ShellRequest::FocusWindow(WindowKind::Rack));
+                        } else if !self.workflow.rack_visible {
                             self.set_rack_visible(true);
                         }
                         self.set_focus(Pane::Rack);
@@ -1602,8 +1639,8 @@ impl<B: AudioBackend> Shell<B> {
             loop_enabled: song.loop_enabled,
             metronome: self.core.metronome(),
             quantize: self.core.input_quantize(),
-            console: self.console_shown(),
-            console_maximised: self.console_shown() && self.ui.console_maximised,
+            console: self.console_visible(),
+            console_maximised: self.maximised(),
             compensation: self.core.doc().console.compensation,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
@@ -1612,8 +1649,10 @@ impl<B: AudioBackend> Shell<B> {
             marker_list: self.core.arrangement().marker_list_visible(),
             rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
+            rack_detached: self.rack_detached(),
+            console_detached: self.console_detached(),
             sequencer_only: self.in_sequencer_only(),
-            editor: !self.ui.show_console
+            editor: !self.lower_is_console()
                 && !matches!(self.lower_pane(), Pane::Arrangement | Pane::Console),
             missing_audio: !self.core.missing_assets().is_empty(),
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
@@ -1631,19 +1670,9 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
-    /// Whether the console shows (in the lower pane, or maximised).
-    fn console_shown(&self) -> bool {
-        self.ui.show_song && self.ui.show_console
-    }
-
+    /// The console is maximised over the rack in the main window.
     fn maximised(&self) -> bool {
-        self.console_shown() && self.ui.console_maximised
-    }
-
-    /// The rack is hidden by F6 (the song area shows; a maximised console hides it too, but
-    /// that is its own state).
-    fn rack_hidden(&self) -> bool {
-        self.ui.show_song && !self.workflow.rack_visible && !self.maximised()
+        self.console_in_main() && self.ui.console_maximised
     }
 
     fn bar_height(&self) -> f64 {
@@ -1664,11 +1693,11 @@ impl<B: AudioBackend> Shell<B> {
     fn plugin_modal_rect(&self) -> Rect {
         let margin = 24.0;
         let top = self.bar_height() + margin;
-        let bottom = (self.size.height - STATUS_BAR_HEIGHT - margin).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - margin).max(top + 1.0);
         Rect::new(
             margin,
             top,
-            (self.size.width - margin).max(margin + 1.0),
+            (self.size().width - margin).max(margin + 1.0),
             bottom,
         )
     }
@@ -1681,8 +1710,8 @@ impl<B: AudioBackend> Shell<B> {
             return None;
         }
         let top = self.bar_height();
-        let bottom = (self.size.height - STATUS_BAR_HEIGHT).max(top + 1.0);
-        let most = (self.size.width - MIN_REST_WIDTH).max(0.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let most = (self.size().width - MIN_REST_WIDTH).max(0.0);
         let least = FileBrowserView::MIN_WIDTH.min(most);
         let width = self.core.file_browser().width().clamp(least, most);
         Some(Rect::new(0.0, top, width, bottom))
@@ -1692,10 +1721,10 @@ impl<B: AudioBackend> Shell<B> {
     pub fn layout(&self) -> Layout {
         let fb = self.file_browser_rect();
         let x0 = fb.map_or(0.0, |r| r.x1);
-        let w = (self.size.width - x0).max(1.0);
+        let w = (self.size().width - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
-        let bottom = (self.size.height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
@@ -1716,7 +1745,7 @@ impl<B: AudioBackend> Shell<B> {
                 file_browser: fb,
             };
         }
-        if self.rack_hidden() {
+        if !self.rack_in_main() {
             let transport = Rect::new(x0, top, x1, top + TRANSPORT_HEIGHT);
             return Layout {
                 rack: Rect::new(x0, top, x1, top),
@@ -1758,16 +1787,18 @@ impl<B: AudioBackend> Shell<B> {
     /// Physical size of the whole window content.
     pub fn physical_size(&self) -> (u32, u32) {
         (
-            (self.size.width * self.scale).ceil().max(1.0) as u32,
-            (self.size.height * self.scale).ceil().max(1.0) as u32,
+            (self.size().width * self.scale()).ceil().max(1.0) as u32,
+            (self.size().height * self.scale()).ceil().max(1.0) as u32,
         )
     }
 
     fn layout_view(&mut self) {
         let l = self.layout();
         // A maximised console hides the rack: it keeps its last size.
-        if l.rack.height() > 0.0 {
-            self.core.handle_event(&UiEvent::Resize(l.rack.size()));
+        if let Some((_, rack)) = self.pane_rect(Pane::Rack)
+            && rack.height() > 0.0
+        {
+            self.core.handle_event(&UiEvent::Resize(rack.size()));
         }
         self.core.transport_bar_mut().set_bounds(l.transport);
         if let Some(fb) = l.file_browser {
@@ -1783,14 +1814,21 @@ impl<B: AudioBackend> Shell<B> {
             self.core.seq_editor_mut().set_bounds(song);
             self.core.container_editor_mut().set_bounds(song);
             self.core.plugin_params_mut().set_bounds(song);
-            self.core.console_mut().set_bounds(song);
+            if !self.console_detached() {
+                self.core.console_mut().set_bounds(song);
+            }
+        }
+        if let Some((_, rect)) = self.pane_rect(Pane::Console)
+            && self.console_detached()
+        {
+            self.core.console_mut().set_bounds(rect);
         }
         let bar = self.bar_height();
         let banner_x = l.file_browser.map_or(0.0, |r| r.x1);
         self.banner.set_bounds(Rect::new(
             banner_x,
             bar,
-            self.size.width.max(banner_x),
+            self.size().width.max(banner_x),
             bar + self.banner.height(),
         ));
         if self.plugin_settings.is_some() {
@@ -1858,7 +1896,7 @@ impl<B: AudioBackend> Shell<B> {
     /// while a sampler is open, else the piano roll while a clip is open, else the
     /// arrangement.
     pub fn lower_pane(&self) -> Pane {
-        if self.ui.show_console {
+        if self.lower_is_console() {
             Pane::Console
         } else if self.core.sample_editor_device().is_some() {
             Pane::SampleEditor
@@ -1886,6 +1924,9 @@ impl<B: AudioBackend> Shell<B> {
     /// A pane that still exists (the song panes fall back when hidden or switched).
     fn live_pane(&self, pane: Pane) -> Pane {
         match pane {
+            // A detached pane lives in its window whatever the main layout is.
+            Pane::Rack if self.rack_detached() => Pane::Rack,
+            Pane::Console if self.console_detached() => Pane::Console,
             Pane::Arrangement
             | Pane::PianoRoll
             | Pane::Console
@@ -1910,13 +1951,14 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::PluginParams => self.song_pane(),
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
-            Pane::Rack if self.rack_hidden() => self.song_pane(),
+            Pane::Rack if !self.rack_in_main() => self.song_pane(),
             other => other,
         }
     }
 
     fn set_focus(&mut self, pane: Pane) {
         self.focus = pane;
+        self.remember_focus(pane);
         self.core
             .arrangement_mut()
             .set_focused(pane == Pane::Arrangement);
@@ -1952,11 +1994,20 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The pane under a window point, if any (the divider and the bars are not panes).
     pub fn hit_pane(&self, pos: Point) -> Option<Pane> {
-        self.hit(pos).and_then(Result::ok)
+        self.hit_in(WindowKind::Main, pos).and_then(Result::ok)
     }
 
-    /// What is under a window point: a pane, the divider (`Err(())`), or nothing.
-    fn hit(&self, pos: Point) -> Option<Result<Pane, ()>> {
+    /// What is under a point of `window`: a pane, the divider (`Err(())`), or nothing. A detached
+    /// pane fills its window.
+    fn hit_in(&self, window: WindowKind, pos: Point) -> Option<Result<Pane, ()>> {
+        if window != WindowKind::Main {
+            let pane = match window {
+                WindowKind::Console => Pane::Console,
+                _ => Pane::Rack,
+            };
+            let (_, rect) = self.pane_rect(pane)?;
+            return rect.contains(pos).then_some(Ok(pane));
+        }
         let l = self.layout();
         if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
@@ -1973,12 +2024,44 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
-    /// Handles one window event (logical units).
+    /// Handles one event of the main window (logical units). The same as
+    /// `handle_in(WindowKind::Main, event)`.
     pub fn handle(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
-        let mut requests = self.handle_event_inner(event);
+        self.handle_in(WindowKind::Main, event)
+    }
+
+    /// Handles one event of the window `window` (logical units of that window). A window that
+    /// is not open ignores it. A pointer event counts as over its own window; a platform that
+    /// knows where the pointer is on the desktop during a drag calls [`Self::handle_routed`].
+    pub fn handle_in(&mut self, window: WindowKind, event: &UiEvent) -> Vec<ShellRequest> {
+        let under = pointer_pos(event).map(|p| WindowHit {
+            kind: window,
+            logical: (p.x, p.y),
+        });
+        self.handle_routed(window, event, under)
+    }
+
+    /// Like [`Self::handle_in`], for a platform that resolves the window under the pointer: the
+    /// OS keeps sending a drag's events to the window that got the press, with positions
+    /// outside its area, so `under` says which window (and where in it, logical units) the
+    /// pointer is really over, or `None` over no window of the app. Only a drag of files from
+    /// the file browser or the library ([`Self::cross_window_drag`]) follows `under`; every
+    /// other gesture stays in its own window.
+    pub fn handle_routed(
+        &mut self,
+        window: WindowKind,
+        event: &UiEvent,
+        under: Option<WindowHit>,
+    ) -> Vec<ShellRequest> {
+        if !self.wins.contains_key(&window) {
+            return Vec::new();
+        }
+        let modal = self.modal_open();
+        let mut requests = self.handle_event_inner(window, event, under);
         self.sync_library_ui();
         self.save_zoom_state();
         requests.append(&mut self.pending);
+        self.after_event(modal, &mut requests);
         requests
     }
 
@@ -1988,11 +2071,11 @@ impl<B: AudioBackend> Shell<B> {
     /// (a sampler panel emits `ImportSamples`). The other views get a hover cancel. A drop
     /// that lands on nothing that takes files (the console, the transport bar, a rack device
     /// that is not a sampler) imports the files as new tracks at the snapped playhead.
-    fn file_event(&mut self, event: &UiEvent) {
+    fn file_event(&mut self, window: WindowKind, event: &UiEvent) {
         self.repaint = true;
         let target = match event {
             UiEvent::FileHover { pos, .. } | UiEvent::FileDrop { pos, .. } => {
-                self.file_target(*pos)
+                self.file_target_in(window, *pos)
             }
             _ => None,
         };
@@ -2098,24 +2181,35 @@ impl<B: AudioBackend> Shell<B> {
     /// whatever takes files under the pointer (cancels over the panel or anything else), the
     /// release is a file drop exactly like an OS drop, and a release over the panel or over
     /// nothing that takes files cancels.
-    fn file_drag_event(&mut self, event: &UiEvent, pos: Point) {
+    ///
+    /// `at` is the window the pointer is over and the point in it (`None`: over no window of the
+    /// app, so there is no target and a release cancels); the file browser is in the main
+    /// window, a detached rack is another place a drop can land.
+    fn file_drag_event(&mut self, event: &UiEvent, at: Option<(WindowKind, Point)>) {
         self.repaint = true;
         let Some(drag) = self.file_drag.as_mut() else {
             return;
         };
-        drag.pos = Some(pos);
+        drag.pos = at;
         if drag.cancelled {
             return;
         }
         let paths = drag.paths.clone();
+        let Some((window, pos)) = at else {
+            // Over no window: the targets let go; the release ends the gesture.
+            self.file_event(WindowKind::Main, &UiEvent::FileHoverCancel);
+            return;
+        };
         match event {
-            UiEvent::PointerMove { .. } => self.file_event(&UiEvent::FileHover { pos, paths }),
+            UiEvent::PointerMove { .. } => {
+                self.file_event(window, &UiEvent::FileHover { pos, paths });
+            }
             UiEvent::PointerUp { .. } => {
-                let over_panel = self.hit_pane(pos) == Some(Pane::FileBrowser);
-                if !over_panel && self.file_target(pos).is_some() {
-                    self.file_event(&UiEvent::FileDrop { pos, paths });
+                let over_panel = self.hit_in(window, pos) == Some(Ok(Pane::FileBrowser));
+                if !over_panel && self.file_target_in(window, pos).is_some() {
+                    self.file_event(window, &UiEvent::FileDrop { pos, paths });
                 } else {
-                    self.file_event(&UiEvent::FileHoverCancel);
+                    self.file_event(window, &UiEvent::FileHoverCancel);
                 }
             }
             _ => {}
@@ -2128,12 +2222,12 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(drag) = &mut self.file_drag {
             drag.cancelled = true;
         }
-        self.file_event(&UiEvent::FileHoverCancel);
+        self.file_event(WindowKind::Main, &UiEvent::FileHoverCancel);
     }
 
-    /// The pane files at a window point go to, if it takes files.
-    fn file_target(&self, pos: Point) -> Option<Pane> {
-        match self.hit(pos)? {
+    /// The pane files at a point of `window` go to, if it takes files.
+    fn file_target_in(&self, window: WindowKind, pos: Point) -> Option<Pane> {
+        match self.hit_in(window, pos)? {
             Ok(
                 pane @ (Pane::Arrangement
                 | Pane::SampleEditor
@@ -2162,80 +2256,73 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
     }
 
-    fn handle_event_inner(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
+    fn handle_event_inner(
+        &mut self,
+        window: WindowKind,
+        event: &UiEvent,
+        under: Option<WindowHit>,
+    ) -> Vec<ShellRequest> {
         if matches!(
             event,
             UiEvent::FileHover { .. } | UiEvent::FileHoverCancel | UiEvent::FileDrop { .. }
         ) {
-            self.file_event(event);
+            if window != WindowKind::Main && self.modal_open() {
+                return Vec::new();
+            }
+            self.file_event(window, event);
             return Vec::new();
         }
         match event {
             UiEvent::ScaleChanged(scale) => {
-                self.scale = *scale;
-                self.core.handle_event(event);
-                self.core.arrangement_mut().set_scale(*scale);
-                self.core.piano_roll_mut().set_scale(*scale);
-                self.core.sample_editor_mut().set_scale(*scale);
-                self.core.step_editor_mut().set_scale(*scale);
-                self.core.slice_editor_mut().set_scale(*scale);
-                self.core.seq_editor_mut().set_scale(*scale);
-                self.core.container_editor_mut().set_scale(*scale);
-                self.core.plugin_params_mut().set_scale(*scale);
-                self.banner.set_scale(*scale);
-                if let Some(v) = &mut self.plugin_settings {
-                    v.set_scale(*scale);
+                if let Some(w) = self.wins.get_mut(&window) {
+                    w.scale = *scale;
                 }
-                if let Some(v) = &mut self.relink {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.midi_maps {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.macros_panel {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.param_search {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.quantize {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.silence {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.notes {
-                    v.set_scale(*scale);
-                }
-                if let Some(v) = &mut self.warp {
-                    v.set_scale(*scale);
-                }
-                self.core.transport_bar_mut().set_scale(*scale);
-                self.core.console_mut().set_scale(*scale);
-                self.core.file_browser_mut().set_scale(*scale);
-                self.repaint = true;
+                self.apply_scale(window);
                 return Vec::new();
             }
             UiEvent::Resize(size) => {
-                self.size = *size;
-                self.context_menu = None;
+                if let Some(w) = self.wins.get_mut(&window) {
+                    w.size = *size;
+                }
+                if self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(|o| o.window == window)
+                {
+                    self.context_menu = None;
+                }
                 self.layout_view();
                 return Vec::new();
             }
             _ => {}
         }
+        // A key from a window the shell did not know had the focus: the platform's focus event
+        // may come second, and a headless caller has none.
+        if matches!(event, UiEvent::Key { pressed: true, .. }) && self.focused != window {
+            self.window_focused(window);
+        }
         if let UiEvent::ModifiersChanged { modifiers } = event {
             // Held-modifier state only; nothing repaints until a role depends on it. The
             // settings dialog learns a role from the modifiers held.
             self.modifiers = *modifiers;
+            let size = self.size();
             if let Some(dialog) = &mut self.dialog
                 && dialog.capturing_keys()
             {
-                dialog.handle(event, self.size);
+                dialog.handle(event, size);
                 self.repaint = true;
             }
             self.forward_modifiers();
             return Vec::new();
+        }
+        // The modals live in the main window: while one is open the other windows are inert, and
+        // a press in one brings the main window forward.
+        if window != WindowKind::Main && self.modal_open() {
+            return if matches!(event, UiEvent::PointerDown { .. }) {
+                vec![ShellRequest::FocusWindow(WindowKind::Main)]
+            } else {
+                Vec::new()
+            };
         }
         if self.plugin_settings.is_some() {
             // The Plugins modal takes every event; Esc closes it.
@@ -2440,6 +2527,7 @@ impl<B: AudioBackend> Shell<B> {
             self.sync_quantize();
             return Vec::new();
         }
+        let size = self.size();
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
             // Learning a chord needs the keys as they are pressed (numpad keys included).
@@ -2448,7 +2536,7 @@ impl<B: AudioBackend> Shell<B> {
             } else {
                 text_form(event)
             };
-            match dialog.handle(&event, self.size) {
+            match dialog.handle(&event, size) {
                 DialogOutcome::Open => {}
                 DialogOutcome::Cancel => self.dialog = None,
                 DialogOutcome::Apply(settings) => {
@@ -2464,7 +2552,7 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         if self.context_menu.is_some() {
-            return self.context_menu_event(event);
+            return self.context_menu_event(window, event);
         }
         let bar_open = self.menubar.as_ref().is_some_and(MenuBar::is_open);
         if let UiEvent::Key {
@@ -2509,7 +2597,7 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         // A press keeps every pointer event until its release.
-        if let Some(capture) = self.capture
+        if let Some((_, capture)) = self.capture
             && let Some(pos) = pointer_pos(event)
         {
             let released = matches!(event, UiEvent::PointerUp { .. });
@@ -2518,13 +2606,19 @@ impl<B: AudioBackend> Shell<B> {
                     self.forward(pane, event);
                 }
                 Capture::Divider { grab } => self.drag_divider(pos, grab, released),
-                Capture::FileDrag => self.file_drag_event(event, pos),
+                Capture::FileDrag => {
+                    let at = under.map(|h| (h.kind, Point::new(h.logical.0, h.logical.1)));
+                    self.file_drag_event(event, at);
+                }
             }
             if released {
                 self.capture = None;
                 self.file_drag = None;
             }
             return Vec::new();
+        }
+        if window != WindowKind::Main {
+            return self.pointer_in_detached(window, event);
         }
         // The plugin banner takes the pointer inside its strip (below the menu bar).
         if self.banner.is_visible()
@@ -2554,7 +2648,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 MenuBarOutcome::Command(command) => {
                     self.repaint = true;
-                    return self.execute(command);
+                    return self.execute_command(command);
                 }
             }
         }
@@ -2566,24 +2660,27 @@ impl<B: AudioBackend> Shell<B> {
             self.forward(Pane::Rack, event);
             return Vec::new();
         };
-        match self.hit(pos) {
+        match self.hit_in(WindowKind::Main, pos) {
             None => self.leave_hover(),
             Some(Err(())) => {
                 self.leave_hover();
                 if matches!(event, UiEvent::PointerDown { .. })
                     && let Some(d) = self.layout().divider
                 {
-                    self.capture = Some(Capture::Divider { grab: pos.y - d.y0 });
+                    self.focused = WindowKind::Main;
+                    self.capture =
+                        Some((WindowKind::Main, Capture::Divider { grab: pos.y - d.y0 }));
                 }
             }
             Some(Ok(pane)) => {
-                if self.hover != Some(pane) {
+                if self.hover_in(WindowKind::Main) != Some(pane) {
                     self.leave_hover();
-                    self.hover = Some(pane);
+                    self.set_hover_in(WindowKind::Main, Some(pane));
                 }
                 if matches!(event, UiEvent::PointerDown { .. }) {
+                    self.focused = WindowKind::Main;
                     self.set_focus(pane);
-                    self.capture = Some(Capture::Pane(pane));
+                    self.capture = Some((WindowKind::Main, Capture::Pane(pane)));
                 }
                 self.forward(pane, event);
             }
@@ -2709,7 +2806,7 @@ impl<B: AudioBackend> Shell<B> {
             _ => {
                 let command = AppCommand::from_command(id, arg)?;
                 self.repaint = true;
-                return Some(self.execute(command));
+                return Some(self.execute_command(command));
             }
         }
         self.repaint = true;
@@ -2720,6 +2817,12 @@ impl<B: AudioBackend> Shell<B> {
     /// Shows the rack again when F6 or F7 hid it (a command that needs it, such as the create
     /// browser, calls this); a maximised console steps back too.
     fn show_rack(&mut self) {
+        if self.rack_detached() {
+            // Nothing to show in the main window: the rack's own window comes forward.
+            self.pending
+                .push(ShellRequest::FocusWindow(WindowKind::Rack));
+            return;
+        }
         let mut changed = false;
         if self.ui.console_maximised {
             self.ui.console_maximised = false;
@@ -2751,7 +2854,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Whether the layout is the sequencer-only one: no rack, no console, the song area shown.
     fn in_sequencer_only(&self) -> bool {
-        self.ui.show_song && !self.workflow.rack_visible && !self.ui.show_console
+        self.ui.show_song && !self.workflow.rack_visible && !self.lower_is_console()
     }
 
     /// F7: sequencer only (no rack, no console), or back to the layout it replaced (the rack
@@ -2785,7 +2888,7 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The song area shows the editors and the arrangement, not the console or nothing.
     fn reveal_lower_pane(&mut self) {
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -2795,7 +2898,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Gives the keys to the editor that shows in the lower pane, if one does.
     fn focus_editor(&mut self) {
         let lower = self.lower_pane();
-        if !self.ui.show_console && !matches!(lower, Pane::Arrangement | Pane::Console) {
+        if !self.lower_is_console() && !matches!(lower, Pane::Arrangement | Pane::Console) {
             self.set_focus(lower);
         }
     }
@@ -2822,7 +2925,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.handle_action(action.clone());
             self.pane_actions(&[action]);
         } else {
-            self.execute(AppCommand::TogglePianoRoll);
+            self.execute_command(AppCommand::TogglePianoRoll);
         }
         self.focus_editor();
     }
@@ -2835,12 +2938,6 @@ impl<B: AudioBackend> Shell<B> {
         self.core.open_create_browser(kind);
     }
 
-    fn leave_hover(&mut self) {
-        if let Some(pane) = self.hover.take() {
-            self.forward(pane, &UiEvent::PointerLeave);
-        }
-    }
-
     /// Sends a key no command took to the focused view (numpad keys as the characters they
     /// type).
     fn route_key(&mut self, event: &UiEvent) {
@@ -2850,7 +2947,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn drag_divider(&mut self, pos: Point, grab: f64, released: bool) {
         let top = self.top();
-        let bottom = (self.size.height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
@@ -2919,7 +3016,9 @@ impl<B: AudioBackend> Shell<B> {
             self.open_context_menus(pane, &actions);
             return actions;
         }
-        let origin = self.layout().rack.origin();
+        let origin = self
+            .pane_rect(Pane::Rack)
+            .map_or(Point::ORIGIN, |(_, r)| r.origin());
         let shift = |p: Point| Point::new(p.x - origin.x, p.y - origin.y);
         let moved = match event.clone() {
             UiEvent::PointerMove { pos, modifiers } => UiEvent::PointerMove {
@@ -3043,17 +3142,20 @@ impl<B: AudioBackend> Shell<B> {
     fn open_context_menu(&mut self, pane: Pane, target: ContextTarget, at: Point) {
         let enable = self.menu_enable(pane);
         let specs = context_menus::specs(target, &enable);
+        // It opens in the window that shows the pane, sized to that window.
+        let window = self.window_of(pane);
+        let size = self.window_size(window).unwrap_or_else(|| self.size());
         let menu = ContextMenu::build(
             &specs,
             &atomik_ui::keymap::Registry::bundled(),
             self.router.keymap(),
             at,
-            self.size,
+            size,
         );
-        self.context_menu = Some(OpenContextMenu { menu, pane });
+        self.context_menu = Some(OpenContextMenu { menu, pane, window });
         // The pointer press that opened it must not keep a drag alive.
         self.capture = None;
-        self.leave_hover();
+        self.leave_all_hover();
         self.repaint = true;
     }
 
@@ -3072,11 +3174,19 @@ impl<B: AudioBackend> Shell<B> {
     /// An event while a context menu is open: it takes the pointer and the keys. A click on an
     /// item runs its command as a key would (in the pane the menu belongs to); Escape or a
     /// click elsewhere closes it.
-    fn context_menu_event(&mut self, event: &UiEvent) -> Vec<ShellRequest> {
+    fn context_menu_event(&mut self, window: WindowKind, event: &UiEvent) -> Vec<ShellRequest> {
         self.repaint = true;
         let Some(open) = &mut self.context_menu else {
             return Vec::new();
         };
+        // The menu belongs to one window: a press in another one closes it (and is not
+        // delivered); the other pointer events of that window are not the menu's.
+        if open.window != window && pointer_pos(event).is_some() {
+            if matches!(event, UiEvent::PointerDown { .. }) {
+                self.context_menu = None;
+            }
+            return Vec::new();
+        }
         if let UiEvent::Key {
             key,
             modifiers,
@@ -3117,7 +3227,9 @@ impl<B: AudioBackend> Shell<B> {
                 _ => continue,
             };
             let at = if pane == Pane::Rack {
-                let o = self.layout().rack.origin();
+                let o = self
+                    .pane_rect(Pane::Rack)
+                    .map_or(Point::ORIGIN, |(_, r)| r.origin());
                 Point::new(at.x + o.x, at.y + o.y)
             } else {
                 at
@@ -3131,10 +3243,12 @@ impl<B: AudioBackend> Shell<B> {
         for action in actions {
             match action {
                 UiAction::ToggleConsole => {
-                    self.execute(AppCommand::ToggleConsole);
+                    let requests = self.execute_command(AppCommand::ToggleConsole);
+                    self.pending.extend(requests);
                 }
                 UiAction::MaximiseConsole => {
-                    self.execute(AppCommand::MaximiseConsole);
+                    let requests = self.execute_command(AppCommand::MaximiseConsole);
+                    self.pending.extend(requests);
                 }
                 UiAction::ImportAudioDialog => self.pending.push(ShellRequest::PickImportFiles),
                 // The piano roll's QUANT button: the panel's last settings, on the roll.
@@ -3198,7 +3312,7 @@ impl<B: AudioBackend> Shell<B> {
                         pos: None,
                         cancelled: false,
                     });
-                    self.capture = Some(Capture::FileDrag);
+                    self.capture = Some((WindowKind::Main, Capture::FileDrag));
                 }
                 UiAction::Browse(BrowseAction::Show(Place::Folder(folder))) => {
                     self.ui.file_browser_folder = Some(folder.clone());
@@ -3224,7 +3338,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.sample_editor_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3239,7 +3353,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.step_editor_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3254,7 +3368,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.seq_editor_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3269,7 +3383,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.container_editor_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3284,7 +3398,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.plugin_params_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3357,7 +3471,7 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.slice_editor_device().is_none() {
             return;
         }
-        if !self.ui.show_song || self.ui.show_console {
+        if !self.ui.show_song || self.lower_is_console() {
             self.ui.show_song = true;
             self.ui.show_console = false;
             self.console_changed();
@@ -3391,15 +3505,24 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn console_changed(&mut self) {
-        if !self.console_shown() && self.focus == Pane::Console {
+        if !self.console_visible() && self.focus == Pane::Console {
             self.set_focus(self.live_pane(Pane::Arrangement));
         }
         self.layout_view();
         self.save_ui_state();
     }
 
-    /// Runs a menu or shortcut command.
+    /// Runs a menu or shortcut command. The requests include any the shell raised on the side
+    /// (such as bringing a window forward).
     pub fn execute(&mut self, command: AppCommand) -> Vec<ShellRequest> {
+        let modal = self.modal_open();
+        let mut requests = self.execute_command(command);
+        requests.append(&mut self.pending);
+        self.after_event(modal, &mut requests);
+        requests
+    }
+
+    fn execute_command(&mut self, command: AppCommand) -> Vec<ShellRequest> {
         self.repaint = true;
         let requests = match command {
             AppCommand::New
@@ -3593,7 +3716,8 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::ToggleSong => {
-                self.ui.show_song = !self.ui.show_song;
+                // With the rack in its own window the song area is all the main window has.
+                self.ui.show_song = !self.ui.show_song || self.rack_detached();
                 if !self.ui.show_song {
                     self.set_focus(self.live_pane(self.focus));
                 }
@@ -3605,7 +3729,7 @@ impl<B: AudioBackend> Shell<B> {
                 if self.core.piano_roll_clip().is_some() {
                     self.core.close_piano_roll();
                 } else if self.core.open_piano_roll_default() {
-                    if !self.ui.show_song || self.ui.show_console {
+                    if !self.ui.show_song || self.lower_is_console() {
                         self.ui.show_song = true;
                         self.ui.show_console = false;
                         self.console_changed();
@@ -3627,13 +3751,33 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.add_audio_track();
                 Vec::new()
             }
-            AppCommand::CreateMixerChannel => self.execute(AppCommand::AddChannel),
+            AppCommand::CreateMixerChannel => self.execute_command(AppCommand::AddChannel),
+            // With the rack in a window of its own F6 raises that window; the F6 choice is the
+            // main window's layout, which the rack no longer takes part in.
+            AppCommand::ToggleRack if self.rack_detached() => {
+                self.set_focus(Pane::Rack);
+                vec![ShellRequest::FocusWindow(WindowKind::Rack)]
+            }
             AppCommand::ToggleRack => {
                 self.set_rack_visible(!self.workflow.rack_visible);
                 Vec::new()
             }
+            // F7 with a pane detached has no layout to change: the main window comes forward
+            // on the arrangement.
+            AppCommand::SequencerOnly if self.rack_detached() || self.console_detached() => {
+                self.set_focus(self.live_pane(Pane::Arrangement));
+                vec![ShellRequest::FocusWindow(WindowKind::Main)]
+            }
             AppCommand::SequencerOnly => {
                 self.toggle_sequencer_only();
+                Vec::new()
+            }
+            AppCommand::DetachRack => {
+                self.set_detached(WindowKind::Rack, !self.rack_detached());
+                Vec::new()
+            }
+            AppCommand::DetachConsole => {
+                self.set_detached(WindowKind::Console, !self.console_detached());
                 Vec::new()
             }
             AppCommand::ToggleEditor => {
@@ -3741,8 +3885,12 @@ impl<B: AudioBackend> Shell<B> {
                 self.save_ui_state();
                 Vec::new()
             }
+            AppCommand::ToggleConsole if self.console_detached() => {
+                self.set_focus(Pane::Console);
+                vec![ShellRequest::FocusWindow(WindowKind::Console)]
+            }
             AppCommand::ToggleConsole => {
-                if self.console_shown() {
+                if self.console_in_main() {
                     self.ui.show_console = false;
                     self.ui.console_maximised = false;
                 } else {
@@ -3752,6 +3900,9 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.console_changed();
                 Vec::new()
+            }
+            AppCommand::MaximiseConsole if self.console_detached() => {
+                vec![ShellRequest::ToggleMaximise(WindowKind::Console)]
             }
             AppCommand::MaximiseConsole => {
                 if self.maximised() {
@@ -3766,8 +3917,11 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::AddChannel => {
-                if !self.console_shown() {
-                    self.execute(AppCommand::ToggleConsole);
+                if !self.console_visible() {
+                    self.execute_command(AppCommand::ToggleConsole);
+                } else if self.console_detached() {
+                    self.pending
+                        .push(ShellRequest::FocusWindow(WindowKind::Console));
                 }
                 // The console's own "+ CHANNEL" picker (instruments without a channel).
                 if let Some(p) = self.core.console().button_center(ConsoleButton::AddChannel) {
@@ -3930,7 +4084,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::PluginSettings => {
                 let theme = self.core.view().theme().clone();
                 let mut view = PluginSettingsView::new(theme);
-                view.set_scale(self.scale);
+                view.set_scale(self.scale());
                 view.set_bounds(self.plugin_modal_rect());
                 view.set_data(self.core.plugin_settings_data());
                 view.set_focused(true);
@@ -3969,7 +4123,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.open_doc(doc);
                 Vec::new()
             }
-            other => self.execute(other),
+            other => self.execute_command(other),
         }
     }
 
@@ -4078,12 +4232,14 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.midi_received() != heard {
             self.repaint = true;
         }
-        if self.console_shown() {
+        if self.console_visible() {
             self.core.update_console_meters(now_seconds);
         }
         if self.core.view().flip() == atomik_ui::Flip::Back {
             self.core.feed_cv_activity(now_seconds);
         }
+        self.flush_geometry(now_seconds);
+        self.fold_repaint();
     }
 
     /// Opens the control surface the settings name (its driver and ports), or closes it. Nothing
@@ -4174,7 +4330,12 @@ impl<B: AudioBackend> Shell<B> {
     /// song pane (its hover is cleared by the `PointerLeave` the shell sends when the pointer
     /// moves to another pane), the arrow elsewhere.
     pub fn cursor(&self) -> CursorHint {
-        if !self.ui.show_song {
+        self.cursor_in(WindowKind::Main)
+    }
+
+    /// The mouse cursor to show in `window`: the detached panes ask for the arrow.
+    pub fn cursor_in(&self, window: WindowKind) -> CursorHint {
+        if window != WindowKind::Main || !self.ui.show_song {
             return CursorHint::Default;
         }
         match self.song_pane() {
@@ -4186,8 +4347,28 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Whether anything must be repainted.
     pub fn needs_repaint(&self) -> bool {
+        self.needs_repaint_in(WindowKind::Main)
+    }
+
+    /// Whether anything in `window` must be repainted (`false` for a window that is not open).
+    /// A change anywhere marks every open window; painting one window clears only its own mark,
+    /// and a view that animates (the console meters) keeps only its own window painting.
+    pub fn needs_repaint_in(&self, window: WindowKind) -> bool {
+        let Some(win) = self.wins.get(&window) else {
+            return false;
+        };
+        match window {
+            WindowKind::Rack => {
+                return self.repaint || win.dirty || self.core.view().needs_repaint();
+            }
+            WindowKind::Console => {
+                return self.repaint || win.dirty || self.core.console().needs_repaint();
+            }
+            WindowKind::Main => {}
+        }
         self.repaint
-            || self.core.view().needs_repaint()
+            || win.dirty
+            || (!self.rack_detached() && self.core.view().needs_repaint())
             || self.core.transport_bar().needs_repaint()
             || (self.ui.file_browser_visible && self.core.file_browser().needs_repaint())
             || (self.ui.show_song
@@ -4204,11 +4385,29 @@ impl<B: AudioBackend> Shell<B> {
                 })
     }
 
-    /// Paints the whole window content in physical pixels.
+    /// Paints the whole main window content in physical pixels.
     pub fn paint(&mut self, canvas: &mut dyn Canvas) {
-        let scale = self.scale;
+        self.paint_in(WindowKind::Main, canvas);
+    }
+
+    /// Paints the content of `window` in physical pixels (nothing for a window that is not open).
+    /// A detached pane fills its window; the main window leaves the detached panes out.
+    pub fn paint_in(&mut self, window: WindowKind, canvas: &mut dyn Canvas) {
+        self.fold_repaint();
+        if !self.wins.contains_key(&window) {
+            return;
+        }
+        match window {
+            WindowKind::Main => self.paint_main(canvas),
+            WindowKind::Rack | WindowKind::Console => self.paint_detached(window, canvas),
+        }
+        self.mark_painted(window);
+    }
+
+    fn paint_main(&mut self, canvas: &mut dyn Canvas) {
+        let scale = self.scale();
         let l = self.layout();
-        let (w, h) = (self.size.width, self.size.height);
+        let (w, h) = (self.size().width, self.size().height);
         if l.rack.height() > 0.0 {
             canvas.push_clip(
                 &Rect::new(
@@ -4289,33 +4488,11 @@ impl<B: AudioBackend> Shell<B> {
             let model = self.menu_model();
             menubar.paint(canvas, &theme, &model, w);
         }
-        if let Some(open) = &self.context_menu {
-            open.menu.paint(canvas, &theme);
-        }
-        if let Some(drag) = &self.file_drag
-            && !drag.cancelled
-            && let Some(pos) = drag.pos
-        {
-            let text = drag_label(&drag.paths);
-            let width = text.chars().count() as f64 * 7.0 + 16.0;
-            let at = Point::new(
-                (pos.x + 14.0).min((w - width).max(0.0)),
-                (pos.y + 16.0).min(h - 24.0),
-            );
-            let label = Rect::new(at.x, at.y, at.x + width, at.y + 20.0);
-            canvas.fill_with(RoundedRect::from_rect(label, 4.0), theme.browser_row);
-            canvas.text(&TextRun::new(
-                text,
-                Point::new(at.x + 8.0, at.y + 14.0),
-                12.0,
-                theme.text,
-            ));
-        }
+        self.paint_overlays(WindowKind::Main, canvas, &theme, Size::new(w, h));
         if let Some(dialog) = &self.dialog {
-            dialog.paint(canvas, &theme, self.size);
+            dialog.paint(canvas, &theme, self.size());
         }
         canvas.pop_transform();
-        self.repaint = false;
     }
 }
 
@@ -4427,9 +4604,17 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
     }
 }
 
+#[path = "shell_windows.rs"]
+mod windows_impl;
+use windows_impl::{MAIN_SIZE, WinState};
+
 #[cfg(test)]
 #[path = "shell_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shell_windows_tests.rs"]
+mod windows_tests;
 
 #[cfg(test)]
 #[path = "shell_song_tests.rs"]

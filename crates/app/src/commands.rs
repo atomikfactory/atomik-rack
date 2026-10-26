@@ -203,6 +203,12 @@ pub enum AppCommand {
     CreateMixerChannel,
     /// View ▸ Rack (F6): show or hide the rack (a layout flag in `workflow.json`).
     ToggleRack,
+    /// View ▸ Detach Rack (Cmd+Shift+F6): the rack in a window of its own, or back in the main
+    /// window.
+    DetachRack,
+    /// View ▸ Detach Mixer (Cmd+Shift+F5): the console in a window of its own, or back in the
+    /// lower pane.
+    DetachConsole,
     /// View ▸ Sequencer Only (F7): hide the rack and the console; again restores the layout.
     SequencerOnly,
     /// View ▸ Clip Editor (F8): open the editor of the selected clip, or close the open one.
@@ -415,6 +421,8 @@ impl AppCommand {
             AppCommand::ToggleRack => ("view.toggle_rack", None),
             AppCommand::ToggleRackNavigator => ("view.toggle_rack_navigator", None),
             AppCommand::SequencerOnly => ("view.sequencer_only", None),
+            AppCommand::DetachRack => ("view.detach_rack", None),
+            AppCommand::DetachConsole => ("view.detach_console", None),
             AppCommand::ToggleEditor => ("view.toggle_editor", None),
             AppCommand::GroupTracks => ("sequencer.group_tracks", None),
             AppCommand::UngroupTracks => ("sequencer.ungroup_tracks", None),
@@ -607,6 +615,8 @@ impl AppCommand {
             ("view.toggle_rack", None) => AppCommand::ToggleRack,
             ("view.toggle_rack_navigator", None) => AppCommand::ToggleRackNavigator,
             ("view.sequencer_only", None) => AppCommand::SequencerOnly,
+            ("view.detach_rack", None) => AppCommand::DetachRack,
+            ("view.detach_console", None) => AppCommand::DetachConsole,
             ("view.toggle_editor", None) => AppCommand::ToggleEditor,
             ("sequencer.group_tracks", None) => AppCommand::GroupTracks,
             ("sequencer.ungroup_tracks", None) => AppCommand::UngroupTracks,
@@ -820,6 +830,10 @@ pub struct MenuState {
     pub rack_navigator: bool,
     /// The rack is shown.
     pub rack: bool,
+    /// The rack is in a window of its own.
+    pub rack_detached: bool,
+    /// The console is in a window of its own.
+    pub console_detached: bool,
     /// The sequencer-only layout (F7) is active.
     pub sequencer_only: bool,
     /// An editor (piano roll, sample, step, slice, ...) is open.
@@ -1083,6 +1097,12 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     state.file_browser,
                 ),
                 check("Rack", AppCommand::ToggleRack, state.rack),
+                check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
+                check(
+                    "Detach Mixer",
+                    AppCommand::DetachConsole,
+                    state.console_detached,
+                ),
                 check(
                     "Rack Navigator",
                     AppCommand::ToggleRackNavigator,
@@ -1624,6 +1644,8 @@ mod tests {
             marker_list: false,
             rack_navigator: true,
             rack: true,
+            rack_detached: false,
+            console_detached: false,
             sequencer_only: false,
             editor: false,
             missing_audio: false,
@@ -1726,6 +1748,8 @@ mod tests {
             AppCommand::ToggleRack,
             AppCommand::ToggleRackNavigator,
             AppCommand::SequencerOnly,
+            AppCommand::DetachRack,
+            AppCommand::DetachConsole,
             AppCommand::ToggleEditor,
             AppCommand::GroupTracks,
             AppCommand::UngroupTracks,
@@ -1875,6 +1899,35 @@ mod tests {
                 .filter(|c| c.command_id().is_some_and(|(id, _)| id == def.id))
                 .any(|c| in_menu.contains(&c));
             assert!(any, "{} is marked menu but has no item", def.id);
+        }
+    }
+
+    #[test]
+    fn registry_detach_commands_have_menu_items() {
+        let keymap = Keymap::bundled(Profile::Standard, Os::Windows);
+        let items: Vec<MenuItem> = menus(&state(), &keymap)
+            .iter()
+            .flat_map(|m| m.items().cloned().collect::<Vec<_>>())
+            .collect();
+        let registry = Registry::bundled();
+        for (id, label, command) in [
+            ("view.detach_rack", "Detach Rack", AppCommand::DetachRack),
+            (
+                "view.detach_console",
+                "Detach Mixer",
+                AppCommand::DetachConsole,
+            ),
+        ] {
+            assert!(registry.get(id).is_some_and(|d| d.menu), "{id}");
+            assert_eq!(command.command_id(), Some((id, None)));
+            assert_eq!(AppCommand::from_command(id, None), Some(command));
+            let item = items.iter().find(|i| i.command == command).unwrap();
+            assert_eq!(item.label, label);
+            assert_eq!(
+                item.checked,
+                Some(false),
+                "a check item: native menus cannot relabel"
+            );
         }
     }
 
@@ -2151,6 +2204,8 @@ mod tests {
                 "Device Browser",
                 "File Browser",
                 "Rack",
+                "Detach Rack",
+                "Detach Mixer",
                 "Rack Navigator",
                 "Sequencer Only",
                 "Clip Editor",
@@ -2313,6 +2368,8 @@ mod tests {
                 marker_list: false,
                 rack_navigator: true,
                 rack: true,
+                rack_detached: false,
+                console_detached: false,
                 sequencer_only: false,
                 editor: false,
                 missing_audio: true,

@@ -46,6 +46,7 @@ pub mod surface;
 pub mod target;
 pub mod translate;
 pub mod ui_state;
+pub mod windows;
 pub mod workflow_tab;
 
 pub use crate::app_core::{AppCore, AppError};

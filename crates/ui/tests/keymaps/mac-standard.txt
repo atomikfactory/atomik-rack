@@ -122,6 +122,8 @@ transport.stop | global | Shift+Enter, Numpad0
 transport.tempo_down | global | NumpadSub
 transport.tempo_up | global | NumpadAdd
 view.cables_cycle | global | K
+view.detach_console | global | Cmd+Shift+F5
+view.detach_rack | global | Cmd+Shift+F6
 view.find_parameter | global | Cmd+Shift+P
 view.focus_browser_search | global | Cmd+Shift+F
 view.maximise_console | global | Shift+F5

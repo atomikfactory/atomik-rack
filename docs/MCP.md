@@ -77,13 +77,14 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 | Tool | Arguments | What it does |
 |---|---|---|
 | `session_open` | `path`, `width`, `height`, `scale`, `os`, `library` | Starts the app on the starter project, or on `path`. A bad file is refused with its JSON path and the previous session is kept. `os` (`windows`, `mac`, `linux`) picks the keymap and shortcut texts. `library` is the session's library folder (inside the allowed folders, made when missing; a session without it has none, and Save to Library says so). Returns the status, with `library`. |
-| `session_status` | `include_params` | Title, unsaved changes, status line, focused and lower pane, undo and redo availability, window size, and the document (as `project_inspect`). |
+| `session_status` | `include_params` | Title, unsaved changes, status line, focused and lower pane, undo and redo availability, window size, `windows` (per open window: `kind`, `detached`, `logical`, `scale`, `physical`, `focused`), and the document (as `project_inspect`). |
 | `session_commands` | `menu`, `query`, `enabled_only` | The menu commands: menu, label, `id`, shortcut, checked, enabled. |
 | `session_command` | `id`, `arg`, `confirm`, `wait` | Runs a menu command as the menu or its shortcut would; `arg` is the argument of the commands that take one the menu cannot spell, the id of a VCA group for `mixer.add_to_vca` and `mixer.delete_vca` (ids are in `session_status`, `document.console.vcas`; the Mixer menu commands act on the selection of the focused pane), or the id or the name of a snapshot for `mixer.recall_snapshot`, `mixer.update_snapshot`, `mixer.compare_snapshot` and `mixer.delete_snapshot` (`<snapshot>:<scope>` for a scoped recall; `mixer.store_snapshot` takes the new snapshot's name). A command that needs a native dialog (`file.open`...) or the "discard unsaved changes" confirmation is reported in `requests` and does not run silently; `confirm: true` accepts the discard. A freeze or bounce renders on a worker and the session has no frame loop, so the call waits for the render to finish unless `wait` is `false` (the answer then has `waited` and the render's `message`, for example `Froze Lead`). |
-| `session_pointer` | `action`, `x`, `y`, `to_x`, `to_y`, `steps`, `dx`, `dy`, `button`, `modifiers` | `move`, `down`, `up`, `click`, `double_click`, `drag`, `wheel`, `leave`. |
-| `session_key` | `key` or `text`, `modifiers` | Presses and releases a key, or types characters. |
-| `session_texts` | `contains`, `limit` | Every text the UI draws, with its position and size. |
-| `session_screenshot` | `save_to` | A PNG of the window as the app paints it, returned as an image; `save_to` also writes the file. |
+| `session_pointer` | `window`, `action`, `x`, `y`, `to_x`, `to_y`, `steps`, `dx`, `dy`, `button`, `modifiers` | `move`, `down`, `up`, `click`, `double_click`, `drag`, `wheel`, `leave`. |
+| `session_key` | `window`, `key` or `text`, `modifiers` | Presses and releases a key, or types characters. |
+| `session_texts` | `window`, `contains`, `limit` | Every text the UI draws, with its position and size. |
+| `session_screenshot` | `window`, `save_to` | A PNG of the window as the app paints it, returned as an image; `save_to` also writes the file. With `window` it is that window, at its own physical size. |
+| `session_window` | `action`, `window`, `width`, `height` | Plays the OS for the windows: `focus`, `close` (a detached window; attaches its pane again, the main window is refused: use `session_close`) or `resize` (`width` x `height` logical, 200..8192). Returns the open windows. |
 | `session_save` | `path` | Saves the document as a project. |
 | `session_relink` | `file`, `asset`, `folder` | Relinks the missing audio of the open project, answering the dialogs of File > Relink Missing Audio... (`session_command` `file.relink_audio` opens the list; its LOCATE... and SEARCH FOLDER... buttons raise native dialogs, reported as `pick_relink_path`). With `file`, that audio file replaces the missing asset `asset` (its file name in any case, or the start of its id; optional when exactly one is missing); with `folder`, the folder is searched and the missing files matched by name. Waits for the import and returns `relinked`, `still_missing`, `document_changed`, `message` (the toast), `dirty` and `can_undo`. |
 | `session_midi` | `action`, `file`, `scope`, `as_song` | Imports or exports a Standard MIDI File, answering the dialogs of File > Import MIDI... and File > Export MIDI... (`session_command` `file.import_midi`, `file.import_midi_song`, `file.export_midi_clip`, `file.export_midi_track` and `file.export_midi_song` raise native dialogs, reported as `pick_midi_file`). `action: import` reads `file`: one clip on the selected note track, or new tracks when none is selected; with `as_song`, new tracks from the start plus the file's tempo map, meter and markers. `action: export` writes `file` for `scope` (`clip` the selected note clip, `track` the selected note track, `song` every note track, the default). One undo step per import. Returns `message` (the toast), `document_changed`, `tracks`, `dirty`, `can_undo` and, for an export, `bytes`. |
@@ -128,6 +129,18 @@ These are the QA steps this project expects for a change, in the order to do the
 4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`, and a folder, colour or comment when it has one), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
 5. If the edit should change the sound (or must not), `session_bounce` with `reference` set to the bounce of the file you opened.
 6. Turn what you proved into a headless test (`crates/app/src/shell_*_tests.rs`, `crates/ui/tests/workflow_*.rs`) before the PR is done.
+
+**Detached windows**
+
+The rack and the mixer can live in windows of their own, and a headless session has them too, with no platform.
+
+1. `session_open`, then `session_command` `view.detach_rack` and `view.detach_console` (they toggle). `session_status` lists `windows`: the main one, then each detached one with its `logical` and `physical` size (a detached window starts at 1280 x 720 for the rack and 1280 x 520 for the mixer, at the main scale), its `scale` and whether it is `focused`.
+2. Aim at a window with `window` (`rack` or `console`; `main` is the default) on `session_pointer`, `session_key`, `session_texts` and `session_screenshot`. Positions are logical pixels of that window, which a detached pane fills from `0,0`. A window that is not open is refused with `the rack window is not open: run view.detach_rack`.
+3. A key sent to a window that does not have the focus gives it the focus first, as clicking into the window would, so `session_status` `focus` follows (`Rack`, `Console`) and the keymap context with it. Transport, undo and save keys work from every window.
+4. `session_window` plays the operating system: `focus`, `resize` (`width`, `height`) and `close`. Closing a detached window attaches its pane to the main window again, as the close button does; the main window is refused (`session_close` ends the session).
+5. Screenshots are CPU renders at each window's own physical size: a screenshot of the rack window is the rack alone, with no menu bar and no status bar.
+
+The cross-window drag of a file from the file browser needs the desktop position of the pointer, which only the real platform has; it is covered by `crates/app/src/shell_windows_tests.rs`, and the multi-monitor and GPU behaviour by the hand checks in `docs/TESTING.md`.
 
 **Note chase**
 
