@@ -1,6 +1,8 @@
 //! The step sequencer's rack panel: the eight pattern slots, a name
 //! line, a compact piano-roll preview of the edited pattern with the playing-step cursor, the
-//! pattern buttons (ADD, DUP, DEL, COPY, PASTE, CLEAR, EDIT) and the nine global knobs.
+//! pattern buttons (ADD, DUP, DEL, COPY, PASTE, CLEAR, EDIT) and the nine global knobs. The CV
+//! sequencer ([`cv_seq_layout`]) has the same panel, three rack units high, with a strip per
+//! curve row under the preview, the chain and the curve knobs.
 //!
 //! ```text
 //! PATTERNS                                PLAYER
@@ -42,8 +44,19 @@ use vello::peniko::Color;
 
 /// Type id of the step sequencer (it has its own panel, [`seq_layout`]).
 pub const SEQ_TYPE: &str = "atomik.step-sequencer";
+/// Type id of the CV sequencer (the step sequencer's panel and editor, plus curves; its panel
+/// is [`cv_seq_layout`]).
+pub const CV_SEQ_TYPE: &str = "atomik.cv-sequencer";
 /// Height of the sequencer panel in rack units.
 pub const SEQ_UNITS: u8 = 2;
+/// Height of the CV sequencer panel in rack units.
+pub const CV_SEQ_UNITS: u8 = 3;
+
+/// Whether devices of `type_id` are edited as step patterns (the step sequencer and the CV
+/// sequencer): they have the sequencer panel and the grid editor.
+pub fn takes_step_doc(type_id: &str) -> bool {
+    type_id == SEQ_TYPE || type_id == CV_SEQ_TYPE
+}
 /// Number of pattern slots.
 pub const SLOTS: usize = MAX_PATTERNS;
 const SLOT_W: f64 = 36.0;
@@ -63,6 +76,27 @@ pub const SEQ_PARAMS: [&str; 9] = [
     "mute",
     "velocity.scale",
     "gate.scale",
+];
+
+/// The CV sequencer's player params in front layout order (five per row).
+pub const CV_SEQ_PLAYER_PARAMS: [&str; 10] = [
+    "pattern",
+    "pattern.switch",
+    "chain",
+    "transpose",
+    "follow",
+    "probability.amount",
+    "random.seed",
+    "velocity.scale",
+    "gate.scale",
+    "mute",
+];
+/// The CV sequencer's curve params in front layout order.
+pub const CV_SEQ_CURVE_PARAMS: [&str; 4] = [
+    "curve_a.polarity",
+    "curve_a.amount",
+    "curve_b.polarity",
+    "curve_b.amount",
 ];
 
 /// A button or area of the sequencer panel.
@@ -113,6 +147,8 @@ pub struct SeqPanel {
     pub clear: Rect,
     /// EDIT.
     pub edit: Rect,
+    /// The strips of curve rows A and B under the preview (CV sequencer only).
+    pub curves: Option<[Rect; 2]>,
 }
 
 impl SeqPanel {
@@ -236,6 +272,7 @@ pub fn seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
         paste: button(46.0),
         clear: button(46.0),
         edit: button(42.0),
+        curves: None,
     };
     let front = place_controls(desc, &SEQ_PARAMS, KNOBS_X, COL_W, PER_ROW, top);
     let front_sections = vec![
@@ -274,11 +311,107 @@ pub fn seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
     }
 }
 
+/// The panel of `atomik.cv-sequencer` (three rack units): the step sequencer's left side with a
+/// strip of each curve row under the preview, the player knobs in two rows and the curve knobs
+/// (polarity and amount of A and B) in a third, under a CURVES title; the back is the generic
+/// socket layout.
+pub fn cv_seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
+    let top = MARGIN_TOP + TITLE_H;
+    let x0 = CONTENT_X.0;
+    let slot_y = (top + 2.0, top + 22.0);
+    let slots = std::array::from_fn(|i| {
+        let x = x0 + i as f64 * (SLOT_W + GAP);
+        Rect::new(x, slot_y.0, x + SLOT_W, slot_y.1)
+    });
+    let right = x0 + LEFT_W;
+    let name = Rect::new(x0, top + 26.0, right, top + 42.0);
+    let preview = Rect::new(x0, top + 46.0, right, top + 94.0);
+    let strips = [
+        Rect::new(x0, top + 98.0, right, top + 120.0),
+        Rect::new(x0, top + 124.0, right, top + 146.0),
+    ];
+    let by = (top + 152.0, top + 172.0);
+    let mut x = x0;
+    let mut button = |w: f64| {
+        let r = Rect::new(x, by.0, x + w, by.1);
+        x += w + GAP;
+        r
+    };
+    let panel = SeqPanel {
+        title: Rect::new(x0, MARGIN_TOP, right, MARGIN_TOP + TITLE_H),
+        slots,
+        name,
+        preview,
+        add: button(38.0),
+        duplicate: button(38.0),
+        remove: button(38.0),
+        copy: button(42.0),
+        paste: button(46.0),
+        clear: button(46.0),
+        edit: button(42.0),
+        curves: Some(strips),
+    };
+    let curves_top = top + 2.0 * ROW_H + TITLE_H + 2.0;
+    let mut front = place_controls(desc, &CV_SEQ_PLAYER_PARAMS, KNOBS_X, COL_W, PER_ROW, top);
+    front.extend(place_controls(
+        desc,
+        &CV_SEQ_CURVE_PARAMS,
+        KNOBS_X,
+        COL_W,
+        PER_ROW,
+        curves_top,
+    ));
+    let knobs_right = KNOBS_X + PER_ROW as f64 * COL_W;
+    let front_sections = vec![
+        Section {
+            label: "PATTERNS".to_string(),
+            rect: panel.title,
+        },
+        Section {
+            label: "PLAYER".to_string(),
+            rect: Rect::new(KNOBS_X, MARGIN_TOP, knobs_right, MARGIN_TOP + TITLE_H),
+        },
+        Section {
+            label: "CURVES".to_string(),
+            rect: Rect::new(
+                KNOBS_X,
+                top + 2.0 * ROW_H,
+                knobs_right,
+                top + 2.0 * ROW_H + TITLE_H,
+            ),
+        },
+    ];
+    let (units, back, back_sections) = back_layout(desc, CV_SEQ_UNITS);
+    debug_assert!(f64::from(units) * f64::from(RACK_UNIT) > by.1 + MARGIN_BOTTOM);
+    PanelSpec {
+        height_units: units,
+        samples: None,
+        drum: None,
+        slicer: None,
+        fx: None,
+        seq: Some(panel),
+        arp: None,
+        key_chord: None,
+        modsrc: None,
+        container: None,
+        plugin: None,
+        front,
+        front_sections,
+        back,
+        back_sections,
+    }
+}
+
 /// Control label of a player param.
 pub fn player_label(key: &str) -> Option<&'static str> {
     Some(match key {
         "pattern" => "Pattern",
         "pattern.switch" => "Switch",
+        "chain" => "Chain",
+        "curve_a.polarity" => "A mode",
+        "curve_a.amount" => "A amount",
+        "curve_b.polarity" => "B mode",
+        "curve_b.amount" => "B amount",
         "transpose" => "Transpose",
         "follow" => "Follow",
         "probability.amount" => "Prob",
@@ -546,6 +679,76 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     edit_button(c, theme, panel.paste, "PASTE", true);
     edit_button(c, theme, panel.clear, "CLEAR", true);
     edit_button(c, theme, panel.edit, "EDIT", true);
+    if let Some(strips) = panel.curves {
+        let curves = device.curves.as_ref().map(|d| d.pattern(edit));
+        let cursor = state.cursor.filter(|_| state.playing == edit);
+        for (row, r) in strips.iter().enumerate() {
+            let steps = curves.as_ref().map_or(&[][..], |p| &p.rows[row][..]);
+            let length = pattern.map_or(16, |p| usize::from(p.length));
+            paint_curve_strip(c, theme, *r, steps, length, cursor, accent, row);
+        }
+    }
+}
+
+/// A curve row as a strip: the zero line and one bar per step from it, the steps that slide
+/// marked with a ramp to the next bar; the cursor column lit.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_curve_strip<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    r: Rect,
+    steps: &[atomik_model::CurveStepDoc],
+    length: usize,
+    cursor: Option<usize>,
+    accent: Color,
+    row: usize,
+) {
+    c.fill_with(RoundedRect::from_rect(r, 3.0), theme.lcd);
+    c.stroke_with(
+        RoundedRect::from_rect(r.inset(-0.5), 3.5),
+        1.0,
+        Color::WHITE.with_alpha(0.07),
+    );
+    let inner = r.inset(-3.0);
+    let n = length.clamp(1, steps.len().max(1));
+    let cw = inner.width() / n as f64;
+    let mid = inner.center().y;
+    let half = inner.height() / 2.0;
+    let tint = if row == 0 {
+        accent
+    } else {
+        mix(accent, theme.highlight, 0.6)
+    };
+    c.stroke_with(
+        vello::kurbo::Line::new(pt(inner.x0, mid), pt(inner.x1, mid)),
+        1.0,
+        Color::WHITE.with_alpha(0.12),
+    );
+    if let Some(k) = cursor.filter(|k| *k < n) {
+        let x = inner.x0 + k as f64 * cw;
+        c.fill_with(
+            Rect::new(x, inner.y0, x + cw, inner.y1),
+            theme.knob_pointer.with_alpha(0.25),
+        );
+    }
+    let y_of = |v: i8| mid - f64::from(v) / 100.0 * half;
+    for (k, s) in steps.iter().take(n).enumerate() {
+        let x = inner.x0 + k as f64 * cw;
+        let y = y_of(s.value);
+        let (y0, y1) = if y < mid { (y, mid) } else { (mid, y) };
+        c.fill_with(
+            Rect::new(x + 0.5, y0, x + (cw - 0.5).max(1.0), y1.max(y0 + 1.0)),
+            tint.with_alpha(0.75),
+        );
+        if s.slide && k + 1 < n {
+            let next = y_of(steps[k + 1].value);
+            c.stroke_with(
+                vello::kurbo::Line::new(pt(x + cw / 2.0, y), pt(x + cw * 1.5, next)),
+                1.0,
+                theme.text,
+            );
+        }
+    }
 }
 
 /// The compact piano-roll preview of a pattern: one column per step, a bar at the key's height

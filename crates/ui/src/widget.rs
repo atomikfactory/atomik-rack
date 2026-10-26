@@ -256,6 +256,7 @@ mod tests {
             color: None,
             zones: Vec::new(),
             steps: None,
+            curves: None,
             inner: None,
             plugin: None,
             column: 0,

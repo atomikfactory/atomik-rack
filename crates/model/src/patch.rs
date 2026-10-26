@@ -181,6 +181,11 @@ pub(crate) const DEVICE_FIELDS_V11: &[&str] = &[
     "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "inner",
     "plugin",
 ];
+/// Project format v32 adds `curves`.
+pub(crate) const DEVICE_FIELDS_V32: &[&str] = &[
+    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
+    "inner", "plugin",
+];
 
 /// How the device objects of a file are read.
 #[derive(Clone, Copy)]
@@ -455,6 +460,16 @@ pub(crate) fn load_device(
             }
             None => None,
         },
+        curves: match obj.get("curves") {
+            Some(v) => {
+                let curves_path = path.field("curves");
+                if !registry.takes_curves(type_id) {
+                    return Err(curves_path.error(format!("{type_id} does not take curves")));
+                }
+                Some(crate::project::load_curves(v, &curves_path)?)
+            }
+            None => None,
+        },
         inner: match obj.get("inner") {
             Some(v) => {
                 let inner_path = path.field("inner");
@@ -586,7 +601,7 @@ pub(crate) fn save(doc: &RackDoc) -> String {
 
 /// Writes `  "devices": [...],` then `  "cables": [...]`, without a newline after the last `]`.
 ///
-/// `zones` also writes each non-empty zone list (project v4), each device's `steps` (project
+/// `zones` also writes each non-empty zone list (project v4), each device's `steps` and `curves` (project
 /// v7) and each container's `inner` (project v8); patches have none of them.
 pub(crate) fn write_devices_and_cables(w: &mut String, doc: &RackDoc, zones: bool) {
     let used = PluginUse(if zones {
@@ -660,6 +675,14 @@ pub(crate) fn write_device(
     if let Some(steps) = d.steps.as_ref().filter(|_| project) {
         let _ = write!(w, ",\n{p}\"steps\": ");
         crate::project::write_steps(w, steps, &p);
+    }
+    if let Some(curves) = d.curves.as_ref().filter(|_| project) {
+        let _ = write!(
+            w,
+            ",
+{p}\"curves\": "
+        );
+        crate::project::write_curves(w, curves, &p);
     }
     if let Some(inner) = d.inner.as_ref().filter(|_| project) {
         let _ = write!(w, ",\n{p}\"inner\": ");

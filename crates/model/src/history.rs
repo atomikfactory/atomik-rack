@@ -4,6 +4,7 @@
 use crate::WriteMode;
 use crate::console::{CompareState, ConsoleBus, ConsoleChannel, MixerSnapshot, VcaGroup};
 use crate::container::{ContainerDoc, MacroDoc, NoteSplit, collect_device_assets, join};
+use crate::curves::CurveDoc;
 use crate::freeze::Frozen;
 use crate::groove::Groove;
 use crate::macros::MacroSet;
@@ -265,6 +266,12 @@ pub(crate) enum Edit {
         key: DeviceKey,
         old: Option<StepSeqDoc>,
         new: Option<StepSeqDoc>,
+    },
+    /// A CV sequencer's curves (`None` is "none stored": flat).
+    Curves {
+        key: DeviceKey,
+        old: Option<CurveDoc>,
+        new: Option<CurveDoc>,
     },
     /// The interface's input channel count.
     InputChannels {
@@ -607,6 +614,11 @@ impl Edit {
                 new: old,
             },
             Edit::Steps { key, old, new } => Edit::Steps {
+                key,
+                old: new,
+                new: old,
+            },
+            Edit::Curves { key, old, new } => Edit::Curves {
                 key,
                 old: new,
                 new: old,
@@ -1039,6 +1051,12 @@ impl Edit {
             }
             Edit::Steps { key, new, .. } => {
                 device_mut(doc, key).steps.clone_from(new);
+                vec![SyncOp::PatternsChanged {
+                    device: key.clone(),
+                }]
+            }
+            Edit::Curves { key, new, .. } => {
+                device_mut(doc, key).curves.clone_from(new);
                 vec![SyncOp::PatternsChanged {
                     device: key.clone(),
                 }]

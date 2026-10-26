@@ -40,6 +40,8 @@ pub fn registry() -> Registry {
         let factory = *all.get(t).unwrap();
         if all.takes_samples(t) {
             r.register_with_samples(factory).unwrap();
+        } else if all.takes_curves(t) {
+            r.register_with_curves(factory).unwrap();
         } else if all.takes_player_data(t) {
             r.register_with_player_data(factory).unwrap();
         } else {

@@ -14,11 +14,13 @@ pub mod arpeggiator;
 pub mod audio_track;
 pub mod bus;
 pub mod bypass;
+mod chain_clock;
 pub mod channel;
 pub mod character;
 pub mod compressor;
 pub mod container;
 mod cv_in;
+pub mod cv_sequencer;
 pub mod distortion;
 pub mod drum_machine;
 pub mod eq;
@@ -62,8 +64,9 @@ pub fn panel_layout(type_id: &str) -> Option<&'static atomik_device_sdk::PanelLa
 
 /// Type ids of the note players (step sequencer, arpeggiator). They are `DeviceKind::Utility`; a
 /// browser that groups by kind can list these under a "Players" heading with this hook.
-pub const PLAYER_TYPE_IDS: [&str; 6] = [
+pub const PLAYER_TYPE_IDS: [&str; 7] = [
     "atomik.arpeggiator",
+    "atomik.cv-sequencer",
     "atomik.key-chord",
     "atomik.note-delay",
     "atomik.note-filter",
@@ -104,6 +107,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register_with_samples(loop_slicer::factory())?;
     registry.register(key_chord::factory())?;
     registry.register(line_mixer::factory())?;
+    registry.register_with_curves(cv_sequencer::factory())?;
     registry.register_with_player_data(step_sequencer::factory())?;
     registry.register(stereo_delay::factory())?;
     registry.register(reverb::factory())?;
@@ -137,7 +141,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 29] = [
+    const TYPE_IDS: [&str; 30] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -145,6 +149,7 @@ mod tests {
         "atomik.character",
         "atomik.compressor",
         "atomik.container",
+        "atomik.cv-sequencer",
         "atomik.distortion",
         "atomik.drum-machine",
         "atomik.eq",
@@ -186,9 +191,10 @@ mod tests {
             );
             assert_eq!(
                 r.takes_player_data(id),
-                id == "atomik.step-sequencer",
+                id == "atomik.step-sequencer" || id == "atomik.cv-sequencer",
                 "{id}"
             );
+            assert_eq!(r.takes_curves(id), id == "atomik.cv-sequencer", "{id}");
         }
     }
 

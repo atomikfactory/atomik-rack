@@ -489,6 +489,17 @@ impl RackView {
                 device: k(device),
                 index,
             },
+            Command::SetCurves {
+                device,
+                index,
+                curves,
+                merge,
+            } => Command::SetCurves {
+                device: k(device),
+                index,
+                curves,
+                merge,
+            },
             other => other,
         })
     }

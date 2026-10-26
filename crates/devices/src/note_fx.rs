@@ -119,10 +119,9 @@ impl NoteRouter {
     /// Ignored while the key is swallowed.
     pub fn on(&mut self, out: &mut NoteBuffer, frame: usize, in_key: u8, outs: &[(u8, f32)]) {
         let ik = usize::from(in_key & 0x7F);
-        if self.swallow[ik] {
-            // A fresh press of a swallowed key is a real press again.
-            self.swallow[ik] = false;
-        } else if self.counts[ik] > 0 {
+        // A fresh press of a swallowed key is a real press again.
+        self.swallow[ik] = false;
+        if self.counts[ik] > 0 {
             self.release(out, frame, ik);
         }
         self.held[ik] = true;

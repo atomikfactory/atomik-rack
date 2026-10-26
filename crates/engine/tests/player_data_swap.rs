@@ -51,10 +51,10 @@ impl Device for Holder {
     fn reset(&mut self) {}
     fn set_param(&mut self, _: atomik_core::ParamId, _: f32) {}
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
-        let count = match self.data.as_deref() {
-            Some(PlayerData::StepSeq(d)) => u32::from(d.count),
-            None => 0,
-        };
+        let count = self
+            .data
+            .as_deref()
+            .map_or(0, |d| u32::from(d.notes().count));
         if let Some(slot) = self.seen.get((ctx.time.frame / 64) as usize) {
             slot.store(count, Ordering::Relaxed);
         }

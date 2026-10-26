@@ -19,8 +19,9 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
-const PLAYERS: [&str; 6] = [
+const PLAYERS: [&str; 7] = [
     "atomik.arpeggiator",
+    "atomik.cv-sequencer",
     "atomik.step-sequencer",
     "atomik.note-filter",
     "atomik.key-chord",
@@ -96,6 +97,7 @@ fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
         None => match desc.type_id {
             "atomik.arpeggiator" => atomik_ui::arp_panel::arp_layout(desc),
             "atomik.step-sequencer" => atomik_ui::seq_panel::seq_layout(desc),
+            "atomik.cv-sequencer" => atomik_ui::seq_panel::cv_seq_layout(desc),
             "atomik.key-chord" => atomik_ui::key_chord_panel::key_chord_layout(desc),
             _ => auto_layout(desc),
         },

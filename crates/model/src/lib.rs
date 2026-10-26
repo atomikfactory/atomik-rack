@@ -19,6 +19,8 @@ mod container;
 mod container_cmd;
 mod container_io;
 pub mod controller;
+mod curves;
+mod curves_cmd;
 mod expand;
 pub mod freeze;
 pub mod groove;
@@ -67,6 +69,7 @@ pub use container::{
     MAX_MACRO_TARGETS, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, MacroTarget, NoteSplit, SPLIT_TYPE,
     boundary_sockets, scoped_cable, split_path,
 };
+pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
 pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
@@ -228,6 +231,11 @@ pub struct RackDevice {
     /// Step sequencer patterns; `None` for every device that takes no
     /// pattern data. A new sequencer starts with [`StepSeqDoc::default`].
     pub steps: Option<StepSeqDoc>,
+    /// CV sequencer curves; `None` for every device whose type takes no curves
+    /// (`Registry::takes_curves`) and, on one that does, for flat zero curves (a new CV
+    /// sequencer starts with none). Pattern `i` of the curves goes with pattern `i` of
+    /// [`RackDevice::steps`].
+    pub curves: Option<CurveDoc>,
     /// A container's inside: `Some` exactly on devices whose type is a
     /// `DeviceKind::Container`, `None` on every other device. See [`ContainerDoc`].
     pub inner: Option<Box<ContainerDoc>>,
@@ -492,6 +500,23 @@ pub enum Command {
         /// Drag-merge group, or `None` for a standalone step.
         merge: Option<u64>,
     },
+    /// Replace the curve rows of pattern `index` (0-based, below the device's pattern count) of
+    /// a CV sequencer (one undo step); the curves of lower patterns the document does not hold
+    /// yet are filled in flat. The device must take curves (`Registry::takes_curves`) and the
+    /// rows must be valid (see [`CurvePatternDoc::check`]); a rejected command changes nothing.
+    /// Consecutive `SetCurves` with the same `merge` id on the same device and pattern merge
+    /// into one undo step (drags; the sequencer editor uses the ids it uses for
+    /// `SetPattern`). Reports [`SyncOp::PatternsChanged`].
+    SetCurves {
+        /// The CV sequencer.
+        device: DeviceKey,
+        /// Pattern index, below the pattern count.
+        index: u8,
+        /// The new rows.
+        curves: CurvePatternDoc,
+        /// Drag-merge group, or `None` for a standalone step.
+        merge: Option<u64>,
+    },
     /// Append an empty 16-step 1/16 pattern (`Pattern N`) to a sequencer (one
     /// undo step); refused at [`MAX_PATTERNS`]. Reports [`SyncOp::PatternsChanged`].
     AddPattern {
@@ -613,8 +638,8 @@ pub enum SyncOp {
     /// when a whole device comes back or goes away, the app builds its map on insertion). The
     /// app rebuilds the device's sample map from [`RackDevice::zones`].
     ZonesChanged(DeviceKey),
-    /// A step sequencer's patterns changed (the four pattern commands, their undo
-    /// and redo, also inside a `Batch`; not reported when a whole device comes back or goes
+    /// A step or CV sequencer's patterns or curves changed (the pattern commands and
+    /// `SetCurves`, their undo and redo, also inside a `Batch`; not reported when a whole device comes back or goes
     /// away, the app builds its data on insertion). The app rebuilds the device's pattern data
     /// with [`player_data_for`] and sends it to the engine.
     PatternsChanged {
@@ -774,6 +799,8 @@ enum MergeKey {
     Zones(u64, DeviceKey),
     /// `SetPattern` on one pattern of one device.
     Pattern(u64, DeviceKey, u8),
+    /// `SetCurves` on one pattern of one device.
+    Curves(u64, DeviceKey, u8),
     /// `SetSplits` on one container.
     Splits(u64, DeviceKey),
     /// `SetMacro` on one target (container, macro, device, param).
@@ -866,6 +893,12 @@ impl Document {
                 merge: Some(m),
                 ..
             } => Some(MergeKey::Pattern(*m, device.clone(), *index)),
+            Command::SetCurves {
+                device,
+                index,
+                merge: Some(m),
+                ..
+            } => Some(MergeKey::Curves(*m, device.clone(), *index)),
             Command::Container(ContainerCommand::SetSplits {
                 container,
                 merge: Some(m),
@@ -908,6 +941,9 @@ impl Document {
                 new.clone_from(latest);
             }
             (Some(Edit::Steps { new, .. }), Edit::Steps { new: latest, .. }) if merged => {
+                new.clone_from(latest);
+            }
+            (Some(Edit::Curves { new, .. }), Edit::Curves { new: latest, .. }) if merged => {
                 new.clone_from(latest);
             }
             (Some(Edit::ConsoleVcas { new, .. }), Edit::ConsoleVcas { new: latest, .. })
@@ -1030,6 +1066,7 @@ impl Document {
                             | Command::SetParam { .. }
                             | Command::SetZones { .. }
                             | Command::SetPattern { .. }
+                            | Command::SetCurves { .. }
                             | Command::AddPattern { .. }
                             | Command::RemovePattern { .. }
                             | Command::DuplicatePattern { .. }
@@ -1263,6 +1300,7 @@ impl Document {
                 }
             }
             command @ (Command::SetPattern { .. }
+            | Command::SetCurves { .. }
             | Command::AddPattern { .. }
             | Command::RemovePattern { .. }
             | Command::DuplicatePattern { .. }) => steps_cmd::plan(doc, registry, command)?,
@@ -1491,7 +1529,7 @@ pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelErr
 
 /// Saves a document as an `.atomik` project file, format [`PROJECT_FORMAT`] version
 /// [`PROJECT_VERSION`] (10): the patch v2 rack fields (plus each device's `"zones"` when it has
-/// any, `"steps"` when present, a container's `"inner"` and a plugin device's `"plugin"`) (without `length_beats`),
+/// any, `"steps"` and `"curves"` when present, a container's `"inner"` and a plugin device's `"plugin"`) (without `length_beats`),
 /// `"input_channels"`, `"console"` (channels with their sources, master, 8 returns,
 /// compensation), `"assets"` (the sample pool) and `"song"` with every song field, clip ids
 /// and `next_clip_id`. The output is deterministic and canonical,

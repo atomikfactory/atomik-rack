@@ -398,6 +398,7 @@ fn flat_twin(doc: &RackDoc, registry: &atomik_device_sdk::Registry) -> RackDoc {
             color: None,
             zones: e.zones.clone(),
             steps: e.steps.clone(),
+            curves: e.curves.clone(),
             inner: None,
             plugin: None,
             column: 0,
@@ -435,7 +436,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(text, save_project(&demo_doc()), "regenerate the demo");
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
-    assert!(text.contains("\"version\": 31"));
+    assert!(text.contains("\"version\": 32"));
     assert!(text.contains("\"inner\""));
 }
 
@@ -782,6 +783,7 @@ fn expanded_patch_ids_never_collide_with_user_keys() {
         color: None,
         zones: Vec::new(),
         steps: None,
+        curves: None,
         inner: None,
         plugin: None,
         column: 0,

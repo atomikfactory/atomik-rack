@@ -323,6 +323,7 @@ mod tests {
             color: Some([1, 2, 3]),
             zones: Vec::new(),
             steps: None,
+            curves: None,
             inner: None,
             plugin: None,
             column: 0,

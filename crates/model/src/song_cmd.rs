@@ -357,6 +357,7 @@ pub(crate) fn add_audio_track(
             color: None,
             zones: Vec::new(),
             steps: None,
+            curves: None,
             inner: None,
             plugin: None,
             column: 0,
