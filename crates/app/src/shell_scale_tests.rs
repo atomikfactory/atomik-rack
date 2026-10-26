@@ -7,7 +7,7 @@ use crate::session::NullBackend;
 use atomik_model::ClipId;
 use atomik_model::theory::{ChordKind, Scale, ScaleKind};
 use atomik_ui::PointerButton;
-use atomik_ui::chord_edit::Stamp;
+use atomik_ui::chord_edit::{ArpPattern, Stamp};
 use atomik_ui::key_rows::Fold;
 use atomik_ui::keymap::script::event_for;
 use atomik_ui::piano_roll::ScaleBarField;
@@ -429,4 +429,50 @@ fn the_cursor_follows_the_piano_roll_and_goes_back_to_the_arrow_elsewhere() {
         modifiers: Modifiers::NONE,
     });
     assert_eq!(s.cursor(), CursorHint::Default);
+}
+
+#[test]
+fn the_arpeggio_submenu_is_reachable_with_a_straight_pointer_path_across_the_parent_rows() {
+    let (mut s, _) = roll_shell(None);
+    let spot = empty_spot(&s);
+    mouse(&mut s, spot, PointerButton::Secondary);
+    let chords = s.context_menu().unwrap().submenu_center("Chords").unwrap();
+    hover(&mut s, chords);
+    let arp = s
+        .context_menu()
+        .unwrap()
+        .submenu_center("Arpeggio Pattern")
+        .unwrap();
+    // The straight path from the "Chords" row to the arpeggio row crosses rows of the parent
+    // menu (it ends in the submenu, which sits beside the parent panel).
+    let parent = s.context_menu().unwrap().row_rects();
+    let crossed = (1..=40)
+        .map(|i| chords.lerp(arp, f64::from(i) / 40.0))
+        .any(|p| {
+            let row = parent.iter().position(|r| r.contains(p));
+            row.is_some() && !parent[row.unwrap()].contains(chords)
+        });
+    assert!(crossed, "the path must cross another row of the parent");
+    let mut t = 10.0;
+    // Slowly: 50 ms per move, so the delay alone would not hold the submenu.
+    for i in 1..=40 {
+        hover(&mut s, chords.lerp(arp, f64::from(i) / 40.0));
+        t += 0.05;
+        s.frame_at(t);
+        let open = s.context_menu().unwrap().open_path();
+        assert_eq!(open.first(), Some(&"Chords"), "step {i}: {open:?}");
+    }
+    hover(&mut s, arp);
+    s.frame_at(t + 1.0);
+    assert_eq!(
+        s.context_menu().unwrap().open_path(),
+        ["Chords", "Arpeggio Pattern"]
+    );
+    let down = s
+        .context_menu()
+        .unwrap()
+        .item_center_with("editor.set_arp_pattern", "down")
+        .unwrap();
+    mouse(&mut s, down, PointerButton::Primary);
+    assert_eq!(s.core().piano_roll().tools().arp.pattern, ArpPattern::Down);
 }

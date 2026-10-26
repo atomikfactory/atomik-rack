@@ -10,6 +10,12 @@
 //!
 //! A submenu opens beside its row when the pointer rests on the row (or clicks it) and stays
 //! open while the pointer is over it or the rows that opened it; submenus nest to any depth.
+//!
+//! While a submenu is open, the pointer may cross the other rows of its panel on the way to the
+//! submenu: a move inside the triangle from the previous pointer position to the submenu near
+//! edge that gets closer to it keeps the submenu, and any other move onto another row only
+//! switches after [`SUBMENU_DELAY`] seconds. The delay is counted by [`ContextMenu::tick`], which
+//! the shell calls once a frame, so the widget reads no clock.
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::event::{Key, PointerButton, UiEvent};
@@ -28,6 +34,8 @@ const MIN_WIDTH: f64 = 200.0;
 const FONT: f32 = 13.0;
 /// How far a submenu overlaps the panel it opens from.
 const OVERLAP: f64 = 2.0;
+/// How long the pointer must rest on another row before it replaces the open submenu, seconds.
+pub const SUBMENU_DELAY: f64 = 0.28;
 
 /// One row of a menu description: a registry command, a submenu or a separator.
 #[derive(Debug, Clone, PartialEq)]
@@ -202,6 +210,19 @@ pub struct ContextMenu {
     /// release that ends the press which opened the menu (a toolbar field opens one on a press,
     /// and the panel may be moved under the pointer to fit the window) chooses nothing.
     armed: bool,
+    /// The previous pointer position this panel saw: the apex of the safe triangle.
+    last: Option<Point>,
+    /// A switch the pointer asked for by resting on another row, made by [`Self::tick`].
+    pending: Option<Pending>,
+}
+
+/// A row the pointer rests on while a submenu is open beside another row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Pending {
+    /// The row under the pointer (`None`: the panel padding).
+    row: Option<usize>,
+    /// The time of the first tick after the pointer settled, `None` until that tick.
+    since: Option<f64>,
 }
 
 /// The submenu open beside a panel: the row that opened it and its panel.
@@ -209,6 +230,15 @@ pub struct ContextMenu {
 struct Open {
     row: usize,
     menu: ContextMenu,
+}
+
+/// Whether `p` is inside the triangle `a`, `b`, `c` (edges included).
+fn in_triangle(p: Point, a: Point, b: Point, c: Point) -> bool {
+    let side = |u: Point, v: Point| (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
+    let (d1, d2, d3) = (side(a, b), side(b, c), side(c, a));
+    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(neg && pos)
 }
 
 /// Estimated width of a text run.
@@ -309,6 +339,8 @@ impl ContextMenu {
             bounds,
             open: None,
             armed: false,
+            last: None,
+            pending: None,
         };
         let size = menu.rect().size();
         menu.origin = Point::new(
@@ -426,6 +458,73 @@ impl ContextMenu {
         self.row_rects().iter().position(|r| r.contains(p))
     }
 
+    /// The label of the highlighted row of the innermost open panel.
+    pub fn highlighted(&self) -> Option<&str> {
+        if let Some(o) = &self.open {
+            return o.menu.highlighted();
+        }
+        match &self.entries[self.hover?] {
+            Entry::Item(i) => Some(&i.label),
+            Entry::Submenu(s) => Some(&s.label),
+            Entry::Separator => None,
+        }
+    }
+
+    /// Whether a pointer switch is waiting for its delay (the caller keeps ticking).
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some() || self.open.as_ref().is_some_and(|o| o.menu.has_pending())
+    }
+
+    /// Advances the hover delay to `now` (seconds, any monotonic clock): a pointer that rested on
+    /// another row for [`SUBMENU_DELAY`] switches to it. Returns whether the menu changed.
+    pub fn tick(&mut self, now: f64) -> bool {
+        let mut changed = self.open.as_mut().is_some_and(|o| o.menu.tick(now));
+        if let Some(p) = &mut self.pending {
+            let since = *p.since.get_or_insert(now);
+            if now - since >= SUBMENU_DELAY {
+                let row = p.row;
+                self.pending = None;
+                self.switch_to(row);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// The pointer left this panel: drop what it was heading for.
+    fn forget_pointer(&mut self) {
+        self.last = None;
+        self.pending = None;
+        if let Some(o) = &mut self.open {
+            o.menu.forget_pointer();
+        }
+    }
+
+    /// Opens the submenu of `row`, or closes the open one, as the pointer on `row` asks.
+    fn switch_to(&mut self, row: Option<usize>) {
+        match row.map(|r| (r, &self.entries[r])) {
+            Some((r, Entry::Submenu(s))) if s.enabled => self.open_row(r),
+            _ => {
+                self.open = None;
+                self.hover = row.filter(|r| matches!(self.entries[*r], Entry::Item(_)));
+            }
+        }
+    }
+
+    /// Whether a move from `from` to `to` heads for the open submenu: inside the triangle from
+    /// `from` to the submenu near edge, and closer to that edge.
+    fn heads_for_submenu(&self, from: Point, to: Point) -> bool {
+        let Some(o) = &self.open else { return false };
+        let child = o.menu.rect();
+        let near = if child.center().x > self.rect().center().x {
+            child.x0
+        } else {
+            child.x1
+        };
+        let (a, b) = (Point::new(near, child.y0), Point::new(near, child.y1));
+        (near - to.x).abs() < (near - from.x).abs() && in_triangle(to, from, a, b)
+    }
+
     /// Opens the submenu of row `row` beside it (to the left when there is no room at the right).
     fn open_row(&mut self, row: usize) {
         if self.open.as_ref().is_some_and(|o| o.row == row) {
@@ -459,20 +558,33 @@ impl ContextMenu {
         }
         match event {
             UiEvent::PointerMove { pos, .. } => {
+                let from = self.last.replace(*pos);
                 if let Some(o) = &mut self.open
                     && o.menu.covers(*pos)
                 {
+                    self.pending = None;
                     self.hover = Some(o.row);
                     return o.menu.handle(event);
                 }
-                if self.rect().contains(*pos) {
-                    let row = self.row_at(*pos);
-                    match row.map(|r| (r, &self.entries[r])) {
-                        Some((r, Entry::Submenu(s))) if s.enabled => self.open_row(r),
-                        _ => {
-                            self.open = None;
-                            self.hover = row.filter(|r| matches!(self.entries[*r], Entry::Item(_)));
-                        }
+                if let Some(o) = &mut self.open {
+                    o.menu.forget_pointer();
+                }
+                if !self.rect().contains(*pos) {
+                    // Outside every panel (a gap, or the pointer left): nothing changes.
+                    self.pending = None;
+                    return MenuOutcome::Consumed;
+                }
+                let row = self.row_at(*pos);
+                let opener = self.open.as_ref().map(|o| o.row);
+                if opener.is_none() || row == opener {
+                    self.pending = None;
+                    self.switch_to(row);
+                } else {
+                    // Another row while a submenu is open: wait, unless heading for the submenu.
+                    let toward = from.is_some_and(|f| self.heads_for_submenu(f, *pos));
+                    let same = self.pending.is_some_and(|p| p.row == row);
+                    if toward || !same {
+                        self.pending = Some(Pending { row, since: None });
                     }
                 }
                 MenuOutcome::Consumed
@@ -813,6 +925,8 @@ mod tests {
         let mut m = menu(&nested(), Os::Windows);
         m.handle(&mv(m.submenu_center("Chords").unwrap()));
         m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        m.tick(0.0);
+        m.tick(1.0);
         assert!(m.open_path().is_empty());
         assert!(m.item_center("edit.cut").is_none());
     }
@@ -948,5 +1062,135 @@ mod tests {
         );
         let mut list = crate::display_list::DisplayList::new();
         m.paint(&mut list, &Theme::default());
+    }
+
+    fn tick(m: &mut ContextMenu, t: f64) {
+        m.tick(t);
+    }
+
+    /// A menu at the right of the window, so its submenus flip to the left.
+    fn flipped() -> ContextMenu {
+        ContextMenu::build(
+            &nested(),
+            &Registry::bundled(),
+            &Keymap::bundled(Profile::Standard, Os::Windows),
+            Point::new(600.0, 300.0),
+            Size::new(800.0, 600.0),
+        )
+    }
+
+    /// Moves the pointer slowly from `a` to `b` in `steps` moves, with a tick of 50 ms after each.
+    fn glide(m: &mut ContextMenu, a: Point, b: Point, steps: u32, t: &mut f64) {
+        for i in 1..=steps {
+            m.handle(&mv(a.lerp(b, f64::from(i) / f64::from(steps))));
+            *t += 0.05;
+            tick(m, *t);
+            assert_eq!(m.open_path().first(), Some(&"Chords"), "step {i}");
+        }
+    }
+
+    #[test]
+    fn pointer_move_diagonally_through_a_sibling_keeps_the_submenu_open() {
+        let mut m = menu(&nested(), Os::Windows);
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        let paste = m.item_center("edit.paste").unwrap();
+        // The straight path from the row to the submenu's last item crosses the "Off" row.
+        let off = m.row_rects()[2];
+        let crosses = (1..=10).any(|i| off.contains(row.lerp(paste, f64::from(i) / 10.0)));
+        assert!(crosses, "the path must cross the sibling row");
+        let mut t = 0.0;
+        glide(&mut m, row, paste, 40, &mut t);
+        tick(&mut m, t + 1.0);
+        assert_eq!(m.open_path(), ["Chords"], "the pointer is in the submenu");
+    }
+
+    #[test]
+    fn pointer_resting_on_a_sibling_longer_than_the_delay_switches() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        assert_eq!(m.open_path(), ["Chords"], "not yet");
+        assert!(m.has_pending());
+        tick(&mut m, SUBMENU_DELAY * 0.5);
+        assert_eq!(m.open_path(), ["Chords"], "still waiting");
+        tick(&mut m, SUBMENU_DELAY + 0.01);
+        assert!(m.open_path().is_empty());
+        assert_eq!(m.highlighted(), Some("Copy"));
+        assert!(!m.has_pending());
+    }
+
+    #[test]
+    fn pointer_moving_back_to_the_opening_row_cancels_the_switch() {
+        let mut m = menu(&nested(), Os::Windows);
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        m.handle(&mv(row));
+        tick(&mut m, 1.0);
+        assert_eq!(m.open_path(), ["Chords"]);
+    }
+
+    #[test]
+    fn pointer_resting_on_a_disabled_submenu_row_closes_the_open_one_after_the_delay() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.submenu_center("Off").unwrap()));
+        assert_eq!(m.open_path(), ["Chords"]);
+        tick(&mut m, 0.0);
+        tick(&mut m, 1.0);
+        assert!(m.open_path().is_empty());
+    }
+
+    #[test]
+    fn pointer_in_the_overlap_or_outside_every_panel_keeps_the_submenu() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        let off = m.submenu_center("Off").unwrap();
+        // The strip where the submenu overlaps the parent panel, on the sibling's row.
+        m.handle(&mv(Point::new(m.rect().x1 - 1.0, off.y)));
+        tick(&mut m, 0.0);
+        tick(&mut m, 2.0);
+        assert_eq!(m.open_path(), ["Chords"], "overlap strip");
+        // Outside both panels (a gap, or the pointer left): nothing closes.
+        m.handle(&mv(Point::new(700.0, 500.0)));
+        tick(&mut m, 4.0);
+        tick(&mut m, 6.0);
+        assert_eq!(m.open_path(), ["Chords"], "outside");
+    }
+
+    #[test]
+    fn a_submenu_flipped_to_the_left_keeps_the_same_hover_intent() {
+        let mut m = flipped();
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        let child = m.open.as_ref().unwrap().menu.rect();
+        assert!(child.x1 <= m.rect().x0 + 3.0, "flipped: {child:?}");
+        let paste = m.item_center("edit.paste").unwrap();
+        let mut t = 0.0;
+        glide(&mut m, row, paste, 40, &mut t);
+        // Resting on a sibling switches, as on the right.
+        let mut m = flipped();
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        tick(&mut m, 1.0);
+        assert!(m.open_path().is_empty());
+    }
+
+    #[test]
+    fn nested_submenus_keep_their_own_hover_intent() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.submenu_center("Deeper").unwrap()));
+        assert_eq!(m.open_path(), ["Chords", "Deeper"]);
+        // Resting on the sibling of "Deeper" inside the first submenu closes only "Deeper".
+        m.handle(&mv(m.item_center("edit.cut").unwrap()));
+        tick(&mut m, 0.0);
+        assert_eq!(m.open_path(), ["Chords", "Deeper"]);
+        tick(&mut m, 1.0);
+        assert_eq!(m.open_path(), ["Chords"]);
     }
 }

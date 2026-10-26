@@ -3164,6 +3164,13 @@ impl<B: AudioBackend> Shell<B> {
         self.context_menu.as_ref().map(|o| &o.menu)
     }
 
+    /// Whether the context menu waits for a pointer to rest (the platform loop keeps ticking).
+    pub fn context_menu_pending(&self) -> bool {
+        self.context_menu
+            .as_ref()
+            .is_some_and(|o| o.menu.has_pending())
+    }
+
     /// Closes the context menu without choosing.
     pub fn close_context_menu(&mut self) {
         if self.context_menu.take().is_some() {
@@ -4226,6 +4233,12 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.plugin_tick(now_seconds);
+        // A pointer resting on another row of a context menu switches its submenu.
+        if let Some(open) = &mut self.context_menu
+            && open.menu.tick(now_seconds)
+        {
+            self.repaint = true;
+        }
         // The control path: MIDI mappings and the control surface.
         let heard = self.core.midi_received();
         self.core.midi_control_frame(now_seconds);
