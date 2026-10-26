@@ -38,7 +38,7 @@ use crate::history::Edit;
 use crate::plugin::{PluginCommand, key_base_of_name};
 use crate::rack_columns;
 use crate::song::Track;
-use crate::song_cmd::{has_notes_input, new_track};
+use crate::song_cmd::{has_notes_input, new_note_track};
 use crate::{
     Cable, Command, ConsoleCommand, DeviceKey, ModelError, RackDoc, RackSlot, SocketRef,
     console_cmd, rules,
@@ -240,13 +240,14 @@ fn disarm(p: &mut Planner<'_>, names: &[DeviceKey], except: &DeviceKey) {
 fn arm_new_track(p: &mut Planner<'_>, key: &DeviceKey, names: &[DeviceKey]) {
     disarm(p, names, key);
     let index = p.doc().song.tracks.len();
+    let track = Track {
+        armed: true,
+        ..new_note_track(p.doc(), p.registry, key.clone())
+    };
     p.push(Edit::Track {
         index,
         old: None,
-        new: Some(Track {
-            armed: true,
-            ..new_track(key.clone())
-        }),
+        new: Some(track),
     });
 }
 
@@ -677,6 +678,115 @@ pub(crate) fn notes_successor(
         .filter(|d| doc.device(d).is_some())
 }
 
+/// The top of the player chain feeding `device`: up the cables into its Notes input while the
+/// feeder is a note player. `None` when no player feeds it (a track then enters at the
+/// device itself).
+pub(crate) fn stack_top(
+    doc: &RackDoc,
+    registry: &Registry,
+    device: &DeviceKey,
+) -> Option<DeviceKey> {
+    let mut top = device.clone();
+    for _ in 0..doc.devices.len() {
+        let feeder = doc
+            .cables
+            .iter()
+            .find(|c| c.to.device == top && is_notes_socket(doc, registry, &c.to))
+            .map(|c| c.from.device.clone());
+        match feeder {
+            Some(f) if f != *device && is_player_device(doc, registry, &f) => top = f,
+            _ => break,
+        }
+    }
+    (top != *device).then_some(top)
+}
+
+/// True when the notes of `from` reach `to` down the note cables through players.
+fn notes_reach(doc: &RackDoc, registry: &Registry, from: &DeviceKey, to: &DeviceKey) -> bool {
+    let mut seen = vec![from.clone()];
+    let mut next = 0;
+    while let Some(at) = seen.get(next).cloned() {
+        next += 1;
+        if at == *to {
+            return true;
+        }
+        if at != *from && !is_player_device(doc, registry, &at) {
+            continue;
+        }
+        for c in &doc.cables {
+            if c.from.device == at
+                && is_notes_socket(doc, registry, &c.from)
+                && !seen.contains(&c.to.device)
+            {
+                seen.push(c.to.device.clone());
+            }
+        }
+    }
+    false
+}
+
+/// The cables `edit` connects at the top level, and whether it cuts any.
+fn note_cable_edits<'a>(edit: &'a Edit, connects: &mut Vec<&'a Cable>, cuts: &mut bool) {
+    match edit {
+        Edit::Compound(edits) => edits
+            .iter()
+            .for_each(|e| note_cable_edits(e, connects, cuts)),
+        Edit::Connect(c) => connects.push(c),
+        Edit::Disconnect(_) => *cuts = true,
+        _ => {}
+    }
+}
+
+/// `edit`, a cable change at the top level, plus what it does to where tracks' notes enter,
+/// in the same undo step. A note player cabled into the device a track enters at moves the
+/// entry to the top of the chain now feeding the track's device. A cable cut that leaves a
+/// track's entry without a path down to its device moves the entry to the top of what still
+/// feeds the device (the device itself when nothing does). Other edits are returned as they
+/// are; so is a document no track of which is affected.
+pub(crate) fn with_entries(doc: &RackDoc, registry: &Registry, edit: Edit) -> Edit {
+    let (mut connects, mut cuts) = (Vec::new(), false);
+    note_cable_edits(&edit, &mut connects, &mut cuts);
+    let player_cables: Vec<Cable> = connects
+        .into_iter()
+        .filter(|c| {
+            is_player_device(doc, registry, &c.from.device)
+                && is_notes_socket(doc, registry, &c.from)
+                && is_notes_socket(doc, registry, &c.to)
+        })
+        .cloned()
+        .collect();
+    if player_cables.is_empty() && !cuts {
+        return edit;
+    }
+    let mut after = doc.clone();
+    edit.perform(&mut after);
+    let mut moves = Vec::new();
+    for track in doc.song.tracks.iter().filter(|t| !t.is_audio()) {
+        let entry = doc.notes_entry(track);
+        let fed = player_cables.iter().any(|c| c.to.device == *entry);
+        let cut_off = *entry != track.device
+            && notes_reach(doc, registry, entry, &track.device)
+            && !notes_reach(&after, registry, entry, &track.device);
+        if !fed && !cut_off {
+            continue;
+        }
+        let new = stack_top(&after, registry, &track.device);
+        if new.as_ref() != track.notes_to.as_ref() {
+            moves.push(Edit::TrackEntry {
+                device: track.device.clone(),
+                old: track.notes_to.clone(),
+                new,
+            });
+        }
+    }
+    if moves.is_empty() {
+        return edit;
+    }
+    let mut edits = vec![edit];
+    edits.extend(moves);
+    Edit::Compound(edits)
+}
+
 /// The head of the stack a selection stands for, with the key of its Notes input: from the
 /// selection down the note cables through the players to the end of the chain (the
 /// instrument), then up to where its track's notes enter. A track decides it (its entry);
@@ -700,21 +810,7 @@ fn stack_head(
     }
     let head = match doc.song.track(&bottom) {
         Some(track) => doc.notes_entry(track).clone(),
-        None => {
-            let mut top = bottom.clone();
-            for _ in 0..limit {
-                let feeder = doc
-                    .cables
-                    .iter()
-                    .find(|c| c.to.device == top && is_notes_socket(doc, registry, &c.to))
-                    .map(|c| c.from.device.clone());
-                match feeder {
-                    Some(f) if f != bottom && is_player_device(doc, registry, &f) => top = f,
-                    _ => break,
-                }
-            }
-            top
-        }
+        None => stack_top(doc, registry, &bottom).unwrap_or(bottom),
     };
     let desc = registry.descriptor(&doc.device(&head)?.type_id)?;
     Some((head, notes_socket(desc, Direction::Input)?))
