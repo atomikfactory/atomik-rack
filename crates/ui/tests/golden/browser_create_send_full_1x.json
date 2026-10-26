@@ -1735,10 +1735,14 @@
 {"text":"Arpeggiator","at":[34.00,520.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
 {"text":"atomik.arpeggiator","at":[34.00,532.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"PLAYER","at":[204.00,520.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
-{"fill":{"circle":[21.00,558.00,5.00]},"brush":"#a65ad8ff"},
-{"text":"Step sequencer","at":[34.00,556.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
-{"text":"atomik.step-sequencer","at":[34.00,568.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"fill":{"circle":[21.00,558.00,5.00]},"brush":"#d8825aff"},
+{"text":"Note Filter","at":[34.00,556.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
+{"text":"atomik.note-filter","at":[34.00,568.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"PLAYER","at":[204.00,556.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
+{"fill":{"circle":[21.00,594.00,5.00]},"brush":"#a65ad8ff"},
+{"text":"Step sequencer","at":[34.00,592.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
+{"text":"atomik.step-sequencer","at":[34.00,604.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"PLAYER","at":[204.00,592.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}
