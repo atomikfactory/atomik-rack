@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-seven original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter and key & chord), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships twenty-nine original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -1028,6 +1028,80 @@ The choice labels are the labels of `atomik_core::theory` (`ScaleKind::label`, `
 
 ---
 
+## Note Repeater: `atomik.note-repeater` (Utility, "Players")
+
+An echo for notes: every note passes as played and adds repeats. Source: [crates/devices/src/note_repeater.rs](../crates/devices/src/note_repeater.rs); the queue it shares with the Note Delay is [crates/devices/src/note_queue.rs](../crates/devices/src/note_queue.rs).
+
+### Sockets
+
+`notes_in` (id 0, input) and `notes_out` (id 1, output). No CV sockets, no pattern data.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `time.sync` | 0-7: 1/4, 1/8D, 1/8, 1/8T, 1/16D, 1/16, 1/16T, 1/32 | 1 (1/8D) | choice | Linear | yes |
+| `time.mode` | 0-1: sync, free | 0 (sync) | choice | Linear | yes |
+| `time.ms` | 10 to 2000 | 250 | ms | Exponential | no |
+| `repeats` | 1 to 16 | 3 | none | Linear | yes |
+| `velocity.decay` | 0 to 1 (shown 0 to 100 %) | 0.25 | percent | Linear | no |
+| `pitch.step` | -12 to 12 | 0 | semitones | Linear | yes |
+| `pitch.scale` | 0-1: off, in key | 0 (off) | choice | Linear | yes |
+| `scale.root` | 0-11, as Key & Chord | 0 (C) | choice | Linear | yes |
+| `scale.kind` | 0-15, as Key & Chord | 1 (Major) | choice | Linear | yes |
+| `gate` | 0.05 to 1 (shown 5 to 100 %) | 0.5 | percent | Linear | no |
+| `dry` | 0 or 1 | 1 | toggle | Linear | yes |
+| `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+
+The scale choices are the tables of Key & Chord (one place, pinned to the core theory by a test there).
+
+### Behaviour
+
+- **Time.** The distance *D* between repeats is a note value (`time.sync`, converted to frames when the note arrives: `ticks / ticks per frame`, rounded half up) or free (`time.ms`: `ms * sample rate / 1000`, rounded half up). A tempo change later does **not** move repeats that are already scheduled.
+- **Repeats.** Repeat *n* of a note on at frame *f* starts at *f + n D* with the key `key + n * pitch.step`, or with `pitch.scale` in key, `n * pitch.step` scale degrees from the key (the rule of the core theory's `Scale::step`). A key outside 0..=127 is dropped. The velocity is the previous repeat's times `1 - velocity.decay`, iterated; repeats stop below 1/127. A repeat lasts `max(1, D * gate)` frames.
+- **Dry.** The original note passes as played; with `dry` off only the repeats sound. Turning it off while a key is held still ends that key's note.
+- **Independent echoes.** A repeat is its own note: the input Off does not touch it. Repeats ring out after the key is released, across a loop wrap (the Offs the engine sends there are ordinary Offs) and while the transport is stopped. Notes chased at play are echoed like played notes.
+- **Frame clock and queue.** The device counts frames itself (64 per batch), so it behaves the same playing or stopped. Repeats wait in a fixed queue of 512 entries ordered by frame, then insertion order. A note is scheduled only when there is room for its end; when the queue is full, notes (and their repeats) are dropped, never an Off. A dry note keeps a slot for its Off.
+- **Same key twice.** A repeat on a key that already sounds (for instance the dry note, with `pitch.step` 0) closes it and starts it again; the key is closed when the last of them ends.
+- **Other events.** Pitch bend, controllers and pressure pass at their offsets (expressions of keys that do not sound are dropped). `AllOff` (stop, locate) clears the queue, closes what sounds and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch.
+- **Bypass.** The common [player bypass](#player-bypass); it also clears the queue.
+- **Starting points.** *Dotted eighth* (the defaults), *Rising fifths* (`pitch.step` 7, `repeats` 4), *Short tail* (`time.sync` 1/16, `repeats` 2, `gate` 0.3), *Out of key* (`pitch.scale` in key, `pitch.step` 2).
+
+---
+
+## Note Delay: `atomik.note-delay` (Utility, "Players")
+
+Moves every note event later in time and never adds a note. Source: [crates/devices/src/note_delay.rs](../crates/devices/src/note_delay.rs).
+
+### Sockets
+
+`notes_in` (id 0, input) and `notes_out` (id 1, output). No CV sockets, no pattern data.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `delay.mode` | 0-1: sync, free | 0 (sync) | choice | Linear | yes |
+| `delay.sync` | 0-8: 0, 1/64, 1/32T, 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4 | 5 (1/16) | choice | Linear | yes |
+| `delay.ms` | 0 to 1000 | 0 | ms | Linear | no |
+| `swing` | 0 to 75 | 0 | none | Linear | no |
+| `swing.grid` | 0-1: 1/8, 1/16 | 1 (1/16) | choice | Linear | yes |
+| `humanize.time` | 0 to 20 | 0 | ms | Linear | no |
+| `humanize.velocity` | 0 to 32 | 0 | none | Linear | yes |
+| `random.seed` | 0 to 999 | 0 | none | Linear | yes |
+| `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
+
+### Behaviour
+
+- **Delay.** Every event is delayed by `delay.sync` (rounded to frames when the event arrives, as the Note Repeater; the first choice is no delay) or, in free mode, `delay.ms`. A later tempo change does not move events already scheduled.
+- **Swing** (only while the transport plays): a note whose position lies in the first half of an **odd** step of `swing.grid` is delayed by the swing shift of that grid, `(swing * step + 100) / 200` ticks (the rule of the step players). Notes on even steps or in the second half of a step do not move. While stopped nothing swings.
+- **Humanize.** `humanize.time` delays a note by up to that many milliseconds (late only: there is no look-ahead for early notes). `humanize.velocity` moves the velocity by up to that many steps of 127, either way (1..=127). Both are drawn from a hash of the device seed, `random.seed`, the note's transport tick (the device frame while stopped) and its key: a bounce is the same every time, at any block size.
+- **Lengths kept.** An Off gets the delay its On got (remembered per key), so a note keeps its length even when a param moves while it is held. Bend, controllers and pressure get the base delay.
+- **Queue and frame clock, note safety and bypass** as the Note Repeater: 512 entries, an On scheduled only when its Off fits, `AllOff` clears the queue and closes what sounds, bypass clears the queue.
+- **Starting points.** *Late swing 16ths* (`delay.sync` 0, `swing` 60, `swing.grid` 1/16), *Flam* (`delay.sync` 1/64), *Loose hands* (`delay.sync` 0, `humanize.time` 12, `humanize.velocity` 10), *Behind the beat* (`delay.sync` 1/32).
+
+---
+
 ## Container: `atomik.container` (Container, "Containers")
 
 A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.
@@ -1117,7 +1191,7 @@ VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe an
 
 ## Player bypass
 
-The step sequencer, the arpeggiator, the note filter and Key & Chord end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
+The step sequencer, the arpeggiator, the note filter, Key & Chord, the Note Repeater and the Note Delay end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
 
 - **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0 and it holds no state.
 - **The switch.** A change of the param is adopted at the start of the next batch: the notes the player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the player's own state (the held set, the pattern position) is cleared, and a key that is held at the switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing doubles on either side.

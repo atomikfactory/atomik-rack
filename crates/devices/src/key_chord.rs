@@ -83,7 +83,7 @@ const fn param(
 }
 
 /// The labels of `scale.kind`, in [`ScaleKind::ALL`] order (a test pins them to the core).
-static SCALE_KIND_LABELS: [&str; 16] = [
+pub(crate) static SCALE_KIND_LABELS: [&str; 16] = [
     "Chromatic",
     "Major",
     "Natural Minor",
