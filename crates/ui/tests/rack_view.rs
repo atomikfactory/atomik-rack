@@ -609,7 +609,7 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
-    assert_eq!(v.browser_rows(&reg).len(), 20); // as above (20 browsable devices, the container included)
+    assert_eq!(v.browser_rows(&reg).len(), 21); // as above (21 browsable devices, the container included)
     // Select the synth, then double-click the mixer row.
     let p = v.plate_center(&key("synth")).unwrap();
     let _ = v.handle(&down(p), &doc, &reg);
