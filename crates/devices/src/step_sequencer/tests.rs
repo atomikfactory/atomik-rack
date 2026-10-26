@@ -149,7 +149,8 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "random.seed",
             "mute",
             "velocity.scale",
-            "gate.scale"
+            "gate.scale",
+            "bypass"
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -1055,4 +1056,61 @@ fn a_locate_closes_a_long_note_when_no_step_follows() {
     let evs = batch(&mut h);
     assert_eq!(plain(&evs), [(base, K::Off(60))]);
     assert!(collect(&mut h, 50).is_empty(), "nothing hangs or plays");
+}
+
+#[test]
+fn step_sequencer_bypass_passes_notes_through_and_stops_the_pattern() {
+    let (sr, bpm, s) = (48_000u64, 120u64, 3_840u64);
+    let mut h = rig(
+        sr as f64,
+        bpm as f64,
+        &[full(SeqResolution::Sixteenth, 4, 0, 60, 100)],
+    );
+    let mut all = Vec::new();
+    let bypass_at = due(s + 1_000, sr, bpm) as usize / BATCH + 1;
+    for _ in 0..bypass_at {
+        all.extend(batch(&mut h));
+    }
+    // The playing note closes at the start of the bypass batch; a key played now passes through
+    // with its offset.
+    set(&mut h, "bypass", 1.0);
+    h.push_note("notes_in", on(5, 72, 0.8));
+    let base = h.frame();
+    let evs = batch(&mut h);
+    assert_eq!(
+        plain(&evs),
+        [(base, K::Off(60)), (base + 5, K::On(72, 102))]
+    );
+    all.extend(evs);
+    assert!(
+        collect(&mut h, batches_for(4 * s, sr, bpm)).is_empty(),
+        "the pattern stops while bypassed"
+    );
+
+    // Leaving the bypass closes the thru key; the pattern resumes on the next step.
+    set(&mut h, "bypass", 0.0);
+    let base = h.frame();
+    let evs = batch(&mut h);
+    assert_eq!(plain(&evs), [(base, K::Off(72))]);
+    all.extend(evs);
+    h.push_note("notes_in", off(0, 72));
+    all.extend(collect(&mut h, batches_for(2 * s, sr, bpm)));
+    assert!(
+        all.iter()
+            .filter(|e| e.frame > base && matches!(e.k, K::On(..)))
+            .all(|e| e.k == K::On(60, 100)),
+        "only the pattern plays again, the old key's Off is ignored"
+    );
+    assert!(
+        all.iter()
+            .any(|e| e.frame > base && matches!(e.k, K::On(..)))
+    );
+    let mut down = std::collections::BTreeSet::new();
+    for e in &all {
+        match e.k {
+            K::On(k, _) => assert!(down.insert(k), "double On of {k}"),
+            K::Off(k) => assert!(down.remove(&k), "Off of silent {k}"),
+            K::AllOff => down.clear(),
+        }
+    }
 }

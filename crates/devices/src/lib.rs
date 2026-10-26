@@ -30,6 +30,7 @@ pub mod mastering;
 pub mod mod_source;
 pub mod modulation;
 mod note_clock;
+mod note_fx;
 pub mod note_split;
 pub mod phase_meter;
 pub mod poly_synth;

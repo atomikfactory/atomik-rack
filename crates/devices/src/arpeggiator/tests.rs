@@ -149,7 +149,8 @@ fn descriptor_validates_and_orders_params_and_sockets() {
             "velocity.mode",
             "velocity.fixed",
             "run",
-            "random.seed"
+            "random.seed",
+            "bypass"
         ]
     );
     let sockets: Vec<_> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
@@ -771,4 +772,75 @@ fn a_locate_closes_a_long_note_at_once() {
         evs.iter().map(|e| (e.frame, e.k)).collect::<Vec<_>>(),
         [(base, K::Off(48))]
     );
+}
+
+/// Applies note events to a set of sounding keys, failing on a double On or an Off of a silent key.
+fn track(sounding: &mut std::collections::BTreeSet<u8>, evs: &[Ev]) {
+    for e in evs {
+        match e.k {
+            K::On(k, _) => assert!(sounding.insert(k), "double On of {k} at {}", e.frame),
+            K::Off(k) => assert!(sounding.remove(&k), "Off of silent {k} at {}", e.frame),
+            K::AllOff => sounding.clear(),
+        }
+    }
+}
+
+#[test]
+fn arpeggiator_bypass_passes_notes_through_and_leaves_nothing_hanging() {
+    let mut h = rig();
+    let mut sounding = std::collections::BTreeSet::new();
+    set(&mut h, "gate", 100.0);
+    press(&mut h, &[60]);
+    let evs = collect(&mut h, 20);
+    track(&mut sounding, &evs);
+    assert_eq!(sounding.iter().copied().collect::<Vec<_>>(), [60]);
+
+    // Bypass while key 60 is held: the arpeggiated note closes at the start of the batch, the
+    // held key is not retriggered and a new key passes straight through.
+    set(&mut h, "bypass", 1.0);
+    h.push_note("notes_in", on(5, 64, 0.8));
+    let base = h.frame();
+    let evs = batch(&mut h);
+    assert_eq!(
+        evs.iter().map(|e| (e.frame, e.k)).collect::<Vec<_>>(),
+        [(base, K::Off(60)), (base + 5, K::On(64, 102))]
+    );
+    track(&mut sounding, &evs);
+    assert!(
+        collect(&mut h, 400).is_empty(),
+        "no arpeggio while bypassed"
+    );
+
+    // Offs: the held key's is swallowed, the thru key's passes.
+    h.push_note("notes_in", off(2, 60));
+    h.push_note("notes_in", off(9, 64));
+    let base = h.frame();
+    let evs = batch(&mut h);
+    assert_eq!(
+        evs.iter().map(|e| (e.frame, e.k)).collect::<Vec<_>>(),
+        [(base + 9, K::Off(64))]
+    );
+    track(&mut sounding, &evs);
+    assert!(sounding.is_empty());
+
+    // A key held on the thru when the bypass ends is closed, and the arpeggiator starts clean.
+    h.push_note("notes_in", on(0, 67, 0.8));
+    track(&mut sounding, &batch(&mut h));
+    set(&mut h, "bypass", 0.0);
+    let base = h.frame();
+    let evs = batch(&mut h);
+    assert_eq!(
+        evs.iter().map(|e| (e.frame, e.k)).collect::<Vec<_>>(),
+        [(base, K::Off(67))]
+    );
+    track(&mut sounding, &evs);
+    h.push_note("notes_in", off(0, 67));
+    assert!(
+        collect(&mut h, 400).is_empty(),
+        "the old key does not arpeggiate"
+    );
+    press(&mut h, &[72]);
+    let evs = collect(&mut h, 400);
+    track(&mut sounding, &evs);
+    assert!(ons(&evs).iter().all(|(_, k)| *k == 72) && !ons(&evs).is_empty());
 }

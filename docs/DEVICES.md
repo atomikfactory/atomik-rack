@@ -891,6 +891,7 @@ A transport-synced, monophonic pattern player. Like the sampler it plays data in
 | `mute` | 0 to 1 | 0 | toggle | Linear | yes |
 | `velocity.scale` | 0 to 2 | 1 | none | Linear | no |
 | `gate.scale` | 0.25 to 2 | 1 | none | Linear | no |
+| `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -927,6 +928,7 @@ The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, 
 | `velocity.fixed` | 1 to 127 | 100 | none | Linear | yes |
 | `run` | 0–1: transport, always | 1 (always) | choice | Linear | yes |
 | `random.seed` | 0 to 999 | 0 | none | Linear | yes |
+| `bypass` | 0 or 1 (see [Player bypass](#player-bypass)) | 0 | toggle | Linear | yes |
 
 ### Behaviour (as built)
 
@@ -1025,6 +1027,14 @@ Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main
 Try it with the test plugins: [../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and [../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both formats in one project).
 
 VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
+
+## Player bypass
+
+The step sequencer and the arpeggiator end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
+
+- **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0 and it holds no state.
+- **The switch.** A change of the param is adopted at the start of the next batch: the notes the player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the player's own state (the held set, the pattern position) is cleared, and a key that is held at the switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing doubles on either side.
+- **The strip switch.** A player panel has the same small **BYPASS** LED button in the name strip as an effect, and the panel body is veiled while it is on.
 
 ## Effect bypass
 

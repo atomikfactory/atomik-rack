@@ -2175,14 +2175,27 @@ impl RackView {
                         u16::from(m) + 1
                     ))
                 }
-                Some(Hit::Bypass(i)) => Some(
-                    if self.devices[i].is_bypassed() {
-                        "Bypassed: the dry signal passes. Click to switch the effect back in"
-                    } else {
-                        "Click to bypass the effect: the dry signal passes"
-                    }
-                    .to_string(),
-                ),
+                Some(Hit::Bypass(i)) => {
+                    let player = self.devices[i]
+                        .desc
+                        .as_ref()
+                        .is_some_and(|d| crate::browser::is_player(d.type_id));
+                    Some(
+                        match (player, self.devices[i].is_bypassed()) {
+                            (false, true) => {
+                                "Bypassed: the dry signal passes. Click to switch the effect back in"
+                            }
+                            (false, false) => "Click to bypass the effect: the dry signal passes",
+                            (true, true) => {
+                                "Bypassed: the notes pass through unchanged. Click to switch the player back in"
+                            }
+                            (true, false) => {
+                                "Click to bypass the player: the notes pass through unchanged"
+                            }
+                        }
+                        .to_string(),
+                    )
+                }
                 Some(Hit::Plate(i)) => {
                     let d = &self.devices[i];
                     if self.locked.as_ref() == Some(&d.key) {

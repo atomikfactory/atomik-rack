@@ -23,6 +23,9 @@
 //! * **Note safety.** Notes are closed on stop, jump (locate, loop wrap, start), `mute`, `AllOff`
 //!   on `notes_in`, and a `reset` leaves an `AllOff` for the next batch. A data swap never touches
 //!   a sounding note: its Off is already scheduled in the pending table.
+//! * **Bypass** (`bypass`, last param): the sequencer closes its notes and the pattern stops, then
+//!   `notes_in` goes straight to `notes_out` (see `crate::note_fx::PlayerBypass`). A key held at a
+//!   switch is not retriggered: it is ignored until its own Off.
 //! * **Outputs.** `gate_cv_out`, `pitch_cv_out` ((key - 60) / 24, +-1), `velocity_cv_out` and a
 //!   1 ms `trig_cv_out` pulse at every played step (see `crate::note_clock`).
 //! * **Meter values** (`has_meter_values`): the playing pattern (0-based), the step index of the
@@ -37,9 +40,12 @@ use atomik_device_sdk::{
 };
 use atomik_dsp::rng::{hash64, unit_f64};
 
+use crate::bypass::bypass_param;
 use crate::note_clock::{
-    Grid, JumpTracker, NOTES_IN, NoteCore, PLAYER_SOCKETS, Segment, StepHost, run_segment, seed_mix,
+    Grid, JumpTracker, NOTES_IN, NOTES_OUT, NoteCore, PLAYER_SOCKETS, Segment, StepHost,
+    run_segment, seed_mix,
 };
+use crate::note_fx::PlayerBypass;
 
 const fn param(
     id: u32,
@@ -74,8 +80,9 @@ const P_SEED: u32 = 5;
 const P_MUTE: u32 = 6;
 const P_VELOCITY: u32 = 7;
 const P_GATE: u32 = 8;
+const P_BYPASS: u32 = 9;
 
-static PARAMS: [ParamDescriptor; 9] = [
+static PARAMS: [ParamDescriptor; 10] = [
     param(
         P_PATTERN,
         "pattern",
@@ -134,6 +141,7 @@ static PARAMS: [ParamDescriptor; 9] = [
         Unit::None,
         false,
     ),
+    bypass_param(P_BYPASS),
 ];
 
 /// Static description of the step sequencer.
@@ -163,6 +171,7 @@ pub struct StepSequencer {
     data: Option<PlayerDataRef>,
     core: NoteCore,
     clock: JumpTracker,
+    bypass: PlayerBypass,
     seed: u64,
     seed_mix: u64,
     // Params.
@@ -198,6 +207,7 @@ impl StepSequencer {
             data: None,
             core: NoteCore::new(),
             clock: JumpTracker::new(),
+            bypass: PlayerBypass::new(),
             seed: 0,
             seed_mix: 0,
             queued: 0,
@@ -422,6 +432,9 @@ impl Device for StepSequencer {
 
     fn reset(&mut self) {
         self.core.reset();
+        if self.bypass.reset() {
+            self.core.flush_alloff = true;
+        }
         self.clock.invalidate();
         self.held_tie = None;
         self.held_n = 0;
@@ -450,16 +463,37 @@ impl Device for StepSequencer {
             }
             P_VELOCITY => self.vel_scale = f64::from(plain.clamp(0.0, 2.0)),
             P_GATE => self.gate_scale = f64::from(plain.clamp(0.25, 2.0)),
+            P_BYPASS => self.bypass.set_param(plain),
             _ => {}
         }
     }
 
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         let time = ctx.time;
-        self.inbuf.clear();
-        self.inbuf.extend_from_slice(ctx.notes_in(NOTES_IN));
-        self.in_cursor = 0;
         self.core.begin_batch(ctx);
+        if self.bypass.begin_batch(ctx.notes_out(NOTES_OUT)) {
+            // The switch closes what the sequencer sent and starts it from nothing.
+            self.core.close_all(ctx, 0);
+            self.clock.invalidate();
+            self.held_tie = None;
+            self.held_n = 0;
+            self.running = false;
+            self.close_pending = false;
+            self.cur = self.queued;
+        }
+        self.inbuf.clear();
+        self.in_cursor = 0;
+        for i in 0..ctx.notes_in(NOTES_IN).len() {
+            let e = ctx.notes_in(NOTES_IN)[i];
+            if let Some(e) = self.bypass.route(ctx.notes_out(NOTES_OUT), e) {
+                self.inbuf.push(e);
+            }
+        }
+        if self.bypass.is_active() {
+            self.running = false;
+            self.core.end_batch(ctx);
+            return;
+        }
         self.tpf = time.ticks_per_frame;
         let valid = time.playing && self.tpf > 0.0 && self.tpf.is_finite();
         if !valid {

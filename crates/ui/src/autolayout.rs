@@ -178,13 +178,14 @@ impl PanelSpec {
 pub const BYPASS_KEY: &str = "bypass";
 
 /// Whether a device gets the BYPASS switch of the name strip: a built-in effect (a plugin
-/// keeps its own BYPASS button inside its panel) that has the `bypass` param. Such a param is
-/// placed by that switch, never as a knob of the panel body: the auto-layout skips it, the
-/// hand-made layouts do not list it.
+/// keeps its own BYPASS button inside its panel) or a note player that has the `bypass` param.
+/// Such a param is placed by that switch, never as a knob of the panel body: the auto-layout
+/// skips it, the hand-made layouts do not list it.
 pub fn has_strip_bypass(desc: &DeviceDescriptor) -> bool {
-    desc.kind == atomik_device_sdk::DeviceKind::Effect
-        && !atomik_device_sdk::is_plugin_type_id(desc.type_id)
-        && desc.param_by_key(BYPASS_KEY).is_some()
+    let takes_one = (desc.kind == atomik_device_sdk::DeviceKind::Effect
+        && !atomik_device_sdk::is_plugin_type_id(desc.type_id))
+        || crate::browser::is_player(desc.type_id);
+    takes_one && desc.param_by_key(BYPASS_KEY).is_some()
 }
 
 /// The widget chosen for a param.
