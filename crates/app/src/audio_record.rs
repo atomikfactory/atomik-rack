@@ -39,8 +39,8 @@
 //! asset and one clip ([`place_lap`] aligns it to whole ticks with a sub-tick `source_offset`).
 
 use atomik_core::{BATCH, db_to_gain};
+pub use atomik_core::{REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB, REC_GAIN_PARAM};
 use atomik_device_sdk::Registry;
-use atomik_devices::audio_track::{REC_GAIN_MAX_DB, REC_GAIN_MIN_DB};
 use atomik_engine::{SongPosition, TapChannel};
 use atomik_model::{DeviceKey, INTERFACE_KEY, RackDoc};
 
@@ -59,11 +59,6 @@ pub fn record_offset_frames(input_latency: u32, output_latency: u32, user_offset
         + ENGINE_FIFO_FRAMES
         + i64::from(user_offset)
 }
-
-/// The key of the input gain param (dB) of an audio track device.
-pub const REC_GAIN_PARAM: &str = "rec_gain";
-/// The key of the clip-safe switch param of an audio track device.
-pub const REC_CLIP_SAFE_PARAM: &str = "rec_clip_safe";
 
 /// The recording input settings of an audio track.
 #[derive(Debug, Clone, Copy, PartialEq)]

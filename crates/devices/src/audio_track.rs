@@ -17,14 +17,19 @@
 //! `rec_gain` (−60..+24 dB, the minimum is off) and `rec_clip_safe` are the track's recording
 //! input settings. They are ordinary stored params (undoable, merged while dragged), so a
 //! project written before they existed loads at 0 dB with clip-safe off. The device only uses
-//! the gain; the clip-safe limiter works on the recorded take, never on the monitor. Without playback (`None`: transport stopped, or no engine playback) only
-//! the monitored input is heard. Unconnected inputs read as zeros.
+//! the gain; the clip-safe limiter works on the recorded take, never on the monitor.
+//!
+//! Without playback (`None`: transport stopped, or no engine playback) only the monitored
+//! input is heard. Unconnected inputs read as zeros.
 //!
 //! The device is `DeviceKind::Instrument` (so it gets a console channel), has a single stage
 //! and no latency. `process` never allocates, locks or blocks and is a pure function
 //! of its inputs and params.
 
-use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
+use atomik_core::{
+    BATCH, ParamDescriptor, ParamId, REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB,
+    REC_GAIN_PARAM, Taper, Unit,
+};
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
     SocketDescriptor, SocketId, SocketKind,
@@ -40,11 +45,6 @@ const P_MONITOR: u32 = 0;
 const P_MONITOR_LIVE: u32 = 1;
 const P_REC_GAIN: u32 = 2;
 const P_REC_CLIP_SAFE: u32 = 3;
-
-/// Lowest input gain in dB (the bottom of the range is off).
-pub const REC_GAIN_MIN_DB: f32 = -60.0;
-/// Highest input gain in dB.
-pub const REC_GAIN_MAX_DB: f32 = 24.0;
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
@@ -91,7 +91,7 @@ static PARAMS: [ParamDescriptor; 4] = [
     },
     ParamDescriptor {
         id: ParamId(P_REC_GAIN),
-        key: "rec_gain",
+        key: REC_GAIN_PARAM,
         name: "Input gain",
         min: REC_GAIN_MIN_DB,
         max: REC_GAIN_MAX_DB,
@@ -102,7 +102,7 @@ static PARAMS: [ParamDescriptor; 4] = [
     },
     ParamDescriptor {
         id: ParamId(P_REC_CLIP_SAFE),
-        key: "rec_clip_safe",
+        key: REC_CLIP_SAFE_PARAM,
         name: "Clip safe",
         min: 0.0,
         max: 1.0,

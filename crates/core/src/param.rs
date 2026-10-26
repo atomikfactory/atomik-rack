@@ -123,6 +123,15 @@ pub const VCA_MIN_DB: f32 = -60.0;
 /// Highest VCA offset in dB.
 pub const VCA_MAX_DB: f32 = 12.0;
 
+/// Key of the audio track device's recording input gain param (dB).
+pub const REC_GAIN_PARAM: &str = "rec_gain";
+/// Key of the audio track device's clip-safe switch param.
+pub const REC_CLIP_SAFE_PARAM: &str = "rec_clip_safe";
+/// Lowest recording input gain in dB: the bottom of the range is off.
+pub const REC_GAIN_MIN_DB: f32 = -60.0;
+/// Highest recording input gain in dB.
+pub const REC_GAIN_MAX_DB: f32 = 24.0;
+
 /// Converts linear gain to decibels (−∞ for 0).
 pub fn gain_to_db(gain: f32) -> f32 {
     20.0 * gain.log10()

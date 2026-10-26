@@ -18,7 +18,8 @@ pub use meter_map::{
 pub use midi::{ChannelMessage, MessageKind};
 pub use note::{BufferFull, ExprKind, NoteBuffer, NoteEvent, NoteKind};
 pub use param::{
-    ParamDescriptor, ParamId, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain, gain_to_db,
+    ParamDescriptor, ParamId, REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB,
+    REC_GAIN_PARAM, Taper, Unit, VCA_MAX_DB, VCA_MIN_DB, db_to_gain, gain_to_db,
 };
 pub use tempo_map::{MapError, TempoMap, TempoPoint, TempoSegment, TempoTable, compile_tempo};
 pub use time::{
