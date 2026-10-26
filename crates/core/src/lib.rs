@@ -8,6 +8,7 @@ mod midi;
 mod note;
 mod param;
 mod tempo_map;
+pub mod theory;
 mod time;
 
 pub use meter_map::{
