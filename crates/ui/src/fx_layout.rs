@@ -286,6 +286,7 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: Some(fx),
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,

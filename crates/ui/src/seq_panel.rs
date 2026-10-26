@@ -299,6 +299,7 @@ pub fn seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: Some(panel),
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,
@@ -390,6 +391,7 @@ pub fn cv_seq_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: Some(panel),
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,
@@ -420,6 +422,12 @@ pub fn player_label(key: &str) -> Option<&'static str> {
         "velocity.scale" => "Vel scale",
         "gate.scale" => "Gate scale",
         "gate" => "Gate",
+        "density" => "Density",
+        "variation" => "Variation",
+        "fill.every" => "Fill every",
+        "fill.amount" => "Fill amt",
+        "accent" => "Accent",
+        "style" => "Style",
         "swing" => "Swing",
         "hold" => "Hold",
         "run" => "Run",
@@ -564,6 +572,10 @@ pub struct PlayerInfo<'a> {
     pub scope: Option<&'a crate::modsrc_panel::Scope>,
     /// The pattern name being edited, if any.
     pub rename: Option<&'a str>,
+    /// The visible page of steps (drum generator panel), 0-based.
+    pub page: usize,
+    /// The pad names of the drum machine a drum generator is cabled to (empty without one).
+    pub pad_names: &'a [String],
 }
 
 /// Draws the sequencer panel's extras.

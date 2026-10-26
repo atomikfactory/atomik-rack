@@ -47,12 +47,12 @@ impl RackView {
 
     // ------------------------------------------------------------------ geometry and state for hosts and tests
 
-    fn front_device(&self, key: &DeviceKey) -> Option<&DeviceView> {
+    pub(super) fn front_device(&self, key: &DeviceKey) -> Option<&DeviceView> {
         let d = &self.devices[self.device_index(key)?];
         (self.flip == Flip::Front && !d.folded).then_some(d)
     }
 
-    fn view_center(&self, d: &DeviceView, r: Rect) -> Point {
+    pub(super) fn view_center(&self, d: &DeviceView, r: Rect) -> Point {
         self.rack_to_view(r.center() + d.offset())
     }
 
@@ -87,7 +87,7 @@ impl RackView {
     /// The edited pattern (0-based) of a step sequencer panel; `None` for other devices.
     pub fn edited_pattern(&self, key: &DeviceKey) -> Option<usize> {
         let d = &self.devices[self.device_index(key)?];
-        d.spec.seq.is_some().then_some(d.edit)
+        (d.spec.seq.is_some() || d.spec.drum_gen.is_some()).then_some(d.edit)
     }
 
     /// Selects the edited pattern of a step sequencer panel (clamped to the pattern count; no
@@ -97,7 +97,10 @@ impl RackView {
             return;
         };
         let d = &self.devices[i];
-        if let (Some(_), Some(dev)) = (d.spec.seq, d.device.as_ref()) {
+        if let (true, Some(dev)) = (
+            d.spec.seq.is_some() || d.spec.drum_gen.is_some(),
+            d.device.as_ref(),
+        ) {
             let index = index.min(pattern_count(dev) - 1);
             self.set_edit(i, index);
         }
@@ -117,7 +120,9 @@ impl RackView {
 
     fn play_state_of(&self, d: &DeviceView) -> Option<PlayState> {
         let dev = d.device.as_ref()?;
-        d.spec.seq?;
+        if d.spec.seq.is_none() && d.spec.drum_gen.is_none() {
+            return None;
+        }
         let param = d
             .desc?
             .param_by_key("pattern")
@@ -145,8 +150,21 @@ impl RackView {
         let d = &self.devices[self.device_index(key)?];
         let state = self.play_state_of(d)?;
         let dev = d.device.as_ref()?;
-        let steps = dev.steps.clone().unwrap_or_default();
-        let len = steps.patterns.get(state.playing)?.length;
+        let len = if d.spec.drum_gen.is_some() {
+            dev.drums
+                .clone()
+                .unwrap_or_default()
+                .patterns
+                .get(state.playing)?
+                .length
+        } else {
+            dev.steps
+                .clone()
+                .unwrap_or_default()
+                .patterns
+                .get(state.playing)?
+                .length
+        };
         state.cursor.filter(|c| *c < usize::from(len))
     }
 
@@ -218,6 +236,7 @@ impl RackView {
         let key = self.devices[i].key.clone();
         match b {
             PlayerBtn::Seq(sb) => self.seq_down(i, sb, modifiers, clicks, out),
+            PlayerBtn::Drum(db) => self.drum_down(i, db, modifiers, clicks, out),
             PlayerBtn::Mode(m) => self.choose(i, "mode", m, out),
             PlayerBtn::Rate(m) => self.choose(i, "rate", m, out),
             PlayerBtn::FromClip => {
@@ -249,7 +268,7 @@ impl RackView {
         }
     }
 
-    fn select_pattern(&mut self, i: usize, index: usize, out: &mut Vec<UiAction>) {
+    pub(super) fn select_pattern(&mut self, i: usize, index: usize, out: &mut Vec<UiAction>) {
         if self.set_edit(i, index) {
             out.push(UiAction::SelectPattern {
                 device: self.devices[i].key.clone(),
@@ -352,6 +371,10 @@ impl RackView {
         };
         if r.is_macro {
             self.macro_rename_key(r, key);
+            return;
+        }
+        if self.devices[r.dev].spec.drum_gen.is_some() {
+            self.drum_rename_key(r, key, out);
             return;
         }
         match seq_panel::rename_key(&mut r.text, key) {

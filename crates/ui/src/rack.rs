@@ -8,6 +8,7 @@ use crate::cables::{self, SocketEnd};
 use crate::canvas::Canvas;
 use crate::container_panel::{self, ContainerButton, ContainerInfo};
 use crate::display_list::DisplayList;
+use crate::drum_gen_panel::DrumButton;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::fx::FxKind;
 use crate::interface::{boundary_in_descriptor, boundary_out_descriptor, interface_descriptor};
@@ -38,6 +39,7 @@ mod columns;
 mod console_links;
 mod container_input;
 mod device_drag;
+mod drum_input;
 mod fx_input;
 mod io_input;
 mod navigator;
@@ -170,6 +172,8 @@ enum PlayerBtn {
     OctaveInc,
     /// The FROM CLIP button of a Key & Chord panel.
     FromClip,
+    /// A button, a lane mute or the cells of a drum generator panel.
+    Drum(DrumButton),
 }
 
 impl Hit {
@@ -228,6 +232,8 @@ struct DeviceView {
     sens: u8,
     /// Step sequencer panel: the edited pattern, 0-based (view state).
     edit: usize,
+    /// Drum generator panel: the visible page of steps, 0-based (view state).
+    page: usize,
     /// The effect kind with a visual (`atomik.reverb`, ...).
     fx: Option<FxKind>,
     /// Effect panels: display meter values (see [`fx::update_display`]); player panels: the
@@ -380,6 +386,8 @@ enum Drag {
     },
     /// An EQ handle is dragged (see [`EqDrag`]).
     Eq(EqDrag),
+    /// A cell of a drum generator grid is pressed (see [`drum_input::DrumDrag`]).
+    Drum(drum_input::DrumDrag),
 }
 
 /// The axis an EQ handle drag is locked to (the model merges consecutive `SetParam`s of one
@@ -517,6 +525,10 @@ pub struct RackView {
     edits: BTreeMap<DeviceKey, usize>,
     /// The pattern clipboard of the sequencer panels (COPY, PASTE).
     pattern_clip: Option<PatternDoc>,
+    /// The drum generator panels' pattern clipboard.
+    drum_clip: Option<atomik_model::DrumPatternDoc>,
+    /// The visible page of each drum generator panel (view state).
+    pages: BTreeMap<DeviceKey, usize>,
     /// The pattern name (or macro name) being edited on a panel.
     rename: Option<Rename>,
     /// The container whose inside is shown: the local keys from the top level down (empty =
@@ -663,6 +675,8 @@ impl RackView {
             io: crate::io_panel::IoView::default(),
             edits: BTreeMap::new(),
             pattern_clip: None,
+            drum_clip: None,
+            pages: BTreeMap::new(),
             rename: None,
             scope: Vec::new(),
             scope_names: Vec::new(),
@@ -818,7 +832,7 @@ impl RackView {
                 v.name.clone_from(&d.name);
                 v.accent = self.theme.accent_for(d);
                 v.device = Some(d.clone());
-                if v.spec.seq.is_some() {
+                if v.spec.seq.is_some() || v.spec.drum_gen.is_some() {
                     let last = pattern_count(d) - 1;
                     if v.edit > last {
                         v.edit = last;
@@ -941,6 +955,9 @@ impl RackView {
             (Some(d), _) if type_id == autolayout::SLICER_TYPE => autolayout::slicer_layout(d),
             (Some(d), _) if type_id == seq_panel::SEQ_TYPE => seq_panel::seq_layout(d),
             (Some(d), _) if type_id == seq_panel::CV_SEQ_TYPE => seq_panel::cv_seq_layout(d),
+            (Some(d), _) if type_id == crate::drum_gen_panel::DRUM_GEN_TYPE => {
+                crate::drum_gen_panel::drum_gen_layout(d)
+            }
             (Some(d), _) if type_id == container_panel::CONTAINER_TYPE => {
                 container_panel::container_layout(d)
             }
@@ -969,6 +986,7 @@ impl RackView {
                 slicer: None,
                 fx: None,
                 seq: None,
+                drum_gen: None,
                 arp: None,
                 key_chord: None,
                 modsrc: None,
@@ -1047,6 +1065,7 @@ impl RackView {
             pad_cabled: [false; 16],
             sens: autolayout::DEFAULT_SLICE_SENSITIVITY,
             edit: 0,
+            page: 0,
             fx: None,
             meters: Vec::new(),
             scope: crate::modsrc_panel::Scope::new(),
@@ -1094,6 +1113,8 @@ impl RackView {
             let pad = self.pads.get(&d.key).copied().unwrap_or(1).clamp(1, 16);
             let pad_names = if spec.drum.is_some() {
                 drum_pad_names(d, doc)
+            } else if spec.drum_gen.is_some() {
+                linked_pad_names(d, doc)
             } else {
                 Vec::new()
             };
@@ -1107,12 +1128,23 @@ impl RackView {
                 .get(&d.key)
                 .copied()
                 .unwrap_or(autolayout::DEFAULT_SLICE_SENSITIVITY);
-            let edit = if spec.seq.is_some() {
+            let edit = if spec.seq.is_some() || spec.drum_gen.is_some() {
                 self.edits
                     .get(&d.key)
                     .copied()
                     .unwrap_or(0)
                     .min(pattern_count(d) - 1)
+            } else {
+                0
+            };
+            let page = if spec.drum_gen.is_some() {
+                let wanted = self.pages.get(&d.key).copied().unwrap_or(0);
+                let length = d
+                    .drums
+                    .as_ref()
+                    .and_then(|x| x.patterns.get(edit))
+                    .map_or(16, |p| p.length);
+                crate::drum_gen_panel::clamp_page(wanted, length)
             } else {
                 0
             };
@@ -1155,6 +1187,7 @@ impl RackView {
                         && p.pad_cabled == pad_cabled
                         && p.sens == sens
                         && p.edit == edit
+                        && p.page == page
                         && p.plugin_status == plugin_status
                         && p.master == master
                         && p.cv == cv
@@ -1179,6 +1212,7 @@ impl RackView {
                 pad_cabled,
                 sens,
                 edit,
+                page,
                 fx,
                 meters,
                 scope,
@@ -1229,6 +1263,7 @@ impl RackView {
                 pad_cabled: [false; 16],
                 sens: autolayout::DEFAULT_SLICE_SENSITIVITY,
                 edit: 0,
+                page: 0,
                 fx: None,
                 meters: Vec::new(),
                 scope: crate::modsrc_panel::Scope::new(),
@@ -1359,6 +1394,13 @@ impl RackView {
                             );
                             for (b, r) in sp.buttons() {
                                 tree.add(dn, r + off, Hit::Player(i, PlayerBtn::Seq(b)), false);
+                            }
+                        }
+                        if let Some(dp) = d.spec.drum_gen {
+                            let grid = Hit::Player(i, PlayerBtn::Drum(DrumButton::Grid));
+                            tree.add(dn, dp.grid + off, grid, false);
+                            for (b, r) in dp.buttons() {
+                                tree.add(dn, r + off, Hit::Player(i, PlayerBtn::Drum(b)), false);
                             }
                         }
                         if let Some(ap) = d.spec.arp {
@@ -2547,6 +2589,7 @@ impl RackView {
         self.crumb_hover_at(pos);
         match self.drag.clone() {
             Drag::Eq(e) => self.eq_move(e, rp, out),
+            Drag::Drum(d) => self.drum_move(d, pos, out),
             Drag::Value {
                 dev,
                 slot,
@@ -3052,6 +3095,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { .. } => {}
             Drag::Eq(_) => out.push(UiAction::EndMerge),
+            Drag::Drum(d) => self.drum_up(&d, out),
             Drag::Value { .. } => {
                 self.tree.release_capture();
                 out.push(UiAction::EndMerge);
@@ -3548,6 +3592,7 @@ impl RackView {
             Drag::Pad { device, key } => out.push(audition_off(device, key)),
             Drag::Sens { dev, start, .. } => self.store_sens(dev, start),
             Drag::Eq(e) => self.eq_cancel(&e, out),
+            Drag::Drum(d) => self.drum_cancel(&d, out),
             _ => {}
         }
     }
@@ -3619,6 +3664,8 @@ impl RackView {
                     player: PlayerInfo {
                         edit: d.edit,
                         meters: &d.meters,
+                        page: d.page,
+                        pad_names: &d.pad_names,
                         scope: d.spec.modsrc.is_some().then_some(&d.scope),
                         rename: self
                             .rename
@@ -3839,7 +3886,12 @@ impl CircleExt for Circle {
 /// The number of patterns a step sequencer view shows (a device without stored `steps` has the
 /// default single pattern).
 fn pattern_count(d: &RackDevice) -> usize {
-    d.steps.as_ref().map_or(1, |s| s.patterns.len()).max(1)
+    let n = match (&d.steps, &d.drums) {
+        (Some(s), _) => s.patterns.len(),
+        (None, Some(x)) => x.patterns.len(),
+        (None, None) => 1,
+    };
+    n.max(1)
 }
 
 /// Velocity (7-bit) of the audition when a drum pad is clicked: fixed, not read from the click
@@ -3902,4 +3954,42 @@ fn drum_pad_names(d: &RackDevice, doc: &RackDoc) -> Vec<String> {
                 .map_or_else(|| "missing".to_string(), |m| file_stem(&m.original_name)),
         })
         .collect()
+}
+
+/// The 16 pad names of the drum machine a drum generator's `notes_out` reaches, directly or
+/// through other note players (the first such drum machine found, following the cables
+/// breadth first); empty when it reaches none.
+fn linked_pad_names(generator: &RackDevice, doc: &RackDoc) -> Vec<String> {
+    let mut seen = vec![generator.key.clone()];
+    let mut frontier = vec![generator.key.clone()];
+    for _ in 0..8 {
+        let mut next = Vec::new();
+        for from in &frontier {
+            for c in doc
+                .cables
+                .iter()
+                .filter(|c| &c.from.device == from && c.from.socket == "notes_out")
+            {
+                let to = &c.to.device;
+                if seen.contains(to) {
+                    continue;
+                }
+                seen.push(to.clone());
+                let Some(t) = doc.device(to) else {
+                    continue;
+                };
+                if t.type_id == autolayout::DRUM_TYPE {
+                    return drum_pad_names(t, doc);
+                }
+                if crate::browser::is_player(&t.type_id) {
+                    next.push(to.clone());
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    Vec::new()
 }

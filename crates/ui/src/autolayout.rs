@@ -138,6 +138,8 @@ pub struct PanelSpec {
     /// The step sequencer panel of an `atomik.step-sequencer` (see
     /// [`crate::seq_panel`]).
     pub seq: Option<crate::seq_panel::SeqPanel>,
+    /// The drum generator panel of an `atomik.drum-generator` (see [`crate::drum_gen_panel`]).
+    pub drum_gen: Option<crate::drum_gen_panel::DrumGenPanel>,
     /// The arpeggiator panel of an `atomik.arpeggiator` (see [`crate::arp_panel`]).
     pub arp: Option<crate::arp_panel::ArpPanel>,
     /// The Key & Chord panel of an `atomik.key-chord` (see [`crate::key_chord_panel`]).
@@ -318,6 +320,7 @@ fn layout_with(
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,
@@ -761,6 +764,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,
@@ -896,6 +900,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: Some(panel),
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,
@@ -950,6 +955,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,

@@ -215,6 +215,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
             character: Some(geom),
         }),
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,

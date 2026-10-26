@@ -34,7 +34,10 @@ impl RackView {
         let Some(i) = self.device_index(key) else {
             return;
         };
-        if self.devices[i].spec.seq.is_some() || self.devices[i].spec.arp.is_some() {
+        if self.devices[i].spec.seq.is_some()
+            || self.devices[i].spec.arp.is_some()
+            || self.devices[i].spec.drum_gen.is_some()
+        {
             self.player_meter_feed(i, values);
             return;
         }

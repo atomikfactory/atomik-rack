@@ -148,6 +148,7 @@ pub fn container_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: None,
         key_chord: None,
         modsrc: None,

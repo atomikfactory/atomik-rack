@@ -136,6 +136,7 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
         slicer: None,
         fx: None,
         seq: None,
+        drum_gen: None,
         arp: Some(panel),
         key_chord: None,
         modsrc: None,

@@ -99,6 +99,7 @@ fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
             "atomik.arpeggiator" => atomik_ui::arp_panel::arp_layout(desc),
             "atomik.step-sequencer" => atomik_ui::seq_panel::seq_layout(desc),
             "atomik.cv-sequencer" => atomik_ui::seq_panel::cv_seq_layout(desc),
+            "atomik.drum-generator" => atomik_ui::drum_gen_panel::drum_gen_layout(desc),
             "atomik.key-chord" => atomik_ui::key_chord_panel::key_chord_layout(desc),
             _ => auto_layout(desc),
         },
