@@ -1350,6 +1350,18 @@ impl PianoRollView {
                 out.extend(self.audition(key, true));
                 self.drag = Drag::Keys { key };
             }
+            // Select: a right click on a note opens the notes menu on it. An unselected note
+            // becomes the whole selection, a selected one keeps a multi-selection whole. The
+            // other tools delete it, as the pencil does in FL.
+            Hit::Note(i, _) if button == PointerButton::Secondary && tool == Tool::Select => {
+                if !self.selection.contains(&i) {
+                    self.selection.select_only(i);
+                }
+                out.push(UiAction::ContextMenu {
+                    target: ContextTarget::Notes,
+                    at: pos,
+                });
+            }
             Hit::Note(i, _) if button == PointerButton::Secondary => self.remove_note(i, out),
             Hit::Grid if button == PointerButton::Secondary => out.push(UiAction::ContextMenu {
                 target: ContextTarget::Notes,
