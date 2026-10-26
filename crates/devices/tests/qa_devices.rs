@@ -10,7 +10,9 @@
 atomik_testkit::install_alloc_guard!();
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
-use atomik_devices::{line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay};
+use atomik_devices::{
+    line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay, wavetable_synth,
+};
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::signal::{max_step, rms};
 use proptest::prelude::*;
@@ -154,6 +156,47 @@ proptest! {
             h.set_param(p.key, p.from_normalized(*n));
         }
         *h.input_mut("cutoff_cv_in") = [cv; BATCH];
+        let mut notes = notes;
+        notes.sort_by_key(|(b, o, _, _)| (*b, *o));
+        let batches = (sr / BATCH as f64).ceil() as usize; // 1 s
+        let mut next = 0;
+        for b in 0..batches {
+            while next < notes.len() && notes[next].0 == b {
+                let (_, offset, key, velocity) = notes[next];
+                h.push_note("notes_in", NoteEvent { offset, kind: NoteKind::On { key, velocity } });
+                next += 1;
+            }
+            h.process();
+            for key in ["out_l", "out_r"] {
+                for s in h.output(key) {
+                    prop_assert!(s.is_finite() && s.abs() <= 4.0, "{} Hz, {}: {}", sr, key, s);
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(12))]
+    /// The wavetable synth at 44.1 / 48 / 96 kHz: any params, CVs and random notes stay finite
+    /// and |x| <= 4.
+    #[test]
+    fn qa_wavetable_any_params_bounded_at_every_sample_rate(
+        sr_index in 0usize..3,
+        norms in prop::collection::vec(0.0f32..=1.0, wavetable_synth::DESCRIPTOR.params.len()),
+        notes in prop::collection::vec((0usize..200, 0u16..64, 0u8..=127, 0.01f32..=1.0), 1..40),
+        cv in -1.5f32..=1.5,
+        seed in any::<u64>(),
+    ) {
+        let sr = [44_100.0, 48_000.0, 96_000.0][sr_index];
+        let mut h = DeviceHarness::with_options(
+            Box::new(wavetable_synth::WavetableSynth::new()), sr, 120.0, seed);
+        for (p, n) in wavetable_synth::DESCRIPTOR.params.iter().zip(&norms) {
+            h.set_param(p.key, p.from_normalized(*n));
+        }
+        for socket in ["cutoff_cv_in", "pitch_cv_in", "position_cv_in"] {
+            *h.input_mut(socket) = [cv; BATCH];
+        }
         let mut notes = notes;
         notes.sort_by_key(|(b, o, _, _)| (*b, *o));
         let batches = (sr / BATCH as f64).ceil() as usize; // 1 s

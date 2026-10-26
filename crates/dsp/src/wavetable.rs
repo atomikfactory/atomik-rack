@@ -12,7 +12,7 @@
 //!   frames the output is their linear blend, so it is continuous in the position.
 //! * **Mip levels.** Each frame is stored once per octave of bandwidth: level `m` keeps the first
 //!   [`LEVEL_HARMONICS`]`[m]` harmonics (1023, 512, 256, ... 1), made by an inverse FFT of the
-//!   truncated spectrum (a textbook "FFT truncation"), at a length of eight samples per top
+//!   truncated spectrum (a textbook "FFT truncation"), at a length of sixteen samples per top
 //!   harmonic (at most 2048). [`level_for`] picks the richest level whose top harmonic stays below
 //!   Nyquist for a fundamental, so a read never aliases; [`Wavetable::read`] interpolates the
 //!   cycle with a four-point Hermite and the two frames linearly.
@@ -41,8 +41,8 @@ pub const MAX_HARMONICS: usize = 1023;
 pub const LEVELS: usize = 11;
 /// Highest harmonic kept by each mip level: level 0 is full bandwidth, each next level halves it.
 pub const LEVEL_HARMONICS: [usize; LEVELS] = [1023, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1];
-/// Samples per cycle of each mip level (eight per top harmonic, at most 2048): powers of two.
-pub const LEVEL_LEN: [usize; LEVELS] = [2048, 2048, 2048, 1024, 512, 256, 128, 64, 32, 16, 8];
+/// Samples per cycle of each mip level (sixteen per top harmonic, at most 2048): powers of two.
+pub const LEVEL_LEN: [usize; LEVELS] = [2048, 2048, 2048, 2048, 1024, 512, 256, 128, 64, 32, 16];
 /// Longest stored cycle.
 pub const CYCLE_LEN: usize = 2048;
 /// The factory table names, in table order.
@@ -62,10 +62,10 @@ pub const TABLE_NAMES: [&str; TABLE_COUNT] = [
 ];
 
 /// Floats of one frame over all its mip levels.
-const FRAME_FLOATS: usize = 8184;
+const FRAME_FLOATS: usize = 10224;
 /// Where each level starts inside a frame's floats.
 const LEVEL_OFFSET: [usize; LEVELS] = [
-    0, 2048, 4096, 6144, 7168, 7680, 7936, 8064, 8128, 8160, 8176,
+    0, 2048, 4096, 6144, 8192, 9216, 9728, 9984, 10112, 10176, 10208,
 ];
 /// Size of the time-domain drawing of the hard-sync sweep (four times the cycle, to keep the
 /// jumps from folding into the harmonics we keep).
@@ -560,10 +560,10 @@ mod tests {
         for l in 0..LEVELS {
             assert_eq!(LEVEL_OFFSET[l], at);
             assert!(LEVEL_LEN[l].is_power_of_two());
-            // Eight samples per top harmonic, capped at the cycle length.
+            // Sixteen samples per top harmonic, capped at the cycle length.
             assert_eq!(
                 LEVEL_LEN[l],
-                (8 * LEVEL_HARMONICS[l]).next_power_of_two().min(CYCLE_LEN)
+                (16 * LEVEL_HARMONICS[l]).next_power_of_two().min(CYCLE_LEN)
             );
             at += LEVEL_LEN[l];
         }
