@@ -645,6 +645,9 @@ impl App {
                         self.shell.open_file(&path);
                     }
                 }
+                // The detached windows are opened by the platform windows work (Agent C);
+                // until then there is no other window to bring forward or maximise.
+                ShellRequest::FocusWindow(_) | ShellRequest::ToggleMaximise(_) => {}
                 ShellRequest::Quit => {
                     self.shutdown();
                     event_loop.exit();
