@@ -10,6 +10,16 @@
 //!
 //! A submenu opens beside its row when the pointer rests on the row (or clicks it) and stays
 //! open while the pointer is over it or the rows that opened it; submenus nest to any depth.
+//!
+//! While a submenu is open, the pointer may cross the other rows of its panel on the way to the
+//! submenu: a move inside the triangle from the previous pointer position to the submenu near
+//! edge that gets closer to it keeps the submenu, and any other move onto another row only
+//! switches after [`SUBMENU_DELAY`] seconds. The delay is counted by [`ContextMenu::tick`], which
+//! the shell calls once a frame, so the widget reads no clock.
+//!
+//! The keys work in and between the panels: Up and Down (wrapping) and Home and End move the one
+//! highlight that the pointer moves too, skipping separators and disabled rows; Right or Enter
+//! opens a submenu on its first row; Left or Escape closes the submenu; Enter or Space chooses.
 
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun};
 use crate::event::{Key, PointerButton, UiEvent};
@@ -28,6 +38,8 @@ const MIN_WIDTH: f64 = 200.0;
 const FONT: f32 = 13.0;
 /// How far a submenu overlaps the panel it opens from.
 const OVERLAP: f64 = 2.0;
+/// How long the pointer must rest on another row before it replaces the open submenu, seconds.
+pub const SUBMENU_DELAY: f64 = 0.28;
 
 /// One row of a menu description: a registry command, a submenu or a separator.
 #[derive(Debug, Clone, PartialEq)]
@@ -202,6 +214,29 @@ pub struct ContextMenu {
     /// release that ends the press which opened the menu (a toolbar field opens one on a press,
     /// and the panel may be moved under the pointer to fit the window) chooses nothing.
     armed: bool,
+    /// The previous pointer position this panel saw: the apex of the safe triangle.
+    last: Option<Point>,
+    /// A switch the pointer asked for by resting on another row, made by [`Self::tick`].
+    pending: Option<Pending>,
+}
+
+/// A row the pointer rests on while a submenu is open beside another row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Pending {
+    /// The row under the pointer (`None`: the panel padding).
+    row: Option<usize>,
+    /// The time of the first tick after the pointer settled, `None` until that tick.
+    since: Option<f64>,
+}
+
+/// What a key did in a panel.
+enum Nav {
+    /// Handled; the menu stays open.
+    Done,
+    /// The panel asks its parent to close it (Left, Escape).
+    Back,
+    /// An item was chosen.
+    Run(MenuOutcome),
 }
 
 /// The submenu open beside a panel: the row that opened it and its panel.
@@ -209,6 +244,15 @@ pub struct ContextMenu {
 struct Open {
     row: usize,
     menu: ContextMenu,
+}
+
+/// Whether `p` is inside the triangle `a`, `b`, `c` (edges included).
+fn in_triangle(p: Point, a: Point, b: Point, c: Point) -> bool {
+    let side = |u: Point, v: Point| (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x);
+    let (d1, d2, d3) = (side(a, b), side(b, c), side(c, a));
+    let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(neg && pos)
 }
 
 /// Estimated width of a text run.
@@ -309,6 +353,8 @@ impl ContextMenu {
             bounds,
             open: None,
             armed: false,
+            last: None,
+            pending: None,
         };
         let size = menu.rect().size();
         menu.origin = Point::new(
@@ -426,6 +472,82 @@ impl ContextMenu {
         self.row_rects().iter().position(|r| r.contains(p))
     }
 
+    /// Whether row `row` can be highlighted and chosen.
+    fn selectable(&self, row: usize) -> bool {
+        match &self.entries[row] {
+            Entry::Item(i) => i.enabled,
+            Entry::Submenu(s) => s.enabled,
+            Entry::Separator => false,
+        }
+    }
+
+    /// The label of the highlighted row of the innermost open panel.
+    pub fn highlighted(&self) -> Option<&str> {
+        if let Some(o) = &self.open {
+            return o.menu.highlighted();
+        }
+        match &self.entries[self.hover?] {
+            Entry::Item(i) => Some(&i.label),
+            Entry::Submenu(s) => Some(&s.label),
+            Entry::Separator => None,
+        }
+    }
+
+    /// Whether a pointer switch is waiting for its delay (the caller keeps ticking).
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some() || self.open.as_ref().is_some_and(|o| o.menu.has_pending())
+    }
+
+    /// Advances the hover delay to `now` (seconds, any monotonic clock): a pointer that rested on
+    /// another row for [`SUBMENU_DELAY`] switches to it. Returns whether the menu changed.
+    pub fn tick(&mut self, now: f64) -> bool {
+        let mut changed = self.open.as_mut().is_some_and(|o| o.menu.tick(now));
+        if let Some(p) = &mut self.pending {
+            let since = *p.since.get_or_insert(now);
+            if now - since >= SUBMENU_DELAY {
+                let row = p.row;
+                self.pending = None;
+                self.switch_to(row);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// The pointer left this panel: drop what it was heading for.
+    fn forget_pointer(&mut self) {
+        self.last = None;
+        self.pending = None;
+        if let Some(o) = &mut self.open {
+            o.menu.forget_pointer();
+        }
+    }
+
+    /// Opens the submenu of `row`, or closes the open one, as the pointer on `row` asks.
+    fn switch_to(&mut self, row: Option<usize>) {
+        match row.map(|r| (r, &self.entries[r])) {
+            Some((r, Entry::Submenu(s))) if s.enabled => self.open_row(r),
+            _ => {
+                self.open = None;
+                self.hover = row.filter(|r| matches!(self.entries[*r], Entry::Item(_)));
+            }
+        }
+    }
+
+    /// Whether a move from `from` to `to` heads for the open submenu: inside the triangle from
+    /// `from` to the submenu near edge, and closer to that edge.
+    fn heads_for_submenu(&self, from: Point, to: Point) -> bool {
+        let Some(o) = &self.open else { return false };
+        let child = o.menu.rect();
+        let near = if child.center().x > self.rect().center().x {
+            child.x0
+        } else {
+            child.x1
+        };
+        let (a, b) = (Point::new(near, child.y0), Point::new(near, child.y1));
+        (near - to.x).abs() < (near - from.x).abs() && in_triangle(to, from, a, b)
+    }
+
     /// Opens the submenu of row `row` beside it (to the left when there is no room at the right).
     fn open_row(&mut self, row: usize) {
         if self.open.as_ref().is_some_and(|o| o.row == row) {
@@ -459,20 +581,33 @@ impl ContextMenu {
         }
         match event {
             UiEvent::PointerMove { pos, .. } => {
+                let from = self.last.replace(*pos);
                 if let Some(o) = &mut self.open
                     && o.menu.covers(*pos)
                 {
+                    self.pending = None;
                     self.hover = Some(o.row);
                     return o.menu.handle(event);
                 }
-                if self.rect().contains(*pos) {
-                    let row = self.row_at(*pos);
-                    match row.map(|r| (r, &self.entries[r])) {
-                        Some((r, Entry::Submenu(s))) if s.enabled => self.open_row(r),
-                        _ => {
-                            self.open = None;
-                            self.hover = row.filter(|r| matches!(self.entries[*r], Entry::Item(_)));
-                        }
+                if let Some(o) = &mut self.open {
+                    o.menu.forget_pointer();
+                }
+                if !self.rect().contains(*pos) {
+                    // Outside every panel (a gap, or the pointer left): nothing changes.
+                    self.pending = None;
+                    return MenuOutcome::Consumed;
+                }
+                let row = self.row_at(*pos);
+                let opener = self.open.as_ref().map(|o| o.row);
+                if opener.is_none() || row == opener {
+                    self.pending = None;
+                    self.switch_to(row);
+                } else {
+                    // Another row while a submenu is open: wait, unless heading for the submenu.
+                    let toward = from.is_some_and(|f| self.heads_for_submenu(f, *pos));
+                    let same = self.pending.is_some_and(|p| p.row == row);
+                    if toward || !same {
+                        self.pending = Some(Pending { row, since: None });
                     }
                 }
                 MenuOutcome::Consumed
@@ -499,19 +634,83 @@ impl ContextMenu {
                     _ => MenuOutcome::Consumed,
                 }
             }
+            UiEvent::Key {
+                key, pressed: true, ..
+            } => match self.key(key, false) {
+                Nav::Run(outcome) => outcome,
+                Nav::Done | Nav::Back => MenuOutcome::Consumed,
+            },
             UiEvent::Key { .. } => MenuOutcome::Consumed,
             _ => MenuOutcome::Ignored,
         }
     }
 
-    /// Whether `event` closes the menu without choosing: Escape, or a press outside every panel.
+    /// A key press in the innermost open panel; `nested` is whether this panel is a submenu.
+    fn key(&mut self, key: &Key, nested: bool) -> Nav {
+        self.pending = None;
+        if let Some(o) = &mut self.open {
+            return match o.menu.key(key, true) {
+                Nav::Back => {
+                    // The highlight is already on the row that opened it.
+                    self.open = None;
+                    Nav::Done
+                }
+                other => other,
+            };
+        }
+        let n = self.entries.len();
+        match key {
+            Key::Down | Key::Up => {
+                let down = *key == Key::Down;
+                // From nothing, Down steps on to the first row and Up to the last one.
+                let mut at = self.hover.unwrap_or(if down { n - 1 } else { 0 });
+                for _ in 0..n {
+                    at = if down { (at + 1) % n } else { (at + n - 1) % n };
+                    if self.selectable(at) {
+                        self.hover = Some(at);
+                        break;
+                    }
+                }
+            }
+            Key::Home => self.hover = (0..n).find(|r| self.selectable(*r)).or(self.hover),
+            Key::End => self.hover = (0..n).rev().find(|r| self.selectable(*r)).or(self.hover),
+            Key::Right | Key::Enter | Key::Space => {
+                let Some(row) = self.hover.filter(|r| self.selectable(*r)) else {
+                    return Nav::Done;
+                };
+                match &self.entries[row] {
+                    Entry::Submenu(_) => {
+                        self.open_row(row);
+                        if let Some(o) = &mut self.open {
+                            o.menu.hover =
+                                (0..o.menu.entries.len()).find(|r| o.menu.selectable(*r));
+                        }
+                    }
+                    Entry::Item(i) if *key != Key::Right => {
+                        return Nav::Run(MenuOutcome::Run {
+                            command: i.command.clone(),
+                            arg: i.arg.clone(),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Key::Left | Key::Escape if nested => return Nav::Back,
+            _ => {}
+        }
+        Nav::Done
+    }
+
+    /// Whether `event` closes the menu without choosing: Escape with no submenu open, or a press
+    /// outside every panel.
     pub fn wants_close(&self, event: &UiEvent) -> bool {
         match event {
+            // Escape closes the innermost open submenu first (see `handle`).
             UiEvent::Key {
                 key: Key::Escape,
                 pressed: true,
                 ..
-            } => true,
+            } => self.open.is_none(),
             UiEvent::PointerDown { pos, .. } => !self.covers(*pos),
             _ => false,
         }
@@ -813,6 +1012,8 @@ mod tests {
         let mut m = menu(&nested(), Os::Windows);
         m.handle(&mv(m.submenu_center("Chords").unwrap()));
         m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        m.tick(0.0);
+        m.tick(1.0);
         assert!(m.open_path().is_empty());
         assert!(m.item_center("edit.cut").is_none());
     }
@@ -948,5 +1149,319 @@ mod tests {
         );
         let mut list = crate::display_list::DisplayList::new();
         m.paint(&mut list, &Theme::default());
+    }
+
+    fn tick(m: &mut ContextMenu, t: f64) {
+        m.tick(t);
+    }
+
+    fn key_event(key: Key) -> UiEvent {
+        UiEvent::Key {
+            key,
+            modifiers: Modifiers::NONE,
+            pressed: true,
+        }
+    }
+
+    /// Presses `key` and returns what the menu made of it.
+    fn press(m: &mut ContextMenu, key: Key) -> MenuOutcome {
+        m.handle(&key_event(key))
+    }
+
+    /// A menu at the right of the window, so its submenus flip to the left.
+    fn flipped() -> ContextMenu {
+        ContextMenu::build(
+            &nested(),
+            &Registry::bundled(),
+            &Keymap::bundled(Profile::Standard, Os::Windows),
+            Point::new(600.0, 300.0),
+            Size::new(800.0, 600.0),
+        )
+    }
+
+    /// Moves the pointer slowly from `a` to `b` in `steps` moves, with a tick of 50 ms after each.
+    fn glide(m: &mut ContextMenu, a: Point, b: Point, steps: u32, t: &mut f64) {
+        for i in 1..=steps {
+            m.handle(&mv(a.lerp(b, f64::from(i) / f64::from(steps))));
+            *t += 0.05;
+            tick(m, *t);
+            assert_eq!(m.open_path().first(), Some(&"Chords"), "step {i}");
+        }
+    }
+
+    #[test]
+    fn pointer_move_diagonally_through_a_sibling_keeps_the_submenu_open() {
+        let mut m = menu(&nested(), Os::Windows);
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        let paste = m.item_center("edit.paste").unwrap();
+        // The straight path from the row to the submenu's last item crosses the "Off" row.
+        let off = m.row_rects()[2];
+        let crosses = (1..=10).any(|i| off.contains(row.lerp(paste, f64::from(i) / 10.0)));
+        assert!(crosses, "the path must cross the sibling row");
+        let mut t = 0.0;
+        glide(&mut m, row, paste, 40, &mut t);
+        tick(&mut m, t + 1.0);
+        assert_eq!(m.open_path(), ["Chords"], "the pointer is in the submenu");
+    }
+
+    #[test]
+    fn pointer_resting_on_a_sibling_longer_than_the_delay_switches() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        assert_eq!(m.open_path(), ["Chords"], "not yet");
+        assert!(m.has_pending());
+        tick(&mut m, SUBMENU_DELAY * 0.5);
+        assert_eq!(m.open_path(), ["Chords"], "still waiting");
+        tick(&mut m, SUBMENU_DELAY + 0.01);
+        assert!(m.open_path().is_empty());
+        assert_eq!(m.highlighted(), Some("Copy"));
+        assert!(!m.has_pending());
+    }
+
+    #[test]
+    fn pointer_moving_back_to_the_opening_row_cancels_the_switch() {
+        let mut m = menu(&nested(), Os::Windows);
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        m.handle(&mv(row));
+        tick(&mut m, 1.0);
+        assert_eq!(m.open_path(), ["Chords"]);
+    }
+
+    #[test]
+    fn pointer_resting_on_a_disabled_submenu_row_closes_the_open_one_after_the_delay() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.submenu_center("Off").unwrap()));
+        assert_eq!(m.open_path(), ["Chords"]);
+        tick(&mut m, 0.0);
+        tick(&mut m, 1.0);
+        assert!(m.open_path().is_empty());
+    }
+
+    #[test]
+    fn pointer_in_the_overlap_or_outside_every_panel_keeps_the_submenu() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        let off = m.submenu_center("Off").unwrap();
+        // The strip where the submenu overlaps the parent panel, on the sibling's row.
+        m.handle(&mv(Point::new(m.rect().x1 - 1.0, off.y)));
+        tick(&mut m, 0.0);
+        tick(&mut m, 2.0);
+        assert_eq!(m.open_path(), ["Chords"], "overlap strip");
+        // Outside both panels (a gap, or the pointer left): nothing closes.
+        m.handle(&mv(Point::new(700.0, 500.0)));
+        tick(&mut m, 4.0);
+        tick(&mut m, 6.0);
+        assert_eq!(m.open_path(), ["Chords"], "outside");
+    }
+
+    #[test]
+    fn a_submenu_flipped_to_the_left_keeps_the_same_hover_intent() {
+        let mut m = flipped();
+        let row = m.submenu_center("Chords").unwrap();
+        m.handle(&mv(row));
+        let child = m.open.as_ref().unwrap().menu.rect();
+        assert!(child.x1 <= m.rect().x0 + 3.0, "flipped: {child:?}");
+        let paste = m.item_center("edit.paste").unwrap();
+        let mut t = 0.0;
+        glide(&mut m, row, paste, 40, &mut t);
+        // Resting on a sibling switches, as on the right.
+        let mut m = flipped();
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        tick(&mut m, 0.0);
+        tick(&mut m, 1.0);
+        assert!(m.open_path().is_empty());
+    }
+
+    #[test]
+    fn nested_submenus_keep_their_own_hover_intent() {
+        let mut m = menu(&nested(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.submenu_center("Deeper").unwrap()));
+        assert_eq!(m.open_path(), ["Chords", "Deeper"]);
+        // Resting on the sibling of "Deeper" inside the first submenu closes only "Deeper".
+        m.handle(&mv(m.item_center("edit.cut").unwrap()));
+        tick(&mut m, 0.0);
+        assert_eq!(m.open_path(), ["Chords", "Deeper"]);
+        tick(&mut m, 1.0);
+        assert_eq!(m.open_path(), ["Chords"]);
+    }
+
+    fn keyed() -> Vec<Spec> {
+        vec![
+            Spec::item("edit.copy"),
+            Spec::Separator,
+            Spec::item("edit.cut").enabled(false),
+            Spec::submenu(
+                "Chords",
+                vec![
+                    Spec::item("edit.delete"),
+                    Spec::item("edit.duplicate").enabled(false),
+                    Spec::Separator,
+                    Spec::item("edit.paste"),
+                ],
+            ),
+            Spec::submenu("Off", vec![Spec::item("edit.delete")]).enabled(false),
+            Spec::item("edit.undo"),
+        ]
+    }
+
+    /// The highlighted label after each of `keys`.
+    fn walk(m: &mut ContextMenu, keys: &[Key]) -> Vec<Option<String>> {
+        keys.iter()
+            .map(|k| {
+                press(m, k.clone());
+                m.highlighted().map(str::to_string)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn arrow_keys_move_the_highlight_wrap_and_skip_separators_and_disabled_rows() {
+        let mut m = menu(&keyed(), Os::Windows);
+        assert_eq!(m.highlighted(), None);
+        let down = walk(&mut m, &[const { Key::Down }; 4]);
+        let want = ["Copy", "Chords", "Undo", "Copy"].map(|s| Some(s.to_string()));
+        assert_eq!(
+            down, want,
+            "Down: separators, Cut and Off are skipped; wraps"
+        );
+        let up = walk(&mut m, &[const { Key::Up }; 4]);
+        let want = ["Undo", "Chords", "Copy", "Undo"].map(|s| Some(s.to_string()));
+        assert_eq!(up, want, "Up wraps from the first row to the last");
+    }
+
+    #[test]
+    fn up_with_nothing_highlighted_starts_at_the_last_row() {
+        let mut m = menu(&keyed(), Os::Windows);
+        press(&mut m, Key::Up);
+        assert_eq!(m.highlighted(), Some("Undo"));
+    }
+
+    #[test]
+    fn home_and_end_jump_to_the_first_and_last_selectable_row() {
+        let mut m = menu(&keyed(), Os::Windows);
+        press(&mut m, Key::End);
+        assert_eq!(m.highlighted(), Some("Undo"));
+        press(&mut m, Key::Home);
+        assert_eq!(m.highlighted(), Some("Copy"));
+    }
+
+    #[test]
+    fn right_opens_a_submenu_on_its_first_item_and_left_or_escape_returns_to_the_row() {
+        let mut m = menu(&keyed(), Os::Windows);
+        walk(&mut m, &[Key::Down, Key::Down]);
+        assert_eq!(m.highlighted(), Some("Chords"));
+        assert_eq!(press(&mut m, Key::Right), MenuOutcome::Consumed);
+        assert_eq!(m.open_path(), ["Chords"]);
+        assert_eq!(m.highlighted(), Some("Delete"));
+        // Down skips the disabled item and the separator.
+        press(&mut m, Key::Down);
+        assert_eq!(m.highlighted(), Some("Paste"));
+        press(&mut m, Key::Left);
+        assert!(m.open_path().is_empty());
+        assert_eq!(m.highlighted(), Some("Chords"), "back on the parent row");
+        // Escape in a submenu closes the submenu only; at the root it closes the menu.
+        press(&mut m, Key::Right);
+        let esc = key_event(Key::Escape);
+        assert!(!m.wants_close(&esc), "a submenu is open");
+        m.handle(&esc);
+        assert!(m.open_path().is_empty());
+        assert_eq!(m.highlighted(), Some("Chords"));
+        assert!(m.wants_close(&esc), "now the root");
+    }
+
+    #[test]
+    fn enter_on_a_submenu_row_opens_it_and_enter_or_space_on_an_item_runs_it() {
+        let mut m = menu(&keyed(), Os::Windows);
+        walk(&mut m, &[Key::Down, Key::Down]);
+        assert_eq!(press(&mut m, Key::Enter), MenuOutcome::Consumed);
+        assert_eq!(m.highlighted(), Some("Delete"));
+        assert_eq!(
+            press(&mut m, Key::Enter),
+            MenuOutcome::Run {
+                command: "edit.delete".into(),
+                arg: None
+            }
+        );
+        let mut m = menu(&keyed(), Os::Windows);
+        press(&mut m, Key::Home);
+        assert_eq!(
+            press(&mut m, Key::Space),
+            MenuOutcome::Run {
+                command: "edit.copy".into(),
+                arg: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_disabled_item_is_not_run_by_enter() {
+        let mut m = menu(&keyed(), Os::Windows);
+        m.handle(&mv(m.item_center("edit.cut").unwrap()));
+        assert_eq!(press(&mut m, Key::Enter), MenuOutcome::Consumed);
+    }
+
+    #[test]
+    fn other_keys_are_consumed_and_a_release_moves_nothing() {
+        let mut m = menu(&keyed(), Os::Windows);
+        press(&mut m, Key::Home);
+        for k in [
+            Key::Right,
+            Key::Left,
+            Key::Char('x'),
+            Key::Tab,
+            Key::PageDown,
+        ] {
+            assert_eq!(press(&mut m, k), MenuOutcome::Consumed);
+        }
+        assert_eq!(m.highlighted(), Some("Copy"));
+        let release = UiEvent::Key {
+            key: Key::Down,
+            modifiers: Modifiers::NONE,
+            pressed: false,
+        };
+        assert_eq!(m.handle(&release), MenuOutcome::Consumed);
+        assert_eq!(m.highlighted(), Some("Copy"));
+    }
+
+    #[test]
+    fn the_hover_highlight_and_the_keyboard_highlight_are_one() {
+        let mut m = menu(&keyed(), Os::Windows);
+        m.handle(&mv(m.item_center("edit.undo").unwrap()));
+        assert_eq!(m.highlighted(), Some("Undo"));
+        press(&mut m, Key::Down);
+        assert_eq!(
+            m.highlighted(),
+            Some("Copy"),
+            "continues from the hovered row"
+        );
+        press(&mut m, Key::Down);
+        press(&mut m, Key::Right);
+        // A pointer move onto a row of the submenu takes the highlight there.
+        m.handle(&mv(m.item_center("edit.paste").unwrap()));
+        assert_eq!(m.highlighted(), Some("Paste"));
+        press(&mut m, Key::Up);
+        assert_eq!(m.highlighted(), Some("Delete"));
+    }
+
+    #[test]
+    fn a_key_cancels_a_pending_pointer_switch() {
+        let mut m = menu(&keyed(), Os::Windows);
+        m.handle(&mv(m.submenu_center("Chords").unwrap()));
+        m.handle(&mv(m.item_center("edit.copy").unwrap()));
+        assert!(m.has_pending());
+        press(&mut m, Key::Down);
+        assert!(!m.has_pending());
+        tick(&mut m, 0.0);
+        tick(&mut m, 5.0);
+        assert_eq!(m.open_path(), ["Chords"]);
     }
 }

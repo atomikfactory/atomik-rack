@@ -112,6 +112,16 @@ impl MenuBar {
         Some((panel, rows))
     }
 
+    /// Whether entry `row` of menu `menu` can be highlighted and chosen.
+    fn selectable(menus: &[Menu], menu: usize, row: usize) -> bool {
+        matches!(&menus[menu].entries[row], MenuEntry::Item(it) if it.enabled)
+    }
+
+    /// The highlighted entry of the open dropdown: the pointer's and the keyboard's.
+    pub fn highlighted_item(&self) -> Option<usize> {
+        self.open.and(self.hover)
+    }
+
     fn title_at(menus: &[Menu], p: Point) -> Option<usize> {
         Self::title_rects(menus).iter().position(|r| r.contains(p))
     }
@@ -203,21 +213,62 @@ impl MenuBar {
                 }
             }
             UiEvent::Key { key, pressed, .. } if self.open.is_some() => {
-                if *pressed {
-                    match key {
-                        Key::Escape => self.close(),
-                        Key::Left | Key::Right => {
-                            let n = menus.len().max(1);
-                            let i = self.open.unwrap_or(0);
-                            self.open = Some(if *key == Key::Left {
-                                (i + n - 1) % n
-                            } else {
-                                (i + 1) % n
-                            });
-                            self.hover = None;
-                        }
-                        _ => {}
+                if !*pressed {
+                    return MenuBarOutcome::Consumed;
+                }
+                let Some(open) = self.open else {
+                    return MenuBarOutcome::Consumed;
+                };
+                match key {
+                    Key::Escape => self.close(),
+                    // The bar's dropdowns have no submenus, so Right on an item moves on too.
+                    Key::Left | Key::Right => {
+                        let n = menus.len().max(1);
+                        let next = if *key == Key::Left {
+                            (open + n - 1) % n
+                        } else {
+                            (open + 1) % n
+                        };
+                        self.open = Some(next);
+                        self.hover = (0..menus[next].entries.len())
+                            .find(|r| Self::selectable(menus, next, *r));
                     }
+                    Key::Down | Key::Up => {
+                        let rows = menus[open].entries.len();
+                        let down = *key == Key::Down;
+                        // From nothing, Down steps on to the first item and Up to the last.
+                        let mut at = self.hover.unwrap_or(if down { rows.max(1) - 1 } else { 0 });
+                        for _ in 0..rows {
+                            at = if down {
+                                (at + 1) % rows
+                            } else {
+                                (at + rows - 1) % rows
+                            };
+                            if Self::selectable(menus, open, at) {
+                                self.hover = Some(at);
+                                break;
+                            }
+                        }
+                    }
+                    Key::Home | Key::End => {
+                        let rows = 0..menus[open].entries.len();
+                        let pick = if *key == Key::Home {
+                            rows.clone().find(|r| Self::selectable(menus, open, *r))
+                        } else {
+                            rows.rev().find(|r| Self::selectable(menus, open, *r))
+                        };
+                        self.hover = pick.or(self.hover);
+                    }
+                    Key::Enter | Key::Space => {
+                        if let Some(i) = self.hover
+                            && let MenuEntry::Item(item) = &menus[open].entries[i]
+                            && item.enabled
+                        {
+                            self.close();
+                            return MenuBarOutcome::Command(item.command);
+                        }
+                    }
+                    _ => {}
                 }
                 MenuBarOutcome::Consumed
             }
@@ -533,5 +584,143 @@ mod tests {
         assert!(texts.contains(&"Zoom In"));
         assert!(texts.contains(&"\u{2713}"), "Cables: Show is checked");
         assert!(texts.contains(&"Ctrl+="));
+    }
+
+    fn press(bar: &mut MenuBar, m: &[Menu], k: Key) -> MenuBarOutcome {
+        bar.handle(
+            &UiEvent::Key {
+                key: k,
+                modifiers: Modifiers::NONE,
+                pressed: true,
+            },
+            m,
+        )
+    }
+
+    /// The entry indices of menu `i` that can be chosen.
+    fn selectable(m: &[Menu], i: usize) -> Vec<usize> {
+        m[i].entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e, MenuEntry::Item(it) if it.enabled))
+            .map(|(r, _)| r)
+            .collect()
+    }
+
+    #[test]
+    fn up_and_down_move_the_highlight_wrap_and_skip_separators_and_disabled_items() {
+        let m = model();
+        // The Edit menu has a disabled Undo and separators.
+        let ok = selectable(&m, 1);
+        assert!(ok.len() < m[1].entries.len(), "rows to skip");
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[1].center()), &m);
+        assert_eq!(bar.highlighted_item(), None);
+        let mut seen = Vec::new();
+        for _ in 0..=ok.len() {
+            press(&mut bar, &m, Key::Down);
+            seen.push(bar.highlighted_item().unwrap());
+        }
+        let mut want = ok.clone();
+        want.push(ok[0]);
+        assert_eq!(seen, want, "every enabled item once, then wraps");
+        press(&mut bar, &m, Key::Up);
+        assert_eq!(bar.highlighted_item(), ok.last().copied(), "Up wraps back");
+        press(&mut bar, &m, Key::Home);
+        assert_eq!(bar.highlighted_item(), ok.first().copied());
+        press(&mut bar, &m, Key::End);
+        assert_eq!(bar.highlighted_item(), ok.last().copied());
+    }
+
+    #[test]
+    fn up_with_nothing_highlighted_starts_at_the_last_item() {
+        let m = model();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[2].center()), &m);
+        press(&mut bar, &m, Key::Up);
+        assert_eq!(bar.highlighted_item(), selectable(&m, 2).last().copied());
+    }
+
+    #[test]
+    fn enter_and_space_choose_the_highlighted_item_and_close_the_menu() {
+        let m = model();
+        for k in [Key::Enter, Key::Space] {
+            let mut bar = MenuBar::new();
+            bar.handle(&down(MenuBar::title_rects(&m)[2].center()), &m);
+            assert_eq!(
+                press(&mut bar, &m, k.clone()),
+                MenuBarOutcome::Consumed,
+                "nothing yet"
+            );
+            press(&mut bar, &m, Key::Down);
+            let first = selectable(&m, 2)[0];
+            let MenuEntry::Item(item) = &m[2].entries[first] else {
+                panic!("an item");
+            };
+            assert_eq!(
+                press(&mut bar, &m, k),
+                MenuBarOutcome::Command(item.command)
+            );
+            assert!(!bar.is_open());
+        }
+    }
+
+    #[test]
+    fn hover_and_keyboard_share_one_highlight() {
+        let m = model();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[2].center()), &m);
+        let ok = selectable(&m, 2);
+        let (_, rows) = MenuBar::dropdown(&m, 2).unwrap();
+        bar.handle(&mv(rows[ok[1]].center()), &m);
+        assert_eq!(bar.highlighted_item(), Some(ok[1]));
+        press(&mut bar, &m, Key::Down);
+        assert_eq!(
+            bar.highlighted_item(),
+            Some(ok[2]),
+            "continues from the hovered item"
+        );
+    }
+
+    #[test]
+    fn left_and_right_move_to_the_neighbour_menu_on_its_first_item_and_right_on_an_item_does_too() {
+        let m = model();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        press(&mut bar, &m, Key::Down);
+        assert_eq!(press(&mut bar, &m, Key::Right), MenuBarOutcome::Consumed);
+        assert_eq!(
+            bar.open_menu(),
+            Some(1),
+            "Right on an item without a submenu"
+        );
+        assert_eq!(bar.highlighted_item(), selectable(&m, 1).first().copied());
+        press(&mut bar, &m, Key::Left);
+        assert_eq!(bar.open_menu(), Some(0));
+        assert_eq!(bar.highlighted_item(), selectable(&m, 0).first().copied());
+        press(&mut bar, &m, Key::Left);
+        assert_eq!(bar.open_menu(), Some(m.len() - 1), "wraps to the last menu");
+    }
+
+    #[test]
+    fn keys_in_an_open_menu_never_reach_the_panes_below() {
+        let m = model();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        for k in [
+            Key::Space,
+            Key::Char('a'),
+            Key::Tab,
+            Key::Delete,
+            Key::PageUp,
+        ] {
+            assert_ne!(press(&mut bar, &m, k), MenuBarOutcome::Ignored);
+        }
+        let release = UiEvent::Key {
+            key: Key::Space,
+            modifiers: Modifiers::NONE,
+            pressed: false,
+        };
+        assert_eq!(bar.handle(&release, &m), MenuBarOutcome::Consumed);
     }
 }
