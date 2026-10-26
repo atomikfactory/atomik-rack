@@ -309,6 +309,7 @@ pub mod fx_layout;
 pub mod fx_paint;
 pub mod interface;
 pub mod io_panel;
+pub mod key_chord_panel;
 pub mod key_rows;
 pub mod keymap;
 mod library_drop;

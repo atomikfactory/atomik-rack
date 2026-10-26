@@ -168,6 +168,8 @@ enum PlayerBtn {
     OctaveDec,
     /// The octave stepper's plus button.
     OctaveInc,
+    /// The FROM CLIP button of a Key & Chord panel.
+    FromClip,
 }
 
 impl Hit {
@@ -461,6 +463,9 @@ pub struct RackView {
     toast: Option<String>,
     /// The mapped controls and the learn state (see [`crate::MidiMarks`]).
     midi: crate::MidiMarks,
+    /// The scale of the clip open in the piano roll, for the FROM CLIP button of a Key & Chord
+    /// panel (`None`: no clip, or a clip without a scale; the button is disabled).
+    clip_scale: Option<atomik_model::theory::Scale>,
     repaint: bool,
     content_height: f64,
     /// How many columns the view lays out (1 inside a container).
@@ -568,6 +573,21 @@ fn param_cmd(key: &DeviceKey, param: &str, value: f32, merge: Option<u64>) -> Ui
 }
 
 impl RackView {
+    /// Tells the view the scale of the clip open in the piano roll (`None` when no clip is open
+    /// or it has no scale): it enables the FROM CLIP button of the Key & Chord panels.
+    pub fn set_clip_scale(&mut self, scale: Option<atomik_model::theory::Scale>) {
+        if self.clip_scale != scale {
+            self.clip_scale = scale;
+            for d in &mut self.devices {
+                if d.spec.key_chord.is_some() {
+                    d.revision += 1;
+                    d.lists = [None, None];
+                }
+            }
+            self.repaint = true;
+        }
+    }
+
     /// Tells the view which controls have a MIDI mapping (a dot on each; an outline on each
     /// while MIDI Learn is on, and in the warning colour on the one waiting for a hardware
     /// control).
@@ -615,6 +635,7 @@ impl RackView {
             },
             toast: None,
             midi: crate::MidiMarks::default(),
+            clip_scale: None,
             repaint: true,
             content_height: 0.0,
             columns: 1,
@@ -928,6 +949,9 @@ impl RackView {
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }
+            (Some(d), _) if type_id == crate::key_chord_panel::KEY_CHORD_TYPE => {
+                crate::key_chord_panel::key_chord_layout(d)
+            }
             (Some(d), _) if crate::fx::FxKind::of(type_id).is_some() => {
                 crate::fx_layout::fx_layout(
                     crate::fx::FxKind::of(type_id).unwrap_or(crate::fx::FxKind::Reverb),
@@ -945,6 +969,7 @@ impl RackView {
                 fx: None,
                 seq: None,
                 arp: None,
+                key_chord: None,
                 modsrc: None,
                 container: None,
                 plugin: None,
@@ -1349,6 +1374,10 @@ impl RackView {
                             let inc = Hit::Player(i, PlayerBtn::OctaveInc);
                             tree.add(dn, ap.octave_inc + off, inc, false);
                         }
+                        if let Some(kc) = d.spec.key_chord {
+                            let hit = Hit::Player(i, PlayerBtn::FromClip);
+                            tree.add(dn, kc.from_clip + off, hit, false);
+                        }
                         if let Some(fx) = d.spec.fx {
                             if fx.kind == FxKind::Eq {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
@@ -1584,6 +1613,20 @@ impl RackView {
             _ => pc.rect.center(),
         };
         Some(self.rack_to_view(c + d.offset()))
+    }
+
+    /// Centre of the FROM CLIP button of a Key & Chord panel (logical view coordinates), when it
+    /// is on screen-side (front, unfolded).
+    pub fn from_clip_button_center(&self, key: &DeviceKey) -> Option<Point> {
+        if self.flip != Flip::Front {
+            return None;
+        }
+        let d = &self.devices[self.device_index(key)?];
+        if d.folded {
+            return None;
+        }
+        let b = d.spec.key_chord?.from_clip;
+        Some(self.rack_to_view(b.center() + d.offset()))
     }
 
     /// Centre of the Edit button of a sampler panel (logical view coordinates), when it is on
@@ -3577,6 +3620,7 @@ impl RackView {
                     driven: &d.driven,
                     io: self.io.info(),
                     master: d.master.info(),
+                    from_clip: self.clip_scale.is_some(),
                 };
                 paint::record_panel(&mut list, &self.theme, &info);
                 self.devices[i].lists[side] = Some(list);

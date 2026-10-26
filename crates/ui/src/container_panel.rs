@@ -149,6 +149,7 @@ pub fn container_layout(desc: &DeviceDescriptor) -> PanelSpec {
         fx: None,
         seq: None,
         arp: None,
+        key_chord: None,
         modsrc: None,
         container: Some(panel),
         plugin: None,
