@@ -598,9 +598,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
     // Two more with the console devices shown (the default).
-    assert_eq!(v.browser_rows(&reg).len(), 22);
+    assert_eq!(v.browser_rows(&reg).len(), 23);
     v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 20); // arpeggiator, line mixer, poly synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, mod source, modulation, step sequencer, container, character, spectrum, phase meter, macro bank
+    assert_eq!(v.browser_rows(&reg).len(), 21); // arpeggiator, line mixer, poly synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, mod source, modulation, step sequencer, note filter, container, character, spectrum, phase meter, macro bank
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }
