@@ -431,6 +431,27 @@ fn the_cursor_follows_the_piano_roll_and_goes_back_to_the_arrow_elsewhere() {
     assert_eq!(s.cursor(), CursorHint::Default);
 }
 
+fn press_key(s: &mut Shell<NullBackend>, key: Key) {
+    for pressed in [true, false] {
+        s.handle(&UiEvent::Key {
+            key: key.clone(),
+            modifiers: Modifiers::NONE,
+            pressed,
+        });
+    }
+}
+
+/// Presses Down until the innermost open panel highlights `label`.
+fn down_to(s: &mut Shell<NullBackend>, label: &str) {
+    for _ in 0..40 {
+        if s.context_menu().unwrap().highlighted() == Some(label) {
+            return;
+        }
+        press_key(s, Key::Down);
+    }
+    panic!("{label} not reached by Down");
+}
+
 #[test]
 fn the_arpeggio_submenu_is_reachable_with_a_straight_pointer_path_across_the_parent_rows() {
     let (mut s, _) = roll_shell(None);
@@ -475,4 +496,51 @@ fn the_arpeggio_submenu_is_reachable_with_a_straight_pointer_path_across_the_par
         .unwrap();
     mouse(&mut s, down, PointerButton::Primary);
     assert_eq!(s.core().piano_roll().tools().arp.pattern, ArpPattern::Down);
+}
+
+#[test]
+fn the_arpeggio_submenu_is_reachable_with_the_keys_and_the_keys_do_not_reach_the_transport() {
+    let (mut s, _) = roll_shell(None);
+    let spot = empty_spot(&s);
+    mouse(&mut s, spot, PointerButton::Secondary);
+    // Space with the menu open is not play, and Escape closes only the innermost submenu.
+    press_key(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space is not the transport's now");
+    assert!(s.context_menu().is_some());
+    down_to(&mut s, "Chords");
+    press_key(&mut s, Key::Right);
+    down_to(&mut s, "Arpeggio Pattern");
+    press_key(&mut s, Key::Right);
+    assert_eq!(
+        s.context_menu().unwrap().open_path(),
+        ["Chords", "Arpeggio Pattern"]
+    );
+    assert_eq!(s.context_menu().unwrap().highlighted(), Some("Up"));
+    press_key(&mut s, Key::Escape);
+    assert_eq!(s.context_menu().unwrap().open_path(), ["Chords"]);
+    press_key(&mut s, Key::Right);
+    press_key(&mut s, Key::Down);
+    assert_eq!(s.context_menu().unwrap().highlighted(), Some("Down"));
+    press_key(&mut s, Key::Enter);
+    assert!(s.context_menu().is_none(), "Enter chose it");
+    assert_eq!(s.core().piano_roll().tools().arp.pattern, ArpPattern::Down);
+    assert!(!s.core().is_playing());
+    // Escape at the root closes the menu.
+    mouse(&mut s, spot, PointerButton::Secondary);
+    press_key(&mut s, Key::Escape);
+    assert!(s.context_menu().is_none());
+}
+
+#[test]
+fn keys_in_an_open_menu_bar_move_between_menus_and_do_not_start_playback() {
+    let (mut s, _) = roll_shell(None);
+    let titles = MenuBar::title_rects(&s.menu_model());
+    mouse(&mut s, titles[0].center(), PointerButton::Primary);
+    assert_eq!(s.menubar.as_ref().unwrap().open_menu(), Some(0));
+    press_key(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space with a menu open is not play");
+    press_key(&mut s, Key::Right);
+    assert_eq!(s.menubar.as_ref().unwrap().open_menu(), Some(1));
+    press_key(&mut s, Key::Escape);
+    assert!(!s.menubar.as_ref().unwrap().is_open());
 }

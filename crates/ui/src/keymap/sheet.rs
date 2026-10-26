@@ -249,7 +249,12 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          so they win over the global bindings of the same chords (Space previews instead of \
          playing, Backspace goes up a folder instead of deleting); every other chord, `F4` and \
          `F5` included, still runs as usual. While the panel's search or tag field has focus, \
-         only Esc, function keys and the chords with the primary modifier run commands.\n\n",
+         only Esc, function keys and the chords with the primary modifier run commands. An open \
+         menu (a context menu, or a menu of the in-window menu bar) takes every key: Up and Down \
+         move the highlight (it wraps, and skips separators and disabled items), Home and End \
+         jump to the first and last item, Right or Enter opens a submenu on its first item, Left \
+         or Esc closes it (Esc on the first panel closes the menu), Enter or Space chooses, and in \
+         the menu bar Left and Right move to the neighbouring menu (Right on an item too).\n\n",
     );
     out.push_str(POINTER_GESTURES);
     if profiles.contains(&Profile::Legacy)
