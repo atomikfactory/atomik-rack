@@ -7,10 +7,17 @@
 //! `out = playback + input × monitor_gain`
 //!
 //! where `input` is the cabled `in_l`/`in_r` (from `interface:in_k`, for input monitoring) and
-//! `monitor_gain` is 1 when `monitor` is **on**, or when it is **auto** and the app has set
-//! `internal.monitor_live` to 1 (the track is armed), and 0 otherwise (**off**). The gain
-//! change is a 5 ms linear crossfade, snapped on the first batch after `prepare`/`reset` like
-//! the other devices. Without playback (`None`: transport stopped, or no engine playback) only
+//! `monitor_gain` is the input gain (`rec_gain`, 1 at its default of 0 dB) when `monitor` is
+//! **on**, or when it is **auto** and the app has set `internal.monitor_live` to 1 (the track is
+//! armed), and 0 otherwise (**off**). The gain change is a 5 ms linear crossfade, snapped on
+//! the first batch after `prepare`/`reset` like the other devices, so turning the input gain
+//! needs no zipper and what a performer hears is what the take gets (the app applies the same
+//! gain to the recorded signal, see `atomik_engine::TapControls`).
+//!
+//! `rec_gain` (−60..+24 dB, the minimum is off) and `rec_clip_safe` are the track's recording
+//! input settings. They are ordinary stored params (undoable, merged while dragged), so a
+//! project written before they existed loads at 0 dB with clip-safe off. The device only uses
+//! the gain; the clip-safe limiter works on the recorded take, never on the monitor. Without playback (`None`: transport stopped, or no engine playback) only
 //! the monitored input is heard. Unconnected inputs read as zeros.
 //!
 //! The device is `DeviceKind::Instrument` (so it gets a console channel), has a single stage
@@ -31,6 +38,13 @@ const SMOOTH_MS: f32 = 5.0;
 
 const P_MONITOR: u32 = 0;
 const P_MONITOR_LIVE: u32 = 1;
+const P_REC_GAIN: u32 = 2;
+const P_REC_CLIP_SAFE: u32 = 3;
+
+/// Lowest input gain in dB (the bottom of the range is off).
+pub const REC_GAIN_MIN_DB: f32 = -60.0;
+/// Highest input gain in dB.
+pub const REC_GAIN_MAX_DB: f32 = 24.0;
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
@@ -52,7 +66,7 @@ const fn socket(
     }
 }
 
-static PARAMS: [ParamDescriptor; 2] = [
+static PARAMS: [ParamDescriptor; 4] = [
     ParamDescriptor {
         id: ParamId(P_MONITOR),
         key: "monitor",
@@ -68,6 +82,28 @@ static PARAMS: [ParamDescriptor; 2] = [
         id: ParamId(P_MONITOR_LIVE),
         key: "internal.monitor_live",
         name: "Monitor live",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    },
+    ParamDescriptor {
+        id: ParamId(P_REC_GAIN),
+        key: "rec_gain",
+        name: "Input gain",
+        min: REC_GAIN_MIN_DB,
+        max: REC_GAIN_MAX_DB,
+        default: 0.0,
+        taper: Taper::Decibel,
+        unit: Unit::Db,
+        discrete: false,
+    },
+    ParamDescriptor {
+        id: ParamId(P_REC_CLIP_SAFE),
+        key: "rec_clip_safe",
+        name: "Clip safe",
         min: 0.0,
         max: 1.0,
         default: 0.0,
@@ -108,6 +144,8 @@ pub fn factory() -> DeviceFactory {
 pub struct AudioTrack {
     monitor: u8,
     live: bool,
+    /// The input gain, linear (`rec_gain`).
+    input_gain: f32,
     gain: Smoother,
     fresh: bool,
 }
@@ -124,6 +162,7 @@ impl AudioTrack {
         Self {
             monitor: 1,
             live: false,
+            input_gain: 1.0,
             gain: Smoother::new(0.0, SMOOTH_MS, 48_000.0),
             fresh: true,
         }
@@ -131,7 +170,7 @@ impl AudioTrack {
 
     fn target(&self) -> f32 {
         let on = self.monitor == 2 || (self.monitor == 1 && self.live);
-        if on { 1.0 } else { 0.0 }
+        if on { self.input_gain } else { 0.0 }
     }
 
     fn update_target(&mut self) {
@@ -159,6 +198,7 @@ impl Device for AudioTrack {
         match id.0 {
             P_MONITOR => self.monitor = plain.round().clamp(0.0, 2.0) as u8,
             P_MONITOR_LIVE => self.live = plain >= 0.5,
+            P_REC_GAIN => self.input_gain = PARAMS[P_REC_GAIN as usize].db_param_gain(plain),
             _ => return,
         }
         self.update_target();
@@ -209,7 +249,12 @@ mod tests {
     fn descriptor_keys_are_in_contract_order() {
         assert_keys(
             &DESCRIPTOR,
-            &["monitor", "internal.monitor_live"],
+            &[
+                "monitor",
+                "internal.monitor_live",
+                "rec_gain",
+                "rec_clip_safe",
+            ],
             &["in_l", "in_r", "out_l", "out_r"],
         );
         assert_eq!(DESCRIPTOR.type_id, "atomik.audio-track");
@@ -219,6 +264,74 @@ mod tests {
         assert_eq!(monitor.default.to_bits(), 1.0f32.to_bits());
         assert_eq!(monitor.unit, Unit::Choice(&["off", "auto", "on"]));
         assert_eq!(factory().descriptor.type_id, "atomik.audio-track");
+    }
+
+    #[test]
+    fn the_input_settings_default_to_unity_and_clip_safe_off() {
+        let gain = DESCRIPTOR.param_by_key("rec_gain").unwrap();
+        assert_eq!((gain.min, gain.max, gain.default), (-60.0, 24.0, 0.0));
+        assert_eq!(gain.unit, Unit::Db);
+        assert_eq!(gain.taper, Taper::Decibel);
+        let safe = DESCRIPTOR.param_by_key("rec_clip_safe").unwrap();
+        assert_eq!((safe.default, safe.unit), (0.0, Unit::Toggle));
+    }
+
+    #[test]
+    fn the_input_gain_scales_the_monitored_input() {
+        for db in [-12.0f32, 6.0, 24.0] {
+            let mut h = rig();
+            h.set_param("monitor", 2.0);
+            h.set_param("rec_gain", db);
+            *h.input_mut("in_l") = ramp(0.01);
+            *h.input_mut("in_r") = [-0.2; BATCH];
+            h.process();
+            let g = atomik_core::db_to_gain(db);
+            for (i, v) in h.output("out_l").iter().enumerate() {
+                assert_eq!(v.to_bits(), (ramp(0.01)[i] * g).to_bits(), "{db} dB, {i}");
+            }
+            assert_eq!(h.output("out_r")[7].to_bits(), (-0.2f32 * g).to_bits());
+        }
+    }
+
+    #[test]
+    fn the_bottom_of_the_gain_range_is_off() {
+        let mut h = rig();
+        h.set_param("monitor", 2.0);
+        h.set_param("rec_gain", -60.0);
+        *h.input_mut("in_l") = [0.9; BATCH];
+        let y = h.render(3, &["out_l"]);
+        assert!(y[0].iter().all(|s| s.to_bits() == 0));
+    }
+
+    #[test]
+    fn a_gain_change_is_a_five_ms_ramp_and_the_default_is_bit_exact() {
+        let mut h = rig();
+        h.set_param("monitor", 2.0);
+        *h.input_mut("in_l") = [0.5; BATCH];
+        let plain = h.render(1, &["out_l"]).remove(0);
+        assert!(plain.iter().all(|s| s.to_bits() == 0.5f32.to_bits()));
+        h.set_param("rec_gain", 6.0);
+        let y = h.render(5, &["out_l"]).remove(0);
+        let to = 0.5 * atomik_core::db_to_gain(6.0);
+        let ramp_len = 240;
+        for (n, v) in y.iter().enumerate().take(ramp_len) {
+            let want = 0.5 + (to - 0.5) * (n + 1) as f32 / ramp_len as f32;
+            assert!((v - want).abs() < 1e-5, "sample {n}: {v} vs {want}");
+        }
+        assert!(y[ramp_len..].iter().all(|s| (s - to).abs() < 1e-6));
+    }
+
+    #[test]
+    fn clip_safe_does_not_touch_the_monitor() {
+        let mut h = rig();
+        h.set_param("monitor", 2.0);
+        h.set_param("rec_gain", 12.0);
+        *h.input_mut("in_l") = [0.9; BATCH];
+        let before = h.render(2, &["out_l"]).remove(0);
+        h.set_param("rec_clip_safe", 1.0);
+        let after = h.render(2, &["out_l"]).remove(0);
+        assert_eq!(before, after);
+        assert!(after[0] > 1.0, "the monitor is not limited");
     }
 
     #[test]
