@@ -164,7 +164,8 @@ fn the_layout_places_every_param_once_and_every_extra_inside_the_content_area() 
     assert_eq!(spec.height_units, 2);
     let mut params: Vec<usize> = spec.front.iter().map(|c| c.param).collect();
     params.sort_unstable();
-    assert_eq!(params, (0..desc.params.len()).collect::<Vec<_>>());
+    // The `bypass` param (last) belongs to the name strip's switch.
+    assert_eq!(params, (0..desc.params.len() - 1).collect::<Vec<_>>());
     let mut sockets: Vec<usize> = spec.back.iter().map(|s| s.socket).collect();
     sockets.sort_unstable();
     assert_eq!(sockets, (0..desc.sockets.len()).collect::<Vec<_>>());

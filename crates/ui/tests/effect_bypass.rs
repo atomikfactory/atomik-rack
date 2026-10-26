@@ -19,6 +19,8 @@ use support::container::{apply, check, paint_rack};
 use support::plugin::plugin_rack;
 use support::*;
 
+const PLAYERS: [&str; 2] = ["atomik.arpeggiator", "atomik.step-sequencer"];
+
 const EFFECTS: [&str; 10] = [
     "atomik.reverb",
     "atomik.compressor",
@@ -84,12 +86,16 @@ fn set_bypass(value: f32) -> Command {
 fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
     match FxKind::of(desc.type_id) {
         Some(k) => fx_layout(k, desc),
-        None => auto_layout(desc),
+        None => match desc.type_id {
+            "atomik.arpeggiator" => atomik_ui::arp_panel::arp_layout(desc),
+            "atomik.step-sequencer" => atomik_ui::seq_panel::seq_layout(desc),
+            _ => auto_layout(desc),
+        },
     }
 }
 
 #[test]
-fn only_the_ten_builtin_effects_have_the_switch() {
+fn only_the_builtin_effects_and_the_players_have_the_switch() {
     let reg = registry();
     let mut with: Vec<&str> = Vec::new();
     for type_id in reg.type_ids() {
@@ -102,13 +108,15 @@ fn only_the_ten_builtin_effects_have_the_switch() {
     }
     with.sort_unstable();
     let mut want = EFFECTS.to_vec();
+    want.extend(PLAYERS);
     want.sort_unstable();
     assert_eq!(with, want);
-    // No instrument, mixer or utility has one, and no plugin (effect plugins keep the BYPASS
+    // No instrument, mixer or other utility has one, and no plugin (effect plugins keep the BYPASS
     // button inside their panel).
     for t in reg.type_ids() {
         let desc = reg.descriptor(t).unwrap();
-        let expected = desc.kind == DeviceKind::Effect && !is_plugin_type_id(t);
+        let expected =
+            (desc.kind == DeviceKind::Effect && !is_plugin_type_id(t)) || PLAYERS.contains(&t);
         assert_eq!(has_strip_bypass(desc), expected && want.contains(&t), "{t}");
     }
     let p = plugin_rack();
@@ -284,6 +292,40 @@ fn bypass_stays_in_the_descriptor_for_automation_and_the_param_lists() {
     }
 }
 
+#[test]
+fn player_panels_show_the_strip_bypass() {
+    let reg = registry();
+    for t in PLAYERS {
+        let mut d = one_device(t).unwrap();
+        let mut v = view_of(&d);
+        let b = v.bypass_button_rect(&key("d")).expect("a switch");
+        let fold = v.fold_button_center(&key("d")).unwrap();
+        assert!(!overlaps(&b, &Circle::new(fold, 7.0).bounding_box()), "{t}");
+        // One SetParam per click, 1 then 0.
+        assert_eq!(commands(&press(&mut v, &d)), vec![set_bypass(1.0)], "{t}");
+        // The param is never a control of the panel body.
+        let desc = reg.descriptor(t).unwrap();
+        let bypass = desc
+            .params
+            .iter()
+            .position(|p| p.key == BYPASS_KEY)
+            .unwrap();
+        assert_eq!(bypass, desc.params.len() - 1, "{t}: appended last");
+        assert!(spec_of(desc).front.iter().all(|c| c.param != bypass), "{t}");
+        // The veil covers the body only while bypassed, the strip stays lit.
+        let veil = bypass_veil(spec_of(desc).height());
+        let off = paint_rack(&mut v, d.doc());
+        assert_eq!(veil_count(&off, veil), 0, "{t}: no veil when not bypassed");
+        assert!(off.texts().contains(&"BYPASS"), "{t}");
+        apply(&mut d, set_bypass(1.0));
+        v.sync(d.doc(), &reg);
+        let on = paint_rack(&mut v, d.doc());
+        assert_eq!(veil_count(&on, veil), 1, "{t}: one veil when bypassed");
+        assert!(on.texts().contains(&"BYPASS"), "{t}");
+        assert_eq!(commands(&press(&mut v, &d)), vec![set_bypass(0.0)], "{t}");
+    }
+}
+
 // ------------------------------------------------------------------ goldens
 
 fn golden_of(type_id: &str, bypassed: bool, folded: bool) -> String {
@@ -318,6 +360,11 @@ fn goldens_of_the_strip_switch_lit_and_unlit_folded_and_one_unit_tall() {
     check(
         "effect_bypass_reverb_folded_off_1x.json",
         &golden_of("atomik.reverb", false, true),
+    );
+    // A player's strip carries the same switch.
+    check(
+        "effect_bypass_arpeggiator_on_1x.json",
+        &golden_of("atomik.arpeggiator", true, false),
     );
     // The stereo delay is one unit tall (auto-layout panel).
     check(
