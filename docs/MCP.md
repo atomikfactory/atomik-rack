@@ -105,6 +105,10 @@ One headless app at a time: the real `Shell` with the audio off and no window, t
 
 Positions are **logical pixels**: the window size you asked for (default 1280 x 860), whatever the scale. A screenshot at scale 2 is twice as many pixels, so divide its coordinates by the scale; `session_texts` already reports logical positions, so use it to find what to aim at (the `y` of a text is its baseline: aim a few pixels above it). Modifiers are `shift`, `ctrl`, `alt`, `meta`, and `cmd` (meta on `mac`, ctrl elsewhere). Keys are a single character, `Escape`, `Enter`, `Space`, `Backspace`, `Delete`, `Tab`, `Up`, `Down`, `Left`, `Right`, `PageUp`, `PageDown`, `Home`, `End`, `Insert`, `F1`..`F24`, `Digit0`..`Digit9` (the physical digit row, for Alt chords) and `Numpad0`..`Numpad9`. What a chord does is the keymap's business: `session_commands` lists the shortcuts, and a key test through `session_key` checks the binding as well as the command.
 
+#### Clip inspector
+
+With audio clips selected (`session_pointer` `click` on a clip, `shift` to add) the transport bar draws the inspector right of the signature: `session_texts` `contains: FADE` finds it, and a `drag` or `wheel` on a field edits every selected clip; `edit.undo` takes the whole edit back in one step. Resize the session (`session_window` `resize`) to see it drop its fields on a narrow bar.
+
 #### Command ids
 
 An id is the registry command id, with `:argument` when the command has one (for example `view.toggle_browser`, `edit.undo`, `transport.add_marker`). `session_commands` is the source of truth: it lists each id with its label and shortcut ([KEYBOARD.md](KEYBOARD.md) lists the same commands by label).
