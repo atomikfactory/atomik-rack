@@ -515,7 +515,7 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 "key": d.key.as_str(), "type_id": d.type_id, "name": d.name,
                 "column": d.column, "folded": d.folded,
                 "plugin": d.plugin.is_some(), "container": d.inner.is_some(),
-                "sample_zones": d.zones.len(), "step_sequencer": d.steps.is_some(),
+                "sample_zones": d.zones.len(), "step_sequencer": d.steps.is_some(), "cv_curves": d.curves.is_some(),
             });
             if include_params {
                 let params: serde_json::Map<String, Value> = d

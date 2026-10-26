@@ -212,6 +212,48 @@ fn the_default_pattern_is_sent_for_a_sequencer_without_edits() {
     assert_eq!(s.patterns[0].length, 16);
 }
 
+#[test]
+fn a_cv_sequencer_gets_cv_data_and_every_curve_edit_swaps_it() {
+    let mut c = AppCore::new(RecordingSink::new());
+    add(&mut c, "atomik.cv-sequencer", "cv");
+    let first = c.sink_mut().take();
+    let data = first
+        .iter()
+        .find_map(|x| match x {
+            SinkCall::PlayerData { data, .. } => data.clone(),
+            _ => None,
+        })
+        .unwrap();
+    assert!(matches!(&*data, PlayerData::CvSeq(_)));
+    let mut rows = atomik_model::CurvePatternDoc::default();
+    rows.rows[0][3].value = 70;
+    c.apply_command(Command::SetCurves {
+        device: key("cv"),
+        index: 0,
+        curves: rows,
+        merge: None,
+    })
+    .unwrap();
+    let calls = c.sink_mut().take();
+    let PlayerData::CvSeq(d) = calls
+        .iter()
+        .find_map(|x| match x {
+            SinkCall::PlayerData { data, .. } => data.clone(),
+            _ => None,
+        })
+        .expect("the curve edit re-sends the data")
+        .as_ref()
+        .clone()
+    else {
+        panic!("CvSeq data")
+    };
+    assert_eq!(d.curves[0][0][3].value, 70);
+    // The grid editor opens on it.
+    c.handle_action(UiAction::OpenSeqEditor { device: key("cv") });
+    assert_eq!(c.seq_editor_device(), Some(&key("cv")));
+    assert!(c.seq_editor().has_curve_lanes());
+}
+
 // ------------------------------------------------------------------ the editor pane
 
 #[test]

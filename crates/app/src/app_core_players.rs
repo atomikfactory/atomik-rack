@@ -42,8 +42,11 @@ use crate::target::Target;
 use atomik_model::DeviceKey;
 use atomik_ui::SeqEditorView;
 
-/// The step sequencer's device type.
-pub(super) const STEP_SEQUENCER: &str = "atomik.step-sequencer";
+/// Whether devices of `type_id` are edited as step patterns (the step sequencer and the CV
+/// sequencer).
+fn takes_step_doc(type_id: &str) -> bool {
+    atomik_ui::seq_panel::takes_step_doc(type_id)
+}
 
 impl<S: EngineSink> AppCore<S> {
     // ------------------------------------------------------------------ sequencer editor pane
@@ -66,7 +69,7 @@ impl<S: EngineSink> AppCore<S> {
     fn is_step_sequencer(&self, device: &DeviceKey) -> bool {
         self.doc()
             .resolve(device)
-            .is_some_and(|d| d.type_id == STEP_SEQUENCER)
+            .is_some_and(|d| takes_step_doc(&d.type_id))
     }
 
     /// Opens the grid editor on a step sequencer (ignored for other devices), on the pattern its
@@ -96,12 +99,12 @@ impl<S: EngineSink> AppCore<S> {
         let key = self
             .view
             .selected()
-            .filter(|k| doc.resolve(k).is_some_and(|d| d.type_id == STEP_SEQUENCER))
+            .filter(|k| doc.resolve(k).is_some_and(|d| takes_step_doc(&d.type_id)))
             .cloned()
             .or_else(|| {
                 self.flat_devices()
                     .into_iter()
-                    .find(|(_, d)| d.type_id == STEP_SEQUENCER)
+                    .find(|(_, d)| takes_step_doc(&d.type_id))
                     .map(|(k, _)| k)
             });
         match key {
