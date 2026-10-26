@@ -332,18 +332,18 @@ fn shift_and_alt_together_add_the_device_only_without_a_track() {
 fn a_utility_is_a_plain_add_except_in_the_effect_create_browser() {
     let (doc, reg) = (reference_doc(), registry());
     let mut v = view(&doc, &reg);
-    // The normal browser: the arpeggiator is a plain add.
+    // The normal browser: the modulator is a plain add.
     v.set_browser_visible(true);
-    type_text(&mut v, "arpeg", &doc, &reg);
+    type_text(&mut v, "modulator", &doc, &reg);
     let got = commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg));
     assert!(
-        matches!(got.as_slice(), [Command::AddDevice { type_id, .. }] if type_id == "atomik.arpeggiator"),
+        matches!(got.as_slice(), [Command::AddDevice { type_id, .. }] if type_id == "atomik.mod-source"),
         "{got:?}"
     );
     // The effect create browser lists the utilities and creates them through CreateEffect.
     let mut v = view(&doc, &reg);
     v.open_browser_create(CreateKind::Effect, &reg);
-    type_text(&mut v, "arpeg", &doc, &reg);
+    type_text(&mut v, "modulator", &doc, &reg);
     let got = commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg));
     assert!(
         matches!(
@@ -351,8 +351,93 @@ fn a_utility_is_a_plain_add_except_in_the_effect_create_browser() {
             [Command::Workflow(W::CreateEffect {
                 source: CreateSource::Type(t),
                 ..
-            })] if t == "atomik.arpeggiator"
+            })] if t == "atomik.mod-source"
         ),
         "{got:?}"
+    );
+}
+
+fn create_player(type_id: &str, target: CreateTarget, options: CreateOptions) -> Command {
+    Command::Workflow(W::CreatePlayer {
+        type_id: type_id.into(),
+        target,
+        options,
+    })
+}
+
+#[test]
+fn a_player_is_created_on_the_selected_stack_by_either_browser() {
+    let (doc, reg) = (reference_doc(), registry());
+    let arp = "atomik.arpeggiator";
+    // The normal browser, nothing selected: the player is only added.
+    let mut v = view(&doc, &reg);
+    v.set_browser_visible(true);
+    type_text(&mut v, "arpeg", &doc, &reg);
+    let got = commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg));
+    assert_eq!(
+        got,
+        vec![create_player(
+            arp,
+            CreateTarget::Nothing,
+            CreateOptions::default()
+        )]
+    );
+    // With a device selected the stack is found from it, in the normal browser and in the
+    // effect create browser (which lists the players with the utilities).
+    let mut v = view(&doc, &reg);
+    v.set_selected(Some(key("synth")));
+    v.set_browser_visible(true);
+    type_text(&mut v, "arpeg", &doc, &reg);
+    let want = vec![create_player(
+        arp,
+        CreateTarget::Selected(key("synth")),
+        CreateOptions::default(),
+    )];
+    assert_eq!(
+        commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg)),
+        want
+    );
+    let mut v = view(&doc, &reg);
+    v.set_selected(Some(key("synth")));
+    v.open_browser_create(CreateKind::Effect, &reg);
+    type_text(&mut v, "arpeg", &doc, &reg);
+    assert_eq!(
+        commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg)),
+        want
+    );
+}
+
+#[test]
+fn shift_adds_a_player_unrouted_and_the_setting_decides_the_plain_action() {
+    let (doc, reg) = (reference_doc(), registry());
+    let mut v = view(&doc, &reg);
+    v.set_selected(Some(key("synth")));
+    v.set_browser_visible(true);
+    type_text(&mut v, "arpeg", &doc, &reg);
+    let off = CreateOptions {
+        route: false,
+        ..CreateOptions::default()
+    };
+    let target = CreateTarget::Selected(key("synth"));
+    assert_eq!(
+        commands(&v.handle(&press(Key::Enter, shift()), &doc, &reg)),
+        vec![create_player(
+            "atomik.arpeggiator",
+            target.clone(),
+            off.clone()
+        )]
+    );
+    v.set_auto_route(false);
+    assert_eq!(
+        commands(&v.handle(&press(Key::Enter, Modifiers::NONE), &doc, &reg)),
+        vec![create_player("atomik.arpeggiator", target.clone(), off)]
+    );
+    assert_eq!(
+        commands(&v.handle(&press(Key::Enter, shift()), &doc, &reg)),
+        vec![create_player(
+            "atomik.arpeggiator",
+            target,
+            CreateOptions::default()
+        )]
     );
 }

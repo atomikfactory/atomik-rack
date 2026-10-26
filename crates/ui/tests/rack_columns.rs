@@ -459,6 +459,23 @@ fn dragging_another_device_row_adds_it_plainly() {
 }
 
 #[test]
+fn dragging_a_player_row_adds_it_at_the_slot_without_cabling_it() {
+    let (doc, reg, mut v) = two_columns();
+    open_browser(&mut v);
+    let row = row_of(&v, &reg, "atomik.arpeggiator");
+    let to = in_column(&v, 1, 4.0);
+    let a = drag(&mut v, &doc, &reg, row, to);
+    assert!(
+        matches!(
+            commands(&a).as_slice(),
+            [Command::AddDeviceAt { slot, type_id, .. }]
+                if *slot == (RackSlot { column: 1, index: 0 }) && type_id == "atomik.arpeggiator"
+        ),
+        "{a:?}"
+    );
+}
+
+#[test]
 fn shift_inverts_the_route_option_of_a_dropped_creation() {
     let (doc, reg, mut v) = two_columns();
     open_browser(&mut v);
