@@ -262,6 +262,8 @@ struct DeviceView {
     anim: u32,
     /// Params a macro of an enclosing container drives (key, macro 0-based): drawn locked.
     driven: Vec<(String, u8)>,
+    /// Params with an automation lane (keys): their controls are marked.
+    automated: Vec<String>,
     /// Container panel: the console already has a channel fed by this container.
     has_channel: bool,
     /// Plugin panel: what the app knows about the live instance.
@@ -554,6 +556,12 @@ pub struct RackView {
     /// Macro params of the shown devices: view key to (param, macro, driven by this scope's
     /// container).
     driven: BTreeMap<DeviceKey, Vec<(String, u8, bool)>>,
+    /// The params of the shown devices that have an automation lane (top level only): view key
+    /// to param keys, recomputed from the document at every sync.
+    automated: BTreeMap<DeviceKey, Vec<String>>,
+    /// The values the controls show instead of the stored ones (the automation at the playhead,
+    /// see [`RackView::set_shown_values`]); top level only.
+    shown: atomik_model::ShownValues,
     /// The breadcrumb element under the pointer.
     crumb_hover: Option<CrumbHit>,
     /// The open "map to macro" menu.
@@ -705,6 +713,8 @@ impl RackView {
             pending_scope: None,
             direct: Vec::new(),
             driven: BTreeMap::new(),
+            automated: BTreeMap::new(),
+            shown: Default::default(),
             crumb_hover: None,
             macro_menu: None,
             plugin_status: BTreeMap::new(),
@@ -857,11 +867,17 @@ impl RackView {
         for (i, d) in shown.iter().enumerate() {
             let d: &RackDevice = d;
             let driven = self.driven_for(&d.key);
+            let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
             let v = &mut self.devices[i + 1];
-            if v.device.as_ref() != Some(d) || v.driven != driven || v.has_channel != has_channel {
+            if v.device.as_ref() != Some(d)
+                || v.driven != driven
+                || v.automated != automated
+                || v.has_channel != has_channel
+            {
                 renewed |= v.device.as_ref().is_some_and(|old| old.name != d.name);
                 v.driven = driven;
+                v.automated = automated;
                 v.has_channel = has_channel;
                 v.name.clone_from(&d.name);
                 v.accent = self.theme.accent_for(d);
@@ -1129,6 +1145,7 @@ impl RackView {
             cv: [false; 2],
             anim: 0,
             driven: Vec::new(),
+            automated: Vec::new(),
             has_channel: false,
             plugin_status: PluginDeviceStatus::default(),
             desc_id: 0,
@@ -1213,6 +1230,7 @@ impl RackView {
                 None
             };
             let driven = self.driven_for(&d.key);
+            let automated = self.automated_for(&d.key);
             let has_channel = doc.console.channel_of(&d.key).is_some();
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
@@ -1239,6 +1257,7 @@ impl RackView {
                 Some(p)
                     if p.device.as_ref() == Some(d)
                         && p.driven == driven
+                        && p.automated == automated
                         && p.has_channel == has_channel
                         && p.pad == pad
                         && p.pad_names == pad_names
@@ -1280,6 +1299,7 @@ impl RackView {
                 cv,
                 anim,
                 driven,
+                automated,
                 has_channel,
                 plugin_status,
                 desc_id,
@@ -1331,6 +1351,7 @@ impl RackView {
                 cv: [false; 2],
                 anim: 0,
                 driven: Vec::new(),
+                automated: Vec::new(),
                 has_channel: false,
                 plugin_status: PluginDeviceStatus::default(),
                 desc_id: 0,
@@ -2224,6 +2245,43 @@ impl RackView {
         self.repaint = true;
     }
 
+    /// Sets the values the controls show instead of the stored ones: the automation at the
+    /// playhead, by `(device, param key)` (see [`atomik_model::RackDoc::automation_values_at`]).
+    /// A control shows its param's entry; with none it shows the document's value. The next sync
+    /// or paint re-records only the panels whose displayed values changed. Returns whether the set
+    /// changed. Top level only: inside a container the controls show the document's values.
+    pub fn set_shown_values(&mut self, shown: &atomik_model::ShownValues) -> bool {
+        if &self.shown == shown {
+            return false;
+        }
+        self.shown.clone_from(shown);
+        self.repaint = true;
+        true
+    }
+
+    /// The value the control of `param` on top-level device `device` shows now, `None` for a
+    /// device or param the view does not know. What the panel was last synced with: the shown
+    /// value of an automated param, else the document's.
+    pub fn shown_value(&self, device: &DeviceKey, param: &str) -> Option<f32> {
+        let v = self.devices.iter().find(|d| &d.key == device)?;
+        let desc = v.desc.as_ref()?;
+        let p = desc.param_by_key(param)?;
+        Some(
+            v.device
+                .as_ref()
+                .map_or(p.default, |d| widget::current_value(d, p)),
+        )
+    }
+
+    /// Whether the control of `param` on top-level device `device` is marked as automated (the
+    /// param has an automation lane).
+    pub fn is_automated(&self, device: &DeviceKey, param: &str) -> bool {
+        self.devices
+            .iter()
+            .find(|d| &d.key == device)
+            .is_some_and(|d| d.automated.iter().any(|k| k == param))
+    }
+
     /// (device, panel revision) in rack order; a revision changes only when that device's
     /// panel must be re-recorded.
     pub fn panel_revisions(&self) -> Vec<(DeviceKey, u64)> {
@@ -2323,7 +2381,19 @@ impl RackView {
                 // A control a macro drives says what it shows and who moves it.
                 Some(Hit::Control(i, slot)) => {
                     let (p, _, value) = self.param_of(i, slot)?;
-                    let m = self.driven_by(i, p.key)?;
+                    let Some(m) = self.driven_by(i, p.key) else {
+                        return self.devices[i]
+                            .automated
+                            .iter()
+                            .any(|k| k == p.key)
+                            .then(|| {
+                                format!(
+                                    "{}  {}  (automated)",
+                                    autolayout::control_label(p),
+                                    widget::format_value(p, value)
+                                )
+                            });
+                    };
                     Some(format!(
                         "{}  {}  (driven by macro {})",
                         autolayout::control_label(p),
@@ -3770,6 +3840,7 @@ impl RackView {
                         has_channel: d.has_channel,
                     },
                     driven: &d.driven,
+                    automated: &d.automated,
                     io: self.io.info(),
                     master: d.master.info(),
                     from_clip: self.clip_scale.is_some(),

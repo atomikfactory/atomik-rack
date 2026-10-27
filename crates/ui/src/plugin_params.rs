@@ -226,6 +226,9 @@ pub struct PluginParamsView {
     scroll: f64,
     /// The values of the device as of the last sync (param key to plain value).
     values: BTreeMap<String, f32>,
+    /// The values shown instead of the stored ones (the automation at the playhead, see
+    /// [`PluginParamsView::set_shown_values`]).
+    shown: atomik_model::ShownValues,
     pins: Vec<u32>,
     /// Params a macro drives: param id to (container path key, macro 0-based), outermost first.
     drivers: BTreeMap<u32, (DeviceKey, u8)>,
@@ -284,6 +287,7 @@ impl PluginParamsView {
             query: String::new(),
             scroll: 0.0,
             values: BTreeMap::new(),
+            shown: Default::default(),
             pins: Vec::new(),
             drivers: BTreeMap::new(),
             macro_names: Default::default(),
@@ -794,6 +798,17 @@ impl PluginParamsView {
         self.clamp_scroll();
     }
 
+    /// Sets the values the rows show instead of the stored ones: the automation at the playhead,
+    /// by `(device, param key)` (see [`atomik_model::RackDoc::automation_values_at`]). The next
+    /// [`Self::sync`] shows them. Returns whether the set changed.
+    pub fn set_shown_values(&mut self, shown: &atomik_model::ShownValues) -> bool {
+        if &self.shown == shown {
+            return false;
+        }
+        self.shown.clone_from(shown);
+        true
+    }
+
     /// Re-reads the device and the document. Cheap when nothing changed.
     pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
         let Some(key) = self.device.clone() else {
@@ -836,13 +851,22 @@ impl PluginParamsView {
         }
         // A param a macro bank drives shows the value the macro gives it.
         let driven = doc.driven_params(&key);
-        if driven.is_empty() {
+        let shown = self.shown.range((key.clone(), String::new())..);
+        let shown: Vec<(&String, f32)> = shown
+            .take_while(|((device, _), _)| device == &key)
+            .map(|((_, param), v)| (param, *v))
+            .collect();
+        if driven.is_empty() && shown.is_empty() {
             if d.params != self.values {
                 self.values.clone_from(&d.params);
                 self.repaint = true;
             }
         } else {
             let mut values = d.params.clone();
+            // An automated param shows what its lane gives; a macro's value comes after.
+            for (param, v) in shown {
+                values.insert(param.clone(), v);
+            }
             for (param, _) in &driven {
                 if let Some(v) = doc.driven_value(registry, &key, param) {
                     values.insert(param.clone(), v);

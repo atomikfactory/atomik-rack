@@ -461,10 +461,24 @@ struct StripView {
     vca_id: Option<u32>,
     /// The params a macro bank drives, with the macro (0-based): drawn locked with a tag.
     driven: Vec<(String, u8)>,
+    /// The params with an automation lane (their controls carry the automation mark).
+    automated: Vec<String>,
     cache_id: u64,
     revision: u64,
     sig: Option<Sig>,
     lists: [Option<DisplayList>; 2],
+}
+
+/// The params of `device` that have an automation lane (the keys, in order).
+fn automated_of(
+    automated: &std::collections::BTreeSet<(DeviceKey, String)>,
+    device: &DeviceKey,
+) -> Vec<String> {
+    automated
+        .range((device.clone(), String::new())..)
+        .take_while(|(d, _)| d == device)
+        .map(|(_, p)| p.clone())
+        .collect()
 }
 
 impl StripView {
@@ -487,6 +501,7 @@ impl StripView {
             vca: None,
             vca_id: None,
             driven: Vec::new(),
+            automated: Vec::new(),
             cache_id,
             revision: 0,
             sig: None,
@@ -697,6 +712,9 @@ pub struct ConsoleView {
     focused: bool,
     /// The mapped controls and the learn state (see [`crate::MidiMarks`]).
     midi: crate::MidiMarks,
+    /// The values the strips show instead of the stored ones (the automation at the playhead,
+    /// see [`ConsoleView::set_shown_values`]).
+    shown: atomik_model::ShownValues,
     repaint: bool,
 }
 
@@ -745,6 +763,7 @@ impl ConsoleView {
             next_merge: MERGE_BASE,
             focused: false,
             midi: crate::MidiMarks::default(),
+            shown: Default::default(),
             repaint: true,
         }
     }
@@ -1652,8 +1671,53 @@ impl ConsoleView {
         id
     }
 
+    /// Sets the values the strips show instead of the stored ones: the automation at the
+    /// playhead, by `(device, param key)` (see [`atomik_model::RackDoc::automation_values_at`]).
+    /// The next [`Self::sync`] re-records only the strips whose displayed values changed.
+    /// Returns whether the set changed.
+    pub fn set_shown_values(&mut self, shown: &atomik_model::ShownValues) -> bool {
+        if &self.shown == shown {
+            return false;
+        }
+        self.shown.clone_from(shown);
+        self.repaint = true;
+        true
+    }
+
+    /// The value the control of `param` on strip device `device` shows now (a channel, a bus or
+    /// the master), `None` for a device or param the view does not know.
+    pub fn shown_value(&self, device: &DeviceKey, param: &str) -> Option<f32> {
+        let s = self
+            .strips
+            .iter()
+            .chain(self.master.as_ref())
+            .find(|s| &s.key == device)?;
+        Some(s.value(s.desc?.param_by_key(param)?))
+    }
+
+    /// Whether the control of `param` on strip device `device` is marked as automated.
+    pub fn is_automated(&self, device: &DeviceKey, param: &str) -> bool {
+        self.strips
+            .iter()
+            .chain(self.master.as_ref())
+            .find(|s| &s.key == device)
+            .is_some_and(|s| s.automated.iter().any(|k| k == param))
+    }
+
     /// Updates the view from the document. Emits nothing; cheap when nothing changed.
     pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
+        // The strips show the value an automation lane gives a param (see `set_shown_values`).
+        let automated = doc.automated_params();
+        let view = doc.view_with_shown(&self.shown);
+        self.sync_in(&view, &automated, registry);
+    }
+
+    fn sync_in(
+        &mut self,
+        doc: &RackDoc,
+        automated: &std::collections::BTreeSet<(DeviceKey, String)>,
+        registry: &Registry,
+    ) {
         let console = &doc.console;
         let desc_of = |key: &DeviceKey| {
             doc.device(key)
@@ -1774,6 +1838,7 @@ impl ConsoleView {
             // A param a macro drives shows the value the macro gives it.
             let device = doc.device_with_driven_values(registry, &key);
             s.driven = doc.driven_params(&key);
+            s.automated = automated_of(automated, &key);
             s.desc = desc_of(&key);
             if let Some(c) = console.channels.get(i) {
                 let source = c.source.as_ref().and_then(|k| doc.device(k));
@@ -1811,6 +1876,7 @@ impl ConsoleView {
                 format!("{:?}", s.vca),
                 format!("{:?} {:?}", s.insert_bypass, s.bypass_all),
                 format!("{:?}", s.driven),
+                format!("{:?}", s.automated),
             ];
             extra.extend(chain_sig(&s.inserts));
             let sig = Sig {
@@ -1852,6 +1918,7 @@ impl ConsoleView {
                 if let Some(m) = &mut self.master {
                     m.device = doc.device_with_driven_values(registry, k);
                     m.driven = doc.driven_params(k);
+                    m.automated = automated_of(automated, k);
                     m.desc = desc;
                     m.name = "MASTER".into();
                     m.accent = accent;
@@ -1860,6 +1927,7 @@ impl ConsoleView {
                     let mut extra = names.clone();
                     extra.push(format!("{:?} {:?}", m.insert_bypass, m.bypass_all));
                     extra.push(format!("{:?}", m.driven));
+                    extra.push(format!("{:?}", m.automated));
                     extra.extend(flags);
                     extra.extend(chain_sig(&m.inserts));
                     let sig = Sig {
@@ -3601,12 +3669,10 @@ impl ConsoleView {
         l: &StripLayout,
         pinned: bool,
     ) {
-        let driven = self
-            .strips
-            .iter()
-            .find(|s| &s.key == key)
-            .map_or(&[][..], |s| s.driven.as_slice());
-        if self.midi.is_empty() && driven.is_empty() {
+        let view = self.strips.iter().find(|s| &s.key == key);
+        let driven = view.map_or(&[][..], |s| s.driven.as_slice());
+        let automated = view.map_or(&[][..], |s| s.automated.as_slice());
+        if self.midi.is_empty() && driven.is_empty() && automated.is_empty() {
             return;
         }
         for pc in &l.controls {
@@ -3619,6 +3685,9 @@ impl ConsoleView {
             }
             if let Some((_, m)) = driven.iter().find(|(p, _)| p == pc.param) {
                 crate::macro_marks::paint_tag(c, &self.st.base, pc.rect, *m);
+            }
+            if automated.iter().any(|p| p == pc.param) {
+                paint::automation_mark(c, &self.st.base, pc.rect);
             }
         }
     }

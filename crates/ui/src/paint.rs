@@ -295,6 +295,9 @@ pub struct PanelInfo<'a> {
     /// Params driven by a macro of an enclosing container (device inside a container): the
     /// param key and the macro index (0-based). Their controls draw locked with a macro tag.
     pub driven: &'a [(String, u8)],
+    /// Params with an automation lane (the param keys): their controls carry the automation
+    /// mark.
+    pub automated: &'a [String],
     /// Audio I/O panel: socket lamp states, displayed levels and clip flags.
     pub io: crate::io_panel::IoInfo<'a>,
     /// Master panel: the effect on each return and the key-in state.
@@ -811,6 +814,9 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     info.accent,
                 );
             }
+            if !info.automated.is_empty() {
+                automated_marks(c, theme, desc, info, false);
+            }
             if !info.driven.is_empty() {
                 driven_tags(c, theme, desc, info, false);
             }
@@ -880,6 +886,9 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 };
                 control_labelled(c, theme, pc, p, value, info.accent, &label);
             }
+            if !info.automated.is_empty() {
+                automated_marks(c, theme, desc, info, true);
+            }
             if !info.driven.is_empty() {
                 driven_tags(c, theme, desc, info, true);
             }
@@ -896,6 +905,40 @@ pub fn bypass_veil(height: f64) -> Rect {
         f64::from(RACK_WIDTH) - EAR,
         height - 1.0,
     )
+}
+
+/// The mark of an automated control: a thin cyan ring around it and a small dot at its top-left
+/// corner (a lane plays the param, and the control follows the lane while the song plays or is
+/// positioned). Cyan is the CV colour: the lane is a control signal over time.
+pub(crate) fn automation_mark<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
+    let color = theme.cable_cv;
+    c.stroke_with(
+        RoundedRect::from_rect(r.inset(-1.0), 5.0),
+        1.0,
+        with_alpha(color, 0.75),
+    );
+    c.fill_with(Circle::new(pt(r.x0 - 1.0, r.y0 - 1.0), 2.2), color);
+}
+
+/// Marks the controls whose param has an automation lane (see [`automation_mark`]).
+fn automated_marks<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    desc: &DeviceDescriptor,
+    info: &PanelInfo<'_>,
+    back: bool,
+) {
+    for pc in info
+        .spec
+        .front
+        .iter()
+        .filter(|pc| info.spec.on_back(pc) == back)
+    {
+        let p = &desc.params[info.spec.param_index(desc, pc, info.pad)];
+        if info.automated.iter().any(|k| k == p.key) {
+            automation_mark(c, theme, pc.rect);
+        }
+    }
 }
 
 /// Locks the controls whose param a macro drives: a dim veil and a small `M<n>` tag.
