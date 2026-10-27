@@ -11,10 +11,12 @@
 //!   table.
 //! * **Frequency.** [`op_frequency`]: a ratio of the played pitch (coarse step plus a fraction)
 //!   or a fixed frequency that ignores the key.
-//! * **Bandwidth limit.** Phase modulation puts a partial at every multiple of the modulator's
-//!   frequency, out to about `(index + 1)` times it (Carson's rule), and a partial above Nyquist
-//!   folds back as an alias. [`limits`] walks the routing from operator 4 down, estimates the
-//!   highest partial each operator produces and scales the modulation index of any operator
+//! * **Bandwidth limit.** Phase modulation swings the instantaneous frequency of an operator by
+//!   the modulation index times the frequency content of its modulators (so a deep stack of
+//!   operators reaches far), and puts sidebands a little past that swing (Carson's rule, widened
+//!   by a square-root term for the tail of the Bessel functions). A partial above Nyquist folds
+//!   back as an alias. [`limits`] walks the routing from operator 4 down, estimates the swing
+//!   and the highest partial of every operator and scales the modulation index of any operator
 //!   whose estimate would pass `bw_max`, so a bright patch gets duller on a high key instead of
 //!   aliasing. The scale is continuous in the frequencies, so a pitch glide or a vibrato never
 //!   jumps. Feedback is limited the same way.
@@ -25,8 +27,9 @@ pub const OPERATORS: usize = 4;
 pub const ALGORITHM_COUNT: usize = 12;
 /// Phase deviation in radians of a modulator at full level and a modulation index of 1.
 pub const MAX_INDEX_RAD: f32 = 8.0;
-/// Phase deviation in radians of the feedback at `feedback` = 1.
-pub const MAX_FEEDBACK_RAD: f32 = 4.0;
+/// Phase deviation in radians of the feedback at `feedback` = 1. Beyond about 2 radians the
+/// one-sample-late loop stops being tonal and turns to noise, so full feedback stays under it.
+pub const MAX_FEEDBACK_RAD: f32 = 1.8;
 /// Coarse steps of an operator (`0..=31`; step 0 is the ratio 0.5).
 pub const COARSE_STEPS: usize = 32;
 
@@ -145,6 +148,31 @@ pub fn op_frequency(fixed: bool, coarse: f32, fine: f32, key_hz: f32) -> f32 {
     }
 }
 
+/// `ln` of the decay ratio per harmonic of a one-sample feedback tone `x = sin(p + b x)`, for
+/// `b < 1` (the Kepler series: harmonic `n` falls as `rho^n`).
+fn ln_rho(b: f32) -> f32 {
+    let r = (1.0 - b * b).max(0.0).sqrt();
+    b.max(1e-3).ln() + r - (1.0 + r).ln()
+}
+
+/// The most feedback in radians that keeps the harmonic `n` (the last one under the bandwidth
+/// limit) below about -50 dB: the largest `b < 1` with `n ln(rho) <= -6`; above `n` = 120 the
+/// saw-like range (`b > 1`, whose harmonics fall as `n^-1.5`) opens up linearly to
+/// [`MAX_FEEDBACK_RAD`] at `n` = 240.
+fn feedback_allowed(n: f32) -> f32 {
+    let nb = n.clamp(1.0, 120.0);
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..14 {
+        let mid = 0.5 * (lo + hi);
+        if nb * ln_rho(mid) <= -6.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo + ((n - 120.0) / 120.0).clamp(0.0, 1.0) * (MAX_FEEDBACK_RAD - lo)
+}
+
 /// What [`limits`] returns.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
@@ -152,6 +180,8 @@ pub struct Limits {
     pub index: [f32; OPERATORS],
     /// The scale `0..=1` of the feedback.
     pub feedback: f32,
+    /// For each operator, the estimated highest partial in Hz after the scales.
+    pub bandwidth: [f32; OPERATORS],
 }
 
 /// The scales that keep every operator's partials below `bw_max` Hz.
@@ -159,6 +189,11 @@ pub struct Limits {
 /// `freq` is each operator's frequency in Hz, `depth` the modulation index in radians each
 /// operator would give its targets (its level times the index, before limiting), `feedback_rad`
 /// the feedback in radians. An operator with a `depth` of nothing does not count.
+///
+/// For an operator at `f` Hz with modulators `m` (indices `depth[m]`, instantaneous frequency
+/// swing `swing[m]`): the swing is `f + scale * sum(depth[m] * swing[m])`, and the highest
+/// partial `swing + (1 + 1.5 sqrt(index)) * max(swing[m])` with `index = scale * sum(depth[m])`.
+/// The largest `scale <= 1` that keeps it under `bw_max` solves a quadratic in `sqrt(scale)`.
 pub fn limits(
     alg: &Algorithm,
     freq: &[f32; OPERATORS],
@@ -170,34 +205,46 @@ pub fn limits(
     let mut out = Limits {
         index: [1.0; OPERATORS],
         feedback: 1.0,
+        bandwidth: [0.0; OPERATORS],
     };
-    let mut bw = [0.0f32; OPERATORS];
+    let mut swing = [0.0f32; OPERATORS];
     for op in (0..OPERATORS).rev() {
         let f = freq[op].max(0.0);
-        let (mut b_in, mut i_nom) = (0.0f32, 0.0f32);
+        let (mut f_in, mut i_nom, mut tail) = (0.0f32, 0.0f32, 0.0f32);
         for m in (op + 1)..OPERATORS {
             if alg.modulates(m, op) && depth[m] > USED {
-                b_in = b_in.max(bw[m]);
+                f_in += depth[m] * swing[m];
                 i_nom += depth[m];
+                tail = tail.max(0.5 * (swing[m] + out.bandwidth[m]));
             }
         }
-        let mut b = f;
+        let (mut sw, mut b) = (f, f);
         if i_nom > 0.0 {
-            // Carson: the highest partial is about f + (index + 1) * (modulator bandwidth).
-            let room = ((bw_max - f) / b_in.max(1e-3) - 1.0).max(0.0);
-            let s = if i_nom > room { room / i_nom } else { 1.0 };
-            out.index[op] = s;
-            if s > 0.0 {
-                b = f + (i_nom * s + 1.0) * b_in;
+            let c = f + tail - bw_max;
+            let bq = 1.5 * tail * i_nom.sqrt();
+            let x = if f_in + bq + c <= 0.0 {
+                1.0
+            } else if c >= 0.0 {
+                0.0
+            } else {
+                // a t^2 + bq t + c = 0 with t = sqrt(scale), a = f_in.
+                let t = (-bq + (bq * bq - 4.0 * f_in * c).sqrt()) / (2.0 * f_in);
+                (t * t).min(1.0)
+            };
+            out.index[op] = x;
+            if x > 0.0 {
+                sw = f + x * f_in;
+                b = sw + (1.0 + 1.5 * (x * i_nom).sqrt()) * tail;
             }
         }
         if op == usize::from(alg.feedback) && feedback_rad > USED {
-            let room = ((bw_max - b) / f.max(1e-3)).max(0.0);
-            let s = (room / feedback_rad).min(1.0);
+            let s = (feedback_allowed(bw_max / sw.max(1e-3)) / feedback_rad).min(1.0);
             out.feedback = s;
-            b += s * feedback_rad * f;
+            b += s * feedback_rad * sw;
+            sw *= 1.0 + s * feedback_rad;
         }
-        bw[op] = b;
+        swing[op] = sw;
+        out.bandwidth[op] = b;
     }
     out
 }
@@ -301,8 +348,8 @@ mod tests {
     #[test]
     fn the_scale_is_continuous_in_the_pitch() {
         let mut last = 1.0f32;
-        for k in 0..400 {
-            let f = 200.0 + k as f32 * 20.0;
+        for k in 0..1_700 {
+            let f = 200.0 + k as f32 * 5.0;
             let s = stack_limits(f, 2.0, 6.0).index[0];
             assert!(s <= last + 1e-6, "monotone at {f}");
             assert!(last - s < 0.02, "no jump at {f}: {last} -> {s}");
@@ -327,28 +374,16 @@ mod tests {
                 for s in l.index.iter().chain([&l.feedback]) {
                     assert!((0.0..=1.0).contains(s), "{}: {s}", alg.name);
                 }
-                // Re-estimate the bandwidth with the scales applied: wherever a modulation or
-                // feedback is left, its estimate stays under the limit.
-                let mut bw = [0.0f32; OPERATORS];
-                for op in (0..OPERATORS).rev() {
-                    let (mut b_in, mut i) = (0.0f32, 0.0f32);
-                    for m in (op + 1)..OPERATORS {
-                        if alg.modulates(m, op) {
-                            b_in = b_in.max(bw[m]);
-                            i += depth[m] * l.index[op];
-                        }
-                    }
-                    bw[op] = freq[op] + if i > 0.0 { (i + 1.0) * b_in } else { 0.0 };
-                    let fb = op == usize::from(alg.feedback) && l.feedback > 0.0;
-                    if fb {
-                        bw[op] += l.feedback * MAX_FEEDBACK_RAD * freq[op];
-                    }
-                    if i > 0.0 || fb {
+                // Wherever a modulation is left, the estimate is under the limit.
+                for op in 0..OPERATORS {
+                    let modulated =
+                        (op + 1..OPERATORS).any(|m| alg.modulates(m, op)) && l.index[op] > 0.0;
+                    if modulated {
                         assert!(
-                            bw[op] <= 19_200.0 + 1.0,
+                            l.bandwidth[op] <= 19_200.0 + 1.0,
                             "{} f0 {f0} op {op}: {}",
                             alg.name,
-                            bw[op]
+                            l.bandwidth[op]
                         );
                     }
                 }
@@ -357,14 +392,51 @@ mod tests {
     }
 
     #[test]
+    fn a_deep_stack_on_a_low_note_is_not_limited() {
+        // Four operators in a chain at 130 Hz with ordinary indices: nowhere near the limit.
+        let f = 130.0;
+        let l = limits(
+            &ALGORITHMS[0],
+            &[f, 2.0 * f, 3.0 * f, 4.0 * f],
+            &[1.2, 1.0, 0.8, 0.8],
+            0.0,
+            19_200.0,
+        );
+        assert_eq!(l.index, [1.0; OPERATORS], "{l:?}");
+        // The same stack three octaves up is.
+        let g = f * 8.0;
+        let l = limits(
+            &ALGORITHMS[0],
+            &[g, 2.0 * g, 3.0 * g, 4.0 * g],
+            &[1.2, 1.0, 0.8, 0.8],
+            0.0,
+            19_200.0,
+        );
+        assert!(l.index[0] < 1.0, "{l:?}");
+    }
+
+    #[test]
+    fn the_feedback_allowed_grows_with_the_harmonics_that_fit() {
+        let mut last = 0.0;
+        for n in 1..300 {
+            let a = feedback_allowed(n as f32);
+            assert!(a >= last - 1e-4 && a <= MAX_FEEDBACK_RAD + 1e-4, "{n}: {a}");
+            last = a;
+        }
+        assert!(feedback_allowed(4.0) < 0.5);
+        assert!(feedback_allowed(40.0) < 1.0);
+        assert!((feedback_allowed(240.0) - MAX_FEEDBACK_RAD).abs() < 1e-4);
+    }
+
+    #[test]
     fn feedback_is_limited_on_a_high_note() {
         let alg = &ALGORITHMS[11];
-        let freq = [1_000.0, 1_000.0, 1_000.0, 4_000.0];
+        let freq = [1_000.0, 1_000.0, 1_000.0, 8_000.0];
         let l = limits(alg, &freq, &[0.0; OPERATORS], MAX_FEEDBACK_RAD, 19_200.0);
         assert!(l.feedback < 1.0 && l.feedback > 0.0, "{}", l.feedback);
         let low = limits(
             alg,
-            &[100.0; OPERATORS],
+            &[50.0; OPERATORS],
             &[0.0; OPERATORS],
             MAX_FEEDBACK_RAD,
             19_200.0,
