@@ -2775,6 +2775,13 @@ impl<B: AudioBackend> Shell<B> {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
             }
+            ("automation.edit_control", None) => {
+                if let Some((device, param)) = self.control_target.clone()
+                    && self.core.show_lane_of(&device, &param)
+                {
+                    self.show_arrangement_focus();
+                }
+            }
             ("midi.learn_control", None) => {
                 if let Some((device, param)) = self.control_target.clone() {
                     self.core
@@ -2941,6 +2948,12 @@ impl<B: AudioBackend> Shell<B> {
         self.layout_view();
         self.save_workflow();
         self.save_ui_state();
+    }
+
+    /// Brings the arrangement into view and gives it the keys (a lane was just shown there).
+    fn show_arrangement_focus(&mut self) {
+        self.reveal_lower_pane();
+        self.set_focus(Pane::Arrangement);
     }
 
     /// The song area shows the editors and the arrangement, not the console or nothing.
@@ -3184,6 +3197,10 @@ impl<B: AudioBackend> Shell<B> {
                 .control_target
                 .as_ref()
                 .is_some_and(|(d, p)| core.is_midi_mapped(d, p)),
+            control_lane: self
+                .control_target
+                .as_ref()
+                .is_some_and(|(d, p)| core.has_lane_for(d, p)),
             control_assign: self
                 .control_target
                 .as_ref()
@@ -4127,7 +4144,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::ShowParamLane => {
                 if self.core.show_touched_lane() {
-                    self.set_focus(Pane::Arrangement);
+                    self.show_arrangement_focus();
                 }
                 Vec::new()
             }

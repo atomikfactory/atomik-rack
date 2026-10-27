@@ -345,6 +345,82 @@ fn a_second_param_goes_to_the_current_bank_or_to_a_new_one() {
     assert_eq!(s.core().doc().macros.assigns.len(), n);
 }
 
+// ---- Edit Automation ---------------------------------------------------------------------------
+
+/// The "Edit Automation" row of the open control menu: whether it can be chosen.
+fn edit_automation_enabled(s: &Shell<NullBackend>) -> bool {
+    s.context_menu()
+        .expect("a menu")
+        .all_items()
+        .into_iter()
+        .find(|i| i.command == "automation.edit_control")
+        .expect("the Edit Automation row")
+        .enabled
+}
+
+#[test]
+fn edit_automation_adds_the_lane_once_shows_it_and_undoes_in_one_step() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
+    let at = knob_at(&s, "a", CUTOFF);
+    mouse(&mut s, at, PointerButton::Secondary);
+    assert!(edit_automation_enabled(&s));
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center("automation.edit_control")
+        .unwrap();
+    mouse(&mut s, item, PointerButton::Primary);
+    assert!(s.context_menu().is_none());
+    let lane_count = |s: &Shell<NullBackend>| {
+        s.core().doc().song.track(&key("a")).map(|t| {
+            t.lanes
+                .iter()
+                .filter(|l| matches!(l.kind, atomik_model::LaneKind::Automation(_)))
+                .count()
+        })
+    };
+    assert_eq!(lane_count(&s), Some(1));
+    assert_eq!(
+        s.core().arrangement().followed_lane(),
+        Some(&(key("a"), CUTOFF.to_owned()))
+    );
+    assert_eq!(s.focus(), Pane::Arrangement);
+    // A second time only reveals: the document does not change.
+    let before = s.core().doc().clone();
+    s.control_target = Some((key("a"), CUTOFF.into()));
+    s.run_command("automation.edit_control", None);
+    assert_eq!(s.core().doc(), &before);
+    // One undo takes the lane (and the track made for it) away.
+    assert!(s.core_mut().undo());
+    assert!(s.core().doc().song.track(&key("a")).is_none());
+}
+
+#[test]
+fn edit_automation_is_greyed_for_a_param_with_no_lane() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.stereo-delay".into(),
+            key: Some(key("fx")),
+        })
+        .unwrap();
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
+    let at = knob_at(&s, "fx", "mix");
+    mouse(&mut s, at, PointerButton::Secondary);
+    assert!(!edit_automation_enabled(&s));
+    let before = s.core().doc().clone();
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center("automation.edit_control")
+        .unwrap();
+    mouse(&mut s, item, PointerButton::Primary);
+    assert_eq!(s.core().doc(), &before);
+}
+
 // ---- the Macros panel --------------------------------------------------------------------------
 
 #[test]

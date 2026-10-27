@@ -255,6 +255,12 @@ const COMMANDS: &[CommandDef] = &[
     cmd("audio.restart", "Restart Audio", G::Global, C::Global).menu(),
     cmd("audio.settings", "Settings", G::Global, C::Global).menu(),
     cmd(
+        "automation.edit_control",
+        "Edit Automation",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
         "browser.cancel",
         "Cancel Browser Search",
         G::Browser,

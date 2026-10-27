@@ -354,6 +354,11 @@ impl<S: EngineSink> AppCore<S> {
         .then_some(host)
     }
 
+    /// Whether `param` of `device` has a lane to show or add (see [`Self::lane_host`]).
+    pub fn has_lane_for(&self, device: &DeviceKey, param: &str) -> bool {
+        self.lane_host(device, param).is_some()
+    }
+
     /// Records that `param` of `device` is being touched and, when following, shows its lane.
     pub(super) fn param_touched(&mut self, device: &DeviceKey, param: &str) {
         self.macros.touched.insert(device.clone(), param.to_owned());
