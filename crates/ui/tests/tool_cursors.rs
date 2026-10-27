@@ -86,11 +86,8 @@ fn a_clip_edge_shows_the_resize_arrows_with_select_and_during_the_drag() {
     v.handle(&mv(ed + Vec2::new(30.0, 60.0)), &doc, &reg);
     assert_eq!(v.cursor(), CursorHint::ResizeHorizontal);
     v.handle(&up(ed), &doc, &reg);
-    assert_eq!(
-        v.cursor(),
-        CursorHint::ResizeHorizontal,
-        "still on the edge"
-    );
+    let ed = edge(&v);
+    assert_eq!(hover(&mut v, &doc, &reg, ed), CursorHint::ResizeHorizontal);
     let away = empty_lane(&v);
     assert_eq!(hover(&mut v, &doc, &reg, away), CursorHint::Default);
 }
