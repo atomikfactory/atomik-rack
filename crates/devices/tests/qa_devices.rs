@@ -11,7 +11,7 @@ atomik_testkit::install_alloc_guard!();
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
 use atomik_devices::{
-    fm_synth, guitar_amp, line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay,
+    fm_synth, granular, guitar_amp, line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay,
     wavetable_synth,
 };
 use atomik_testkit::harness::DeviceHarness;
@@ -239,6 +239,70 @@ proptest! {
         for socket in ["pitch_cv_in", "index_cv_in"] {
             *h.input_mut(socket) = [cv; BATCH];
         }
+        let mut notes = notes;
+        notes.sort_by_key(|(b, o, _, _)| (*b, *o));
+        let batches = (sr / BATCH as f64).ceil() as usize; // 1 s
+        let mut next = 0;
+        for b in 0..batches {
+            while next < notes.len() && notes[next].0 == b {
+                let (_, offset, key, velocity) = notes[next];
+                h.push_note("notes_in", NoteEvent { offset, kind: NoteKind::On { key, velocity } });
+                next += 1;
+            }
+            h.process();
+            for key in ["out_l", "out_r"] {
+                for s in h.output(key) {
+                    prop_assert!(s.is_finite() && s.abs() <= 4.0, "{} Hz, {}: {}", sr, key, s);
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(12))]
+    /// The granular sampler at 44.1 / 48 / 96 kHz, on its built-in source or on a stereo sample
+    /// map: any params, CVs, random notes, pitch bends and mod wheel stay finite and |x| <= 4.
+    #[test]
+    fn qa_granular_any_params_bounded_at_every_sample_rate(
+        sr_index in 0usize..3,
+        with_map in any::<bool>(),
+        norms in prop::collection::vec(0.0f32..=1.0, granular::DESCRIPTOR.params.len()),
+        notes in prop::collection::vec((0usize..200, 0u16..64, 0u8..=127, 0.01f32..=1.0), 1..40),
+        bend in -1.0f32..=1.0,
+        wheel in 0.0f32..=1.0,
+        cv in -1.5f32..=1.5,
+        seed in any::<u64>(),
+    ) {
+        let sr = [44_100.0, 48_000.0, 96_000.0][sr_index];
+        let mut h = DeviceHarness::with_options(
+            Box::new(granular::Granular::new()), sr, 120.0, seed);
+        if with_map {
+            let data: Vec<Vec<f32>> = [220.0f32, 331.0]
+                .iter()
+                .map(|f| (0..9_000).map(|i| 0.8 * (i as f32 * f * 0.000_13).sin()).collect())
+                .collect();
+            let buffer = std::sync::Arc::new(
+                atomik_device_sdk::SampleBuffer::new(data.into()).unwrap());
+            let zone = atomik_device_sdk::Zone {
+                buffer: 0, key_lo: 0, key_hi: 127, vel_lo: 1, vel_hi: 127, root_key: 60,
+                transpose: 0, tune_cents: 0.0, gain_db: 0.0, pan: 0.0, start: 100, end: 8_900,
+                loop_mode: atomik_device_sdk::LoopMode::Off, loop_start: 0, loop_end: 0,
+                crossfade: 0, trigger: atomik_device_sdk::TriggerMode::Gate, reverse: false,
+            };
+            let map = std::sync::Arc::new(
+                atomik_device_sdk::SampleMap::new(vec![buffer], vec![zone]).unwrap());
+            prop_assert!(h.device_mut().swap_samples(Some(map)).is_none());
+        }
+        for (p, n) in granular::DESCRIPTOR.params.iter().zip(&norms) {
+            h.set_param(p.key, p.from_normalized(*n));
+        }
+        for socket in ["pitch_cv_in", "position_cv_in", "density_cv_in", "cutoff_cv_in", "level_cv_in"] {
+            *h.input_mut(socket) = [cv; BATCH];
+        }
+        h.push_note("notes_in", NoteEvent { offset: 0, kind: NoteKind::PitchBend { value: bend } });
+        h.push_note("notes_in", NoteEvent {
+            offset: 0, kind: NoteKind::Cc { controller: 1, value: wheel } });
         let mut notes = notes;
         notes.sort_by_key(|(b, o, _, _)| (*b, *o));
         let batches = (sr / BATCH as f64).ceil() as usize; // 1 s
