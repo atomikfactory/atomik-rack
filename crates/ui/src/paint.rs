@@ -694,6 +694,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     let label = crate::wavetable_panel::wavetable_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
+                } else if info.spec.fm.is_some() {
+                    let label = crate::fm_panel::fm_label(p.key)
+                        .map_or_else(|| autolayout::control_label(p), str::to_string);
+                    control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.seq.is_some()
                     || info.spec.arp.is_some()
                     || info.spec.drum_gen.is_some()
@@ -799,6 +803,9 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
             if let (Some(panel), Some(device)) = (info.spec.wavetable, info.device) {
                 crate::wavetable_panel::paint_panel(c, theme, &panel, device, desc, info.accent);
+            }
+            if let (Some(panel), Some(device)) = (info.spec.fm, info.device) {
+                crate::fm_panel::paint_panel(c, theme, &panel, device, desc, info.accent);
             }
             if let (Some(panel), Some(_)) = (info.spec.key_chord, info.device) {
                 crate::key_chord_panel::paint_panel(c, theme, &panel, info.from_clip);

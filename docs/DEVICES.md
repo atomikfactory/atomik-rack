@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships thirty-one original devices: the poly synth, the wavetable synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships thirty-two original devices: the poly synth, the wavetable synth, the FM synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -193,6 +193,117 @@ Every table is a row of 16 frames; `position` 0 is the first frame and 1 the las
 - **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly synth's soft limiter (linear up to ±2, saturating towards ±4): the output is always finite and |x| ≤ 4.
 - **Cost and start-up.** The 12 tables are built once per process, the first time a wavetable synth is created (a fraction of a second); every later instance shares them (about 8 MB). `process` allocates nothing. A table change is an ordinary param change; a click may be heard when it happens on a sounding note.
 - **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed and the device instance, so renders are reproducible.
+
+---
+
+## FM Synth: `atomik.fm-synth` (Instrument)
+
+A four-operator FM synthesizer with up to 16 voices. Each voice has four sine operators that phase-modulate each other through one of twelve routings (algorithms), each with its own frequency ratio (or a fixed frequency), envelope with a delay, velocity sensitivity and key scaling; a damped feedback path on operator 4; a pitch envelope, an LFO, the mod wheel on the modulation index, poly (with voice stealing), mono and legato play with glide, and six factory sounds. There is no filter: an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation synthesis. The routings, the frequency rule and the bandwidth limiter are in [dsp/src/fm.rs](../crates/dsp/src/fm.rs).
+
+### Operators and algorithms
+
+Operator *n* is a sine whose phase is moved by the outputs of the operators the algorithm routes into it, always from higher numbers to lower, so a voice computes operator 4 first. An operator that modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is the volume of a carrier and the modulation depth of a modulator (full level at index 1 is 8 radians). The carriers are summed with the gain 1/√(carriers).
+
+| Index | Name | Modulation (a→b: a modulates b) | Carriers |
+|---|---|---|---|
+| 0 | Stack | 4→3, 3→2, 2→1 | 1 |
+| 1 | Twin stack | 4→3, 2→1 | 3, 1 |
+| 2 | Y | 4→2, 3→2, 2→1 | 1 |
+| 3 | Fork | 4→1, 4→2, 4→3 | 1, 2, 3 |
+| 4 | Three into one | 4→1, 3→1, 2→1 | 1 |
+| 5 | Stack and one | 4→3, 3→2 | 2, 1 |
+| 6 | Branch | 4→3, 3→2, 3→1 | 2, 1 |
+| 7 | Two chains | 4→3, 3→1, 2→1 | 1 |
+| 8 | Pair into pair | 4→1, 4→2, 3→1, 3→2 | 1, 2 |
+| 9 | Stack and two | 4→3 | 3, 2, 1 |
+| 10 | Tapped stack | 4→3, 3→2, 2→1 | 2, 1 |
+| 11 | Additive | none | 1, 2, 3, 4 |
+
+In every routing operator 4 is the feedback operator.
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend (±2 semitones) and the mod wheel (CC 1) |
+| `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1. |
+| `index_cv_in` | CV | in | Adds `cv.index_amount` × CV to the modulation index. |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels (when cabled). |
+| `pan_cv_in` | CV | in | Balances the stereo output by `pan_cv_trim` × CV (−1 = left, +1 = right; when cabled). |
+| `out_l` | Audio | out | Left output |
+| `out_r` | Audio | out | Right output: identical to `out_l` unless `spread` pans the keys or `pan_cv_in` is cabled |
+| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
+
+### Params
+
+Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve params each, ids 4 to 51), then the rest (ids 52 to 68). The ids are the indices.
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `sound` | 0–5: Init, E. Piano, Bell, Bass, Brass, Pad | 0 | choice | Linear | yes |
+| `algorithm` | 0–11: the names above | 0 (Stack) | choice | Linear | yes |
+| `feedback` | 0 to 1 | 0 | percent | Linear | no |
+| `index` | 0 to 2 | 1 | none | Linear | no |
+| `opN.fixed` (N = 1–4) | 0 to 1 | 0 | toggle | Linear | yes |
+| `opN.coarse` | 0 to 31 | 1, 2, 1, 1 | none | Linear | yes |
+| `opN.fine` | 0 to 0.99 | 0 | none | Linear | no |
+| `opN.detune` | −50 to 50 | 0 | cents | Linear | no |
+| `opN.level` | 0 to 1 | 0.8, 0.3, 0, 0 | percent | Linear | no |
+| `opN.velocity` | 0 to 1 | 0.4, 0.6, 0, 0 | percent | Linear | no |
+| `opN.key_scale` | −1 to 1 | 0 | none | Linear | no |
+| `opN.delay` | 0 to 2000 | 0 | ms | Linear | no |
+| `opN.attack` | 0.5 to 10000 | 2 | ms | Exponential | no |
+| `opN.decay` | 0.5 to 10000 | 400 | ms | Exponential | no |
+| `opN.sustain` | 0 to 1 | 0.7 | percent | Linear | no |
+| `opN.release` | 0.5 to 10000 | 300 | ms | Exponential | no |
+| `pitch.env_amount` | −48 to 48 | 0 | semitones | Linear | no |
+| `pitch.env_decay` | 1 to 5000 | 80 | ms | Exponential | no |
+| `lfo.wave` | 0–4: sine, triangle, saw, square, sample&hold | 0 | choice | Linear | yes |
+| `lfo.rate` | 0.05 to 30 | 5 | Hz | Exponential | no |
+| `lfo.to_pitch` | 0 to 12 | 0 | semitones | Linear | no |
+| `lfo.to_amp` | 0 to 1 | 0 | percent | Linear | no |
+| `lfo.to_index` | 0 to 1 | 0 | none | Linear | no |
+| `wheel.to_index` | 0 to 2 | 0.5 | none | Linear | no |
+| `play.mode` | 0–2: poly, mono, legato | 0 | choice | Linear | yes |
+| `play.glide` | 0 to 2000 | 0 | ms | Linear | no |
+| `voices` | 1 to 16 | 8 | none | Linear | yes |
+| `spread` | 0 to 1 | 0 | percent | Linear | no |
+| `master.level` | −60 to 6 | −6 | dB | Decibel | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `cv.index_amount` | −2 to 2 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+
+### Behaviour (as built)
+
+- **Frequency.** Ratio mode: the played pitch × (`coarse` + `fine`), where coarse step 0 is the ratio 0.5 and step *n* is *n*; `detune` adds cents. Fixed mode (`fixed` on): 10^((`coarse` + `fine`) / 8) Hz whatever the key, 1 Hz at step 0 and a decade every eight steps (about 9.9 kHz at the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it. Operator frequencies are held under 0.45 of the sample rate. The phase accumulators are `f64`.
+- **Envelope.** Each operator has an ADSR and a `delay` in ms before its attack starts. A voice sounds until the envelopes of its carriers are idle; a note off during a carrier's delay cancels the note. A same-key retrigger restarts every envelope from its current level and ignores the delays.
+- **Velocity and key scaling.** The operator level is `level` × (1 − `velocity` × (1 − key velocity)) × the key scaling gain. Key scaling lowers the level on one side of middle C (key 60): `key_scale` > 0 above it, < 0 below it, by 0.4 dB per semitone × |`key_scale`|.
+- **Modulation index.** `index` + mod wheel × `wheel.to_index` + LFO × `lfo.to_index` + `cv.index_amount` × `index_cv_in`, clamped to 0..3, scales every modulator.
+- **Feedback.** The average of the last two outputs of operator 4 moves its own phase by up to 1.8 radians (`feedback` 1): a sine at 0, a saw-like tone as it rises. The average damps the loop; the range stops short of the point (about 2 radians) where a one-sample-late loop turns to noise. The output is a sine, so it is bounded whatever the setting.
+- **Aliasing.** A modulation index puts partials out to about the swing of the instantaneous frequency plus a few sidebands, and what passes Nyquist folds back. Every 16 samples the voice asks `atomik_dsp::fm::limits` for the scales that keep the highest partial of every operator under 0.4 of the sample rate (the estimate follows the swing through a stack of operators), and ramps the indices to them; the feedback is eased back by how many of its harmonics fit under the limit. A bright patch therefore plays duller on a high key instead of aliasing, continuously in the pitch. The bounce test measures the worst non-harmonic partial of a patch with everything open at keys 84 to 112: under −55 dB below the strongest partial.
+- **Pitch.** Semitones = key (gliding in the mono modes) + bend + `pitch.env_amount` × e^(−t/`pitch.env_decay`) (restarted at each note) + LFO × `lfo.to_pitch` + `pitch_cv_trim` × 24 × `pitch_cv_in`.
+- **Play.** `poly`: up to `voices` voices; a note with no free voice steals the oldest, which fades out over 2 ms. `mono`: one voice, the last key wins, every key retriggers the envelopes, and releasing a key returns to the key still held. `legato`: as mono, but a key played while another is held changes the pitch only. `play.glide` is the time constant in ms of the slide to the new pitch (0 is none). Switching to a mono mode releases the other voices.
+- **Stereo.** `spread` pans a voice by its key (middle C centre, 36 semitones away is the edge); the tremolo is `lfo.to_amp` × (1 − LFO)/2 of the amplitude.
+- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly synth's soft limiter: the output is always finite and |x| ≤ 4.
+- **Randomness.** Only the sample & hold LFO is random, seeded by the patch seed and the device instance, so renders are reproducible.
+
+### Sounds
+
+`sound` selects a factory sound. A sound is a value for every param but `sound` ([fm_synth/sounds.rs](../crates/devices/src/fm_synth/sounds.rs), listing what differs from the init sound). **The device ignores the param**: the app turns a `SetParam` of `sound` on an FM synth into one `Command::Batch` (the same mechanism as the guitar amp's setups), so one undo brings back everything it changed; the player tweaks from there and the project file holds plain param values.
+
+| Sound | Idea |
+|---|---|
+| Init | A two-operator stack: operator 2 (ratio 2) modulating operator 1. |
+| E. Piano | Twin stack: a soft body (ratio 1 over ratio 1) and a short bright tine (ratio 14 over ratio 1) that fades first; harder keys are brighter; a little tremolo and key spread. |
+| Bell | Twin stack at the inharmonic ratios 3.5, 2.76 and 5.4 with decays of 1 to 4.5 s and no sustain. |
+| Bass | Mono with a 30 ms glide: a stack with feedback, bright for a moment at each note. |
+| Brass | Y routing whose index opens over 90 ms, a light vibrato, the mod wheel brightens it. |
+| Pad | Two detuned pairs (±7 cents) with attacks of 0.7 to 1.2 s; a slow triangle LFO breathes the index. |
+
+### Tests
+
+The synth's tests render each algorithm and compare it to a naive `f64` reference computation (phase accumulators, the routing as written out in the test); and cover the ratios, fixed frequencies and detune to a fraction of a hertz, the feedback (against the reference, bounded, tonal at its maximum on five registers), voice stealing and the voice limit, the envelopes and their delays, velocity and key scaling, the index from the wheel, the LFO and the CV, the mono modes and the glide, aliasing of a bright patch on high keys (with an unlimited reference that does alias), determinism and reset, every param at its extremes, and the factory sounds. A proptest (`qa_devices`) drives random params, CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in [crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch `examples/patches/fm-demo.json` bounces in [crates/render/tests/fm_demo.rs](../crates/render/tests/fm_demo.rs).
 
 ---
 

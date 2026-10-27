@@ -149,6 +149,8 @@ pub struct PanelSpec {
     /// The wavetable synth panel of an `atomik.wavetable-synth` (see
     /// [`crate::wavetable_panel`]).
     pub wavetable: Option<crate::wavetable_panel::WavetablePanel>,
+    /// The FM synth panel of an `atomik.fm-synth` (see [`crate::fm_panel`]).
+    pub fm: Option<crate::fm_panel::FmPanel>,
     /// The container panel of an `atomik.container` (see
     /// [`crate::container_panel`]).
     pub container: Option<crate::container_panel::ContainerPanel>,
@@ -287,7 +289,7 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
     } else {
         0.0
     };
-    layout_with(desc, reserve, samples, group_prefix, &[])
+    layout_with(desc, reserve, samples, group_prefix, &[], 0.0, usize::MAX)
 }
 
 /// Like [`auto_layout`] with a `strip` wide column kept free at the left of the content area
@@ -298,7 +300,15 @@ pub(crate) fn auto_layout_with_strip(
     strip: f64,
     prefix_of: for<'a> fn(&'a str) -> &'a str,
 ) -> PanelSpec {
-    layout_with(desc, strip + SECTION_GAP, false, prefix_of, &[])
+    layout_with(
+        desc,
+        strip + SECTION_GAP,
+        false,
+        prefix_of,
+        &[],
+        0.0,
+        usize::MAX,
+    )
 }
 
 /// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
@@ -310,7 +320,28 @@ pub(crate) fn auto_layout_with_order(
     prefix_of: for<'a> fn(&'a str) -> &'a str,
     order: &[&str],
 ) -> PanelSpec {
-    layout_with(desc, strip + SECTION_GAP, false, prefix_of, order)
+    layout_with(
+        desc,
+        strip + SECTION_GAP,
+        false,
+        prefix_of,
+        order,
+        0.0,
+        usize::MAX,
+    )
+}
+
+/// Like [`auto_layout_with_order`] with `top` height kept free above the sections of the front
+/// panel (a visual across the panel); the caller places what goes there. A section has at most
+/// `max_rows` rows of controls.
+pub(crate) fn auto_layout_with_top(
+    desc: &DeviceDescriptor,
+    top: f64,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+    max_rows: usize,
+) -> PanelSpec {
+    layout_with(desc, 0.0, false, prefix_of, order, top, max_rows)
 }
 
 fn layout_with(
@@ -319,15 +350,19 @@ fn layout_with(
     samples: bool,
     prefix_of: for<'a> fn(&'a str) -> &'a str,
     order: &[&str],
+    top: f64,
+    max_rows: usize,
 ) -> PanelSpec {
     let front = front_groups(desc, prefix_of, order);
     let back = back_groups(desc);
     let units = (1..=MAX_UNITS)
         .find(|&u| {
-            fit(&front, u, ROW_H, reserve).is_some() && fit(&back, u, SOCKET_CELL.1, 0.0).is_some()
+            fit_rows_between(&front, u, ROW_H, reserve, top, 1, max_rows).is_some()
+                && fit(&back, u, SOCKET_CELL.1, 0.0).is_some()
         })
         .unwrap_or(MAX_UNITS);
-    let (front_cells, front_sections) = fit(&front, units, ROW_H, reserve).unwrap_or_default();
+    let (front_cells, front_sections) =
+        fit_rows_between(&front, units, ROW_H, reserve, top, 1, max_rows).unwrap_or_default();
     let (back_cells, back_sections) = fit(&back, units, SOCKET_CELL.1, 0.0).unwrap_or_default();
     let height = f64::from(units) * f64::from(RACK_UNIT);
     PanelSpec {
@@ -341,6 +376,7 @@ fn layout_with(
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: None,
         samples: samples.then(|| {
@@ -524,12 +560,39 @@ pub(crate) fn fit_with(
     reserve: f64,
     top: f64,
 ) -> Option<Packed> {
+    fit_rows(groups, units, row_h, reserve, top, 1)
+}
+
+/// Like [`fit_with`], trying `first_rows` rows per section first and then more of them;
+/// `fit_rows(.., 1)` is [`fit_with`]. A panel that wants one row per section passes `max_rows`
+/// of 1 to [`fit_rows_between`].
+pub(crate) fn fit_rows(
+    groups: &[Group],
+    units: u8,
+    row_h: f64,
+    reserve: f64,
+    top: f64,
+    first_rows: usize,
+) -> Option<Packed> {
+    fit_rows_between(groups, units, row_h, reserve, top, first_rows, usize::MAX)
+}
+
+/// Like [`fit_rows`], giving up past `max_rows` rows per section.
+pub(crate) fn fit_rows_between(
+    groups: &[Group],
+    units: u8,
+    row_h: f64,
+    reserve: f64,
+    top: f64,
+    first_rows: usize,
+    max_rows: usize,
+) -> Option<Packed> {
     let avail = f64::from(units) * f64::from(RACK_UNIT) - MARGIN_TOP - MARGIN_BOTTOM - top;
     if groups.is_empty() {
         return Some((Vec::new(), Vec::new()));
     }
-    let mut rows = 1;
-    while TITLE_H + rows as f64 * row_h <= avail + EPS {
+    let mut rows = first_rows.max(1);
+    while rows <= max_rows && TITLE_H + rows as f64 * row_h <= avail + EPS {
         if let Some(((cells, sections), h)) = pack(groups, rows, row_h, reserve)
             && h <= avail + EPS
         {
@@ -797,6 +860,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: None,
         front,
@@ -934,6 +998,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: None,
         front,
@@ -990,6 +1055,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: None,
         front,

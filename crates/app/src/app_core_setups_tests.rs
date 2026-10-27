@@ -163,3 +163,72 @@ fn set_other<S: EngineSink>(c: &mut AppCore<S>) {
         Some(&20.0)
     );
 }
+
+// ------------------------------------------------------------------------------- FM synth sounds
+
+fn fm_core() -> AppCore<RecordingSink> {
+    let mut c = AppCore::new(RecordingSink::new());
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.fm-synth".into(),
+        key: Some(key("fm")),
+    })
+    .unwrap();
+    c
+}
+
+fn fm_value<S: EngineSink>(c: &AppCore<S>, param: &str) -> f32 {
+    let dev = c.doc().resolve(&key("fm")).unwrap();
+    dev.params.get(param).copied().unwrap_or_else(|| {
+        atomik_devices::fm_synth::DESCRIPTOR
+            .param_by_key(param)
+            .unwrap()
+            .default
+    })
+}
+
+fn fm_set<S: EngineSink>(c: &mut AppCore<S>, param: &str, value: f32) {
+    c.apply_command(Command::SetParam {
+        key: key("fm"),
+        param: param.into(),
+        value,
+        merge: None,
+    })
+    .unwrap();
+}
+
+#[test]
+fn choosing_an_fm_sound_sets_every_param_of_it_in_one_undo_step() {
+    use atomik_devices::fm_synth::sounds;
+    for i in 0..sounds::SOUNDS.len() {
+        let mut c = fm_core();
+        fm_set(&mut c, "op1.level", 0.123);
+        fm_set(&mut c, "sound", i as f32);
+        assert_eq!(fm_value(&c, "sound"), i as f32);
+        for (param, want) in sounds::values(i) {
+            assert_eq!(
+                fm_value(&c, param),
+                want,
+                "{}: {param}",
+                sounds::SOUND_NAMES[i]
+            );
+        }
+        assert!(c.undo());
+        assert_eq!(fm_value(&c, "sound"), 0.0, "one undo");
+        assert_eq!(fm_value(&c, "op1.level"), 0.123, "back to the tweak");
+    }
+}
+
+#[test]
+fn other_params_named_sound_or_setup_are_left_alone() {
+    // A guitar amp's `sound` or an FM synth's `setup` is not a param: nothing expands.
+    let mut c = fm_core();
+    let before = c.doc().resolve(&key("fm")).unwrap().params.clone();
+    let r = c.apply_command(Command::SetParam {
+        key: key("fm"),
+        param: "setup".into(),
+        value: 2.0,
+        merge: None,
+    });
+    assert!(r.is_err() || c.doc().resolve(&key("fm")).unwrap().params == before);
+}

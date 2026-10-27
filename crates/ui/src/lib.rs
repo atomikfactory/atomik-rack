@@ -310,6 +310,7 @@ pub mod drum_gen_panel;
 pub mod event;
 pub mod export_panel;
 pub mod file_browser;
+pub mod fm_panel;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;

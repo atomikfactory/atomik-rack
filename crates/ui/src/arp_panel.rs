@@ -141,6 +141,7 @@ pub fn arp_layout(desc: &DeviceDescriptor) -> PanelSpec {
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: None,
         front,

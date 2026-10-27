@@ -1,0 +1,91 @@
+{
+  "format": "atomik-patch",
+  "version": 1,
+  "sample_rate": 48000,
+  "tempo_bpm": 100,
+  "seed": 11,
+  "length_beats": 8,
+  "output_channels": 2,
+  "devices": [
+    {
+      "id": "keys",
+      "type": "atomik.fm-synth",
+      "params": {
+        "algorithm": 1, "spread": 0.4, "lfo.wave": 0, "lfo.rate": 4.5,
+        "lfo.to_amp": 0.12, "op1.level": 0.8, "op1.velocity": 0.3, "op1.attack": 1,
+        "op1.decay": 2800, "op1.sustain": 0.12, "op1.release": 350, "op2.coarse": 1,
+        "op2.level": 0.32, "op2.velocity": 0.7, "op2.key_scale": 0.3, "op2.attack": 1,
+        "op2.decay": 1500, "op2.sustain": 0.05, "op2.release": 300, "op3.coarse": 1,
+        "op3.detune": 4, "op3.level": 0.5, "op3.velocity": 0.3, "op3.attack": 1,
+        "op3.decay": 2400, "op3.sustain": 0.1, "op3.release": 300, "op4.coarse": 14,
+        "op4.level": 0.18, "op4.velocity": 0.8, "op4.attack": 1, "op4.decay": 90,
+        "op4.sustain": 0, "op4.release": 100
+      }
+    },
+    {
+      "id": "bass",
+      "type": "atomik.fm-synth",
+      "params": {
+        "algorithm": 0, "feedback": 0.3, "play.mode": 1, "play.glide": 30,
+        "op1.level": 0.9, "op1.velocity": 0.3, "op1.attack": 1, "op1.decay": 600,
+        "op1.sustain": 0.8, "op1.release": 120, "op2.coarse": 1, "op2.level": 0.5,
+        "op2.velocity": 0.6, "op2.attack": 1, "op2.decay": 300, "op2.sustain": 0.3,
+        "op2.release": 120, "op3.coarse": 2, "op3.level": 0.3, "op3.velocity": 0.5,
+        "op3.attack": 1, "op3.decay": 200, "op3.sustain": 0.1, "op3.release": 100,
+        "op4.coarse": 1, "op4.level": 0.4, "op4.velocity": 0.4, "op4.attack": 1,
+        "op4.decay": 150, "op4.sustain": 0.2, "op4.release": 100
+      }
+    },
+    {
+      "id": "mixer",
+      "type": "atomik.line-mixer",
+      "params": { "ch1.level": -2, "ch2.level": -3, "ch3.level": -8, "ch3.pan": 0.25, "master.level": 0 }
+    },
+    {
+      "id": "bell",
+      "type": "atomik.fm-synth",
+      "params": {
+        "algorithm": 1, "spread": 0.5, "op1.level": 0.7, "op1.velocity": 0.3,
+        "op1.attack": 1, "op1.decay": 4500, "op1.sustain": 0, "op1.release": 2500,
+        "op2.coarse": 3, "op2.fine": 0.5, "op2.level": 0.55, "op2.velocity": 0.6,
+        "op2.attack": 1, "op2.decay": 2500, "op2.sustain": 0, "op2.release": 1500,
+        "op3.coarse": 2, "op3.fine": 0.76, "op3.level": 0.45, "op3.velocity": 0.3,
+        "op3.attack": 1, "op3.decay": 3500, "op3.sustain": 0, "op3.release": 2000,
+        "op4.coarse": 5, "op4.fine": 0.4, "op4.level": 0.35, "op4.velocity": 0.5,
+        "op4.attack": 1, "op4.decay": 1200, "op4.sustain": 0, "op4.release": 800
+      }
+    }
+  ],
+  "cables": [
+    { "from": "keys:out_l", "to": "mixer:ch1_in_l" },
+    { "from": "keys:out_r", "to": "mixer:ch1_in_r" },
+    { "from": "bass:out_l", "to": "mixer:ch2_in_l" },
+    { "from": "bass:out_r", "to": "mixer:ch2_in_r" },
+    { "from": "bell:out_l", "to": "mixer:ch3_in_l" },
+    { "from": "bell:out_r", "to": "mixer:ch3_in_r" },
+    { "from": "mixer:master_l", "to": "interface:out_1" },
+    { "from": "mixer:master_r", "to": "interface:out_2" }
+  ],
+  "notes": [
+    { "device": "keys", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 57, "velocity": 0.6 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 60, "velocity": 0.7 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 64, "velocity": 0.8 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 67, "velocity": 0.9 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 53, "velocity": 0.6 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 57, "velocity": 0.7 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 60, "velocity": 0.8 },
+    { "device": "keys", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 64, "velocity": 0.9 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 0, "length_beats": 1.5, "key": 33, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 1.5, "length_beats": 1, "key": 33, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 2, "length_beats": 1, "key": 40, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 3, "length_beats": 1, "key": 36, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 4, "length_beats": 1.5, "key": 29, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 5.5, "length_beats": 1, "key": 29, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 6, "length_beats": 1, "key": 36, "velocity": 0.85 },
+    { "device": "bass", "socket": "notes_in", "at_beats": 7, "length_beats": 1, "key": 33, "velocity": 0.85 },
+    { "device": "bell", "socket": "notes_in", "at_beats": 0.5, "length_beats": 1.5, "key": 81, "velocity": 0.7 },
+    { "device": "bell", "socket": "notes_in", "at_beats": 2.5, "length_beats": 1.5, "key": 84, "velocity": 0.7 },
+    { "device": "bell", "socket": "notes_in", "at_beats": 4.5, "length_beats": 1.5, "key": 81, "velocity": 0.7 },
+    { "device": "bell", "socket": "notes_in", "at_beats": 6.5, "length_beats": 1.5, "key": 77, "velocity": 0.7 }
+  ]
+}

@@ -1,4 +1,4 @@
-//! Atomik Rack built-in devices: [`poly_synth`], [`wavetable_synth`], [`sampler`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
+//! Atomik Rack built-in devices: [`poly_synth`], [`wavetable_synth`], [`fm_synth`], [`sampler`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
 //! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
@@ -25,6 +25,7 @@ pub mod distortion;
 pub mod drum_generator;
 pub mod drum_machine;
 pub mod eq;
+pub mod fm_synth;
 pub mod guitar_amp;
 pub mod key_chord;
 pub mod line_mixer;
@@ -107,6 +108,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(audio_track::factory())?;
     registry.register(poly_synth::factory())?;
     registry.register(wavetable_synth::factory())?;
+    registry.register(fm_synth::factory())?;
     registry.register_with_samples(sampler::factory())?;
     registry.register_with_samples(drum_machine::factory())?;
     registry.register_with_samples(loop_slicer::factory())?;
@@ -148,7 +150,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 33] = [
+    const TYPE_IDS: [&str; 34] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -161,6 +163,7 @@ mod tests {
         "atomik.drum-generator",
         "atomik.drum-machine",
         "atomik.eq",
+        "atomik.fm-synth",
         "atomik.guitar-amp",
         "atomik.key-chord",
         "atomik.line-mixer",
