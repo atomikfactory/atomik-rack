@@ -292,7 +292,7 @@ fn a_mapping_never_changes_a_bounce_and_the_file_keeps_it() {
     lines.drain(start..=end);
     let v27 = lines
         .join("\n")
-        .replace("\"version\": 33", "\"version\": 27");
+        .replace("\"version\": 34", "\"version\": 27");
     let v27_path = tmp("maps-v27.atomik");
     std::fs::write(&v27_path, v27).unwrap();
     ok(&mut s, "session_open", json!({"path": v27_path}));

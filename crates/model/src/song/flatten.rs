@@ -271,12 +271,14 @@ fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curv
 }
 
 /// The tracks that play: unmuted tracks, and if any track is soloed, only the soloed ones
-/// among them. Display order is kept.
+/// among them, and the automation tracks (a solo is about what is heard from notes and audio:
+/// it never stops the fader or effect automation, only the track's own mute does). Display
+/// order is kept.
 pub fn effective_tracks(song: &Song) -> Vec<&Track> {
     let any_solo = song.tracks.iter().any(|t| t.solo);
     song.tracks
         .iter()
-        .filter(|t| !t.muted && (!any_solo || t.solo))
+        .filter(|t| !t.muted && (!any_solo || t.solo || t.is_automation_only()))
         .collect()
 }
 

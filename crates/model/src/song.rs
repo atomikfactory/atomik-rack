@@ -1,7 +1,9 @@
 //! Song data and song commands.
 //!
 //! All times are in ticks ([`atomik_core::PPQ`] per quarter note). The song references rack
-//! devices by [`DeviceKey`]; a track belongs to exactly one device with a Notes input.
+//! devices by [`DeviceKey`]; a track belongs to exactly one device: one with a Notes input (a note
+//! track), an `atomik.audio-track` (an audio track) or any other device, a console channel or an
+//! effect (an automation track, see [`Track::is_automation_only`]).
 //!
 //! Public types are a stable contract: changes need review.
 
@@ -418,7 +420,8 @@ pub struct Track {
     /// [`crate::freeze`]). The clips, the instrument and the effects stay as they were.
     pub frozen: Option<Frozen>,
     /// Lanes: the note lanes first (at least one, up to [`MAX_NOTE_LANES`]; lane 0 is "the"
-    /// note lane), then the automation lanes; an audio track has its audio lane alone. All the
+    /// note lane), then the automation lanes; an audio track has its audio lane alone, and an
+    /// automation track (a device without a Notes input) has automation lanes alone. All the
     /// note lanes play the track's device.
     pub lanes: Vec<Lane>,
 }
@@ -696,7 +699,9 @@ pub enum SongCommand {
         /// Show the rows.
         open: bool,
     },
-    /// Add an automation lane for a parameter (creates the track if needed).
+    /// Add an automation lane for a parameter (creates the track if needed: a note track for a
+    /// device with a Notes input, an automation track for any other device, a channel strip or an
+    /// effect; an audio track takes none). Internal params and params a macro drives are refused.
     AddAutomationLane {
         /// Device.
         device: DeviceKey,
@@ -1322,6 +1327,18 @@ impl Track {
     /// device key; [`crate::RackDoc::is_audio_track`] checks the device type too.)
     pub fn is_audio(&self) -> bool {
         self.lanes.first().is_some_and(|l| l.kind.is_audio())
+    }
+
+    /// True for an automation track: it holds automation lanes alone (no note lane, no audio
+    /// lane). It is the track of a device without a Notes input, a console channel or an
+    /// effect, made by [`SongCommand::AddAutomationLane`]; it can be muted (its automation
+    /// stops), never soloed, armed or frozen, and no solo elsewhere silences it.
+    pub fn is_automation_only(&self) -> bool {
+        !self.lanes.is_empty()
+            && self
+                .lanes
+                .iter()
+                .all(|l| matches!(l.kind, LaneKind::Automation(_)))
     }
 
     /// The track's note lanes in order (lane `i` of the iterator is `lanes[i]`).

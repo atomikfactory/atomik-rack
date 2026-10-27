@@ -195,7 +195,7 @@ fn add_automation_lane_creates_track_when_needed() {
     d.undo(&reg).unwrap();
     assert_eq!(d.doc(), &before);
     d.redo(&reg).unwrap();
-    // Duplicate lane, unknown param, device without notes input, unknown device.
+    // Duplicate lane, unknown param, unknown device.
     assert!(matches!(rejects(&mut d, cmd, &reg), ModelError::BadSong(_)));
     let unknown = sc(SongCommand::AddAutomationLane {
         device: key("lead"),
@@ -205,14 +205,6 @@ fn add_automation_lane_creates_track_when_needed() {
         rejects(&mut d, unknown, &reg),
         ModelError::UnknownKey("filter.cutof".into())
     );
-    let delay = sc(SongCommand::AddAutomationLane {
-        device: key("delay"),
-        param: "mix".into(),
-    });
-    assert!(matches!(
-        rejects(&mut d, delay, &reg),
-        ModelError::BadSong(_)
-    ));
     let nodev = sc(SongCommand::AddAutomationLane {
         device: key("zzz"),
         param: "mix".into(),

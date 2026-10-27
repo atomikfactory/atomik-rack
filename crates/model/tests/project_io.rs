@@ -237,7 +237,7 @@ fn save_writes_project_header_and_song() {
     let doc = demo(&reg);
     let v: Value = serde_json::from_str(&save_project(&doc)).unwrap();
     assert_eq!(v["format"], "atomik-project");
-    assert_eq!(v["version"], 33);
+    assert_eq!(v["version"], 34);
     assert_eq!(v["input_channels"], 0);
     assert_eq!(v["assets"], json!({}));
     assert_eq!(v["tempo_bpm"], 120);
@@ -361,7 +361,7 @@ fn load_rejects_bad_projects_with_paths() {
             "atomik-project",
         ),
         (
-            Box::new(|v| v["version"] = json!(34)),
+            Box::new(|v| v["version"] = json!(35)),
             "version".into(),
             "unsupported version",
         ),
@@ -424,8 +424,8 @@ fn load_rejects_bad_projects_with_paths() {
         ),
         (
             Box::new(|v| v["song"]["tracks"][0]["device"] = json!("echo")),
-            format!("{t0}.device"),
-            "Notes input",
+            format!("{t0}.lanes[0].kind"),
+            "automation track",
         ),
         (
             Box::new(|v| v["song"]["tracks"][1]["device"] = json!("bass")),
@@ -919,7 +919,7 @@ fn ac_x6_v1_projects_migrate_losslessly() {
     assert_console_invariants(&doc);
     // Saved as version 6, it reads back identically.
     let v3 = save_project(&doc);
-    assert!(v3.contains("\"version\": 33,"));
+    assert!(v3.contains("\"version\": 34,"));
     assert_eq!(load_project(&v3, &reg).unwrap(), doc);
 }
 
@@ -985,7 +985,7 @@ fn tempo_ramps_and_meter_changes_round_trip_canonically() {
     let doc = with_maps(&reg);
     let text = save_project(&doc);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 33);
+    assert_eq!(v["version"], 34);
     assert_eq!(
         v["song"]["tempo"],
         json!([

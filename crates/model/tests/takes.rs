@@ -645,9 +645,9 @@ fn take_groups_round_trip_byte_for_byte_and_the_version_is_twenty_two() {
     let reg = registry();
     let d = mixed_doc(&reg);
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 33);
+    assert_eq!(PROJECT_VERSION, 34);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 33);
+    assert_eq!(v["version"], 34);
     assert!(text.contains("\"take_groups\""));
     let loaded = load_project(&text, &reg).unwrap();
     assert_eq!(save_project(&loaded), text);
@@ -714,12 +714,12 @@ fn a_version_19_file_loads_without_groups_and_refuses_the_field() {
     d.apply(add_clip("lead", 0, take(0, BAR, 60)), &reg)
         .unwrap();
     let text = save_project(d.doc());
-    let v19 = text.replace("\"version\": 33", "\"version\": 19");
+    let v19 = text.replace("\"version\": 34", "\"version\": 19");
     let loaded = load_project(&v19, &reg).unwrap();
     assert_eq!(loaded.song.take_groups().count(), 0);
-    assert!(save_project(&loaded).contains("\"version\": 33"));
+    assert!(save_project(&loaded).contains("\"version\": 34"));
     // The field is unknown before version 20.
-    let with = save_project(mixed_doc(&reg).doc()).replace("\"version\": 33", "\"version\": 19");
+    let with = save_project(mixed_doc(&reg).doc()).replace("\"version\": 34", "\"version\": 19");
     let e = load_project(&with, &reg).unwrap_err().to_string();
     assert!(e.contains("take_groups"), "{e}");
 }
