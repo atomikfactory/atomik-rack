@@ -46,6 +46,25 @@ fn layered(r: &Registry) -> Document {
     Document::new(d.doc().clone())
 }
 
+// ---------------------------------------------------------------- rename
+
+#[test]
+fn rename_reaches_a_device_inside_a_container_and_a_blank_name_restores_its_default() {
+    let r = reg();
+    let mut d = layered(&r);
+    let rename = |name: &str| Command::Rename {
+        key: key("c/pad"),
+        name: name.into(),
+    };
+    d.apply(rename("Strings"), &r).unwrap();
+    assert_eq!(inner(&d, "c").devices[1].name, "Strings");
+    // `synth` keeps the type's name, so the default of `pad` is the next free one.
+    d.apply(rename(""), &r).unwrap();
+    assert_eq!(inner(&d, "c").devices[1].name, "Poly Synth 2");
+    d.undo(&r).unwrap();
+    assert_eq!(inner(&d, "c").devices[1].name, "Strings");
+}
+
 // ---------------------------------------------------------------- splits
 
 #[test]

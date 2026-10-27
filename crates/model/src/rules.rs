@@ -619,6 +619,26 @@ pub(crate) fn unique_name(doc: &RackDoc, name: &str) -> String {
     unique_name_in(&doc.devices, name)
 }
 
+/// The name a device of `key` gets when its name is cleared: its type's name, made unique
+/// among the other devices of its scope (the top level, or the inside of its container).
+pub(crate) fn default_name(
+    doc: &RackDoc,
+    registry: &Registry,
+    key: &DeviceKey,
+    device: &RackDevice,
+) -> Result<String, ModelError> {
+    let desc = descriptor(registry, &device.type_id)?;
+    let (container, local) = crate::container::split_path(key);
+    let siblings: Vec<RackDevice> = doc
+        .scope_devices(container.as_ref())
+        .unwrap_or_default()
+        .iter()
+        .filter(|d| d.key != local)
+        .cloned()
+        .collect();
+    Ok(unique_name_in(&siblings, desc.name))
+}
+
 /// [`unique_name`] among the devices of one scope.
 pub(crate) fn unique_name_in(devices: &[RackDevice], name: &str) -> String {
     let used = |n: &str| devices.iter().any(|d| d.name == n);

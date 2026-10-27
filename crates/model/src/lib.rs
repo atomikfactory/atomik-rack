@@ -360,7 +360,8 @@ pub enum Command {
         /// New state.
         folded: bool,
     },
-    /// Rename a device (names need not be unique).
+    /// Rename a device (names need not be unique). The name is trimmed; a blank one restores
+    /// the default name of the device's type, made unique among its siblings.
     Rename {
         /// Device.
         key: DeviceKey,
@@ -1312,11 +1313,20 @@ impl Document {
                 console_bus::rename_bus(&mut p, &key, &name)?;
                 p.finish()
             }
-            Command::Rename { key, name } => Edit::Name {
-                old: rules::resolve(doc, &key)?.name.clone(),
-                new: name,
-                key,
-            },
+            Command::Rename { key, name } => {
+                let device = rules::resolve(doc, &key)?;
+                let name = name.trim();
+                let new = if name.is_empty() {
+                    rules::default_name(doc, registry, &key, device)?
+                } else {
+                    name.to_owned()
+                };
+                Edit::Name {
+                    old: device.name.clone(),
+                    new,
+                    key,
+                }
+            }
             Command::SetColor { key, color } => Edit::Color {
                 old: rules::resolve(doc, &key)?.color,
                 new: color,
