@@ -547,10 +547,15 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             item("sequencer.tempo_delete_point", e.tempo_can_delete),
         ],
         ContextTarget::TempoLane => vec![item("sequencer.tempo_add_point", true)],
-        ContextTarget::RulerMeter => METERS
-            .iter()
-            .map(|(arg, insert, _)| meter_item("sequencer.meter_insert", arg, insert))
-            .collect(),
+        ContextTarget::RulerMeter => {
+            let mut v = vec![item("sequencer.marker_end_here", true), Spec::Separator];
+            v.extend(
+                METERS
+                    .iter()
+                    .map(|(arg, insert, _)| meter_item("sequencer.meter_insert", arg, insert)),
+            );
+            v
+        }
         ContextTarget::MeterChange => {
             let mut v: Vec<Spec> = METERS
                 .iter()

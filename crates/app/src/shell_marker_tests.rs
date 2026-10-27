@@ -87,6 +87,7 @@ fn the_strip_is_on_and_the_list_off_by_default_and_the_commands_toggle_and_save_
         ),
         ("transport.prev_marker", AppCommand::PreviousMarker),
         ("transport.next_marker", AppCommand::NextMarker),
+        ("transport.set_end_marker", AppCommand::SetEndMarker),
     ] {
         assert_eq!(AppCommand::from_command(id, None), Some(command), "{id}");
         assert_eq!(command.command_id(), Some((id, None)));
@@ -228,6 +229,17 @@ fn the_menu_commands_work_from_any_focus() {
 }
 
 #[test]
+fn the_end_marker_menu_command_sets_the_end_at_the_playhead_and_undoes() {
+    let mut s = shell();
+    let before = s.core().doc().song.end_tick();
+    locate(&mut s, 3 * BAR + 7);
+    s.execute(AppCommand::SetEndMarker);
+    assert_eq!(s.core().doc().song.end_tick(), 3 * BAR + 7);
+    s.core_mut().undo();
+    assert_eq!(s.core().doc().song.end_tick(), before);
+}
+
+#[test]
 fn the_menus_list_the_marker_items() {
     let s = shell();
     let menus = menus(&s.menu_state(), s.keymap());
@@ -244,6 +256,7 @@ fn the_menus_list_the_marker_items() {
     for (label, shortcut) in [
         ("Add Marker", Some("Shift+M")),
         ("Add Range Marker from Loop", None),
+        ("Set End Marker at Playhead", None),
         ("Previous Marker", Some(",")),
         ("Next Marker", Some(".")),
     ] {

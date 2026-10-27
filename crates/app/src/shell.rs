@@ -3898,6 +3898,7 @@ impl<B: AudioBackend> Shell<B> {
             // a menu item and a key do the same thing wherever the focus is.
             AppCommand::AddMarker
             | AppCommand::AddRangeFromLoop
+            | AppCommand::SetEndMarker
             | AppCommand::PreviousMarker
             | AppCommand::NextMarker => {
                 if let Some((id, arg)) = command.command_id()
