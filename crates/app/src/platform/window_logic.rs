@@ -159,10 +159,26 @@ pub(super) fn changed<T: PartialEq + Clone>(old: &T, new: &T) -> Option<T> {
     (old != new).then(|| new.clone())
 }
 
+/// Whether a surface presents in step with its monitor (vsync). With several windows the app
+/// paints them one after the other on one thread, so a presentation that waits for the next
+/// vertical blank would stall every other window for a whole refresh of this one's monitor, and
+/// the windows on monitors with different rates would drag each other down. They then present
+/// without waiting and the app's own tick sets the pace.
+pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
+    open_windows <= 1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::windows::{ZOrder, to_desktop, window_under};
+
+    #[test]
+    fn only_a_lone_window_waits_for_the_vertical_blank() {
+        assert!(presents_with_vsync(1));
+        assert!(!presents_with_vsync(2));
+        assert!(!presents_with_vsync(3));
+    }
 
     #[test]
     fn monitor_info_physical_keeps_pixels_and_scale() {

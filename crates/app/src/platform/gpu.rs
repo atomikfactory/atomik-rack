@@ -105,6 +105,18 @@ impl GpuContext {
         Ok(WindowSurface { surface })
     }
 
+    /// Switches `surface` between presenting in step with the monitor and presenting at once.
+    pub fn set_vsync(&mut self, surface: &mut WindowSurface, vsync: bool) {
+        let mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+        if surface.surface.config.present_mode != mode {
+            self.context.set_present_mode(&mut surface.surface, mode);
+        }
+    }
+
     /// The renderer of device `dev_id`, built on first use.
     fn renderer_for(&mut self, dev_id: usize) -> Result<&mut Renderer, String> {
         if self.renderers.len() <= dev_id {

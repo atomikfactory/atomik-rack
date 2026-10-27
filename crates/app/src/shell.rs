@@ -4388,6 +4388,17 @@ impl<B: AudioBackend> Shell<B> {
         self.needs_repaint_in(WindowKind::Main)
     }
 
+    /// The open windows that have something to paint, main window first, then the rack and the
+    /// console: always in that order, whichever window has the focus. The platform paints all
+    /// of them each tick, so a window that animates is never starved by another.
+    pub fn windows_to_paint(&self) -> Vec<WindowKind> {
+        self.wins
+            .keys()
+            .copied()
+            .filter(|&w| self.needs_repaint_in(w))
+            .collect()
+    }
+
     /// Whether anything in `window` must be repainted (`false` for a window that is not open).
     /// A change anywhere marks every open window; painting one window clears only its own mark,
     /// and a view that animates (the console meters) keeps only its own window painting.
