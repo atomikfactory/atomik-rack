@@ -2592,8 +2592,15 @@ impl PianoRollView {
                 r.y1 - 0.5,
             );
             let selected = self.selection.contains(&i);
-            let base = if selected { st.selection } else { self.accent };
-            let fill = mix(mix(base, st.lane, 0.45), base, n.velocity);
+            // The fill is the velocity's colour; a selected note is lifted toward the text
+            // colour (and gets the light outline), so a selection reads at any velocity.
+            let base = st.velocity_color(n.velocity);
+            let base = if selected {
+                mix(base, st.base.text, 0.4)
+            } else {
+                base
+            };
+            let fill = base;
             let rr = RoundedRect::from_rect(Rect::new(r.x0, r.y0, r.x1.max(r.x0 + 2.0), r.y1), 2.0);
             // A muted note is hollow: a faint fill inside a clear outline in the note colour,
             // which velocity shading (a solid fill) never produces.
@@ -2796,7 +2803,12 @@ impl PianoRollView {
                 continue;
             }
             let selected = self.selection.contains(&i);
-            let col = if selected { st.selection } else { self.accent };
+            let col = st.velocity_color(n.velocity);
+            let col = if selected {
+                mix(col, st.base.text, 0.4)
+            } else {
+                col
+            };
             let y = top + (1.0 - f64::from(n.velocity)) * h;
             let bottom = top + h;
             let (bar, cap) = if n.muted { (0.25, 0.4) } else { (0.85, 1.0) };
