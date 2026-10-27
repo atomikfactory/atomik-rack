@@ -212,7 +212,7 @@ static PARAMS: [ParamDescriptor; N_PARAMS] = [
     knob(P_DEPTH, "depth", "Depth", 0.0, 10.0, 3.0, Unit::None),
     knob(P_SAG, "sag", "Sag", 0.0, 10.0, 3.0, Unit::None),
     knob(P_MASTER, "master", "Master", 0.0, 10.0, 6.0, Unit::None),
-    knob(P_LEVEL, "level", "Level", -24.0, 12.0, -3.0, Unit::Db),
+    knob(P_LEVEL, "level", "Level", -24.0, 12.0, -1.5, Unit::Db),
     param(
         P_CAB,
         "cab",
