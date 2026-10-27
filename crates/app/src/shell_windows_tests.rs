@@ -882,3 +882,69 @@ fn a_window_whose_frame_was_not_presented_is_painted_again() {
     s.repaint_window(WindowKind::Console);
     assert_eq!(s.windows_to_paint(), [WindowKind::Rack]);
 }
+
+#[test]
+fn a_detached_rack_repaints_when_the_automation_moves_a_control() {
+    use atomik_core::PPQ;
+    use atomik_model::{AutomationPoint, Clip, ClipContent, ClipId, Curve, SongCommand};
+    let mut s = shell();
+    s.execute(AppCommand::DetachRack);
+    s.execute(AppCommand::DetachConsole);
+    let a = DeviceKey("a".into());
+    add_synth(&mut s, "a");
+    let bar = 4 * PPQ;
+    for c in [
+        SongCommand::AddTrack { device: a.clone() },
+        SongCommand::AddAutomationLane {
+            device: a.clone(),
+            param: "filter.cutoff".into(),
+        },
+        SongCommand::AddClip {
+            device: a.clone(),
+            lane: 1,
+            clip: Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 4 * bar,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                controllers: Vec::new(),
+                grid: None,
+                content: ClipContent::Automation(
+                    [(0, 300.0), (bar, 3000.0)]
+                        .iter()
+                        .map(|&(tick, value)| AutomationPoint {
+                            tick,
+                            value,
+                            curve: Curve::Linear,
+                        })
+                        .collect(),
+                ),
+            },
+        },
+    ] {
+        s.core_mut().apply_command(Command::Song(c)).unwrap();
+    }
+    let mut dl = atomik_ui::DisplayList::new();
+    for w in [WindowKind::Main, WindowKind::Rack, WindowKind::Console] {
+        s.paint_in(w, &mut dl);
+    }
+    let shown = |s: &Shell<NullBackend>| s.core().view().shown_value(&a, "filter.cutoff").unwrap();
+    let before = shown(&s);
+    s.core_mut()
+        .transport_action(atomik_ui::TransportAction::Locate(bar / 2));
+    s.frame();
+    assert!((shown(&s) - 1650.0).abs() < 0.5, "{}", shown(&s));
+    assert_ne!(shown(&s), before);
+    assert!(
+        s.needs_repaint_in(WindowKind::Rack),
+        "the detached rack has a changed control to paint"
+    );
+    assert!(s.windows_to_paint().contains(&WindowKind::Rack));
+    s.paint_in(WindowKind::Rack, &mut dl);
+    // The same position again: nothing to paint in the rack.
+    s.frame();
+    assert!(!s.needs_repaint_in(WindowKind::Rack));
+}
