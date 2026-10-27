@@ -290,6 +290,7 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
         arp: None,
         key_chord: None,
         modsrc: None,
+        wavetable: None,
         container: None,
         plugin: None,
         front,

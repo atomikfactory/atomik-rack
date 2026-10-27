@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships twenty-nine original devices: the poly synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships thirty original devices: the poly synth, the wavetable synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -89,6 +89,110 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
   - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
   - *Pan:* per sample, the mono sum is balanced by `pan_cv_trim`·CV after the limiter: unity on both sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
 - **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device instance, so renders are reproducible.
+
+---
+
+## Wavetable Synth: `atomik.wavetable-synth` (Instrument)
+
+A wavetable synthesizer with up to 16 voices. Each voice has two wavetable oscillators (each reads one of twelve factory tables at a frame position you can morph), a sub sine and noise, up to seven unison copies of each oscillator spread across the stereo field, a stereo pair of 12 dB/oct state-variable filters, an amp envelope and a mod envelope. One global LFO and the mod envelope can move both frame positions, the cutoff and the pitch. Source: [crates/devices/src/wavetable_synth.rs](../crates/devices/src/wavetable_synth.rs); the tables are in [crates/dsp/src/wavetable.rs](../crates/dsp/src/wavetable.rs).
+
+### Tables
+
+Every table is a row of 16 frames; `position` 0 is the first frame and 1 the last, and between two frames the output is their linear blend, so a sweep of the position is continuous. The tables are generated in code (nothing is read from a file) and are band-limited: each frame is stored once per octave of bandwidth (1023, 512, 256, ... 1 harmonics), and the oscillator reads the richest level whose top harmonic stays below Nyquist for its highest frequency (the pitch with its modulation, plus the detune of the widest unison copy), so the output does not alias. Each frame is scaled to a peak of 1.
+
+| Index | Name | The 16 frames |
+|---|---|---|
+| 0 | `saw>square` | A falling saw whose even harmonics fade out, ending as a square |
+| 1 | `pulse width` | A pulse narrowing from 50 % to 5 % |
+| 2 | `sine>saw` | A sine that gains one harmonic per frame (1/h amplitudes), ending as a saw |
+| 3 | `sine>hollow` | The same with the odd harmonics only, ending as a square |
+| 4 | `triangle>saw` | A triangle blended into a falling saw |
+| 5 | `vowels` | Three formant peaks sliding through a, e, i, o, u (written for a 110 Hz cycle) |
+| 6 | `harmonic sweep` | A resonant peak climbing from the fundamental to the 32nd harmonic |
+| 7 | `sync sweep` | A saw synced to a master cycle, the slave running 1 to 8 times per cycle |
+| 8 | `fm 1:2` | Phase modulation, modulator at twice the carrier, index 0 to 6 |
+| 9 | `fm 1:3` | Phase modulation, modulator at three times the carrier, index 0 to 5 |
+| 10 | `digital` | Four seeded random spectra (harmonics 1 to 48) crossfaded |
+| 11 | `organ` | Drawbar partials 1, 2, 3, 4, 5, 6 and 8 whose levels swell in turn |
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend and the mod wheel (CC 1) |
+| `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. |
+| `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1. |
+| `position_cv_in` | CV | in | Adds `cv.position_amount` × CV to the frame position of both oscillators (result clamped to 0..1). |
+| `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (result clamped to 0..1). |
+| `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels. |
+| `pan_cv_in` | CV | in | Balances the stereo output by `pan_cv_trim` × CV (−1 = left, +1 = right). |
+| `out_l` | Audio | out | Left output |
+| `out_r` | Audio | out | Right output: identical to `out_l` unless `unison.spread` moves copies apart or `pan_cv_in` is cabled |
+| `lfo_cv_out` | CV | out | The global LFO, bipolar −1..+1, written every sample |
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `osc1.table` | 0–11: the table names above | 0 (`saw>square`) | choice | Linear | yes |
+| `osc1.position` | 0 to 1 | 0 | percent | Linear | no |
+| `osc1.octave` | −3 to 3 | 0 | octaves | Linear | yes |
+| `osc1.semi` | −12 to 12 | 0 | semitones | Linear | yes |
+| `osc1.fine` | −50 to 50 | 0 | cents | Linear | no |
+| `osc1.level` | 0 to 1 | 0.7 | percent | Linear | no |
+| `osc2.table` | 0–11 | 1 (`pulse width`) | choice | Linear | yes |
+| `osc2.position` | 0 to 1 | 0.25 | percent | Linear | no |
+| `osc2.octave` | −3 to 3 | 0 | octaves | Linear | yes |
+| `osc2.semi` | −12 to 12 | 0 | semitones | Linear | yes |
+| `osc2.fine` | −50 to 50 | 7 | cents | Linear | no |
+| `osc2.level` | 0 to 1 | 0.5 | percent | Linear | no |
+| `mix.sub` | 0 to 1 (a sine one octave below the key) | 0 | percent | Linear | no |
+| `mix.noise` | 0 to 1 (white noise) | 0 | percent | Linear | no |
+| `unison.voices` | 1 to 7 copies of each oscillator | 1 | none | Linear | yes |
+| `unison.detune` | 0 to 100 (the widest copy, each way) | 20 | cents | Linear | no |
+| `unison.spread` | 0 to 1 (the widest copy, each way) | 0.5 | percent | Linear | no |
+| `filter.mode` | 0–2: LP12, BP12, HP12 | 0 (LP12) | choice | Linear | yes |
+| `filter.cutoff` | 20 to 20 000 | 8000 | Hz | Exp | no |
+| `filter.resonance` | 0 to 1 | 0.2 | percent | Linear | no |
+| `filter.env_amount` | −1 to 1 (±6 octaves) | 0.3 | none | Linear | no |
+| `filter.key_track` | 0 to 1 | 0.5 | percent | Linear | no |
+| `env.amp.attack` | 0.5 to 10 000 | 2 | ms | Exp | no |
+| `env.amp.decay` | 0.5 to 10 000 | 200 | ms | Exp | no |
+| `env.amp.sustain` | 0 to 1 | 0.7 | percent | Linear | no |
+| `env.amp.release` | 0.5 to 10 000 | 300 | ms | Exp | no |
+| `env.mod.attack` | 0.5 to 10 000 | 2 | ms | Exp | no |
+| `env.mod.decay` | 0.5 to 10 000 | 600 | ms | Exp | no |
+| `env.mod.sustain` | 0 to 1 | 0 | percent | Linear | no |
+| `env.mod.release` | 0.5 to 10 000 | 300 | ms | Exp | no |
+| `env.mod.to_pos1` | −1 to 1 (fraction of the table) | 0.3 | none | Linear | no |
+| `env.mod.to_pos2` | −1 to 1 | 0 | none | Linear | no |
+| `env.mod.to_pitch` | −24 to 24 | 0 | semitones | Linear | no |
+| `lfo.wave` | 0–4: sine, triangle, saw, square, sample&hold | 0 (sine) | choice | Linear | yes |
+| `lfo.rate` | 0.05 to 30 | 2 | Hz | Exp | no |
+| `lfo.to_pitch` | 0 to 12 | 0 | semitones | Linear | no |
+| `lfo.to_cutoff` | 0 to 4 | 0 | octaves | Linear | no |
+| `lfo.to_pos1` | −1 to 1 (fraction of the table) | 0 | none | Linear | no |
+| `lfo.to_pos2` | −1 to 1 | 0 | none | Linear | no |
+| `velocity.amp` | 0 to 1 | 0.5 | percent | Linear | no |
+| `cv.cutoff_amount` | 0 to 4 | 2 | octaves | Linear | no |
+| `cv.position_amount` | −1 to 1 | 0.5 | none | Linear | no |
+| `voices` | 1 to 16 | 8 | none | Linear | yes |
+| `master.level` | −60 to 6 (−60 = silent) | −6 | dB | dB | no |
+| `pitch_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+
+### Behaviour (as built)
+
+- **Voices, stealing, velocity and channel messages** are the poly synth's: Idle → Attack → Decay → Sustain → Release → Idle; a same-key note-on retriggers the voice from its current level; with every allowed voice busy the oldest started voice fades out over 2 ms and the new note starts after it; amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)); pitch bend moves every voice by up to ±2 semitones and the mod wheel adds up to one semitone of LFO vibrato; both survive `AllOff` and `reset` clears them.
+- **Frame position** of oscillator *n* = `oscN.position` + `env.mod.to_posN` × mod envelope + `lfo.to_posN` × LFO + `cv.position_amount` × `position_cv_in`, clamped to 0..1. It is evaluated every 16 samples per voice and ramps linearly in between.
+- **Pitch** (semitones) = key + the oscillator's octave, semitone and cents + `env.mod.to_pitch` × mod envelope + LFO × (`lfo.to_pitch` + mod wheel) + bend + `pitch_cv_trim` × 24 × `pitch_cv_in`.
+- **Filter.** Cutoff = `filter.cutoff` × 2^(`env_amount`·6·mod envelope + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV), clamped to 20 Hz … 0.45 × sample rate. There is one filter per channel, so the unison spread survives it.
+- **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV does). Each copy has its own phase: the first starts at phase 0, the others at seeded random phases. The copies are scaled by 1/√n.
+- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly synth's soft limiter (linear up to ±2, saturating towards ±4): the output is always finite and |x| ≤ 4.
+- **Cost and start-up.** The 12 tables are built once per process, the first time a wavetable synth is created (a fraction of a second); every later instance shares them (about 8 MB). `process` allocates nothing. A table change is an ordinary param change; a click may be heard when it happens on a sounding note.
+- **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed and the device instance, so renders are reproducible.
 
 ---
 

@@ -356,6 +356,7 @@ pub mod tree;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;
+pub mod wavetable_panel;
 pub mod widget;
 pub mod zone_edit;
 

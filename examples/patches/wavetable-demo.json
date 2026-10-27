@@ -1,0 +1,40 @@
+{
+  "format": "atomik-patch",
+  "version": 1,
+  "sample_rate": 48000,
+  "tempo_bpm": 100,
+  "seed": 7,
+  "length_beats": 8,
+  "output_channels": 2,
+  "devices": [
+    {
+      "id": "pad",
+      "type": "atomik.wavetable-synth",
+      "params": {
+        "osc1.table": 5, "osc1.position": 0.15, "osc1.level": 0.8,
+        "osc2.table": 6, "osc2.position": 0.3, "osc2.octave": -1, "osc2.fine": 9, "osc2.level": 0.45,
+        "mix.sub": 0.25,
+        "unison.voices": 4, "unison.detune": 18, "unison.spread": 0.8,
+        "filter.cutoff": 5200, "filter.resonance": 0.15, "filter.env_amount": 0.2,
+        "env.amp.attack": 180, "env.amp.release": 900,
+        "env.mod.attack": 600, "env.mod.decay": 2400, "env.mod.sustain": 0.3,
+        "env.mod.to_pos1": 0.6,
+        "lfo.rate": 0.35, "lfo.to_pos2": 0.4, "lfo.to_pitch": 0.15
+      }
+    }
+  ],
+  "cables": [
+    { "from": "pad:out_l", "to": "interface:out_1" },
+    { "from": "pad:out_r", "to": "interface:out_2" }
+  ],
+  "notes": [
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 4, "key": 45, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 4, "key": 52, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 4, "key": 57, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 4, "key": 60, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 4, "key": 41, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 4, "key": 48, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 4, "key": 53, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 4, "key": 57, "velocity": 0.7 }
+  ]
+}
