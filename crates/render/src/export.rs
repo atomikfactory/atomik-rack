@@ -38,11 +38,11 @@ use crate::wav::{SampleFormat, write_wav_file_with};
 use crate::{RenderError, Warning};
 use atomik_audio_file::AudioData;
 use atomik_device_sdk::Registry;
-use atomik_dsp::DitherMode;
 use atomik_model::RackDoc;
 use std::path::{Path, PathBuf};
 
 pub use crate::freeze::{MAX_TAIL_SECONDS, TAIL_FLOOR};
+pub use atomik_dsp::DitherMode;
 
 /// The longest tail a song export keeps by default, in seconds.
 pub const DEFAULT_TAIL_SECONDS: f64 = 10.0;

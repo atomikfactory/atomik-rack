@@ -44,6 +44,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "session_set_param",
     "session_meters",
     "session_bounce",
+    "session_export",
     "session_close",
     "session_window",
     "session_midi_input",

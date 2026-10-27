@@ -62,6 +62,7 @@ fn every_session_tool_needs_an_open_session() {
         ),
         ("session_meters", json!({})),
         ("session_bounce", json!({})),
+        ("session_export", json!({"file": "target/tmp/never.wav"})),
         ("session_library", json!({"action": "save_selection"})),
     ] {
         let r = call(&mut s, tool, args);
@@ -2286,4 +2287,121 @@ fn a_tooltip_shows_after_the_pointer_rests_on_a_button() {
         json!({"action": "leave", "wait": 2.0}),
     );
     assert!(v["tooltip"].is_null(), "{v}");
+}
+
+// ---------------------------------------------------------------- session_export
+
+#[test]
+fn a_session_export_writes_the_song_to_the_end_in_the_chosen_depth() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // The command raises the file dialog, which a headless session reports.
+    let r = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "file.export_song_audio"}),
+    );
+    assert_eq!(r["requests"][0]["request"], "pick_export_audio", "{r}");
+    let reference = tmp("export-reference.wav");
+    ok(&mut s, "session_bounce", json!({"output": reference}));
+    for (format, expected, tolerance) in [
+        (
+            "pcm16",
+            atomik_render::wav::SampleFormat::Pcm16,
+            1.5 / 32_768.0,
+        ),
+        (
+            "pcm24",
+            atomik_render::wav::SampleFormat::Pcm24,
+            0.5 / 8_388_608.0,
+        ),
+    ] {
+        let out = tmp(&format!("export-{format}.wav"));
+        let v = ok(
+            &mut s,
+            "session_export",
+            json!({"file": out, "format": format, "tail": false}),
+        );
+        assert_eq!(v["format"], format);
+        assert_eq!(v["frames"], 16 * 48_000, "{v}");
+        assert_eq!(v["span_frames"], 16 * 48_000);
+        assert_eq!(v["tail_frames"], 0);
+        assert_eq!(v["audio"]["silent"], false);
+        // The same samples as the bounce of the session, to within the quantisation.
+        let a = atomik_render::wav::read_wav_file(Path::new(&out)).unwrap();
+        assert_eq!(a.format, expected);
+        let b = atomik_render::wav::read_wav_file(Path::new(&reference)).unwrap();
+        for (x, y) in a.channels.iter().zip(&b.channels) {
+            let worst = x
+                .iter()
+                .zip(y)
+                .map(|(p, q)| (p - q).abs())
+                .fold(0.0f32, f32::max);
+            assert!(worst <= tolerance + 1e-6, "{format}: {worst}");
+        }
+    }
+}
+
+#[test]
+fn a_session_export_of_the_loop_is_exactly_the_locator_range_at_another_rate() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // The demo loops its eight bars: 16 s.
+    let v = ok(
+        &mut s,
+        "session_export",
+        json!({"file": tmp("export-loop.wav"), "span": "loop", "format": "f32", "sample_rate": 44100}),
+    );
+    assert_eq!(v["span_frames"], 16 * 48_000);
+    assert_eq!(v["tail_frames"], 0);
+    assert_eq!(v["sample_rate"], 44_100);
+    assert_eq!(v["frames"], 16 * 44_100, "{v}");
+    assert_eq!(v["dither"], "none");
+}
+
+#[test]
+fn session_export_validates_its_arguments_and_the_path() {
+    let mut s = server();
+    ok(&mut s, "session_open", json!({}));
+    let out = tmp("export-bad.wav");
+    for (args, needle) in [
+        (json!({}), "missing argument `file`"),
+        (json!({"file": out, "span": "bar"}), "span"),
+        (json!({"file": out, "format": "mp3"}), "format"),
+        (
+            json!({"file": out, "format": "pcm24", "dither": "tpdf"}),
+            "pcm16 only",
+        ),
+        (
+            json!({"file": out, "format": "pcm16", "dither": "fancy"}),
+            "dither",
+        ),
+        (json!({"file": out, "sample_rate": 1000}), "sample_rate"),
+        (json!({"file": out, "tail": "yes"}), "tail"),
+    ] {
+        let r = call(&mut s, "session_export", args);
+        assert!(r.is_error, "{needle}");
+        assert!(
+            r.first_text().contains(needle),
+            "{needle}: {}",
+            r.first_text()
+        );
+    }
+    assert!(!Path::new(&out).exists());
+    let outside = std::env::temp_dir().join("atomik-mcp-never.wav");
+    let r = call(
+        &mut s,
+        "session_export",
+        json!({"file": outside.to_string_lossy()}),
+    );
+    assert!(r.is_error);
+    assert!(r.first_text().contains("outside the allowed folders"));
 }
