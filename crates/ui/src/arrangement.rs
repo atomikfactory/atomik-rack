@@ -55,6 +55,7 @@ mod heights;
 mod help;
 mod lanes;
 mod markers;
+mod meters;
 mod organise;
 mod takes;
 mod tempo;
@@ -66,6 +67,7 @@ pub use heights::{
 };
 pub use lanes::LaneMenu;
 pub use markers::{MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT};
+pub use meters::{MeterSource, TrackLevel, TrackMeterInfo};
 pub use organise::{
     FOLDED_LANE_HEIGHT, FOLDER_ROW_HEIGHT, FolderButton, HEIGHT_LARGE, HEIGHT_SMALL, HeightPreset,
     OrgMenu, TRACK_INDENT,
@@ -285,6 +287,8 @@ enum Hit {
     NoteLaneHeader(usize, usize),
     /// The name in the header of track `i` (a double-click types a new one).
     TrackName(usize),
+    /// The level meter in the header of audio track `i` (a click clears its clip lamp).
+    TrackMeter(usize),
     Header(usize),
     AddTrack(DeviceKey),
     AddAudio,
@@ -625,6 +629,8 @@ pub struct ArrangementView {
     au: audio_edit::AudioUi,
     /// Which take groups are open.
     tk: takes::TakesUi,
+    /// The level meters of the audio track headers.
+    mt: meters::MetersUi,
     /// The view's whole rectangle; `bounds` is what is left of it when the marker list is
     /// docked at the right edge.
     outer: Rect,
@@ -704,6 +710,7 @@ impl ArrangementView {
             og: organise::OrgUi::default(),
             au: audio_edit::AudioUi::default(),
             tk: takes::TakesUi::default(),
+            mt: meters::MetersUi::default(),
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
             audio_headers: Vec::new(),
@@ -1900,6 +1907,9 @@ impl ArrangementView {
                                 return Hit::Button(track, b);
                             }
                         }
+                        if let Some(h) = self.meter_hit(rr, track, pos) {
+                            return h;
+                        }
                         if let Some(h) = self.comment_hit(rr, track, pos) {
                             return h;
                         }
@@ -2320,6 +2330,8 @@ impl ArrangementView {
                 self.folder_down(&hit, pos, button, modifiers, clicks, out);
             }
             Hit::Button(track, b) if primary => self.track_button(track, b, doc, registry, out),
+            Hit::TrackMeter(track) if primary => self.meter_click(track),
+            Hit::TrackMeter(track) => self.header_down(track, button, modifiers, pos, out),
             Hit::LaneButton(track, lane, b) if primary => self.lane_button(track, lane, b, out),
             Hit::NoteLaneHeader(track, lane) => {
                 let secondary = button == PointerButton::Secondary;
@@ -5182,6 +5194,7 @@ impl ArrangementView {
                 hovered(b),
             );
         }
+        self.paint_track_meter(c, hr, track);
         if compact {
             return;
         }

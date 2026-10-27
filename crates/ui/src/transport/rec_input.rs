@@ -102,6 +102,8 @@ pub(super) struct RecInputState {
     levels: BTreeMap<DeviceKey, Level>,
     last_time: Option<f64>,
     drag: Option<GainDrag>,
+    /// Clicks on the meter not yet taken by the app.
+    cleared: Vec<DeviceKey>,
 }
 
 /// Where the section's boxes are.
@@ -170,6 +172,22 @@ impl TransportBar {
             }
         }
         if self.rec_shown() != before {
+            self.repaint = true;
+        }
+    }
+
+    /// The tracks whose meter was clicked since the last call. The app clears the same latch
+    /// in the arrangement header ([`crate::ArrangementView::clear_meter_latch`]).
+    pub fn take_rec_clears(&mut self) -> Vec<DeviceKey> {
+        std::mem::take(&mut self.rec.cleared)
+    }
+
+    /// Clears the clip latch and the hold of `device` (its meter in the arrangement header was
+    /// clicked); nothing is reported back.
+    pub fn clear_rec_latch(&mut self, device: &DeviceKey) {
+        if let Some(l) = self.rec.levels.get_mut(device) {
+            l.latched = false;
+            l.bar = Ballistic::new();
             self.repaint = true;
         }
     }
@@ -298,6 +316,7 @@ impl TransportBar {
                     l.latched = false;
                     l.bar = Ballistic::new();
                 }
+                self.rec.cleared.push(src.device);
                 self.repaint = true;
                 Vec::new()
             }

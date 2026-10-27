@@ -91,6 +91,10 @@ fn drop_hover_matches_golden() {
 fn audio_recordings_are_deterministic() {
     assert_eq!(record_audio_lane().to_json(), record_audio_lane().to_json());
     assert_eq!(record_drop_hover().to_json(), record_drop_hover().to_json());
+    assert_eq!(
+        record_track_meters().to_json(),
+        record_track_meters().to_json()
+    );
 }
 
 // ---------------------------------------------------------------- structure
@@ -306,4 +310,37 @@ fn audio_clips_use_their_own_body_colour() {
         .iter()
         .any(|op| matches!(op, Op::Fill { shape: Geom::RoundedRect(_), brush } if *brush == want));
     assert!(found, "audio body colour not used");
+}
+
+/// The audio track headers with their meters at work: the first track (default height) reads
+/// its input with a clipped left peak, the second (small, one line) its playback.
+fn record_track_meters() -> DisplayList {
+    use atomik_ui::{MeterSource, TrackLevel};
+    let (mut doc, reg) = (audio_doc(), registry());
+    doc.song
+        .track_heights
+        .insert(key("audio-track-2"), atomik_ui::HEIGHT_SMALL);
+    let mut v = audio_arrangement(&doc, &reg);
+    let level = |device: &str, source, peaks| TrackLevel {
+        device: key(device),
+        source,
+        peaks,
+        stereo: true,
+    };
+    v.feed_track_levels(
+        &[
+            level("audio-track", MeterSource::Input, [1.2, 0.25]),
+            level("audio-track-2", MeterSource::Playback, [0.5, 0.1]),
+        ],
+        0.0,
+    );
+    paint(&mut v, &doc)
+}
+
+#[test]
+fn track_meters_match_golden() {
+    check(
+        "audio_track_meters_1x.json",
+        &record_track_meters().to_json(),
+    );
 }

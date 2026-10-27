@@ -67,6 +67,7 @@ impl ArrangementView {
                 let rr = rect_of(track, 0)?;
                 Some(track_button(b, self.track_button_rect(rr, track, b)))
             }
+            Hit::TrackMeter(track) => self.meter_help(rect_of(track, 0)?, track),
             Hit::LaneButton(track, lane, b) => {
                 let rr = rect_of(track, lane)?;
                 let rect = if b == LaneButton::Mute {

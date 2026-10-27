@@ -471,6 +471,12 @@ impl ArrangementView {
         } else {
             TRACK_LIST_WIDTH - 62.0
         };
+        // An audio track's meter sits after the name.
+        let base = if tr.is_audio() {
+            base.min(super::meters::name_base(hr.height() < super::COMPACT_BELOW))
+        } else {
+            base
+        };
         let frozen = if tr.frozen.is_some() { 16.0 } else { 0.0 };
         (base - frozen - self.track_indent(track)).max(16.0)
     }
