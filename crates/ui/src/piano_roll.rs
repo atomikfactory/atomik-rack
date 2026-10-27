@@ -70,6 +70,8 @@ const ZOOM_STEP: f64 = 1.15;
 /// Zoom factor of the zoom commands (H and G).
 const ZOOM_KEY: f64 = 1.25;
 const MERGE_BASE: u64 = 2 << 40;
+/// How long a note stepped onto sounds, in seconds.
+const STEP_AUDITION_SECS: f64 = 0.25;
 const DEFAULT_VELOCITY: f32 = 0.8;
 /// Note length / minimum with snapping off (a sixteenth / a 64th).
 const OFF_LENGTH: i64 = PPQ / 4;
@@ -177,6 +179,15 @@ enum Hit {
     /// The controller lane's body.
     CtlBody,
     None,
+}
+
+/// The note a Left/Right step plays: released after [`STEP_AUDITION_SECS`] (the clock starts at
+/// the first [`PianoRollView::tick`] after the step), at the next step or press, or on close.
+#[derive(Debug, Clone)]
+struct StepNote {
+    device: DeviceKey,
+    key: u8,
+    off_at: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +319,11 @@ pub struct PianoRollView {
     ctl: LaneEditor,
     ctl_sel: Option<usize>,
     next_merge: u64,
+    /// The anchor and the active end (note indices) of the selection built by stepping with
+    /// Shift+Left/Right; only trusted while the selection still has that shape.
+    step_sel: Option<(usize, usize)>,
+    /// The note a step is sounding, until its release.
+    step_note: Option<StepNote>,
     last_length: Option<i64>,
     playhead: i64,
     focused: bool,
@@ -351,6 +367,8 @@ impl PianoRollView {
             ctl: LaneEditor::default(),
             ctl_sel: None,
             next_merge: MERGE_BASE,
+            step_sel: None,
+            step_note: None,
             last_length: None,
             playhead: 0,
             focused: false,
@@ -1296,7 +1314,10 @@ impl PianoRollView {
                 button,
                 modifiers,
                 clicks,
-            } => self.pointer_down(*pos, *button, *modifiers, *clicks, &mut out),
+            } => {
+                self.release_audition_into(&mut out);
+                self.pointer_down(*pos, *button, *modifiers, *clicks, &mut out)
+            }
             UiEvent::PointerUp { .. } => self.pointer_up(&mut out),
             UiEvent::PointerLeave => {
                 self.hover = Hit::None;
@@ -2398,10 +2419,15 @@ impl PianoRollView {
     }
 
     /// Selects the next (`forward`) or previous note in time order (ties by pitch, low to
-    /// high), or with `extend` adds it to the selection. With nothing selected the next note
-    /// is the first at or after the playhead (the first one if there is none) and the previous
-    /// the last before it. At either end nothing changes (no wrap). The view scrolls to keep
-    /// the note in sight. Declined when the clip has no notes.
+    /// high) and plays it. With `extend` the selection grows or shrinks like a text selection:
+    /// it has an anchor (where stepping started, or the earliest note of a selection made
+    /// otherwise) and an active end (the one stepping moves, the latest note for a selection
+    /// made otherwise). A step away from the anchor adds the next note; a step toward it drops
+    /// the active note, and past the anchor the selection grows on the other side. With nothing
+    /// selected the next note is the first at or after the playhead (the first one if there is
+    /// none) and the previous the last before it. At either end nothing changes (no wrap). The
+    /// view scrolls to keep the note in sight; a shrink plays the new active end. Declined when
+    /// the clip has no notes.
     fn step_selection(&mut self, forward: bool, extend: bool) -> CommandOutcome {
         let notes = self.notes();
         if notes.is_empty() {
@@ -2410,50 +2436,145 @@ impl PianoRollView {
         let mut order: Vec<usize> = (0..notes.len()).collect();
         order.sort_by_key(|&i| (notes[i].tick, notes[i].key, i));
         let pos_of = |i: usize| order.iter().position(|&o| o == i);
-        let sel: Vec<usize> = self
+        let sel: BTreeSet<usize> = self
             .selection
             .items()
             .iter()
             .filter_map(|&i| pos_of(i))
             .collect();
-        let target = match (sel.iter().min(), sel.iter().max()) {
-            (Some(&lo), Some(&hi)) => {
-                if forward {
-                    (hi + 1 < order.len()).then_some(hi + 1)
-                } else {
-                    lo.checked_sub(1)
+        let (lo, hi) = (sel.first().copied(), sel.last().copied());
+        let mut out = Vec::new();
+        let Some((lo, hi)) = lo.zip(hi) else {
+            // The playhead outside the clip counts as before every note for the
+            // next one and after every note for the previous one.
+            let at = self.playhead_content();
+            let last = order.len() - 1;
+            let p = if forward {
+                match at {
+                    Some(at) => order.iter().position(|&i| notes[i].tick >= at),
+                    None => Some(0),
                 }
-            }
-            _ => {
-                // The playhead outside the clip counts as before every note for the
-                // next one and after every note for the previous one.
-                let at = self.playhead_content();
-                let last = order.len() - 1;
-                if forward {
-                    match at {
-                        Some(at) => order.iter().position(|&i| notes[i].tick >= at),
-                        None => Some(0),
-                    }
-                    .or(Some(last))
-                } else {
-                    match at {
-                        Some(at) => order.iter().rposition(|&i| notes[i].tick < at),
-                        None => Some(last),
-                    }
-                    .or(Some(0))
+                .unwrap_or(last)
+            } else {
+                match at {
+                    Some(at) => order.iter().rposition(|&i| notes[i].tick < at),
+                    None => Some(last),
                 }
+                .unwrap_or(0)
+            };
+            self.step_to(order[p], order[p], Some(order[p]), &mut out);
+            return CommandOutcome::Handled(out);
+        };
+        if !extend {
+            let p = if forward {
+                (hi + 1 < order.len()).then_some(hi + 1)
+            } else {
+                lo.checked_sub(1)
+            };
+            if let Some(p) = p {
+                self.step_to(order[p], order[p], Some(order[p]), &mut out);
             }
+            return CommandOutcome::Handled(out);
+        }
+        // The anchor and active end of the selection as positions: the remembered ones while
+        // the selection still has their shape, the earliest and latest note otherwise.
+        let kept = self.step_sel.and_then(|(a, h)| pos_of(a).zip(pos_of(h)));
+        let (anchor, active) = match kept {
+            Some((a, h)) if sel.contains(&a) && (if h >= a { h == hi } else { h == lo }) => (a, h),
+            _ => (lo, hi),
         };
-        let Some(i) = target.map(|p| order[p]) else {
-            return CommandOutcome::Handled(Vec::new());
-        };
-        if extend {
-            self.selection.add(i);
+        // The active end is right of the anchor (or on it, when a step to the right extends).
+        let right = active > anchor || (active == anchor && forward);
+        let (new_sel, new_active) = if forward == right {
+            // Away from the anchor: the neighbour joins.
+            let next = if forward {
+                (active + 1 < order.len()).then_some(active + 1)
+            } else {
+                active.checked_sub(1)
+            };
+            let Some(next) = next else {
+                return CommandOutcome::Handled(out);
+            };
+            let mut s = sel.clone();
+            s.insert(next);
+            (s, next)
         } else {
+            // Toward the anchor: the active note leaves, the next selected one is the end.
+            let mut s = sel.clone();
+            s.remove(&active);
+            let end = if right {
+                s.range(..active).next_back().copied()
+            } else {
+                s.range(active + 1..).next().copied()
+            };
+            (s, end.unwrap_or(anchor))
+        };
+        let anchor_note = order[anchor];
+        self.selection.set(new_sel.iter().map(|&p| order[p]));
+        self.step_to(anchor_note, order[new_active], None, &mut out);
+        CommandOutcome::Handled(out)
+    }
+
+    /// Finishes a step: remembers the anchor and active end, scrolls the active note into
+    /// view, selects it alone when `only` and plays it (the sounding step note goes first).
+    fn step_to(
+        &mut self,
+        anchor: usize,
+        active: usize,
+        only: Option<usize>,
+        out: &mut Vec<UiAction>,
+    ) {
+        if let Some(i) = only {
             self.selection.select_only(i);
         }
-        self.reveal_note(i);
-        CommandOutcome::Handled(Vec::new())
+        self.step_sel = Some((anchor, active));
+        self.reveal_note(active);
+        self.release_audition_into(out);
+        let (Some(device), Some(n)) = (self.device.clone(), self.notes().get(active).copied())
+        else {
+            return;
+        };
+        out.push(UiAction::Audition {
+            device: device.clone(),
+            key: n.key,
+            on: true,
+        });
+        self.step_note = Some(StepNote {
+            device,
+            key: n.key,
+            off_at: None,
+        });
+    }
+
+    /// Releases the note a step is sounding, at once. The host calls it before the roll closes
+    /// or its clip changes, so no note hangs.
+    pub fn release_audition(&mut self) -> Vec<UiAction> {
+        let mut out = Vec::new();
+        self.release_audition_into(&mut out);
+        out
+    }
+
+    fn release_audition_into(&mut self, out: &mut Vec<UiAction>) {
+        if let Some(s) = self.step_note.take() {
+            out.push(UiAction::Audition {
+                device: s.device,
+                key: s.key,
+                on: false,
+            });
+        }
+    }
+
+    /// Per-frame clock (`now` in seconds, any monotonic clock): releases the note a step is
+    /// sounding once it has sounded for [`STEP_AUDITION_SECS`].
+    pub fn tick(&mut self, now: f64) -> Vec<UiAction> {
+        let Some(s) = &mut self.step_note else {
+            return Vec::new();
+        };
+        let due = *s.off_at.get_or_insert(now + STEP_AUDITION_SECS);
+        if now >= due {
+            return self.release_audition();
+        }
+        Vec::new()
     }
 
     /// Scrolls the view (time and keys) so note `i` is inside the grid.

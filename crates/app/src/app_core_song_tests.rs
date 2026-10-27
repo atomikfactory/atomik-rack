@@ -863,6 +863,52 @@ fn piano_roll_actions_open_and_close_it() {
     assert_eq!(c.piano_roll_clip(), None);
 }
 
+#[test]
+fn a_note_stepped_onto_in_the_piano_roll_sounds_and_never_hangs() {
+    let mut c = with_track();
+    let socket = notes_input(c.registry().get(SYNTH).unwrap().descriptor).unwrap();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60), (480, 64), (960, 67)]),
+        }),
+    );
+    let clip = c.doc().song.tracks[0].lanes[0].clips[0].id;
+    c.handle_action(UiAction::OpenPianoRoll(clip));
+    c.piano_roll_mut().set_selected_notes(&[0]);
+    c.sink_mut().take();
+    let on = |k: u8| SinkCall::LiveNote {
+        target: (id(1), socket),
+        kind: NoteKind::On {
+            key: k,
+            velocity: AUDITION_VELOCITY,
+        },
+    };
+    let off = |k: u8| SinkCall::LiveNote {
+        target: (id(1), socket),
+        kind: NoteKind::Off { key: k },
+    };
+    assert!(
+        c.pane_command(Pane::PianoRoll, "editor.select_next_note", None)
+            .is_some()
+    );
+    assert_eq!(c.sink_mut().take(), [on(64)]);
+    // The clock releases it after a moment.
+    c.piano_roll_tick(1.0);
+    assert!(c.sink_mut().take().is_empty());
+    c.piano_roll_tick(1.5);
+    assert_eq!(c.sink_mut().take(), [off(64)]);
+    // Closing the roll mid-note releases it.
+    c.pane_command(Pane::PianoRoll, "editor.select_next_note", None);
+    c.sink_mut().take();
+    c.handle_action(UiAction::ClosePianoRoll);
+    assert_eq!(c.sink_mut().take(), [off(67)]);
+    c.piano_roll_tick(9.0);
+    assert!(c.sink_mut().take().is_empty());
+}
+
 // ------------------------------------------------------------------ files
 
 fn demo_project() -> &'static str {
