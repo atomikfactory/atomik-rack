@@ -126,6 +126,10 @@ pub enum AppCommand {
     AddRangeFromLoop,
     /// Transport > Set End Marker at Playhead: the song End moves to the playhead.
     SetEndMarker,
+    /// Transport > Set Left Locator at Playhead: the loop starts at the playhead.
+    SetLeftLocator,
+    /// Transport > Set Right Locator at Playhead: the loop ends at the playhead.
+    SetRightLocator,
     /// Transport > Previous Marker: the playhead goes to the marker before it.
     PreviousMarker,
     /// Transport > Next Marker: the playhead goes to the marker after it.
@@ -389,6 +393,8 @@ impl AppCommand {
             AppCommand::AddMarker => ("transport.add_marker", None),
             AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
             AppCommand::SetEndMarker => ("transport.set_end_marker", None),
+            AppCommand::SetLeftLocator => ("transport.set_left_locator", None),
+            AppCommand::SetRightLocator => ("transport.set_right_locator", None),
             AppCommand::PreviousMarker => ("transport.prev_marker", None),
             AppCommand::NextMarker => ("transport.next_marker", None),
             AppCommand::ToggleConsole => ("view.toggle_console", None),
@@ -562,6 +568,8 @@ impl AppCommand {
             ("transport.add_marker", None) => AppCommand::AddMarker,
             ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
             ("transport.set_end_marker", None) => AppCommand::SetEndMarker,
+            ("transport.set_left_locator", None) => AppCommand::SetLeftLocator,
+            ("transport.set_right_locator", None) => AppCommand::SetRightLocator,
             ("transport.prev_marker", None) => AppCommand::PreviousMarker,
             ("transport.next_marker", None) => AppCommand::NextMarker,
             ("view.toggle_console", None) => AppCommand::ToggleConsole,
@@ -1226,6 +1234,8 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 item("Add Marker", AppCommand::AddMarker),
                 item("Add Range Marker from Loop", AppCommand::AddRangeFromLoop),
                 item("Set End Marker at Playhead", AppCommand::SetEndMarker),
+                item("Set Left Locator at Playhead", AppCommand::SetLeftLocator),
+                item("Set Right Locator at Playhead", AppCommand::SetRightLocator),
                 item("Previous Marker", AppCommand::PreviousMarker),
                 item("Next Marker", AppCommand::NextMarker),
                 MenuEntry::Separator,
@@ -1756,6 +1766,8 @@ mod tests {
             AppCommand::AddMarker,
             AppCommand::AddRangeFromLoop,
             AppCommand::SetEndMarker,
+            AppCommand::SetLeftLocator,
+            AppCommand::SetRightLocator,
             AppCommand::PreviousMarker,
             AppCommand::NextMarker,
             AppCommand::ToggleConsole,
