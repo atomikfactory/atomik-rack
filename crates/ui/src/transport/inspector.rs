@@ -523,7 +523,7 @@ impl TransportBar {
             return out;
         }
         let x0 = self.lcd_rects()[3].x1 + LEAD;
-        let limit = self.bounds.x1 - TAIL;
+        let limit = self.bounds.x1 - TAIL - self.rec_reserved();
         let y0 = self.bounds.center().y - BOX_H / 2.0;
         let all: f64 = SLOTS.iter().map(|s| s.width() + GAP).sum();
         let name_w = 118.0;

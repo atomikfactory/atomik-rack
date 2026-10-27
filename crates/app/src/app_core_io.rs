@@ -32,6 +32,8 @@ pub(super) struct IoMeters {
     taps: Vec<IoTap>,
     /// Per socket (inputs, then outputs), the indices into `taps` that feed it.
     sockets: Vec<Vec<usize>>,
+    /// How many of the sockets are inputs.
+    inputs: usize,
     /// This frame's peak per tap.
     reads: Vec<f32>,
     /// This frame's peak per socket.
@@ -103,6 +105,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             io.sockets.push(taps);
         }
+        io.inputs = n_in;
         io.reads = vec![0.0; io.taps.len()];
         io.peaks = vec![0.0; io.sockets.len()];
         io.shared = Vec::with_capacity(io.taps.len());
@@ -146,6 +149,13 @@ impl<S: EngineSink> AppCore<S> {
         if !io.sockets.is_empty() {
             self.view.set_io_peaks(&io.peaks);
         }
+    }
+
+    /// This frame's peak of each host input channel (index = channel), as
+    /// [`Self::feed_io_meters`] read it. Empty before the routing is planned.
+    pub(super) fn host_input_peaks(&self) -> &[f32] {
+        let io = &self.io_meters;
+        &io.peaks[..io.inputs.min(io.peaks.len())]
     }
 
     /// The console strips' readings; a reading in `shared` (spent by [`Self::feed_io_meters`]

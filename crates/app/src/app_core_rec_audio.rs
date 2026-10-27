@@ -10,6 +10,15 @@
 //!   nothing starts). One engine record tap covers the union of the needed channels (4 s of
 //!   audio), and a writer thread drains it into per-track files in the bundle's `Audio/`
 //!   (the session scratch bundle until the project is saved).
+//! * **Input gain and clip-safe** ([`crate::audio_record`]): each armed track's `rec_gain` and
+//!   `rec_clip_safe` params go to the tap's strip of that track when the take starts and every
+//!   UI frame after ([`AppCore::feed_take_inputs`]), so the file holds the gained (and, with
+//!   clip-safe, limited) signal and a change is heard in the take from the next batch on.
+//! * **Input meter** ([`AppCore::feed_rec_input`]): every frame the transport bar gets the
+//!   post-gain peak of each armed track's input (the host input's peak, which the Audio I/O
+//!   meters already read, times the track's gain; the peak of a scaled signal is the scaled
+//!   peak) and the track it shows: the selected track when it is armed, else the first armed
+//!   audio track. It works while armed and not recording, so the level can be set before a take.
 //! * **While recording** every UI frame notes the first and the latest *playing* transport
 //!   state (as MIDI recording does), which anchor the engine-frame to song-position conversion.
 //! * **Stop or locate** ([`AppCore::finish_take`]): the writer is told where the take ends and
@@ -46,10 +55,14 @@
 
 use super::*;
 use crate::audio_import::{Loaded, ticks_for_frames};
-use crate::audio_record::{TAP_SECONDS, place_lap, plan_tap, track_input};
+use crate::audio_record::{
+    TAP_SECONDS, input_peak, input_settings, place_lap, plan_tap, track_input,
+};
 use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
+use atomik_engine::TapControls;
 use atomik_model::song::AUDIO_TRACK_TYPE;
 use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId};
+use atomik_ui::RecInput;
 use std::sync::mpsc::Sender;
 
 /// Frames after the last transport state seen that a finished take still records (on top of the
@@ -62,6 +75,10 @@ pub(super) const PRIME_WAIT_FRAMES: u32 = 120;
 /// A running audio take.
 pub(super) struct AudioRecording {
     ctl: Sender<Ctl>,
+    /// The tap's strips: input gain and clip-safe of each recorded track.
+    controls: Arc<TapControls>,
+    /// The track of each strip.
+    strips: Vec<DeviceKey>,
     /// The writer thread.
     writer: std::thread::JoinHandle<()>,
     /// Song frame the transport started from, when recording started from a stopped transport.
@@ -128,7 +145,13 @@ impl<S: EngineSink> AppCore<S> {
         let rate = self.doc().sample_rate;
         let plan = plan_tap(&planned);
         let capacity = TAP_SECONDS * rate as usize;
-        let Some(tap) = self.sink.start_audio_record(&plan.channels, capacity) else {
+        let strips: Vec<DeviceKey> = plan.tracks.iter().map(|t| t.device.clone()).collect();
+        let controls = Arc::new(TapControls::new(strips.len()));
+        self.set_strip_controls(&controls, &strips);
+        let Some(tap) =
+            self.sink
+                .start_audio_record(&plan.channels, capacity, Arc::clone(&controls))
+        else {
             self.reject(
                 "audio recording needs a running audio engine (audio is off or its stream did not open)"
                     .to_owned(),
@@ -172,6 +195,8 @@ impl<S: EngineSink> AppCore<S> {
             (!self.playing).then(|| self.doc().song.frame_at(self.position, rate));
         self.audio.recording = Some(AudioRecording {
             ctl,
+            controls,
+            strips,
             writer,
             start_song_frame,
             start_loop_count: state.loop_count,
@@ -179,6 +204,59 @@ impl<S: EngineSink> AppCore<S> {
             last: None,
         });
         true
+    }
+
+    /// Copies the input gain and clip-safe params of `strips` into `controls`.
+    fn set_strip_controls(&self, controls: &TapControls, strips: &[DeviceKey]) {
+        for (strip, key) in strips.iter().enumerate() {
+            let s = input_settings(self.doc(), key, &self.registry);
+            controls.set(strip, s.gain(), s.clip_safe);
+        }
+    }
+
+    /// Hands the running take the tracks' current input settings (module docs); one wait-free
+    /// store per strip.
+    pub(super) fn feed_take_inputs(&self) {
+        if let Some(rec) = &self.audio.recording {
+            self.set_strip_controls(&rec.controls, &rec.strips);
+        }
+    }
+
+    /// Feeds the transport bar's recording input (module docs): the focus track with its
+    /// settings and the post-gain peaks of every armed audio track, at `now_seconds` (any
+    /// monotonic clock). Call once per frame, after [`Self::feed_io_meters`].
+    pub fn feed_rec_input(&mut self, now_seconds: f64) {
+        let armed = self.armed_audio_tracks();
+        let focus = self
+            .arrangement
+            .selected_track()
+            .filter(|t| armed.contains(t))
+            .or_else(|| armed.first())
+            .cloned();
+        let source = focus.map(|device| {
+            let settings = input_settings(self.doc(), &device, &self.registry);
+            RecInput {
+                name: self
+                    .doc()
+                    .device(&device)
+                    .map_or_else(|| device.0.clone(), |d| d.name.clone()),
+                device,
+                gain_db: settings.gain_db,
+                clip_safe: settings.clip_safe,
+            }
+        });
+        let host = self.host_input_peaks();
+        let peaks: Vec<(DeviceKey, f32)> = armed
+            .iter()
+            .map(|key| {
+                let peak = track_input(self.doc(), key).map_or(0.0, |input| {
+                    input_peak(host, input, input_settings(self.doc(), key, &self.registry))
+                });
+                (key.clone(), peak)
+            })
+            .collect();
+        self.transport_bar.set_rec_input(source);
+        self.transport_bar.feed_rec_peaks(&peaks, now_seconds);
     }
 
     /// Notes the transport states of a running audio take.

@@ -92,4 +92,20 @@ fn preview_pngs() {
     let mut canvas = CpuCanvas::new(w, h, &mut text);
     bar.paint(&mut canvas, &doc, &reg);
     write("transport.png", canvas);
+
+    // The recording input of an armed audio track, a peak held near full scale and the clip lamp
+    // latched.
+    let device = key("bass");
+    bar.set_rec_input(Some(atomik_ui::RecInput {
+        device: device.clone(),
+        name: "Guitar".into(),
+        gain_db: 6.5,
+        clip_safe: true,
+    }));
+    for (peak, t) in [(0.9, 0.0), (1.2, 0.1), (0.35, 0.2)] {
+        bar.feed_rec_peaks(&[(device.clone(), peak)], t);
+    }
+    let mut canvas = CpuCanvas::new(w, h, &mut text);
+    bar.paint(&mut canvas, &doc, &reg);
+    write("transport_rec_input.png", canvas);
 }

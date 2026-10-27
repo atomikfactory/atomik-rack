@@ -146,3 +146,221 @@ fn a_new_tap_replaces_the_old_one() {
     assert_eq!(b[0].0, 640);
     handle.collect_garbage();
 }
+
+// ---------------------------------------------------------------- gain and clip-safe
+
+use atomik_engine::{TapChannel, TapControls};
+use std::sync::Arc;
+
+/// Records `frames` frames of `inputs` through a gained tap, one block size, calling `each`
+/// before every block with the index of the first frame of the block, and returns every
+/// recorded channel.
+fn record_gained(
+    inputs: &[Vec<f32>],
+    channels: &[TapChannel],
+    controls: &Arc<TapControls>,
+    frames: usize,
+    block: usize,
+    mut each: impl FnMut(usize),
+) -> Vec<Vec<f32>> {
+    let (mut engine, mut handle) = new_engine(cfg(inputs.len() as u16, 2));
+    let mut tap = handle
+        .record_tap_gained(channels, 4_096, Arc::clone(controls))
+        .unwrap();
+    let mut runs = Vec::new();
+    let mut done = 0;
+    while done < frames {
+        let n = block.min(frames - done);
+        each(done);
+        let ins: Vec<Vec<f32>> = inputs.iter().map(|c| c[done..done + n].to_vec()).collect();
+        render_block(&mut engine, &ins, 2, n);
+        drain_all(&mut tap, &mut runs);
+        done += n;
+    }
+    assert_eq!(tap.overflow_frames(), 0);
+    let mut out = vec![Vec::new(); channels.len()];
+    for (_, run) in runs {
+        for (o, r) in out.iter_mut().zip(run) {
+            o.extend(r);
+        }
+    }
+    out
+}
+
+fn ch(host: usize, strip: usize) -> TapChannel {
+    TapChannel { host, strip }
+}
+
+#[test]
+fn the_gain_is_applied_to_every_sample_whatever_the_block_size() {
+    let inputs = [input(0), input(1)];
+    let controls = Arc::new(TapControls::new(2));
+    controls.set(0, 2.5, false);
+    controls.set(1, 0.25, false);
+    let mut first: Option<Vec<Vec<f32>>> = None;
+    for block in [1usize, 64, 333, 1_000] {
+        let got = record_gained(
+            &inputs,
+            &[ch(0, 0), ch(1, 1)],
+            &controls,
+            TOTAL,
+            block,
+            |_| {},
+        );
+        let whole = TOTAL / 64 * 64;
+        assert_eq!(got[0].len(), whole, "block {block}");
+        for (i, v) in got[0].iter().enumerate() {
+            assert_eq!(
+                v.to_bits(),
+                (inputs[0][i] * 2.5).to_bits(),
+                "strip 0, frame {i}"
+            );
+        }
+        for (i, v) in got[1].iter().enumerate() {
+            assert_eq!(
+                v.to_bits(),
+                (inputs[1][i] * 0.25).to_bits(),
+                "strip 1, frame {i}"
+            );
+        }
+        match &first {
+            None => first = Some(got),
+            Some(f) => assert_eq!(bits(f), bits(&got), "block {block} equals block 1"),
+        }
+    }
+}
+
+#[test]
+fn two_strips_can_record_the_same_host_channel_with_different_gains() {
+    let inputs = [vec![0.5f32; 2_048]];
+    let controls = Arc::new(TapControls::new(2));
+    controls.set(0, 1.0, false);
+    controls.set(1, 2.0, false);
+    let got = record_gained(&inputs, &[ch(0, 0), ch(0, 1)], &controls, 2_048, 64, |_| {});
+    assert!(got[0].iter().all(|s| s.to_bits() == 0.5f32.to_bits()));
+    assert!(got[1].iter().all(|s| s.to_bits() == 1.0f32.to_bits()));
+}
+
+#[test]
+fn a_gain_change_glides_with_no_step() {
+    let inputs = [vec![1.0f32; 8_192]];
+    let controls = Arc::new(TapControls::new(1));
+    let got = record_gained(&inputs, &[ch(0, 0)], &controls, 8_192, 64, |at| {
+        if at == 2_048 {
+            controls.set(0, 4.0, false);
+        }
+    });
+    let y = &got[0];
+    // Before the change (a whole batch boundary) the take is untouched.
+    assert!(y[..2_048].iter().all(|s| s.to_bits() == 1.0f32.to_bits()));
+    // The change starts at the next batch and ends at the target.
+    assert!(
+        y[2_048] > 1.0 && y[2_048] < 1.2,
+        "starts gently: {}",
+        y[2_048]
+    );
+    assert!(y[4_500..].iter().all(|s| (s - 4.0).abs() < 1.0e-3));
+    // Monotone and no step bigger than a fraction of the whole move.
+    for w in y[2_047..4_096].windows(2) {
+        assert!(w[1] >= w[0], "monotone");
+        assert!(w[1] - w[0] < 0.1, "no step: {} -> {}", w[0], w[1]);
+    }
+}
+
+#[test]
+fn clip_safe_never_writes_a_sample_above_full_scale_for_a_hot_input() {
+    // A loud sine, 12 dB hot, with spikes and a stereo pair of different levels.
+    let hot = |amp: f32, phase: f32| -> Vec<f32> {
+        (0..TOTAL)
+            .map(|i| {
+                let v = amp * (i as f32 * 0.07 + phase).sin();
+                if i % 997 == 0 { v * 3.0 } else { v }
+            })
+            .collect()
+    };
+    let inputs = [hot(1.0, 0.0), hot(0.3, 1.0)];
+    let controls = Arc::new(TapControls::new(1));
+    controls.set(0, atomik_core::db_to_gain(12.0), true);
+    for block in [64usize, 333] {
+        let got = record_gained(
+            &inputs,
+            &[ch(0, 0), ch(1, 0)],
+            &controls,
+            TOTAL,
+            block,
+            |_| {},
+        );
+        let peak = got.iter().flatten().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak <= 1.0, "block {block}: peak {peak}");
+        assert!(
+            peak > 0.9,
+            "the limiter holds the level near full scale: {peak}"
+        );
+        // The pair is limited together: the image is kept (both channels share one gain).
+        let (l, r) = (&got[0], &got[1]);
+        let k = (0..l.len())
+            .find(|&i| l[i].abs() > 0.5 && inputs[0][i].abs() > 0.5)
+            .unwrap();
+        let ratio_in = inputs[1][k] / inputs[0][k];
+        assert!(((r[k] / l[k]) - ratio_in).abs() < 1.0e-4);
+    }
+    // Without clip-safe the same take keeps its overs (float files lose nothing).
+    controls.set(0, atomik_core::db_to_gain(12.0), false);
+    let got = record_gained(&inputs, &[ch(0, 0), ch(1, 0)], &controls, TOTAL, 64, |_| {});
+    assert!(got[0].iter().any(|s| s.abs() > 1.0));
+}
+
+#[test]
+fn clip_safe_leaves_a_take_below_full_scale_untouched_to_the_bit() {
+    let inputs = [(0..TOTAL)
+        .map(|i| 0.8 * (i as f32 * 0.05).sin())
+        .collect::<Vec<_>>()];
+    let controls = Arc::new(TapControls::new(1));
+    controls.set(0, 1.0, true);
+    let got = record_gained(&inputs, &[ch(0, 0)], &controls, TOTAL, 64, |_| {});
+    for (i, v) in got[0].iter().enumerate() {
+        assert_eq!(v.to_bits(), inputs[0][i].to_bits(), "frame {i}");
+    }
+}
+
+#[test]
+fn clip_safe_releases_back_to_the_original_level_after_a_hot_passage() {
+    // Hot for a while, then quiet: the gain reduction releases back to unity.
+    let inputs = [(0..16_384)
+        .map(|i| if i < 4_096 { 3.0 } else { 0.5 })
+        .collect::<Vec<f32>>()];
+    let controls = Arc::new(TapControls::new(1));
+    controls.set(0, 1.0, true);
+    let got = record_gained(&inputs, &[ch(0, 0)], &controls, 16_384, 64, |_| {});
+    assert!(got[0][..4_096].iter().all(|s| s.abs() <= 1.0));
+    // About twenty time constants later the take is back at its original level.
+    assert!((got[0][16_000] - 0.5).abs() < 1.0e-3, "{}", got[0][16_000]);
+}
+
+#[test]
+fn clip_safe_writes_silence_for_a_sample_that_is_not_a_number() {
+    let mut x = vec![0.25f32; 1_024];
+    x[100] = f32::NAN;
+    x[200] = f32::INFINITY;
+    let controls = Arc::new(TapControls::new(1));
+    controls.set(0, 1.0, true);
+    let got = record_gained(&[x], &[ch(0, 0)], &controls, 1_024, 64, |_| {});
+    assert!(got[0].iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+    assert_eq!(got[0][100], 0.0);
+    assert_eq!(got[0][200], 0.0);
+}
+
+#[test]
+fn controls_clamp_and_report_what_was_set() {
+    let c = TapControls::new(2);
+    assert_eq!((c.len(), c.is_empty()), (2, false));
+    assert_eq!(c.get(0), Some((1.0, false)));
+    c.set(1, 1_000.0, true);
+    assert_eq!(c.get(1), Some((64.0, true)));
+    c.set(1, -3.0, false);
+    assert_eq!(c.get(1), Some((0.0, false)));
+    c.set(1, f32::NAN, false);
+    assert_eq!(c.get(1), Some((1.0, false)));
+    c.set(9, 2.0, true); // no such strip: ignored
+    assert_eq!(c.get(9), None);
+}

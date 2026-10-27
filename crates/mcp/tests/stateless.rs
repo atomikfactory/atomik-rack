@@ -234,6 +234,49 @@ fn project_inspect_reports_where_a_track_with_a_player_stack_enters() {
 }
 
 #[test]
+fn project_inspect_reports_the_recording_input_of_an_audio_track_when_it_is_set() {
+    use atomik_model::{Command, Document, SongCommand, empty_doc};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let mut d = Document::new(empty_doc());
+    for name in ["Plain", "Hot"] {
+        d.apply(
+            Command::Song(SongCommand::AddAudioTrack {
+                name: Some(name.into()),
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    let hot = d.doc().song.tracks[1].device.clone();
+    for (param, value) in [("rec_gain", 6.5), ("rec_clip_safe", 1.0)] {
+        d.apply(
+            Command::SetParam {
+                key: hot.clone(),
+                param: param.into(),
+                value,
+                merge: None,
+            },
+            &reg,
+        )
+        .unwrap();
+    }
+    let path = tmp("rec-input.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let tracks = r.parsed()["song"]["tracks"].clone();
+    assert!(
+        tracks[0].get("rec_input").is_none(),
+        "defaults are not listed"
+    );
+    assert_eq!(
+        tracks[1]["rec_input"],
+        json!({"gain_db": 6.5, "clip_safe": true})
+    );
+}
+
+#[test]
 fn project_inspect_counts_the_drum_patterns_of_a_drum_generator() {
     use atomik_model::{Command, Document, empty_doc};
     let mut s = server();

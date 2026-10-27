@@ -130,7 +130,7 @@ These are the QA steps this project expects for a change, in the order to do the
 1. `session_open` the project that shows it (or the starter project).
 2. Reach the state: `session_command` for menu commands, `session_pointer` and `session_key` for gestures and chords.
 3. Read the screen with `session_texts` (cheap, exact) and look at `session_screenshot` for layout, overlap and clipping. Save a screenshot with `save_to` when it belongs in the PR.
-4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`, and a folder, colour, comment or `notes_to` (the device its notes enter, the top of its player stack) when it has one), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
+4. Assert on the document with `session_status`: the devices, cables, tracks (each with `muted`, `solo`, `armed` and `chase`, and a folder, colour, comment, `notes_to` (the device its notes enter, the top of its player stack) or `rec_input` (`gain_db` and `clip_safe`, the recording input of an audio track, listed when not at 0 dB with clip-safe off; not the channel strip's `input_gain_db`) when it has one), markers, `dirty`, `can_undo`. Then `edit.undo` and check that one step undoes it.
 5. If the edit should change the sound (or must not), `session_bounce` with `reference` set to the bounce of the file you opened.
 6. Turn what you proved into a headless test (`crates/app/src/shell_*_tests.rs`, `crates/ui/tests/workflow_*.rs`) before the PR is done.
 

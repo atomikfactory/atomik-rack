@@ -22,8 +22,11 @@ use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
 mod inspector;
+mod rec_input;
 use inspector::Inspector;
 pub use inspector::{InspClip, InspectorField, InspectorSource};
+use rec_input::RecInputState;
+pub use rec_input::{RecInput, RecInputPart};
 
 /// Recommended height of the bar, logical pixels.
 pub const TRANSPORT_HEIGHT: f64 = 44.0;
@@ -178,6 +181,8 @@ pub struct TransportBar {
     drag: Option<ValueDrag>,
     /// The clip inspector at the right of the readouts.
     insp: Inspector,
+    /// The recording input (gain, clip-safe, level) at the right end.
+    rec: RecInputState,
     next_merge: u64,
     focused: bool,
     repaint: bool,
@@ -206,6 +211,7 @@ impl TransportBar {
             hover: None,
             drag: None,
             insp: Inspector::default(),
+            rec: RecInputState::default(),
             next_merge: TRANSPORT_MERGE_BASE,
             focused: false,
             repaint: true,
@@ -279,7 +285,7 @@ impl TransportBar {
 
     /// True while a drag on the tempo or the signature is held.
     pub fn is_dragging(&self) -> bool {
-        self.drag.is_some() || self.is_dragging_inspector()
+        self.drag.is_some() || self.is_dragging_inspector() || self.is_dragging_rec_input()
     }
 
     /// Centre of a button.
@@ -604,6 +610,7 @@ impl TransportBar {
             UiEvent::PointerMove { pos, modifiers } => {
                 self.drag_to(pos.y, modifiers.shift, &mut out);
                 self.inspector_drag_to(pos.y, modifiers.shift, &mut out);
+                self.rec_drag_to(pos.y, modifiers.shift, &mut out);
                 let h = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos));
@@ -648,6 +655,8 @@ impl TransportBar {
                     self.begin_tempo_edit(None);
                 } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
                     self.begin_meter_edit();
+                } else if let Some(part) = self.rec_hit(*pos) {
+                    out.extend(self.rec_press(part, *clicks, pos.y));
                 } else if let Some(field) = self.inspector_field_at(*pos) {
                     out.extend(self.inspector_press(field, *clicks, pos.y));
                 } else if let Some(field) = self.field_at(*pos) {
@@ -666,6 +675,7 @@ impl TransportBar {
                     self.repaint = true;
                 }
                 self.inspector_release(&mut out);
+                self.rec_release(&mut out);
             }
             UiEvent::Wheel {
                 delta,
@@ -675,10 +685,13 @@ impl TransportBar {
                 && self.meter_editing.is_none()
                 && self.drag.is_none()
                 && !self.insp.is_editing()
-                && !self.is_dragging_inspector() =>
+                && !self.is_dragging_inspector()
+                && !self.is_dragging_rec_input() =>
             {
                 if let Some(field) = self.field_at(*pos) {
                     self.wheel_field(field, wheel_steps(delta.y), modifiers.shift, &mut out);
+                } else if let Some(part) = self.rec_hit(*pos) {
+                    self.rec_wheel(part, wheel_steps(delta.y), modifiers.shift, &mut out);
                 } else if let Some(field) = self.inspector_field_at(*pos) {
                     self.inspector_wheel(field, wheel_steps(delta.y), modifiers.shift, &mut out);
                 }
@@ -717,7 +730,7 @@ impl TransportBar {
                 "Time signature: drag or scroll a number, double-click to type",
             ));
         }
-        self.inspector_help(pos)
+        self.rec_help(pos).or_else(|| self.inspector_help(pos))
     }
 
     fn button_help(b: TransportButton, rect: Rect) -> Help {
@@ -895,6 +908,7 @@ impl TransportBar {
             .align(Align::Center),
         );
         self.paint_inspector(c, doc);
+        self.paint_rec_input(c);
         if self.focused {
             sp::line(c, b.x0, b.y0 + 0.5, b.x1, b.y0 + 0.5, t.focus);
         }

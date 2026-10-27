@@ -124,6 +124,32 @@ fn record_transport() -> DisplayList {
     dl
 }
 
+/// The bar while recording an audio track: the input at +6.5 dB with SAFE on, a peak held near
+/// full scale and the clip lamp latched.
+fn record_transport_rec_input() -> DisplayList {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    v.set_state(TransportState {
+        playing: true,
+        recording: true,
+        metronome: false,
+        position: BAR + PPQ,
+    });
+    let device = key("bass");
+    v.set_rec_input(Some(atomik_ui::RecInput {
+        device: device.clone(),
+        name: "Guitar".into(),
+        gain_db: 6.5,
+        clip_safe: true,
+    }));
+    v.feed_rec_peaks(&[(device.clone(), 0.9)], 0.0);
+    v.feed_rec_peaks(&[(device.clone(), 1.2)], 0.1);
+    v.feed_rec_peaks(&[(device, 0.35)], 0.2);
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    dl
+}
+
 #[test]
 fn arrangement_matches_golden() {
     check("arrangement_1x.json", &record_arrangement().to_json());
@@ -169,6 +195,14 @@ fn piano_roll_folded_to_the_used_notes_matches_golden() {
 #[test]
 fn transport_bar_matches_golden() {
     check("transport_1x.json", &record_transport().to_json());
+}
+
+#[test]
+fn transport_bar_with_the_recording_input_matches_golden() {
+    check(
+        "transport_rec_input_1x.json",
+        &record_transport_rec_input().to_json(),
+    );
 }
 
 #[test]

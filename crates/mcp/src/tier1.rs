@@ -539,6 +539,7 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             )
         })
         .collect();
+    let registry = default_registry();
     let tracks: Vec<Value> = doc
         .song
         .tracks
@@ -605,6 +606,19 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 // The top of the track's player stack: where its notes enter, when not at its
                 // own device.
                 track["notes_to"] = json!(entry.as_str());
+            }
+            if t.is_audio() {
+                // The recording input of the track (not the channel strip's trim, which is
+                // `input_gain_db` of the strips): listed when it is not at its defaults.
+                let gain = doc
+                    .param_value(&t.device, atomik_core::REC_GAIN_PARAM, &registry)
+                    .unwrap_or(0.0);
+                let safe = doc
+                    .param_value(&t.device, atomik_core::REC_CLIP_SAFE_PARAM, &registry)
+                    .is_some_and(|v| v >= 0.5);
+                if gain != 0.0 || safe {
+                    track["rec_input"] = json!({"gain_db": gain, "clip_safe": safe});
+                }
             }
             if let Some(g) = doc.song.track_group(&t.device) {
                 track["folder"] = json!(g);

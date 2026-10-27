@@ -7,7 +7,8 @@ use atomik_core::{NoteKind, ParamId, Tempo};
 use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, EngineConfig, EngineError, MeterReading, PreviewStream, RecordTap,
-    RoutingPlan, SongInput, SongSnapshot, Topology, TransportCommand, TransportState,
+    RoutingPlan, SongInput, SongSnapshot, TapChannel, TapControls, Topology, TransportCommand,
+    TransportState,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -119,13 +120,15 @@ pub trait EngineSink {
     ) -> Option<(usize, u64)> {
         None
     }
-    /// [`atomik_engine::EngineHandle::record_tap`]: starts copying the host input
-    /// `channels` into a ring of `capacity_frames` for the audio recorder. `None` when no
-    /// engine runs (the default).
+    /// [`atomik_engine::EngineHandle::record_tap_gained`]: starts copying the host input
+    /// `channels` into a ring of `capacity_frames` for the audio recorder, each through its
+    /// strip of `controls` (the track's input gain and clip-safe switch). `None` when no engine
+    /// runs (the default).
     fn start_audio_record(
         &mut self,
-        _channels: &[usize],
+        _channels: &[TapChannel],
         _capacity_frames: usize,
+        _controls: Arc<TapControls>,
     ) -> Option<RecordTap> {
         None
     }

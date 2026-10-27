@@ -158,7 +158,9 @@ fn bits(v: &[f32]) -> Vec<u32> {
 #[test]
 fn a_take_is_written_bit_exactly_one_asset_per_track() {
     let mut rig = Rig::new("exact");
-    let tap = rig.handle.record_tap(&[0, 1], 32_768).unwrap();
+    // The plan taps every track's channels separately (each has its own gain): a takes host
+    // channels 0 and 1, b takes host channel 1 again.
+    let tap = rig.handle.record_tap(&[0, 1, 1], 32_768).unwrap();
     let cfgw = rig.config(
         &[("a", TrackInput::Stereo(0, 1)), ("b", TrackInput::Mono(1))],
         1,

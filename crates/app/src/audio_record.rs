@@ -19,6 +19,17 @@
 //! one later. The song position of input frame `h` is `position_at(h - compensation)` (see
 //! [`split_laps`]).
 //!
+//! # Input gain and clip-safe
+//!
+//! An audio track has two stored params for its recording input ([`REC_GAIN_PARAM`], in dB, and
+//! [`REC_CLIP_SAFE_PARAM`]). The gain is applied **to the recorded signal and to the monitor**
+//! (the track's device scales the input it monitors by the same value), so the performer hears
+//! what is written. The take's gain is the engine tap's ([`atomik_engine::TapControls`]), set
+//! from these params when the take starts and every UI frame while it runs, so a turn of the
+//! control is heard in the take from the next batch on and ramps without a step. Clip-safe puts
+//! a limiter on the written take only; the monitor is not limited. A project written before the
+//! params existed has none stored and records at 0 dB, clip-safe off, exactly as before.
+//!
 //! # Takes and laps
 //!
 //! A take's audio is one file per armed track holding every tapped frame from the first one to
@@ -27,8 +38,10 @@
 //! consecutive song frames, dropping what lies before the transport started. A lap becomes one
 //! asset and one clip ([`place_lap`] aligns it to whole ticks with a sub-tick `source_offset`).
 
-use atomik_core::BATCH;
-use atomik_engine::SongPosition;
+use atomik_core::{BATCH, db_to_gain};
+pub use atomik_core::{REC_CLIP_SAFE_PARAM, REC_GAIN_MAX_DB, REC_GAIN_MIN_DB, REC_GAIN_PARAM};
+use atomik_device_sdk::Registry;
+use atomik_engine::{SongPosition, TapChannel};
 use atomik_model::{DeviceKey, INTERFACE_KEY, RackDoc};
 
 /// Seconds of input the record tap's ring holds (the writer thread drains it continuously).
@@ -45,6 +58,65 @@ pub fn record_offset_frames(input_latency: u32, output_latency: u32, user_offset
         + i64::from(output_latency)
         + ENGINE_FIFO_FRAMES
         + i64::from(user_offset)
+}
+
+/// The recording input settings of an audio track.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InputSettings {
+    /// Input gain in dB (the bottom of the range, [`REC_GAIN_MIN_DB`], is off).
+    pub gain_db: f32,
+    /// The take is limited so it never goes above 0 dBFS.
+    pub clip_safe: bool,
+}
+
+impl Default for InputSettings {
+    fn default() -> Self {
+        Self {
+            gain_db: 0.0,
+            clip_safe: false,
+        }
+    }
+}
+
+impl InputSettings {
+    /// The linear gain: 0 at the bottom of the range, otherwise the dB value clamped to the
+    /// range (what the device's own param turns it into).
+    pub fn gain(self) -> f32 {
+        if self.gain_db.is_nan() {
+            1.0
+        } else if self.gain_db <= REC_GAIN_MIN_DB {
+            0.0
+        } else {
+            db_to_gain(self.gain_db.min(REC_GAIN_MAX_DB))
+        }
+    }
+}
+
+/// The recording input settings of the audio track `device` as the document holds them (the
+/// defaults for a device that is not an audio track or has none stored).
+pub fn input_settings(doc: &RackDoc, device: &DeviceKey, registry: &Registry) -> InputSettings {
+    let defaults = InputSettings::default();
+    InputSettings {
+        gain_db: doc
+            .param_value(device, REC_GAIN_PARAM, registry)
+            .unwrap_or(defaults.gain_db),
+        clip_safe: doc
+            .param_value(device, REC_CLIP_SAFE_PARAM, registry)
+            .map_or(defaults.clip_safe, |v| v >= 0.5),
+    }
+}
+
+/// The post-gain peak of the track's input: the largest of the host peaks (`host_peaks[k]` is
+/// the peak of host input `k` since the last read) of its channels, times its gain. The peak of
+/// a scaled signal is the scaled peak, so this is what the meter of the take would read.
+pub fn input_peak(host_peaks: &[f32], input: TrackInput, settings: InputSettings) -> f32 {
+    let pre = input
+        .channels()
+        .into_iter()
+        .map(|c| host_peaks.get(c).copied().unwrap_or(0.0))
+        .filter(|p| p.is_finite())
+        .fold(0.0f32, f32::max);
+    pre * settings.gain()
 }
 
 /// Where an audio track takes its recording from: host input channels (0-based).
@@ -99,30 +171,36 @@ pub struct PlannedTrack {
     pub tap_index: Vec<usize>,
 }
 
-/// The union of the host channels a take needs and where each track finds its own.
+/// The channels a take taps and where each track finds its own.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TapPlan {
-    /// The host channels to tap, sorted and without duplicates.
-    pub channels: Vec<usize>,
+    /// The tapped channels: every track's channels in turn (left first), each through the strip
+    /// of its track (its index in `tracks`). A host channel that two tracks record appears once
+    /// per track, because each applies its own input gain.
+    pub channels: Vec<TapChannel>,
     /// The tracks, in the order given.
     pub tracks: Vec<PlannedTrack>,
 }
 
-/// Plans one tap for `tracks`: the sorted union of their channels.
+/// Plans one tap for `tracks`: each track's channels in turn, through the track's own strip.
 pub fn plan_tap(tracks: &[(DeviceKey, TrackInput)]) -> TapPlan {
-    let mut channels: Vec<usize> = tracks.iter().flat_map(|(_, i)| i.channels()).collect();
-    channels.sort_unstable();
-    channels.dedup();
+    let mut channels = Vec::new();
     let tracks = tracks
         .iter()
-        .map(|(device, input)| PlannedTrack {
-            device: device.clone(),
-            input: *input,
-            tap_index: input
-                .channels()
-                .into_iter()
-                .filter_map(|c| channels.iter().position(|x| *x == c))
-                .collect(),
+        .enumerate()
+        .map(|(strip, (device, input))| {
+            let first = channels.len();
+            channels.extend(
+                input
+                    .channels()
+                    .into_iter()
+                    .map(|host| TapChannel { host, strip }),
+            );
+            PlannedTrack {
+                device: device.clone(),
+                input: *input,
+                tap_index: (first..channels.len()).collect(),
+            }
         })
         .collect();
     TapPlan { channels, tracks }
