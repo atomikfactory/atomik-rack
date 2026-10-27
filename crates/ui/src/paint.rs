@@ -244,6 +244,8 @@ fn body<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, h: f64, side: Side, accent
 pub struct PanelInfo<'a> {
     /// Display name.
     pub name: &'a str,
+    /// The name being typed in place on the plate (a field with a caret replaces the name).
+    pub editing_name: Option<&'a str>,
     /// Small caption under the name (descriptor name, upper case).
     pub caption: &'a str,
     /// Device accent.
@@ -317,6 +319,48 @@ pub fn plate_rect(height: f64, folded: bool) -> Rect {
     } else {
         Rect::new(PLATE_X.0, 6.0, PLATE_X.1, height - 6.0)
     }
+}
+
+/// The name on a plate, in panel coordinates: where a double-click types a new name. Unfolded it
+/// is the two lines at the top of the plate; folded, the stretch between the fold button and
+/// the type label. `has_bypass` is whether the strip has the BYPASS switch (it ends the plate
+/// folded).
+pub fn name_rect(height: f64, folded: bool, has_bypass: bool) -> Rect {
+    let r = plate_rect(height, folded);
+    if folded {
+        let x = fold_button_center(height, true).x + 12.0;
+        let caption_x = if has_bypass {
+            bypass_button_rect(height, true).x0 - 8.0
+        } else {
+            r.x1 - 8.0
+        };
+        Rect::new(x, r.y0, (caption_x - 70.0).max(x + 60.0), r.y1)
+    } else {
+        Rect::new(r.x0 + 2.0, r.y0 + 4.0, r.x1 - 2.0, r.y0 + 36.0)
+    }
+}
+
+/// The field of a name being typed: the tail of `text` that fits `rect`, then the caret.
+fn name_field<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    rect: Rect,
+    text: &str,
+    accent: Color,
+    size: f32,
+) {
+    c.fill_with(RoundedRect::from_rect(rect, 3.0), theme.lcd);
+    c.stroke_with(RoundedRect::from_rect(rect.inset(-0.5), 3.5), 1.0, accent);
+    let room = ((rect.width() - 8.0) / (f64::from(size) * 0.56)).floor() as usize;
+    let shown = format!("{text}|");
+    let skip = shown.chars().count().saturating_sub(room.max(2));
+    let tail: String = shown.chars().skip(skip).collect();
+    c.text(&TextRun::new(
+        tail,
+        pt(rect.x0 + 4.0, rect.center().y + f64::from(size) * 0.36),
+        size,
+        accent,
+    ));
 }
 
 /// The BYPASS switch of an effect's name strip, in panel coordinates: under the name and the
@@ -406,15 +450,21 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         } else {
             r.x1 - 8.0
         };
-        c.text(
-            &TextRun::new(
-                info.name,
-                pt(x, r.center().y + 4.0),
-                theme.name_size - 1.0,
-                theme.text,
-            )
-            .weight(700),
-        );
+        if let Some(text) = info.editing_name {
+            let field = name_rect(info.height, true, has_bypass);
+            let field = Rect::new(field.x0, field.y0 + 4.0, field.x1, field.y1 - 4.0);
+            name_field(c, theme, field, text, info.accent, theme.name_size - 2.0);
+        } else {
+            c.text(
+                &TextRun::new(
+                    info.name,
+                    pt(x, r.center().y + 4.0),
+                    theme.name_size - 1.0,
+                    theme.text,
+                )
+                .weight(700),
+            );
+        }
         c.text(
             &TextRun::new(
                 fit_label(info.caption, caption_x - x - 70.0, 7.0),
@@ -425,6 +475,13 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
             .align(Align::End)
             .spacing(0.8),
         );
+        return;
+    }
+    if let Some(text) = info.editing_name {
+        let field = name_rect(info.height, false, has_bypass);
+        let field = Rect::new(field.x0, field.y0, field.x1, field.y0 + 18.0);
+        name_field(c, theme, field, text, info.accent, 9.0);
+        plate_foot(c, theme, info, r);
         return;
     }
     let width = r.width() - 10.0;
@@ -452,6 +509,11 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         .weight(600)
         .spacing(0.9),
     );
+    plate_foot(c, theme, info, r);
+}
+
+/// The bottom of an unfolded plate: REAR on the back view, the status LED on the front.
+fn plate_foot<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>, r: Rect) {
     if info.side == Side::Back {
         c.text(
             &TextRun::new("REAR", pt(r.x1 - 6.0, r.y1 - 9.0), 6.5, theme.text_muted)
