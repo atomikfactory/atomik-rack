@@ -11,6 +11,7 @@
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
 //! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
+//! | audio track | the tuner display (needle, note, cents, Hz) and its TUNER button | across the top, 92 high | INPUT, TUNER |
 //! | phase meter | goniometer, correlation, balance and width bars, level bars, loudness readouts | across the top, 148 high | STEREO, LEVEL, SCOPE, LOUDNESS |
 //!
 //! The height is the smallest whole number of rack units where the front (visual and sections)
@@ -36,6 +37,7 @@ const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
 const TOP_SPECTRUM: f64 = 200.0;
 const TOP_PHASE: f64 = 148.0;
+const TOP_TUNER: f64 = 92.0;
 
 type Def = &'static [(&'static str, &'static [&'static str])];
 
@@ -138,6 +140,10 @@ fn sections(kind: FxKind) -> Def {
             ("SCOPE", &["scope", "scope_gain"]),
             ("LOUDNESS", &["loudness"]),
         ],
+        FxKind::AudioTrack => &[
+            ("INPUT", &["monitor", "rec_gain", "rec_clip_safe"]),
+            ("TUNER", &["tuner_mute", "tuner_ref"]),
+        ],
         FxKind::Mastering => &[
             ("INPUT", &["input"]),
             ("MULTIBAND", &["multiband.on", "xover.low", "xover.high"]),
@@ -192,6 +198,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Character => "SCREEN",
         FxKind::Spectrum => "SPECTRUM",
         FxKind::PhaseMeter => "STEREO IMAGE AND LEVELS",
+        FxKind::AudioTrack => "TUNER",
     }
 }
 
@@ -207,6 +214,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::Character => (0.0, 0.0),
         FxKind::Spectrum => (0.0, TOP_SPECTRUM),
         FxKind::PhaseMeter => (0.0, TOP_PHASE),
+        FxKind::AudioTrack => (0.0, TOP_TUNER),
     }
 }
 
@@ -359,6 +367,13 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
             None,
         ),
+        // The TUNER button at the left, the display filling the rest.
+        FxKind::AudioTrack => (
+            Rect::new(v.x0 + 74.0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
+            empty,
+            empty,
+            Some(Rect::new(v.x0, v.y0 + 1.0, v.x0 + 66.0, v.y0 + 23.0)),
+        ),
         FxKind::PhaseMeter => {
             // Goniometer square, stereo bars, level bars with their scale, loudness readouts.
             let s = (v.height() - 2.0).clamp(80.0, 140.0);
@@ -446,6 +461,10 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "release" => "Release".to_string(),
         "early" => "Early/late".to_string(),
         "meter.reset" => "Reset".to_string(),
+        "rec_gain" => "Gain".to_string(),
+        "rec_clip_safe" => "Clip safe".to_string(),
+        "tuner_mute" => "Mute".to_string(),
+        "tuner_ref" => "A4 Hz".to_string(),
         "corr_time" => "Corr. time".to_string(),
         "scope_gain" => "Gain".to_string(),
         "transform_cv_trim" | "mix_cv_trim" | "drive_cv_trim" | "feedback_cv_trim"

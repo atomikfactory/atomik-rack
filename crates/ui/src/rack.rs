@@ -137,6 +137,8 @@ enum Hit {
     EqPlot(usize),
     /// The "SC from" button of a compressor panel.
     ScButton(usize),
+    /// The TUNER button of an audio track panel.
+    TunerButton(usize),
     /// A button of the Character preset matrix (device index, preset 0..16).
     Preset(usize, u8),
     /// The whole Character preset matrix: the focus target of the arrow keys.
@@ -198,6 +200,7 @@ impl Hit {
             | Hit::Strip(i)
             | Hit::EqPlot(i)
             | Hit::ScButton(i)
+            | Hit::TunerButton(i)
             | Hit::Preset(i, _)
             | Hit::PresetGrid(i)
             | Hit::Player(i, _)
@@ -1461,7 +1464,12 @@ impl RackView {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
                             }
                             if let Some(b) = fx.button {
-                                tree.add(dn, b + off, Hit::ScButton(i), false);
+                                let hit = if fx.kind == FxKind::AudioTrack {
+                                    Hit::TunerButton(i)
+                                } else {
+                                    Hit::ScButton(i)
+                                };
+                                tree.add(dn, b + off, hit, false);
                             }
                             if let Some(g) = fx.character {
                                 let grid = tree.add(dn, g.matrix + off, Hit::PresetGrid(i), true);
@@ -2917,6 +2925,7 @@ impl RackView {
             (Hit::EqPlot(i), PointerButton::Primary) => self.eq_down(i, rp, clicks, out),
             (Hit::Preset(i, n), PointerButton::Primary) => self.preset_down(i, n, out),
             (Hit::ScButton(i), PointerButton::Primary) => self.sc_open(i, doc, registry),
+            (Hit::TunerButton(i), PointerButton::Primary) => self.tuner_toggle(i, out),
             (h @ (Hit::IoClip(..) | Hit::IoHeader(_)), PointerButton::Primary) => self.io_down(h),
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
                 self.return_edit_down(i, slot, out)
@@ -2950,7 +2959,8 @@ impl RackView {
                 | Hit::Container(i, _)
                 | Hit::MacroName(i, _)
                 | Hit::Plugin(i, _)
-                | Hit::ScButton(i),
+                | Hit::ScButton(i)
+                | Hit::TunerButton(i),
                 _,
             ) => self.select(i, out),
             (Hit::Control(i, slot), _) => {

@@ -773,8 +773,13 @@ The player device of an audio track. It has no sound of its own: the engine rend
 | `internal.monitor_live` | 0 or 1 | 0 | toggle | Linear | yes |
 | `rec_gain` | -60..+24 dB (the bottom is off) | 0 | dB | Decibel | no |
 | `rec_clip_safe` | 0 or 1 | 0 | toggle | Linear | yes |
+| `internal.tuner_live` | 0 or 1 | 0 | toggle | Linear | yes |
+| `tuner_mute` | 0 or 1 | 1 | toggle | Linear | yes |
+| `tuner_ref` | 415..466 Hz | 440 | Hz | Linear | yes |
 
 `internal.monitor_live` is set by the app (1 while the track is armed). The UI hides it and it is neither saved nor undoable, like `internal.solo_silence`.
+
+`internal.tuner_live` is set by the app (1 while the track's tuner shows), like `internal.monitor_live`: hidden, neither saved nor undoable. `tuner_mute` and `tuner_ref` are the **tuner** settings: ordinary stored, undoable params, additive like the input settings, so a project written before them loads with the reference at 440 Hz and mute on (which does nothing while no tuner shows).
 
 `rec_gain` and `rec_clip_safe` are the track's **recording input** settings: ordinary stored, undoable params, set from the transport bar while the track is armed (see below). A project written before they existed has neither stored and loads at 0 dB with clip-safe off, which records and monitors exactly as it did.
 
@@ -785,8 +790,19 @@ The player device of an audio track. It has no sound of its own: the engine rend
 - **Input gain.** `rec_gain` scales the monitored input (`monitor_gain` is the linear gain when the monitor is on, 0 when it is off), so the performer hears the level that is recorded. The app applies the same gain to the signal written to the take (the engine's record tap, see ARCHITECTURE.md 2.6), before it is written. 0 dB is bit-exact: a track at the default plays and records as before.
 - **Clip-safe.** `rec_clip_safe` does nothing in the device: it switches the limiter of the *take* (ARCHITECTURE.md 2.6). The monitor is never limited.
 - **Smoothing.** A change of the monitor gain, including a turn of `rec_gain`, is a 5 ms linear crossfade. The first batch after the device is prepared or reset snaps without a ramp.
+- **Tuner.** The device pushes its input after `rec_gain` into a scope tap every batch (two 64-frame copies: the same lock-free ring the analysers use), armed or not, monitored or not, so the tuner works whenever the input is cabled. With `internal.tuner_live` and `tuner_mute` both on, the whole output (playback and monitor) is faded out over 5 ms and back in when the tuner is hidden; the tap is not muted. The first batch snaps like the other gains, and at the defaults the output is bit-exact as before.
 - **Clips.** Clip audio is not stretched when the tempo changes unless the clip is warped (Audio > Warp, see ARCHITECTURE.md 2.18); a clip's start follows the tempo map and an unwarped clip's audio plays in real time. Fades are linear or equal power; mono assets play on both channels, and for more than two channels the first two are played.
 - **Latency.** None (a single stage). The 64-frame engine FIFO and the interface latencies are accounted for by recording, not by the device.
+
+### The tuner panel
+
+The audio track's rack panel has a **TUNER** button and a display (the panel is an effect-style layout, `FxKind::AudioTrack`; the front also holds the input settings: monitor, gain, clip safe, and the tuner's mute and A4 reference). The button shows or hides the tuner of that track; the shown state is view state (not saved), so a project always opens with the tuner hidden. The app reads the track's tap at the display rate and analyses it off the audio thread ([ARCHITECTURE.md](ARCHITECTURE.md), section 2.6):
+
+- **Display.** The note and its octave (`E2`), a needle strip from -50 to +50 cents with a tick every 10 cents, the frequency in Hz, the deviation in cents (`+3.2 ct`), the reference (`A4 = 440 Hz`) and a state word: `IN TUNE` (within 3 cents, the lamp lights and the needle is green), `FLAT` or `SHARP` (amber within 15 cents, red beyond), `PLAY A NOTE` while the signal is too quiet or has no clear pitch, `HOLD` when the last note stays on screen for 0.8 s after the signal is gone (drawn dim).
+- **Pitch.** 28 Hz to 1.6 kHz (the low B of a five-string bass to above the 24th fret of a guitar's top string), within a cent for a steady tone and within a few cents for a plucked string. A frame below about -56 dBFS (after the input gain) is silent; raise `rec_gain` for a weak pickup. The louder of the two input channels is analysed.
+- **Needle.** The pitch is smoothed with a 70 ms time constant; a jump of more than half a semitone (a new string) replaces it at once.
+- **Mute while tuning.** On by default (`tuner_mute`): the track is silent while its tuner shows, so you can tune on stage or against a click. Turn it off to hear the track.
+- **Reference.** `tuner_ref` is A4 in whole hertz, 415 to 466 (Baroque 415, 432, 440, 442, 466...).
 
 ---
 

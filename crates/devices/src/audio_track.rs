@@ -19,6 +19,16 @@
 //! project written before they existed loads at 0 dB with clip-safe off. The device only uses
 //! the gain; the clip-safe limiter works on the recorded take, never on the monitor.
 //!
+//! **Tuner.** The device keeps a [`ScopeTap`] of its input after the gain (what the performer hears
+//! and what is recorded, whether or not the track is armed or monitored) and pushes it every
+//! batch; the app runs the pitch analysis on the UI side from it ([`atomik_dsp::tuner`]), so the
+//! audio thread only stores 2 x 64 floats. `internal.tuner_live` is set by the app while the
+//! track shows its tuner; with `tuner_mute` on (the default) the track output (playback and
+//! monitor) is then faded out over 5 ms, so a guitar can be tuned in silence. `tuner_ref` (A4,
+//! 415..466 Hz) is the reference pitch the display uses; the device does not read it. The three
+//! are additive params: a project written before them loads with 440 Hz and mute on, which does
+//! nothing while no tuner shows.
+//!
 //! Without playback (`None`: transport stopped, or no engine playback) only the monitored
 //! input is heard. Unconnected inputs read as zeros.
 //!
@@ -32,9 +42,10 @@ use atomik_core::{
 };
 use atomik_device_sdk::{
     Device, DeviceDescriptor, DeviceFactory, DeviceKind, Direction, PrepareInfo, ProcessContext,
-    SocketDescriptor, SocketId, SocketKind,
+    ScopeTap, SocketDescriptor, SocketId, SocketKind,
 };
 use atomik_dsp::Smoother;
+use std::sync::Arc;
 
 /// `monitor` choices: off, auto, on.
 pub const MONITOR_MODES: &[&str] = &["off", "auto", "on"];
@@ -45,6 +56,9 @@ const P_MONITOR: u32 = 0;
 const P_MONITOR_LIVE: u32 = 1;
 const P_REC_GAIN: u32 = 2;
 const P_REC_CLIP_SAFE: u32 = 3;
+const P_TUNER_LIVE: u32 = 4;
+const P_TUNER_MUTE: u32 = 5;
+const P_TUNER_REF: u32 = 6;
 
 const IN_L: SocketId = SocketId(0);
 const IN_R: SocketId = SocketId(1);
@@ -66,7 +80,7 @@ const fn socket(
     }
 }
 
-static PARAMS: [ParamDescriptor; 4] = [
+static PARAMS: [ParamDescriptor; 7] = [
     ParamDescriptor {
         id: ParamId(P_MONITOR),
         key: "monitor",
@@ -111,6 +125,39 @@ static PARAMS: [ParamDescriptor; 4] = [
         unit: Unit::Toggle,
         discrete: true,
     },
+    ParamDescriptor {
+        id: ParamId(P_TUNER_LIVE),
+        key: "internal.tuner_live",
+        name: "Tuner live",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    },
+    ParamDescriptor {
+        id: ParamId(P_TUNER_MUTE),
+        key: "tuner_mute",
+        name: "Mute while tuning",
+        min: 0.0,
+        max: 1.0,
+        default: 1.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    },
+    ParamDescriptor {
+        id: ParamId(P_TUNER_REF),
+        key: "tuner_ref",
+        name: "Reference A4",
+        min: 415.0,
+        max: 466.0,
+        default: 440.0,
+        taper: Taper::Linear,
+        unit: Unit::Hz,
+        discrete: true,
+    },
 ];
 
 static SOCKETS: [SocketDescriptor; 4] = [
@@ -147,6 +194,13 @@ pub struct AudioTrack {
     /// The input gain, linear (`rec_gain`).
     input_gain: f32,
     gain: Smoother,
+    /// The tuner is shown and `tuner_mute` is on: the output is faded out.
+    tuner_live: bool,
+    tuner_mute: bool,
+    /// 1 when the track sounds, 0 while the tuner mutes it.
+    mute: Smoother,
+    /// The input after the gain, for the tuner (allocated here: it outlives re-prepares).
+    tap: Arc<ScopeTap>,
     fresh: bool,
 }
 
@@ -164,6 +218,10 @@ impl AudioTrack {
             live: false,
             input_gain: 1.0,
             gain: Smoother::new(0.0, SMOOTH_MS, 48_000.0),
+            tuner_live: false,
+            tuner_mute: true,
+            mute: Smoother::new(1.0, SMOOTH_MS, 48_000.0),
+            tap: Arc::new(ScopeTap::new()),
             fresh: true,
         }
     }
@@ -175,6 +233,8 @@ impl AudioTrack {
 
     fn update_target(&mut self) {
         self.gain.set_target(self.target());
+        let muted = self.tuner_live && self.tuner_mute;
+        self.mute.set_target(if muted { 0.0 } else { 1.0 });
     }
 }
 
@@ -185,8 +245,13 @@ impl Device for AudioTrack {
 
     fn prepare(&mut self, info: &PrepareInfo) {
         self.gain.set_time(SMOOTH_MS, info.sample_rate.hz() as f32);
+        self.mute.set_time(SMOOTH_MS, info.sample_rate.hz() as f32);
         self.update_target();
         self.fresh = true;
+    }
+
+    fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        Some(Arc::clone(&self.tap))
     }
 
     fn reset(&mut self) {
@@ -199,6 +264,8 @@ impl Device for AudioTrack {
             P_MONITOR => self.monitor = plain.round().clamp(0.0, 2.0) as u8,
             P_MONITOR_LIVE => self.live = plain >= 0.5,
             P_REC_GAIN => self.input_gain = PARAMS[P_REC_GAIN as usize].db_param_gain(plain),
+            P_TUNER_LIVE => self.tuner_live = plain >= 0.5,
+            P_TUNER_MUTE => self.tuner_mute = plain >= 0.5,
             _ => return,
         }
         self.update_target();
@@ -208,6 +275,8 @@ impl Device for AudioTrack {
         if self.fresh {
             let t = self.gain.target();
             self.gain.set_immediate(t);
+            let m = self.mute.target();
+            self.mute.set_immediate(m);
             self.fresh = false;
         }
         let (in_l, in_r) = (*ctx.input(IN_L), *ctx.input(IN_R));
@@ -216,14 +285,26 @@ impl Device for AudioTrack {
         for g in &mut gains {
             *g = self.gain.next_value();
         }
+        let mut mutes = [1.0f32; BATCH];
+        for m in &mut mutes {
+            *m = self.mute.next_value();
+        }
         let out = ctx.output(OUT_L);
         for n in 0..BATCH {
-            out[n] = pb_l.map_or(0.0, |p| p[n]) + in_l[n] * gains[n];
+            out[n] = (pb_l.map_or(0.0, |p| p[n]) + in_l[n] * gains[n]) * mutes[n];
         }
         let out = ctx.output(OUT_R);
         for n in 0..BATCH {
-            out[n] = pb_r.map_or(0.0, |p| p[n]) + in_r[n] * gains[n];
+            out[n] = (pb_r.map_or(0.0, |p| p[n]) + in_r[n] * gains[n]) * mutes[n];
         }
+        // The tuner hears the input after the gain, whatever the monitor does.
+        let g = self.input_gain;
+        let (mut tap_l, mut tap_r) = ([0.0f32; BATCH], [0.0f32; BATCH]);
+        for n in 0..BATCH {
+            tap_l[n] = in_l[n] * g;
+            tap_r[n] = in_r[n] * g;
+        }
+        self.tap.push(&tap_l, &tap_r);
     }
 }
 
@@ -254,6 +335,9 @@ mod tests {
                 "internal.monitor_live",
                 "rec_gain",
                 "rec_clip_safe",
+                "internal.tuner_live",
+                "tuner_mute",
+                "tuner_ref",
             ],
             &["in_l", "in_r", "out_l", "out_r"],
         );
@@ -440,5 +524,104 @@ mod tests {
         h.render(50, &["out_l", "out_r"]); // process is guarded by the harness
         atomik_testkit::no_alloc::assert_no_alloc(|| h.device_mut().reset());
         h.process();
+    }
+
+    fn tap_frames(h: &atomik_testkit::harness::DeviceHarness, n: usize) -> (Vec<f32>, Vec<f32>) {
+        let tap = h.device().scope_tap().expect("a tap");
+        let (mut l, mut r) = (vec![9.0; n], vec![9.0; n]);
+        tap.read_latest(&mut l, &mut r);
+        (l, r)
+    }
+
+    #[test]
+    fn the_tuner_params_are_additive_with_defaults() {
+        let reference = DESCRIPTOR.param_by_key("tuner_ref").unwrap();
+        assert_eq!(
+            (reference.min, reference.max, reference.default),
+            (415.0, 466.0, 440.0)
+        );
+        assert_eq!(reference.unit, Unit::Hz);
+        assert!(reference.discrete);
+        let mute = DESCRIPTOR.param_by_key("tuner_mute").unwrap();
+        assert_eq!((mute.default, mute.unit), (1.0, Unit::Toggle));
+        let live = DESCRIPTOR.param_by_key("internal.tuner_live").unwrap();
+        assert_eq!((live.default, live.unit), (0.0, Unit::Toggle));
+        // The existing params keep their ids: a project stores params by key, the engine by id.
+        for (i, key) in [
+            "monitor",
+            "internal.monitor_live",
+            "rec_gain",
+            "rec_clip_safe",
+        ]
+        .iter()
+        .enumerate()
+        {
+            assert_eq!(DESCRIPTOR.param_by_key(key).unwrap().id, ParamId(i as u32));
+        }
+    }
+
+    #[test]
+    fn the_tap_holds_the_gained_input_even_unarmed_and_unmonitored() {
+        let mut h = rig();
+        let tap = h.device().scope_tap().expect("a tap");
+        assert!(Arc::ptr_eq(&tap, &h.device().scope_tap().unwrap()));
+        h.set_param("monitor", 0.0);
+        h.set_param("rec_gain", 6.0);
+        *h.input_mut("in_l") = ramp(0.01);
+        *h.input_mut("in_r") = [-0.2; BATCH];
+        h.set_playback(&[ramp(0.5), ramp(0.5)]);
+        h.render(3, &["out_l"]);
+        assert_eq!(tap.head(), (3 * BATCH) as u64);
+        let g = atomik_core::db_to_gain(6.0);
+        let (l, r) = tap_frames(&h, BATCH);
+        for i in 0..BATCH {
+            assert_eq!(l[i].to_bits(), (ramp(0.01)[i] * g).to_bits(), "{i}");
+            assert_eq!(r[i].to_bits(), (-0.2f32 * g).to_bits());
+        }
+        // An unconnected input is silence.
+        *h.input_mut("in_l") = [0.0; BATCH];
+        h.process();
+        assert!(tap_frames(&h, 8).0.iter().all(|s| s.to_bits() == 0));
+    }
+
+    #[test]
+    fn the_tuner_mutes_the_track_over_five_ms_unless_the_option_is_off() {
+        let mut h = rig();
+        h.set_param("monitor", 2.0);
+        *h.input_mut("in_l") = [0.5; BATCH];
+        h.set_playback(&[[0.25; BATCH], [0.25; BATCH]]);
+        let before = h.render(2, &["out_l"]).remove(0);
+        assert!(before.iter().all(|s| s.to_bits() == 0.75f32.to_bits()));
+        // Showing the tuner fades the whole output (playback and monitor) out.
+        h.set_param("internal.tuner_live", 1.0);
+        let y = h.render(5, &["out_l", "out_r"]);
+        let ramp_len = 240;
+        for (n, v) in y[0].iter().enumerate().take(ramp_len) {
+            let want = 0.75 * (1.0 - (n + 1) as f32 / ramp_len as f32);
+            assert!((v - want).abs() < 1e-5, "sample {n}: {v} vs {want}");
+        }
+        assert!(y[0][ramp_len..].iter().all(|s| s.abs() < 1e-7));
+        assert!(y[1].last().unwrap().abs() < 1e-7);
+        // The tap still hears the input: the tuner needs it.
+        assert!(tap_frames(&h, 4).0.iter().all(|s| (s - 0.5).abs() < 1e-6));
+        // Hiding it brings the sound back.
+        h.set_param("internal.tuner_live", 0.0);
+        let back = h.render(5, &["out_l"]).remove(0);
+        assert!((back.last().unwrap() - 0.75).abs() < 1e-6);
+        // With the option off the tuner shows and the track keeps sounding.
+        h.set_param("tuner_mute", 0.0);
+        h.set_param("internal.tuner_live", 1.0);
+        let open = h.render(5, &["out_l"]).remove(0);
+        assert!(open.iter().all(|s| (s - 0.75).abs() < 1e-6));
+    }
+
+    #[test]
+    fn a_tuner_shown_before_the_first_batch_mutes_without_a_ramp() {
+        let mut h = rig();
+        h.set_param("monitor", 2.0);
+        h.set_param("internal.tuner_live", 1.0);
+        *h.input_mut("in_l") = [0.5; BATCH];
+        let y = h.render(1, &["out_l"]).remove(0);
+        assert!(y.iter().all(|s| s.to_bits() == 0));
     }
 }

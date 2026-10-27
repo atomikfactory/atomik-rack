@@ -353,6 +353,7 @@ pub mod timeline;
 pub mod tooltip;
 pub mod transport;
 pub mod tree;
+pub mod tuner_panel;
 pub mod viewport;
 pub mod warp_panel;
 pub mod wave_paint;

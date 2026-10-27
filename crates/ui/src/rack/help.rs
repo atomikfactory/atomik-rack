@@ -77,6 +77,7 @@ fn text(hit: Hit) -> Option<Cow<'static, str>> {
         Hit::SliceBtn(_) => s("Slice the loop at its transients (the knob sets how many)"),
         Hit::ToTrack(_) => s("Lay the slices out as notes on a new track"),
         Hit::ScButton(_) => s("Choose the sidechain source of this effect"),
+        Hit::TunerButton(_) => s("Show or hide the tuner: it reads this track's input"),
         Hit::Container(_, ContainerButton::Open) => s("Enter the container to see its devices"),
         Hit::Container(_, ContainerButton::Edit) => s("Open the container editor"),
         Hit::Container(_, ContainerButton::ToChannel) => {
