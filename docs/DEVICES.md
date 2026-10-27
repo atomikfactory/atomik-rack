@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships thirty original devices: the poly synth, the wavetable synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships thirty-one original devices: the poly synth, the wavetable synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -449,6 +449,86 @@ Oversampled saturation, waveshaping and bitcrushing. Source: [crates/devices/src
 Mono 1x / 2x / 4x polyphase halfband oversampler, shared with the planned limiter. Linear-phase FIR halfband stages (centre tap 0.5, Kaiser-windowed sinc with the coefficients computed in `new` from IEEE `+ − × ÷ sqrt` only, so they are identical on every platform): stage 1 (base ⇄ 2x) 59 taps, stage 2 (2x ⇄ 4x) 23 taps padded to 25 so the delay is a whole number of base samples. Allocation-free after `Oversampler::new(max_block)`. Latency (up and down, base samples): 2x **29**, 4x **35**, 1x 0 (measured as the impulse delay; the response is symmetric). Measured: passband deviation below 0.0005 dB (2x) and 0.0011 dB up to 0.4 fs; image and alias rejection at least 90 dB for the 2x chain and **84.7 dB for the 4x chain** (the transition band is 0.4–0.6 fs).
 
 ---
+
+## Guitar Amp: `atomik.guitar-amp` (Effect)
+
+A guitar amplifier with a cabinet, chorus, delay and reverb, and five factory setups. An original design that follows the general topology of a valve amp (cascaded gain stages, a tone stack between them, a power stage, a speaker in a box with a microphone), not the circuit or the voicing of a product. Sources: [crates/devices/src/guitar_amp.rs](../crates/devices/src/guitar_amp.rs), the setups in [guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), the blocks in [crates/dsp/src/amp](../crates/dsp/src/amp).
+
+```text
+in L/R -> mono -> x input -> gate -> tight high-pass, mid boost
+  -> [ up 4x -> preamp: stage 1 -> stage 2 -> tone stack -> stage 3 -> fizz low-pass -> power amp -> down ]
+  -> cabinet -> chorus -> delay (ping-pong) -> reverb -> x level -> out L/R
+```
+
+### Sockets
+
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). The amp is mono: it plays the sum of the two inputs, or the one input that is cabled; the cabinet is mono and the chorus, delay and reverb make the stereo image (with every effect off the two outputs are the same signal). There are no CV inputs.
+
+### Params
+
+| Key | Range | Default | Unit | Taper | Discrete |
+|---|---|---|---|---|---|
+| `setup` | 0–4: Clean, Crunch, Industrial Rhythm, 80s Lead, Synthwave (a label, see Setups) | 0 | choice | Linear | yes |
+| `input` | −24 to 24 | 0 | dB | Linear | no |
+| `gate` | −80 (off) to −20 | −80 | dB | Linear | no |
+| `tight` | 20 (open) to 500 | 20 | Hz | Exp | no |
+| `boost` | 0 to 18 | 0 | dB | Linear | no |
+| `gain` | 0 to 10 | 2.5 | none | Linear | no |
+| `bass`, `mid`, `treble` | 0 to 10 | 5, 5.5, 5.5 | none | Linear | no |
+| `presence`, `depth` | 0 to 10 | 4, 3 | none | Linear | no |
+| `sag` | 0 to 10 | 3 | none | Linear | no |
+| `master` | 0 to 10 | 6 | none | Linear | no |
+| `level` | −24 to 12 | −1.5 | dB | Linear | no |
+| `cab` | 0–3: 1x12 open, 2x12, 4x12 closed, off | 1 | choice | Linear | yes |
+| `mic` | 0 (centre of the cone) to 1 (its edge) | 0.35 | percent | Linear | no |
+| `chorus.on` | 0 or 1 | 0 | toggle | Linear | yes |
+| `chorus.mix`, `chorus.depth` | 0 to 1 | 0.4, 0.4 | percent | Linear | no |
+| `chorus.rate` | 0.1 to 6 | 0.8 | Hz | Exp | no |
+| `delay.on` | 0 or 1 | 0 | toggle | Linear | yes |
+| `delay.time` | 20 to 1000 | 380 | ms | Exp | no |
+| `delay.sync` | 0–12: free, 1/32, 1/16T, 1/16, 1/16D, 1/8T, 1/8, 1/8D, 1/4T, 1/4, 1/4D, 1/2, 1/1 | 0 | choice | Linear | yes |
+| `delay.feedback` | 0 to 0.9 | 0.3 | percent | Linear | no |
+| `delay.tone` | 500 to 12000 | 5000 | Hz | Exp | no |
+| `delay.mix` | 0 to 1 | 0.25 | percent | Linear | no |
+| `reverb.on` | 0 or 1 | 0 | toggle | Linear | yes |
+| `reverb.size` | 0 to 1 | 0.4 | percent | Linear | no |
+| `reverb.decay` | 0.3 to 8 (seconds) | 1.2 | none | Exp | no |
+| `reverb.mix` | 0 to 1 | 0.2 | percent | Linear | no |
+| `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
+
+The defaults are the Clean setup's (a test pins that).
+
+### Behaviour (as built)
+
+- **Gate.** `gate` is the threshold of a noise gate on the input (after `input`): 50 dB deep, 0.5 ms attack, 30 ms hold, 80 ms release. At −80 dB (up to −79.9) the gate is off and does not touch the signal.
+- **Input stage.** `tight` is the corner of a second-order high-pass in front of the gain (the tight, percussive low end of a palm-muted chug on a down-tuned guitar); `boost` a peaking boost at 780 Hz (Q 0.7), like a booster pedal.
+- **Preamp.** Three cascaded stages. A stage is `x · gain + bias`, an asymmetric algebraic soft clip (the positive half `u/√(1+u²)`, the negative half `u/√(1+(1.35u)²)`, saturating at −0.74 so it makes even harmonics), a coupling high-pass (20, 90, 140 Hz) and a second-order low-pass (7.5, 5.8, 5 kHz). `gain` 0..10 sets the three stage gains together (the first takes the most): 2 + 28k, 26k and 6 + 14k² dB for `k = gain / 10`, 8 dB at 0 and 76 dB at 10, each gliding over 10 ms. After the third stage two low-pass sections at 7.5 kHz take the fizz off.
+- **Tone stack.** `bass`, `mid`, `treble` (0..10) are a passive-style stack between the second and third stages: a low shelf at 110 Hz, a scoop at 480 Hz and a high shelf at 2.8 kHz, with the interaction of a passive network (a high `mid` loads the shelves and fills the scoop, raised shelves deepen it, and a loss of 9 dB at the middle position that the next stage makes up). It is built from three biquads, not from a circuit solution.
+- **Power amp.** `master` (0..10) is the drive into the power stage, −24 to +12 dB, so it sets how hard the stage works as well as how loud it is. The stage is a symmetric algebraic soft clip (odd harmonics, ceiling 1). `sag` (0..10) lowers the gain by up to `1/(1 + 0.9 env)` and the ceiling by `0.2 env`, with `env` a 30 ms attack, 250 ms release envelope of the signal. `presence` (0 to 10 dB, a high shelf at 3.4 kHz) and `depth` (0 to 9 dB, a low shelf at 95 Hz) follow the clip.
+- **Oversampling and aliasing.** Preamp and power amp run at four times the sample rate between the halfband stages of `atomik_dsp::oversample::Oversampler`, and every clip is first-order antiderivative anti-aliased (`(F(u) − F(u₁)) / (u − u₁)`, `F` the exact antiderivative of the curve, in `f64`). A 5.86 kHz sine at gain 10 through the device with the cabinet off has everything that is not one of its harmonics below −53 dB of the fundamental; the preamp and power amp alone measure −49.7 dB at 4x against −37.4 dB at 1x.
+- **Latency.** `latency_frames()` is the oversampler's round trip, 35 samples at every sample rate and for every param; the cabinet, the effects and the other filters add none. The engine's PDC delays the other paths by it and a bypassed amp delays its dry path by it (the bounce test pins both).
+- **Cabinet.** `cab` selects a designed filter cascade (no recorded response): 1x12 open (high-pass 92 Hz, resonance 130 Hz, upper mid 2.8 kHz, low-pass 6.0 and 7.2 kHz, 12 % box reflection), 2x12 (82 Hz, 115 Hz, 2.5 kHz, 5.6 and 6.7 kHz, 17 %), 4x12 closed (72 Hz, 105 Hz +5 dB, 2.3 kHz, 5.2 and 6.2 kHz, 22 %) or off (a wire). The box reflection is one echo 0.37 ms later. `mic` moves the microphone: a high shelf at 3.2 kHz from +4 dB (centre) to −5 dB (edge), a low shelf at 180 Hz from −1 dB to +2 dB and the second low-pass down by up to 30 %. The types have a trim so they are about equally loud; switching glides all the coefficients over 15 ms.
+- **Effects.** The chorus is a wet blend of `atomik_dsp::Chorus` (10 ms centre, 0.4 to 4 ms of sweep, the right side inverted). The delay is a ping-pong of two `DelayLine`s: the mono sum goes into the left line, the repeats cross, and a one-pole low-pass at `delay.tone` darkens each trip; the time is `delay.time` in ms or a note value of `delay.sync` at the project tempo (the note values of the stereo delay), up to 1.5 s, and it glides by at most 0.25 samples per sample so a change bends the repeats instead of clicking. The reverb is `atomik_dsp::Room` (large range, damping 0.35, seeded by the patch seed) with `reverb.size` and `reverb.decay`. The delay and the reverb add to the dry signal. Each section's `on` switch and mix glide over 15 ms; a section whose mix has reached zero is not run, so `mix = 0` or `on = 0` leaves the signal bit for bit as it was, and a section switched on again starts from an empty line.
+- **Level and bounds.** `level` is the last gain; the output is clamped to ±16 as a last bound. Non-finite input samples are treated as 0 and every param is clamped, so the output is finite for any params (a property test runs random params at 44.1, 48 and 96 kHz). Nothing allocates, locks or blocks in `process`, `reset` and `set_param`; the delay lines and the reverb are allocated in `prepare`.
+- **Meter values** (3): input peak, output peak (linear, last batch) and the gate's reduction in dB.
+
+### Setups
+
+`setup` selects a factory setup. A setup is a value for every param but `setup` and `bypass` ([guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), one row per setup). **The device ignores the param**: the app turns a `SetParam` of `setup` on a guitar amp into one `Command::Batch` that sets `setup` and every param of the setup (`AppCore::expand_setup`). Choosing a setup is therefore **one undo step** (one undo brings back every value), it works from the rack panel, from MIDI and from the MCP tools alike, and a project file only holds plain param values. The player tweaks freely afterwards and the selector keeps showing the last setup; choosing the same one again restores its values. A `bypass` is not part of a setup. A patch rendered by `atomik-render` that sets `setup` alone does not load the setup: write the params.
+
+| Setup | gain | tone (bass, mid, treble) | tight, boost | gate | cab, mic | effects |
+|---|---|---|---|---|---|---|
+| Clean | 2.5 | 5, 5.5, 5.5 | open, 0 | off | 2x12, 0.35 | none |
+| Crunch | 6.5 | 4.5, 6.5, 6 | 80 Hz, 3 dB | off | 2x12, 0.3 | a small room |
+| Industrial Rhythm | 9 | 6.5, 3.5, 6.5 (presence 7, depth 6, sag 1.5) | 150 Hz, 9 dB | −52 dB | 4x12 closed, 0.25 | none |
+| 80s Lead | 8 | 5.5, 7.5, 6 (sag 6) | 90 Hz, 6 dB | −56 dB | 4x12 closed, 0.35 | 380 ms ping-pong delay (feedback 0.38, tone 4.2 kHz, mix 0.28), plate-like reverb (1.8 s, mix 0.22) |
+| Synthwave | 3.5 | 4.5, 5, 7 (presence 6) | 40 Hz, 0 | off | 1x12 open, 0.1 | wide chorus (0.7 Hz, depth 0.7, mix 0.5), dotted-eighth delay at the project tempo (feedback 0.45, tone 6 kHz, mix 0.3), 4.5 s reverb (size 0.8, mix 0.35) |
+
+The levels (`level` −1.5, −8, −10, −4.5 and −2.5 dB) are matched on a played guitar: the bounce test of the synthesised guitar DI measures the five within half a decibel of each other.
+
+### Tests
+
+`crates/dsp/src/amp` (the blocks: tone interaction, aliasing against 1x, even and odd harmonics, sag, presence and depth, the cabinets), `crates/devices/src/guitar_amp/tests.rs` (descriptor, setup table, gain staging, aliasing, gate, cabinet and mic, tone, effects and tempo sync, exact bypass of a zero mix, mono input, determinism, extreme and non-finite params), the `qa_guitar_amp_any_params_bounded_at_every_sample_rate` property test, `crates/app/src/app_core_setups_tests.rs` (a setup is one undo step), `crates/ui/tests/guitar_amp_panel.rs` with the goldens of `fx_panels.rs`, and in `atomik-render` the PDC case of `fx_pdc.rs` and `guitar_amp_demo.rs`: a synthesised Karplus-Strong guitar DI bounced through every setup (bit-identical at every host block, the gate, the delay tail, the width and a fingerprint golden within 0.5 dB).
 
 ## Modulation: `atomik.modulation` (Effect)
 
@@ -1447,12 +1527,12 @@ The step sequencer, the arpeggiator, the note filter, Key & Chord, the Note Repe
 
 ## Effect bypass
 
-Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, modulation, mastering, Character, the spectrum and the phase meter) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
+Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, the guitar amp, modulation, mastering, Character, the spectrum and the phase meter) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
 
 - **Bypassed (>= 0.5).** `out_l` / `out_r` carry the main inputs `in_l` / `in_r` **delayed by the device's current `latency_frames()`**, bit for bit, so plugin delay compensation stays right and a bypassed latent effect (compressor lookahead, oversampled distortion and modulation, mastering, Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in `prepare`; a latency that changes at run time (Character across its two latency classes) moves the dry tap at the next batch boundary.
 - **The effect keeps running.** Its state and tail continue and every other output (the compressor's `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged; un-bypassing is seamless, and the CPU cost does not drop.
 - **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample, `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed input. The first batch after `prepare` or `reset` starts at the param's value without a fade, so a project saved bypassed opens bypassed.
-- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all ten effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
+- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all eleven effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
 - **Plugins.** A plugin effect's bypass is the same switch with the same fade, and its dry signal is also the input delayed by the plugin's reported latency (a 100 ms ring), so bypassing a latent plugin does not move the channel against the others.
 - **Console inserts.** The console's BYP ALL button and the B of an insert slot set this `bypass` on the effects of the chain, so the delay compensation holds (see Channel strip upgrades in [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is not delay compensated.
 
