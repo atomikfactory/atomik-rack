@@ -1,6 +1,6 @@
 # Device reference
 
-Atomik Rack ships thirty-two original devices: the poly synth, the wavetable synth, the FM synth, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships thirty-three original devices: the poly synth, the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
 
 Conventions used throughout:
 
@@ -304,6 +304,60 @@ Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve 
 ### Tests
 
 The synth's tests render each algorithm and compare it to a naive `f64` reference computation (phase accumulators, the routing as written out in the test); and cover the ratios, fixed frequencies and detune to a fraction of a hertz, the feedback (against the reference, bounded, tonal at its maximum on five registers), voice stealing and the voice limit, the envelopes and their delays, velocity and key scaling, the index from the wheel, the LFO and the CV, the mono modes and the glide, aliasing of a bright patch on high keys (with an unlimited reference that does alias), determinism and reset, every param at its extremes, and the factory sounds. A proptest (`qa_devices`) drives random params, CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in [crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch `examples/patches/fm-demo.json` bounces in [crates/render/tests/fm_demo.rs](../crates/render/tests/fm_demo.rs).
+
+
+---
+
+## Grain Sampler: `atomik.granular` (Instrument)
+
+A sample played as a cloud of short grains, with up to 16 voices. Each voice starts `grain.density` grains a second, each a windowed read of the sample at a position (a knob, a scan through the sample and a random spray), a pitch (the key, transpose, a random scatter per grain) and a direction, then runs through a filter and the amp envelope. With no sample loaded it plays a **built-in vowel pad** (three seconds at middle C that glide through "ah, oh, eh, ee" along the position, made in code), so a new device sounds at once. An original design from the textbook of granular synthesis; the blocks are in [dsp/src/grain.rs](../crates/dsp/src/grain.rs) and the voice in [granular.rs](../crates/devices/src/granular.rs).
+
+**The sample.** Registered like the sampler (`takes_samples`): drop a file on the panel or load it from the browser, and the device holds **one** sample: a drop replaces the zone in one undo step (extra files are named in the status message and ignored). Project files keep the reference, relink works as for the sampler, and EDIT opens the sample editor on the zone. The first zone whose key and velocity range match a note plays; its start and end are the **window** the grains read (position 0 to 100 % is that window), and its root key, transpose, tune, gain and pan apply; its loop and trigger fields are ignored. With a map that has no zone for a note, that note is silent. A sample swap allocates nothing and fades a voice that loses its zone in 5 ms, as the sampler does.
+
+| Param | Range | Default | Meaning |
+|---|---|---|---|
+| `sound` | choice | Init | Factory sound (see below). |
+| `voices` | 1 to 16 | 8 | Notes at once; the oldest is stolen (2 ms fade). |
+| `master.level` | -60 to 6 dB | -6 | Output level. |
+| `grain.density` | 1 to 200 Hz | 24 | Grains started a second per voice. |
+| `grain.size` | 5 to 500 ms | 90 | Grain length. |
+| `grain.window` | Hann, Tukey, Percussive | Hann | Grain shape. |
+| `grain.timing` | 0 to 100 % | 30 | Randomness of the spacing; the mean rate is unchanged. |
+| `grain.reverse` | 0 to 100 % | 0 | Share of grains played backwards. |
+| `grain.spread` | 0 to 100 % | 50 | Random pan per grain. |
+| `grain.limit` | 1 to 64 | 48 | Grains one voice holds; past it the grain nearest its end is replaced. |
+| `pos.position` | 0 to 100 % | 20 | Where in the window grains start. |
+| `pos.spray` | 0 to 100 % | 8 | Width of the random offset around the position (reflected at the ends). |
+| `pos.scan` | -4 to 4 | 0 | Speed of the position through the window in times real time; 0 freezes, negative runs back, wraps round. |
+| `pitch.transpose`, `pitch.fine` | ±24 st, ±100 ct | 0 | Tuning. |
+| `pitch.random` | 0 to 1200 ct | 0 | Random pitch offset per grain, either way. |
+| `pitch.key_track` | 0 to 100 % | 100 | How far the pitch follows the key. |
+| `env.amp.*`, `velocity.amp` | | A 30 ms, D 400 ms, S 1, R 400 ms, 50 % | Amp ADSR and velocity sensitivity. |
+| `filter.enabled`, `filter.mode`, `filter.cutoff`, `filter.resonance`, `filter.key_track`, `filter.env_amount` | | off, LP12, 8 kHz | A 12 dB state-variable filter per voice; the mod envelope opens it. |
+| `env.mod.*` | | A 5 ms, D 600 ms, S 0, R 300 ms | The mod envelope, with `to_position` (fraction), `to_size`, `to_density` (octaves), `to_pitch` (semitones). |
+| `lfo.wave`, `lfo.rate` | | sine, 0.5 Hz | The LFO, with `to_position`, `to_size`, `to_density`, `to_pitch`, `to_cutoff`. |
+| `wheel.to_position`, `wheel.to_spray` | | 0, 50 % | Mod wheel (CC 1); by default it opens the spray. |
+| `cv.pitch_amount`, `cv.position_amount`, `cv.density_amount`, `cv.cutoff_amount`, `master.level_cv_trim` | | 12 st, 50 %, 2 oct, 2 oct, 1 | Scale of the CV inputs. |
+
+Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_cv_in`, `level_cv_in`, `out_l`, `out_r`.
+
+- **Grains.** A grain starts at `fold(position + scan + spray·u/2)` of the window, `u` uniform in -1 to 1, moved so that a grain that fits the window does not straddle its end (no splice inside a grain; a grain longer than the window wraps round it). It reads `2^(semitones/12)` source frames per output frame (limited to 1/32 to 8) with a four-point Hermite.
+- **Aliasing.** Above a step of 1 the read averages `2n+1` linear taps over ±step frames with triangular weights (response sinc², blended in over steps 1 to 1.25): a 9 kHz tone two octaves up comes out under 20 % of the level it would have aliased at, a 1 kHz tone keeps its level to 1.5 dB (both are tests).
+- **Level.** Grains are scaled by 1/√overlap (density × size scaled by the window's power, at most `grain.limit`, at least 1), then amp envelope, velocity, master (5 ms smoothing) and the poly synth's soft limiter: the output is finite and |x| ≤ 4.
+- **Randomness.** Each note seeds its own stream from the patch seed and the note's start number (reset by `reset`), so two renders of the same notes are identical, at any host block size.
+- **Panel.** The sample strip names the sample or the built-in source; the waveform of the window shows the position, the spray band and the live grains from the device's published values (31 meter values: source, position, spray, grain and voice counts, the last 13 grains as position and life).
+
+### Sounds
+
+`sound` selects a factory sound; like the FM synth's, a change is one `Command::Batch` and the device ignores the param ([granular/sounds.rs](../crates/devices/src/granular/sounds.rs)). The sounds are made for the built-in source.
+
+| Sound | Idea |
+|---|---|
+| Init | 90 ms Hann grains, 24 a second, near the start, a little spray, filter off. |
+| Frozen Pad | Position frozen on the "oh", long dense grains, slow swell and release, a low-pass that breathes; the wheel opens the spray. |
+| Shimmer | An octave up, short Tukey grains, a third reversed, 30 cents of scatter, wide, high-passed, a slow scan. |
+| Stutter | Percussive 55 ms grains at 9 a second, no timing scatter or spray: the same slice repeats; a square LFO jumps between two slices and each note starts faster. |
+| Texture | A half-speed scan with wide spray, half the grains reversed, 45 cents of scatter, an LFO on the size and a filter that opens with each note. |
 
 ---
 
