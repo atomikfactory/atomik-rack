@@ -1,5 +1,9 @@
-//! Interleaved WAV output (32-bit float or 24-bit PCM) and the reader used by tests.
+//! Interleaved WAV output (32-bit float, 24-bit or 16-bit PCM) and the reader used by tests.
+//!
+//! 16-bit output is dithered by default (seeded TPDF, [`atomik_dsp::Dither`]); 24-bit and float
+//! output is not. [`write_wav_with`] picks the dither and the seed.
 
+use atomik_dsp::{Dither, DitherMode};
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 
@@ -10,6 +14,8 @@ pub enum SampleFormat {
     F32,
     /// 24-bit signed PCM; see [`pcm24_from_f32`].
     Pcm24,
+    /// 16-bit signed PCM, dithered by default (see the module docs).
+    Pcm16,
 }
 
 /// A decoded WAV file.
@@ -19,7 +25,7 @@ pub struct WavData {
     pub sample_rate: u32,
     /// Sample format.
     pub format: SampleFormat,
-    /// De-interleaved samples, one `Vec` per channel (PCM is scaled back by 2^-23).
+    /// De-interleaved samples, one `Vec` per channel (PCM is scaled back by 2^-23 or 2^-15).
     pub channels: Vec<Vec<f32>>,
 }
 
@@ -35,7 +41,7 @@ pub enum WavError {
     /// The channel buffers differ in length.
     #[error("every channel must have the same number of frames")]
     UnequalChannels,
-    /// The file is neither 32-bit float nor 24-bit PCM.
+    /// The file is not 32-bit float, 24-bit PCM or 16-bit PCM.
     #[error("unsupported WAV sample format: {0}")]
     Unsupported(String),
 }
@@ -55,10 +61,14 @@ pub fn pcm24_from_f32(x: f32) -> i32 {
 /// 2^23: full scale of 24-bit PCM.
 const PCM24_SCALE: f64 = 8_388_608.0;
 
+/// 2^15: full scale of 16-bit PCM.
+const PCM16_SCALE: f32 = 32_768.0;
+
 fn spec(channels: u16, sample_rate: u32, format: SampleFormat) -> hound::WavSpec {
     let (bits_per_sample, sample_format) = match format {
         SampleFormat::F32 => (32, hound::SampleFormat::Float),
         SampleFormat::Pcm24 => (24, hound::SampleFormat::Int),
+        SampleFormat::Pcm16 => (16, hound::SampleFormat::Int),
     };
     hound::WavSpec {
         channels,
@@ -68,12 +78,40 @@ fn spec(channels: u16, sample_rate: u32, format: SampleFormat) -> hound::WavSpec
     }
 }
 
-/// Writes `channels` (equal lengths) interleaved as a WAV stream.
+/// The dither [`write_wav`] uses: seeded TPDF for 16-bit PCM, none for the others.
+pub fn default_dither(format: SampleFormat) -> DitherMode {
+    match format {
+        SampleFormat::Pcm16 => DitherMode::Tpdf,
+        SampleFormat::F32 | SampleFormat::Pcm24 => DitherMode::None,
+    }
+}
+
+/// Writes `channels` (equal lengths) interleaved as a WAV stream, with the default dither of the
+/// format ([`default_dither`], seed 0).
 pub fn write_wav<W: Write + Seek>(
     writer: W,
     channels: &[Vec<f32>],
     sample_rate: u32,
     format: SampleFormat,
+) -> Result<(), WavError> {
+    write_wav_with(
+        writer,
+        channels,
+        sample_rate,
+        format,
+        (default_dither(format), 0),
+    )
+}
+
+/// [`write_wav`] with the dither and its seed chosen (`dither`: mode and seed). The dither
+/// applies to the PCM formats and is ignored for float output; it is the only place the samples
+/// are requantised, so a float to 16-bit export is quantised exactly once.
+pub fn write_wav_with<W: Write + Seek>(
+    writer: W,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    format: SampleFormat,
+    (dither, seed): (DitherMode, u64),
 ) -> Result<(), WavError> {
     let frames = channels.first().ok_or(WavError::NoChannels)?.len();
     if channels.iter().any(|c| c.len() != frames) {
@@ -82,11 +120,13 @@ pub fn write_wav<W: Write + Seek>(
     let count = u16::try_from(channels.len())
         .map_err(|_| WavError::Unsupported(format!("{} channels", channels.len())))?;
     let mut w = hound::WavWriter::new(writer, spec(count, sample_rate, format))?;
+    let mut dither = Dither::new(dither, seed, channels.len());
     for n in 0..frames {
-        for channel in channels {
+        for (c, channel) in channels.iter().enumerate() {
             match format {
                 SampleFormat::F32 => w.write_sample(channel[n])?,
-                SampleFormat::Pcm24 => w.write_sample(pcm24_from_f32(channel[n]))?,
+                SampleFormat::Pcm24 => w.write_sample(dither.quantise(c, channel[n], 24))?,
+                SampleFormat::Pcm16 => w.write_sample(dither.quantise(c, channel[n], 16) as i16)?,
             }
         }
     }
@@ -94,7 +134,7 @@ pub fn write_wav<W: Write + Seek>(
     Ok(())
 }
 
-/// Reads a 32-bit float or 24-bit PCM WAV stream.
+/// Reads a 32-bit float, 24-bit PCM or 16-bit PCM WAV stream.
 pub fn read_wav<R: Read>(reader: R) -> Result<WavData, WavError> {
     let mut r = hound::WavReader::new(reader)?;
     let spec = r.spec();
@@ -109,6 +149,12 @@ pub fn read_wav<R: Read>(reader: R) -> Result<WavData, WavError> {
                 SampleFormat::Pcm24,
                 r.samples::<i32>()
                     .map(|s| s.map(|v| (f64::from(v) / PCM24_SCALE) as f32))
+                    .collect::<Result<_, _>>()?,
+            ),
+            (hound::SampleFormat::Int, 16) => (
+                SampleFormat::Pcm16,
+                r.samples::<i16>()
+                    .map(|s| s.map(|v| f32::from(v) / PCM16_SCALE))
                     .collect::<Result<_, _>>()?,
             ),
             (f, bits) => return Err(WavError::Unsupported(format!("{bits}-bit {f:?}"))),
@@ -135,6 +181,18 @@ pub fn write_wav_file(
 ) -> Result<(), WavError> {
     let file = std::io::BufWriter::new(std::fs::File::create(path).map_err(hound::Error::from)?);
     write_wav(file, channels, sample_rate, format)
+}
+
+/// [`write_wav_with`] to a file (created or truncated).
+pub fn write_wav_file_with(
+    path: &Path,
+    channels: &[Vec<f32>],
+    sample_rate: u32,
+    format: SampleFormat,
+    dither: (DitherMode, u64),
+) -> Result<(), WavError> {
+    let file = std::io::BufWriter::new(std::fs::File::create(path).map_err(hound::Error::from)?);
+    write_wav_with(file, channels, sample_rate, format, dither)
 }
 
 /// [`read_wav`] from a file.
@@ -220,11 +278,11 @@ mod tests {
     }
 
     #[test]
-    fn read_wav_rejects_16bit() {
+    fn read_wav_rejects_8bit() {
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: 48_000,
-            bits_per_sample: 16,
+            bits_per_sample: 8,
             sample_format: hound::SampleFormat::Int,
         };
         let mut buf = Cursor::new(Vec::new());
@@ -233,5 +291,122 @@ mod tests {
         w.finalize().unwrap();
         let r = read_wav(Cursor::new(buf.into_inner()));
         assert!(matches!(r, Err(WavError::Unsupported(_))), "{r:?}");
+    }
+
+    fn tone() -> Vec<Vec<f32>> {
+        let left: Vec<f32> = (0..4800).map(|i| ((i as f32) * 0.05).sin() * 0.8).collect();
+        let right: Vec<f32> = left.iter().map(|x| x * -0.4).collect();
+        vec![left, right]
+    }
+
+    #[test]
+    fn pcm16_roundtrips_within_the_dither_and_has_a_16_bit_header() {
+        let channels = tone();
+        let (bytes, back) = roundtrip(&channels, SampleFormat::Pcm16);
+        assert_eq!(back.format, SampleFormat::Pcm16);
+        assert_eq!(back.sample_rate, 48_000);
+        assert_eq!(back.channels.len(), 2);
+        // fmt chunk: PCM (1), 2 channels, 48 kHz, block align 4, 16 bits.
+        assert_eq!(&bytes[20..22], &1u16.to_le_bytes());
+        assert_eq!(&bytes[22..24], &2u16.to_le_bytes());
+        assert_eq!(&bytes[32..34], &4u16.to_le_bytes());
+        assert_eq!(&bytes[34..36], &16u16.to_le_bytes());
+        // TPDF of ±1 LSB plus the rounding: at most 1.5 LSB from the input.
+        for (a, b) in channels.iter().zip(&back.channels) {
+            assert_eq!(a.len(), b.len());
+            for (x, y) in a.iter().zip(b) {
+                assert!(
+                    (x - y).abs() <= 1.5 / PCM16_SCALE + f32::EPSILON,
+                    "{x} vs {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pcm16_without_dither_rounds_to_half_an_lsb() {
+        let channels = tone();
+        let mut buf = Cursor::new(Vec::new());
+        write_wav_with(
+            &mut buf,
+            &channels,
+            48_000,
+            SampleFormat::Pcm16,
+            (DitherMode::None, 0),
+        )
+        .unwrap();
+        let back = read_wav(Cursor::new(buf.into_inner())).unwrap();
+        for (a, b) in channels.iter().zip(&back.channels) {
+            for (x, y) in a.iter().zip(b) {
+                assert!(
+                    (x - y).abs() <= 0.5 / PCM16_SCALE + f32::EPSILON,
+                    "{x} vs {y}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_dither_is_seeded_and_only_touches_the_pcm_words() {
+        let channels = tone();
+        let bytes = |format, mode, seed| {
+            let mut buf = Cursor::new(Vec::new());
+            write_wav_with(&mut buf, &channels, 48_000, format, (mode, seed)).unwrap();
+            buf.into_inner()
+        };
+        let a = bytes(SampleFormat::Pcm16, DitherMode::Tpdf, 9);
+        assert_eq!(a, bytes(SampleFormat::Pcm16, DitherMode::Tpdf, 9));
+        assert_ne!(a, bytes(SampleFormat::Pcm16, DitherMode::Tpdf, 10));
+        assert_ne!(a, bytes(SampleFormat::Pcm16, DitherMode::None, 9));
+        // write_wav is the 16-bit default: TPDF, seed 0.
+        let mut buf = Cursor::new(Vec::new());
+        write_wav(&mut buf, &channels, 48_000, SampleFormat::Pcm16).unwrap();
+        assert_eq!(
+            buf.into_inner(),
+            bytes(SampleFormat::Pcm16, DitherMode::Tpdf, 0)
+        );
+        // Float output ignores it.
+        assert_eq!(
+            bytes(SampleFormat::F32, DitherMode::Tpdf, 1),
+            bytes(SampleFormat::F32, DitherMode::None, 2)
+        );
+    }
+
+    #[test]
+    fn pcm24_is_not_dithered_by_default_and_matches_pcm24_from_f32() {
+        let channels = tone();
+        let mut buf = Cursor::new(Vec::new());
+        write_wav(&mut buf, &channels, 48_000, SampleFormat::Pcm24).unwrap();
+        let back = read_wav(Cursor::new(buf.into_inner())).unwrap();
+        for (a, b) in channels.iter().zip(&back.channels) {
+            for (x, y) in a.iter().zip(b) {
+                let code = pcm24_from_f32(*x);
+                assert_eq!(*y, (f64::from(code) / PCM24_SCALE) as f32);
+            }
+        }
+    }
+
+    #[test]
+    fn the_audio_file_reader_reads_the_16_and_24_bit_files() {
+        let channels = tone();
+        let dir = std::env::temp_dir().join(format!("atomik-wav-depth-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (format, tolerance) in [
+            (SampleFormat::Pcm16, 1.5 / PCM16_SCALE),
+            (SampleFormat::Pcm24, 0.5 / SCALE),
+        ] {
+            let path = dir.join(format!("{format:?}.wav"));
+            write_wav_file(&path, &channels, 44_100, format).unwrap();
+            let decoded = atomik_audio_file::decode_file(&path).unwrap();
+            assert_eq!(decoded.sample_rate, 44_100);
+            assert_eq!(decoded.channels.len(), 2);
+            assert_eq!(decoded.frames(), channels[0].len());
+            for (a, b) in channels.iter().zip(&decoded.channels) {
+                for (x, y) in a.iter().zip(b) {
+                    assert!((x - y).abs() <= tolerance + 1e-6, "{format:?}: {x} vs {y}");
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -68,6 +68,29 @@ pub(crate) struct Done {
     pub warnings: Vec<String>,
 }
 
+/// The plugin host a render of `doc` needs, with the device types it provides registered in
+/// `registry` (`None`: the document has no plugin). `what` names the render in the message
+/// that says the sandbox is needed.
+pub(crate) fn plugin_host(
+    doc: &RackDoc,
+    plugins: PluginEnv,
+    registry: &mut atomik_device_sdk::Registry,
+    what: &str,
+) -> Result<Option<PluginHost>, String> {
+    if doc.plugin_devices().is_empty() {
+        return Ok(None);
+    }
+    let isolation = plugins.isolation.ok_or_else(|| {
+        format!(
+            "this project uses plugins, which {what} can only render with the plugin sandbox: \
+             turn it on in Audio > Plugins (it applies at the next start)"
+        )
+    })?;
+    let mut host = PluginHost::with_isolation(isolation);
+    host.set_catalog(&plugins.cache, &plugins.settings, registry);
+    Ok(Some(host))
+}
+
 /// Renders `work`. `None`: the control stopped it.
 fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String> {
     let Work {
@@ -79,18 +102,7 @@ fn render(work: Work, control: RenderControl<'_>) -> Result<Option<Done>, String
         plugins,
     } = work;
     let mut registry = atomik_render::default_registry();
-    let mut host = if doc.plugin_devices().is_empty() {
-        None
-    } else {
-        let isolation = plugins.isolation.ok_or_else(|| {
-            "this project uses plugins, which a freeze can only render with the plugin sandbox: \
-             turn it on in Audio > Plugins (it applies at the next start)"
-                .to_owned()
-        })?;
-        let mut host = PluginHost::with_isolation(isolation);
-        host.set_catalog(&plugins.cache, &plugins.settings, &mut registry);
-        Some(host)
-    };
+    let mut host = plugin_host(&doc, plugins, &mut registry, "a freeze")?;
     atomik_model::register_stand_ins(&doc, &mut registry).map_err(|e| e.to_string())?;
     let options = ProjectOptions {
         host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),

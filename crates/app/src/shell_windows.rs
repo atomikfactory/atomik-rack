@@ -265,6 +265,9 @@ impl<B: AudioBackend> Shell<B> {
                 if let Some(v) = &mut self.relink {
                     v.set_scale(scale);
                 }
+                if let Some(v) = &mut self.export {
+                    v.set_scale(scale);
+                }
                 if let Some(v) = &mut self.midi_maps {
                     v.set_scale(scale);
                 }
@@ -391,6 +394,7 @@ impl<B: AudioBackend> Shell<B> {
         self.dialog.is_some()
             || self.plugin_settings.is_some()
             || self.relink.is_some()
+            || self.export.is_some()
             || self.midi_maps.is_some()
             || self.macros_panel.is_some()
             || self.param_search.is_some()

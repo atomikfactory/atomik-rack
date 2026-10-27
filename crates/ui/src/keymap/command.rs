@@ -495,6 +495,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     ),
     cmd(
+        "file.export_loop_audio",
+        "Export Loop as Audio File",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.export_midi_clip",
         "Export MIDI Clip",
         G::Global,
@@ -516,6 +523,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.export_patch", "Export Patch", G::Global, C::Global).menu(),
+    cmd(
+        "file.export_song_audio",
+        "Export Song as Audio File",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.import_audio", "Import Audio", G::Global, C::Global).menu(),
     cmd("file.import_midi", "Import MIDI", G::Global, C::Global).menu(),
     cmd(

@@ -107,6 +107,11 @@ pub const TOOLS: &[Tool] = &[
         run: bounce,
     },
     Tool {
+        name: "session_export",
+        definition: export_def,
+        run: export,
+    },
+    Tool {
         name: "session_close",
         definition: close_def,
         run: close,
@@ -342,6 +347,10 @@ fn request_json(r: ShellRequest) -> Value {
         ShellRequest::PickExportMidiPreset | ShellRequest::PickImportMidiPreset => (
             "pick_midi_preset",
             "a file dialog: use session_midi_learn with action export or import and a file",
+        ),
+        ShellRequest::PickExportAudio(_) => (
+            "pick_export_audio",
+            "a file dialog: use session_export with a file (it writes the same file the dialog would)",
         ),
         ShellRequest::PickImportMidi { .. } | ShellRequest::PickExportMidi(_) => (
             "pick_midi_file",
@@ -1863,6 +1872,156 @@ fn bounce(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         v["comparison"]["reference"] = json!(name);
     }
     Ok(ToolOutput::json(&v))
+}
+
+// -------------------------------------------------------------- session_export
+
+fn export_def() -> Value {
+    definition(
+        "session_export",
+        "Exports the session's document as an audio file, answering the dialogs of File > Export \
+Song / Loop as Audio File... (`session_command` file.export_song_audio and file.export_loop_audio \
+raise a native dialog, reported as `pick_export_audio`). The same renderer and rules as the \
+app's export, run synchronously: `span` song is from the start to the End marker plus the tail \
+that is still audible (at most 10 s, cut where the output stays below -90 dBFS; `tail` false \
+ends at the End), `span` loop is exactly the frames between the locators with no tail. `format` \
+is pcm16 (dithered, see `dither`), pcm24 (no dither, the default) or f32; `sample_rate` converts \
+from the project's rate. The file is read back for the audio report. Returns `path`, `bytes`, \
+`format`, `dither`, `sample_rate`, `frames`, `seconds`, `span_frames`, `tail_frames`, `warnings` \
+and `audio`.",
+        &[
+            ("file", "string", "The WAV file to write."),
+            ("span", "string", "song (default) or loop."),
+            ("format", "string", "pcm16, pcm24 (default) or f32."),
+            (
+                "dither",
+                "string",
+                "pcm16 only: none, tpdf (default) or shaped.",
+            ),
+            (
+                "sample_rate",
+                "integer",
+                "Convert to this rate in Hz (8000 to 192000; default the project's).",
+            ),
+            (
+                "tail",
+                "boolean",
+                "Song only: keep the audible tail after the End (default true).",
+            ),
+            (
+                "window_s",
+                "number",
+                "Loudness window in seconds for the report (default 0.5).",
+            ),
+        ],
+        &["file"],
+    )
+}
+
+fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
+    use atomik_render::export::{
+        BitDepth, DEFAULT_TAIL_SECONDS, DitherMode, ExportFormat, ExportRequest, ExportSpan,
+        export_audio_file,
+    };
+    let file = args.str("file")?;
+    let span = match args.opt_str("span")?.unwrap_or("song") {
+        "song" => ExportSpan::Song,
+        "loop" => ExportSpan::Loop,
+        other => return Err(format!("span must be song or loop, not `{other}`")),
+    };
+    let bit_depth = match args.opt_str("format")?.unwrap_or("pcm24") {
+        "pcm16" => BitDepth::Pcm16,
+        "pcm24" => BitDepth::Pcm24,
+        "f32" => BitDepth::Float32,
+        other => return Err(format!("format must be pcm16, pcm24 or f32, not `{other}`")),
+    };
+    let dither = match args.opt_str("dither")? {
+        None => bit_depth.default_dither(),
+        Some(_) if bit_depth != BitDepth::Pcm16 => {
+            return Err("dither applies to pcm16 only".to_string());
+        }
+        Some("none") => DitherMode::None,
+        Some("tpdf") => DitherMode::Tpdf,
+        Some("shaped") => DitherMode::Shaped,
+        Some(other) => {
+            return Err(format!(
+                "dither must be none, tpdf or shaped, not `{other}`"
+            ));
+        }
+    };
+    let sample_rate = args
+        .opt_u64("sample_rate")?
+        .map(|r| {
+            u32::try_from(r)
+                .ok()
+                .filter(|r| (8_000..=192_000).contains(r))
+                .ok_or("sample_rate must be 8000..=192000")
+        })
+        .transpose()?;
+    let tail = args.opt_bool("tail")?.unwrap_or(true);
+    let window_s = args.opt_f64("window_s")?.unwrap_or(0.5);
+    let out = server.paths().write(file)?;
+    let session = server.require_session()?;
+    let core = session.shell().core();
+    let doc = core.doc();
+    if !doc.plugin_devices().is_empty() {
+        return Err(
+            "this project uses third-party plugins; export it from the app (with the plugin \
+             sandbox on)"
+                .to_string(),
+        );
+    }
+    let options = atomik_render::project::ProjectOptions {
+        host_block: std::num::NonZeroUsize::new(512).unwrap_or(std::num::NonZeroUsize::MIN),
+        workers: 0,
+        loop_count: None,
+    };
+    let request = ExportRequest {
+        span,
+        tail_seconds: if span == ExportSpan::Song && tail {
+            DEFAULT_TAIL_SECONDS
+        } else {
+            0.0
+        },
+    };
+    let format = ExportFormat {
+        bit_depth,
+        dither,
+        sample_rate,
+    };
+    let report = export_audio_file(
+        doc,
+        core.registry(),
+        (&options, core.bundle_root()),
+        &mut atomik_render::project::PluginBounce::default(),
+        (&request, &format),
+        (&out, atomik_render::plugin_pass::RenderControl::default()),
+    )
+    .map_err(|e| e.to_string())?
+    .ok_or("the export was cancelled")?;
+    let written = read_wav_file(&out).map_err(|e| e.to_string())?;
+    Ok(ToolOutput::json(&json!({
+        "path": out.to_string_lossy(),
+        "bytes": std::fs::metadata(&out).map(|m| m.len()).ok(),
+        "format": match bit_depth {
+            BitDepth::Pcm16 => "pcm16",
+            BitDepth::Pcm24 => "pcm24",
+            BitDepth::Float32 => "f32",
+        },
+        "dither": match (bit_depth, dither) {
+            (BitDepth::Pcm16, DitherMode::None) => "none",
+            (BitDepth::Pcm16, DitherMode::Tpdf) => "tpdf",
+            (BitDepth::Pcm16, DitherMode::Shaped) => "shaped",
+            _ => "none",
+        },
+        "sample_rate": report.sample_rate,
+        "frames": report.frames,
+        "seconds": report.frames as f64 / f64::from(report.sample_rate),
+        "span_frames": report.span_frames,
+        "tail_frames": report.tail_frames,
+        "warnings": report.warnings.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "audio": analysis::report(&written.channels, written.sample_rate, window_s),
+    })))
 }
 
 // --------------------------------------------------------------- session_close

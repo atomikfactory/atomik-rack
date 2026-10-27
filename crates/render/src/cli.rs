@@ -98,7 +98,7 @@ pub struct Args {
     /// Output WAV file.
     #[arg(short = 'o', long = "output", value_name = "OUT.wav")]
     pub output: PathBuf,
-    /// Output sample format.
+    /// Output sample format (`pcm16` is dithered with seeded TPDF).
     #[arg(long, value_enum, default_value_t = SampleFormat::F32)]
     pub format: SampleFormat,
     /// Host block size in frames; the output does not depend on it.

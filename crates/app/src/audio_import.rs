@@ -105,6 +105,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Box<Result<Option<crate::freeze_worker::Done>, String>>,
     },
+    /// An audio export finished and wrote its file (`Ok(None)`: it was cancelled, nothing was
+    /// written), or failed: see [`crate::export_worker`].
+    Exported {
+        generation: u64,
+        job: u64,
+        result: Box<Result<Option<atomik_render::export::ExportReport>, String>>,
+    },
     /// The notes of an audio clip were extracted (or it failed): see the Audio to Notes
     /// section of [`crate::AppCore`].
     Noted {
