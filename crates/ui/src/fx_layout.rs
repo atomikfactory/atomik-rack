@@ -12,7 +12,7 @@
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
 //! | spectrum | log-frequency plot or 1/3-octave bars, peak hold, loudest-bin readout, input peaks | across the top, 200 high | ANALYSIS, SMOOTHING, DISPLAY |
-//! | audio track | the tuner display (needle, note, cents, Hz) and its TUNER button | across the top, 92 high | INPUT, TUNER |
+//! | audio track | the tuner display (needle, note, cents, Hz), only while the TUNER button of its name plate is on | across the top, 92 high | INPUT, TUNER (with the display) |
 //! | phase meter | goniometer, correlation, balance and width bars, level bars, loudness readouts | across the top, 148 high | STEREO, LEVEL, SCOPE, LOUDNESS |
 //!
 //! The height is the smallest whole number of rack units where the front (visual and sections)
@@ -269,13 +269,31 @@ fn knob_or_cell(desc: &DeviceDescriptor, param: usize) -> (ControlKind, f64, Opt
 
 /// The panel of one of the six effects.
 pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
+    layout(kind, desc, true)
+}
+
+/// The panel of an audio track: with the tuner (the display and the TUNER section) or, with it
+/// hidden, only the input settings, so the panel is shorter. The TUNER button is on the name
+/// plate in both ([`crate::paint::tuner_button_rect`]).
+pub fn audio_track_layout(desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
+    layout(FxKind::AudioTrack, desc, tuner_on)
+}
+
+fn layout(kind: FxKind, desc: &DeviceDescriptor, tuner_on: bool) -> PanelSpec {
     if kind == FxKind::Character {
         return crate::character_panel::character_layout(desc);
     }
-    let (left, top) = placement(kind);
+    // A hidden tuner leaves no display and no settings of its own.
+    let collapsed = kind == FxKind::AudioTrack && !tuner_on;
+    let (left, top) = if collapsed {
+        (0.0, 0.0)
+    } else {
+        placement(kind)
+    };
     let reserve = if left > 0.0 { left + SECTION_GAP } else { 0.0 };
     let groups: Vec<Group> = sections(kind)
         .iter()
+        .filter(|(label, _)| !(collapsed && *label == "TUNER"))
         .map(|(label, keys)| Group {
             label: (*label).to_string(),
             min_w: label.chars().count() as f64 * 5.7 + 8.0,
@@ -309,15 +327,16 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
     } else {
         (CONTENT_X.0, CONTENT_X.1, MARGIN_TOP + top - 4.0)
     };
-    front_sections.insert(
-        0,
-        Section {
-            label: title(kind).to_string(),
-            rect: Rect::new(x0, MARGIN_TOP, x1, MARGIN_TOP + TITLE_H),
-        },
-    );
-    let v = Rect::new(x0, MARGIN_TOP + TITLE_H, x1, y1);
-    let fx = fx_rects(kind, v);
+    let fx = (!collapsed).then(|| {
+        front_sections.insert(
+            0,
+            Section {
+                label: title(kind).to_string(),
+                rect: Rect::new(x0, MARGIN_TOP, x1, MARGIN_TOP + TITLE_H),
+            },
+        );
+        fx_rects(kind, Rect::new(x0, MARGIN_TOP + TITLE_H, x1, y1))
+    });
 
     let front = cells
         .into_iter()
@@ -332,7 +351,7 @@ pub fn fx_layout(kind: FxKind, desc: &DeviceDescriptor) -> PanelSpec {
         samples: None,
         drum: None,
         slicer: None,
-        fx: Some(fx),
+        fx,
         seq: None,
         drum_gen: None,
         arp: None,
@@ -414,12 +433,12 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             Rect::new(v.x0 + 32.0, v.y0 + 1.0, v.x1 - 46.0, v.y0 + 14.0),
             None,
         ),
-        // The TUNER button at the left, the display filling the rest.
+        // The display fills the visual; the TUNER button is on the name plate.
         FxKind::AudioTrack => (
-            Rect::new(v.x0 + 74.0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
+            Rect::new(v.x0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
             empty,
             empty,
-            Some(Rect::new(v.x0, v.y0 + 1.0, v.x0 + 66.0, v.y0 + 23.0)),
+            None,
         ),
         FxKind::PhaseMeter => {
             // Goniometer square, stereo bars, level bars with their scale, loudness readouts.

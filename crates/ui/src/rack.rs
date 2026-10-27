@@ -25,6 +25,7 @@ use crate::widget::{self, ValueDrag};
 use atomik_device_sdk::{
     ControlKind, DeviceDescriptor, Direction, PanelLayout, RACK_UNIT, RACK_WIDTH, Registry,
 };
+use atomik_model::song::AUDIO_TRACK_TYPE;
 use atomik_model::{
     BOUNDARY_KEY, Cable, Command, ConsoleCommand, ContainerCommand, CreateOptions, CreateSource,
     CreateTarget, DeviceKey, INTERFACE_KEY, PatternDoc, RackDevice, RackDoc, RackSlot, SocketRef,
@@ -843,6 +844,9 @@ impl RackView {
                             .as_ref()
                             .is_some_and(|s| plugin_signature(s) == plugin_signature(d))
                         && v.desc_id == descriptor_id(registry, d)
+                        // An audio track's panel opens and closes with its tuner.
+                        && (v.fx != Some(FxKind::AudioTrack)
+                            || v.spec.fx.is_some() == v.analyser.tuner_on)
                 });
         if !same_structure {
             self.rebuild(doc, registry);
@@ -969,6 +973,20 @@ impl RackView {
                 self.repaint = true;
             }
         }
+    }
+
+    /// The panel of an audio track: with the tuner display when it is shown, shorter when not
+    /// (both cached, the second under its own key).
+    fn audio_track_spec(&mut self, desc: &DeviceDescriptor, tuner_on: bool) -> Arc<PanelSpec> {
+        if tuner_on {
+            return self.spec_for(desc.type_id, Some(desc), false);
+        }
+        let key = format!("{}#tuner-off", desc.type_id);
+        Arc::clone(
+            self.specs
+                .entry(key)
+                .or_insert_with(|| Arc::new(crate::fx_layout::audio_track_layout(desc, false))),
+        )
     }
 
     fn spec_for(
@@ -1135,8 +1153,12 @@ impl RackView {
             let desc = registry.get(&d.type_id).map(|f| *f.descriptor);
             let desc_id = descriptor_id(registry, d);
             let samples = registry.takes_samples(&d.type_id);
+            let tuner_on = old.get(&d.key).is_some_and(|p| p.analyser.tuner_on);
             let spec = match (&d.plugin, &desc) {
                 (Some(p), Some(dd)) => self.plugin_spec(&d.type_id, dd, p),
+                (None, Some(dd)) if d.type_id == AUDIO_TRACK_TYPE => {
+                    self.audio_track_spec(dd, tuner_on)
+                }
                 _ => self.spec_for(&d.type_id, desc.as_ref(), samples),
             };
             let plugin_status = self
@@ -1381,6 +1403,14 @@ impl RackView {
                         false,
                     );
                 }
+                if d.fx == Some(FxKind::AudioTrack) && !d.folded && self.flip == Flip::Front {
+                    tree.add(
+                        pn,
+                        paint::tuner_button_rect() + off,
+                        Hit::TunerButton(i),
+                        false,
+                    );
+                }
             }
             let Some(desc) = d.desc else { continue };
             if !d.folded {
@@ -1466,12 +1496,7 @@ impl RackView {
                                 tree.add(dn, fx.plot.inset(8.0) + off, Hit::EqPlot(i), false);
                             }
                             if let Some(b) = fx.button {
-                                let hit = if fx.kind == FxKind::AudioTrack {
-                                    Hit::TunerButton(i)
-                                } else {
-                                    Hit::ScButton(i)
-                                };
-                                tree.add(dn, b + off, hit, false);
+                                tree.add(dn, b + off, Hit::ScButton(i), false);
                             }
                             if let Some(g) = fx.character {
                                 let grid = tree.add(dn, g.matrix + off, Hit::PresetGrid(i), true);
