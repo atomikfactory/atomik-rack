@@ -364,8 +364,8 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT,
-    TrackButton,
+    ArrangementView, AudioHandle, HEIGHT_LARGE, HEIGHT_SMALL, LaneButton, LaneMenu,
+    MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};

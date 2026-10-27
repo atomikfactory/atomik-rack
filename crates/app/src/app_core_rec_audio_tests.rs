@@ -975,3 +975,119 @@ fn a_track_without_input_cables_reads_silence() {
     core.feed_rec_input(0.0);
     assert_eq!(core.transport_bar().rec_level_db().0, -60.0);
 }
+
+// ---------------------------------------------------------------- the meters in the track headers
+
+/// Two host inputs: 0.5 on the first, 0.25 on the second.
+fn stereo_core() -> AppCore<OfflineSink> {
+    let mut doc = empty_doc();
+    doc.input_channels = 2;
+    let mut sink = OfflineSink::new();
+    sink.input = Box::new(|c, _| if c == 0 { 0.5 } else { 0.25 });
+    AppCore::with_doc(sink, doc, None)
+}
+
+fn header_meter(core: &AppCore<impl EngineSink>, key: &DeviceKey) -> atomik_ui::TrackMeterInfo {
+    core.arrangement().track_meter(key).expect("an audio track")
+}
+
+/// A primary click at `pos` in `pane`.
+fn click_in(core: &mut AppCore<impl EngineSink>, pane: Pane, pos: atomik_ui::kurbo::Point) {
+    use atomik_ui::{Modifiers, PointerButton, UiEvent};
+    core.handle_pane_event(
+        pane,
+        &UiEvent::PointerDown {
+            pos,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+    );
+    core.handle_pane_event(
+        pane,
+        &UiEvent::PointerUp {
+            pos,
+            button: PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        },
+    );
+}
+
+#[test]
+fn an_armed_track_header_shows_the_post_gain_input_per_channel_and_an_unarmed_one_its_playback() {
+    let mut core = stereo_core();
+    let key = add_audio_track(&mut core, "Mic");
+    set_input_param(&mut core, &key, "rec_gain", 6.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.0);
+    let idle = header_meter(&core, &key);
+    assert_eq!(idle.source, atomik_ui::MeterSource::Playback);
+    assert_eq!(idle.level_db, [-60.0, -60.0], "nothing plays");
+    arm(&mut core, &key, true);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.1);
+    let armed = header_meter(&core, &key);
+    assert_eq!(armed.source, atomik_ui::MeterSource::Input);
+    assert!(armed.stereo);
+    let gain = atomik_core::db_to_gain(6.0);
+    let db = |p: f32| 20.0 * (p * gain).log10();
+    assert!((armed.level_db[0] - db(0.5)).abs() < 0.01, "{armed:?}");
+    assert!((armed.level_db[1] - db(0.25)).abs() < 0.01, "{armed:?}");
+    // The transport bar reads the louder of the two: the same number.
+    assert!((core.transport_bar().rec_level_db().0 - armed.level_db[0]).abs() < 0.01);
+    arm(&mut core, &key, false);
+    core.feed_rec_input(0.2);
+    assert_eq!(
+        header_meter(&core, &key).source,
+        atomik_ui::MeterSource::Playback
+    );
+}
+
+#[test]
+fn a_mono_input_has_one_bar() {
+    let mut core = mono_core(|_, _| 0.5);
+    let key = add_audio_track(&mut core, "Mic");
+    arm(&mut core, &key, true);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.0);
+    let m = header_meter(&core, &key);
+    assert_eq!(m.source, atomik_ui::MeterSource::Input);
+    assert!(!m.stereo);
+}
+
+#[test]
+fn the_clip_latch_is_one_for_the_header_and_the_transport_bar() {
+    let mut core = stereo_core();
+    let key = add_audio_track(&mut core, "Mic");
+    set_input_param(&mut core, &key, "rec_gain", 12.0);
+    core.transport_bar_mut()
+        .set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1500.0, 44.0));
+    arm(&mut core, &key, true);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.0);
+    assert!(header_meter(&core, &key).latched);
+    assert!(core.transport_bar().rec_clip_latched(), "both agree");
+    // A click on the header's meter clears the transport bar's lamp too.
+    let p = core.arrangement().track_meter_point(&key).expect("shown");
+    click_in(&mut core, Pane::Arrangement, p);
+    set_input_param(&mut core, &key, "rec_gain", -30.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.1);
+    assert!(!header_meter(&core, &key).latched);
+    assert!(!core.transport_bar().rec_clip_latched());
+    // Hot again, then a click on the transport bar's meter clears the header's lamp.
+    set_input_param(&mut core, &key, "rec_gain", 12.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.2);
+    assert!(header_meter(&core, &key).latched && core.transport_bar().rec_clip_latched());
+    let p = core
+        .transport_bar()
+        .rec_input_point(atomik_ui::RecInputPart::Meter)
+        .expect("the section is shown");
+    click_in(&mut core, Pane::Transport, p);
+    set_input_param(&mut core, &key, "rec_gain", -30.0);
+    pump(&mut core, 4_800, 480);
+    core.feed_rec_input(0.3);
+    assert!(!core.transport_bar().rec_clip_latched());
+    assert!(!header_meter(&core, &key).latched);
+}

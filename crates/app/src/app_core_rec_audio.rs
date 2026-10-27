@@ -19,6 +19,15 @@
 //!   meters already read, times the track's gain; the peak of a scaled signal is the scaled
 //!   peak) and the track it shows: the selected track when it is armed, else the first armed
 //!   audio track. It works while armed and not recording, so the level can be set before a take.
+//! * **Track header meters** (`feed_track_meters`, called at the end of [`AppCore::feed_rec_input`]):
+//!   each audio track's header in the arrangement shows the same input level, per channel, while
+//!   the track is armed, and otherwise the playback level: the output of the track's console
+//!   channel (`out_l` / `out_r`, after the fader, the mute and the solo), which is what you hear
+//!   from the track before it joins the master. The console's meters are read once per frame
+//!   (a read resets the peak): by [`AppCore::update_console_meters`] while the console shows, else
+//!   by the header feed, and both use that one reading. The clip lamp of an armed track is shared
+//!   with the transport bar: a click on either clears both. A project with no audio track reads
+//!   nothing.
 //! * **While recording** every UI frame notes the first and the latest *playing* transport
 //!   state (as MIDI recording does), which anchor the engine-frame to song-position conversion.
 //! * **Stop or locate** ([`AppCore::finish_take`]): the writer is told where the take ends and
@@ -56,13 +65,13 @@
 use super::*;
 use crate::audio_import::{Loaded, ticks_for_frames};
 use crate::audio_record::{
-    TAP_SECONDS, input_peak, input_settings, place_lap, plan_tap, track_input,
+    TAP_SECONDS, input_peak, input_peaks, input_settings, place_lap, plan_tap, track_input,
 };
 use crate::audio_writer::{Ctl, FinishInfo, TakeResult, WriterConfig, WriterTrack, spawn};
 use atomik_engine::TapControls;
 use atomik_model::song::AUDIO_TRACK_TYPE;
 use atomik_model::{AssetMeta, AudioClipContent, Clip, ClipContent, ClipId};
-use atomik_ui::RecInput;
+use atomik_ui::{ChannelMeters, MeterSource, RecInput, TrackLevel};
 use std::sync::mpsc::Sender;
 
 /// Frames after the last transport state seen that a finished take still records (on top of the
@@ -255,8 +264,75 @@ impl<S: EngineSink> AppCore<S> {
                 (key.clone(), peak)
             })
             .collect();
+        // A click on either meter of a track clears the lamp of the other, so they agree.
+        for device in self.arrangement.take_meter_clears() {
+            if device.1 == MeterSource::Input {
+                self.transport_bar.clear_rec_latch(&device.0);
+            }
+        }
+        for device in self.transport_bar.take_rec_clears() {
+            self.arrangement
+                .clear_meter_latch(&device, MeterSource::Input);
+        }
         self.transport_bar.set_rec_input(source);
         self.transport_bar.feed_rec_peaks(&peaks, now_seconds);
+        self.feed_track_meters(&armed, now_seconds);
+    }
+
+    /// Feeds the meters in the arrangement's audio track headers (module docs): the input of an
+    /// armed track, per channel, else the output of the track's console channel (post-fader),
+    /// from the console readings of this frame. A project with no audio track reads nothing.
+    fn feed_track_meters(&mut self, armed: &[DeviceKey], now_seconds: f64) {
+        let tracks: Vec<DeviceKey> = self
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .filter(|t| self.doc().is_audio_track(&t.device, &self.registry))
+            .map(|t| t.device.clone())
+            .collect();
+        if tracks.is_empty() {
+            self.readings_fresh = false;
+            self.arrangement.feed_track_levels(&[], now_seconds);
+            return;
+        }
+        // The console reads the meters only while it shows (and then, first, this frame): else
+        // read them here. A read resets the peak, so each frame is read once.
+        if !std::mem::take(&mut self.readings_fresh) {
+            let shared = std::mem::take(&mut self.io_meters.shared);
+            self.frame_readings = self.console_readings_with(&shared);
+            self.io_meters.shared = shared;
+        }
+        let host = self.host_input_peaks();
+        let levels: Vec<TrackLevel> = tracks
+            .into_iter()
+            .map(|device| {
+                if armed.contains(&device) {
+                    let settings = input_settings(self.doc(), &device, &self.registry);
+                    let (peaks, stereo) = track_input(self.doc(), &device)
+                        .map_or(([0.0; 2], true), |input| input_peaks(host, input, settings));
+                    return TrackLevel {
+                        device,
+                        source: MeterSource::Input,
+                        peaks,
+                        stereo,
+                    };
+                }
+                let reading = self
+                    .doc()
+                    .console
+                    .channel_of(&device)
+                    .and_then(|c| self.frame_readings.iter().find(|(k, _)| *k == c.channel))
+                    .map_or(ChannelMeters::SILENT, |(_, m)| *m);
+                TrackLevel {
+                    device,
+                    source: MeterSource::Playback,
+                    peaks: [reading.out_peak_l, reading.out_peak_r],
+                    stereo: true,
+                }
+            })
+            .collect();
+        self.arrangement.feed_track_levels(&levels, now_seconds);
     }
 
     /// Notes the transport states of a running audio take.

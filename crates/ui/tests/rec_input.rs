@@ -391,3 +391,25 @@ fn every_part_has_a_tooltip_and_the_gain_names_the_track() {
         .unwrap();
     assert!(meter.text.contains("click"), "{}", meter.text);
 }
+
+// ---------------------------------------------------------------- the latch shared with the arrangement
+
+#[test]
+fn a_click_on_the_meter_is_reported_and_a_clear_from_outside_is_silent() {
+    let (mut b, doc) = bar(1500.0, 0.0, false);
+    b.feed_rec_peaks(&peaks(2.0), 0.0);
+    assert!(b.take_rec_clears().is_empty());
+    let p = b.rec_input_point(RecInputPart::Meter).unwrap();
+    handle(&mut b, &doc, &[down(p), up(p)]);
+    assert!(!b.rec_clip_latched());
+    assert_eq!(b.take_rec_clears(), vec![key("audio-track-1")]);
+    assert!(b.take_rec_clears().is_empty(), "taken once");
+    // The arrangement header's meter was clicked: the latch goes, nothing is reported back.
+    b.feed_rec_peaks(&peaks(2.0), 0.1);
+    assert!(b.rec_clip_latched());
+    b.clear_rec_latch(&key("audio-track-1"));
+    assert!(!b.rec_clip_latched());
+    assert_eq!(b.rec_level_db().1, -60.0, "the hold goes with it");
+    assert!(b.take_rec_clears().is_empty(), "not an echo");
+    b.clear_rec_latch(&key("nope"));
+}

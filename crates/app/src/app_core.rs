@@ -244,6 +244,11 @@ pub struct AppCore<S: EngineSink> {
     console: ConsoleView,
     /// Metered endpoints per console strip (channels in console order, then the master).
     meter_points: Vec<(DeviceKey, [Endpoint; 3])>,
+    /// The console strips' readings of this frame, kept by [`AppCore::update_console_meters`] for
+    /// the meters in the track headers: a read resets the peak, so a frame is read once.
+    frame_readings: Vec<(DeviceKey, ChannelMeters)>,
+    /// [`Self::frame_readings`] holds a frame the headers have not used yet.
+    readings_fresh: bool,
     /// The engine latency epoch the current routing was compiled with.
     latency_epoch: u64,
     /// Per-channel latency readouts of the current routing (frames).
@@ -393,6 +398,8 @@ impl<S: EngineSink> AppCore<S> {
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
             meter_points: Vec::new(),
+            frame_readings: Vec::new(),
+            readings_fresh: false,
             latency_epoch: 0,
             readouts: Vec::new(),
             pdc_limit: false,
@@ -1490,7 +1497,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Feeds the console view this frame's meters, then the monotonic time in seconds (call
-    /// once per frame while the console shows).
+    /// once per frame while the console shows). The readings are kept for
+    /// [`Self::feed_rec_input`], which feeds the track headers from the same read.
     pub fn update_console_meters(&mut self, now_seconds: f64) {
         // The endpoints read earlier this frame (a read resets the peak); the cache stays for
         // the CV feed and is cleared by the next frame's read.
@@ -1499,6 +1507,8 @@ impl<S: EngineSink> AppCore<S> {
         self.io_meters.shared = shared;
         self.console.set_meters(&readings);
         self.console.set_frame_time(now_seconds);
+        self.frame_readings = readings;
+        self.readings_fresh = true;
     }
 
     /// The console view.
