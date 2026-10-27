@@ -1,5 +1,6 @@
-//! The piano roll's tool gating and its multi-note gestures: only the pencil draws, the select
-//! tool rubber-bands from the empty grid, a selected group moves and resizes together (both
+//! The piano roll's tool gating and its multi-note gestures: only the pencil draws on a single
+//! press (the select tool draws on a double-click), the select tool rubber-bands from the empty
+//! grid, a selected group moves and resizes together (both
 //! edges) in one undo step, and the cursor hint follows the hovered part and the drag.
 
 mod support;
@@ -50,7 +51,7 @@ fn empty_point(v: &PianoRollView) -> Point {
 }
 
 #[test]
-fn select_never_draws_a_click_or_a_drag_on_the_empty_grid() {
+fn select_never_draws_a_click_or_a_drag_on_the_empty_grid_without_a_double_click() {
     let (mut v, doc, reg) = setup();
     assert_eq!(v.tool(), Tool::Select);
     v.set_selected_notes(&[0, 1]);
@@ -65,12 +66,6 @@ fn select_never_draws_a_click_or_a_drag_on_the_empty_grid() {
     let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to), up(p)]);
     assert!(lists(&a).is_empty(), "a drag draws nothing");
     assert_eq!(end_merges(&a), 0);
-    // A double click (the second press) draws nothing either.
-    let a = run(
-        |e| v.handle(e, &doc, &reg),
-        &[down_mods(p, Modifiers::NONE, 2), up(p)],
-    );
-    assert!(lists(&a).is_empty());
     // The pencil still draws.
     v.set_tool(Tool::Pencil);
     let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
@@ -256,4 +251,83 @@ fn the_cursor_hint_follows_the_hovered_part_the_tool_and_the_drag() {
     v.handle(&up(body), &doc, &reg);
     v.handle(&UiEvent::PointerLeave, &doc, &reg);
     assert_eq!(v.cursor(), CursorHint::Default);
+}
+
+fn notes_of(a: &[UiAction]) -> Vec<Note> {
+    lists(a).pop().expect("a content command").0
+}
+
+#[test]
+fn select_double_click_on_the_empty_grid_draws_a_note_and_selects_it() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[0]);
+    let p = empty_point(&v);
+    // The first click only deselects (a zero-size band changes nothing else).
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    assert!(lists(&a).is_empty());
+    assert!(v.selected_notes().is_empty());
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_mods(p, Modifiers::NONE, 2), up(p)],
+    );
+    let drawn: Vec<Note> = notes_of(&a);
+    assert_eq!(drawn.len(), 17, "one note joined the 16");
+    let n = drawn
+        .iter()
+        .find(|n| n.key == 55 && n.tick == 2 * PPQ)
+        .expect("the new note");
+    assert_eq!(n.length, PPQ, "the beat snap is the length");
+    assert_eq!(end_merges(&a), 1, "one undo step");
+    let sel = v.selected_notes();
+    assert_eq!(sel.len(), 1);
+    assert_eq!(drawn[sel[0]], *n);
+}
+
+#[test]
+fn select_double_click_then_drag_right_sets_the_length() {
+    let (mut v, doc, reg) = setup();
+    let p = empty_point(&v);
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    let to = p + Vec2::new(beat_px(&v) * 2.0 + 3.0, 0.0);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down_mods(p, Modifiers::NONE, 2), mv(to), up(to)],
+    );
+    let drawn = lists(&a);
+    assert!(drawn.iter().all(|(_, m)| m.is_some()), "merged edits");
+    let n = drawn
+        .last()
+        .unwrap()
+        .0
+        .iter()
+        .find(|n| n.key == 55 && n.tick == 2 * PPQ)
+        .copied()
+        .expect("the new note");
+    assert_eq!(n.length, 3 * PPQ);
+    // Dragging left of the start keeps the minimum length (one snap step).
+    let back = p - Vec2::new(beat_px(&v) * 2.0, 0.0);
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[
+            down_mods(back, Modifiers::NONE, 2),
+            mv(back - Vec2::new(40.0, 0.0)),
+            up(back),
+        ],
+    );
+    let n = notes_of(&a)
+        .into_iter()
+        .find(|n| n.key == 55 && n.tick == 0);
+    assert_eq!(n.map(|n| n.length), Some(PPQ));
+}
+
+#[test]
+fn select_double_click_on_a_note_does_not_draw() {
+    let (mut v, doc, reg) = setup();
+    let r = v.note_rect(0).unwrap();
+    let p = r.center();
+    let a = run(
+        |e| v.handle(e, &doc, &reg),
+        &[down(p), up(p), down_mods(p, Modifiers::NONE, 2), up(p)],
+    );
+    assert!(lists(&a).is_empty());
 }

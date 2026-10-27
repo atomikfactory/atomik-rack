@@ -1295,8 +1295,8 @@ impl PianoRollView {
                 pos,
                 button,
                 modifiers,
-                ..
-            } => self.pointer_down(*pos, *button, *modifiers, &mut out),
+                clicks,
+            } => self.pointer_down(*pos, *button, *modifiers, *clicks, &mut out),
             UiEvent::PointerUp { .. } => self.pointer_up(&mut out),
             UiEvent::PointerLeave => {
                 self.hover = Hit::None;
@@ -1347,6 +1347,7 @@ impl PianoRollView {
         pos: Point,
         button: PointerButton,
         modifiers: Modifiers,
+        clicks: u8,
         out: &mut Vec<UiAction>,
     ) {
         self.repaint = true;
@@ -1454,8 +1455,14 @@ impl PianoRollView {
             Hit::Note(..) if primary && tool == Tool::Pencil => {}
             Hit::Note(i, part) if primary => self.note_down(i, part, pos, modifiers, out),
             Hit::Grid if primary && matches!(tool, Tool::Razor | Tool::Eraser) => {}
-            // Select never draws: a press on the empty grid starts a rubber band (Shift or Ctrl
-            // keeps the selection and adds to it, a plain press replaces it, so a click clears).
+            // Select draws on a double-click only (the first press of it already cleared the
+            // selection through the zero-size band below, which changes nothing else); the
+            // press then drags the new note's length like the pencil.
+            Hit::Grid if primary && tool == Tool::Select && clicks >= 2 => {
+                self.draw_down(pos, step, out);
+            }
+            // A single press on the empty grid starts a rubber band (Shift or Ctrl keeps the
+            // selection and adds to it, a plain press replaces it, so a click clears).
             Hit::Grid if primary && tool == Tool::Select => {
                 let base = if modifiers.shift || modifiers.command() {
                     self.selection.items().clone()
@@ -1469,31 +1476,7 @@ impl PianoRollView {
                     base,
                 };
             }
-            Hit::Grid if primary => {
-                let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
-                let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
-                let key = self.drawn_key(self.key_at(pos.y));
-                let notes: Vec<Note> = self
-                    .stamp_keys(key)
-                    .into_iter()
-                    .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
-                    .collect();
-                let base = self.notes().to_vec();
-                let merge = self.merge_id();
-                let (list, sel) = with_notes(&base, &notes);
-                self.selection.set(sel);
-                out.extend(self.content(list.clone(), Some(merge)));
-                for n in &notes {
-                    out.extend(self.audition(n.key, true));
-                }
-                self.drag = Drag::Draw {
-                    start: pos,
-                    base,
-                    notes,
-                    merge,
-                    last: list,
-                };
-            }
+            Hit::Grid if primary => self.draw_down(pos, step, out),
             Hit::Velocity(Some(i)) if primary => {
                 let sel = if self.selection.contains(&i) {
                     self.selection.items().clone()
@@ -1517,6 +1500,34 @@ impl PianoRollView {
             }
             _ => {}
         }
+    }
+
+    /// A press that draws: a note (or the stamp's chord) at the snapped tick and the row under
+    /// `pos`, selected, with a drag that sets its length.
+    fn draw_down(&mut self, pos: Point, step: Option<i64>, out: &mut Vec<UiAction>) {
+        let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
+        let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
+        let key = self.drawn_key(self.key_at(pos.y));
+        let notes: Vec<Note> = self
+            .stamp_keys(key)
+            .into_iter()
+            .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
+            .collect();
+        let base = self.notes().to_vec();
+        let merge = self.merge_id();
+        let (list, sel) = with_notes(&base, &notes);
+        self.selection.set(sel);
+        out.extend(self.content(list.clone(), Some(merge)));
+        for n in &notes {
+            out.extend(self.audition(n.key, true));
+        }
+        self.drag = Drag::Draw {
+            start: pos,
+            base,
+            notes,
+            merge,
+            last: list,
+        };
     }
 
     fn remove_note(&mut self, i: usize, out: &mut Vec<UiAction>) {
