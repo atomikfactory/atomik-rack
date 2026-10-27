@@ -816,3 +816,69 @@ fn title_in_names_each_window() {
     assert_eq!(s.title_in(WindowKind::Rack), "Rack \u{2014} Untitled");
     assert_eq!(s.title_in(WindowKind::Console), "Mixer \u{2014} Untitled");
 }
+
+/// Feeds what the engine shows during playback to every view that animates: a console strip's
+/// meter, the playhead and the rack (a device's display).
+fn animate(s: &mut Shell<NullBackend>, strip: &DeviceKey, step: i64) {
+    let level = if step % 2 == 0 { 0.8 } else { 0.2 };
+    let meters = atomik_ui::ChannelMeters {
+        out_peak_l: level,
+        out_peak_r: level,
+        ..atomik_ui::ChannelMeters::SILENT
+    };
+    let core = s.core_mut();
+    core.console_mut().set_meters(&[(strip.clone(), meters)]);
+    core.console_mut().set_frame_time(step as f64 * 0.05);
+    core.arrangement_mut().set_playhead(step * 480);
+    core.piano_roll_mut().set_playhead(step * 480);
+    core.view_mut().request_repaint();
+}
+
+#[test]
+fn every_open_window_is_painted_while_it_animates_whichever_has_the_focus() {
+    let mut s = shell();
+    add_device(&mut s, "atomik.poly-synth", "syn");
+    s.execute(AppCommand::DetachRack);
+    s.execute(AppCommand::DetachConsole);
+    let strip = s
+        .core()
+        .doc()
+        .console
+        .channel_of(&DeviceKey("syn".into()))
+        .unwrap()
+        .channel
+        .clone();
+    let all = [WindowKind::Main, WindowKind::Rack, WindowKind::Console];
+    let mut dl = atomik_ui::DisplayList::new();
+    for (step, focus) in all.into_iter().enumerate() {
+        s.window_focused(focus);
+        for w in s.windows_to_paint() {
+            s.paint_in(w, &mut dl);
+        }
+        assert!(s.windows_to_paint().is_empty(), "idle: nothing to paint");
+        animate(&mut s, &strip, step as i64 + 1);
+        // The tick's own work, as the platform runs it.
+        s.frame_at(step as f64 * 0.05);
+        assert_eq!(
+            s.windows_to_paint(),
+            all,
+            "every window, not only {focus:?}, has a frame to draw"
+        );
+    }
+}
+
+#[test]
+fn a_window_whose_frame_was_not_presented_is_painted_again() {
+    let mut s = shell();
+    s.execute(AppCommand::DetachRack);
+    let mut dl = atomik_ui::DisplayList::new();
+    for w in s.windows_to_paint() {
+        s.paint_in(w, &mut dl);
+    }
+    assert!(s.windows_to_paint().is_empty());
+    s.repaint_window(WindowKind::Rack);
+    assert_eq!(s.windows_to_paint(), [WindowKind::Rack]);
+    // A window that is not open has nothing to paint.
+    s.repaint_window(WindowKind::Console);
+    assert_eq!(s.windows_to_paint(), [WindowKind::Rack]);
+}

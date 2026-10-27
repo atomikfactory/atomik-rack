@@ -420,6 +420,14 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// The frame of `window` was painted but not presented (the surface timed out or was
+    /// hidden): paint it again at the next tick.
+    pub fn repaint_window(&mut self, window: WindowKind) {
+        if let Some(w) = self.win_mut(window) {
+            w.dirty = true;
+        }
+    }
+
     /// `window` was painted.
     pub(super) fn mark_painted(&mut self, window: WindowKind) {
         if let Some(w) = self.win_mut(window) {
