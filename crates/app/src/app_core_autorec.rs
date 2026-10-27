@@ -296,6 +296,17 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// The lanes a running take is writing now (they show the user's value, not the lane's).
+    pub(super) fn writing_automation_lanes(&self) -> Vec<LaneId> {
+        self.autorec.take.as_ref().map_or_else(Vec::new, |take| {
+            take.lanes
+                .iter()
+                .filter(|(_, l)| l.pass.is_writing())
+                .map(|(id, _)| id.clone())
+                .collect()
+        })
+    }
+
     /// True while an automation take is being recorded.
     pub(super) fn automation_take_running(&self) -> bool {
         self.autorec.take.is_some()

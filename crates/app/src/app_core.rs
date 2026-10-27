@@ -241,6 +241,8 @@ pub struct AppCore<S: EngineSink> {
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
+    /// What the controls show for automated params (see `app_core_autoview`).
+    autoview: autoview::AutoView,
     position: i64,
     recorded: Vec<RecordedNote>,
     console: ConsoleView,
@@ -428,6 +430,7 @@ impl<S: EngineSink> AppCore<S> {
             quantize: InputQuantize::Off,
             take: None,
             autorec: autorec::AutoRec::new(),
+            autoview: autoview::AutoView::default(),
             position: 0,
             recorded: Vec::new(),
         };
@@ -773,6 +776,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Re-syncs the views and publishes the live-notes target. Call after changing a view
     /// directly.
     pub fn after_view_change(&mut self) {
+        // The controls show the automation at the playhead (and the param an edit just moved
+        // its new value): the views below sync with the values of this moment.
+        self.update_shown_values();
         let doc = self.document.doc();
         self.view.sync(doc, &self.registry);
         self.arrangement.sync(doc, &self.registry);
@@ -968,6 +974,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.feed_take(&state);
         self.show_transport();
+        self.feed_automation_values();
         self.feed_device_meters();
         self.feed_device_scopes();
         self.feed_tuners();
@@ -1069,6 +1076,7 @@ impl<S: EngineSink> AppCore<S> {
                     self.submit_routing_with(exp);
                 }
                 SyncOp::ParamChanged { key, param, value } => {
+                    self.note_param_edit(key, param);
                     if inserted.contains(key) || self.echo_suppressed() {
                         // A device inserted by this edit already got its stored params; a
                         // value the plugin's own window made is not sent back to it.
@@ -2342,6 +2350,9 @@ mod rec;
 #[path = "app_core_autorec.rs"]
 mod autorec;
 
+#[path = "app_core_autoview.rs"]
+mod autoview;
+
 #[path = "app_core_samples.rs"]
 mod samples;
 
@@ -2486,6 +2497,10 @@ mod tests;
 #[cfg(test)]
 #[path = "app_core_autorec_tests.rs"]
 mod autorec_tests;
+
+#[cfg(test)]
+#[path = "app_core_autoview_tests.rs"]
+mod autoview_tests;
 
 #[cfg(test)]
 #[path = "app_core_song_tests.rs"]
