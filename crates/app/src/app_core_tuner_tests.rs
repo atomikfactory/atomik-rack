@@ -365,3 +365,36 @@ fn the_track_is_muted_while_the_tuner_shows_unless_the_option_is_off() {
     let open = pump(&mut core, 4_800);
     assert!(peak(&open[0][3_000..]) > 0.01);
 }
+
+#[test]
+fn a_click_on_the_tuner_button_shows_the_tuner_and_mutes_the_track() {
+    let mut core = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    let key = add_audio_track(&mut core);
+    let id = core.device_id(&key).unwrap();
+    let _ = core.handle_event(&atomik_ui::UiEvent::Resize(atomik_ui::kurbo::Size::new(
+        1200.0, 3_000.0,
+    )));
+    let mut dl = atomik_ui::DisplayList::new();
+    core.paint(&mut dl);
+    tuner_params(&mut core);
+    let at = core.view().tuner_button_center(&key).expect("the button");
+    for event in [
+        atomik_ui::UiEvent::PointerDown {
+            pos: at,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: atomik_ui::Modifiers::NONE,
+            clicks: 1,
+        },
+        atomik_ui::UiEvent::PointerUp {
+            pos: at,
+            button: atomik_ui::PointerButton::Primary,
+            modifiers: atomik_ui::Modifiers::NONE,
+        },
+    ] {
+        let _ = core.handle_event(&event);
+    }
+    assert!(core.tuner_shown(&key));
+    assert_eq!(tuner_params(&mut core), vec![(id, 1.0)]);
+    core.paint(&mut dl);
+    assert!(dl.texts().contains(&"PLAY A NOTE"), "{:?}", dl.texts());
+}
