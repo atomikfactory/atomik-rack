@@ -42,6 +42,10 @@ pub enum AppCommand {
     ExportMidiTrack,
     /// File ▸ Export MIDI Song…: every note track as a type 1 MIDI file.
     ExportMidiSong,
+    /// File ▸ Export Song as Audio File…: the song from the start to the End marker, plus its tail.
+    ExportSongAudio,
+    /// File ▸ Export Loop as Audio File…: exactly the range between the locators.
+    ExportLoopAudio,
     /// File ▸ Stress Rack: 100 devices, 300 cables.
     StressRack,
     /// File ▸ Stress Song: 8 tracks × 64 bars with automation.
@@ -331,6 +335,8 @@ impl AppCommand {
             AppCommand::ExportMidiClip => ("file.export_midi_clip", None),
             AppCommand::ExportMidiTrack => ("file.export_midi_track", None),
             AppCommand::ExportMidiSong => ("file.export_midi_song", None),
+            AppCommand::ExportSongAudio => ("file.export_song_audio", None),
+            AppCommand::ExportLoopAudio => ("file.export_loop_audio", None),
             AppCommand::StressRack => ("file.stress_rack", None),
             AppCommand::StressSong => ("file.stress_song", None),
             AppCommand::Quit => ("file.quit", None),
@@ -503,6 +509,8 @@ impl AppCommand {
             ("file.export_midi_clip", None) => AppCommand::ExportMidiClip,
             ("file.export_midi_track", None) => AppCommand::ExportMidiTrack,
             ("file.export_midi_song", None) => AppCommand::ExportMidiSong,
+            ("file.export_song_audio", None) => AppCommand::ExportSongAudio,
+            ("file.export_loop_audio", None) => AppCommand::ExportLoopAudio,
             ("file.stress_rack", None) => AppCommand::StressRack,
             ("file.stress_song", None) => AppCommand::StressSong,
             ("file.quit", None) => AppCommand::Quit,
@@ -854,6 +862,12 @@ pub struct MenuState {
     pub midi_track: bool,
     /// The song has a note track (File > Export MIDI Song is available).
     pub midi_song: bool,
+    /// The song can be exported as audio: it has a length and no export runs (File > Export Song
+    /// as Audio File is available).
+    pub export_song: bool,
+    /// The loop can be exported as audio: its locators are apart and no export runs (File >
+    /// Export Loop as Audio File is available).
+    pub export_loop: bool,
     /// What the selected tracks and folder allow (the Track menu).
     pub org: OrgMenu,
     /// What the selected note lane allows (the lane items of the Track menu).
@@ -1034,6 +1048,16 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     "Export MIDI Song\u{2026}",
                     AppCommand::ExportMidiSong,
                     state.midi_song,
+                ),
+                enabled(
+                    "Export Song as Audio File\u{2026}",
+                    AppCommand::ExportSongAudio,
+                    state.export_song,
+                ),
+                enabled(
+                    "Export Loop as Audio File\u{2026}",
+                    AppCommand::ExportLoopAudio,
+                    state.export_loop,
                 ),
                 MenuEntry::Separator,
                 item("Stress Rack", AppCommand::StressRack),
@@ -1666,6 +1690,8 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            export_song: false,
+            export_loop: false,
             org: OrgMenu::default(),
             lane: LaneMenu::default(),
             audio: AudioMenu::default(),
@@ -1693,6 +1719,8 @@ mod tests {
             AppCommand::ExportMidiClip,
             AppCommand::ExportMidiTrack,
             AppCommand::ExportMidiSong,
+            AppCommand::ExportSongAudio,
+            AppCommand::ExportLoopAudio,
             AppCommand::StressRack,
             AppCommand::StressSong,
             AppCommand::Quit,
@@ -2183,6 +2211,8 @@ mod tests {
                 "Export MIDI Clip\u{2026}",
                 "Export MIDI Track\u{2026}",
                 "Export MIDI Song\u{2026}",
+                "Export Song as Audio File\u{2026}",
+                "Export Loop as Audio File\u{2026}",
                 "Stress Rack",
                 "Stress Song",
                 "Quit"
@@ -2393,6 +2423,8 @@ mod tests {
                 midi_clip: true,
                 midi_track: false,
                 midi_song: true,
+                export_song: true,
+                export_loop: true,
                 org: OrgMenu::default(),
                 lane: LaneMenu::default(),
                 audio: AudioMenu::default(),

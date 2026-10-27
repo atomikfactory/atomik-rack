@@ -821,6 +821,27 @@ impl App {
                         self.shell.export_midi_to(what, &path);
                     }
                 }
+                ShellRequest::PickExportAudio(scope) => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title(match scope {
+                            atomik_ui::ExportScope::Song => "Export song as audio file",
+                            atomik_ui::ExportScope::Loop => "Export loop as audio file",
+                        })
+                        .add_filter("WAV audio file", &["wav"])
+                        .set_file_name(self.shell.export_audio_name(scope));
+                    if let Some(dir) = self.shell.export_audio_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("wav");
+                        }
+                        self.shell.export_audio_to(scope, &path);
+                    }
+                }
                 ShellRequest::PickLoadSamples => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Load samples")

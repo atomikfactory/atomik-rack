@@ -130,6 +130,7 @@
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
 use crate::commands::{AppCommand, Menu, MenuState, menus};
 use crate::context_menus::{self, MenuEnable};
+use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
@@ -150,12 +151,12 @@ use atomik_ui::keymap::{
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
-    BrowseAction, Canvas, CanvasExt, ConsoleButton, FileBrowserView, Flip, Key, MacrosAction,
-    MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction, NotesValues, NotesView,
-    NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView, PluginSettingsView,
-    PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction, RelinkEntry,
-    RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent, WarpAction,
-    WarpValues, WarpView,
+    BrowseAction, Canvas, CanvasExt, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip,
+    Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction,
+    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
+    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
+    RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent,
+    WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -195,6 +196,10 @@ pub enum ShellRequest {
         /// Import as a song: new tracks from the start, with the tempo, meter and markers.
         as_song: bool,
     },
+    /// Show a save dialog for an audio file (File > Export Song / Loop as Audio File): a WAV file
+    /// named by [`Shell::export_audio_name`], starting in [`Shell::export_audio_dir`], then call
+    /// [`Shell::export_audio_to`] with the scope and the path.
+    PickExportAudio(ExportScope),
     /// Show a save dialog for a MIDI file (File > Export MIDI), then call
     /// [`Shell::export_midi_to`] with the scope and the path.
     PickExportMidi(MidiExport),
@@ -345,6 +350,14 @@ pub struct Shell<B: AudioBackend> {
     banner: PluginBannerView,
     /// The Plugins settings modal while it is open.
     plugin_settings: Option<PluginSettingsView>,
+    /// The audio export panel (File > Export Song / Loop as Audio File) while it is open.
+    export: Option<ExportView>,
+    /// What the panel exports and where: the scope and the file the dialog picked.
+    export_target: Option<(ExportScope, PathBuf)>,
+    /// The remembered export choices (`export.json`).
+    export_prefs: ExportPrefs,
+    /// Where they are saved (next to the settings file).
+    export_prefs_path: Option<PathBuf>,
     /// The relink panel (File > Relink Missing Audio) while it is open.
     relink: Option<RelinkView>,
     /// The MIDI Mappings panel (Mixer > MIDI Mappings) while it is open.
@@ -479,6 +492,7 @@ impl<B: AudioBackend> Shell<B> {
         let built = user_keymap.build(user_keymap.profile.unwrap_or(default_profile), os);
         startup_notes.extend(built.report.summary());
         let keymap_stamp = keymap_path.as_deref().and_then(stamp_of);
+        let export_prefs_path = Self::export_prefs_file(options.settings_path.as_deref());
         let options_library_path = options.library_path.clone();
         let library_override = options.library_root.clone();
         let mut shell = Self {
@@ -503,6 +517,14 @@ impl<B: AudioBackend> Shell<B> {
             banner,
             plugin_settings: None,
             relink: None,
+            export: None,
+            export_target: None,
+            export_prefs: export_prefs_path
+                .as_deref()
+                .map(ExportPrefs::load)
+                .unwrap_or_default(),
+            export_prefs_path,
+
             quantize: None,
             quantize_values: QuantizeValues::default(),
             silence: None,
@@ -1668,6 +1690,8 @@ impl<B: AudioBackend> Shell<B> {
             midi_clip: self.core.can_export_midi(MidiExport::Clip),
             midi_track: self.core.can_export_midi(MidiExport::Track),
             midi_song: self.core.can_export_midi(MidiExport::Song),
+            export_song: self.core.can_export_audio(ExportScope::Song),
+            export_loop: self.core.can_export_audio(ExportScope::Loop),
             org: self.core.arrangement().org_menu(),
             lane: self.core.arrangement().lane_menu(),
             audio: self.core.arrangement().audio_menu(),
@@ -1850,6 +1874,12 @@ impl<B: AudioBackend> Shell<B> {
         if self.relink.is_some() {
             let rect = self.plugin_modal_rect();
             if let Some(v) = &mut self.relink {
+                v.set_bounds(rect);
+            }
+        }
+        if self.export.is_some() {
+            let rect = self.plugin_modal_rect();
+            if let Some(v) = &mut self.export {
                 v.set_bounds(rect);
             }
         }
@@ -2412,6 +2442,21 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             return requests;
+        }
+        if self.export.is_some() {
+            // The export panel takes every event; Esc closes it (or stops the render).
+            self.repaint = true;
+            let actions = self
+                .export
+                .as_mut()
+                .map(|v| v.handle(&text_form(event)))
+                .unwrap_or_default();
+            for action in actions {
+                if let UiAction::Export(a) = action {
+                    self.export_action(a);
+                }
+            }
+            return Vec::new();
         }
         if self.relink.is_some() {
             // The relink panel takes every event; Esc closes it.
@@ -3581,6 +3626,8 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportMidiClip => self.export_midi_request(MidiExport::Clip),
             AppCommand::ExportMidiTrack => self.export_midi_request(MidiExport::Track),
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
+            AppCommand::ExportSongAudio => self.export_audio_request(ExportScope::Song),
+            AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
@@ -4222,6 +4269,7 @@ impl<B: AudioBackend> Shell<B> {
         self.sync_plugin_ui();
         self.sync_library_ui();
         self.sync_relink();
+        self.sync_export();
         self.sync_midi_maps();
         self.sync_macros();
         self.sync_param_search();
@@ -4489,6 +4537,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(view) = &self.relink {
             view.paint(canvas);
         }
+        if let Some(view) = &self.export {
+            view.paint(canvas);
+        }
         if let Some(view) = &self.midi_maps {
             view.paint(canvas);
         }
@@ -4654,6 +4705,9 @@ fn pointer_pos(event: &UiEvent) -> Option<Point> {
     }
 }
 
+#[path = "shell_export.rs"]
+mod export_impl;
+
 #[path = "shell_windows.rs"]
 mod windows_impl;
 use windows_impl::{MAIN_SIZE, WinState};
@@ -4810,3 +4864,7 @@ mod freeze_tests;
 #[cfg(test)]
 #[path = "shell_library_tests.rs"]
 mod library_tests;
+
+#[cfg(test)]
+#[path = "shell_export_tests.rs"]
+mod export_tests;

@@ -195,3 +195,32 @@ fn every_button_has_a_tooltip() {
         assert!(v.help_at(p).is_some(), "{label}");
     }
 }
+
+#[test]
+#[ignore = "writes preview images; run explicitly"]
+fn preview_export_png() {
+    use support::cpu::CpuCanvas;
+    const SCALE: f64 = 1.5;
+    let mut text = atomik_ui::TextEngine::new();
+    let mut options = view(ExportScope::Song);
+    options.set_scale(SCALE);
+    let mut progress = view(ExportScope::Loop);
+    progress.set_scale(SCALE);
+    progress.show_progress();
+    progress.set_progress(0.42, "Rendering the loop");
+    for (name, v) in [("export_options", &options), ("export_progress", &progress)] {
+        let mut canvas = CpuCanvas::new(
+            (BOUNDS.width() * SCALE) as u16,
+            (360.0 * SCALE) as u16,
+            &mut text,
+        );
+        v.paint(&mut canvas);
+        let png = canvas.finish().into_png().expect("png");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/preview")
+            .join(format!("{name}.png"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, png).unwrap();
+        println!("wrote {}", path.display());
+    }
+}

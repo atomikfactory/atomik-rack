@@ -415,6 +415,8 @@ mod tests {
             midi_clip: false,
             midi_track: false,
             midi_song: false,
+            export_song: false,
+            export_loop: false,
             org: atomik_ui::arrangement::OrgMenu::default(),
             lane: atomik_ui::arrangement::LaneMenu::default(),
             audio: atomik_ui::arrangement::AudioMenu::default(),

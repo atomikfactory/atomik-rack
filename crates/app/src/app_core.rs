@@ -2380,6 +2380,10 @@ pub use warp::WARP_CACHE_BYTES;
 #[path = "app_core_notes.rs"]
 mod notes;
 
+#[path = "app_core_export.rs"]
+mod export;
+pub use export::{export_format, export_request};
+
 #[path = "app_core_freeze.rs"]
 mod freeze;
 pub use freeze::{FREEZE_TAIL_SECONDS, FreezeThrough};
@@ -2417,6 +2421,10 @@ mod rec_audio_tests;
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]
 mod tuner_tests;
+
+#[cfg(test)]
+#[path = "app_core_export_tests.rs"]
+mod export_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]

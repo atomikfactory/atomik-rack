@@ -120,6 +120,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.relink {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.export {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.warp {
             return v.help_at(pos);
         }
