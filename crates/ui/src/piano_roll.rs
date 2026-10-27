@@ -1888,10 +1888,14 @@ impl PianoRollView {
                 merge,
                 last,
             } => {
-                let delta = axis.dx_to_ticks(pos.x - start.x);
                 let first = notes[0];
-                let len =
-                    seq_edit::drag_length(first.tick, first.tick + first.length, delta, step, min);
+                // A press without a drag keeps the default length; a drag ends the note at
+                // the (snapped) pointer, at least the minimum long.
+                let len = if pos.distance(*start) > DRAG_THRESHOLD {
+                    (snap_round(axis.x_to_tick(pos.x), step) - first.tick).max(min)
+                } else {
+                    first.length
+                };
                 let drawn: Vec<Note> = notes.iter().map(|n| Note { length: len, ..*n }).collect();
                 let (list, sel) = with_notes(base, &drawn);
                 if list != *last {

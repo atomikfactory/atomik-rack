@@ -125,7 +125,7 @@ fn dragging_while_drawing_sets_the_length() {
     let c = contents(&a);
     let last = &c.last().unwrap().0;
     let n = last.iter().find(|n| n.key == 52).unwrap();
-    assert_eq!((n.tick, n.length), (8 * PPQ, PPQ / 4 + PPQ));
+    assert_eq!((n.tick, n.length), (8 * PPQ, PPQ));
     assert_eq!(c[0].1, c.last().unwrap().1, "one merge group");
 }
 
@@ -666,4 +666,46 @@ fn dragging_or_wheeling_the_snap_selector_steps_the_resolutions() {
     };
     let _ = v.handle(&wheel(-1.0), &doc, &reg);
     assert_eq!(v.snap(), Snap::Sixteenth);
+}
+
+#[test]
+fn a_dragged_note_ends_at_the_snapped_pointer_and_a_click_keeps_the_default_length() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = piano_roll(&doc, &reg);
+    v.set_tool(Tool::Pencil);
+    v.set_snap(Snap::Beat);
+    let p = grid_point(&v, 8 * PPQ, 52);
+    let (x_end, x_back) = (v.tick_to_x(11 * PPQ + PPQ / 5), v.tick_to_x(6 * PPQ));
+    // Released at 11 beats and a bit: the end snaps to the beat grid.
+    let to = Point::new(x_end, p.y);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to), up(to)]);
+    let n = *contents(&a)
+        .last()
+        .unwrap()
+        .0
+        .iter()
+        .find(|n| n.key == 52)
+        .unwrap();
+    assert_eq!((n.tick, n.length), (8 * PPQ, 3 * PPQ));
+    // Dragged back to the left of the start: one snap step.
+    let to = Point::new(x_back, p.y);
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), mv(to), up(to)]);
+    let n = *contents(&a)
+        .last()
+        .unwrap()
+        .0
+        .iter()
+        .find(|n| n.key == 52)
+        .unwrap();
+    assert_eq!(n.length, PPQ);
+    // A click: the default length.
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    let n = *contents(&a)
+        .last()
+        .unwrap()
+        .0
+        .iter()
+        .find(|n| n.key == 52)
+        .unwrap();
+    assert_eq!(n.length, PPQ);
 }

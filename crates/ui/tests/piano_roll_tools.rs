@@ -303,7 +303,8 @@ fn select_double_click_then_drag_right_sets_the_length() {
         .find(|n| n.key == 55 && n.tick == 2 * PPQ)
         .copied()
         .expect("the new note");
-    assert_eq!(n.length, 3 * PPQ);
+    // The note ends where the pointer was released (two beats on).
+    assert_eq!(n.length, 2 * PPQ);
     // Dragging left of the start keeps the minimum length (one snap step).
     let back = p - Vec2::new(beat_px(&v) * 2.0, 0.0);
     let a = run(

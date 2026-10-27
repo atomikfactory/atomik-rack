@@ -830,7 +830,7 @@ fn dragging_while_stamping_sets_the_length_of_every_note_in_one_undo_step() {
     assert_eq!(keys(&list), [57, 60, 64]);
     assert!(
         list.iter()
-            .all(|n| n.tick == 4 * PPQ && n.length == 3 * PPQ),
+            .all(|n| n.tick == 4 * PPQ && n.length == 2 * PPQ),
         "{list:?}"
     );
     let merges: Vec<_> = emitted(&all).into_iter().map(|(_, m)| m).collect();
