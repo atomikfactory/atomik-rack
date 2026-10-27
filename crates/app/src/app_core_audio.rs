@@ -315,6 +315,9 @@ impl<S: EngineSink> AppCore<S> {
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         self.slice_editor
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
+        // The waveform of a granular sampler's panel.
+        self.view
+            .set_sample_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         // Assets in RAM share their samples with the views: below the finest peak level the
         // waveform reads them. Streamed assets have none and keep the finest peak level.
         if let SongAsset::Memory { data, .. } = &loaded.asset {
@@ -336,6 +339,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.clear_peaks(hash);
         self.sample_editor.clear_peaks(hash);
         self.slice_editor.clear_peaks(hash);
+        self.view.clear_sample_peaks(hash);
     }
 
     // ------------------------------------------------------------------ background work

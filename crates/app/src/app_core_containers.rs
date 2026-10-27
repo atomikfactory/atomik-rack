@@ -148,7 +148,8 @@ pub(super) fn macro_values(expanded: &ExpandedRack) -> BTreeMap<(DeviceKey, Stri
         .collect()
 }
 
-/// The flat devices that publish values for the views: effects with a display and the players.
+/// The flat devices that publish values for the views: effects with a display, the players, the
+/// modulators and the granular sampler (its live grains).
 pub(super) fn metered_keys(expanded: &ExpandedRack) -> Vec<DeviceKey> {
     expanded
         .devices
@@ -157,6 +158,7 @@ pub(super) fn metered_keys(expanded: &ExpandedRack) -> Vec<DeviceKey> {
             atomik_ui::fx::FxKind::of(&d.type_id).is_some_and(|k| k.meter_count() > 0)
                 || atomik_devices::is_player(&d.type_id)
                 || atomik_devices::is_modulator(&d.type_id)
+                || d.type_id == super::samples::GRANULAR
         })
         .map(|d| d.key.clone())
         .collect()
