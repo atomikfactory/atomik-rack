@@ -1295,8 +1295,8 @@ impl PianoRollView {
                 pos,
                 button,
                 modifiers,
-                ..
-            } => self.pointer_down(*pos, *button, *modifiers, &mut out),
+                clicks,
+            } => self.pointer_down(*pos, *button, *modifiers, *clicks, &mut out),
             UiEvent::PointerUp { .. } => self.pointer_up(&mut out),
             UiEvent::PointerLeave => {
                 self.hover = Hit::None;
@@ -1347,6 +1347,7 @@ impl PianoRollView {
         pos: Point,
         button: PointerButton,
         modifiers: Modifiers,
+        clicks: u8,
         out: &mut Vec<UiAction>,
     ) {
         self.repaint = true;
@@ -1454,8 +1455,14 @@ impl PianoRollView {
             Hit::Note(..) if primary && tool == Tool::Pencil => {}
             Hit::Note(i, part) if primary => self.note_down(i, part, pos, modifiers, out),
             Hit::Grid if primary && matches!(tool, Tool::Razor | Tool::Eraser) => {}
-            // Select never draws: a press on the empty grid starts a rubber band (Shift or Ctrl
-            // keeps the selection and adds to it, a plain press replaces it, so a click clears).
+            // Select draws on a double-click only (the first press of it already cleared the
+            // selection through the zero-size band below, which changes nothing else); the
+            // press then drags the new note's length like the pencil.
+            Hit::Grid if primary && tool == Tool::Select && clicks >= 2 => {
+                self.draw_down(pos, step, out);
+            }
+            // A single press on the empty grid starts a rubber band (Shift or Ctrl keeps the
+            // selection and adds to it, a plain press replaces it, so a click clears).
             Hit::Grid if primary && tool == Tool::Select => {
                 let base = if modifiers.shift || modifiers.command() {
                     self.selection.items().clone()
@@ -1469,31 +1476,7 @@ impl PianoRollView {
                     base,
                 };
             }
-            Hit::Grid if primary => {
-                let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
-                let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
-                let key = self.drawn_key(self.key_at(pos.y));
-                let notes: Vec<Note> = self
-                    .stamp_keys(key)
-                    .into_iter()
-                    .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
-                    .collect();
-                let base = self.notes().to_vec();
-                let merge = self.merge_id();
-                let (list, sel) = with_notes(&base, &notes);
-                self.selection.set(sel);
-                out.extend(self.content(list.clone(), Some(merge)));
-                for n in &notes {
-                    out.extend(self.audition(n.key, true));
-                }
-                self.drag = Drag::Draw {
-                    start: pos,
-                    base,
-                    notes,
-                    merge,
-                    last: list,
-                };
-            }
+            Hit::Grid if primary => self.draw_down(pos, step, out),
             Hit::Velocity(Some(i)) if primary => {
                 let sel = if self.selection.contains(&i) {
                     self.selection.items().clone()
@@ -1517,6 +1500,34 @@ impl PianoRollView {
             }
             _ => {}
         }
+    }
+
+    /// A press that draws: a note (or the stamp's chord) at the snapped tick and the row under
+    /// `pos`, selected, with a drag that sets its length.
+    fn draw_down(&mut self, pos: Point, step: Option<i64>, out: &mut Vec<UiAction>) {
+        let tick = snap_floor(self.axis.x_to_tick(pos.x), step).max(0);
+        let length = step.or(self.last_length).unwrap_or(OFF_LENGTH).max(1);
+        let key = self.drawn_key(self.key_at(pos.y));
+        let notes: Vec<Note> = self
+            .stamp_keys(key)
+            .into_iter()
+            .map(|k| seq_edit::clamp_note(Note::new(tick, length, k, DEFAULT_VELOCITY)))
+            .collect();
+        let base = self.notes().to_vec();
+        let merge = self.merge_id();
+        let (list, sel) = with_notes(&base, &notes);
+        self.selection.set(sel);
+        out.extend(self.content(list.clone(), Some(merge)));
+        for n in &notes {
+            out.extend(self.audition(n.key, true));
+        }
+        self.drag = Drag::Draw {
+            start: pos,
+            base,
+            notes,
+            merge,
+            last: list,
+        };
     }
 
     fn remove_note(&mut self, i: usize, out: &mut Vec<UiAction>) {
@@ -2150,6 +2161,10 @@ impl PianoRollView {
             "editor.transpose_down" => self.transpose(-1),
             "editor.octave_up" => self.move_selection(0, 12),
             "editor.octave_down" => self.move_selection(0, -12),
+            "editor.select_next_note" => self.step_selection(true, false),
+            "editor.select_prev_note" => self.step_selection(false, false),
+            "editor.extend_next_note" => self.step_selection(true, true),
+            "editor.extend_prev_note" => self.step_selection(false, true),
             "editor.nudge_left" => self.move_selection(-step, 0),
             "editor.nudge_right" => self.move_selection(step, 0),
             // One beat of the meter (the Beat snap step) or one tick, whatever the snap.
@@ -2382,6 +2397,86 @@ impl PianoRollView {
         self.apply_edit(Some((list, new)))
     }
 
+    /// Selects the next (`forward`) or previous note in time order (ties by pitch, low to
+    /// high), or with `extend` adds it to the selection. With nothing selected the next note
+    /// is the first at or after the playhead (the first one if there is none) and the previous
+    /// the last before it. At either end nothing changes (no wrap). The view scrolls to keep
+    /// the note in sight. Declined when the clip has no notes.
+    fn step_selection(&mut self, forward: bool, extend: bool) -> CommandOutcome {
+        let notes = self.notes();
+        if notes.is_empty() {
+            return CommandOutcome::Declined;
+        }
+        let mut order: Vec<usize> = (0..notes.len()).collect();
+        order.sort_by_key(|&i| (notes[i].tick, notes[i].key, i));
+        let pos_of = |i: usize| order.iter().position(|&o| o == i);
+        let sel: Vec<usize> = self
+            .selection
+            .items()
+            .iter()
+            .filter_map(|&i| pos_of(i))
+            .collect();
+        let target = match (sel.iter().min(), sel.iter().max()) {
+            (Some(&lo), Some(&hi)) => {
+                if forward {
+                    (hi + 1 < order.len()).then_some(hi + 1)
+                } else {
+                    lo.checked_sub(1)
+                }
+            }
+            _ => {
+                // The playhead outside the clip counts as before every note for the
+                // next one and after every note for the previous one.
+                let at = self.playhead_content();
+                let last = order.len() - 1;
+                if forward {
+                    match at {
+                        Some(at) => order.iter().position(|&i| notes[i].tick >= at),
+                        None => Some(0),
+                    }
+                    .or(Some(last))
+                } else {
+                    match at {
+                        Some(at) => order.iter().rposition(|&i| notes[i].tick < at),
+                        None => Some(last),
+                    }
+                    .or(Some(0))
+                }
+            }
+        };
+        let Some(i) = target.map(|p| order[p]) else {
+            return CommandOutcome::Handled(Vec::new());
+        };
+        if extend {
+            self.selection.add(i);
+        } else {
+            self.selection.select_only(i);
+        }
+        self.reveal_note(i);
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Scrolls the view (time and keys) so note `i` is inside the grid.
+    fn reveal_note(&mut self, i: usize) {
+        let Some(n) = self.notes().get(i).copied() else {
+            return;
+        };
+        self.vp.manual_scroll();
+        let width = self.axis.visible_ticks(self.bounds.x1);
+        let (a, z) = (self.axis.scroll, self.axis.scroll + width);
+        if (n.tick as f64) < a || (n.tick as f64) > z {
+            self.axis.page_to(n.tick, self.bounds.x1);
+        }
+        let g = self.grid_rect();
+        let top = self.key_top(n.key);
+        if top < g.y0 {
+            self.scroll_y -= g.y0 - top;
+        } else if top + self.key_h > g.y1 {
+            self.scroll_y += top + self.key_h - g.y1;
+        }
+        self.clamp_scroll();
+    }
+
     /// Transposes the selection by one semitone, or by one scale degree when snap to scale is
     /// on and the clip has a scale (Declined without a selection).
     fn transpose(&mut self, by: i32) -> CommandOutcome {
@@ -2581,8 +2676,15 @@ impl PianoRollView {
                 r.y1 - 0.5,
             );
             let selected = self.selection.contains(&i);
-            let base = if selected { st.selection } else { self.accent };
-            let fill = mix(mix(base, st.lane, 0.45), base, n.velocity);
+            // The fill is the velocity's colour; a selected note is lifted toward the text
+            // colour (and gets the light outline), so a selection reads at any velocity.
+            let base = st.velocity_color(n.velocity);
+            let base = if selected {
+                mix(base, st.base.text, 0.4)
+            } else {
+                base
+            };
+            let fill = base;
             let rr = RoundedRect::from_rect(Rect::new(r.x0, r.y0, r.x1.max(r.x0 + 2.0), r.y1), 2.0);
             // A muted note is hollow: a faint fill inside a clear outline in the note colour,
             // which velocity shading (a solid fill) never produces.
@@ -2785,7 +2887,12 @@ impl PianoRollView {
                 continue;
             }
             let selected = self.selection.contains(&i);
-            let col = if selected { st.selection } else { self.accent };
+            let col = st.velocity_color(n.velocity);
+            let col = if selected {
+                mix(col, st.base.text, 0.4)
+            } else {
+                col
+            };
             let y = top + (1.0 - f64::from(n.velocity)) * h;
             let bottom = top + h;
             let (bar, cap) = if n.muted { (0.25, 0.4) } else { (0.85, 1.0) };

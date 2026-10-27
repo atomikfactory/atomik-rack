@@ -298,6 +298,20 @@ fn reference_default_table_of_the_plan() {
         ("Cmd+Up", &[Context::Editor], "editor.transpose_up", None),
         ("Cmd+Shift+Up", &[Context::Editor], "editor.octave_up", None),
         ("Cmd+Left", &[Context::Editor], "editor.nudge_left", None),
+        ("Left", &[Context::Editor], "editor.select_prev_note", None),
+        ("Right", &[Context::Editor], "editor.select_next_note", None),
+        (
+            "Shift+Left",
+            &[Context::Editor],
+            "editor.extend_prev_note",
+            None,
+        ),
+        (
+            "Shift+Right",
+            &[Context::Editor],
+            "editor.extend_next_note",
+            None,
+        ),
         (
             "Cmd+Shift+Left",
             &[Context::Editor],

@@ -130,6 +130,27 @@ impl SeqTheme {
         if muted { mix(c, self.lane, 0.65) } else { c }
     }
 
+    /// The fill of a piano roll note of velocity `v` (0 to 1): a ramp from a dim steel blue
+    /// through the CV blue and the notes green to the highlight yellow, so a soft note reads
+    /// cool and dark and a loud one warm and bright (the brightness only ever rises).
+    pub fn velocity_color(&self, v: f32) -> Color {
+        let t = &self.base;
+        let stops = [
+            (0.0, mix(t.cable_cv, self.lane, 0.6)),
+            (0.35, t.cable_cv),
+            (0.7, t.cable_notes),
+            (1.0, t.highlight),
+        ];
+        let v = v.clamp(0.0, 1.0);
+        for w in stops.windows(2) {
+            let ((a, ca), (b, cb)) = (w[0], w[1]);
+            if v <= b {
+                return mix(ca, cb, (v - a) / (b - a));
+            }
+        }
+        t.highlight
+    }
+
     /// Clip header strip / note fill for an accent colour.
     pub fn clip_head(&self, accent: Color, muted: bool) -> Color {
         let c = mix(accent, self.base.panel_bottom, 0.32);

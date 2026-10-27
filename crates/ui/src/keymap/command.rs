@@ -339,6 +339,20 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.extend_next_note",
+        "Extend Selection to Next Note",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.extend_prev_note",
+        "Extend Selection to Previous Note",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
     cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
     cmd("editor.nudge_left", "Nudge Left", G::Editor, C::Editor).rep(),
@@ -392,6 +406,20 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.select_next_note",
+        "Select Next Note",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
+    cmd(
+        "editor.select_prev_note",
+        "Select Previous Note",
+        G::Editor,
+        C::Editor,
+    )
+    .rep(),
     cmd(
         "editor.set_arp_gate",
         "Set Arpeggio Gate",

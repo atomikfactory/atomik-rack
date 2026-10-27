@@ -482,3 +482,145 @@ fn toggle_note_mute_unmutes_a_muted_selection_and_is_quiet_without_one() {
     let out = v.command("editor.toggle_note_mute", None, &doc, &reg);
     assert_eq!(out, CommandOutcome::Handled(vec![]));
 }
+
+fn run_nav(
+    v: &mut PianoRollView,
+    id: &str,
+    doc: &atomik_model::RackDoc,
+    reg: &atomik_device_sdk::Registry,
+) -> CommandOutcome {
+    v.command(id, None, doc, reg)
+}
+
+#[test]
+fn next_and_previous_note_select_one_note_at_a_time_in_time_order() {
+    let (mut v, doc, reg) = setup();
+    // Nothing selected: Right takes the first note at or after the playhead, Left the last
+    // one before it.
+    v.set_playhead(2 * PPQ);
+    assert!(run_nav(&mut v, "editor.select_next_note", &doc, &reg).is_taken());
+    assert_eq!(v.selected_notes(), vec![2]);
+    v.set_selected_notes(&[]);
+    assert!(run_nav(&mut v, "editor.select_prev_note", &doc, &reg).is_taken());
+    assert_eq!(v.selected_notes(), vec![1]);
+    // From a selection they step by one.
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![2]);
+    run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![0]);
+    // The first note stays: no wrap.
+    run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![0]);
+    v.set_selected_notes(&[15]);
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![15]);
+    // A playhead outside the clip: Right takes the first note, Left the last.
+    v.set_selected_notes(&[]);
+    v.set_playhead(100 * PPQ);
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![0]);
+    v.set_selected_notes(&[]);
+    run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![15]);
+    // Selecting changes nothing in the song.
+    assert!(
+        run_nav(&mut v, "editor.select_next_note", &doc, &reg)
+            .actions()
+            .is_empty()
+    );
+}
+
+#[test]
+fn extending_adds_the_neighbour_to_the_selection() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[4]);
+    run_nav(&mut v, "editor.extend_next_note", &doc, &reg);
+    run_nav(&mut v, "editor.extend_next_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![4, 5, 6]);
+    run_nav(&mut v, "editor.extend_prev_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![3, 4, 5, 6]);
+    // A plain step collapses the range onto the neighbour of its end.
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![7]);
+}
+
+#[test]
+fn notes_at_the_same_tick_go_from_low_to_high_pitch() {
+    let mut doc = song_doc();
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(1) {
+                    c.content = ClipContent::Notes(vec![
+                        n(0, PPQ, 64, 0.8),
+                        n(0, PPQ, 60, 0.8),
+                        n(0, PPQ, 67, 0.8),
+                        n(PPQ, PPQ, 50, 0.8),
+                    ]);
+                }
+            }
+        }
+    }
+    let reg = registry();
+    let mut v = piano_roll(&doc, &reg);
+    let mut keys = Vec::new();
+    for _ in 0..4 {
+        run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+        keys.push(v.notes()[v.selected_notes()[0]].key);
+    }
+    assert_eq!(keys, vec![60, 64, 67, 50]);
+}
+
+#[test]
+fn navigation_scrolls_the_selected_note_into_view() {
+    let (mut v, doc, reg) = setup();
+    let _ = v.handle(
+        &UiEvent::Wheel {
+            delta: atomik_ui::kurbo::Vec2::new(0.0, 6.0),
+            pos: Point::new(v.tick_to_x(0), 200.0),
+            modifiers: Modifiers::CTRL,
+        },
+        &doc,
+        &reg,
+    );
+    let last = bass_line()[15];
+    assert!(
+        v.tick_to_x(last.tick) > v.bounds().x1,
+        "off screen to start"
+    );
+    v.set_selected_notes(&[0]);
+    for _ in 0..15 {
+        run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    }
+    assert_eq!(v.selected_notes(), vec![15]);
+    let x = v.tick_to_x(last.tick);
+    assert!(x >= v.tick_to_x(0).min(x) && x < v.bounds().x1, "x = {x}");
+    let r = v.note_rect(15).unwrap();
+    assert!(r.x0 >= 0.0 && r.x0 < v.bounds().x1);
+    // And back to the first.
+    for _ in 0..15 {
+        run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    }
+    assert!(v.note_rect(0).unwrap().x0 >= 0.0);
+}
+
+#[test]
+fn an_empty_clip_declines_the_navigation() {
+    let mut doc = song_doc();
+    for t in &mut doc.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(1) {
+                    c.content = ClipContent::Notes(Vec::new());
+                }
+            }
+        }
+    }
+    let reg = registry();
+    let mut v = piano_roll(&doc, &reg);
+    assert_eq!(
+        run_nav(&mut v, "editor.select_next_note", &doc, &reg),
+        CommandOutcome::Declined
+    );
+}
