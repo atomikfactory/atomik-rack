@@ -144,6 +144,13 @@ impl RackView {
             {
                 return Some(Help::new(rect, text));
             }
+            if self.devices[i]
+                .desc
+                .is_some_and(|d| d.type_id == crate::fm_panel::FM_TYPE)
+                && let Some(text) = crate::fm_panel::fm_help(p.key)
+            {
+                return Some(Help::new(rect, text));
+            }
             let label = autolayout::control_label(p);
             return match kind {
                 ControlKind::Toggle => Some(Help::new(

@@ -243,6 +243,7 @@ pub fn plugin_layout(desc: &DeviceDescriptor, doc: &PluginDoc) -> PanelSpec {
         key_chord: None,
         modsrc: None,
         wavetable: None,
+        fm: None,
         container: None,
         plugin: Some(panel),
         front,
