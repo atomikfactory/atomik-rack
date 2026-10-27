@@ -46,6 +46,7 @@ mod io_input;
 mod navigator;
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
+mod name_input;
 mod player_input;
 mod plugin_input;
 mod selection;
@@ -111,6 +112,8 @@ enum Hit {
     Rack,
     Device(usize),
     Plate(usize),
+    /// The name on a device's plate: a double-click types a new name.
+    Name(usize),
     Fold(usize),
     Control(usize, usize),
     Socket(usize, usize),
@@ -183,6 +186,7 @@ impl Hit {
             Hit::Rack => None,
             Hit::Device(i)
             | Hit::Plate(i)
+            | Hit::Name(i)
             | Hit::Fold(i)
             | Hit::Edit(i)
             | Hit::ToChannel(i)
@@ -568,14 +572,24 @@ pub struct RackView {
     auto_route: bool,
 }
 
-/// A pattern name or a macro name being edited in place.
+/// What a [`Rename`] types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameKind {
+    /// A pattern name of a player panel.
+    Pattern,
+    /// A macro name of a container panel.
+    Macro,
+    /// The name of the device itself, on its plate.
+    Device,
+}
+
+/// A device name, a pattern name or a macro name being edited in place.
 #[derive(Debug, Clone)]
 struct Rename {
     dev: usize,
     index: u8,
     text: String,
-    /// A macro name of a container panel (else a pattern name).
-    is_macro: bool,
+    kind: RenameKind,
 }
 
 fn param_cmd(key: &DeviceKey, param: &str, value: f32, merge: Option<u64>) -> UiAction {
@@ -1343,6 +1357,10 @@ impl RackView {
                     Hit::Plate(i),
                     false,
                 );
+                if self.locked.as_ref() != Some(&d.key) {
+                    let name = paint::name_rect(d.height, d.folded, d.has_strip_bypass());
+                    tree.add(pn, name + off, Hit::Name(i), false);
+                }
                 let fc = paint::fold_button_center(d.height, d.folded) + off;
                 tree.add(
                     pn,
@@ -2299,7 +2317,7 @@ impl RackView {
                         .to_string(),
                     )
                 }
-                Some(Hit::Plate(i)) => {
+                Some(Hit::Plate(i) | Hit::Name(i)) => {
                     let d = &self.devices[i];
                     if self.locked.as_ref() == Some(&d.key) {
                         Some(Self::MASTER_LOCKED_TEXT.to_string())
@@ -2746,6 +2764,9 @@ impl RackView {
             return;
         }
         self.browser.focused = false;
+        if self.device_rename_press(pos, out) {
+            return;
+        }
         self.cancel_rename();
         if button == PointerButton::Middle {
             self.drag = Drag::Pan { last: pos };
@@ -2762,7 +2783,10 @@ impl RackView {
                 }));
             }
             (Hit::Bypass(i), PointerButton::Primary) => self.bypass_down(i, out),
-            (Hit::Plate(i), PointerButton::Primary) => {
+            (Hit::Name(i), PointerButton::Primary) if clicks >= 2 => {
+                self.begin_device_rename(i, out)
+            }
+            (Hit::Plate(i) | Hit::Name(i), PointerButton::Primary) => {
                 let collapse = self.select_click(i, modifiers, out);
                 if self.locked.as_ref() == Some(&self.devices[i].key) {
                     // The Master Section is selected by the press but never dragged.
@@ -2897,7 +2921,7 @@ impl RackView {
             (Hit::ReturnEdit(i, slot), PointerButton::Primary) => {
                 self.return_edit_down(i, slot, out)
             }
-            (Hit::Plate(i) | Hit::Device(i), PointerButton::Secondary) => {
+            (Hit::Plate(i) | Hit::Name(i) | Hit::Device(i), PointerButton::Secondary) => {
                 self.select_for_menu(i, out);
                 out.push(UiAction::ContextMenu {
                     target: ContextTarget::Device,
@@ -3660,6 +3684,11 @@ impl RackView {
                 let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
                 let info = PanelInfo {
                     name: &d.name,
+                    editing_name: self
+                        .rename
+                        .as_ref()
+                        .filter(|r| r.dev == i && r.kind == RenameKind::Device)
+                        .map(|r| r.text.as_str()),
                     caption: &d.caption,
                     accent: d.accent,
                     desc: d.desc.as_ref(),
@@ -3687,7 +3716,7 @@ impl RackView {
                         rename: self
                             .rename
                             .as_ref()
-                            .filter(|r| r.dev == i && !r.is_macro)
+                            .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
                             .map(|r| r.text.as_str()),
                     },
                     plugin: PluginInfo {
@@ -3699,7 +3728,7 @@ impl RackView {
                         rename: self
                             .rename
                             .as_ref()
-                            .filter(|r| r.dev == i && r.is_macro)
+                            .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
                             .map(|r| (usize::from(r.index), r.text.as_str())),
                         has_channel: d.has_channel,
                     },

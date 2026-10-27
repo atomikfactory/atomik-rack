@@ -2,7 +2,9 @@
 //! step sequencer, the in-place rename, the arpeggiator's mode, rate and octave buttons, the
 //! meter feed of both and the geometry accessors for hosts and tests.
 
-use super::{DeviceView, Flip, PlayerBtn, RackView, Rename, UiAction, param_cmd, pattern_count};
+use super::{
+    DeviceView, Flip, PlayerBtn, RackView, Rename, RenameKind, UiAction, param_cmd, pattern_count,
+};
 use crate::event::{Key, Modifiers};
 use crate::seq_panel::{self, PlayState, RenameKey, SeqButton};
 use crate::widget::current_value;
@@ -308,7 +310,7 @@ impl RackView {
                         dev: i,
                         index: n as u8,
                         text: p.name,
-                        is_macro: false,
+                        kind: RenameKind::Pattern,
                     });
                     self.bump(i);
                 }
@@ -369,8 +371,12 @@ impl RackView {
         let Some(mut r) = self.rename.take() else {
             return;
         };
-        if r.is_macro {
+        if r.kind == RenameKind::Macro {
             self.macro_rename_key(r, key);
+            return;
+        }
+        if r.kind == RenameKind::Device {
+            self.device_rename_key(r, key, out);
             return;
         }
         if self.devices[r.dev].spec.drum_gen.is_some() {

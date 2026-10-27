@@ -13,7 +13,7 @@
 //! becomes `ContainerCommand::AddInner`. Actions about the scope itself (enter, exit, the
 //! container editor, the macro menu's commands) are built with absolute keys and are not lifted.
 
-use super::{Drag, RackView, Rename, UiAction};
+use super::{Drag, RackView, Rename, RenameKind, UiAction};
 use crate::breadcrumb::{self, CrumbHit};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::container_panel::ContainerButton;
@@ -743,7 +743,10 @@ impl RackView {
 
     /// The macro name being edited in place on the panel of `key`: (macro 0-based, text).
     pub fn renaming_macro(&self, key: &DeviceKey) -> Option<(u8, &str)> {
-        let r = self.rename.as_ref().filter(|r| r.is_macro)?;
+        let r = self
+            .rename
+            .as_ref()
+            .filter(|r| r.kind == RenameKind::Macro)?;
         (self.devices.get(r.dev)?.key == self.local_key(key)).then_some((r.index, r.text.as_str()))
     }
 
@@ -787,7 +790,7 @@ impl RackView {
                 dev: i,
                 index: n,
                 text,
-                is_macro: true,
+                kind: RenameKind::Macro,
             });
             self.bump(i);
         }

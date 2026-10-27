@@ -197,6 +197,47 @@ fn fold_rename_color_change_view_only() {
 }
 
 #[test]
+fn rename_trims_the_name_and_undoes_in_one_step() {
+    let reg = registry();
+    let mut d = three_devices(&reg);
+    d.apply(
+        Command::Rename {
+            key: key("delay"),
+            name: "  Echo  ".into(),
+        },
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().devices[1].name, "Echo");
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().devices[1].name, "Stereo Delay");
+    d.redo(&reg).unwrap();
+    assert_eq!(d.doc().devices[1].name, "Echo");
+}
+
+#[test]
+fn rename_to_a_blank_name_restores_the_default_name() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    for _ in 0..2 {
+        d.apply(add(99, SYNTH, None), &reg).unwrap();
+    }
+    let rename = |key: &str, name: &str| Command::Rename {
+        key: self::key(key),
+        name: name.into(),
+    };
+    d.apply(rename("poly-synth-2", "Lead"), &reg).unwrap();
+    // The default is the type's name made unique among the others, as when it was added.
+    d.apply(rename("poly-synth-2", "   "), &reg).unwrap();
+    assert_eq!(d.doc().devices[1].name, "Poly Synth 2");
+    d.apply(rename("poly-synth", ""), &reg).unwrap();
+    assert_eq!(d.doc().devices[0].name, "Poly Synth");
+    d.undo(&reg).unwrap();
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().devices[1].name, "Lead");
+}
+
+#[test]
 fn view_commands_reject_unknown_device() {
     let reg = registry();
     let mut d = three_devices(&reg);

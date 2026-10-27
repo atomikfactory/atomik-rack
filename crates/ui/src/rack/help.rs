@@ -70,6 +70,7 @@ fn plugin_button(b: PluginButton) -> &'static str {
 fn text(hit: Hit) -> Option<Cow<'static, str>> {
     let s = |t: &'static str| Some(Cow::Borrowed(t));
     match hit {
+        Hit::Name(_) => s("Double-click to rename"),
         Hit::Fold(_) => s("Fold the device to a thin strip, or unfold it"),
         Hit::Edit(_) => s("Open the editor for this device's samples"),
         Hit::ToChannel(_) => s("Add a mixer channel for this device"),

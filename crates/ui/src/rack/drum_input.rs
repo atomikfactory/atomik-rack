@@ -3,7 +3,7 @@
 //! length stepper, GENERATE and RANDOMISE, the in-place rename and the geometry accessors for
 //! hosts and tests.
 
-use super::{Drag, RackView, Rename, UiAction, param_cmd, pattern_count};
+use super::{Drag, RackView, Rename, RenameKind, UiAction, param_cmd, pattern_count};
 use crate::drum_gen_panel::{self, DrumButton, VISIBLE_STEPS};
 use crate::event::{Key, Modifiers};
 use crate::seq_panel::{self, RenameKey};
@@ -170,7 +170,7 @@ impl RackView {
                         dev: i,
                         index: n as u8,
                         text: p.name,
-                        is_macro: false,
+                        kind: RenameKind::Pattern,
                     });
                     self.bump(i);
                 }
