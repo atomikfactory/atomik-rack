@@ -5,7 +5,7 @@
 //! [`Gate`]/expander, the console [`fader_gain`] taper and mid/side [`stereo_width`].
 //! Sample playback maths: ([`Playhead`], [`read_hermite`], loop crossfade).
 //! The stage blocks of the factory devices, each a small documented module:
-//! [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
+//! [`dither`] (the requantiser of an audio export), [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
 //! (flat-sum 24 dB/oct split), [`phaser`], [`chorus`], [`echo`], [`comb`], [`room`] (small box
 //! and large room on [`Fdn8`]), [`ringmod`], [`bitcrush`], [`noise`] (white, pink, rumble,
 //! crackle, presence gate), [`spectral`] (STFT stage), [`spectrum`] (the analyser display: FFT power, 1/3-octave bands, peak hold), [`stereo_meter`] (correlation, balance and width), [`modal`], [`wavetable`] (the band-limited factory wavetables of the wavetable synth), [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift), [`tuner`] (pitch, note and cents for the audio track tuner) and [`notes`] (audio to notes: a YIN pitch tracker for monophonic audio and a drum hit classifier).
@@ -28,6 +28,7 @@ pub mod crossover;
 mod delay;
 mod det_math;
 mod det_trig;
+pub mod dither;
 mod dynamics;
 pub mod echo;
 mod fader;
@@ -76,6 +77,7 @@ pub use crossover::Crossover;
 pub use delay::DelayLine;
 pub use det_math::{exp2_det, exp2_det_f64, flush_denormal, hadamard8, log2_det};
 pub use det_trig::sin_cycles;
+pub use dither::{Dither, DitherMode};
 pub use dynamics::{
     Compressor, Detector, EXPANDER_RATIO, GATE_DETECTOR_MS, Gate, KNEE_DB, RMS_WINDOW_MS,
     static_gain_reduction_db, static_gain_reduction_knee_db,
