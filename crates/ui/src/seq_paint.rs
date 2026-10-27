@@ -49,6 +49,10 @@ pub struct SeqTheme {
     pub loop_off: Color,
     /// Loop shading over the lanes.
     pub loop_shade: Color,
+    /// The song End: its flag and line.
+    pub end_mark: Color,
+    /// Shading of the lanes past the song End.
+    pub end_shade: Color,
     /// Playhead.
     pub playhead: Color,
     /// Recording (playhead while recording, arm button, record button).
@@ -96,6 +100,8 @@ impl SeqTheme {
             loop_on: t.highlight,
             loop_off: mix(t.text_muted, t.background, 0.45),
             loop_shade: t.highlight.with_alpha(0.05),
+            end_mark: t.cable_cv,
+            end_shade: Color::from_rgba8(0x00, 0x00, 0x00, 0x4d),
             playhead: t.knob_pointer,
             record: t.cable_audio,
             mute: Color::from_rgba8(0xe0, 0xa8, 0x3c, 0xff),

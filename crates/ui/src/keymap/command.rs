@@ -1046,6 +1046,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "sequencer.marker_end_here",
+        "Set End Marker Here",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.marker_loop_range",
         "Loop This Range",
         G::Sequencer,
@@ -1430,6 +1437,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .rep(),
+    cmd(
+        "transport.set_end_marker",
+        "Set End Marker at Playhead",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
     cmd("transport.stop", "Stop", G::Transport, C::Global),
     cmd(
         "transport.tempo_down",

@@ -78,7 +78,9 @@ fn the_context_menus_list_their_commands() {
         items(ContextTarget::TempoLane),
         vec![("sequencer.tempo_add_point", None, true)]
     );
-    let insert = items(ContextTarget::RulerMeter);
+    let ruler = items(ContextTarget::RulerMeter);
+    assert_eq!(ruler[0], ("sequencer.marker_end_here", None, true));
+    let insert = &ruler[1..];
     let args: Vec<_> = insert.iter().map(|i| i.1.unwrap()).collect();
     assert_eq!(args, ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"]);
     assert!(

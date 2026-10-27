@@ -104,6 +104,10 @@ const DRAG_THRESHOLD: f64 = 3.0;
 const LINE_GRAB: f64 = 3.0;
 /// The height of the playhead's flag at the bottom of the ruler.
 const PLAYHEAD_FLAG: f64 = 9.0;
+/// Width and height of the End flag at the top of the loop band; it hangs to the left of the
+/// End line, and a press on it grabs the End before a loop locator under it.
+const END_FLAG_W: f64 = 11.0;
+const END_FLAG_H: f64 = 9.0;
 const POINT_RADIUS: f64 = 6.0;
 const SCROLL_STEP: f64 = 48.0;
 /// Height of the horizontal scrollbar along the bottom of the timeline.
@@ -256,6 +260,8 @@ enum Hit {
     Playhead,
     /// A loop locator in the ruler (`true`: the right one); a drag moves it.
     LoopEdge(bool),
+    /// The song End in the ruler: its flag at the top of the loop band, or its line below it.
+    EndMark,
     /// The line of a marker in the grid (the same grab as the marker's label in the strip).
     MarkerLine(u32),
     /// A point of the tempo lane.
@@ -476,6 +482,13 @@ enum Drag {
         /// The pointer's offset from the playhead at the press (zero when it was placed there).
         grab: i64,
         last: i64,
+    },
+    /// Dragging the song End: the new End is committed on release.
+    End {
+        start: Point,
+        original: i64,
+        end: i64,
+        moved: bool,
     },
     /// Dragging a loop locator: the range is committed on release.
     LoopEdge {
@@ -1253,6 +1266,18 @@ impl ArrangementView {
         self.bounds.y0 + (LABEL_BAND + RULER_HEIGHT) / 2.0
     }
 
+    /// The y of the middle of the song End's flag in the ruler.
+    pub fn end_flag_y(&self) -> f64 {
+        self.bounds.y0 + LABEL_BAND + 1.0 + END_FLAG_H / 2.0
+    }
+
+    /// The End's flag for an End line at `x`: it hangs to the left of the line, at the top of
+    /// the loop band.
+    fn end_flag_rect(&self, x: f64) -> Rect {
+        let top = self.bounds.y0 + LABEL_BAND + 1.0;
+        Rect::new(x - END_FLAG_W, top, x + LINE_GRAB, top + END_FLAG_H)
+    }
+
     /// The y of the bar-label band of the ruler (click to locate).
     pub fn ruler_label_y(&self) -> f64 {
         self.bounds.y0 + LABEL_BAND / 2.0
@@ -1567,7 +1592,8 @@ impl ArrangementView {
         Rect::new(tl.x0, (tl.y1 - HSCROLL_HEIGHT).max(tl.y0), tl.x1, tl.y1)
     }
 
-    /// Total scrollable span in ticks: the content end plus room, never less than the view.
+    /// Total scrollable span in ticks: the song End or the content end (whichever is later) plus
+    /// room, never less than the view.
     fn hscroll_total(&self) -> f64 {
         let end = self
             .song
@@ -1577,7 +1603,8 @@ impl ArrangementView {
             .flat_map(|l| l.clips.iter())
             .map(|c| c.start + c.length)
             .max()
-            .unwrap_or(0) as f64;
+            .unwrap_or(0)
+            .max(self.song.end_tick()) as f64;
         let view = self.hscroll_rect().width() / self.axis.px_per_tick;
         (end + 4.0 * self.bars.bar_ticks_at(end as i64) as f64)
             .max(self.axis.scroll + view)
@@ -1769,7 +1796,15 @@ impl ArrangementView {
             }
             let (a, z) = self.song.loop_range;
             let dist = |t: i64| (self.axis.tick_to_x(t) - pos.x).abs();
-            return (near(a) || near(z)).then(|| Hit::LoopEdge(dist(z) <= dist(a)));
+            // The End's flag first; its line only where no locator is in reach.
+            let end_x = self.axis.tick_to_x(self.song.end_tick());
+            if self.end_flag_rect(end_x).contains(pos) {
+                return Some(Hit::EndMark);
+            }
+            if near(a) || near(z) {
+                return Some(Hit::LoopEdge(dist(z) <= dist(a)));
+            }
+            return near(self.song.end_tick()).then_some(Hit::EndMark);
         }
         if pos.y < self.lanes_top() || self.vp.shown_tool() != Tool::Select {
             return None;
@@ -2229,7 +2264,7 @@ impl ArrangementView {
         }
         let in_ruler = matches!(
             hit,
-            Hit::RulerLabel | Hit::LoopBand | Hit::LoopEdge(_) | Hit::Playhead
+            Hit::RulerLabel | Hit::LoopBand | Hit::LoopEdge(_) | Hit::Playhead | Hit::EndMark
         ) && pos.y < self.ruler_bottom();
         if primary
             && in_ruler
@@ -2254,6 +2289,15 @@ impl ArrangementView {
                     last: self.playhead,
                 };
             }
+            Hit::EndMark if primary => {
+                let end = self.song.end_tick();
+                self.drag = Drag::End {
+                    start: pos,
+                    original: end,
+                    end,
+                    moved: false,
+                };
+            }
             Hit::LoopEdge(right) => {
                 let r = self.song.loop_range;
                 self.drag = Drag::LoopEdge {
@@ -2273,7 +2317,12 @@ impl ArrangementView {
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
             Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
             Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
-            Hit::RulerLabel if button == PointerButton::Secondary => {
+            Hit::RulerLabel | Hit::LoopBand | Hit::EndMark
+                if button == PointerButton::Secondary =>
+            {
+                // The tick the End entry of the menu would set: the snapped one under the pointer.
+                self.mk.ctx_tick =
+                    snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers)).max(1);
                 self.ctx_bar =
                     u32::try_from(self.bars.bar_of(self.axis.x_to_tick(pos.x)).max(1)).unwrap_or(1);
                 self.ctx_meter = None;
@@ -2999,7 +3048,10 @@ impl ArrangementView {
             out.extend(actions);
             return;
         }
-        if matches!(self.drag, Drag::Playhead { .. } | Drag::LoopEdge { .. }) {
+        if matches!(
+            self.drag,
+            Drag::Playhead { .. } | Drag::LoopEdge { .. } | Drag::End { .. }
+        ) {
             self.locator_move(pos, modifiers, out);
             return;
         }
@@ -3031,6 +3083,7 @@ impl ArrangementView {
             | Drag::Comp { .. }
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
+            | Drag::End { .. }
             | Drag::Mark => {}
             Drag::Move {
                 start,
@@ -3317,6 +3370,15 @@ impl ArrangementView {
                     *range = locator_range(*original, *right, snap_round(raw, grid).max(0), min);
                 }
             }
+            Drag::End {
+                start, end, moved, ..
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if *moved {
+                    // Never at or before the start of the song: at least one snap step.
+                    *end = snap_round(raw, grid).max(min);
+                }
+            }
             _ => {}
         }
         self.repaint = true;
@@ -3328,16 +3390,17 @@ impl ArrangementView {
     pub fn cursor(&self) -> CursorHint {
         let tool = self.vp.shown_tool();
         match &self.drag {
-            Drag::Playhead { .. } | Drag::LoopEdge { .. } | Drag::Resize { .. } => {
-                CursorHint::ResizeHorizontal
-            }
+            Drag::Playhead { .. }
+            | Drag::LoopEdge { .. }
+            | Drag::End { .. }
+            | Drag::Resize { .. } => CursorHint::ResizeHorizontal,
             Drag::Audio {
                 grab: AudioGrab::TrimStart,
                 ..
             } => CursorHint::ResizeHorizontal,
             Drag::Draw { pencil: true, .. } => CursorHint::Pen,
             Drag::None => match self.hover {
-                Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::MarkerLine(_)) => {
+                Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::EndMark | Hit::MarkerLine(_)) => {
                     CursorHint::ResizeHorizontal
                 }
                 Some(Hit::Clip {
@@ -3364,6 +3427,16 @@ impl ArrangementView {
             Drag::Snap { steps } => {
                 if !steps.moved() {
                     self.snap = self.snap.cycle(true);
+                }
+            }
+            Drag::End {
+                original,
+                end,
+                moved,
+                ..
+            } => {
+                if moved && end != original {
+                    out.push(song_cmd(SongCommand::SetSongEnd(end)));
                 }
             }
             Drag::LoopEdge {
@@ -4193,6 +4266,17 @@ impl ArrangementView {
             let r = Rect::new(self.axis.tick_to_x(a), tl.y0, self.axis.tick_to_x(z), tl.y1);
             sp::rect(c, r, st.loop_shade);
         }
+        // Past the End: shaded, with a line at the End itself.
+        let end_x = self.axis.tick_to_x(self.shown_end());
+        if end_x < tl.x1 {
+            sp::rect(
+                c,
+                Rect::new(end_x.max(tl.x0), tl.y0, tl.x1, tl.y1),
+                st.end_shade,
+            );
+            let x = end_x.round() + 0.5;
+            sp::line(c, x, tl.y0, x, tl.y1, st.end_mark.with_alpha(0.55));
+        }
         for (row, rr) in self.visible_rows() {
             let RowKind::Lane { track, lane } = row.kind else {
                 continue;
@@ -4951,6 +5035,7 @@ impl ArrangementView {
             sp::line(c, x, lr.y0, x, lr.y1, col);
         }
         sp::line(c, rr.x0, band.y0 + 0.5, rr.x1, band.y0 + 0.5, st.separator);
+        self.paint_end_flag(c, band);
         let x = self.axis.tick_to_x(self.playhead);
         let pc = if self.recording {
             st.record
@@ -4964,6 +5049,43 @@ impl ArrangementView {
         flag.close_path();
         c.fill_with(flag, pc);
         c.pop_clip();
+    }
+
+    /// The song End: a line through the loop band and a flag with an E hanging to the left of
+    /// it. While it is dragged, it is drawn where the pointer put it.
+    fn paint_end_flag(&self, c: &mut dyn Canvas, band: Rect) {
+        let st = &self.st;
+        let x = self.axis.tick_to_x(self.shown_end()).round() + 0.5;
+        let lit =
+            matches!(self.drag, Drag::End { moved: true, .. }) || self.hover == Some(Hit::EndMark);
+        let col = if lit {
+            mix(st.end_mark, st.base.text, 0.35)
+        } else {
+            st.end_mark
+        };
+        sp::line(c, x, band.y0 + 1.0, x, band.y1, col);
+        let flag = self.end_flag_rect(x);
+        let body = Rect::new(flag.x0, flag.y0, x, flag.y1);
+        c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.85));
+        sp::label(
+            c,
+            "E",
+            body.center().x,
+            body.center().y,
+            8.0,
+            st.background,
+            Align::Center,
+        );
+    }
+
+    /// The song End as shown: the dragged one while the flag is dragged, else the song's.
+    fn shown_end(&self) -> i64 {
+        match &self.drag {
+            Drag::End {
+                end, moved: true, ..
+            } => *end,
+            _ => self.song.end_tick(),
+        }
     }
 
     fn paint_track_list(&self, c: &mut dyn Canvas, doc: &RackDoc) {

@@ -139,7 +139,7 @@ pub use console_snapshot::{
 };
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
-use history::Edit;
+use history::{Edit, song_end_growth};
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
@@ -1009,7 +1009,14 @@ impl Document {
             _ => None,
         };
         let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
-        let ops = edit.perform(&mut self.doc);
+        let mut ops = edit.perform(&mut self.doc);
+        let edit = match song_end_growth(&self.doc, &edit) {
+            Some(grow) => {
+                ops.extend(grow.perform(&mut self.doc));
+                Edit::Compound(vec![edit, grow])
+            }
+            None => edit,
+        };
         self.redo.clear();
         let merged = merge.is_some() && merge == self.merge;
         if merged

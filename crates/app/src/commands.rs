@@ -120,6 +120,8 @@ pub enum AppCommand {
     AddMarker,
     /// Transport > Add Range Marker from Loop.
     AddRangeFromLoop,
+    /// Transport > Set End Marker at Playhead: the song End moves to the playhead.
+    SetEndMarker,
     /// Transport > Previous Marker: the playhead goes to the marker before it.
     PreviousMarker,
     /// Transport > Next Marker: the playhead goes to the marker after it.
@@ -380,6 +382,7 @@ impl AppCommand {
             AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
             AppCommand::AddMarker => ("transport.add_marker", None),
             AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
+            AppCommand::SetEndMarker => ("transport.set_end_marker", None),
             AppCommand::PreviousMarker => ("transport.prev_marker", None),
             AppCommand::NextMarker => ("transport.next_marker", None),
             AppCommand::ToggleConsole => ("view.toggle_console", None),
@@ -550,6 +553,7 @@ impl AppCommand {
             ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
             ("transport.add_marker", None) => AppCommand::AddMarker,
             ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
+            ("transport.set_end_marker", None) => AppCommand::SetEndMarker,
             ("transport.prev_marker", None) => AppCommand::PreviousMarker,
             ("transport.next_marker", None) => AppCommand::NextMarker,
             ("view.toggle_console", None) => AppCommand::ToggleConsole,
@@ -1197,6 +1201,7 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 MenuEntry::Separator,
                 item("Add Marker", AppCommand::AddMarker),
                 item("Add Range Marker from Loop", AppCommand::AddRangeFromLoop),
+                item("Set End Marker at Playhead", AppCommand::SetEndMarker),
                 item("Previous Marker", AppCommand::PreviousMarker),
                 item("Next Marker", AppCommand::NextMarker),
                 MenuEntry::Separator,
@@ -1722,6 +1727,7 @@ mod tests {
             AppCommand::ShowParamLane,
             AppCommand::AddMarker,
             AppCommand::AddRangeFromLoop,
+            AppCommand::SetEndMarker,
             AppCommand::PreviousMarker,
             AppCommand::NextMarker,
             AppCommand::ToggleConsole,

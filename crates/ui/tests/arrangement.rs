@@ -758,7 +758,7 @@ fn clicking_the_scrollbar_end_jumps_but_stays_within_the_content() {
     let _ = run(|e| v.handle(e, &doc, &reg), &[down(end), up(end)]);
     let far = v.scroll_ticks();
     assert!(far > 0.0, "a click near the right end jumps there");
-    // Never past the last clip end plus four bars.
+    // Never past the later of the last clip end and the song End, plus four bars.
     let last = doc
         .song
         .tracks
@@ -767,7 +767,8 @@ fn clicking_the_scrollbar_end_jumps_but_stays_within_the_content() {
         .flat_map(|l| l.clips.iter())
         .map(|c| c.start + c.length)
         .max()
-        .unwrap();
+        .unwrap()
+        .max(doc.song.end_tick());
     assert!(far <= (last + 4 * BAR) as f64, "{far} > {}", last + 4 * BAR);
     // A second click at the same place does not move further.
     let _ = run(|e| v.handle(e, &doc, &reg), &[down(end), up(end)]);
