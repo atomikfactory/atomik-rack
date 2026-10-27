@@ -2161,6 +2161,10 @@ impl PianoRollView {
             "editor.transpose_down" => self.transpose(-1),
             "editor.octave_up" => self.move_selection(0, 12),
             "editor.octave_down" => self.move_selection(0, -12),
+            "editor.select_next_note" => self.step_selection(true, false),
+            "editor.select_prev_note" => self.step_selection(false, false),
+            "editor.extend_next_note" => self.step_selection(true, true),
+            "editor.extend_prev_note" => self.step_selection(false, true),
             "editor.nudge_left" => self.move_selection(-step, 0),
             "editor.nudge_right" => self.move_selection(step, 0),
             // One beat of the meter (the Beat snap step) or one tick, whatever the snap.
@@ -2391,6 +2395,86 @@ impl PianoRollView {
         let moved = seq_edit::move_notes(self.notes(), &sel, dt, dkey);
         let (list, new) = seq_edit::normalize_notes(moved, &sel);
         self.apply_edit(Some((list, new)))
+    }
+
+    /// Selects the next (`forward`) or previous note in time order (ties by pitch, low to
+    /// high), or with `extend` adds it to the selection. With nothing selected the next note
+    /// is the first at or after the playhead (the first one if there is none) and the previous
+    /// the last before it. At either end nothing changes (no wrap). The view scrolls to keep
+    /// the note in sight. Declined when the clip has no notes.
+    fn step_selection(&mut self, forward: bool, extend: bool) -> CommandOutcome {
+        let notes = self.notes();
+        if notes.is_empty() {
+            return CommandOutcome::Declined;
+        }
+        let mut order: Vec<usize> = (0..notes.len()).collect();
+        order.sort_by_key(|&i| (notes[i].tick, notes[i].key, i));
+        let pos_of = |i: usize| order.iter().position(|&o| o == i);
+        let sel: Vec<usize> = self
+            .selection
+            .items()
+            .iter()
+            .filter_map(|&i| pos_of(i))
+            .collect();
+        let target = match (sel.iter().min(), sel.iter().max()) {
+            (Some(&lo), Some(&hi)) => {
+                if forward {
+                    (hi + 1 < order.len()).then_some(hi + 1)
+                } else {
+                    lo.checked_sub(1)
+                }
+            }
+            _ => {
+                // The playhead outside the clip counts as before every note for the
+                // next one and after every note for the previous one.
+                let at = self.playhead_content();
+                let last = order.len() - 1;
+                if forward {
+                    match at {
+                        Some(at) => order.iter().position(|&i| notes[i].tick >= at),
+                        None => Some(0),
+                    }
+                    .or(Some(last))
+                } else {
+                    match at {
+                        Some(at) => order.iter().rposition(|&i| notes[i].tick < at),
+                        None => Some(last),
+                    }
+                    .or(Some(0))
+                }
+            }
+        };
+        let Some(i) = target.map(|p| order[p]) else {
+            return CommandOutcome::Handled(Vec::new());
+        };
+        if extend {
+            self.selection.add(i);
+        } else {
+            self.selection.select_only(i);
+        }
+        self.reveal_note(i);
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Scrolls the view (time and keys) so note `i` is inside the grid.
+    fn reveal_note(&mut self, i: usize) {
+        let Some(n) = self.notes().get(i).copied() else {
+            return;
+        };
+        self.vp.manual_scroll();
+        let width = self.axis.visible_ticks(self.bounds.x1);
+        let (a, z) = (self.axis.scroll, self.axis.scroll + width);
+        if (n.tick as f64) < a || (n.tick as f64) > z {
+            self.axis.page_to(n.tick, self.bounds.x1);
+        }
+        let g = self.grid_rect();
+        let top = self.key_top(n.key);
+        if top < g.y0 {
+            self.scroll_y -= g.y0 - top;
+        } else if top + self.key_h > g.y1 {
+            self.scroll_y += top + self.key_h - g.y1;
+        }
+        self.clamp_scroll();
     }
 
     /// Transposes the selection by one semitone, or by one scale degree when snap to scale is

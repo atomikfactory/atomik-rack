@@ -16,6 +16,8 @@ edit.redo | global | Ctrl+Y, Ctrl+Shift+Z
 edit.select_all | global | Ctrl+A
 edit.undo | global | Ctrl+Z
 editor.chordify | editor | Shift+C
+editor.extend_next_note | editor | Shift+Right
+editor.extend_prev_note | editor | Shift+Left
 editor.fold_toggle | editor | Shift+F
 editor.nudge_left | editor | Ctrl+Left
 editor.nudge_left_beat | editor | Ctrl+Shift+Left
@@ -28,6 +30,8 @@ editor.octave_up | editor | Ctrl+Shift+Up
 editor.quantize | sequencer | Ctrl+K
 editor.quantize | editor | Ctrl+K
 editor.scale_snap_toggle | editor | Shift+S
+editor.select_next_note | editor | Right
+editor.select_prev_note | editor | Left
 editor.toggle_note_mute | editor | M
 editor.transpose_down | editor | Ctrl+Down
 editor.transpose_up | editor | Ctrl+Up
