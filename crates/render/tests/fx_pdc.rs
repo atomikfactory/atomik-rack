@@ -254,3 +254,48 @@ fn the_pdc_bounces_are_bit_identical_across_host_blocks_and_workers() {
         }
     }
 }
+
+/// The guitar amp reports its 4x oversampler's 35 frames. Its filters and clips reshape a click,
+/// so its start cannot be compared with the dry click's; what the compensation does is still
+/// exact: the gap between the amp channel and the dry one is 35 frames wider with compensation
+/// off than with it on.
+#[test]
+fn the_guitar_amp_is_compensated_by_its_oversampler_latency() {
+    let amp: &[(&str, f32)] = &[
+        ("gain", 0.0),
+        ("cab", 3.0),
+        ("tight", 20.0),
+        ("level", 0.0),
+        ("chorus.on", 0.0),
+        ("delay.on", 0.0),
+        ("reverb.on", 0.0),
+    ];
+    let mut doc = click_doc(("atomik.guitar-amp", amp));
+    let on = render(&doc, 512, 0);
+    doc.console.compensation = false;
+    let off = render(&doc, 512, 0);
+    for beat in 1..8 {
+        let at = beat * BEAT;
+        let apart =
+            |x: &[Vec<f32>]| start_of_click(&x[1], at) as i64 - start_of_click(&x[0], at) as i64;
+        let moved = apart(&off) - apart(&on);
+        assert!(
+            (moved - 35).abs() <= 1,
+            "beat {beat}: moved {moved}, want 35"
+        );
+    }
+    let doc = click_doc(("atomik.guitar-amp", amp));
+    let reference: Vec<u32> = render(&doc, 512, 0)
+        .iter()
+        .flatten()
+        .map(|x| x.to_bits())
+        .collect();
+    for (block, workers) in [(64, 0), (333, 3)] {
+        let got: Vec<u32> = render(&doc, block, workers)
+            .iter()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect();
+        assert!(got == reference, "block {block}, workers {workers}");
+    }
+}
