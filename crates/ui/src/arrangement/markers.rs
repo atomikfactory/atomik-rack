@@ -9,7 +9,9 @@
 //! double-click on a label types a new name in place (the view is the text owner meanwhile,
 //! see [`ArrangementView::is_text_owner`]).
 
-use super::{ArrangementView, DRAG_THRESHOLD, Drag, Hit, LINE_GRAB, MIN_TICKS, song_cmd};
+use super::{
+    ArrangementView, DRAG_THRESHOLD, Drag, Hit, LINE_GRAB, MIN_TICKS, locator_range, song_cmd,
+};
 use crate::action::{ContextTarget, TransportAction, UiAction};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::{Key, Modifiers, PointerButton};
@@ -115,6 +117,8 @@ pub(super) struct MarkerUi {
     /// What the last context menu opened on, and where (the snapped tick).
     pub ctx: Option<MarkSel>,
     pub ctx_tick: i64,
+    /// The snapped tick of the last ruler menu for the loop's locators (zero is allowed).
+    pub ctx_loop_tick: i64,
     /// The list's scroll offset in pixels.
     pub scroll: f64,
     pub drag: Option<MarkDrag>,
@@ -1067,6 +1071,24 @@ impl ArrangementView {
         handled(vec![song_cmd(SongCommand::SetSongEnd(tick))])
     }
 
+    /// Moves one loop locator to `tick`: one undoable command that keeps the loop's enabled
+    /// flag, declined where the range would not change. The other locator gives way when the
+    /// loop would get shorter than one snap step.
+    fn set_locator_at(&mut self, right: bool, tick: i64) -> Option<CommandOutcome> {
+        let min = seq_edit::min_length(self.step(Modifiers::NONE), MIN_TICKS);
+        let range = locator_range(self.song.loop_range, right, tick.max(0), min);
+        if range == self.song.loop_range {
+            let side = if right { "right" } else { "left" };
+            return Some(CommandOutcome::NotApplicable(format!(
+                "The {side} locator is there already"
+            )));
+        }
+        handled(vec![song_cmd(SongCommand::SetLoop {
+            range,
+            enabled: self.song.loop_enabled,
+        })])
+    }
+
     /// The marker commands: add, go to the previous and next marker, the items of the context
     /// menus (on the marker or range the menu opened on, else the selection) and Delete on a
     /// selected marker or range. `None` when `id` is not one of them.
@@ -1077,6 +1099,10 @@ impl ArrangementView {
             "transport.add_range_from_loop" => self.add_range_from_loop(),
             "transport.set_end_marker" => self.set_end_at(self.playhead),
             "sequencer.marker_end_here" => self.set_end_at(self.mk.ctx_tick),
+            "transport.set_left_locator" => self.set_locator_at(false, self.playhead),
+            "transport.set_right_locator" => self.set_locator_at(true, self.playhead),
+            "sequencer.locator_left_here" => self.set_locator_at(false, self.mk.ctx_loop_tick),
+            "sequencer.locator_right_here" => self.set_locator_at(true, self.mk.ctx_loop_tick),
             "transport.prev_marker" => match self.song.prev_marker_tick(self.playhead) {
                 Some(t) => handled(vec![UiAction::Transport(TransportAction::Locate(t))]),
                 None => Some(CommandOutcome::NotApplicable(

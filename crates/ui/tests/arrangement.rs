@@ -1,6 +1,6 @@
 //! ArrangementView behaviour through its public contract: layout,
 //! track controls, clip drawing / moving / resizing / looping, selection shortcuts,
-//! automation point editing, loop bar, ruler, zoom and scroll.
+//! automation point editing, ruler, zoom and scroll.
 
 mod support;
 
@@ -556,35 +556,6 @@ fn automation_clip_header_moves_the_clip() {
 }
 
 // ---------------------------------------------------------------- ruler and loop
-
-#[test]
-fn loop_bar_click_toggles_and_drag_sets_the_range() {
-    let (doc, reg) = (song_doc(), registry());
-    let mut v = arrangement(&doc, &reg);
-    v.set_snap(Snap::Bar);
-    let y = v.loop_band_y();
-    let p = Point::new(v.tick_to_x(BAR), y);
-    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
-    assert_eq!(
-        song_commands(&a),
-        vec![SongCommand::SetLoop {
-            range: (0, 4 * BAR),
-            enabled: false
-        }]
-    );
-    let p0 = Point::new(v.tick_to_x(2 * BAR + PPQ), y);
-    let p1 = Point::new(v.tick_to_x(5 * BAR + PPQ), y);
-    let a = run(|e| v.handle(e, &doc, &reg), &[down(p0), mv(p1)]);
-    assert!(a.is_empty(), "the loop range is committed on release");
-    let a = v.handle(&up(p1), &doc, &reg);
-    assert_eq!(
-        song_commands(&a),
-        vec![SongCommand::SetLoop {
-            range: (2 * BAR, 6 * BAR),
-            enabled: true
-        }]
-    );
-}
 
 #[test]
 fn ruler_click_locates_and_snap_button_cycles() {

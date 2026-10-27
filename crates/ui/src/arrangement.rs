@@ -85,7 +85,7 @@ const FROZEN_CLIP: ClipId = ClipId(0);
 /// The ice blue of everything frozen: the snowflake in the header and the render's clip.
 pub(crate) const ICE: Color = Color::new([0.55, 0.82, 0.97, 1.0]);
 /// Height of the ruler (bar labels above the loop band).
-pub const RULER_HEIGHT: f64 = 34.0;
+pub const RULER_HEIGHT: f64 = 40.0;
 const LABEL_BAND: f64 = 18.0;
 /// Height of a track's note lane.
 pub const TRACK_HEIGHT: f64 = 60.0;
@@ -104,10 +104,11 @@ const DRAG_THRESHOLD: f64 = 3.0;
 const LINE_GRAB: f64 = 3.0;
 /// The height of the playhead's flag at the bottom of the ruler.
 const PLAYHEAD_FLAG: f64 = 9.0;
-/// Width and height of the End flag at the top of the loop band; it hangs to the left of the
-/// End line, and a press on it grabs the End before a loop locator under it.
-const END_FLAG_W: f64 = 11.0;
-const END_FLAG_H: f64 = 9.0;
+/// Width and height of a flag (L, R, E) hanging from its line in the lower band of the ruler,
+/// and the step between the two rows a flag can sit in (flags that would cover each other take
+/// the second row).
+const FLAG_W: f64 = 11.0;
+const FLAG_H: f64 = 9.0;
 const POINT_RADIUS: f64 = 6.0;
 const SCROLL_STEP: f64 = 48.0;
 /// Height of the horizontal scrollbar along the bottom of the timeline.
@@ -255,12 +256,14 @@ enum Hit {
     /// The bottom edge of the header of track `i` (drag to resize the track).
     TrackEdge(usize),
     RulerLabel,
-    LoopBand,
+    /// The lower band of the ruler away from the flags and lines: a press locates like the
+    /// bar labels do.
+    RulerBand,
     /// The playhead: its flag in the ruler, or its line in the grid (a drag locates).
     Playhead,
     /// A loop locator in the ruler (`true`: the right one); a drag moves it.
     LoopEdge(bool),
-    /// The song End in the ruler: its flag at the top of the loop band, or its line below it.
+    /// The song End in the ruler: its flag at the top of the lower band, or its line below it.
     EndMark,
     /// The line of a marker in the grid (the same grab as the marker's label in the strip).
     MarkerLine(u32),
@@ -401,6 +404,43 @@ fn locator_range(range: (i64, i64), right: bool, t: i64, min: i64) -> (i64, i64)
     }
 }
 
+/// What a ruler flag marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlagKind {
+    Left,
+    Right,
+    End,
+}
+
+/// A flag of the ruler: its line at `x`, the side it hangs to and its row.
+#[derive(Debug, Clone, Copy)]
+struct Flag {
+    kind: FlagKind,
+    x: f64,
+    right: bool,
+    row: usize,
+}
+
+impl Flag {
+    /// The painted body, hanging from the line at `top`.
+    fn body(&self, top: f64) -> Rect {
+        let (x0, x1) = if self.right {
+            (self.x, self.x + FLAG_W)
+        } else {
+            (self.x - FLAG_W, self.x)
+        };
+        Rect::new(x0, top, x1, top + FLAG_H)
+    }
+
+    fn label(&self) -> &'static str {
+        match self.kind {
+            FlagKind::Left => "L",
+            FlagKind::Right => "R",
+            FlagKind::End => "E",
+        }
+    }
+}
+
 // One drag lives at a time and is rebuilt on every pointer event anyway: the audio variant holds
 // whole clips, and boxing them would only add an allocation per drag.
 #[allow(clippy::large_enum_variant)]
@@ -497,13 +537,6 @@ enum Drag {
         original: (i64, i64),
         range: (i64, i64),
         moved: bool,
-    },
-    Loop {
-        start: Point,
-        t0: i64,
-        t1: i64,
-        moved: bool,
-        modifiers: Modifiers,
     },
     /// Moving a point of the tempo lane.
     TempoPoint {
@@ -1261,21 +1294,72 @@ impl ArrangementView {
         }
     }
 
-    /// The y of the loop band in the ruler.
+    /// The y of the middle of the ruler's lower band, where the flags hang and a press locates.
     pub fn loop_band_y(&self) -> f64 {
         self.bounds.y0 + (LABEL_BAND + RULER_HEIGHT) / 2.0
     }
 
-    /// The y of the middle of the song End's flag in the ruler.
-    pub fn end_flag_y(&self) -> f64 {
-        self.bounds.y0 + LABEL_BAND + 1.0 + END_FLAG_H / 2.0
+    /// The y of the middle of a flag in row `row` (0 is the top row, 1 the one below it).
+    pub fn flag_row_y(&self, row: usize) -> f64 {
+        self.flag_top(row) + FLAG_H / 2.0
     }
 
-    /// The End's flag for an End line at `x`: it hangs to the left of the line, at the top of
-    /// the loop band.
-    fn end_flag_rect(&self, x: f64) -> Rect {
-        let top = self.bounds.y0 + LABEL_BAND + 1.0;
-        Rect::new(x - END_FLAG_W, top, x + LINE_GRAB, top + END_FLAG_H)
+    /// The y of the middle of the song End's flag in the ruler (it takes the top row).
+    pub fn end_flag_y(&self) -> f64 {
+        self.flag_row_y(0)
+    }
+
+    fn flag_top(&self, row: usize) -> f64 {
+        self.bounds.y0 + LABEL_BAND + 1.0 + row as f64 * FLAG_H
+    }
+
+    /// The flags of the ruler for a loop `range` and an End: the End and the right locator
+    /// hang to the side that keeps them apart when they share a tick (End to the right of its
+    /// line, the right locator to the left of its own), the left locator to the right. A flag
+    /// whose body would cover one placed before it (End, right, left) takes the second row.
+    fn flags(&self, range: (i64, i64), end: i64) -> [Flag; 3] {
+        let mk = |kind, tick, right| Flag {
+            kind,
+            x: self.axis.tick_to_x(tick),
+            right,
+            row: 0,
+        };
+        let mut out = [
+            mk(FlagKind::End, end, true),
+            mk(FlagKind::Right, range.1, false),
+            mk(FlagKind::Left, range.0, true),
+        ];
+        for i in 1..out.len() {
+            let body = out[i].body(0.0);
+            if out[..i]
+                .iter()
+                .any(|o| o.row == 0 && o.body(0.0).x0 < body.x1 && body.x0 < o.body(0.0).x1)
+            {
+                out[i].row = 1;
+            }
+        }
+        out
+    }
+
+    /// The area a press grabs a flag by: its body, widened by [`LINE_GRAB`] over its line.
+    fn flag_grab_rect(&self, f: &Flag) -> Rect {
+        let top = self.flag_top(f.row);
+        let r = f.body(top);
+        if f.right {
+            Rect::new(r.x0 - LINE_GRAB, r.y0, r.x1, r.y1)
+        } else {
+            Rect::new(r.x0, r.y0, r.x1 + LINE_GRAB, r.y1)
+        }
+    }
+
+    /// The loop range as shown: the dragged one while a locator is dragged, else the song's.
+    fn shown_loop(&self) -> (i64, i64) {
+        match &self.drag {
+            Drag::LoopEdge {
+                range, moved: true, ..
+            } => *range,
+            _ => self.song.loop_range,
+        }
     }
 
     /// The y of the bar-label band of the ruler (click to locate).
@@ -1796,10 +1880,19 @@ impl ArrangementView {
             }
             let (a, z) = self.song.loop_range;
             let dist = |t: i64| (self.axis.tick_to_x(t) - pos.x).abs();
-            // The End's flag first; its line only where no locator is in reach.
-            let end_x = self.axis.tick_to_x(self.song.end_tick());
-            if self.end_flag_rect(end_x).contains(pos) {
-                return Some(Hit::EndMark);
+            // The flags first, the right locator's before the left's and both before the End's
+            // (R and E often share the song's last tick: the locator wins where they touch);
+            // the lines only where no flag is under the pointer, locators before the End.
+            let flags = self.flags((a, z), self.song.end_tick());
+            for kind in [FlagKind::Right, FlagKind::Left, FlagKind::End] {
+                let f = flags.iter().find(|f| f.kind == kind)?;
+                if self.flag_grab_rect(f).contains(pos) {
+                    return Some(match kind {
+                        FlagKind::Left => Hit::LoopEdge(false),
+                        FlagKind::Right => Hit::LoopEdge(true),
+                        FlagKind::End => Hit::EndMark,
+                    });
+                }
             }
             if near(a) || near(z) {
                 return Some(Hit::LoopEdge(dist(z) <= dist(a)));
@@ -1868,7 +1961,7 @@ impl ArrangementView {
                 }
                 return Hit::RulerLabel;
             }
-            return Hit::LoopBand;
+            return Hit::RulerBand;
         }
         if pos.y < self.markers_bottom() {
             // The marker strip (only when it is shown).
@@ -2264,7 +2357,7 @@ impl ArrangementView {
         }
         let in_ruler = matches!(
             hit,
-            Hit::RulerLabel | Hit::LoopBand | Hit::LoopEdge(_) | Hit::Playhead | Hit::EndMark
+            Hit::RulerLabel | Hit::RulerBand | Hit::LoopEdge(_) | Hit::Playhead | Hit::EndMark
         ) && pos.y < self.ruler_bottom();
         if primary
             && in_ruler
@@ -2298,7 +2391,7 @@ impl ArrangementView {
                     moved: false,
                 };
             }
-            Hit::LoopEdge(right) => {
+            Hit::LoopEdge(right) if primary => {
                 let r = self.song.loop_range;
                 self.drag = Drag::LoopEdge {
                     start: pos,
@@ -2317,12 +2410,14 @@ impl ArrangementView {
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
             Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
             Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
-            Hit::RulerLabel | Hit::LoopBand | Hit::EndMark
+            Hit::RulerLabel | Hit::RulerBand | Hit::LoopEdge(_) | Hit::EndMark
                 if button == PointerButton::Secondary =>
             {
-                // The tick the End entry of the menu would set: the snapped one under the pointer.
-                self.mk.ctx_tick =
-                    snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers)).max(1);
+                // The tick the End and locator entries of the menu would set: the snapped one
+                // under the pointer (the End never at zero, the left locator may be).
+                let snapped = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
+                self.mk.ctx_tick = snapped.max(1);
+                self.mk.ctx_loop_tick = snapped.max(0);
                 self.ctx_bar =
                     u32::try_from(self.bars.bar_of(self.axis.x_to_tick(pos.x)).max(1)).unwrap_or(1);
                 self.ctx_meter = None;
@@ -2344,21 +2439,11 @@ impl ArrangementView {
                 let at = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
                 out.extend(self.split_all_at(at, None));
             }
-            Hit::RulerLabel if primary => {
+            Hit::RulerLabel | Hit::RulerBand if primary => {
                 // A press locates; the drag goes on locating the snapped tick under the pointer.
                 let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers)).max(0);
                 out.push(UiAction::Transport(TransportAction::Locate(t)));
                 self.drag = Drag::Playhead { grab: 0, last: t };
-            }
-            Hit::LoopBand if primary => {
-                let t = self.axis.x_to_tick(pos.x);
-                self.drag = Drag::Loop {
-                    start: pos,
-                    t0: t,
-                    t1: t,
-                    moved: false,
-                    modifiers,
-                };
             }
             Hit::TakeToggle(_)
             | Hit::TakeFlatten(_)
@@ -3300,13 +3385,6 @@ impl ArrangementView {
                 moved,
                 modifiers: m,
                 ..
-            }
-            | Drag::Loop {
-                start,
-                t1,
-                moved,
-                modifiers: m,
-                ..
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
                 *t1 = axis.x_to_tick(pos.x);
@@ -3547,26 +3625,6 @@ impl ArrangementView {
                 }
                 let (start, length) = seq_edit::draw_span(t0, t1, self.step(modifiers), MIN_TICKS);
                 out.push(new_clip_cmd(device, lane, automation, start, length));
-            }
-            Drag::Loop {
-                t0,
-                t1,
-                moved,
-                modifiers,
-                ..
-            } => {
-                if moved {
-                    let (s, len) = seq_edit::draw_span(t0, t1, self.step(modifiers), MIN_TICKS);
-                    out.push(song_cmd(SongCommand::SetLoop {
-                        range: (s, s + len),
-                        enabled: true,
-                    }));
-                } else {
-                    out.push(song_cmd(SongCommand::SetLoop {
-                        range: self.song.loop_range,
-                        enabled: !self.song.loop_enabled,
-                    }));
-                }
             }
         }
         let _ = pos;
@@ -4262,7 +4320,7 @@ impl ArrangementView {
             sp::grid(c, st, &self.axis, below, &self.bars);
         }
         if self.song.loop_enabled {
-            let (a, z) = self.song.loop_range;
+            let (a, z) = self.shown_loop();
             let r = Rect::new(self.axis.tick_to_x(a), tl.y0, self.axis.tick_to_x(z), tl.y1);
             sp::rect(c, r, st.loop_shade);
         }
@@ -4998,44 +5056,14 @@ impl ArrangementView {
         self.paint_meter_tags(c);
         let band = Rect::new(rr.x0, rr.y0 + LABEL_BAND, rr.x1, rr.y1);
         sp::rect(c, band, mix(st.ruler, st.background, 0.5));
-        let (a, z, on) = match &self.drag {
-            Drag::Loop {
-                t0,
-                t1,
-                moved: true,
-                modifiers,
-                ..
-            } => {
-                let (s, len) = seq_edit::draw_span(*t0, *t1, self.step(*modifiers), MIN_TICKS);
-                (s, s + len, true)
-            }
-            Drag::LoopEdge {
-                range: (a, z),
-                moved: true,
-                ..
-            } => (*a, *z, self.song.loop_enabled),
-            _ => (
-                self.song.loop_range.0,
-                self.song.loop_range.1,
-                self.song.loop_enabled,
-            ),
-        };
-        let lr = Rect::new(
-            self.axis.tick_to_x(a),
-            band.y0 + 3.0,
-            self.axis.tick_to_x(z),
-            band.y1 - 3.0,
-        );
+        let (a, z) = self.shown_loop();
+        let on = self.song.loop_enabled;
+        // The loop is the stretch between its flags, tinted over the whole ruler.
         let col = if on { st.loop_on } else { st.loop_off };
-        c.fill_with(
-            RoundedRect::from_rect(lr, 2.0),
-            col.with_alpha(if on { 0.75 } else { 0.4 }),
-        );
-        for x in [lr.x0 + 1.5, lr.x1 - 1.5] {
-            sp::line(c, x, lr.y0, x, lr.y1, col);
-        }
+        let tint = Rect::new(self.axis.tick_to_x(a), rr.y0, self.axis.tick_to_x(z), rr.y1);
+        sp::rect(c, tint, col.with_alpha(if on { 0.3 } else { 0.1 }));
         sp::line(c, rr.x0, band.y0 + 0.5, rr.x1, band.y0 + 0.5, st.separator);
-        self.paint_end_flag(c, band);
+        self.paint_flags(c, band);
         let x = self.axis.tick_to_x(self.playhead);
         let pc = if self.recording {
             st.record
@@ -5051,31 +5079,62 @@ impl ArrangementView {
         c.pop_clip();
     }
 
-    /// The song End: a line through the loop band and a flag with an E hanging to the left of
-    /// it. While it is dragged, it is drawn where the pointer put it.
-    fn paint_end_flag(&self, c: &mut dyn Canvas, band: Rect) {
+    /// The flags of the ruler: a line through the lower band for each of the loop's locators
+    /// (L and R, in the loop's colour) and the song End (E), each with a flag carrying its
+    /// letter that hangs from the line ([`Self::flags`]). A flag that is dragged is drawn where
+    /// the pointer put it, and one that is hovered or dragged is lit.
+    fn paint_flags(&self, c: &mut dyn Canvas, band: Rect) {
         let st = &self.st;
-        let x = self.axis.tick_to_x(self.shown_end()).round() + 0.5;
-        let lit =
-            matches!(self.drag, Drag::End { moved: true, .. }) || self.hover == Some(Hit::EndMark);
-        let col = if lit {
-            mix(st.end_mark, st.base.text, 0.35)
-        } else {
-            st.end_mark
+        let on = self.song.loop_enabled;
+        let (a, z) = self.shown_loop();
+        let flags = self.flags((a, z), self.shown_end());
+        // The lines first, so a flag's body covers the line of another.
+        for f in &flags {
+            let col = self.flag_colour(f, on);
+            let x = f.x.round() + 0.5;
+            sp::line(c, x, band.y0 + 1.0, x, band.y1, col);
+        }
+        for f in flags.iter().rev() {
+            let col = self.flag_colour(f, on);
+            let x = f.x.round() + 0.5;
+            let body = Flag { x, ..*f }.body(self.flag_top(f.row));
+            c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.85));
+            sp::label(
+                c,
+                f.label(),
+                body.center().x,
+                body.center().y,
+                8.0,
+                st.background,
+                Align::Center,
+            );
+        }
+    }
+
+    /// The colour of a flag: the End's, or the loop's (dim when the loop is off); lit while the
+    /// flag is hovered or dragged.
+    fn flag_colour(&self, f: &Flag, loop_on: bool) -> Color {
+        let st = &self.st;
+        let (base, lit) = match f.kind {
+            FlagKind::End => (
+                st.end_mark,
+                matches!(self.drag, Drag::End { moved: true, .. })
+                    || self.hover == Some(Hit::EndMark),
+            ),
+            kind => {
+                let right = kind == FlagKind::Right;
+                (
+                    if loop_on { st.loop_on } else { st.loop_off },
+                    matches!(&self.drag, Drag::LoopEdge { right: r, moved: true, .. } if *r == right)
+                        || self.hover == Some(Hit::LoopEdge(right)),
+                )
+            }
         };
-        sp::line(c, x, band.y0 + 1.0, x, band.y1, col);
-        let flag = self.end_flag_rect(x);
-        let body = Rect::new(flag.x0, flag.y0, x, flag.y1);
-        c.fill_with(RoundedRect::from_rect(body, 2.0), col.with_alpha(0.85));
-        sp::label(
-            c,
-            "E",
-            body.center().x,
-            body.center().y,
-            8.0,
-            st.background,
-            Align::Center,
-        );
+        if lit {
+            mix(base, st.base.text, 0.35)
+        } else {
+            base
+        }
     }
 
     /// The song End as shown: the dragged one while the flag is dragged, else the song's.

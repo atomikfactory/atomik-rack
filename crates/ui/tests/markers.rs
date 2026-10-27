@@ -220,7 +220,7 @@ fn the_strip_is_off_by_default_and_pushes_the_lanes_down_when_shown() {
     let after = v.lane_rect(&key("bass"), 0).unwrap();
     assert!((after.y0 - before.y0 - MARKER_STRIP_HEIGHT).abs() < 1e-9);
     // Right under the ruler, above the tempo lane when both are shown.
-    assert!((v.marker_strip_rect().y0 - 34.0).abs() < 1e-9);
+    assert!((v.marker_strip_rect().y0 - 40.0).abs() < 1e-9);
     v.set_tempo_lane(true);
     assert!((v.tempo_lane_rect().y0 - v.marker_strip_rect().y1).abs() < 1e-9);
 }
