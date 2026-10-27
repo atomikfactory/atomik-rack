@@ -490,3 +490,34 @@ fn the_meter_reads_the_loudest_channel_of_the_input_times_the_gain() {
     };
     assert_eq!(input_peak(&peaks, TrackInput::Mono(1), off), 0.0);
 }
+
+#[test]
+fn the_header_meter_reads_each_channel_of_the_input_times_the_gain() {
+    let peaks = [0.1, 0.5, 0.25];
+    let unity = InputSettings::default();
+    assert_eq!(
+        input_peaks(&peaks, TrackInput::Stereo(0, 2), unity),
+        ([0.1, 0.25], true)
+    );
+    // A mono input has one bar, from its one channel.
+    assert_eq!(
+        input_peaks(&peaks, TrackInput::Mono(1), unity),
+        ([0.5, 0.0], false)
+    );
+    let hot = InputSettings {
+        gain_db: 6.0,
+        clip_safe: false,
+    };
+    let ([l, r], _) = input_peaks(&peaks, TrackInput::Stereo(1, 2), hot);
+    assert!((l - 0.5 * hot.gain()).abs() < 1.0e-7 && (r - 0.25 * hot.gain()).abs() < 1.0e-7);
+    // The louder channel is what the transport bar's single meter reads.
+    assert_eq!(
+        l.max(r).to_bits(),
+        input_peak(&peaks, TrackInput::Stereo(1, 2), hot).to_bits()
+    );
+    // A missing channel and a NaN read silence.
+    assert_eq!(
+        input_peaks(&[f32::NAN], TrackInput::Stereo(0, 5), unity).0,
+        [0.0, 0.0]
+    );
+}

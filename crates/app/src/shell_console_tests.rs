@@ -1161,3 +1161,41 @@ fn mixer_item(s: &Shell<NullBackend>, command: AppCommand) -> crate::commands::M
         .and_then(|m| m.items().find(|i| i.command == command).cloned())
         .expect("in the Mixer menu")
 }
+
+#[test]
+fn the_audio_track_meters_are_fed_every_frame_without_the_console_and_idle_ones_repaint_nothing() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::Song(atomik_model::SongCommand::AddAudioTrack {
+            name: Some("Mic".to_owned()),
+        }))
+        .unwrap();
+    let track = s.core().doc().song.tracks.last().unwrap().device.clone();
+    assert!(!s.console_visible());
+    s.frame_at(0.0);
+    let mut list = atomik_ui::DisplayList::new();
+    s.paint(&mut list);
+    assert!(
+        list.texts().contains(&"-inf"),
+        "the header shows the readout: {:?}",
+        list.texts()
+    );
+    assert!(s.core().arrangement().track_meter(&track).is_some());
+    // Silence frame after frame: the main window is not asked to repaint for the meters.
+    for t in [0.1, 0.2, 0.3] {
+        s.frame_at(t);
+        assert!(!s.needs_repaint(), "an idle meter costs no frame at {t}");
+    }
+    // A peak on the track is fed from the same frame and does ask for one, in the main window
+    // only (the meter is on the arrangement's header, whatever has the focus).
+    s.core_mut().arrangement_mut().feed_track_levels(
+        &[atomik_ui::TrackLevel {
+            device: track,
+            source: atomik_ui::MeterSource::Playback,
+            peaks: [0.5, 0.5],
+            stereo: true,
+        }],
+        0.4,
+    );
+    assert!(s.needs_repaint_in(WindowKind::Main));
+}

@@ -850,3 +850,90 @@ fn bypass_all_inserts_needs_a_strip_with_inserts() {
     assert!(c.bypass_all_inserts(Pane::Rack));
     assert_eq!(bypass_of(&c, "fx1"), 1.0);
 }
+
+// ---------------------------------------------------------------- the meters in the track headers
+
+/// An audio track with its automatic channel, and the channel's `out_l` / `out_r` endpoints.
+fn audio_with_channel() -> (AppCore<RecordingSink>, DeviceKey, Endpoint, Endpoint) {
+    let mut c = AppCore::new(RecordingSink::new());
+    c.apply_command(Command::Song(atomik_model::SongCommand::AddAudioTrack {
+        name: Some("Mic".to_owned()),
+    }))
+    .unwrap();
+    let track = c.doc().song.tracks.last().unwrap().device.clone();
+    c.sink_mut().take();
+    let channel = c
+        .doc()
+        .console
+        .channel_of(&track)
+        .expect("an audio track gets its channel")
+        .channel
+        .clone();
+    let (l, r) = (
+        endpoint(&c, &channel, "out_l"),
+        endpoint(&c, &channel, "out_r"),
+    );
+    (c, track, l, r)
+}
+
+fn reading(peak: f32) -> MeterReading {
+    MeterReading { peak, rms: peak }
+}
+
+#[test]
+fn an_audio_track_header_shows_the_level_of_its_channel_after_the_fader() {
+    let (mut c, track, l, r) = audio_with_channel();
+    c.sink_mut().meters.insert(l, reading(0.5));
+    c.sink_mut().meters.insert(r, reading(0.25));
+    // The console is not on screen (nobody calls update_console_meters): the headers read anyway.
+    c.feed_rec_input(0.0);
+    let m = c.arrangement().track_meter(&track).unwrap();
+    assert_eq!(m.source, atomik_ui::MeterSource::Playback);
+    assert!(m.stereo);
+    assert!((m.level_db[0] + 6.02).abs() < 0.01 && (m.level_db[1] + 12.04).abs() < 0.01);
+    assert_eq!(m.readout, "-6.0");
+    // A channel that clips latches the header's lamp.
+    c.sink_mut().meters.insert(l, reading(1.5));
+    c.feed_rec_input(0.1);
+    assert!(c.arrangement().track_meter(&track).unwrap().latched);
+}
+
+#[test]
+fn the_console_and_the_headers_share_one_read_of_a_frame() {
+    let (mut c, track, l, r) = audio_with_channel();
+    c.sink_mut().spend_meters_on_read = true;
+    c.sink_mut().meters.insert(l, reading(0.5));
+    c.sink_mut().meters.insert(r, reading(0.5));
+    // A read resets the peak: the console reads first, and the headers use that very reading.
+    c.update_console_meters(0.0);
+    c.feed_rec_input(0.0);
+    let m = c.arrangement().track_meter(&track).unwrap();
+    assert!((m.level_db[0] + 6.02).abs() < 0.01, "{m:?}");
+    let channel = c.doc().console.channel_of(&track).unwrap().channel.clone();
+    assert!((c.console().meter(&channel).unwrap().peak[0].level_db + 6.02).abs() < 0.5);
+    // The next frame, with the console off screen, reads again by itself.
+    c.sink().spent_meters.lock().unwrap().clear();
+    c.sink_mut().meters.insert(l, reading(0.25));
+    c.sink_mut().meters.insert(r, reading(0.25));
+    c.feed_rec_input(0.1);
+    let m = c.arrangement().track_meter(&track).unwrap();
+    assert!(m.hold_db > -6.5, "the hold keeps the louder frame: {m:?}");
+    assert!(
+        m.level_db[0] < -6.5 && m.level_db[0] > -9.0,
+        "the bar has started to fall: {m:?}"
+    );
+}
+
+#[test]
+fn a_project_without_audio_tracks_reads_no_console_meter_for_the_headers() {
+    let mut c = two_channels();
+    c.sink_mut().spend_meters_on_read = true;
+    let a = channel_of(&c, "a");
+    let e = endpoint(&c, &a, "out_l");
+    c.sink_mut().meters.insert(e, reading(0.5));
+    c.feed_rec_input(0.0);
+    assert!(
+        c.sink().spent_meters.lock().unwrap().is_empty(),
+        "nothing to show: nothing read"
+    );
+}

@@ -119,6 +119,27 @@ pub fn input_peak(host_peaks: &[f32], input: TrackInput, settings: InputSettings
     pre * settings.gain()
 }
 
+/// The post-gain peak of each channel of the track's input, left and right, and whether there are
+/// two (a mono input has one, in the left slot). The louder of the two is [`input_peak`].
+pub fn input_peaks(
+    host_peaks: &[f32],
+    input: TrackInput,
+    settings: InputSettings,
+) -> ([f32; 2], bool) {
+    let read = |c: usize| {
+        host_peaks
+            .get(c)
+            .copied()
+            .filter(|p| p.is_finite())
+            .unwrap_or(0.0)
+            * settings.gain()
+    };
+    match input {
+        TrackInput::Mono(a) => ([read(a), 0.0], false),
+        TrackInput::Stereo(a, b) => ([read(a), read(b)], true),
+    }
+}
+
 /// Where an audio track takes its recording from: host input channels (0-based).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackInput {
