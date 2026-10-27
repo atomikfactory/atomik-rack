@@ -425,6 +425,17 @@ impl App {
                 }
             }
         }
+        self.pace_presentation();
+    }
+
+    /// Lets the surfaces wait for the vertical blank only while one window is open.
+    fn pace_presentation(&mut self) {
+        let vsync = window_logic::presents_with_vsync(self.windows.len());
+        for w in self.windows.values_mut() {
+            if let Some(surface) = &mut w.surface {
+                self.gpu.set_vsync(surface, vsync);
+            }
+        }
     }
 
     /// Opens the window of `kind`: placed from its saved geometry and the monitors of the
@@ -625,7 +636,9 @@ impl App {
             None => return,
         };
         match result {
-            FrameResult::Presented | FrameResult::Skipped => {}
+            FrameResult::Presented => {}
+            // Painted but not shown: the shell has marked the window clean, so ask again.
+            FrameResult::Skipped => self.shell.repaint_window(kind),
             FrameResult::Reconfigured => window.request_redraw(),
             FrameResult::Lost => {
                 w.surface = None;
@@ -681,6 +694,13 @@ impl App {
                 w.window.set_cursor(translate::cursor_icon(hint));
                 w.cursor = hint;
             }
+        }
+    }
+
+    /// Paints and presents every window that has something to paint.
+    fn paint_due_windows(&mut self) {
+        for kind in self.shell.windows_to_paint() {
+            self.redraw(kind);
         }
     }
 
@@ -1201,7 +1221,10 @@ impl ApplicationHandler for App {
             self.shell.poll_status();
         }
         // Only the windows with something new repaint: the meters redraw the console's window.
-        self.request_redraws();
+        // Every one of them is painted here, in turn. Leaving it to the OS's redraw requests
+        // would let the one the OS serves first (the focused one, on Windows) take all the
+        // time and starve the others while it animates.
+        self.paint_due_windows();
         // Audio imports and loads finish on worker threads: poll them even without a stream.
         let running = self.shell.core().sink().is_running()
             || self.shell.is_busy()
