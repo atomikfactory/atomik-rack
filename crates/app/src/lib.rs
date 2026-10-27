@@ -19,6 +19,7 @@ pub mod clicks;
 pub mod clipboard;
 pub mod commands;
 pub mod context_menus;
+pub mod cursor_art;
 pub mod freeze_worker;
 pub mod keyboard_tab;
 pub mod keymap_store;

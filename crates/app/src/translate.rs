@@ -1,5 +1,6 @@
 //! winit → `atomik-ui` event translation (the hosting contract in the `atomik-ui` crate docs).
 
+use crate::cursor_art::CursorArt;
 use atomik_ui::keymap::Os;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::{CursorHint, Key, Modifiers, NumpadKey, PointerButton, UiEvent};
@@ -22,13 +23,25 @@ pub fn modifiers(state: ModifiersState) -> Modifiers {
     }
 }
 
-/// The winit cursor icon for a view's cursor hint.
+/// The drawn cursor for a view's cursor hint, for the hints the window system has no icon for.
+pub fn cursor_art(hint: CursorHint) -> Option<CursorArt> {
+    match hint {
+        CursorHint::Pen => Some(CursorArt::Pen),
+        CursorHint::Eraser => Some(CursorArt::Eraser),
+        CursorHint::Razor => Some(CursorArt::Razor),
+        _ => None,
+    }
+}
+
+/// The winit cursor icon for a view's cursor hint (the stand-in for a drawn cursor).
 pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
     match hint {
         CursorHint::Default => CursorIcon::Default,
         CursorHint::ResizeHorizontal => CursorIcon::EwResize,
         CursorHint::Move => CursorIcon::Move,
-        CursorHint::Crosshair => CursorIcon::Crosshair,
+        CursorHint::Crosshair | CursorHint::Pen | CursorHint::Eraser | CursorHint::Razor => {
+            CursorIcon::Crosshair
+        }
     }
 }
 
@@ -370,6 +383,10 @@ mod tests {
         );
         assert_eq!(cursor_icon(CursorHint::Move), CursorIcon::Move);
         assert_eq!(cursor_icon(CursorHint::Crosshair), CursorIcon::Crosshair);
+        assert_eq!(cursor_art(CursorHint::Default), None);
+        assert_eq!(cursor_art(CursorHint::Pen), Some(CursorArt::Pen));
+        assert_eq!(cursor_art(CursorHint::Eraser), Some(CursorArt::Eraser));
+        assert_eq!(cursor_art(CursorHint::Razor), Some(CursorArt::Razor));
     }
 
     #[test]

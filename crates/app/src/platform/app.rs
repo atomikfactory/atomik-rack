@@ -8,6 +8,7 @@ use crate::app_core::{AppCore, default_registry};
 use crate::cli::Cli;
 use crate::clicks::ClickCounter;
 use crate::commands::AppCommand;
+use crate::cursor_art::{self, CursorArt};
 use crate::plugin_setup;
 use crate::session::{LiveSession, SystemBackend};
 use crate::settings::{self, AudioSettings, default_settings_path};
@@ -35,7 +36,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::window::{CustomCursor, Window, WindowId};
 
 /// Redraw tick while audio runs (≈ 60 Hz, for meters and status).
 const FRAME: Duration = Duration::from_micros(16_667);
@@ -265,6 +266,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         shell,
         gpu: GpuContext::new(),
         windows: BTreeMap::new(),
+        custom_cursors: BTreeMap::new(),
         ids: BTreeMap::new(),
         zorder: ZOrder::default(),
         last_focused: WindowKind::Main,
@@ -315,8 +317,8 @@ struct AppWindow {
     pointer: Point,
     /// The OS file drag over this window.
     file_drag: FileDrag,
-    /// The cursor last set on the window.
-    cursor: CursorHint,
+    /// The cursor last set on the window, and the bitmap side it was made for.
+    cursor: (CursorHint, u32),
     title: String,
 }
 
@@ -325,6 +327,8 @@ struct App {
     gpu: GpuContext,
     /// The open windows; the main window is created at start and lives to the end.
     windows: BTreeMap<WindowKind, AppWindow>,
+    /// The drawn tool cursors made so far, by picture and bitmap side.
+    custom_cursors: BTreeMap<(CursorArt, u32), CustomCursor>,
     ids: BTreeMap<WindowId, WindowKind>,
     /// The windows by focus, to find the one under the pointer during a drag.
     zorder: ZOrder,
@@ -507,7 +511,7 @@ impl App {
                 cache: SceneCache::new(),
                 pointer: Point::ZERO,
                 file_drag: FileDrag::new(),
-                cursor: CursorHint::Default,
+                cursor: (CursorHint::Default, 0),
                 title: self.shell.title_in(kind),
             },
         );
@@ -687,13 +691,37 @@ impl App {
         }
     }
 
-    /// Shows the cursor the shell asks for in each window (set only when it changes).
-    fn update_cursors(&mut self) {
+    /// Shows the cursor the shell asks for in each window (set only when it changes). The tool
+    /// cursors are drawn bitmaps, made once per size and kept.
+    fn update_cursors(&mut self, event_loop: &ActiveEventLoop) {
         for (kind, w) in &mut self.windows {
-            if let Some(hint) = window_logic::changed(&w.cursor, &self.shell.cursor_in(*kind)) {
-                w.window.set_cursor(translate::cursor_icon(hint));
-                w.cursor = hint;
+            let size = cursor_art::size_for(w.window.scale_factor());
+            let want = (self.shell.cursor_in(*kind), size);
+            let Some((hint, size)) = window_logic::changed(&w.cursor, &want) else {
+                continue;
+            };
+            let custom = translate::cursor_art(hint).and_then(|art| {
+                if let Some(c) = self.custom_cursors.get(&(art, size)) {
+                    return Some(c.clone());
+                }
+                let b = cursor_art::render(art, size);
+                let source = CustomCursor::from_rgba(
+                    b.rgba,
+                    b.size as u16,
+                    b.size as u16,
+                    b.hotspot.0 as u16,
+                    b.hotspot.1 as u16,
+                )
+                .ok()?;
+                let c = event_loop.create_custom_cursor(source);
+                self.custom_cursors.insert((art, size), c.clone());
+                Some(c)
+            });
+            match custom {
+                Some(c) => w.window.set_cursor(c),
+                None => w.window.set_cursor(translate::cursor_icon(hint)),
             }
+            w.cursor = (hint, size);
         }
     }
 
@@ -718,7 +746,7 @@ impl App {
         self.handle_requests(event_loop, requests);
         self.sync_windows(event_loop);
         self.update_titles();
-        self.update_cursors();
+        self.update_cursors(event_loop);
         #[cfg(target_os = "macos")]
         if let Some(native) = &mut self.native {
             native.update(&self.shell.menu_model());

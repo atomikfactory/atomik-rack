@@ -455,14 +455,16 @@ impl PianoRollView {
     }
 
     /// The mouse cursor to show: a horizontal resize cursor over a note's edge or the playhead's
-    /// line (and during an edge or playhead drag), a move cursor over a note body with Select (and during a move), a crosshair
-    /// for the pencil over the grid (and while drawing or banding).
+    /// line (and during an edge or playhead drag), a move cursor over a note body with Select
+    /// (and during a move), the tool's own cursor (pen, eraser, blade) over the grid, and a
+    /// crosshair while banding.
     pub fn cursor(&self) -> CursorHint {
         match &self.drag {
             Drag::Resize { .. } | Drag::ResizeStart { .. } => return CursorHint::ResizeHorizontal,
             Drag::Move { .. } => return CursorHint::Move,
             Drag::Playhead { .. } => return CursorHint::ResizeHorizontal,
-            Drag::Draw { .. } | Drag::Band { .. } => return CursorHint::Crosshair,
+            Drag::Draw { .. } => return CursorHint::Pen,
+            Drag::Band { .. } => return CursorHint::Crosshair,
             Drag::None => {}
             _ => return CursorHint::Default,
         }
@@ -473,7 +475,12 @@ impl PianoRollView {
             }
             Hit::Note(_, SpanPart::Body) if tool == Tool::Select => CursorHint::Move,
             Hit::Playhead => CursorHint::ResizeHorizontal,
-            Hit::Grid if tool == Tool::Pencil => CursorHint::Crosshair,
+            // The edit tools show their own cursor over the grid; a note edge resizes only
+            // with Select, and the pencil does nothing on a note.
+            Hit::Grid if tool != Tool::Select => CursorHint::of_tool(tool),
+            Hit::Note(..) if matches!(tool, Tool::Eraser | Tool::Razor) => {
+                CursorHint::of_tool(tool)
+            }
             _ => CursorHint::Default,
         }
     }
