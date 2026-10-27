@@ -226,6 +226,8 @@ pub struct AppCore<S: EngineSink> {
     vca_sent: BTreeMap<DeviceKey, VcaFeed>,
     /// The spectrum and phase meter devices of the flat rack and their analysis state.
     analysers: analysers::Analysers,
+    /// The audio track tuners that show and what the engine was told about them.
+    tuners: tuner::Tuners,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: Option<atomik_model::PatternDoc>,
     transport_bar: TransportBar,
@@ -394,6 +396,7 @@ impl<S: EngineSink> AppCore<S> {
             meter_devices: Vec::new(),
             vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
+            tuners: tuner::Tuners::default(),
             pattern_clip_seen: None,
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
@@ -586,6 +589,7 @@ impl<S: EngineSink> AppCore<S> {
             },
             UiAction::ClosePianoRoll => self.close_piano_roll(),
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
+            UiAction::SetTuner { device, on } => self.set_tuner(device, on),
             UiAction::CloseSampleEditor => self.close_sample_editor(),
             UiAction::OpenStepEditor { device, clip } => self.open_step_editor(device, clip),
             UiAction::CloseStepEditor => self.close_step_editor(),
@@ -915,6 +919,7 @@ impl<S: EngineSink> AppCore<S> {
         self.vca_sent.clear();
         self.fx_meter_seq.clear();
         self.analysers.restart();
+        self.tuners.restart();
         self.next_id = 1;
         self.sent_loop = None;
         // Containers are compiled away: the engine gets the expanded rack.
@@ -936,6 +941,7 @@ impl<S: EngineSink> AppCore<S> {
         self.push_solo_silence();
         self.push_vca_feeds();
         self.push_monitor_live();
+        self.push_tuner_live();
         self.submit_song(true);
         self.send_metronome();
         self.show_transport();
@@ -962,6 +968,7 @@ impl<S: EngineSink> AppCore<S> {
         self.show_transport();
         self.feed_device_meters();
         self.feed_device_scopes();
+        self.feed_tuners();
         self.sync_io_host();
         self.feed_io_meters();
         self.browser_frame();
@@ -2333,6 +2340,9 @@ mod players;
 mod analysers;
 pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
 
+#[path = "app_core_tuner.rs"]
+mod tuner;
+
 #[path = "app_core_containers.rs"]
 mod containers;
 
@@ -2403,6 +2413,10 @@ pub use plugins::{
 #[cfg(test)]
 #[path = "app_core_rec_audio_tests.rs"]
 mod rec_audio_tests;
+
+#[cfg(test)]
+#[path = "app_core_tuner_tests.rs"]
+mod tuner_tests;
 
 #[cfg(test)]
 #[path = "app_core_freeze_tests.rs"]
