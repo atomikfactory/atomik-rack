@@ -1,0 +1,85 @@
+{
+  "format": "atomik-patch",
+  "version": 1,
+  "sample_rate": 48000,
+  "tempo_bpm": 100,
+  "seed": 5,
+  "length_beats": 8,
+  "output_channels": 2,
+  "devices": [
+    {
+      "id": "pad",
+      "type": "atomik.granular",
+      "params": {
+        "master.level": -7, "grain.density": 36, "grain.size": 240,
+        "grain.timing": 0.6, "grain.spread": 0.9, "grain.limit": 64,
+        "pos.position": 0.3, "pos.spray": 0.05, "pitch.random": 6,
+        "env.amp.attack": 900, "env.amp.decay": 600, "env.amp.release": 2200,
+        "velocity.amp": 0.3, "filter.enabled": 1, "filter.cutoff": 3600,
+        "filter.resonance": 0.15, "filter.key_track": 0.4, "lfo.rate": 0.18,
+        "lfo.to_position": 0.04, "lfo.to_cutoff": 0.5, "wheel.to_spray": 0.6
+      }
+    },
+    {
+      "id": "mixer",
+      "type": "atomik.line-mixer",
+      "params": { "ch1.level": -2, "ch2.level": -6, "ch3.level": -4, "ch3.pan": -0.2, "master.level": 0 }
+    },
+    {
+      "id": "shimmer",
+      "type": "atomik.granular",
+      "params": {
+        "master.level": -9, "grain.density": 60, "grain.size": 70, "grain.window": 1,
+        "grain.timing": 0.5, "grain.reverse": 0.3, "grain.spread": 1,
+        "grain.limit": 56, "pos.position": 0.45, "pos.spray": 0.25, "pos.scan": 0.12,
+        "pitch.transpose": 12, "pitch.random": 30, "env.amp.attack": 400,
+        "env.amp.sustain": 0.9, "env.amp.release": 1600, "filter.enabled": 1,
+        "filter.mode": 2, "filter.cutoff": 500, "filter.resonance": 0.1,
+        "lfo.rate": 5.2, "lfo.to_pitch": 0.12
+      }
+    },
+    {
+      "id": "beat",
+      "type": "atomik.granular",
+      "params": {
+        "master.level": -5, "grain.density": 9, "grain.size": 55, "grain.window": 2,
+        "grain.timing": 0, "grain.spread": 0.2, "grain.limit": 24,
+        "pos.position": 0.52, "pos.spray": 0, "env.amp.attack": 1,
+        "env.amp.release": 120, "env.mod.decay": 700, "env.mod.to_density": 1,
+        "lfo.wave": 3, "lfo.rate": 2, "lfo.to_position": 0.18
+      }
+    }
+  ],
+  "cables": [
+    { "from": "pad:out_l", "to": "mixer:ch1_in_l" },
+    { "from": "pad:out_r", "to": "mixer:ch1_in_r" },
+    { "from": "shimmer:out_l", "to": "mixer:ch2_in_l" },
+    { "from": "shimmer:out_r", "to": "mixer:ch2_in_r" },
+    { "from": "beat:out_l", "to": "mixer:ch3_in_l" },
+    { "from": "beat:out_r", "to": "mixer:ch3_in_r" },
+    { "from": "mixer:master_l", "to": "interface:out_1" },
+    { "from": "mixer:master_r", "to": "interface:out_2" }
+  ],
+  "notes": [
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 57, "velocity": 0.6 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 60, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 64, "velocity": 0.8 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 0, "length_beats": 3.5, "key": 67, "velocity": 0.9 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 53, "velocity": 0.6 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 57, "velocity": 0.7 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 60, "velocity": 0.8 },
+    { "device": "pad", "socket": "notes_in", "at_beats": 4, "length_beats": 3.5, "key": 64, "velocity": 0.9 },
+    { "device": "shimmer", "socket": "notes_in", "at_beats": 1, "length_beats": 1.5, "key": 72, "velocity": 0.7 },
+    { "device": "shimmer", "socket": "notes_in", "at_beats": 3, "length_beats": 1.5, "key": 76, "velocity": 0.7 },
+    { "device": "shimmer", "socket": "notes_in", "at_beats": 5, "length_beats": 1.5, "key": 69, "velocity": 0.7 },
+    { "device": "shimmer", "socket": "notes_in", "at_beats": 7, "length_beats": 1.5, "key": 72, "velocity": 0.7 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 0, "length_beats": 0.4, "key": 57, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 1.5, "length_beats": 0.4, "key": 57, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 2, "length_beats": 0.4, "key": 60, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 3.5, "length_beats": 0.4, "key": 57, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 4, "length_beats": 0.4, "key": 53, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 5.5, "length_beats": 0.4, "key": 53, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 6, "length_beats": 0.4, "key": 57, "velocity": 0.85 },
+    { "device": "beat", "socket": "notes_in", "at_beats": 7.5, "length_beats": 0.4, "key": 60, "velocity": 0.85 }
+  ]
+}
