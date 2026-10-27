@@ -11,7 +11,7 @@ atomik_testkit::install_alloc_guard!();
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
 use atomik_devices::{
-    line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay, wavetable_synth,
+    guitar_amp, line_mixer::LineMixer, poly_synth, stereo_delay::StereoDelay, wavetable_synth,
 };
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::signal::{max_step, rms};
@@ -211,6 +211,43 @@ proptest! {
             for key in ["out_l", "out_r"] {
                 for s in h.output(key) {
                     prop_assert!(s.is_finite() && s.abs() <= 4.0, "{} Hz, {}: {}", sr, key, s);
+                }
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(12))]
+    /// The guitar amp at 44.1 / 48 / 96 kHz: any params and a loud random guitar-like input stay
+    /// finite and within the amp's output bound.
+    #[test]
+    fn qa_guitar_amp_any_params_bounded_at_every_sample_rate(
+        sr_index in 0usize..3,
+        norms in prop::collection::vec(0.0f32..=1.0, guitar_amp::DESCRIPTOR.params.len()),
+        amp in 0.0f32..=2.0,
+        bpm in 20.0f64..=300.0,
+        seed in any::<u64>(),
+    ) {
+        let sr = [44_100.0, 48_000.0, 96_000.0][sr_index];
+        let mut h = DeviceHarness::with_options(
+            Box::new(guitar_amp::GuitarAmp::new()), sr, bpm, seed);
+        for (p, n) in guitar_amp::DESCRIPTOR.params.iter().zip(&norms) {
+            h.set_param(p.key, p.from_normalized(*n));
+        }
+        let mut rng = atomik_dsp::Rng::new(seed);
+        let batches = (sr / BATCH as f64).ceil() as usize; // 1 s
+        for _ in 0..batches {
+            let mut x = [0.0f32; BATCH];
+            for s in &mut x {
+                *s = rng.next_bipolar() * amp;
+            }
+            *h.input_mut("in_l") = x;
+            *h.input_mut("in_r") = x;
+            h.process();
+            for key in ["out_l", "out_r"] {
+                for s in h.output(key) {
+                    prop_assert!(s.is_finite() && s.abs() <= 16.0, "{} Hz, {}: {}", sr, key, s);
                 }
             }
         }

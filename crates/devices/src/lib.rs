@@ -1,5 +1,5 @@
 //! Atomik Rack built-in devices: [`poly_synth`], [`wavetable_synth`], [`sampler`], [`drum_machine`], [`loop_slicer`], [`line_mixer`], [`stereo_delay`], [`reverb`], the effects
-//! [`compressor`], [`eq`], [`distortion`], [`modulation`] and [`mastering`], the analysers
+//! [`compressor`], [`eq`], [`distortion`], [`guitar_amp`], [`modulation`] and [`mastering`], the analysers
 //! [`spectrum`] and [`phase_meter`] (effects that pass the audio through and publish what they see), and the
 //! console devices [`channel`] (`atomik.channel`), [`bus`] (`atomik.bus`, the channel strip as an output bus) and [`master`] (`atomik.master`).
 //!
@@ -25,6 +25,7 @@ pub mod distortion;
 pub mod drum_generator;
 pub mod drum_machine;
 pub mod eq;
+pub mod guitar_amp;
 pub mod key_chord;
 pub mod line_mixer;
 pub mod loop_slicer;
@@ -120,6 +121,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(container::factory())?;
     registry.register(distortion::factory())?;
     registry.register(eq::factory())?;
+    registry.register(guitar_amp::factory())?;
     registry.register(macro_bank::factory())?;
     registry.register(mastering::factory())?;
     registry.register(mod_source::factory())?;
@@ -146,7 +148,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 32] = [
+    const TYPE_IDS: [&str; 33] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -159,6 +161,7 @@ mod tests {
         "atomik.drum-generator",
         "atomik.drum-machine",
         "atomik.eq",
+        "atomik.guitar-amp",
         "atomik.key-chord",
         "atomik.line-mixer",
         "atomik.loop-slicer",
