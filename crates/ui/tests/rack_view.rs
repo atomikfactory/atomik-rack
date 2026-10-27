@@ -598,9 +598,9 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let mut v = view(&doc, &reg);
     v.set_browser_visible(true);
     // Two more with the console devices shown (the default).
-    assert_eq!(v.browser_rows(&reg).len(), 28);
+    assert_eq!(v.browser_rows(&reg).len(), 29);
     v.set_show_console_devices(false);
-    assert_eq!(v.browser_rows(&reg).len(), 26); // arpeggiator, line mixer, poly synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank
+    assert_eq!(v.browser_rows(&reg).len(), 27); // arpeggiator, line mixer, poly synth, wavetable synth, sampler, drum machine, loop slicer, delay, reverb, compressor, eq, distortion, mastering, mod source, modulation, CV sequencer, drum generator, step sequencer, note filter, key and chord, note repeater, note delay, container, character, spectrum, phase meter, macro bank
     for ch in "dela".chars() {
         let _ = v.handle(&key_event(Key::Char(ch), Modifiers::NONE), &doc, &reg);
     }
@@ -612,7 +612,7 @@ fn browser_filters_and_double_click_adds_below_selection() {
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
     let _ = v.handle(&key_event(Key::Backspace, Modifiers::NONE), &doc, &reg);
-    assert_eq!(v.browser_rows(&reg).len(), 26); // as above (26 browsable devices, the container included)
+    assert_eq!(v.browser_rows(&reg).len(), 27); // as above (27 browsable devices, the container included)
     // Select the synth, then double-click the mixer row.
     let p = v.plate_center(&key("synth")).unwrap();
     let _ = v.handle(&down(p), &doc, &reg);

@@ -146,6 +146,9 @@ pub struct PanelSpec {
     pub key_chord: Option<crate::key_chord_panel::KeyChordPanel>,
     /// The Mod Source panel of an `atomik.mod-source` (see [`crate::modsrc_panel`]).
     pub modsrc: Option<crate::modsrc_panel::ModSourcePanel>,
+    /// The wavetable synth panel of an `atomik.wavetable-synth` (see
+    /// [`crate::wavetable_panel`]).
+    pub wavetable: Option<crate::wavetable_panel::WavetablePanel>,
     /// The container panel of an `atomik.container` (see
     /// [`crate::container_panel`]).
     pub container: Option<crate::container_panel::ContainerPanel>,
@@ -284,7 +287,7 @@ fn layout(desc: &DeviceDescriptor, samples: bool) -> PanelSpec {
     } else {
         0.0
     };
-    layout_with(desc, reserve, samples, group_prefix)
+    layout_with(desc, reserve, samples, group_prefix, &[])
 }
 
 /// Like [`auto_layout`] with a `strip` wide column kept free at the left of the content area
@@ -295,7 +298,19 @@ pub(crate) fn auto_layout_with_strip(
     strip: f64,
     prefix_of: for<'a> fn(&'a str) -> &'a str,
 ) -> PanelSpec {
-    layout_with(desc, strip + SECTION_GAP, false, prefix_of)
+    layout_with(desc, strip + SECTION_GAP, false, prefix_of, &[])
+}
+
+/// Like [`auto_layout_with_strip`] with the sections in the order of `order` (the prefixes
+/// `prefix_of` returns; sections not named follow in descriptor order), so a panel can put
+/// sections that pack well side by side.
+pub(crate) fn auto_layout_with_order(
+    desc: &DeviceDescriptor,
+    strip: f64,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+) -> PanelSpec {
+    layout_with(desc, strip + SECTION_GAP, false, prefix_of, order)
 }
 
 fn layout_with(
@@ -303,8 +318,9 @@ fn layout_with(
     reserve: f64,
     samples: bool,
     prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
 ) -> PanelSpec {
-    let front = front_groups(desc, prefix_of);
+    let front = front_groups(desc, prefix_of, order);
     let back = back_groups(desc);
     let units = (1..=MAX_UNITS)
         .find(|&u| {
@@ -324,6 +340,7 @@ fn layout_with(
         arp: None,
         key_chord: None,
         modsrc: None,
+        wavetable: None,
         container: None,
         plugin: None,
         samples: samples.then(|| {
@@ -361,7 +378,11 @@ pub(crate) struct Group {
     pub(crate) min_w: f64,
 }
 
-fn front_groups(desc: &DeviceDescriptor, prefix_of: for<'a> fn(&'a str) -> &'a str) -> Vec<Group> {
+fn front_groups(
+    desc: &DeviceDescriptor,
+    prefix_of: for<'a> fn(&'a str) -> &'a str,
+    order: &[&str],
+) -> Vec<Group> {
     let mut groups: Vec<(&str, Group)> = Vec::new();
     let strip_bypass = has_strip_bypass(desc);
     for (i, p) in desc.params.iter().enumerate() {
@@ -387,6 +408,13 @@ fn front_groups(desc: &DeviceDescriptor, prefix_of: for<'a> fn(&'a str) -> &'a s
             )),
         }
     }
+    // Sections named in `order` come first, in that order; a stable sort keeps the rest as is.
+    groups.sort_by_key(|(prefix, _)| {
+        order
+            .iter()
+            .position(|o| o == prefix)
+            .unwrap_or(order.len())
+    });
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
@@ -768,6 +796,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         arp: None,
         key_chord: None,
         modsrc: None,
+        wavetable: None,
         container: None,
         plugin: None,
         front,
@@ -904,6 +933,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         arp: None,
         key_chord: None,
         modsrc: None,
+        wavetable: None,
         container: None,
         plugin: None,
         front,
@@ -959,6 +989,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         arp: None,
         key_chord: None,
         modsrc: None,
+        wavetable: None,
         container: None,
         plugin: None,
         front,

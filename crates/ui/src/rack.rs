@@ -977,6 +977,9 @@ impl RackView {
             (Some(d), _) if type_id == crate::modsrc_panel::MODSRC_TYPE => {
                 crate::modsrc_panel::modsrc_layout(d)
             }
+            (Some(d), _) if type_id == crate::wavetable_panel::WAVETABLE_TYPE => {
+                crate::wavetable_panel::wavetable_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }
@@ -1003,6 +1006,7 @@ impl RackView {
                 arp: None,
                 key_chord: None,
                 modsrc: None,
+                wavetable: None,
                 container: None,
                 plugin: None,
                 front: Vec::new(),

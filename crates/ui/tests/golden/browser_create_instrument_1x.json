@@ -833,6 +833,10 @@
 {"text":"Sampler","at":[34.00,196.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
 {"text":"atomik.sampler","at":[34.00,208.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
 {"text":"INSTRUMENT","at":[204.00,196.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
+{"fill":{"circle":[21.00,234.00,5.00]},"brush":"#a1d85aff"},
+{"text":"Wavetable Synth","at":[34.00,232.00],"size":11.00,"weight":600,"align":"start","color":"#ece8e1ff"},
+{"text":"atomik.wavetable-synth","at":[34.00,244.00],"size":8.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"INSTRUMENT","at":[204.00,232.00],"size":7.00,"weight":400,"align":"end","color":"#8f96a0ff","spacing":0.80},
 {"pop_clip":true},
 {"pop_transform":true}
 ]}

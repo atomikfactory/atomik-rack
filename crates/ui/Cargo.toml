@@ -14,6 +14,7 @@ atomik-audio-file.workspace = true
 atomik-library.workspace = true
 atomik-core.workspace = true
 atomik-device-sdk.workspace = true
+atomik-dsp.workspace = true
 atomik-model.workspace = true
 vello.workspace = true
 parley.workspace = true
@@ -26,7 +27,6 @@ serde_json.workspace = true
 [dev-dependencies]
 atomik-devices.workspace = true
 atomik-plugin-host.workspace = true
-atomik-dsp.workspace = true
 # This crate's own tests use the CPU canvas (tests/support/cpu.rs).
 atomik-ui = { path = ".", features = ["cpu-canvas"] }
 proptest.workspace = true
