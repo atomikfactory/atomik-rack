@@ -22,6 +22,7 @@ use crate::sidechain::{self, ScEntry, ScSource};
 use crate::theme::Theme;
 use crate::tree::ViewTree;
 use crate::widget::{self, ValueDrag};
+use atomik_audio_file::PeakPyramid;
 use atomik_device_sdk::{
     ControlKind, DeviceDescriptor, Direction, PanelLayout, RACK_UNIT, RACK_WIDTH, Registry,
 };
@@ -249,6 +250,8 @@ struct DeviceView {
     meters: Vec<f32>,
     /// Mod Source panel: the scope history fed from the published meter values.
     scope: crate::modsrc_panel::Scope,
+    /// Granular panel: what the sample strip says about the loaded sample.
+    sample: Option<crate::granular_panel::SampleInfo>,
     /// Spectrum and phase meter panels: what the app fed from the device's scope tap.
     analyser: crate::analyser::AnalyserData,
     /// Master panel: the effect on each return and the key-in state.
@@ -523,6 +526,9 @@ pub struct RackView {
     pads: BTreeMap<DeviceKey, u8>,
     /// Sensitivity of each loop slicer panel (view state, not in the document).
     sens: BTreeMap<DeviceKey, u8>,
+    /// The waveform peaks of the pool assets a granular panel draws (fed by the app, see
+    /// [`RackView::set_sample_peaks`]).
+    sample_peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// The open "SC from" list of a compressor panel.
     sc_menu: Option<ScMenu>,
     /// The open pick list of a long choice (the master's control-room source).
@@ -620,6 +626,36 @@ impl RackView {
         }
     }
 
+    /// Gives the granular sampler panels the waveform peaks of pool asset `asset` (its content
+    /// hash), replacing earlier ones; the panels that draw it are repainted. The app shares the
+    /// pyramids it feeds the arrangement and the sample editor with.
+    pub fn set_sample_peaks(&mut self, asset: &str, peaks: Arc<PeakPyramid>) {
+        self.sample_peaks.insert(asset.to_string(), peaks);
+        self.refresh_granular_panels(asset);
+    }
+
+    /// Forgets the peaks of `asset` (its audio was replaced or removed).
+    pub fn clear_sample_peaks(&mut self, asset: &str) {
+        if self.sample_peaks.remove(asset).is_some() {
+            self.refresh_granular_panels(asset);
+        }
+    }
+
+    /// Re-records the granular panels that have a zone on `asset`.
+    fn refresh_granular_panels(&mut self, asset: &str) {
+        for d in &mut self.devices {
+            let uses = d.spec.granular.is_some()
+                && d.device
+                    .as_ref()
+                    .is_some_and(|x| x.zones.iter().any(|z| z.asset == asset));
+            if uses {
+                d.revision += 1;
+                d.lists = [None, None];
+                self.repaint = true;
+            }
+        }
+    }
+
     /// Tells the view which controls have a MIDI mapping (a dot on each; an outline on each
     /// while MIDI Learn is on, and in the warning colour on the one waiting for a hardware
     /// control).
@@ -637,6 +673,7 @@ impl RackView {
             layout_provider: None,
             devices: Vec::new(),
             specs: BTreeMap::new(),
+            sample_peaks: BTreeMap::new(),
             cache_ids: BTreeMap::new(),
             next_cache_id: 1,
             tree: ViewTree::new(Rect::ZERO, Hit::Rack),
@@ -875,6 +912,16 @@ impl RackView {
                 }
                 self.repaint = true;
             }
+            // The strip's text also follows the pool (an asset registered or renamed).
+            let v = &mut self.devices[i + 1];
+            if v.spec.granular.is_some() {
+                let sample = crate::granular_panel::sample_info(d, doc);
+                if v.sample != sample {
+                    v.sample = sample;
+                    v.revision += 1;
+                    self.repaint = true;
+                }
+            }
         }
         let cables_changed = self.cables != doc.cables;
         if cables_changed {
@@ -998,6 +1045,9 @@ impl RackView {
                 crate::wavetable_panel::wavetable_layout(d)
             }
             (Some(d), _) if type_id == crate::fm_panel::FM_TYPE => crate::fm_panel::fm_layout(d),
+            (Some(d), _) if type_id == crate::granular_panel::GRANULAR_TYPE => {
+                crate::granular_panel::granular_layout(d)
+            }
             (Some(d), _) if type_id == crate::arp_panel::ARP_TYPE => {
                 crate::arp_panel::arp_layout(d)
             }
@@ -1026,6 +1076,7 @@ impl RackView {
                 modsrc: None,
                 wavetable: None,
                 fm: None,
+                granular: None,
                 container: None,
                 plugin: None,
                 front: Vec::new(),
@@ -1105,6 +1156,7 @@ impl RackView {
             fx: None,
             meters: Vec::new(),
             scope: crate::modsrc_panel::Scope::new(),
+            sample: None,
             analyser: Default::default(),
             master: Default::default(),
             sc: None,
@@ -1213,6 +1265,11 @@ impl RackView {
             } else {
                 Default::default()
             };
+            let sample = if spec.granular.is_some() {
+                crate::granular_panel::sample_info(d, doc)
+            } else {
+                None
+            };
             let (revision, lists) = match prev {
                 Some(p)
                     if p.device.as_ref() == Some(d)
@@ -1227,6 +1284,7 @@ impl RackView {
                         && p.plugin_status == plugin_status
                         && p.master == master
                         && p.cv == cv
+                        && p.sample == sample
                         && p.sc == sc =>
                 {
                     (p.revision, p.lists)
@@ -1252,6 +1310,7 @@ impl RackView {
                 fx,
                 meters,
                 scope,
+                sample,
                 analyser,
                 master,
                 sc,
@@ -1303,6 +1362,7 @@ impl RackView {
                 fx: None,
                 meters: Vec::new(),
                 scope: crate::modsrc_panel::Scope::new(),
+                sample: None,
                 analyser: Default::default(),
                 master: Default::default(),
                 sc: None,
@@ -3748,6 +3808,17 @@ impl RackView {
                     io: self.io.info(),
                     master: d.master.info(),
                     from_clip: self.clip_scale.is_some(),
+                    grain: crate::granular_panel::GrainInfo {
+                        meters: &d.meters,
+                        sample: d.sample.as_ref(),
+                        peaks: d
+                            .device
+                            .as_ref()
+                            .filter(|_| d.spec.granular.is_some())
+                            .and_then(|dev| crate::granular_panel::shown_zone(dev, &d.meters))
+                            .and_then(|z| self.sample_peaks.get(&z.asset))
+                            .map(|p| &**p),
+                    },
                 };
                 paint::record_panel(&mut list, &self.theme, &info);
                 self.devices[i].lists[side] = Some(list);

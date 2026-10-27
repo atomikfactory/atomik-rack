@@ -1,4 +1,4 @@
-//! `atomik.granular` ("Granular Sampler"): a sample played as a cloud of short grains. An original
+//! `atomik.granular` ("Grain Sampler"): a sample played as a cloud of short grains. An original
 //! design from the textbook of granular synthesis; the blocks that are not the voice (windows,
 //! grain pool, clock, anti-aliased read, built-in source) are in [`atomik_dsp::grain`].
 //!
@@ -732,7 +732,7 @@ static SOCKETS: [SocketDescriptor; 8] = [
 pub static DESCRIPTOR: DeviceDescriptor = DeviceDescriptor {
     stages: &[],
     type_id: "atomik.granular",
-    name: "Granular Sampler",
+    name: "Grain Sampler",
     kind: DeviceKind::Instrument,
     version: 1,
     params: &PARAMS,

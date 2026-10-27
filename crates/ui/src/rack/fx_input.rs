@@ -45,6 +45,10 @@ impl RackView {
             self.modsrc_meter_feed(i, values);
             return;
         }
+        if self.devices[i].spec.granular.is_some() {
+            self.granular_meter_feed(i, values);
+            return;
+        }
         if self.devices[i].spec.plugin.is_some() {
             self.plugin_meter_feed(i, values);
             return;
@@ -115,6 +119,28 @@ impl RackView {
         if !self.devices[i].scope.feed(values) {
             return;
         }
+        self.devices[i].revision += 1;
+        let (top, bottom) = (
+            self.view_to_rack(Point::new(0.0, 0.0)).y,
+            self.view_to_rack(Point::new(0.0, self.size.height)).y,
+        );
+        let d = &self.devices[i];
+        if self.flip == super::Flip::Front && !d.folded && d.y + d.height >= top && d.y <= bottom {
+            self.repaint = true;
+        }
+    }
+
+    /// Keeps the values a granular sampler published (the source, the position and spray, the
+    /// grain counts and the live grains) and repaints the visible panel when they changed. The
+    /// vector is reused after the first feed.
+    fn granular_meter_feed(&mut self, i: usize, values: &[f32]) {
+        let n = values.len().min(crate::granular_panel::METER_COUNT);
+        let shown = &mut self.devices[i].meters;
+        if shown.as_slice() == &values[..n] {
+            return;
+        }
+        shown.clear();
+        shown.extend_from_slice(&values[..n]);
         self.devices[i].revision += 1;
         let (top, bottom) = (
             self.view_to_rack(Point::new(0.0, 0.0)).y,

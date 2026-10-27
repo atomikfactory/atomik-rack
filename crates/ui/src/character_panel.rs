@@ -221,6 +221,7 @@ pub fn character_layout(desc: &DeviceDescriptor) -> PanelSpec {
         modsrc: None,
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         front,

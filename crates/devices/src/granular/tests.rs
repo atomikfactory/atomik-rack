@@ -266,7 +266,7 @@ fn heard_hz(hz: f64, setup: impl Fn(&mut DeviceHarness), key: u8) -> f64 {
 fn descriptor_validates_and_lists_the_documented_params_and_sockets() {
     assert_eq!(DESCRIPTOR.validate(), Ok(()));
     assert_eq!(DESCRIPTOR.type_id, "atomik.granular");
-    assert_eq!(DESCRIPTOR.name, "Granular Sampler");
+    assert_eq!(DESCRIPTOR.name, "Grain Sampler");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
     assert_eq!(PARAMS.len(), 50);
     for (i, p) in DESCRIPTOR.params.iter().enumerate() {

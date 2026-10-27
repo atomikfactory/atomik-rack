@@ -314,6 +314,7 @@ pub mod fm_panel;
 pub mod fx;
 pub mod fx_layout;
 pub mod fx_paint;
+pub mod granular_panel;
 pub mod interface;
 pub mod io_panel;
 pub mod key_chord_panel;

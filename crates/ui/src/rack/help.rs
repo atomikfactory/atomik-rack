@@ -151,6 +151,13 @@ impl RackView {
             {
                 return Some(Help::new(rect, text));
             }
+            if self.devices[i]
+                .desc
+                .is_some_and(|d| d.type_id == crate::granular_panel::GRANULAR_TYPE)
+                && let Some(text) = crate::granular_panel::granular_help(p.key)
+            {
+                return Some(Help::new(rect, text));
+            }
             let label = autolayout::control_label(p);
             return match kind {
                 ControlKind::Toggle => Some(Help::new(

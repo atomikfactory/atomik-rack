@@ -301,6 +301,8 @@ pub struct PanelInfo<'a> {
     pub master: crate::master_panel::MasterInfo<'a>,
     /// Key & Chord panel: the FROM CLIP button is enabled (the open clip has a scale).
     pub from_clip: bool,
+    /// Granular panel: the published values, the sample and its peaks.
+    pub grain: crate::granular_panel::GrainInfo<'a>,
 }
 
 /// Fold button centre in panel coordinates.
@@ -698,6 +700,10 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                     let label = crate::fm_panel::fm_label(p.key)
                         .map_or_else(|| autolayout::control_label(p), str::to_string);
                     control_labelled(c, theme, pc, p, value, info.accent, &label);
+                } else if info.spec.granular.is_some() {
+                    let label = crate::granular_panel::granular_label(p.key)
+                        .map_or_else(|| autolayout::control_label(p), str::to_string);
+                    control_labelled(c, theme, pc, p, value, info.accent, &label);
                 } else if info.spec.seq.is_some()
                     || info.spec.arp.is_some()
                     || info.spec.drum_gen.is_some()
@@ -721,7 +727,8 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
                 interface_front(c, theme, desc, info);
             }
             if let (Some(strip), Some(device)) = (info.spec.samples, info.device) {
-                sample_strip(c, theme, strip, device, info.accent);
+                let granular = info.spec.granular.is_some().then_some(&info.grain);
+                sample_strip(c, theme, strip, device, info.accent, granular);
             }
             if let Some(drum) = info.spec.drum {
                 drum_panel(c, theme, drum, info);
@@ -806,6 +813,17 @@ pub fn record_panel<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelIn
             }
             if let (Some(panel), Some(device)) = (info.spec.fm, info.device) {
                 crate::fm_panel::paint_panel(c, theme, &panel, device, desc, info.accent);
+            }
+            if let (Some(panel), Some(device)) = (info.spec.granular, info.device) {
+                crate::granular_panel::paint_panel(
+                    c,
+                    theme,
+                    &panel,
+                    device,
+                    desc,
+                    info.accent,
+                    &info.grain,
+                );
             }
             if let (Some(panel), Some(_)) = (info.spec.key_chord, info.device) {
                 crate::key_chord_panel::paint_panel(c, theme, &panel, info.from_clip);
@@ -911,16 +929,24 @@ pub fn sample_edit_button(strip: Rect) -> Rect {
 }
 
 /// The sample strip of a sampler panel: a title, an LCD with the zone and sample counts and the
-/// Edit button. The whole panel is also the drop target (highlighted by the rack view).
+/// Edit button. The whole panel is also the drop target (highlighted by the rack view). A
+/// granular sampler's strip (`granular`) names its one sample and its length instead, or the
+/// built-in source.
 fn sample_strip<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
     strip: Rect,
     device: &RackDevice,
     accent: Color,
+    granular: Option<&crate::granular_panel::GrainInfo<'_>>,
 ) {
     let title = Section {
-        label: "SAMPLES".to_string(),
+        label: if granular.is_some() {
+            "SAMPLE"
+        } else {
+            "SAMPLES"
+        }
+        .to_string(),
         rect: Rect::new(strip.x0, strip.y0, strip.x1, strip.y0 + 11.0),
     };
     section_title(c, theme, &title);
@@ -938,7 +964,9 @@ fn sample_strip<C: Canvas + ?Sized>(
         .map(|z| z.asset.as_str())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
-    let (l1, l2) = if n == 0 {
+    let (l1, l2) = if let Some(g) = granular {
+        crate::granular_panel::strip_lines(g.sample.filter(|_| n > 0))
+    } else if n == 0 {
         ("No samples".to_string(), "drop files here".to_string())
     } else {
         (
@@ -949,7 +977,11 @@ fn sample_strip<C: Canvas + ?Sized>(
             ),
         )
     };
-    let l1_color = if n == 0 { theme.text_muted } else { accent };
+    let l1_color = if n == 0 && granular.is_none() {
+        theme.text_muted
+    } else {
+        accent
+    };
     c.text(&TextRun::new(l1, pt(lcd.x0 + 8.0, lcd.y0 + 16.0), 10.5, l1_color).weight(700));
     c.text(&TextRun::new(
         l2,

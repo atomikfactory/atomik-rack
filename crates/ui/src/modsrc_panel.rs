@@ -190,6 +190,7 @@ pub fn modsrc_layout(desc: &DeviceDescriptor) -> PanelSpec {
         modsrc: Some(ModSourcePanel { shapes, scope }),
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         front,
