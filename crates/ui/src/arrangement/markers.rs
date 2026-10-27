@@ -1051,6 +1051,22 @@ impl ArrangementView {
         }
     }
 
+    /// Sets the song End at `tick`: one undoable command, declined where it would change
+    /// nothing or put the End at the very start.
+    fn set_end_at(&mut self, tick: i64) -> Option<CommandOutcome> {
+        if tick <= 0 {
+            return Some(CommandOutcome::NotApplicable(
+                "The End marker cannot be at the very start".into(),
+            ));
+        }
+        if tick == self.song.end_tick() {
+            return Some(CommandOutcome::NotApplicable(
+                "The End marker is there already".into(),
+            ));
+        }
+        handled(vec![song_cmd(SongCommand::SetSongEnd(tick))])
+    }
+
     /// The marker commands: add, go to the previous and next marker, the items of the context
     /// menus (on the marker or range the menu opened on, else the selection) and Delete on a
     /// selected marker or range. `None` when `id` is not one of them.
@@ -1059,6 +1075,8 @@ impl ArrangementView {
         let result = match id {
             "transport.add_marker" => self.add_marker_at_playhead(),
             "transport.add_range_from_loop" => self.add_range_from_loop(),
+            "transport.set_end_marker" => self.set_end_at(self.playhead),
+            "sequencer.marker_end_here" => self.set_end_at(self.mk.ctx_tick),
             "transport.prev_marker" => match self.song.prev_marker_tick(self.playhead) {
                 Some(t) => handled(vec![UiAction::Transport(TransportAction::Locate(t))]),
                 None => Some(CommandOutcome::NotApplicable(
