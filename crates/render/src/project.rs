@@ -108,7 +108,8 @@ pub fn notes_input(desc: &DeviceDescriptor) -> Option<SocketId> {
 ///
 /// - Tracks: [`effective_tracks`] (mute and solo applied), in display order. A track is
 ///   skipped when its device has no engine id (`id_of` returns `None`), its type is not in
-///   `registry`, or it has no Notes input.
+///   `registry`, or it has no Notes input and is not an automation track (see
+///   [`atomik_model::song::Track::is_automation_only`]).
 /// - Notes: [`flatten_notes`]; automation: [`flatten_automation`] of every automation lane
 ///   whose param key the descriptor knows, with the descriptor's `ParamId`.
 /// - Tempo map from `song.tempo` (steps and ramps) and the meter map from `song.meter`.
@@ -308,8 +309,12 @@ pub fn song_input_with_warps(
         let Some(desc) = registry.get(&type_id).map(|f| f.descriptor) else {
             continue;
         };
-        let Some(notes_socket) = notes_input(desc) else {
-            continue;
+        // An automation track (a channel strip, an effect) has no Notes input: its engine track
+        // carries lanes only, as the track of a macro target does.
+        let notes_socket = match notes_input(desc) {
+            Some(socket) => socket,
+            None if track.is_automation_only() => SocketId(0),
+            None => continue,
         };
         let notes = flatten_notes(track)
             .into_iter()
