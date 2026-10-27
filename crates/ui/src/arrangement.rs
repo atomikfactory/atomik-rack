@@ -3311,14 +3311,33 @@ impl ArrangementView {
     }
 
     /// The mouse cursor to show: the horizontal arrows over (and while dragging) the playhead,
-    /// a loop locator or a marker line.
+    /// a loop locator, a marker line, or a clip's edge (with Select, which resizes there); over
+    /// the lanes and clips the active tool's own cursor (pen, eraser, blade).
     pub fn cursor(&self) -> CursorHint {
+        let tool = self.vp.shown_tool();
         match &self.drag {
-            Drag::Playhead { .. } | Drag::LoopEdge { .. } => CursorHint::ResizeHorizontal,
+            Drag::Playhead { .. } | Drag::LoopEdge { .. } | Drag::Resize { .. } => {
+                CursorHint::ResizeHorizontal
+            }
+            Drag::Audio {
+                grab: AudioGrab::TrimStart,
+                ..
+            } => CursorHint::ResizeHorizontal,
+            Drag::Draw { pencil: true, .. } => CursorHint::Pen,
             Drag::None => match self.hover {
                 Some(Hit::Playhead | Hit::LoopEdge(_) | Hit::MarkerLine(_)) => {
                     CursorHint::ResizeHorizontal
                 }
+                Some(Hit::Clip {
+                    part: ClipPart::Edge | ClipPart::EdgeStart,
+                    ..
+                }) if tool == Tool::Select => CursorHint::ResizeHorizontal,
+                // The mute button acts the same with every tool.
+                Some(Hit::Clip {
+                    part: ClipPart::Mute,
+                    ..
+                }) => CursorHint::Default,
+                Some(Hit::Clip { .. } | Hit::Lane { .. }) => CursorHint::of_tool(tool),
                 _ => CursorHint::Default,
             },
             _ => CursorHint::Default,

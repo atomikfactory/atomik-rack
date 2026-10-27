@@ -232,8 +232,18 @@ fn the_cursor_hint_follows_the_hovered_part_the_tool_and_the_drag() {
     assert_eq!(hover(&mut v, right), CursorHint::ResizeHorizontal);
     assert_eq!(hover(&mut v, body), CursorHint::Move);
     v.set_tool(Tool::Pencil);
-    assert_eq!(hover(&mut v, empty), CursorHint::Crosshair);
+    assert_eq!(hover(&mut v, empty), CursorHint::Pen);
     assert_eq!(hover(&mut v, right), CursorHint::Default);
+    // The eraser and the razor show their own cursor over the grid and over a note, even at
+    // its end: the edge resizes only with Select.
+    v.set_tool(Tool::Eraser);
+    assert_eq!(hover(&mut v, empty), CursorHint::Eraser);
+    assert_eq!(hover(&mut v, right), CursorHint::Eraser);
+    assert_eq!(hover(&mut v, body), CursorHint::Eraser);
+    v.set_tool(Tool::Razor);
+    assert_eq!(hover(&mut v, empty), CursorHint::Razor);
+    assert_eq!(hover(&mut v, right), CursorHint::Razor);
+    assert_eq!(hover(&mut v, body), CursorHint::Razor);
     v.set_tool(Tool::Select);
     // During a drag the cursor keeps the gesture's shape wherever the pointer goes.
     v.handle(&down(right), &doc, &reg);
