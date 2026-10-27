@@ -459,7 +459,9 @@ pub struct Song {
     pub loop_range: (i64, i64),
     /// Loop enabled.
     pub loop_enabled: bool,
-    /// Song end (for bounce length), in ticks.
+    /// Song End (the length of a render and of the arrangement), in ticks; see
+    /// [`Song::end_tick`]. A clip drawn, moved or stretched past it moves it out to the next
+    /// bar line, in the same undo step.
     pub end: i64,
     /// Next clip id to allocate.
     pub next_clip_id: u64,
@@ -1174,6 +1176,12 @@ impl Song {
             .map(|(_, _, g)| g.id)
             .max()
             .map_or(1, |m| m + 1)
+    }
+
+    /// The song End in ticks: where the song stops for a render and for the arrangement's
+    /// extent. Playback does not stop there. At least 1 (see [`SongCommand::SetSongEnd`]).
+    pub fn end_tick(&self) -> i64 {
+        self.end
     }
 
     /// The first free marker id (above every id in use).

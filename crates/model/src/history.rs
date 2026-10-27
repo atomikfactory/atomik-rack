@@ -1325,3 +1325,26 @@ fn container_mut<'d>(doc: &'d mut RackDoc, key: &DeviceKey) -> &'d mut Container
     doc.inner_mut(key)
         .expect("edit targets an existing container")
 }
+
+/// The edit that moves the song End out to the next bar line when `edit` (already performed on
+/// `doc`) puts a clip past it, `None` when no clip reaches beyond the End. It never moves the
+/// End back: shortening is `SongCommand::SetSongEnd`. The caller records it in the same undo
+/// step as `edit`.
+pub(crate) fn song_end_growth(doc: &RackDoc, edit: &Edit) -> Option<Edit> {
+    fn farthest(edit: &Edit) -> Option<i64> {
+        match edit {
+            Edit::Clip { new: Some(c), .. } => Some(c.start + c.length),
+            Edit::Compound(edits) => edits.iter().filter_map(farthest).max(),
+            _ => None,
+        }
+    }
+    let song = &doc.song;
+    let reach = farthest(edit).filter(|r| *r > song.end)?;
+    let table = song.meter_table();
+    let end = table.map().next_bar_line(reach - 1).max(reach);
+    crate::song_cmd::check_end(end).ok()?;
+    Some(Edit::SongEnd {
+        old: song.end,
+        new: end,
+    })
+}
