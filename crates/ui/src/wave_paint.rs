@@ -132,7 +132,8 @@ pub fn paint_channel(
     if let (true, WaveDetail::Samples(s)) = (w.detail.is_line(w.frames_per_pixel), w.detail) {
         let Some(samples) = s.get(w.ch) else { return };
         let end = w.x_start + w.columns as f64;
-        let frames = line_frames(source(w.x_start), source(end), w.limit);
+        let (a, b) = (source(w.x_start), source(end));
+        let frames = line_frames(a.min(b), a.max(b), w.limit);
         let Some(points) = samples.get(frames.clone()) else {
             return;
         };
@@ -166,16 +167,22 @@ pub fn paint_channel(
         }
         return;
     }
+    // A reversed clip reads its source downwards: the column's frames run from `source(x + 1)`
+    // up to `source(x)`.
     let peak = |i: usize| {
         let x = w.x_start + i as f64;
-        w.detail.column(w.ch, source(x), source(x + 1.0), w.limit)
+        let (a, b) = (source(x), source(x + 1.0));
+        w.detail.column(w.ch, a.min(b), a.max(b), w.limit)
     };
-    let n = (0..w.columns.min(MAX_COLUMNS))
-        .take_while(|i| peak(*i).is_some())
-        .count();
+    let columns = w.columns.min(MAX_COLUMNS);
+    // The audio is silent past the asset end: at the right of a forward clip, at the left of a
+    // reversed one, which starts above the last frame and plays down into the asset.
+    let first = (0..columns).find(|i| peak(*i).is_some()).unwrap_or(columns);
+    let n = (first..columns).take_while(|i| peak(*i).is_some()).count();
     if n == 0 {
         return;
     }
+    let (first, last) = (first, first + n);
     sp::line(
         c,
         w.line_x.0,
@@ -185,16 +192,16 @@ pub fn paint_channel(
         w.color.with_alpha(0.22),
     );
     let mut path = BezPath::new();
-    for i in 0..n {
+    for i in first..last {
         let (_, hi) = peak(i).unwrap_or((0.0, 0.0));
         let p = pt(w.x_start + i as f64 + 0.5, y_of(hi));
-        if i == 0 {
+        if i == first {
             path.move_to(p);
         } else {
             path.line_to(p);
         }
     }
-    for i in (0..n).rev() {
+    for i in (first..last).rev() {
         let (lo, _) = peak(i).unwrap_or((0.0, 0.0));
         path.line_to(pt(w.x_start + i as f64 + 0.5, y_of(lo)));
     }
@@ -298,6 +305,65 @@ mod tests {
         // A view that is far too wide for the line is cut, not read.
         let r = line_frames(0.0, 1e9, u64::MAX);
         assert_eq!(r.len(), MAX_LINE_FRAMES);
+    }
+
+    /// The upper edge of the polygon `paint_channel` fills, as the y of every column.
+    fn edge(source: &dyn Fn(f64) -> f64, frame_x: &dyn Fn(f64) -> f64) -> Vec<(f64, f64)> {
+        let p = pyramid(2560);
+        let w = WaveChannel {
+            detail: WaveDetail::Peaks(p.level_for(256.0)),
+            ch: 0,
+            cy: 50.0,
+            half: 40.0,
+            gain: 1.0,
+            color: Color::WHITE,
+            x_start: 0.0,
+            columns: 20,
+            line_x: (0.0, 20.0),
+            limit: 2560,
+            frames_per_pixel: 256.0,
+        };
+        let mut dl = crate::DisplayList::new();
+        paint_channel(&mut dl, &w, source, frame_x);
+        let path = dl.ops().iter().find_map(|op| match op {
+            crate::Op::Fill {
+                shape: crate::Geom::Path(p),
+                ..
+            } => Some(p.clone()),
+            _ => None,
+        });
+        let Some(path) = path else { return Vec::new() };
+        path.elements()
+            .iter()
+            .filter_map(|e| match e {
+                vello::kurbo::PathEl::MoveTo(p) | vello::kurbo::PathEl::LineTo(p) => {
+                    Some((p.x, p.y))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_descending_source_paints_the_mirror_of_an_ascending_one() {
+        // Ten buckets of 256 frames across 10 columns, from x = 0.
+        let forward = edge(&|x| x * 256.0, &|f| f / 256.0);
+        let reversed = edge(&|x| 2560.0 - x * 256.0, &|f| (2560.0 - f) / 256.0);
+        assert!(!forward.is_empty() && forward.len() == reversed.len());
+        // The top edge is the first half of the polygon's points, left to right.
+        let half = forward.len() / 2;
+        for i in 0..half {
+            assert_eq!(forward[i].1, reversed[half - 1 - i].1, "column {i}");
+        }
+    }
+
+    #[test]
+    fn a_reversed_source_that_starts_above_the_asset_end_skips_the_silent_columns() {
+        // The first 5 columns read frames at and past the end (limit 2560): silent.
+        let reversed = edge(&|x| 2560.0 + 1280.0 - x * 256.0, &|f| (3840.0 - f) / 256.0);
+        let xs: Vec<f64> = reversed.iter().map(|p| p.0).collect();
+        assert!(xs.iter().all(|x| *x >= 5.0), "{xs:?}");
+        assert!(!reversed.is_empty());
     }
 
     #[test]

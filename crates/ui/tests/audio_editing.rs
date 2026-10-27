@@ -632,3 +632,34 @@ fn the_panel_paints_and_its_picture_changes_with_the_values() {
     v.step(SilenceRow::Threshold, 1);
     assert_ne!(paint(&v), a);
 }
+
+// ---------------------------------------------------------------- reversed waveform
+
+/// The path fills of a paint that are tall waveform polygons (the clip body, not the chrome).
+fn wave_polygons(doc: &RackDoc) -> Vec<atomik_ui::kurbo::BezPath> {
+    let reg = registry();
+    let mut v = audio_arrangement(doc, &reg);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, doc, &reg);
+    dl.ops()
+        .iter()
+        .filter_map(|op| match op {
+            atomik_ui::Op::Fill {
+                shape: atomik_ui::Geom::Path(p),
+                ..
+            } if p.elements().len() > 100 => Some(p.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_reversed_clip_draws_its_waveform() {
+    let forward = wave_polygons(&audio_doc());
+    assert!(!forward.is_empty(), "the forward clip has a waveform");
+    let mut doc = audio_doc();
+    edit_clip(&mut doc, 10, |a| a.reverse = true);
+    let reversed = wave_polygons(&doc);
+    assert_eq!(reversed.len(), forward.len(), "one polygon per channel too");
+    assert_ne!(reversed, forward, "and it is the mirrored audio");
+}
