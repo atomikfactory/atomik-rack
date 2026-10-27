@@ -12,7 +12,7 @@ use atomik_model::{
 use atomik_ui::sidechain::{ScSource, sidechain_command};
 
 const SYNTH: &str = "atomik.poly-synth";
-const EFFECTS: [&str; 7] = [
+const EFFECTS: [&str; 8] = [
     "atomik.reverb",
     "atomik.compressor",
     "atomik.eq",
@@ -20,6 +20,7 @@ const EFFECTS: [&str; 7] = [
     "atomik.modulation",
     "atomik.mastering",
     "atomik.character",
+    "atomik.guitar-amp",
 ];
 
 fn key(k: &str) -> DeviceKey {

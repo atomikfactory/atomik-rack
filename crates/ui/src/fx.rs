@@ -21,6 +21,8 @@ pub enum FxKind {
     Eq,
     /// `atomik.distortion`.
     Distortion,
+    /// `atomik.guitar-amp`: the speakers of the selected cabinet with the mic, in/out and gate meters.
+    GuitarAmp,
     /// `atomik.modulation`.
     Modulation,
     /// `atomik.mastering`.
@@ -37,11 +39,12 @@ pub enum FxKind {
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 10] = [
+    pub const ALL: [FxKind; 11] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
         FxKind::Distortion,
+        FxKind::GuitarAmp,
         FxKind::Modulation,
         FxKind::Mastering,
         FxKind::Character,
@@ -50,14 +53,15 @@ impl FxKind {
         FxKind::AudioTrack,
     ];
 
-    /// The nine effects: every kind but the audio track's, which has the BYPASS switch of an
+    /// The ten effects: every kind but the audio track's, which has the BYPASS switch of an
     /// effect, the meters of one and a plain "meters change the painting" behaviour that the
     /// audio track's tuner does not share.
-    pub const EFFECTS: [FxKind; 9] = [
+    pub const EFFECTS: [FxKind; 10] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
         FxKind::Distortion,
+        FxKind::GuitarAmp,
         FxKind::Modulation,
         FxKind::Mastering,
         FxKind::Character,
@@ -77,6 +81,7 @@ impl FxKind {
             FxKind::Compressor => "atomik.compressor",
             FxKind::Eq => "atomik.eq",
             FxKind::Distortion => "atomik.distortion",
+            FxKind::GuitarAmp => "atomik.guitar-amp",
             FxKind::Modulation => "atomik.modulation",
             FxKind::Mastering => "atomik.mastering",
             FxKind::Character => "atomik.character",
@@ -93,6 +98,7 @@ impl FxKind {
             FxKind::Compressor => 3,
             FxKind::Eq => EQ_METERS,
             FxKind::Distortion => 2,
+            FxKind::GuitarAmp => 3,
             FxKind::Modulation => 0,
             FxKind::Mastering => 8,
             FxKind::Character => CHARACTER_METERS,
@@ -193,6 +199,7 @@ fn slot(kind: FxKind, i: usize) -> Slot {
         (FxKind::Eq, i) if i < EQ_BANDS_ANALYSER => Slot::Power,
         (FxKind::Mastering, 0..=3) => Slot::Raw,
         (FxKind::Mastering, _) => Slot::Gr,
+        (FxKind::GuitarAmp, 2) => Slot::Gr,
         (FxKind::Character, 2) => Slot::Unit,
         (FxKind::Character, 3) => Slot::Activity,
         (FxKind::PhaseMeter, phase::SAMPLE_PEAK_DB | phase::TRUE_PEAK_DB) => Slot::Raw,
@@ -807,4 +814,79 @@ pub fn cv_span(knob: f32, trim: f32) -> (f32, f32) {
         trim.clamp(0.0, 1.0)
     };
     ((knob - trim).clamp(0.0, 1.0), (knob + trim).clamp(0.0, 1.0))
+}
+
+// ------------------------------------------------------------------ guitar amp
+
+/// How many speakers the cabinet choice `cab` (`1x12 open`, `2x12`, `4x12 closed`, `off`) draws.
+pub fn amp_speaker_count(cab: usize) -> usize {
+    match cab {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        _ => 0,
+    }
+}
+
+/// The speakers of a cabinet in the unit square of the panel's plot (x right, y down): the
+/// centres and the radius as a fraction of the square's width. The first centre is the one the
+/// mic points at.
+pub fn amp_speakers(count: usize) -> (&'static [(f64, f64)], f64) {
+    match count {
+        1 => (&[(0.5, 0.5)], 0.38),
+        2 => (&[(0.5, 0.26), (0.5, 0.74)], 0.24),
+        4 => (
+            &[(0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73)],
+            0.2,
+        ),
+        _ => (&[], 0.0),
+    }
+}
+
+/// Where the mic sits on the first speaker: the offset of its marker from the speaker's centre as
+/// a fraction of the speaker's radius, 0 at the centre of the cone (`mic` 0) to 0.9 at its edge.
+pub fn amp_mic_offset(mic: f32) -> f64 {
+    0.9 * f64::from(if mic.is_finite() {
+        mic.clamp(0.0, 1.0)
+    } else {
+        0.0
+    })
+}
+
+/// The tooltip of a guitar amp control: what the knob or button does, one short line. `None` for
+/// a key the amp does not have (and for `bypass`, which has the effect strip's own tooltip).
+pub fn amp_help(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "setup" => "Factory sound: click for the next, right-click for the previous. One undo step",
+        "input" => "Level into the amp: raise it for a quiet pickup",
+        "gate" => "Noise gate threshold: quieter than this is silenced. Fully left it is off",
+        "tight" => "High-pass before the gain: higher keeps low, fast riffs tight",
+        "boost" => "Mid boost into the preamp, like a booster pedal in front of the amp",
+        "gain" => "How hard the three preamp stages are driven",
+        "bass" => "Low end of the tone stack. Bass, mid and treble affect each other",
+        "mid" => "Middle of the tone stack: fills in the scoop between bass and treble",
+        "treble" => "High end of the tone stack",
+        "presence" => "High end of the power stage: more bite and air",
+        "depth" => "Low end of the power stage: more thump",
+        "sag" => "How much a loud passage squashes the power stage, and a note blooms back",
+        "master" => "Drive into the power stage: more is louder and more compressed",
+        "level" => "Output volume, after the cabinet and the effects",
+        "cab" => "Cabinet: 1x12 open, 2x12, 4x12 closed, or none",
+        "mic" => "Microphone position, from the centre of the cone (bright) to its edge (dark)",
+        "chorus.on" => "Switch the chorus on or off",
+        "chorus.mix" => "How much of the chorus is heard",
+        "chorus.rate" => "Speed of the chorus sweep",
+        "chorus.depth" => "Width of the chorus sweep",
+        "delay.on" => "Switch the delay on or off",
+        "delay.time" => "Delay time in ms, used when Sync is free",
+        "delay.sync" => "Delay time as a note value at the project tempo, or free",
+        "delay.feedback" => "How many repeats: the part of each echo fed back",
+        "delay.tone" => "Brightness of the repeats: lower is darker",
+        "delay.mix" => "How much of the delay is added to the sound",
+        "reverb.on" => "Switch the reverb on or off",
+        "reverb.size" => "Size of the reverb space",
+        "reverb.decay" => "How long the reverb rings, in seconds",
+        "reverb.mix" => "How much of the reverb is added to the sound",
+        _ => return None,
+    })
 }

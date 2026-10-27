@@ -24,7 +24,7 @@ fn effect_ids() -> Vec<&'static str> {
         .type_ids()
         .filter(|t| r.descriptor(t).unwrap().kind == DeviceKind::Effect)
         .collect();
-    assert_eq!(ids.len(), 10, "{ids:?}");
+    assert_eq!(ids.len(), 11, "{ids:?}");
     ids
 }
 
@@ -35,13 +35,15 @@ fn wrapped(type_id: &str) -> DeviceHarness {
 fn raw(type_id: &str) -> DeviceHarness {
     use crate::stereo_delay;
     use crate::{
-        character, compressor, distortion, eq, mastering, modulation, phase_meter, reverb, spectrum,
+        character, compressor, distortion, eq, guitar_amp, mastering, modulation, phase_meter,
+        reverb, spectrum,
     };
     let d: Box<dyn Device> = match type_id {
         "atomik.reverb" => Box::new(reverb::Reverb::new()),
         "atomik.compressor" => Box::new(compressor::Compressor::new()),
         "atomik.eq" => Box::new(eq::Equalizer::new()),
         "atomik.distortion" => Box::new(distortion::Distortion::new()),
+        "atomik.guitar-amp" => Box::new(guitar_amp::GuitarAmp::new()),
         "atomik.modulation" => Box::new(modulation::Modulation::new()),
         "atomik.mastering" => Box::new(mastering::Mastering::new()),
         "atomik.character" => Box::new(character::Character::new()),
@@ -128,7 +130,7 @@ fn bypassed_output_is_the_input_delayed_by_the_latency_bit_for_bit() {
         let lat = h.device().latency_frames() as usize;
         if matches!(
             id,
-            "atomik.compressor" | "atomik.mastering" | "atomik.character"
+            "atomik.compressor" | "atomik.mastering" | "atomik.character" | "atomik.guitar-amp"
         ) {
             assert!(lat > 0, "{id} should be latent");
         }

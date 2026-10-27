@@ -171,6 +171,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
         FxKind::Compressor => compressor(c, theme, fx, info, &p),
         FxKind::Eq => eq(c, theme, fx, info),
         FxKind::Distortion => distortion(c, theme, fx, info, &p),
+        FxKind::GuitarAmp => guitar_amp(c, theme, fx, info, &p),
         FxKind::Modulation => modulation(c, theme, fx, info, &p),
         FxKind::Mastering => mastering(c, theme, fx, info, &p),
         FxKind::Character => crate::character_panel::paint_front(c, theme, &fx, info),
@@ -883,3 +884,148 @@ fn mastering<C: Canvas + ?Sized>(
         );
     }
 }
+
+// ------------------------------------------------------------------ guitar amp
+
+/// The cabinet names of the panel, in the order of the device's `cab` choice.
+const AMP_CAB_NAMES: [&str; 4] = ["1X12 OPEN", "2X12", "4X12 CLOSED", "DIRECT"];
+
+fn guitar_amp<C: Canvas + ?Sized>(
+    c: &mut C,
+    theme: &Theme,
+    fx: FxPanel,
+    info: &PanelInfo<'_>,
+    p: &Params<'_>,
+) {
+    let r = fx.plot;
+    lcd(c, theme, r);
+    let cab = p.get("cab").round().clamp(0.0, 3.0) as usize;
+    let setup = info
+        .desc
+        .and_then(|d| d.params.iter().find(|q| q.key == "setup"))
+        .and_then(|q| match q.unit {
+            atomik_core::Unit::Choice(names) => names.get(p.get("setup").round().max(0.0) as usize),
+            _ => None,
+        })
+        .map_or(String::new(), |n| n.to_uppercase());
+
+    // Grille cloth: a fine diagonal weave behind the speakers.
+    let inner = r.inset(-3.0);
+    c.push_clip(&inner.into());
+    let mut x = inner.x0 - inner.height();
+    while x < inner.x1 {
+        c.stroke_with(
+            Line::new(pt(x, inner.y1), pt(x + inner.height(), inner.y0)),
+            1.0,
+            alpha(Color::WHITE, 0.035),
+        );
+        x += 5.0;
+    }
+    c.pop_clip();
+
+    // The speakers of the cabinet, and the mic on the first of them.
+    let n = fx::amp_speaker_count(cab);
+    let (centres, radius) = fx::amp_speakers(n);
+    // The speakers sit in a square, in the middle of the space between the labels.
+    let free = Rect::new(
+        inner.x0,
+        inner.y0 + 12.0,
+        inner.x1,
+        (inner.y1 - 14.0).max(inner.y0 + 24.0),
+    );
+    let side = free.width().min(free.height());
+    let square = Rect::from_center_size(free.center(), (side, side));
+    let rad = radius * square.width();
+    let mut first = None;
+    for (i, (fx_, fy)) in centres.iter().enumerate() {
+        let ctr = pt(
+            square.x0 + fx_ * square.width(),
+            square.y0 + fy * square.height(),
+        );
+        c.fill_with(Circle::new(ctr, rad + 2.0), alpha(Color::BLACK, 0.5));
+        c.stroke_with(Circle::new(ctr, rad), 1.5, alpha(Color::WHITE, 0.22));
+        for k in [0.72, 0.46] {
+            c.stroke_with(Circle::new(ctr, rad * k), 1.0, alpha(Color::WHITE, 0.1));
+        }
+        c.fill_with(Circle::new(ctr, rad * 0.24), alpha(Color::WHITE, 0.12));
+        if i == 0 {
+            first = Some(ctr);
+        }
+    }
+    if let Some(ctr) = first {
+        let mic = pt(ctr.x + fx::amp_mic_offset(p.get("mic")) * rad, ctr.y);
+        c.fill_with(Circle::new(mic, 5.0), alpha(info.accent, 0.3));
+        c.fill_with(Circle::new(mic, 2.4), mix(info.accent, Color::WHITE, 0.3));
+        c.stroke_with(
+            Line::new(pt(mic.x - 5.0, mic.y), pt(mic.x + 5.0, mic.y)),
+            1.0,
+            info.accent,
+        );
+    } else {
+        small(
+            c,
+            theme,
+            "NO CABINET",
+            pt(r.center().x, r.center().y),
+            Align::Center,
+            None,
+        );
+    }
+    small(
+        c,
+        theme,
+        AMP_CAB_NAMES[cab],
+        pt(r.x0 + 5.0, r.y0 + 10.0),
+        Align::Start,
+        Some(info.accent),
+    );
+    small(
+        c,
+        theme,
+        crate::paint::fit_label(&setup, r.width() - 8.0, 7.5),
+        pt(r.center().x, r.y1 - 5.0),
+        Align::Center,
+        None,
+    );
+
+    // Meters: input and output peak, then the gate's reduction.
+    let m = fx.meters;
+    let (lh, w) = (10.0, 12.0);
+    let x0 = m.x0 + 2.0;
+    for (k, (label, db)) in [
+        ("IN", meter(info, 0, LEVEL_FLOOR_DB)),
+        ("OUT", meter(info, 1, LEVEL_FLOOR_DB)),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let x = x0 + k as f64 * (w + 8.0);
+        bar(
+            c,
+            Rect::new(x, m.y0, x + w, m.y1 - lh),
+            level_norm(*db, -60.0, 0.0),
+            meter_color(*db),
+            false,
+        );
+        small(
+            c,
+            theme,
+            *label,
+            pt(x + w / 2.0, m.y1 - 1.0),
+            Align::Center,
+            None,
+        );
+    }
+    let gx = x0 + 2.0 * (w + 8.0);
+    gr_bar(
+        c,
+        theme,
+        Rect::new(gx, m.y0, gx + w, m.y1 - lh),
+        "GATE",
+        meter(info, 2, 0.0),
+        GATE_SCALE_DB,
+    );
+}
+
+/// Largest gate reduction drawn (dB): the gate of the device is 50 dB deep.
+const GATE_SCALE_DB: f32 = 50.0;

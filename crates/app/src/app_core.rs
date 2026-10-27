@@ -516,6 +516,8 @@ impl<S: EngineSink> AppCore<S> {
     /// Applies a command and syncs the engine and the view. On rejection nothing changes and
     /// the view shows the error.
     pub fn apply_command(&mut self, command: Command) -> Result<(), ModelError> {
+        // A setup choice on a guitar amp becomes the batch that loads it.
+        let command = self.expand_setup(command);
         // The creation chain tells the model which tracks an earlier auto-route armed.
         let command = self.prepare_creation(command);
         // A workflow command (paste, duplicate, join) selects what it created once it ran.
@@ -2352,6 +2354,9 @@ mod plugins;
 #[path = "app_core_workflow.rs"]
 mod workflow;
 
+#[path = "app_core_setups.rs"]
+mod setups;
+
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;
 
@@ -2505,6 +2510,10 @@ mod players_tests;
 #[cfg(test)]
 #[path = "app_core_character_tests.rs"]
 mod character_tests;
+
+#[cfg(test)]
+#[path = "app_core_setups_tests.rs"]
+mod setups_tests;
 
 #[cfg(test)]
 #[path = "app_core_containers_tests.rs"]

@@ -5,7 +5,7 @@
 //! [`Gate`]/expander, the console [`fader_gain`] taper and mid/side [`stereo_width`].
 //! Sample playback maths: ([`Playhead`], [`read_hermite`], loop crossfade).
 //! The stage blocks of the factory devices, each a small documented module:
-//! [`dither`] (the requantiser of an audio export), [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
+//! [`dither`] (the requantiser of an audio export), [`amp`] (the guitar amp: input stage, preamp, tone stack, power amp and synthesised cabinet), [`shaper`] (drive curves), [`leveller`] (peak-linked upward leveller), [`crossover`]
 //! (flat-sum 24 dB/oct split), [`phaser`], [`chorus`], [`echo`], [`comb`], [`room`] (small box
 //! and large room on [`Fdn8`]), [`ringmod`], [`bitcrush`], [`noise`] (white, pink, rumble,
 //! crackle, presence gate), [`spectral`] (STFT stage), [`spectrum`] (the analyser display: FFT power, 1/3-octave bands, peak hold), [`stereo_meter`] (correlation, balance and width), [`modal`], [`wavetable`] (the band-limited factory wavetables of the wavetable synth), [`wobble`] and [`smoother2`], and the offline [`stretch`] (time-stretch and pitch-shift), [`tuner`] (pitch, note and cents for the audio track tuner) and [`notes`] (audio to notes: a YIN pitch tracker for monophonic audio and a drum hit classifier).
@@ -19,6 +19,7 @@
 
 mod adsr;
 mod allpass;
+pub mod amp;
 mod biquad;
 pub mod bitcrush;
 mod block_smoother;

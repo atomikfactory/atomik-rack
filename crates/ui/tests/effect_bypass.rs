@@ -30,11 +30,12 @@ const PLAYERS: [&str; 8] = [
     "atomik.note-delay",
 ];
 
-const EFFECTS: [&str; 10] = [
+const EFFECTS: [&str; 11] = [
     "atomik.reverb",
     "atomik.compressor",
     "atomik.eq",
     "atomik.distortion",
+    "atomik.guitar-amp",
     "atomik.modulation",
     "atomik.mastering",
     "atomik.character",

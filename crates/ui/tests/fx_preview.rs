@@ -30,7 +30,11 @@ fn preview_pngs() {
     let mut text = TextEngine::new();
     for kind in FxKind::EFFECTS {
         let doc = fx_doc(kind);
-        let h = if kind == FxKind::Eq { 560.0 } else { 420.0 };
+        let h = if matches!(kind, FxKind::Eq | FxKind::GuitarAmp) {
+            560.0
+        } else {
+            420.0
+        };
         let mut v = RackView::new(Theme::dark());
         let _ = v.handle(&UiEvent::Resize(Size::new(820.0, h)), &doc, &reg);
         let _ = v.handle(&UiEvent::ScaleChanged(SCALE), &doc, &reg);

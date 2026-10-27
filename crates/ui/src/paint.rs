@@ -1337,7 +1337,9 @@ pub fn control_labelled<C: Canvas + ?Sized>(
             );
         }
         ControlKind::Choice | ControlKind::Display => {
-            let lcd = Rect::new(cx - 28.0, r.y0 + 3.0, cx + 28.0, r.y0 + 19.0);
+            // A cell wider than the usual 62 widens the display (the guitar amp's setup names).
+            let half = (r.width() / 2.0 - 3.0).max(28.0);
+            let lcd = Rect::new(cx - half, r.y0 + 3.0, cx + half, r.y0 + 19.0);
             c.fill_with(RoundedRect::from_rect(lcd, 3.0), theme.lcd);
             c.stroke_with(
                 RoundedRect::from_rect(lcd.inset(-0.5), 3.5),

@@ -84,6 +84,7 @@ fn heights_in_rack_units_are_pinned() {
     assert_eq!(units(FxKind::Compressor), 3);
     assert_eq!(units(FxKind::Eq), 6);
     assert_eq!(units(FxKind::Distortion), 2);
+    assert_eq!(units(FxKind::GuitarAmp), 5);
     assert_eq!(units(FxKind::Modulation), 2);
     assert_eq!(units(FxKind::Mastering), 4);
     assert_eq!(units(FxKind::Character), 3);
@@ -198,6 +199,14 @@ fn sections_are_labelled_as_documented() {
     for want in ["DRIVE", "TONE", "CRUSH", "OUTPUT"] {
         assert!(
             labels(FxKind::Distortion).iter().any(|l| l == want),
+            "{want}"
+        );
+    }
+    for want in [
+        "AMP", "SETUP", "INPUT", "PREAMP", "TONE", "POWER", "CABINET", "CHORUS", "DELAY", "REVERB",
+    ] {
+        assert!(
+            labels(FxKind::GuitarAmp).iter().any(|l| l == want),
             "{want}"
         );
     }
