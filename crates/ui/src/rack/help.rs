@@ -138,6 +138,12 @@ impl RackView {
             if self.driven_by(i, p.key).is_some() {
                 return None;
             }
+            // The guitar amp explains each of its controls.
+            if self.devices[i].fx == Some(crate::fx::FxKind::GuitarAmp)
+                && let Some(text) = crate::fx::amp_help(p.key)
+            {
+                return Some(Help::new(rect, text));
+            }
             let label = autolayout::control_label(p);
             return match kind {
                 ControlKind::Toggle => Some(Help::new(

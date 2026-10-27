@@ -7,6 +7,7 @@
 //! | compressor | transfer curve, level/GR meters, SC button | left, 172 wide | DETECTOR, GAIN, SIDECHAIN, OUTPUT |
 //! | EQ | response curve, draggable handles, analyser | across the top, 170 high | LOW CUT, LOW SHELF, PEAK 1, PEAK 2, HIGH SHELF, HIGH CUT, OUTPUT |
 //! | distortion | transfer curve, in/out meters | left, 172 wide | DRIVE, TONE, CRUSH, OUTPUT |
+//! | guitar amp | the speakers of the cabinet with the mic, in/out and gate meters | left, 168 wide | SETUP, INPUT, PREAMP, TONE, POWER, CABINET, CHORUS, DELAY, REVERB |
 //! | modulation | LFO sketch (left and right) | left, 196 wide | LFO, VOICE, OUTPUT |
 //! | mastering | crossover and band GR, LUFS readouts, GR meters | across the top, 96 high | INPUT, MULTIBAND, BAND 1-3, STEREO, LIMITER, OUTPUT |
 //! | character | preset matrix, screen, meters | its own 3 U layout, [`crate::character_panel`] | PRESET, SCREEN, METER, CONTROLS |
@@ -32,12 +33,16 @@ const LEFT_REVERB: f64 = 196.0;
 const LEFT_COMPRESSOR: f64 = 210.0;
 const LEFT_DISTORTION: f64 = 172.0;
 const LEFT_MODULATION: f64 = 196.0;
+const LEFT_AMP: f64 = 168.0;
 /// Height (title included) of the visual placed above the sections.
 const TOP_EQ: f64 = 186.0;
 const TOP_MASTERING: f64 = 112.0;
 const TOP_SPECTRUM: f64 = 200.0;
 const TOP_PHASE: f64 = 148.0;
 const TOP_TUNER: f64 = 92.0;
+
+/// Width of the guitar amp's setup selector.
+const SETUP_CELL_W: f64 = 140.0;
 
 type Def = &'static [(&'static str, &'static [&'static str])];
 
@@ -122,6 +127,33 @@ fn sections(kind: FxKind) -> Def {
             ("CRUSH", &["crush.bits", "crush.rate"]),
             ("OUTPUT", &["output", "mix", "mix_cv_trim", "oversample"]),
         ],
+        FxKind::GuitarAmp => &[
+            ("SETUP", &["setup"]),
+            ("INPUT", &["input", "gate", "tight", "boost"]),
+            ("PREAMP", &["gain"]),
+            ("TONE", &["bass", "mid", "treble", "presence", "depth"]),
+            ("POWER", &["sag", "master", "level"]),
+            ("CABINET", &["cab", "mic"]),
+            (
+                "CHORUS",
+                &["chorus.on", "chorus.mix", "chorus.rate", "chorus.depth"],
+            ),
+            (
+                "DELAY",
+                &[
+                    "delay.on",
+                    "delay.time",
+                    "delay.sync",
+                    "delay.feedback",
+                    "delay.tone",
+                    "delay.mix",
+                ],
+            ),
+            (
+                "REVERB",
+                &["reverb.on", "reverb.size", "reverb.decay", "reverb.mix"],
+            ),
+        ],
         FxKind::Modulation => &[
             ("RATE", &["mode", "rate", "sync", "spread"]),
             ("VOICE", &["depth", "feedback", "delay", "stages"]),
@@ -193,6 +225,7 @@ fn title(kind: FxKind) -> &'static str {
         FxKind::Compressor => "TRANSFER",
         FxKind::Eq => "RESPONSE",
         FxKind::Distortion => "CURVE",
+        FxKind::GuitarAmp => "AMP",
         FxKind::Modulation => "LFO",
         FxKind::Mastering => "LOUDNESS AND BANDS",
         FxKind::Character => "SCREEN",
@@ -209,6 +242,7 @@ fn placement(kind: FxKind) -> (f64, f64) {
         FxKind::Compressor => (LEFT_COMPRESSOR, 0.0),
         FxKind::Eq => (0.0, TOP_EQ),
         FxKind::Distortion => (LEFT_DISTORTION, 0.0),
+        FxKind::GuitarAmp => (LEFT_AMP, 0.0),
         FxKind::Modulation => (LEFT_MODULATION, 0.0),
         FxKind::Mastering => (0.0, TOP_MASTERING),
         FxKind::Character => (0.0, 0.0),
@@ -224,6 +258,12 @@ fn knob_or_cell(desc: &DeviceDescriptor, param: usize) -> (ControlKind, f64, Opt
         k => k,
     };
     let (w, h) = cell_size(kind);
+    // The setup selector shows names such as "Industrial Rhythm".
+    let w = if desc.params[param].key == "setup" {
+        SETUP_CELL_W
+    } else {
+        w
+    };
     (kind, w, h)
 }
 
@@ -347,6 +387,12 @@ fn fx_rects(kind: FxKind, v: Rect) -> FxPanel {
             empty,
             None,
         ),
+        FxKind::GuitarAmp => (
+            Rect::new(v.x0, v.y0 + 1.0, v.x1 - 74.0, v.y1 - 1.0),
+            Rect::new(v.x1 - 66.0, v.y0 + 1.0, v.x1, v.y1 - 1.0),
+            empty,
+            None,
+        ),
         FxKind::Eq => (
             Rect::new(v.x0 + 26.0, v.y0, v.x1 - 40.0, v.y1 - 12.0),
             Rect::new(v.x1 - 32.0, v.y0, v.x1, v.y1 - 12.0),
@@ -466,6 +512,7 @@ pub fn fx_label(p: &atomik_core::ParamDescriptor) -> String {
         "tuner_mute" => "Mute".to_string(),
         "tuner_ref" => "A4 Hz".to_string(),
         "corr_time" => "Corr. time".to_string(),
+        "mic" => "Mic".to_string(),
         "scope_gain" => "Gain".to_string(),
         "transform_cv_trim" | "mix_cv_trim" | "drive_cv_trim" | "feedback_cv_trim"
         | "band2.gain_cv_trim" | "band3.gain_cv_trim" | "band4.gain_cv_trim"

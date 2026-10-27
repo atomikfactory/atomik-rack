@@ -44,6 +44,13 @@ pub fn fx_doc(kind: FxKind) -> RackDoc {
             set(&mut d, "drive", 18.0);
             set(&mut d, "bias", 0.2);
         }
+        FxKind::GuitarAmp => {
+            set(&mut d, "setup", 2.0);
+            set(&mut d, "gain", 8.5);
+            set(&mut d, "cab", 2.0);
+            set(&mut d, "mic", 0.6);
+            set(&mut d, "delay.on", 1.0);
+        }
         FxKind::Modulation => {
             set(&mut d, "mode", 2.0);
             set(&mut d, "depth", 0.8);
@@ -88,6 +95,8 @@ pub fn raw_meters(kind: FxKind) -> Vec<f32> {
             v
         }
         FxKind::Distortion => vec![0.7, 0.5],
+        // in peak, out peak, gate reduction dB
+        FxKind::GuitarAmp => vec![0.6, 0.35, 18.0],
         FxKind::Modulation => vec![],
         FxKind::Mastering => vec![-20.5, -21.2, -23.4, -1.8, 2.0, 3.5, 1.2, 4.0],
         // in peak, out peak, transform_eff, activity
