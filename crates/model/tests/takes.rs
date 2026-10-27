@@ -661,6 +661,40 @@ fn take_groups_round_trip_byte_for_byte_and_the_version_is_twenty_two() {
 }
 
 #[test]
+fn a_project_whose_comp_clip_was_removed_saves_and_loads() {
+    let reg = registry();
+    let mut d = mixed_doc(&reg);
+    let gone = group(&d).clips[0];
+    d.apply(sc(SongCommand::RemoveClip { id: gone }), &reg)
+        .unwrap();
+    let text = save_project(d.doc());
+    let loaded = load_project(&text, &reg).unwrap();
+    let (_, _, g) = loaded.song.take_groups().next().unwrap();
+    assert!(!g.clips.contains(&gone));
+    assert_eq!(g.clips.len(), group(&d).clips.len() - 1);
+    assert_eq!(save_project(&loaded), text);
+}
+
+#[test]
+fn a_comp_clip_id_that_is_not_on_the_lane_is_dropped_on_load() {
+    let reg = registry();
+    let text = save_project(mixed_doc(&reg).doc());
+    let ids = |v: &mut Value| first_group(v)["clips"].as_array_mut().unwrap().clone();
+    let mut before = serde_json::from_str::<Value>(&text).unwrap();
+    let kept = ids(&mut before);
+    // A stale id (a file saved before the writer dropped them) and a take's own id.
+    let stale = edited(&text, |v| {
+        let a = first_group(v)["clips"].as_array_mut().unwrap();
+        a.push(serde_json::json!(9999));
+        a.push(serde_json::json!(1));
+    });
+    let loaded = load_project(&stale, &reg).unwrap();
+    let (_, _, g) = loaded.song.take_groups().next().unwrap();
+    let want: Vec<ClipId> = kept.iter().map(|v| ClipId(v.as_u64().unwrap())).collect();
+    assert_eq!(g.clips, want);
+}
+
+#[test]
 fn a_lane_without_groups_writes_no_field() {
     let reg = registry();
     let d = song_start(&reg);
@@ -720,16 +754,6 @@ fn a_bad_group_is_refused_with_its_json_path() {
     assert!(e.contains("empty"), "{e}");
     let e = load(&|v| first_group(v)["comp"] = serde_json::json!([[0, 0, 99999999999i64]]));
     assert!(e.contains("take_groups[0].comp"), "{e}");
-    let e = load(&|v| first_group(v)["clips"] = serde_json::json!([9999]));
-    assert!(
-        e.contains("take_groups[0].clips[0]") && e.contains("not on this lane"),
-        "{e}"
-    );
-    let e = load(&|v| first_group(v)["clips"] = serde_json::json!([1]));
-    assert!(
-        e.contains("not on this lane"),
-        "take clip ids are not lane clips: {e}"
-    );
     let e = load(&|v| first_group(v)["extra"] = serde_json::json!(1));
     assert!(e.contains("extra"), "{e}");
     // A take reusing the id of a lane clip is a duplicate id.
