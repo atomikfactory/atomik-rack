@@ -252,6 +252,8 @@
 //!   emitting [`UiAction::PluginSettings`]) and [`PluginBannerView`] (the project and unclean-exit
 //!   banner, emitting [`UiAction::PluginBanner`]) take their data from the app and show the
 //!   native-code warning before anything is enabled.
+//! - **Export.** [`ExportView`] is the options and the progress of File > Export Song / Loop as
+//!   Audio File; it emits [`UiAction::Export`] (`EXPORT` with the [`ExportValues`], `CANCEL`).
 //! - **Relink.** [`RelinkView`] lists the audio files a project lost and emits
 //!   [`UiAction::Relink`] (`LOCATE...` per file, `SEARCH FOLDER...`, `CLOSE`); the app feeds it with
 //!   [`RelinkView::set_missing`].
@@ -306,6 +308,7 @@ pub mod cursor;
 pub mod display_list;
 pub mod drum_gen_panel;
 pub mod event;
+pub mod export_panel;
 pub mod file_browser;
 pub mod fx;
 pub mod fx_layout;
@@ -377,6 +380,9 @@ pub use container_editor::{ContainerEditorView, ContainerTab};
 pub use cursor::CursorHint;
 pub use display_list::{DisplayList, Op};
 pub use event::{Key, Modifiers, NumpadKey, PointerButton, UiEvent};
+pub use export_panel::{
+    EXPORT_RATES, ExportAction, ExportDepth, ExportDither, ExportScope, ExportValues, ExportView,
+};
 pub use file_browser::{FileBrowserView, PlacesData, TreeChild};
 pub use io_panel::IoSocketState;
 pub use macros_panel::{MacroAssignRow, MacroBankRow, MacroRow, MacrosAction, MacrosView};

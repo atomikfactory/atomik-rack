@@ -369,6 +369,9 @@ pub enum UiAction {
     /// The relink panel ([`crate::RelinkView`]) asks for something: a file for a missing audio
     /// asset, a folder to search, or to close.
     Relink(crate::relink_panel::RelinkAction),
+    /// The audio export panel ([`crate::ExportView`]) asks for something: start the export with its
+    /// options, or cancel (close the options, stop the render).
+    Export(crate::export_panel::ExportAction),
     /// The quantize panel ([`crate::QuantizeView`]) asks for something: apply its settings, measure
     /// a groove from a clip, delete one, or close.
     Quantize(crate::quantize_panel::QuantizeAction),
