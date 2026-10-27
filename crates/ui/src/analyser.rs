@@ -36,6 +36,10 @@ pub struct AnalyserData {
     pub scope_l: Vec<f32>,
     /// Right channel of the scope frames, oldest first.
     pub scope_r: Vec<f32>,
+    /// An audio track's tuner is shown (the TUNER button is lit).
+    pub tuner_on: bool,
+    /// What an audio track's tuner reads, `None` for no note.
+    pub tuner: Option<atomik_dsp::tuner::Reading>,
 }
 
 /// How the scope draws a pair of samples.

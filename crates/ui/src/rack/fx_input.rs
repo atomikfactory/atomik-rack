@@ -82,7 +82,7 @@ impl RackView {
         };
         if !matches!(
             self.devices[i].fx,
-            Some(FxKind::Spectrum | FxKind::PhaseMeter)
+            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack)
         ) || self.devices[i].analyser == *data
         {
             return;
@@ -102,7 +102,11 @@ impl RackView {
     /// The analyser data of a spectrum or phase meter panel (`None` for other devices).
     pub fn analyser_data(&self, key: &DeviceKey) -> Option<&crate::analyser::AnalyserData> {
         let d = &self.devices[self.device_index(key)?];
-        matches!(d.fx, Some(FxKind::Spectrum | FxKind::PhaseMeter)).then_some(&d.analyser)
+        matches!(
+            d.fx,
+            Some(FxKind::Spectrum | FxKind::PhaseMeter | FxKind::AudioTrack)
+        )
+        .then_some(&d.analyser)
     }
 
     /// Folds a Mod Source meter frame into the scope ring buffer (no allocation after the
@@ -156,6 +160,30 @@ impl RackView {
         let d = &self.devices[self.device_index(key)?];
         let b = d.spec.fx?.button?;
         (!d.folded).then(|| self.rack_to_view(b.center() + d.offset()))
+    }
+
+    /// Centre of the TUNER button of an audio track panel (logical view coordinates).
+    pub fn tuner_button_center(&self, key: &DeviceKey) -> Option<Point> {
+        let d = &self.devices[self.device_index(key)?];
+        let b = d.spec.fx.filter(|f| f.kind == FxKind::AudioTrack)?.button?;
+        (self.flip == super::Flip::Front && !d.folded)
+            .then(|| self.rack_to_view(b.center() + d.offset()))
+    }
+
+    /// A press on the TUNER button: shows or hides the tuner of the track and tells the app
+    /// ([`UiAction::SetTuner`]); the lamp follows at once, the app confirms with its next feed.
+    pub(super) fn tuner_toggle(&mut self, i: usize, out: &mut Vec<UiAction>) {
+        let on = !self.devices[i].analyser.tuner_on;
+        self.devices[i].analyser.tuner_on = on;
+        if !on {
+            self.devices[i].analyser.tuner = None;
+        }
+        self.devices[i].revision += 1;
+        self.repaint = true;
+        out.push(UiAction::SetTuner {
+            device: self.devices[i].key.clone(),
+            on,
+        });
     }
 
     /// The labels of the open "SC from" list (empty when closed).

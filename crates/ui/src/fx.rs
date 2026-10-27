@@ -10,7 +10,7 @@ use atomik_device_sdk::DeviceDescriptor;
 use atomik_model::RackDevice;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 
-/// The nine effects with a hand-made panel and visual.
+/// The effects and the audio track with a hand-made panel and visual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FxKind {
     /// `atomik.reverb`.
@@ -31,11 +31,29 @@ pub enum FxKind {
     Spectrum,
     /// `atomik.phase-meter`: goniometer, correlation, balance, width, levels and loudness.
     PhaseMeter,
+    /// `atomik.audio-track`: the input settings and the tuner display.
+    AudioTrack,
 }
 
 impl FxKind {
     /// Every kind.
-    pub const ALL: [FxKind; 9] = [
+    pub const ALL: [FxKind; 10] = [
+        FxKind::Reverb,
+        FxKind::Compressor,
+        FxKind::Eq,
+        FxKind::Distortion,
+        FxKind::Modulation,
+        FxKind::Mastering,
+        FxKind::Character,
+        FxKind::Spectrum,
+        FxKind::PhaseMeter,
+        FxKind::AudioTrack,
+    ];
+
+    /// The nine effects: every kind but the audio track's, which has the BYPASS switch of an
+    /// effect, the meters of one and a plain "meters change the painting" behaviour that the
+    /// audio track's tuner does not share.
+    pub const EFFECTS: [FxKind; 9] = [
         FxKind::Reverb,
         FxKind::Compressor,
         FxKind::Eq,
@@ -64,6 +82,7 @@ impl FxKind {
             FxKind::Character => "atomik.character",
             FxKind::Spectrum => "atomik.spectrum",
             FxKind::PhaseMeter => "atomik.phase-meter",
+            FxKind::AudioTrack => "atomik.audio-track",
         }
     }
 
@@ -79,6 +98,7 @@ impl FxKind {
             FxKind::Character => CHARACTER_METERS,
             FxKind::Spectrum => SPECTRUM_METERS,
             FxKind::PhaseMeter => phase::COUNT,
+            FxKind::AudioTrack => 0,
         }
     }
 }

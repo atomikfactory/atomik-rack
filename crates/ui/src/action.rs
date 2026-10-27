@@ -113,6 +113,16 @@ pub enum UiAction {
     /// for [`UiAction::ImportAudio`] with the selected audio track (or new tracks) and the
     /// playhead as `tick`. The arrangement view itself has no menu and never emits this.
     ImportAudioDialog,
+    /// The TUNER button of an audio track panel: show (`on`) or hide that track's tuner. The app
+    /// then reads the track's input at the display rate and feeds the panel with
+    /// [`crate::RackView::set_analyser`]; the track is muted while it shows when its
+    /// `tuner_mute` is on. View state, not an undo step.
+    SetTuner {
+        /// The audio track device.
+        device: DeviceKey,
+        /// The tuner is shown.
+        on: bool,
+    },
     /// Open the sample editor on this sampler (double-click on a sampler panel, or its Edit
     /// button): call [`crate::SampleEditorView::open`] and show it in place of the
     /// arrangement, like the piano roll.

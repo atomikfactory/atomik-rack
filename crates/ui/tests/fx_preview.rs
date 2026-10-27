@@ -28,7 +28,7 @@ fn write(name: &str, canvas: CpuCanvas<'_>) {
 fn preview_pngs() {
     let reg = registry();
     let mut text = TextEngine::new();
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         let doc = fx_doc(kind);
         let h = if kind == FxKind::Eq { 560.0 } else { 420.0 };
         let mut v = RackView::new(Theme::dark());
@@ -48,6 +48,30 @@ fn preview_pngs() {
             write(&format!("fx_{slug}{suffix}.png"), canvas);
         }
     }
+
+    // The audio track with the tuner showing a slightly flat low E.
+    let doc = fx_doc(FxKind::AudioTrack);
+    let mut v = RackView::new(Theme::dark());
+    let _ = v.handle(&UiEvent::Resize(Size::new(820.0, 420.0)), &doc, &reg);
+    let _ = v.handle(&UiEvent::ScaleChanged(SCALE), &doc, &reg);
+    v.set_analyser(
+        &key("fx"),
+        &atomik_ui::analyser::AnalyserData {
+            tuner_on: true,
+            tuner: Some(atomik_dsp::tuner::Reading {
+                hz: 81.9,
+                note: atomik_dsp::tuner::Note {
+                    key: 40,
+                    cents: -11.0,
+                },
+                held: false,
+            }),
+            ..Default::default()
+        },
+    );
+    let mut canvas = CpuCanvas::new((820.0 * SCALE) as u16, (420.0 * SCALE) as u16, &mut text);
+    v.paint(&mut canvas, &doc, &reg);
+    write("fx_audio_track_tuner.png", canvas);
 
     // The compressor with a sidechain source and the "SC from" list open.
     let mut doc = fx_doc(FxKind::Compressor);

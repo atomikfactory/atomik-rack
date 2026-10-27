@@ -197,6 +197,7 @@ pub fn fx_visual<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info
                 bypassed: crate::paint::bypassed(info),
             },
         ),
+        FxKind::AudioTrack => crate::tuner_panel::paint(c, theme, fx, info, p.get("tuner_ref")),
     }
 }
 

@@ -97,7 +97,7 @@ fn overlaps(a: &Rect, b: &Rect) -> bool {
 
 #[test]
 fn every_param_and_socket_is_placed_once_and_nothing_overlaps() {
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         let d = desc(kind);
         let spec = fx_layout(kind, d);
         let mut params: Vec<usize> = spec.front.iter().map(|c| c.param).collect();
@@ -229,7 +229,7 @@ fn sections_are_labelled_as_documented() {
             "{want}"
         );
     }
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         let l = labels(kind);
         let mut u = l.clone();
         u.sort();
@@ -287,7 +287,7 @@ fn the_visuals_draw_their_readouts() {
 
 #[test]
 fn meter_values_change_the_painting() {
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         if kind == FxKind::Modulation {
             // Nothing to feed: the panel is identical.
             assert_eq!(
@@ -370,7 +370,7 @@ fn a_hidden_panel_does_not_request_repaints() {
 
 #[test]
 fn meter_buffers_have_the_documented_sizes() {
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         let (_, mut v) = rack(kind);
         v.set_device_meter_values(&key("fx"), &raw_meters(kind));
         assert_eq!(
@@ -384,7 +384,7 @@ fn meter_buffers_have_the_documented_sizes() {
 
 #[test]
 fn goldens_of_every_panel() {
-    for kind in FxKind::ALL {
+    for kind in FxKind::EFFECTS {
         if kind == FxKind::Character {
             // Its goldens (front states, back, contact sheet) live in `character_panel.rs`.
             continue;
@@ -660,7 +660,7 @@ proptest! {
         kind in 0usize..7,
         steps in proptest::collection::vec((0u8..4, 0.0f64..1.0, 0.0f64..1.0, 1u8..3), 1..24),
     ) {
-        let kind = FxKind::ALL[kind];
+        let kind = FxKind::EFFECTS[kind];
         let (doc, mut v) = rack(kind);
         let reg = registry();
         let mut document = Document::new(doc);
