@@ -591,7 +591,8 @@ impl<S: EngineSink> AppCore<S> {
         }
         let mut paths = paths;
         let mut ignored = Vec::new();
-        if self.is_loop_slicer(&device) && paths.len() > 1 {
+        // A loop slicer takes one loop and a granular sampler one sample.
+        if (self.is_loop_slicer(&device) || self.is_granular(&device)) && paths.len() > 1 {
             ignored = paths.split_off(1).iter().map(|p| display_name(p)).collect();
         }
         let samples = SampleImport {
@@ -603,8 +604,9 @@ impl<S: EngineSink> AppCore<S> {
         self.start_import(paths, ImportTarget::NewTracks, 0, Some(samples));
     }
 
-    /// Adds the zones of a finished sample import in one undo step. Returns a note for the
-    /// status message when files found no pad (a drum machine).
+    /// Adds the zones of a finished sample import in one undo step (a granular sampler's sample
+    /// replaces the old one). Returns a note for the status message when files found no pad (a
+    /// drum machine) or were left out (a granular sampler takes one).
     fn finish_sample_import(&mut self, import: SampleImport) -> Option<String> {
         if import.files.is_empty() {
             return None;
@@ -630,12 +632,22 @@ impl<S: EngineSink> AppCore<S> {
         let (zones, dropped) =
             super::drums::zones_after_import(device, &import.files, import.at_key);
         let name = device.name.clone();
+        let granular = device.type_id == super::samples::GRANULAR;
         // A rejection is already reported.
         let _ = self.apply_command(Command::SetZones {
             device: import.device,
             zones,
             merge: None,
         });
+        if granular {
+            return (!import.ignored.is_empty()).then(|| {
+                format!(
+                    "{name}: a granular sampler takes one sample; ignored {} file(s): {}",
+                    import.ignored.len(),
+                    import.ignored.join(", ")
+                )
+            });
+        }
         (!dropped.is_empty()).then(|| {
             format!(
                 "{name}: no empty pad for {} file(s): {}",

@@ -49,7 +49,8 @@ const NEW_GRID: StepGrid = StepGrid {
 
 /// The zones after importing `files` into `device`, and the names of the files that found no
 /// pad (a drum machine's background drop with more files than empty pads; in the byte order
-/// of the file names, the last ones).
+/// of the file names, the last ones). A granular sampler's one zone is the first file, replacing
+/// the old zones.
 pub(super) fn zones_after_import(
     device: &RackDevice,
     files: &[(String, String, u64)],
@@ -66,6 +67,10 @@ pub(super) fn zones_after_import(
                 (zones, names.into_iter().skip(skip).cloned().collect())
             }
         };
+    }
+    if device.type_id == super::samples::GRANULAR {
+        // One sample: the first file replaces the old one.
+        return (auto_map(&files[..files.len().min(1)], at_key), Vec::new());
     }
     let mut zones = device.zones.clone();
     zones.extend(auto_map(files, at_key));

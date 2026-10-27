@@ -232,3 +232,76 @@ fn other_params_named_sound_or_setup_are_left_alone() {
     });
     assert!(r.is_err() || c.doc().resolve(&key("fm")).unwrap().params == before);
 }
+
+// ----------------------------------------------------------------------- granular sampler sounds
+
+fn granular_core() -> AppCore<RecordingSink> {
+    let mut c = AppCore::new(RecordingSink::new());
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.granular".into(),
+        key: Some(key("gr")),
+    })
+    .unwrap();
+    c
+}
+
+fn granular_value<S: EngineSink>(c: &AppCore<S>, param: &str) -> f32 {
+    let dev = c.doc().resolve(&key("gr")).unwrap();
+    dev.params.get(param).copied().unwrap_or_else(|| {
+        atomik_devices::granular::DESCRIPTOR
+            .param_by_key(param)
+            .unwrap()
+            .default
+    })
+}
+
+fn granular_set<S: EngineSink>(c: &mut AppCore<S>, param: &str, value: f32) {
+    c.apply_command(Command::SetParam {
+        key: key("gr"),
+        param: param.into(),
+        value,
+        merge: None,
+    })
+    .unwrap();
+}
+
+#[test]
+fn choosing_a_granular_sound_sets_every_param_of_it_in_one_undo_step() {
+    use atomik_devices::granular::sounds;
+    for i in 0..sounds::SOUNDS.len() {
+        let mut c = granular_core();
+        granular_set(&mut c, "pos.position", 0.777);
+        granular_set(&mut c, "sound", i as f32);
+        assert_eq!(granular_value(&c, "sound"), i as f32);
+        for (param, want) in sounds::values(i) {
+            assert_eq!(
+                granular_value(&c, param),
+                want,
+                "{}: {param}",
+                sounds::SOUND_NAMES[i]
+            );
+        }
+        assert!(c.undo());
+        assert_eq!(granular_value(&c, "sound"), 0.0, "one undo");
+        assert_eq!(
+            granular_value(&c, "pos.position"),
+            0.777,
+            "back to the tweak"
+        );
+    }
+}
+
+#[test]
+fn choosing_a_granular_sound_reaches_the_engine_as_plain_param_changes() {
+    let mut c = granular_core();
+    let before = c.sink().calls.len();
+    granular_set(&mut c, "sound", 3.0);
+    // Stutter: 9 grains a second, percussive windows.
+    assert_eq!(granular_value(&c, "grain.density"), 9.0);
+    assert_eq!(granular_value(&c, "grain.window"), 2.0);
+    assert!(
+        c.sink().calls.len() > before + 10,
+        "a batch of param changes"
+    );
+}

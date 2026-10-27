@@ -39,7 +39,16 @@ use atomik_ui::SampleEditorView;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+/// The granular sampler's device type: it plays one sample, so a drop replaces its zone.
+pub(super) const GRANULAR: &str = "atomik.granular";
+
 impl<S: EngineSink> AppCore<S> {
+    pub(super) fn is_granular(&self, device: &DeviceKey) -> bool {
+        self.doc()
+            .resolve(device)
+            .is_some_and(|d| d.type_id == GRANULAR)
+    }
+
     // ------------------------------------------------------------------ sample editor pane
 
     /// The sample editor.
