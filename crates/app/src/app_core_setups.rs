@@ -1,10 +1,11 @@
 //! Device setups: a `setup` choice that loads a whole set of param values.
 //!
-//! The guitar amp has a `setup` param (Clean, Crunch, Industrial Rhythm, 80s Lead, Synthwave) and
-//! the FM synth a `sound` param (Init, E. Piano, Bell, Bass, Brass, Pad). The device itself
-//! ignores it; here a `SetParam` of `setup` (or `sound`) is turned into a `Command::Batch`: the
-//! choice param followed by every param of the chosen setup (`atomik_devices::guitar_amp::setups`,
-//! `atomik_devices::fm_synth::sounds`).
+//! The guitar amp has a `setup` param (Clean, Crunch, Industrial Rhythm, 80s Lead, Synthwave), the
+//! FM synth a `sound` param (Init, E. Piano, Bell, Bass, Brass, Pad) and the granular sampler a
+//! `sound` param (Init, Frozen Pad, Shimmer, Stutter, Texture). The device itself ignores it; here
+//! a `SetParam` of `setup` (or `sound`) is turned into a `Command::Batch`: the choice param
+//! followed by every param of the chosen setup (`atomik_devices::guitar_amp::setups`,
+//! `atomik_devices::fm_synth::sounds`, `atomik_devices::granular::sounds`).
 //! A batch is one undo step, so one undo brings back everything the setup changed, the player tweaks
 //! from there with ordinary param changes, and choosing the same setup again restores its values.
 //! The conversion sits in front of the model, so the rack panel, MIDI, the MCP tools and the macros'
@@ -17,6 +18,8 @@ use super::*;
 const SETUP_DEVICE: &str = atomik_devices::guitar_amp::DESCRIPTOR.type_id;
 /// The type id of the FM synth, whose `sound` param loads a factory sound.
 const SOUND_DEVICE: &str = atomik_devices::fm_synth::DESCRIPTOR.type_id;
+/// The type id of the granular sampler, whose `sound` param loads a factory sound.
+const GRANULAR_DEVICE: &str = atomik_devices::granular::DESCRIPTOR.type_id;
 
 impl<S: EngineSink> AppCore<S> {
     /// `command`, or, when it chooses a setup on a guitar amp, the batch that loads it.
@@ -41,6 +44,11 @@ impl<S: EngineSink> AppCore<S> {
                     let sounds = &atomik_devices::fm_synth::sounds::SOUNDS;
                     let i = clamp_index(*value, sounds.len());
                     ("sound", i, atomik_devices::fm_synth::sounds::values(i))
+                }
+                (GRANULAR_DEVICE, "sound") => {
+                    let sounds = &atomik_devices::granular::sounds::SOUNDS;
+                    let i = clamp_index(*value, sounds.len());
+                    ("sound", i, atomik_devices::granular::sounds::values(i))
                 }
                 _ => return command,
             };

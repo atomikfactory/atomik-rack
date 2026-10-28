@@ -151,6 +151,8 @@ pub struct PanelSpec {
     pub wavetable: Option<crate::wavetable_panel::WavetablePanel>,
     /// The FM synth panel of an `atomik.fm-synth` (see [`crate::fm_panel`]).
     pub fm: Option<crate::fm_panel::FmPanel>,
+    /// The granular sampler panel of an `atomik.granular` (see [`crate::granular_panel`]).
+    pub granular: Option<crate::granular_panel::GranularPanel>,
     /// The container panel of an `atomik.container` (see
     /// [`crate::container_panel`]).
     pub container: Option<crate::container_panel::ContainerPanel>,
@@ -377,6 +379,7 @@ fn layout_with(
         modsrc: None,
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         samples: samples.then(|| {
@@ -861,6 +864,7 @@ pub fn drum_layout(desc: &DeviceDescriptor) -> PanelSpec {
         modsrc: None,
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         front,
@@ -999,6 +1003,7 @@ pub fn slicer_layout(desc: &DeviceDescriptor) -> PanelSpec {
         modsrc: None,
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         front,
@@ -1056,6 +1061,7 @@ pub fn from_panel_layout(layout: &PanelLayout, desc: &DeviceDescriptor) -> Panel
         modsrc: None,
         wavetable: None,
         fm: None,
+        granular: None,
         container: None,
         plugin: None,
         front,

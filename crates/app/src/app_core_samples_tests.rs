@@ -192,6 +192,138 @@ fn only_samplers_take_dropped_samples() {
     );
 }
 
+// ------------------------------------------------------------------ granular sampler: one sample
+
+const GRANULAR_TYPE: &str = "atomik.granular";
+
+fn granular_core() -> AppCore<RecordingSink> {
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: GRANULAR_TYPE.into(),
+        key: Some(key("grn")),
+    })
+    .unwrap();
+    c.sink_mut().take();
+    c
+}
+
+fn granular_zones(c: &AppCore<RecordingSink>) -> Vec<ZoneDoc> {
+    c.doc().device(&key("grn")).unwrap().zones.clone()
+}
+
+fn drop_on_granular(c: &mut AppCore<RecordingSink>, paths: Vec<PathBuf>, at_key: Option<u8>) {
+    c.handle_action(UiAction::ImportSamples {
+        paths,
+        device: key("grn"),
+        at_key,
+    });
+    c.wait_background();
+}
+
+#[test]
+fn a_drop_onto_a_granular_sampler_is_its_one_sample_and_the_next_drop_replaces_it() {
+    let t = Tmp::new("granular-drop");
+    let mut c = granular_core();
+    drop_on_granular(&mut c, vec![wav(&t, "pad.wav", 4_800, 1.0)], None);
+    assert!(c.last_rejection().is_none(), "{:?}", c.last_rejection());
+    let zones = granular_zones(&c);
+    assert_eq!(zones.len(), 1);
+    assert_eq!(
+        (zones[0].key_lo, zones[0].key_hi, zones[0].root_key),
+        (0, 127, 60)
+    );
+    assert_eq!((zones[0].start, zones[0].end), (0, 4_800));
+    // One map for the engine, with the one zone.
+    let sent = sample_calls(&c.sink_mut().take());
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].1.as_ref().unwrap().zones().len(), 1);
+    // A second drop replaces it, in one undo step.
+    drop_on_granular(&mut c, vec![wav(&t, "other.wav", 2_400, 0.5)], Some(48));
+    let zones = granular_zones(&c);
+    assert_eq!(zones.len(), 1);
+    assert_eq!((zones[0].root_key, zones[0].end), (48, 2_400));
+    assert!(c.undo());
+    let back = granular_zones(&c);
+    assert_eq!(
+        (back.len(), back[0].end),
+        (1, 4_800),
+        "one undo brings the first sample back"
+    );
+}
+
+#[test]
+fn a_drop_of_several_files_onto_a_granular_sampler_keeps_the_first_and_names_the_rest() {
+    let t = Tmp::new("granular-many");
+    let mut c = granular_core();
+    drop_on_granular(
+        &mut c,
+        vec![
+            wav(&t, "first_C3.wav", 4_800, 1.0),
+            wav(&t, "second.wav", 2_400, 0.5),
+            wav(&t, "third.wav", 1_200, 0.25),
+        ],
+        None,
+    );
+    let zones = granular_zones(&c);
+    assert_eq!(zones.len(), 1);
+    assert_eq!(
+        zones[0].root_key, 48,
+        "the note name of the file is the root"
+    );
+    assert_eq!(c.doc().assets.len(), 1, "only the first file is imported");
+    let message = c.last_rejection().unwrap();
+    assert!(
+        message.contains("takes one sample")
+            && message.contains("second.wav")
+            && message.contains("third.wav"),
+        "{message}"
+    );
+}
+
+#[test]
+fn the_granular_panel_gets_the_peaks_of_its_sample_and_the_live_grains() {
+    let t = Tmp::new("granular-feed");
+    let mut c = granular_core();
+    drop_on_granular(&mut c, vec![wav(&t, "pad.wav", 4_800, 1.0)], None);
+    let id = c.device_id(&key("grn")).unwrap();
+    // The device's published values reach the view like an effect's.
+    let mut values = vec![-1.0f32; 31];
+    values[0] = 1.0;
+    values[1] = 0.4;
+    values[2] = 0.1;
+    values[3] = 1.0;
+    values[4] = 1.0;
+    values[5] = 0.42;
+    values[6] = 0.2;
+    c.sink_mut().device_values.insert(id, (values.clone(), 1));
+    c.frame();
+    assert_eq!(c.view().device_meters(&key("grn")), &values[..]);
+    // The peaks of the dropped file are on the panel: its picture differs from the same panel
+    // without them (the zone's asset is the first one of the document).
+    let hash = c.doc().assets.keys().next().unwrap().clone();
+    let (doc, registry) = (c.doc().clone(), default_registry());
+    let mut with = atomik_ui::DisplayList::new();
+    c.view_mut().paint(&mut with, &doc, &registry);
+    c.view_mut().clear_sample_peaks(&hash);
+    let mut without = atomik_ui::DisplayList::new();
+    c.view_mut().paint(&mut without, &doc, &registry);
+    assert_ne!(
+        with.to_json(),
+        without.to_json(),
+        "the waveform is drawn from the peaks"
+    );
+}
+
+#[test]
+fn a_granular_sampler_opens_the_sample_editor_on_its_zone() {
+    let t = Tmp::new("granular-editor");
+    let mut c = granular_core();
+    drop_on_granular(&mut c, vec![wav(&t, "pad.wav", 4_800, 1.0)], None);
+    c.open_sample_editor(key("grn"));
+    assert_eq!(c.sample_editor_device(), Some(&key("grn")));
+}
+
 // ------------------------------------------------------------------ maps to the engine
 
 #[test]
