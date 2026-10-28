@@ -550,7 +550,12 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
         ],
         ContextTarget::TempoLane => vec![item("sequencer.tempo_add_point", true)],
         ContextTarget::RulerMeter => {
-            let mut v = vec![item("sequencer.marker_end_here", true), Spec::Separator];
+            let mut v = vec![
+                item("sequencer.locator_left_here", true),
+                item("sequencer.locator_right_here", true),
+                item("sequencer.marker_end_here", true),
+                Spec::Separator,
+            ];
             v.extend(
                 METERS
                     .iter()

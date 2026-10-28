@@ -3963,6 +3963,8 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::AddMarker
             | AppCommand::AddRangeFromLoop
             | AppCommand::SetEndMarker
+            | AppCommand::SetLeftLocator
+            | AppCommand::SetRightLocator
             | AppCommand::PreviousMarker
             | AppCommand::NextMarker => {
                 if let Some((id, arg)) = command.command_id()

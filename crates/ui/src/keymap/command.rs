@@ -1044,6 +1044,20 @@ const COMMANDS: &[CommandDef] = &[
     .decline(),
     cmd("sequencer.join", "Join", G::Sequencer, C::Sequencer),
     cmd(
+        "sequencer.locator_left_here",
+        "Set Left Locator Here",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.locator_right_here",
+        "Set Right Locator Here",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.marker_add_here",
         "Add Marker Here",
         G::Sequencer,
@@ -1460,6 +1474,20 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "transport.set_end_marker",
         "Set End Marker at Playhead",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "transport.set_left_locator",
+        "Set Left Locator at Playhead",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "transport.set_right_locator",
+        "Set Right Locator at Playhead",
         G::Transport,
         C::Global,
     )

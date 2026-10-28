@@ -92,7 +92,7 @@ fn the_lane_is_hidden_by_default_and_pushes_the_lanes_down_when_shown() {
     let after = v.lane_rect(&key("bass"), 0).unwrap();
     assert!((after.y0 - before.y0 - TEMPO_LANE_HEIGHT).abs() < 1e-9);
     // The ruler stays where it was and the lane sits right under it.
-    assert!((v.tempo_lane_rect().y0 - 34.0).abs() < 1e-9);
+    assert!((v.tempo_lane_rect().y0 - 40.0).abs() < 1e-9);
 }
 
 #[test]

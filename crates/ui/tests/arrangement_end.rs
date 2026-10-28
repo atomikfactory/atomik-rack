@@ -59,9 +59,10 @@ fn loops(actions: &[UiAction]) -> usize {
         .count()
 }
 
-/// A point on the End flag of `v`, `dx` pixels left of the End line at `end`.
+/// A point on the End flag of `v`, `dx` pixels right of the End line at `end` (the flag hangs
+/// to the right of its line).
 fn flag(v: &ArrangementView, end: i64, dx: f64) -> Point {
-    Point::new(v.tick_to_x(end) - dx, v.end_flag_y())
+    Point::new(v.tick_to_x(end) + dx, v.end_flag_y())
 }
 
 /// Whether a fill of the End shade starts at x `x` in `dl`.
@@ -155,7 +156,8 @@ fn clicking_the_flag_without_moving_changes_nothing() {
 }
 
 #[test]
-fn the_flag_wins_over_a_locator_under_it_and_the_band_below_keeps_the_locator() {
+fn the_flag_wins_over_the_line_of_a_locator_and_the_band_below_keeps_the_locator() {
+    // The right locator's line is at the End: the End's flag hangs on the other side of it.
     let (mut doc, reg, mut v) = setup(Snap::Bar);
     doc.song.end = 4 * BAR;
     v.sync(&doc, &reg);

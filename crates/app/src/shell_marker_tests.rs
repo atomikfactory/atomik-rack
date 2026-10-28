@@ -88,6 +88,8 @@ fn the_strip_is_on_and_the_list_off_by_default_and_the_commands_toggle_and_save_
         ("transport.prev_marker", AppCommand::PreviousMarker),
         ("transport.next_marker", AppCommand::NextMarker),
         ("transport.set_end_marker", AppCommand::SetEndMarker),
+        ("transport.set_left_locator", AppCommand::SetLeftLocator),
+        ("transport.set_right_locator", AppCommand::SetRightLocator),
     ] {
         assert_eq!(AppCommand::from_command(id, None), Some(command), "{id}");
         assert_eq!(command.command_id(), Some((id, None)));
@@ -240,6 +242,24 @@ fn the_end_marker_menu_command_sets_the_end_at_the_playhead_and_undoes() {
 }
 
 #[test]
+fn the_locator_menu_commands_set_each_locator_at_the_playhead_one_undo_step_each() {
+    let mut s = shell();
+    let before = s.core().doc().song.loop_range;
+    let enabled = s.core().doc().song.loop_enabled;
+    locate(&mut s, 5 * BAR + 7);
+    s.execute(AppCommand::SetRightLocator);
+    assert_eq!(s.core().doc().song.loop_range, (before.0, 5 * BAR + 7));
+    locate(&mut s, 2 * BAR + 3);
+    s.execute(AppCommand::SetLeftLocator);
+    assert_eq!(s.core().doc().song.loop_range, (2 * BAR + 3, 5 * BAR + 7));
+    assert_eq!(s.core().doc().song.loop_enabled, enabled);
+    s.core_mut().undo();
+    assert_eq!(s.core().doc().song.loop_range, (before.0, 5 * BAR + 7));
+    s.core_mut().undo();
+    assert_eq!(s.core().doc().song.loop_range, before);
+}
+
+#[test]
 fn the_menus_list_the_marker_items() {
     let s = shell();
     let menus = menus(&s.menu_state(), s.keymap());
@@ -257,6 +277,8 @@ fn the_menus_list_the_marker_items() {
         ("Add Marker", Some("Shift+M")),
         ("Add Range Marker from Loop", None),
         ("Set End Marker at Playhead", None),
+        ("Set Left Locator at Playhead", None),
+        ("Set Right Locator at Playhead", None),
         ("Previous Marker", Some(",")),
         ("Next Marker", Some(".")),
     ] {
