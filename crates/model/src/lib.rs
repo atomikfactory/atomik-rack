@@ -9,6 +9,7 @@
 mod audio_edit;
 mod audio_notes;
 pub mod automation_rec;
+mod automation_view;
 mod clip_io;
 mod console_bus;
 mod console_cmd;
@@ -124,6 +125,7 @@ pub use audio_edit::{
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use automation_rec::WriteMode;
+pub use automation_view::ShownValues;
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
     Console, ConsoleBus, ConsoleChannel, ConsoleCommand, FX_SLOTS, INSERT_SLOTS, InsertEffect,

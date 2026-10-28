@@ -1092,6 +1092,7 @@ pub fn empty_song(bpm: f64) -> Song {
 
 mod flatten;
 
+pub use crate::automation_view::automation_value_at;
 pub use flatten::{
     AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
     flatten_automation, flatten_controllers, flatten_notes,

@@ -447,7 +447,7 @@ fn emit_notes(
 
 /// The lane's value at a fractional tick: held before the first and after the last point,
 /// linear or step in between (equal ticks: the last point wins, a jump).
-pub(crate) fn lane_value(points: &[SongPoint], tick: f64) -> f32 {
+pub fn lane_value(points: &[SongPoint], tick: f64) -> f32 {
     let k = points.partition_point(|p| p.tick.0 as f64 <= tick);
     let Some(p) = k.checked_sub(1).and_then(|i| points.get(i)) else {
         return points.first().map_or(0.0, |p| p.value);

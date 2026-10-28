@@ -127,6 +127,7 @@ impl RackView {
         self.crumb_hover = None;
         self.pending_scope = None;
         self.driven.clear();
+        self.automated.clear();
         self.epoch += 1 << 20;
         self.browser.scope_depth = self.scope.len();
         self.repaint = true;
@@ -142,10 +143,13 @@ impl RackView {
     ) -> Cow<'a, RackDoc> {
         if self.scope.is_empty() {
             self.compute_bank_driven(doc);
-            // The panels show the value a macro gives a param, not the one stored under it.
-            return match doc.view_with_driven_values(registry) {
+            self.compute_automated(doc);
+            // The panels show the value an automation lane gives a param while the song plays
+            // or is positioned (`shown`), and the value a macro gives it, not the stored one.
+            let base = doc.view_with_shown(&self.shown);
+            return match base.view_with_driven_values(registry) {
                 Some(view) => Cow::Owned(view),
-                None => Cow::Borrowed(doc),
+                None => base,
             };
         }
         let mut keep = 0;
@@ -165,6 +169,7 @@ impl RackView {
             self.popped += levels;
             if keep == 0 {
                 self.driven.clear();
+                self.automated.clear();
                 return Cow::Borrowed(doc);
             }
         }
@@ -176,6 +181,7 @@ impl RackView {
             })
             .collect();
         self.compute_driven(doc);
+        self.automated.clear();
         let Some(container) = path.as_ref().and_then(|p| doc.inner(p)) else {
             return Cow::Borrowed(doc);
         };
@@ -240,6 +246,20 @@ impl RackView {
                 ));
             }
         }
+    }
+
+    /// Which params of the top-level devices have an automation lane (their controls are
+    /// marked).
+    fn compute_automated(&mut self, doc: &RackDoc) {
+        self.automated.clear();
+        for (device, param) in doc.automated_params() {
+            self.automated.entry(device).or_default().push(param);
+        }
+    }
+
+    /// The params of a shown device that have an automation lane, for its panel.
+    pub(super) fn automated_for(&self, key: &DeviceKey) -> Vec<String> {
+        self.automated.get(key).cloned().unwrap_or_default()
     }
 
     /// The driven params of a shown device, for its panel.
