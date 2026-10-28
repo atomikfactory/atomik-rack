@@ -8,7 +8,8 @@ use atomik_dsp::tuner::{Note, Reading};
 use atomik_ui::analyser::AnalyserData;
 use atomik_ui::autolayout::auto_layout;
 use atomik_ui::fx::FxKind;
-use atomik_ui::fx_layout::fx_layout;
+use atomik_ui::fx_layout::{audio_track_layout, fx_layout};
+use atomik_ui::paint::{name_rect, plate_rect, tuner_button_rect};
 use atomik_ui::tuner_panel::{self, geometry, needle_x};
 use atomik_ui::{DisplayList, Flip, RackView, UiAction};
 use std::path::PathBuf;
@@ -79,9 +80,9 @@ fn the_audio_track_is_an_fx_kind_with_a_tuner_panel() {
     let spec = fx_layout(FxKind::AudioTrack, d);
     let p = spec.fx.expect("a visual");
     assert_eq!(p.kind, FxKind::AudioTrack);
-    let button = p.button.expect("the TUNER button");
-    assert!(p.visual.contains_rect(button) && p.visual.contains_rect(p.plot));
-    assert!(button.x1 < p.plot.x0, "the button is left of the display");
+    // The TUNER button is on the name plate, not in the display.
+    assert!(p.button.is_none());
+    assert!(p.visual.contains_rect(p.plot));
     assert!(
         p.plot.width() > 300.0 && p.plot.height() > 60.0,
         "{:?}",
@@ -103,6 +104,28 @@ fn the_audio_track_is_an_fx_kind_with_a_tuner_panel() {
     // Every socket is on the back, as in the generic layout.
     assert_eq!(spec.back.len(), auto_layout(d).back.len());
     assert!(!spec.front.is_empty() && spec.height_units >= 2);
+}
+
+#[test]
+fn a_hidden_tuner_collapses_the_display_and_its_settings() {
+    let d = registry().get("atomik.audio-track").unwrap().descriptor;
+    let shown = audio_track_layout(d, true);
+    let hidden = audio_track_layout(d, false);
+    assert!(shown.fx.is_some() && hidden.fx.is_none());
+    assert!(
+        hidden.height_units < shown.height_units,
+        "the panel is shorter"
+    );
+    let keys = |s: &atomik_ui::autolayout::PanelSpec| {
+        let mut k: Vec<&str> = s.front.iter().map(|c| d.params[c.param].key).collect();
+        k.sort_unstable();
+        k
+    };
+    assert_eq!(keys(&hidden), ["monitor", "rec_clip_safe", "rec_gain"]);
+    assert_eq!(keys(&shown), keys(&fx_layout(FxKind::AudioTrack, d)));
+    // The back is the same whichever way the front is.
+    assert_eq!(hidden.back.len(), shown.back.len());
+    assert!(hidden.front_sections.iter().all(|s| s.label != "TUNER"));
 }
 
 #[test]
@@ -190,17 +213,19 @@ fn the_needle_is_green_amber_or_red() {
 }
 
 #[test]
-fn a_hidden_tuner_says_how_to_show_it() {
+fn a_hidden_tuner_shows_only_the_button() {
     let t = texts_of(&AnalyserData::default());
+    assert!(has(&t, "TUNER"), "the button: {t:?}");
     for s in [
-        "TUNER",
         "TUNER OFF",
+        "PLAY A NOTE",
         "Press TUNER to tune the input",
         "A4 = 440 Hz",
+        "A4 Hz",
+        "Mute",
     ] {
-        assert!(has(&t, s), "{s:?}: {t:?}");
+        assert!(!has(&t, s), "{s:?}: {t:?}");
     }
-    assert!(!has(&t, "PLAY A NOTE"));
 }
 
 #[test]
@@ -227,13 +252,14 @@ fn a_reading_shows_the_note_the_frequency_and_the_cents() {
     let mut hidden = shown(Some(reading(69, 0.0, 440.0, false)));
     hidden.tuner_on = false;
     let t = texts_of(&hidden);
-    assert!(has(&t, "TUNER OFF") && !has(&t, "IN TUNE"), "{t:?}");
+    assert!(!has(&t, "IN TUNE") && !has(&t, "E"), "{t:?}");
 }
 
 #[test]
 fn the_reference_pitch_is_the_tracks_param() {
     let (mut doc, mut v) = rack(FxKind::AudioTrack);
     doc.devices[0].params.insert("tuner_ref".into(), 432.0);
+    v.set_analyser(&key("fx"), &shown(None));
     v.sync(&doc, &registry());
     let t: Vec<String> = paint(&doc, &mut v)
         .texts()
@@ -241,6 +267,47 @@ fn the_reference_pitch_is_the_tracks_param() {
         .map(str::to_string)
         .collect();
     assert!(has(&t, "A4 = 432 Hz"), "{t:?}");
+}
+
+#[test]
+fn the_button_sits_on_the_plate_under_the_name() {
+    let (_, v) = rack(FxKind::AudioTrack);
+    let b = v.tuner_button_center(&key("fx")).expect("the button");
+    let dev = v.device_rect(&key("fx")).unwrap();
+    let want = v.rack_to_view(tuner_button_rect().center() + dev.origin().to_vec2());
+    assert_eq!(b, want);
+    let plate = plate_rect(dev.height(), false);
+    let b = b - dev.origin().to_vec2();
+    let name = name_rect(dev.height(), false, true);
+    assert!(
+        plate.contains(b) && b.x < atomik_ui::autolayout::CONTENT_X.0,
+        "{b:?} {plate:?}"
+    );
+    assert!(b.y > name.y0 + 16.0, "under the name: {b:?} {name:?}");
+}
+
+#[test]
+fn the_tuner_is_off_and_the_panel_short_until_the_button_is_pressed() {
+    let (doc, mut v) = rack(FxKind::AudioTrack);
+    let reg = registry();
+    let off = v.device_rect(&key("fx")).unwrap().height();
+    assert!(!v.analyser_data(&key("fx")).unwrap().tuner_on);
+    let b = v.tuner_button_center(&key("fx")).unwrap();
+    let _ = v.handle(&down(b), &doc, &reg);
+    let _ = v.handle(&up(b), &doc, &reg);
+    let on = v.device_rect(&key("fx")).unwrap().height();
+    assert!(on > off, "the display opens: {off} then {on}");
+    // The button does not move when the panel grows: a second click toggles it back.
+    assert_eq!(v.tuner_button_center(&key("fx")), Some(b));
+    let t: Vec<String> = paint(&doc, &mut v)
+        .texts()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(has(&t, "PLAY A NOTE") && has(&t, "A4 Hz"), "{t:?}");
+    let _ = v.handle(&down(b), &doc, &reg);
+    let _ = v.handle(&up(b), &doc, &reg);
+    assert_eq!(v.device_rect(&key("fx")).unwrap().height(), off);
 }
 
 #[test]

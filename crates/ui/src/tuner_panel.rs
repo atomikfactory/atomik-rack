@@ -17,8 +17,8 @@ use crate::analyser::AnalyserData;
 use crate::autolayout::FxPanel;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::fx_paint::{lcd, small};
-use crate::paint::{PanelInfo, edit_button};
-use crate::theme::{Theme, hsl, mix};
+use crate::paint::PanelInfo;
+use crate::theme::{Theme, hsl};
 use atomik_dsp::tuner::{IN_TUNE_CENTS, Reading, key_name, key_octave};
 use vello::kurbo::{Circle, Line, Point, Rect, RoundedRect};
 use vello::peniko::Color;
@@ -126,7 +126,7 @@ fn alpha(c: Color, a: f32) -> Color {
     c.with_alpha(a)
 }
 
-/// Paints the TUNER button and the display of an audio track panel. `ref_hz` is the track's
+/// Paints the display of an audio track panel (the TUNER button is on the name plate). `ref_hz` is the track's
 /// `tuner_ref`.
 pub fn paint<C: Canvas + ?Sized>(
     c: &mut C,
@@ -136,16 +136,6 @@ pub fn paint<C: Canvas + ?Sized>(
     ref_hz: f32,
 ) {
     let data: &AnalyserData = info.analyser;
-    if let Some(b) = fx.button {
-        edit_button(c, theme, b, "TUNER", true);
-        let led = pt(b.x1 - 10.0, b.center().y);
-        if data.tuner_on {
-            c.fill_with(Circle::new(led, 5.0), alpha(info.accent, 0.3));
-            c.fill_with(Circle::new(led, 2.4), mix(info.accent, Color::WHITE, 0.3));
-        } else {
-            c.fill_with(Circle::new(led, 2.4), alpha(Color::WHITE, 0.14));
-        }
-    }
     let r = fx.plot;
     lcd(c, theme, r);
     let g = geometry(r);

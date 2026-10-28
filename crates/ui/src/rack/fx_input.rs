@@ -191,9 +191,8 @@ impl RackView {
     /// Centre of the TUNER button of an audio track panel (logical view coordinates).
     pub fn tuner_button_center(&self, key: &DeviceKey) -> Option<Point> {
         let d = &self.devices[self.device_index(key)?];
-        let b = d.spec.fx.filter(|f| f.kind == FxKind::AudioTrack)?.button?;
-        (self.flip == super::Flip::Front && !d.folded)
-            .then(|| self.rack_to_view(b.center() + d.offset()))
+        (d.fx == Some(FxKind::AudioTrack) && self.flip == super::Flip::Front && !d.folded)
+            .then(|| self.rack_to_view(crate::paint::tuner_button_rect().center() + d.offset()))
     }
 
     /// A press on the TUNER button: shows or hides the tuner of the track and tells the app

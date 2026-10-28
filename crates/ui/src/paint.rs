@@ -378,6 +378,21 @@ pub fn bypass_button_rect(height: f64, folded: bool) -> Rect {
     }
 }
 
+/// The TUNER switch of an audio track's name plate, in panel coordinates: where the BYPASS
+/// switch of a one-unit effect sits, whatever the height of the panel, so it does not move when
+/// the tuner opens or closes the panel.
+pub fn tuner_button_rect() -> Rect {
+    bypass_button_rect(f64::from(atomik_device_sdk::RACK_UNIT), false)
+}
+
+/// Whether the panel of `info` is an audio track's, whose name plate has the TUNER switch.
+fn tuner_plate(info: &PanelInfo<'_>) -> bool {
+    info.device.is_some()
+        && info
+            .desc
+            .is_some_and(|d| d.type_id == atomik_model::song::AUDIO_TRACK_TYPE)
+}
+
 /// Whether the panel of `info` has the strip BYPASS switch (a device of the document, not
 /// the interface, of an effect type with a `bypass` param).
 fn strip_bypass(info: &PanelInfo<'_>) -> bool {
@@ -445,6 +460,19 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
             info.accent,
         );
     }
+    // The TUNER switch of an audio track (front only: the back is for the sockets).
+    let tuner = tuner_plate(info) && !info.folded && info.side == Side::Front;
+    if tuner {
+        crate::plugin_panel::led_button(
+            c,
+            theme,
+            tuner_button_rect(),
+            "TUNER",
+            Some(info.analyser.tuner_on),
+            true,
+            info.accent,
+        );
+    }
     if info.folded {
         let x = fold.x + 14.0;
         let caption_x = if has_bypass {
@@ -489,9 +517,12 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
     let width = r.width() - 10.0;
     let mut size = theme.name_size;
     let mut lines = wrap_name(info.name, width, size);
-    if has_bypass && info.height < 2.0 * f64::from(atomik_device_sdk::RACK_UNIT) {
-        // One unit tall: the switch leaves room for a single line of name, set smaller (down
-        // to 8) until the whole name fits.
+    if (has_bypass && info.height < 2.0 * f64::from(atomik_device_sdk::RACK_UNIT))
+        || tuner_plate(info)
+    {
+        // One unit tall (or an audio track, whose switch stays at the one-unit place): the
+        // switch leaves room for a single line of name, set smaller (down to 8) until the whole
+        // name fits.
         let chars = info.name.chars().count().max(1) as f64;
         size = ((width / (chars * 0.56) * 0.99) as f32).clamp(8.0, theme.name_size);
         lines = vec![fit_label(info.name, width, size)];
