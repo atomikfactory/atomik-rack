@@ -39,7 +39,6 @@
 //! search stays quick on a project with thousands of params.
 
 use super::*;
-use atomik_device_sdk::{Direction, SocketKind};
 use atomik_model::{
     MACRO_BANK_TYPE, MAX_RESULTS, MacroAssign, MacroCommand, ParamEntry, ParamIndex, SearchTarget,
     SongCommand, macro_key,
@@ -76,12 +75,6 @@ pub enum Revealed {
     Rack,
     /// The strips or a group are selected in the console.
     Console,
-}
-
-fn has_notes_input(desc: &atomik_device_sdk::DeviceDescriptor) -> bool {
-    desc.sockets
-        .iter()
-        .any(|s| s.kind == SocketKind::Notes && s.direction == Direction::Input)
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -338,8 +331,9 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// The song lane that shows `param` of `device`: the param's own lane when the device has a
-    /// track, the macro's lane on the bank's track when a macro drives it, `None` when neither can
-    /// exist (an effect or a channel strip, a device inside a container).
+    /// track (a device without a Notes input, a channel strip or an effect, gets an automation
+    /// track), the macro's lane on the bank's track when a macro drives it, `None` when neither
+    /// can exist (an audio track, a device inside a container, an internal param).
     fn lane_host(&self, device: &DeviceKey, param: &str) -> Option<(DeviceKey, String)> {
         let doc = self.doc();
         let host = match doc.bank_driver(device, param) {
@@ -348,7 +342,7 @@ impl<S: EngineSink> AppCore<S> {
         };
         let d = doc.device(&host.0)?;
         let desc = self.registry.get(&d.type_id)?.descriptor;
-        (has_notes_input(desc)
+        (desc.type_id != atomik_model::song::AUDIO_TRACK_TYPE
             && desc.param_by_key(&host.1).is_some()
             && !host.1.starts_with("internal."))
         .then_some(host)
@@ -374,7 +368,7 @@ impl<S: EngineSink> AppCore<S> {
         let Some((host, lane)) = self.lane_host(device, param) else {
             if say {
                 self.report(format!(
-                    "{device} {param} has no lane in the arrangement: effects and channel strips are automated through a macro (right-click, Assign to Macro)"
+                    "{device} {param} has no automation lane: it is an internal param, an audio track's or a container's inner device"
                 ));
             }
             return false;

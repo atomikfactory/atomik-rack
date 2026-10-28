@@ -234,6 +234,18 @@ impl<S: EngineSink> AppCore<S> {
     fn arm_track_device(&mut self, device: &DeviceKey) {
         let device = device.clone();
         let doc = self.document.doc();
+        // An automation track (a channel strip, an effect) is never armed: nothing to play live.
+        // It is still selected in the rack, and the other tracks keep their arming.
+        if doc
+            .song
+            .track(&device)
+            .is_some_and(|t| t.is_automation_only())
+        {
+            self.view
+                .set_selection(std::slice::from_ref(&device), Some(&device));
+            self.after_view_change();
+            return;
+        }
         let flags = |device: &DeviceKey, armed: bool| {
             doc.song.track(device).map(|t| {
                 Command::Song(SongCommand::SetTrackFlags {

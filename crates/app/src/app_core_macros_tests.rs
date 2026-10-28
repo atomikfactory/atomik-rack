@@ -570,19 +570,22 @@ fn a_driven_param_follows_the_lane_of_its_macro() {
 }
 
 #[test]
-fn a_device_without_a_track_has_no_lane_to_show_and_nothing_is_added() {
+fn an_effect_without_a_track_gets_an_automation_track_when_touched_and_a_param_with_no_lane_says_why()
+ {
     let mut c = core();
     c.set_follow_selection(true);
-    let tracks = c.doc().song.tracks.clone();
     touch(&mut c, "fx", "mix");
-    assert_eq!(c.doc().song.tracks, tracks);
-    assert!(c.arrangement().followed_lane().is_none());
-    // The explicit command says why.
-    c.select(Some(key("fx")));
-    assert!(!c.show_touched_lane());
+    let track = c.doc().song.track(&key("fx")).expect("an automation track");
+    assert!(track.is_automation_only());
+    assert_eq!(
+        c.arrangement().followed_lane(),
+        Some(&(key("fx"), "mix".to_owned()))
+    );
+    // The explicit command says why when a param can have no lane.
+    assert!(!c.show_lane_of(&key("fx"), "internal.solo_silence"));
     assert!(
         c.last_rejection()
-            .is_some_and(|m| m.contains("through a macro"))
+            .is_some_and(|m| m.contains("no automation lane"))
     );
 }
 
@@ -701,9 +704,9 @@ fn the_search_lists_rows_with_their_values_marks_and_what_they_allow() {
     assert!(top.value.contains("Hz"), "{}", top.value);
     assert!(top.can_lane && top.can_macro && top.can_adjust);
     assert!(!top.lane && !top.midi && top.macro_tag.is_none());
-    // A param of a delay has no lane to show; a VCA level reads in dB.
+    // A param of a delay can have a lane (on a track of its own); a VCA level reads in dB.
     let (rows, _) = c.param_search("delay mix");
-    assert!(!rows[0].can_lane && rows[0].can_macro);
+    assert!(rows[0].can_lane && rows[0].can_macro);
     let (rows, total) = c.param_search("");
     assert!(total >= rows.len());
     assert!(rows.len() <= SEARCH_ROWS);

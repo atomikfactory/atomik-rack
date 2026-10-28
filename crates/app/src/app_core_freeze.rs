@@ -190,6 +190,7 @@ impl<S: EngineSink> AppCore<S> {
         let freezable = |d: &DeviceKey| {
             doc.song.track(d).is_some_and(|t| {
                 t.frozen.is_none()
+                    && !t.is_automation_only()
                     && clips_span(t).is_some()
                     && track_chain(doc, &self.registry, d).is_ok()
             })
@@ -377,6 +378,11 @@ impl<S: EngineSink> AppCore<S> {
             .ok_or_else(|| format!("{name} has no track"))?;
         if track.frozen.is_some() {
             return Err(format!("{name} is frozen already"));
+        }
+        if track.is_automation_only() {
+            return Err(format!(
+                "{name} is an automation track: there is nothing to freeze"
+            ));
         }
         let chain = track_chain(doc, &self.registry, device)?;
         let effects = match through {

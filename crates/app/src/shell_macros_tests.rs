@@ -398,7 +398,7 @@ fn edit_automation_adds_the_lane_once_shows_it_and_undoes_in_one_step() {
 }
 
 #[test]
-fn edit_automation_is_greyed_for_a_param_with_no_lane() {
+fn edit_automation_on_an_effect_makes_an_automation_track_and_reveals_it() {
     let mut s = shell();
     s.core_mut()
         .apply_command(Command::AddDevice {
@@ -410,15 +410,84 @@ fn edit_automation_is_greyed_for_a_param_with_no_lane() {
     s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
     let at = knob_at(&s, "fx", "mix");
     mouse(&mut s, at, PointerButton::Secondary);
-    assert!(!edit_automation_enabled(&s));
-    let before = s.core().doc().clone();
+    assert!(edit_automation_enabled(&s));
     let item = s
         .context_menu()
         .unwrap()
         .item_center("automation.edit_control")
         .unwrap();
     mouse(&mut s, item, PointerButton::Primary);
-    assert_eq!(s.core().doc(), &before);
+    let track = s
+        .core()
+        .doc()
+        .song
+        .track(&key("fx"))
+        .cloned()
+        .expect("a track");
+    assert!(track.is_automation_only());
+    assert_eq!(
+        track.lanes[0].kind,
+        atomik_model::LaneKind::Automation("mix".into())
+    );
+    assert_eq!(
+        s.core().arrangement().followed_lane(),
+        Some(&(key("fx"), "mix".to_owned()))
+    );
+    assert_eq!(s.focus(), Pane::Arrangement);
+    // One undo takes the lane and the track away.
+    assert!(s.core_mut().undo());
+    assert!(s.core().doc().song.track(&key("fx")).is_none());
+}
+
+#[test]
+fn edit_automation_on_a_mixer_strip_knob_makes_an_automation_track() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    let channel = s.core().doc().console.channels[0].channel.clone();
+    s.execute(AppCommand::ToggleConsole);
+    let at = s
+        .core()
+        .console()
+        .control_center(&channel, "fader")
+        .expect("the fader is in view");
+    mouse(&mut s, at, PointerButton::Secondary);
+    assert!(edit_automation_enabled(&s));
+    let item = s
+        .context_menu()
+        .unwrap()
+        .item_center("automation.edit_control")
+        .unwrap();
+    mouse(&mut s, item, PointerButton::Primary);
+    let track = s
+        .core()
+        .doc()
+        .song
+        .track(&channel)
+        .cloned()
+        .expect("a track");
+    assert!(track.is_automation_only());
+    assert_eq!(
+        s.core().arrangement().followed_lane(),
+        Some(&(channel.clone(), "fader".to_owned()))
+    );
+    assert_eq!(s.lower_pane(), Pane::Arrangement, "the lane is shown");
+    assert!(s.core_mut().undo());
+    assert!(s.core().doc().song.track(&channel).is_none());
+}
+
+#[test]
+fn edit_automation_is_greyed_for_a_param_inside_a_container() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.container".into(),
+            key: Some(key("box")),
+        })
+        .unwrap();
+    // A device inside a container is addressed by a path, and has no lane of its own.
+    assert!(!s.core().has_lane_for(&key("box/inner"), "mix"));
+    assert!(!s.core().has_lane_for(&key("box"), "internal.solo_silence"));
 }
 
 // ---- the Macros panel --------------------------------------------------------------------------
@@ -631,4 +700,50 @@ fn the_search_follows_the_window_size() {
     s.handle(&UiEvent::Resize(Size::new(700.0, 500.0)));
     let p = s.param_search_view().unwrap().panel();
     assert!(p.x1 <= 700.0 && p.y1 <= 500.0, "{p:?}");
+}
+
+#[test]
+fn selecting_an_automation_track_arms_nothing_and_reports_nothing() {
+    let mut s = shell();
+    add_synth(&mut s, "a", "Lead");
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.stereo-delay".into(),
+            key: Some(key("fx")),
+        })
+        .unwrap();
+    for device in ["a", "fx"] {
+        let param = if device == "a" { CUTOFF } else { "mix" };
+        s.core_mut()
+            .apply_command(Command::Song(
+                atomik_model::SongCommand::AddAutomationLane {
+                    device: key(device),
+                    param: param.into(),
+                },
+            ))
+            .unwrap();
+    }
+    s.handle(&UiEvent::Resize(Size::new(1400.0, 900.0)));
+    let at = s
+        .core()
+        .arrangement()
+        .track_header_center(&key("fx"))
+        .expect("the automation track is in view");
+    mouse(&mut s, at, PointerButton::Primary);
+    assert_eq!(
+        s.core().arrangement().selected_track(),
+        Some(&key("fx")),
+        "the track is selected"
+    );
+    let track = s.core().doc().song.track(&key("fx")).unwrap();
+    assert!(!track.armed, "an automation track cannot be armed");
+    assert_eq!(s.core().last_rejection(), None);
+    // Its menus offer no notes, no note lanes and no freeze.
+    assert!(!s.core().arrangement().chase_menu().0);
+    assert_eq!(
+        s.core().arrangement().lane_menu(),
+        atomik_ui::LaneMenu::default()
+    );
+    assert!(!s.core().freeze_menu().can_freeze);
 }

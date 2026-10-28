@@ -249,3 +249,86 @@ fn an_unchanged_value_re_records_no_panel_and_a_changed_one_only_its_own() {
         assert_eq!(a != b, *k == key("a"), "{k:?}");
     }
 }
+
+// ---- a lane on a channel strip and on the master ---------------------------------------------
+
+/// Synth `a` on its console channel, a lane on the channel's fader (a ramp from 0.2 at bar 0 to
+/// 0.8 at bar 1) and one on the master's first return level, each on a track of its own.
+fn console_core() -> (AppCore<RecordingSink>, DeviceKey, DeviceKey) {
+    // The full registry: an instrument gets its console channel and the master.
+    let mut c = AppCore::with_registry(
+        RecordingSink::new(),
+        atomik_render::default_registry(),
+        atomik_model::empty_doc(),
+        None,
+    );
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: SYNTH.to_string(),
+        key: Some(key("a")),
+    })
+    .unwrap();
+    let channel = c.doc().console.channels[0].channel.clone();
+    let master = c.doc().console.master.clone().expect("a master");
+    for (device, param, points) in [
+        (&channel, "fader", [(0, 0.2), (BAR, 0.8)]),
+        (&master, "return1.level", [(0, -40.0), (BAR, -10.0)]),
+    ] {
+        for cmd in [
+            song(SongCommand::AddAutomationLane {
+                device: device.clone(),
+                param: param.into(),
+            }),
+            song(SongCommand::AddClip {
+                device: device.clone(),
+                lane: 0,
+                clip: clip(4, &points),
+            }),
+        ] {
+            c.apply_command(cmd).unwrap();
+        }
+    }
+    c.sink_mut().take();
+    (c, channel, master)
+}
+
+#[test]
+fn a_channel_strip_knob_follows_its_lane_and_shows_the_mark() {
+    let (mut c, channel, _) = console_core();
+    assert!(c.console.is_automated(&channel, "fader"));
+    let stored = c
+        .doc()
+        .param_value(&channel, "fader", c.registry())
+        .unwrap();
+    let doc = c.doc().clone();
+    for (tick, want) in [(0, 0.2), (BAR / 2, 0.5), (BAR, 0.8), (3 * BAR, 0.8)] {
+        playing_at(&mut c, tick);
+        let got = c.console.shown_value(&channel, "fader").unwrap();
+        assert!((got - want).abs() < 1e-3, "tick {tick}: {got} vs {want}");
+    }
+    assert_eq!(c.doc(), &doc, "playback does not change the document");
+    // A muted automation track plays nothing: the knob shows its own value, and keeps its mark.
+    c.apply_command(song(SongCommand::SetTrackFlags {
+        device: channel.clone(),
+        muted: true,
+        solo: false,
+        armed: false,
+    }))
+    .unwrap();
+    playing_at(&mut c, BAR / 2);
+    let got = c.console.shown_value(&channel, "fader").unwrap();
+    assert!((got - stored).abs() < 1e-3, "{got} vs {stored}");
+    assert!(c.console.is_automated(&channel, "fader"));
+}
+
+#[test]
+fn the_master_follows_its_lane_and_the_rack_panel_of_a_channel_too() {
+    let (mut c, channel, master) = console_core();
+    assert!(c.console.is_automated(&master, "return1.level"));
+    playing_at(&mut c, BAR / 2);
+    let got = c.console.shown_value(&master, "return1.level").unwrap();
+    assert!((got + 25.0).abs() < 0.01, "{got}");
+    // The rack shows the channel device the same way when its console devices are visible.
+    let rack = c.view.shown_value(&channel, "fader");
+    assert!(rack.is_none_or(|v| (v - 0.5).abs() < 1e-3), "{rack:?}");
+}
