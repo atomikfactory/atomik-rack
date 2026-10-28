@@ -538,11 +538,177 @@ fn extending_adds_the_neighbour_to_the_selection() {
     run_nav(&mut v, "editor.extend_next_note", &doc, &reg);
     run_nav(&mut v, "editor.extend_next_note", &doc, &reg);
     assert_eq!(v.selected_notes(), vec![4, 5, 6]);
+    // The active end is right of the anchor: Shift+Left gives the last note back.
     run_nav(&mut v, "editor.extend_prev_note", &doc, &reg);
-    assert_eq!(v.selected_notes(), vec![3, 4, 5, 6]);
+    assert_eq!(v.selected_notes(), vec![4, 5]);
     // A plain step collapses the range onto the neighbour of its end.
     run_nav(&mut v, "editor.select_next_note", &doc, &reg);
-    assert_eq!(v.selected_notes(), vec![7]);
+    assert_eq!(v.selected_notes(), vec![6]);
+}
+
+fn ext(
+    v: &mut PianoRollView,
+    forward: bool,
+    doc: &atomik_model::RackDoc,
+    reg: &atomik_device_sdk::Registry,
+) {
+    let id = if forward {
+        "editor.extend_next_note"
+    } else {
+        "editor.extend_prev_note"
+    };
+    run_nav(v, id, doc, reg);
+}
+
+#[test]
+fn shift_left_shrinks_a_range_extended_to_the_right_then_extends_past_the_anchor() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[4]);
+    ext(&mut v, true, &doc, &reg);
+    ext(&mut v, true, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![4, 5, 6]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![4, 5]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![4]);
+    // Back at the anchor: it goes on to the left.
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![3, 4]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![2, 3, 4]);
+    // And Shift+Right now shrinks from the left, then passes the anchor.
+    ext(&mut v, true, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![3, 4]);
+    ext(&mut v, true, &doc, &reg);
+    ext(&mut v, true, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![4, 5]);
+}
+
+#[test]
+fn shift_left_after_a_marquee_drops_the_latest_note_first() {
+    let (mut v, doc, reg) = setup();
+    // Not made by stepping: the earliest note is the anchor, the latest the active end.
+    v.set_selected_notes(&[2, 3, 5]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![2, 3]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![2]);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![1, 2]);
+    // Shift+Right on a marquee extends past its latest note.
+    v.set_selected_notes(&[2, 3, 5]);
+    ext(&mut v, true, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![2, 3, 5, 6]);
+}
+
+#[test]
+fn extending_stops_at_either_end_and_a_plain_step_restarts_the_anchor() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[14]);
+    ext(&mut v, true, &doc, &reg);
+    ext(&mut v, true, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![14, 15]);
+    // A plain step: the new note is the anchor.
+    run_nav(&mut v, "editor.select_prev_note", &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![13]);
+    ext(&mut v, true, &doc, &reg);
+    ext(&mut v, false, &doc, &reg);
+    assert_eq!(v.selected_notes(), vec![13]);
+}
+
+/// The audition actions of one command, as (device, key, on).
+fn auds(actions: &[UiAction]) -> Vec<(String, u8, bool)> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Audition { device, key, on } => Some((device.0.clone(), *key, *on)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn stepping_plays_the_note_stepped_onto_and_releases_it_after_a_moment() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[4]);
+    let out = run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    // Note 5 is key 48 on the roll's device.
+    assert_eq!(auds(out.actions()), vec![("bass".to_string(), 48, true)]);
+    assert!(
+        v.tick(10.0).is_empty(),
+        "the clock starts at the first tick"
+    );
+    assert!(v.tick(10.1).is_empty(), "still sounding");
+    assert_eq!(auds(&v.tick(10.5)), vec![("bass".to_string(), 48, false)]);
+    assert!(v.tick(11.0).is_empty(), "released once");
+}
+
+#[test]
+fn the_next_step_releases_the_sounding_note_before_the_new_one() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[4]);
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    let out = run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(
+        auds(out.actions()),
+        vec![
+            ("bass".to_string(), 48, false),
+            ("bass".to_string(), 46, true)
+        ]
+    );
+    // Shift+Right plays the note it reaches, Shift+Left a shrink the new active end.
+    let out = run_nav(&mut v, "editor.extend_next_note", &doc, &reg);
+    assert_eq!(
+        auds(out.actions()),
+        vec![
+            ("bass".to_string(), 46, false),
+            ("bass".to_string(), 43, true)
+        ]
+    );
+    let out = run_nav(&mut v, "editor.extend_prev_note", &doc, &reg);
+    assert_eq!(
+        auds(out.actions()),
+        vec![
+            ("bass".to_string(), 43, false),
+            ("bass".to_string(), 46, true)
+        ]
+    );
+}
+
+#[test]
+fn a_step_that_goes_nowhere_or_has_no_notes_is_silent() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[15]);
+    let out = run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert!(auds(out.actions()).is_empty());
+    assert!(v.tick(1.0).is_empty() && v.tick(5.0).is_empty());
+
+    let mut empty = song_doc();
+    for t in &mut empty.song.tracks {
+        for l in &mut t.lanes {
+            for c in &mut l.clips {
+                if c.id == ClipId(1) {
+                    c.content = ClipContent::Notes(vec![]);
+                }
+            }
+        }
+    }
+    let mut v = piano_roll(&empty, &reg);
+    v.set_roles(Roles::defaults(Os::Windows));
+    let out = run_nav(&mut v, "editor.select_next_note", &empty, &reg);
+    assert_eq!(out, CommandOutcome::Declined);
+}
+
+#[test]
+fn releasing_the_audition_stops_a_sounding_step_note_at_once() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_notes(&[4]);
+    run_nav(&mut v, "editor.select_next_note", &doc, &reg);
+    assert_eq!(
+        auds(&v.release_audition()),
+        vec![("bass".to_string(), 48, false)]
+    );
+    assert!(v.release_audition().is_empty());
 }
 
 #[test]

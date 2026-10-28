@@ -1948,6 +1948,7 @@ impl<S: EngineSink> AppCore<S> {
             self.close_slice_editor();
             self.close_seq_editor();
             self.close_container_editor();
+            self.release_piano_roll_audition();
             self.piano_roll.open(id);
             self.piano_clip = Some(id);
             self.piano_roll.sync(self.document.doc(), &self.registry);
@@ -1997,8 +1998,23 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Releases the note a Left/Right step in the piano roll is sounding.
+    fn release_piano_roll_audition(&mut self) {
+        for action in self.piano_roll.release_audition() {
+            self.handle_action(action);
+        }
+    }
+
+    /// Per-frame clock of the piano roll (`now` in seconds): ends the note a step sounds.
+    pub fn piano_roll_tick(&mut self, now: f64) {
+        for action in self.piano_roll.tick(now) {
+            self.handle_action(action);
+        }
+    }
+
     /// Closes the piano roll (the arrangement shows again).
     pub fn close_piano_roll(&mut self) {
+        self.release_piano_roll_audition();
         self.piano_roll.close();
         self.piano_clip = None;
         self.sync_clip_scale();

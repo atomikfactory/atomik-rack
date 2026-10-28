@@ -4304,6 +4304,7 @@ impl<B: AudioBackend> Shell<B> {
             self.repaint = true;
         }
         self.core.plugin_tick(now_seconds);
+        self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
         // A pointer resting on another row of a context menu switches its submenu.
         if let Some(open) = &mut self.context_menu
