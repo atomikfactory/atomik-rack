@@ -3723,6 +3723,7 @@ impl ConsoleView {
         if let Some(list) = &m.lists[0] {
             c.draw_list(list);
         }
+        self.paint_master_marks(c, m, l, false);
         if let (Some(gr), Some(mt)) = (l.gr_meter, self.meters.get(&m.key)) {
             gr_bar(c, &self.st, gr, mt.gr_db);
         }
@@ -3735,6 +3736,7 @@ impl ConsoleView {
         if let Some(list) = &m.lists[1] {
             c.draw_list(list);
         }
+        self.paint_master_marks(c, m, l, true);
         if let Some(r) = l.meter {
             stereo_meter(c, &self.st, r, self.meters.get(&m.key), false);
         }
@@ -3744,6 +3746,22 @@ impl ConsoleView {
         if l.upper_height > h + 1e-9 {
             let x = mx + l.fader_x - 7.0;
             v_scrollbar(c, &self.st, x, top, h, self.master_scroll, l.upper_height);
+        }
+    }
+
+    /// The automation marks of the master's controls (in the master's own coordinates): the
+    /// scrolling columns, or the pinned fader column.
+    fn paint_master_marks(
+        &self,
+        c: &mut dyn Canvas,
+        m: &StripView,
+        l: &MasterLayout,
+        pinned: bool,
+    ) {
+        for pc in &l.controls {
+            if (pc.rect.x0 >= l.fader_x) == pinned && m.automated.iter().any(|p| p == pc.param) {
+                paint::automation_mark(c, &self.st.base, pc.rect);
+            }
         }
     }
 

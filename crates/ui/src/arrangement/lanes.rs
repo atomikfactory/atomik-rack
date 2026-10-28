@@ -280,7 +280,7 @@ impl ArrangementView {
         let Some(t) = self.song.track(d) else {
             return LaneMenu::default();
         };
-        if t.is_audio() || t.frozen.is_some() {
+        if t.is_audio() || t.is_automation_only() || t.frozen.is_some() {
             return LaneMenu::default();
         }
         LaneMenu {

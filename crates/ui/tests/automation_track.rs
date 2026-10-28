@@ -272,3 +272,66 @@ fn preview_png() {
 fn events_are_plain_values() {
     let _ = UiEvent::Resize(atomik_ui::kurbo::Size::new(1.0, 1.0));
 }
+
+#[test]
+fn folder_solo_and_arm_leave_an_automation_track_alone_and_mute_includes_it() {
+    let (mut d, reg, mut v) = setup();
+    d.apply(
+        Command::Song(SongCommand::GroupTracks {
+            devices: vec![key("bass"), delay()],
+            name: "Mix".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    v.sync(d.doc(), &reg);
+    for (button, check) in [
+        (
+            atomik_ui::arrangement::FolderButton::Arm,
+            (|t: &atomik_model::Track| t.armed) as fn(&atomik_model::Track) -> bool,
+        ),
+        (atomik_ui::arrangement::FolderButton::Solo, |t| t.solo),
+        (atomik_ui::arrangement::FolderButton::Mute, |t| t.muted),
+    ] {
+        let p = v.folder_button_center(1, button).unwrap();
+        let a = click(&d, &reg, &mut v, p);
+        for c in commands(&a) {
+            d.apply(c, &reg)
+                .unwrap_or_else(|e| panic!("{button:?}: {e}"));
+        }
+        v.sync(d.doc(), &reg);
+        let song = &d.doc().song;
+        assert!(check(song.track(&key("bass")).unwrap()), "{button:?}");
+        assert_eq!(
+            check(song.track(&delay()).unwrap()),
+            button == atomik_ui::arrangement::FolderButton::Mute,
+            "{button:?}"
+        );
+    }
+}
+
+#[test]
+fn drawing_on_the_first_lane_makes_an_automation_clip_there() {
+    let (d, reg, mut v) = setup();
+    v.set_snap(atomik_ui::timeline::Snap::Bar);
+    let lane = v.lane_rect(&delay(), 0).unwrap();
+    let y = lane.center().y;
+    let (x0, x1) = (v.tick_to_x(5 * BAR + 10), v.tick_to_x(6 * BAR + 10));
+    let a = run(
+        |e| v.handle(e, d.doc(), &reg),
+        &[
+            down(atomik_ui::kurbo::Point::new(x0, y)),
+            mv(atomik_ui::kurbo::Point::new(x1, y)),
+            up(atomik_ui::kurbo::Point::new(x1, y)),
+        ],
+    );
+    let cmds = song_commands(&a);
+    let [SongCommand::AddClip { device, lane, clip }] = cmds.as_slice() else {
+        panic!("{cmds:?}")
+    };
+    assert_eq!((device, *lane), (&delay(), 0));
+    assert_eq!(
+        clip.content,
+        atomik_model::ClipContent::Automation(Vec::new())
+    );
+}
