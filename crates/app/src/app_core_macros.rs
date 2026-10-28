@@ -20,8 +20,10 @@
 //! touched one of its device and, with the switch on, brings its lane into view:
 //!
 //! * a param a macro drives follows the **macro's** lane on the bank's track;
-//! * a device without a song track (an effect, a channel strip: a track needs a device that takes
-//!   notes) has no lane to show, and the param is automated through a macro instead;
+//! * a device without a song track gets one when it has no Notes input too: an effect or a
+//!   channel strip is automated on an automation track of its own (see
+//!   [`atomik_model::song::Track::is_automation_only`]); only an audio track, a device inside a
+//!   container and an internal param have no lane to show;
 //! * the lane is added when it is missing (one undo step, an empty lane: **no automation data is
 //!   created until something is written**), but never while an automation take is recording;
 //! * the track's folders are opened (they are the project's, so that is a command), a collapsed
