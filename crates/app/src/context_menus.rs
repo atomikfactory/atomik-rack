@@ -70,6 +70,8 @@ pub struct MenuEnable {
     pub control_mapped: bool,
     /// Control menu: the param can be assigned to a macro (nothing drives it and it can be).
     pub control_assign: bool,
+    /// Control menu: the control has an automation lane to edit (Edit Automation works).
+    pub control_lane: bool,
     /// Control menu: a macro drives the param (Remove from Macro works).
     pub control_driven: bool,
 }
@@ -581,6 +583,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 checked: None,
             });
             vec![
+                item("automation.edit_control", e.control_lane),
+                Spec::Separator,
                 item("midi.learn_control", true),
                 item("midi.forget_control", e.control_mapped),
                 Spec::Separator,
