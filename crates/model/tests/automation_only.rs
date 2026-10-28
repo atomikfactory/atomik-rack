@@ -357,3 +357,25 @@ fn duplicating_an_effect_track_copies_its_automation_track() {
     d.undo(&reg).unwrap();
     assert_eq!(d.doc().song.tracks.len(), 1);
 }
+
+#[test]
+fn duplicating_a_channel_track_is_one_undo_step_or_a_clean_refusal() {
+    let reg = console_registry();
+    let mut d = start(&reg);
+    d.apply(lane("channel", FADER), &reg).unwrap();
+    let before = d.doc().clone();
+    let r = d.apply(
+        Command::Workflow(atomik_model::WorkflowCommand::DuplicateTrack {
+            device: key("channel"),
+        }),
+        &reg,
+    );
+    match r {
+        Ok(_) => {
+            assert!(d.doc().song.tracks.iter().all(|t| t.is_automation_only()));
+            d.undo(&reg).unwrap();
+            assert_eq!(d.doc(), &before);
+        }
+        Err(_) => assert_eq!(d.doc(), &before, "a refusal changes nothing"),
+    }
+}
