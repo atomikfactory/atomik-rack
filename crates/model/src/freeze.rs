@@ -471,6 +471,11 @@ pub(crate) fn plan_freeze(
 ) -> Result<Edit, ModelError> {
     let index = track_index(doc, device)?;
     let track = &doc.song.tracks[index];
+    if track.is_automation_only() {
+        return Err(bad(format!(
+            "{device} is an automation track: there is nothing to freeze"
+        )));
+    }
     if track.frozen.is_some() {
         return Err(bad(format!("{device} is already frozen")));
     }

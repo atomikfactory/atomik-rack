@@ -74,7 +74,7 @@ impl ArrangementView {
                     let hr = Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1);
                     self.lane_mute_rect(hr, lane)
                 } else {
-                    self.lane_button_rect(rr, track, b)
+                    self.lane_button_rect(rr, track, lane, b)
                 };
                 Some(lane_button(b, rect))
             }

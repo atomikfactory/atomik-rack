@@ -374,13 +374,18 @@ fn following_the_selection_and_showing_a_lane_add_an_empty_lane() {
         .unwrap()
         .clone();
     assert_eq!(lane["clips"], 0, "no data");
-    // A param of a delay has no lane: automate it through a macro.
+    // A param of a delay gets an automation track of its own; an internal param has no lane.
     let v = macros(
         &mut s,
         json!({"action": "lane", "device": "echo", "param": "mix"}),
     );
+    assert_eq!(v["done"], true);
+    let v = macros(
+        &mut s,
+        json!({"action": "lane", "device": "echo", "param": "internal.solo_silence"}),
+    );
     assert_eq!(v["done"], false);
-    assert!(v["message"].as_str().unwrap().contains("macro"), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("no automation lane"), "{v}");
     // A param a macro drives shows the macro's lane.
     macros(
         &mut s,

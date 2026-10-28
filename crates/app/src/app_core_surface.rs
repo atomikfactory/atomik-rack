@@ -289,7 +289,7 @@ impl<S: EngineSink> AppCore<S> {
                 else {
                     return;
                 };
-                if let Some(t) = doc.song.track(&device) {
+                if let Some(t) = doc.song.track(&device).filter(|t| !t.is_automation_only()) {
                     let command = SongCommand::SetTrackFlags {
                         device,
                         muted: t.muted,

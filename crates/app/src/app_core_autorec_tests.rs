@@ -587,3 +587,69 @@ fn a_take_on_a_real_engine_lands_at_the_ticks_the_transport_played() {
     );
     assert_eq!(points, &[(0, 3000.0)]);
 }
+
+// ------------------------------------------------------------------ a channel strip
+
+#[test]
+fn a_take_on_a_channel_fader_lane_writes_its_automation_track_in_one_undo_step() {
+    // The full registry: the synth gets a console channel, whose fader gets an automation track.
+    let mut c = AppCore::with_registry(
+        RecordingSink::new(),
+        atomik_render::default_registry(),
+        atomik_model::empty_doc(),
+        None,
+    );
+    c.apply_command(Command::AddDevice {
+        index: usize::MAX,
+        type_id: SYNTH.to_string(),
+        key: Some(key("a")),
+    })
+    .unwrap();
+    let channel = c.doc().console.channels[0].channel.clone();
+    c.apply_command(song(SongCommand::AddAutomationLane {
+        device: channel.clone(),
+        param: "fader".into(),
+    }))
+    .unwrap();
+    c.sink_mut().take();
+    c.handle_action(UiAction::ToggleLaneArm {
+        device: channel.clone(),
+        param: "fader".into(),
+    });
+    assert!(c.automation_armed(&channel, "fader"));
+    record(&mut c);
+    assert!(c.is_recording());
+    let depth = |c: &mut AppCore<RecordingSink>| {
+        let mut n = 0;
+        while c.undo() {
+            n += 1;
+        }
+        while c.redo() {}
+        n
+    };
+    for (tick, value) in [(1000, 0.3), (2000, 0.6), (3000, 0.9)] {
+        at(&mut c, tick, 0);
+        c.apply_command(Command::SetParam {
+            key: channel.clone(),
+            param: "fader".into(),
+            value,
+            merge: Some(7),
+        })
+        .unwrap();
+    }
+    release(&mut c);
+    let before = depth(&mut c);
+    at(&mut c, 4000, 0);
+    record(&mut c);
+    assert!(!c.is_recording());
+    let track = c.doc().song.track(&channel).unwrap();
+    assert!(track.is_automation_only());
+    let lane = &track.lanes[0];
+    assert_eq!(lane.clips.len(), 1, "the take wrote one clip");
+    let ClipContent::Automation(points) = &lane.clips[0].content else {
+        panic!("automation");
+    };
+    assert!(points.len() >= 2 && (points.last().unwrap().value - 0.9).abs() < 1e-3);
+    // The take is one undo step, on top of the knob moves.
+    assert_eq!(depth(&mut c), before + 1);
+}

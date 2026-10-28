@@ -931,3 +931,40 @@ fn project_inspect_leaves_the_other_lane_kinds_as_they_were() {
             .all(|l| l.get("label").is_none() && l.get("muted").is_none())
     );
 }
+
+#[test]
+fn project_inspect_marks_an_automation_track_and_lists_its_lanes() {
+    use atomik_model::{Command, Document, SongCommand, load_project};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut d = Document::new(load_project(&text, &reg).unwrap());
+    // The first console channel of the demo gets a lane on its fader.
+    let channel = d.doc().console.channels[0].channel.clone();
+    d.apply(
+        Command::Song(SongCommand::AddAutomationLane {
+            device: channel.clone(),
+            param: "fader".into(),
+        }),
+        &reg,
+    )
+    .unwrap();
+    let path = tmp("automation-track.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let tracks = r.parsed()["song"]["tracks"].clone();
+    let t = tracks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["device"] == json!(channel.as_str()))
+        .expect("the channel's track");
+    assert_eq!(t["automation_only"], json!(true));
+    assert_eq!(t["lanes"][0]["kind"], json!("automation:fader"));
+    assert!(t["lanes"][0].get("label").is_none(), "no note lane label");
+    assert!(
+        tracks[0].get("automation_only").is_none(),
+        "only an automation track has it"
+    );
+}

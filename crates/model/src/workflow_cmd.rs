@@ -829,8 +829,11 @@ fn paste_tracks(
             continue;
         };
         let desc = rules::descriptor(p.registry, p.type_of(new)?)?;
-        if !is_audio_track_type(desc) && !has_notes_input(desc) {
+        if !is_audio_track_type(desc) && !has_notes_input(desc) && !t.is_automation_only() {
             return Err(bad_song(format!("{new} has no Notes input")));
+        }
+        if t.is_automation_only() && has_notes_input(desc) {
+            return Err(bad_song(format!("{new} has a Notes input")));
         }
         let mut track = t.clone();
         track.device = new.clone();

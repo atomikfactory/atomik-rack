@@ -154,12 +154,10 @@ fn an_automated_panel_front_matches_golden() {
 #[test]
 fn a_console_strip_follows_its_shown_value_and_marks_the_lane() {
     let (mut doc, reg) = (console_doc(), console_registry());
+    // A channel strip has an automation track of its own: the lane alone.
     let mut t = song_doc().song.tracks.remove(0);
     t.device = key("ch-bass");
-    t.lanes = vec![
-        atomik_model::Lane::notes(),
-        atomik_model::Lane::automation("fader"),
-    ];
+    t.lanes = vec![atomik_model::Lane::automation("fader")];
     doc.song.tracks = vec![t];
     let mut v = console_view(&doc, &reg);
     assert!(v.is_automated(&key("ch-bass"), "fader"));
@@ -172,4 +170,35 @@ fn a_console_strip_follows_its_shown_value_and_marks_the_lane() {
     assert!(v.set_shown_values(&ShownValues::new()));
     v.sync(&doc, &reg);
     assert_eq!(v.shown_value(&key("ch-bass"), "fader"), Some(stored));
+}
+
+#[test]
+fn the_master_section_follows_its_shown_value_and_marks_the_lane() {
+    let (mut doc, reg) = (console_doc(), console_registry());
+    let paint_master = |doc: &RackDoc| {
+        let mut v = console_view(doc, &reg);
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, doc, &reg);
+        (v, dl.to_json())
+    };
+    let (plain, without) = paint_master(&doc);
+    assert!(!plain.is_automated(&key("master"), "return1.level"));
+    let mut t = song_doc().song.tracks.remove(0);
+    t.device = key("master");
+    t.lanes = vec![atomik_model::Lane::automation("return1.level")];
+    doc.song.tracks = vec![t];
+    let (mut v, with) = paint_master(&doc);
+    assert!(v.is_automated(&key("master"), "return1.level"));
+    assert_ne!(
+        without, with,
+        "the master control carries the automation mark"
+    );
+    // The control follows the value it is given, and the document stays.
+    let stored = v.shown_value(&key("master"), "return1.level").unwrap();
+    assert!(v.set_shown_values(&shown("master", "return1.level", -20.0)));
+    v.sync(&doc, &reg);
+    assert!((v.shown_value(&key("master"), "return1.level").unwrap() + 20.0).abs() < 1e-3);
+    assert!(v.set_shown_values(&ShownValues::new()));
+    v.sync(&doc, &reg);
+    assert_eq!(v.shown_value(&key("master"), "return1.level"), Some(stored));
 }

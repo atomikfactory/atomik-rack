@@ -602,6 +602,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 "device": t.device.as_str(), "muted": t.muted, "solo": t.solo,
                 "armed": t.armed, "chase": t.chase, "lanes": lanes,
             });
+            if t.is_automation_only() {
+                // A channel strip or an effect: its lanes are automation lanes alone.
+                track["automation_only"] = json!(true);
+            }
             if let Some(entry) = &t.notes_to {
                 // The top of the track's player stack: where its notes enter, when not at its
                 // own device.

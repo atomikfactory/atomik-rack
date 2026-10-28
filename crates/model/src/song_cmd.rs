@@ -99,6 +99,21 @@ pub(crate) fn new_audio_track(device: DeviceKey) -> Track {
     }
 }
 
+/// A new track for `device` (one without a Notes input: a channel strip, an effect) that holds
+/// the automation lane `lane` and nothing else: no note lane, not armed, not soloed.
+pub(crate) fn new_automation_track(device: DeviceKey, lane: Lane) -> Track {
+    Track {
+        device,
+        muted: false,
+        solo: false,
+        armed: false,
+        chase: true,
+        notes_to: None,
+        frozen: None,
+        lanes: vec![lane],
+    }
+}
+
 /// Lane `lane` of `track`, which must be a note lane.
 pub(crate) fn note_lane_of(track: &Track, lane: usize) -> Result<&Lane, ModelError> {
     let device = &track.device;
@@ -820,6 +835,11 @@ pub(crate) fn plan(
             armed,
         } => {
             let t = &song.tracks[track_index(doc, &device)?];
+            if t.is_automation_only() && (solo || armed) {
+                return Err(bad(format!(
+                    "{device} is an automation track: it can be muted, but not soloed or armed"
+                )));
+            }
             Edit::TrackFlags {
                 device,
                 old: [t.muted, t.solo, t.armed],
@@ -839,6 +859,11 @@ pub(crate) fn plan(
             if t.is_audio() {
                 return Err(bad(format!(
                     "{device} is an audio track, so it has no note lanes"
+                )));
+            }
+            if t.is_automation_only() {
+                return Err(bad(format!(
+                    "{device} is an automation track, so it has no note lanes"
                 )));
             }
             let count = t.note_lane_count();
@@ -942,9 +967,9 @@ pub(crate) fn plan(
             if desc.param_by_key(&param).is_none() || crate::console::is_internal_param(&param) {
                 return Err(ModelError::UnknownKey(param));
             }
-            if !has_notes_input(desc) {
+            if is_audio_track_type(desc) {
                 return Err(bad(format!(
-                    "{device} has no Notes input, so it has no track to automate"
+                    "{device} is an audio track: its one lane holds audio, not automation"
                 )));
             }
             if let Some(a) = doc.bank_driver(&device, &param) {
@@ -962,8 +987,15 @@ pub(crate) fn plan(
                     new: Some(lane),
                 },
                 None => {
-                    let mut track = new_note_track(doc, registry, device);
-                    track.lanes.push(lane);
+                    // A device with a Notes input gets a note track; any other device (a
+                    // channel strip, an effect) a track that holds automation lanes alone.
+                    let track = if has_notes_input(desc) {
+                        let mut t = new_note_track(doc, registry, device);
+                        t.lanes.push(lane);
+                        t
+                    } else {
+                        new_automation_track(device, lane)
+                    };
                     Edit::Track {
                         index: song.tracks.len(),
                         old: None,

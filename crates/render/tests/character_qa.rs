@@ -86,7 +86,7 @@ fn a_project_with_every_preset_round_trips_save_load_save_byte_identically() {
     }
     // The preset is a plain numeric param, so no new project field appeared.
     assert!(
-        first.contains("\"version\": 33"),
+        first.contains("\"version\": 34"),
         "saved in the current format"
     );
 }

@@ -390,6 +390,10 @@ impl ArrangementView {
 
     /// Whether lane `lane` of track `track` is a folded automation lane.
     pub(super) fn is_lane_folded(&self, track: usize, lane: usize) -> bool {
+        // The first lane of an automation track is its header row: it cannot fold away.
+        if lane == 0 && self.is_automation_track(track) {
+            return false;
+        }
         // The lane that follows the selected parameter stays open, whatever the project says.
         !self.is_followed(track, lane)
             && self
@@ -723,7 +727,8 @@ impl ArrangementView {
 
     /// M, S or R on a folder: every track of it in one batch.
     fn folder_button(&mut self, group: u32, b: FolderButton, out: &mut Vec<UiAction>) {
-        let tracks = self.song.group_tracks(group);
+        // An automation track can only be muted: solo and arm leave it as it is.
+        let tracks = self.flagged_tracks(group, b);
         let flag = |t: &atomik_model::Track| match b {
             FolderButton::Mute => t.muted,
             FolderButton::Solo => t.solo,
@@ -753,13 +758,28 @@ impl ArrangementView {
         }
     }
 
-    /// The flags of a folder's buttons: lit when every track of a non-empty folder has them.
+    /// The tracks of a folder that button `b` works on: all of them, but for solo and arm the
+    /// automation tracks, which have neither.
+    fn flagged_tracks(&self, group: u32, b: FolderButton) -> Vec<usize> {
+        let mut tracks = self.song.group_tracks(group);
+        if b != FolderButton::Mute {
+            tracks.retain(|i| !self.song.tracks[*i].is_automation_only());
+        }
+        tracks
+    }
+
+    /// The flags of a folder's buttons: lit when every track of a non-empty folder has them
+    /// (the automation tracks do not count for solo and arm).
     fn folder_flags(&self, group: u32) -> [bool; 3] {
-        let tracks = self.song.group_tracks(group);
-        let all = |f: fn(&atomik_model::Track) -> bool| {
+        let all = |b: FolderButton, f: fn(&atomik_model::Track) -> bool| {
+            let tracks = self.flagged_tracks(group, b);
             !tracks.is_empty() && tracks.iter().all(|i| f(&self.song.tracks[*i]))
         };
-        [all(|t| t.muted), all(|t| t.solo), all(|t| t.armed)]
+        [
+            all(FolderButton::Mute, |t| t.muted),
+            all(FolderButton::Solo, |t| t.solo),
+            all(FolderButton::Arm, |t| t.armed),
+        ]
     }
 
     // ------------------------------------------------------------------ typing
@@ -1255,7 +1275,7 @@ impl ArrangementView {
     /// The fold chevron at the left of an automation lane header.
     pub(super) fn paint_lane_fold(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
         let t = &self.st.base;
-        let r = self.lane_button_rect(hr, track, LaneButton::Fold);
+        let r = self.lane_button_rect(hr, track, lane, LaneButton::Fold);
         let ctr = r.center();
         let folded = self.is_lane_folded(track, lane);
         let mut chev = BezPath::new();

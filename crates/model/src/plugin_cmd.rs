@@ -232,7 +232,14 @@ fn relink(
     }
     // The song track and its automation lanes (top-level devices only).
     if let Some(track) = doc.song.track(&device) {
-        if crate::container::notes_input(new_desc).is_none() {
+        // A note track needs a Notes input; an automation track needs there to be none.
+        if track.is_automation_only() {
+            if crate::container::notes_input(new_desc).is_some() {
+                return Err(bad(format!(
+                    "{device} has an automation track and {new_type} has a Notes input"
+                )));
+            }
+        } else if crate::container::notes_input(new_desc).is_none() {
             return Err(bad(format!(
                 "{device} has a song track and {new_type} has no Notes input"
             )));

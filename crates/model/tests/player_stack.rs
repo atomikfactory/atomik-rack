@@ -396,8 +396,8 @@ fn notes_to_round_trips_and_old_projects_have_none() {
     let new = save_project(plain.doc());
     assert!(!new.contains("notes_to"));
     let v: Value = serde_json::from_str(&new).unwrap();
-    assert_eq!(v["version"], 33);
-    assert_eq!(PROJECT_VERSION, 33);
+    assert_eq!(v["version"], 34);
+    assert_eq!(PROJECT_VERSION, 34);
     let old = new.replacen(
         &format!("\"version\": {PROJECT_VERSION}"),
         "\"version\": 30",
