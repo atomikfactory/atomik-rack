@@ -132,6 +132,8 @@ const NOTE_BUTTONS: [TrackButton; 5] = [
     TrackButton::Arm,
     TrackButton::AddLane,
 ];
+/// Header controls of an automation track (no solo, arm or note lane to add to).
+const AUTOMATION_BUTTONS: [TrackButton; 2] = [TrackButton::Expand, TrackButton::Mute];
 /// Header controls of an audio track.
 const AUDIO_BUTTONS: [TrackButton; 6] = [
     TrackButton::Expand,
@@ -841,8 +843,18 @@ impl ArrangementView {
 
     /// The rectangle of a control in the header row `row` of an automation lane. The controls
     /// sit at the right end of the header, centred vertically.
-    fn lane_button_rect(&self, row: Rect, track: usize, button: LaneButton) -> Rect {
-        let (x, cy) = (self.bounds.x0, row.y0 + row.height() / 2.0);
+    fn lane_button_rect(&self, row: Rect, track: usize, lane: usize, button: LaneButton) -> Rect {
+        let x = self.bounds.x0;
+        // The first lane of an automation track shares the track's header row: its controls sit
+        // on the second line of the header, beside the mute button (a short row has no room).
+        let cy = if lane == 0 {
+            if row.height() < COMPACT_BELOW {
+                return Rect::ZERO;
+            }
+            row.y0 + 41.0
+        } else {
+            row.y0 + row.height() / 2.0
+        };
         let indent = self.track_indent(track);
         match button {
             LaneButton::Fold => Rect::new(x + indent + 3.0, cy - 7.0, x + indent + 15.0, cy + 7.0),
@@ -1011,7 +1023,7 @@ impl ArrangementView {
         self.selected_track
             .as_ref()
             .and_then(|d| self.song.track(d))
-            .map_or((false, false), |t| (!t.is_audio(), t.chase))
+            .map_or((false, false), |t| (t.note_lane_count() > 0, t.chase))
     }
 
     /// Selects a track (or none); the clip and point selections are cleared.
@@ -1174,7 +1186,7 @@ impl ArrangementView {
         let track = self.song.tracks.iter().position(|t| &t.device == device)?;
         let lane = self.song.tracks[track].automation_lane(param)?;
         let rr = self.row_rect(self.row_of(track, lane)?);
-        Some(self.lane_button_rect(rr, track, button).center())
+        Some(self.lane_button_rect(rr, track, lane, button).center())
     }
 
     /// Centre of the "+ track" row of a device that can have a track but has none.
@@ -2035,6 +2047,13 @@ impl ArrangementView {
                                 return Hit::Button(track, b);
                             }
                         }
+                        if self.is_automation_track(track) && rr.height() >= COMPACT_BELOW {
+                            for b in [LaneButton::Arm, LaneButton::Mode] {
+                                if self.lane_button_rect(rr, track, 0, b).contains(pos) {
+                                    return Hit::LaneButton(track, 0, b);
+                                }
+                            }
+                        }
                         if let Some(h) = self.meter_hit(rr, track, pos) {
                             return h;
                         }
@@ -2059,7 +2078,7 @@ impl ArrangementView {
                             &[LaneButton::Fold, LaneButton::Arm, LaneButton::Mode]
                         };
                         for &b in buttons {
-                            if self.lane_button_rect(rr, track, b).contains(pos) {
+                            if self.lane_button_rect(rr, track, lane, b).contains(pos) {
                                 return Hit::LaneButton(track, lane, b);
                             }
                         }
@@ -2570,8 +2589,11 @@ impl ArrangementView {
     /// The controls in the header of a track: audio tracks have an input selector and a
     /// monitor button where note tracks have the "add automation lane" button.
     fn header_buttons(&self, track: usize) -> &'static [TrackButton] {
-        if self.song.tracks[track].is_audio() {
+        let t = &self.song.tracks[track];
+        if t.is_audio() {
             &AUDIO_BUTTONS
+        } else if t.is_automation_only() {
+            &AUTOMATION_BUTTONS
         } else {
             &NOTE_BUTTONS
         }
@@ -2589,6 +2611,15 @@ impl ArrangementView {
     /// The cached header state of an audio track.
     fn audio_header(&self, device: &DeviceKey) -> Option<&AudioHeader> {
         self.audio_headers.iter().find(|h| &h.device == device)
+    }
+
+    /// Whether track `track` is an automation track: automation lanes alone, its first lane in
+    /// the header row (see [`atomik_model::song::Track::is_automation_only`]).
+    fn is_automation_track(&self, track: usize) -> bool {
+        self.song
+            .tracks
+            .get(track)
+            .is_some_and(|t| t.is_automation_only())
     }
 
     /// Whether lane `lane` of track `track` is an automation lane.
@@ -5279,7 +5310,7 @@ impl ArrangementView {
         let armed = self.armed_lanes.contains(&(device.clone(), param.clone()));
         let hovered = |b| self.hover == Some(Hit::LaneButton(track, lane, b));
         let mode = self.song.write_mode(&device, &param);
-        let mr = self.lane_button_rect(hr, track, LaneButton::Mode);
+        let mr = self.lane_button_rect(hr, track, lane, LaneButton::Mode);
         sp::button(c, st, mr, "", None, hovered(LaneButton::Mode));
         sp::label(
             c,
@@ -5290,7 +5321,7 @@ impl ArrangementView {
             if armed { t.text } else { t.text_muted },
             Align::Center,
         );
-        let ar = self.lane_button_rect(hr, track, LaneButton::Arm);
+        let ar = self.lane_button_rect(hr, track, lane, LaneButton::Arm);
         sp::button(
             c,
             st,
@@ -5361,11 +5392,15 @@ impl ArrangementView {
             sp::snowflake(c, pt(x, name_y - 4.0), 5.0, ICE);
         }
         let hovered = |b| self.hover == Some(Hit::Button(track, b));
+        let automation = tr.is_automation_only();
         for (b, label, on, lit) in [
             (TrackButton::Mute, "M", tr.muted, st.mute),
             (TrackButton::Solo, "S", tr.solo, st.solo),
             (TrackButton::Arm, "R", tr.armed, st.record),
         ] {
+            if automation && b != TrackButton::Mute {
+                continue;
+            }
             sp::button(
                 c,
                 st,
@@ -5377,6 +5412,22 @@ impl ArrangementView {
         }
         self.paint_track_meter(c, hr, track);
         if compact {
+            return;
+        }
+        if automation {
+            // The first lane's param and controls share the header's second line.
+            let p = self.param_of(track, 0);
+            let x = hr.x0 + 56.0 + self.track_indent(track);
+            sp::label(
+                c,
+                &fit_label(p.name, 134.0 - (x - hr.x0) - 4.0, 9.0),
+                x,
+                hr.y0 + 44.0,
+                9.0,
+                t.text_muted,
+                Align::Start,
+            );
+            self.paint_lane_buttons(c, hr, track, 0);
             return;
         }
         if tr.is_audio() {

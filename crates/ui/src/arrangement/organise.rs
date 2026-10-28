@@ -390,6 +390,10 @@ impl ArrangementView {
 
     /// Whether lane `lane` of track `track` is a folded automation lane.
     pub(super) fn is_lane_folded(&self, track: usize, lane: usize) -> bool {
+        // The first lane of an automation track is its header row: it cannot fold away.
+        if lane == 0 && self.is_automation_track(track) {
+            return false;
+        }
         // The lane that follows the selected parameter stays open, whatever the project says.
         !self.is_followed(track, lane)
             && self
@@ -1255,7 +1259,7 @@ impl ArrangementView {
     /// The fold chevron at the left of an automation lane header.
     pub(super) fn paint_lane_fold(&self, c: &mut dyn Canvas, hr: Rect, track: usize, lane: usize) {
         let t = &self.st.base;
-        let r = self.lane_button_rect(hr, track, LaneButton::Fold);
+        let r = self.lane_button_rect(hr, track, lane, LaneButton::Fold);
         let ctr = r.center();
         let folded = self.is_lane_folded(track, lane);
         let mut chev = BezPath::new();
