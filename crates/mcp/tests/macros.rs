@@ -385,7 +385,13 @@ fn following_the_selection_and_showing_a_lane_add_an_empty_lane() {
         json!({"action": "lane", "device": "echo", "param": "internal.solo_silence"}),
     );
     assert_eq!(v["done"], false);
-    assert!(v["message"].as_str().unwrap().contains("no automation lane"), "{v}");
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("no automation lane"),
+        "{v}"
+    );
     // A param a macro drives shows the macro's lane.
     macros(
         &mut s,
