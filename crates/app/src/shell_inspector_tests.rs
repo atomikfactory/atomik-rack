@@ -159,3 +159,45 @@ fn the_inspector_follows_the_selection() {
     s.core_mut().after_view_change();
     assert!(!s.core().transport_bar().inspector_fields().is_empty());
 }
+
+fn start_of(s: &Shell<NullBackend>, id: ClipId) -> i64 {
+    s.core().doc().song.clip(id).unwrap().2.start
+}
+
+#[test]
+fn the_arrange_inspector_toggles_edits_two_clips_in_one_undo_step_and_takes_the_keys() {
+    use atomik_ui::ClipField;
+    let mut s = shell();
+    let ids = imported(&mut s);
+    assert!(!s.core().arrangement().inspector_visible());
+    assert!(!s.menu_state().inspector);
+    s.execute(AppCommand::ToggleInspector);
+    assert!(s.core().arrangement().inspector_visible());
+    assert!(s.ui_state().show_inspector && s.menu_state().inspector);
+    s.core_mut().arrangement_mut().set_selected_clips(&ids);
+    s.core_mut().after_view_change();
+    let before = s.core().doc().clone();
+    let starts: Vec<i64> = ids.iter().map(|i| start_of(&s, *i)).collect();
+    // Double-click the tick part of Position and type +240.
+    let p = s
+        .core()
+        .arrangement()
+        .inspector_part_point(ClipField::Position, 3)
+        .unwrap();
+    down(&mut s, p, 2);
+    up(&mut s, p);
+    assert!(s.core().arrangement().is_text_owner());
+    for c in ['+', '2', '4', '0'] {
+        tap(&mut s, Key::Char(c));
+    }
+    tap(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space does not play while typing");
+    tap(&mut s, Key::Enter);
+    for (id, start) in ids.iter().zip(&starts) {
+        assert_eq!(start_of(&s, *id), start + 240, "{id:?}");
+    }
+    s.execute(AppCommand::Undo);
+    assert_eq!(s.core().doc(), &before, "one undo step for both clips");
+    s.execute(AppCommand::ToggleInspector);
+    assert!(!s.core().arrangement().inspector_visible() && !s.ui_state().show_inspector);
+}
