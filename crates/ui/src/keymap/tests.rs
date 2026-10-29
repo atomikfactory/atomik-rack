@@ -89,6 +89,8 @@ fn reference_shadows_are_the_expected_notes() {
             "files Backspace files.parent over edit.delete",
             "files Cmd+A files.select_all over edit.select_all",
             "files Cmd+F files.search over view.toggle_browser",
+            "keys K keys.note over view.cables_cycle",
+            "keys L keys.note over transport.loop",
         ]
     );
     assert!(find_shadows(&km(Profile::Legacy, Os::Windows)).is_empty());
@@ -927,6 +929,8 @@ const MOVED: &[&str] = &[
     "Editor Up editor.transpose_up",
     "Global Cmd+I file.import_audio",
     "Global Cmd+Shift+Y edit.redo",
+    "Global F4 view.toggle_file_browser",
+    "Global F9 view.toggle_piano_keys",
     "Rack R transport.record",
     "Rack Shift+L transport.loop",
     "Rack Shift+R transport.record",
@@ -961,10 +965,15 @@ fn zoom_in_works_with_the_plus_character_typed_with_shift_in_both_profiles() {
 // ------------------------------------------------------------------ the file browser
 
 #[test]
-fn the_file_browser_toggle_is_f4_in_every_profile_and_context() {
+fn the_file_browser_toggle_is_f9_in_standard_and_f4_in_legacy_in_every_context() {
     for os in Os::ALL {
         for profile in Profile::ALL {
             let k = km(profile, os);
+            let toggle = if profile == Profile::Standard {
+                "F9"
+            } else {
+                "F4"
+            };
             for ctxs in [
                 &[][..],
                 &[Context::Files][..],
@@ -973,21 +982,21 @@ fn the_file_browser_toggle_is_f4_in_every_profile_and_context() {
                 &[Context::Sequencer][..],
             ] {
                 assert_eq!(
-                    first(k.resolve(&chord("F4", os), &stack(ctxs))).command,
+                    first(k.resolve(&chord(toggle, os), &stack(ctxs))).command,
                     "view.toggle_file_browser",
                     "{os:?} {profile:?} {ctxs:?}"
                 );
             }
             assert_eq!(
                 k.shortcut_text("view.toggle_file_browser", None).as_deref(),
-                Some("F4")
+                Some(toggle)
             );
         }
     }
     // Function keys are media keys on a Mac keyboard: the same alternative as F3 and F5.
     let mac = km(Profile::Standard, Os::Mac);
     assert_eq!(
-        first(mac.resolve(&chord("Cmd+Alt+Digit4", Os::Mac), &stack(&[]))).command,
+        first(mac.resolve(&chord("Cmd+Alt+Digit9", Os::Mac), &stack(&[]))).command,
         "view.toggle_file_browser"
     );
 }
@@ -1016,7 +1025,7 @@ fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
     let globals: &[(&str, &str)] = &[
         ("Cmd+S", "file.save"),
         ("Cmd+Z", "edit.undo"),
-        ("F4", "view.toggle_file_browser"),
+        ("F9", "view.toggle_file_browser"),
         ("F5", "view.toggle_console"),
         ("F3", "view.toggle_browser"),
         ("Cmd+Shift+Z", "edit.redo"),
@@ -1035,7 +1044,8 @@ fn the_files_context_takes_the_panels_keys_before_the_global_ones() {
                 );
             }
             for (c, want) in globals {
-                if profile == Profile::Legacy && matches!(*c, "F3" | "Delete" | "Cmd+Return") {
+                if profile == Profile::Legacy && matches!(*c, "F3" | "F9" | "Delete" | "Cmd+Return")
+                {
                     continue;
                 }
                 assert_eq!(
@@ -1126,7 +1136,7 @@ fn script_the_panel_keys_win_over_play_and_delete() {
          down Space\nexpect command files.toggle_preview\nup Space\n\
          down Backspace\nexpect command files.parent\n\
          down Cmd+S\nexpect command file.save\nup Cmd+S\n\
-         down F4\nexpect command view.toggle_file_browser\nup F4\n\
+         down F9\nexpect command view.toggle_file_browser\nup F9\n\
          ctx text files\n\
          up Space\ndown Space\nexpect text\n\
          down Cmd+S\nexpect command file.save\n",
