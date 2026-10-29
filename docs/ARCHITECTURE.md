@@ -895,6 +895,17 @@ The file browser's preview is live only. `ControlOp::PreviewStart` is sent only 
 
 Tests: `render_any_host_block_is_bit_identical` ([determinism.rs](../crates/engine/tests/determinism.rs)), the multicore proptest, `cli_block_size_does_not_change_output` and the goldens ([render/tests/e2e.rs](../crates/render/tests/e2e.rs)), the project bounce tests, `audio_bounces_are_bit_identical_across_blocks_and_workers` and `a_bounce_of_several_audio_tracks_is_identical_across_blocks_and_workers` ([render/tests](../crates/render/tests)), and for the sampler `the_bounce_is_bit_identical_across_host_blocks_and_worker_counts` and `voice_stealing_and_layering_are_deterministic` ([sampler_demo.rs](../crates/render/tests/sampler_demo.rs)). Sampler voice stealing orders by a per-device start counter, and the sample reader uses only IEEE arithmetic and `sin_quarter`.
 
+### Fault containment (needs `panic = "unwind"`)
+
+A bug in a device must cost that device, not the session. The rules:
+
+- `Node::run` ([plan.rs](../crates/engine/src/plan.rs)) wraps the device's `process` in `catch_unwind`, on the audio thread and on a worker alike. A panic marks the node faulted: its outputs are zeroed and it is skipped from then on, the engine stores the device's instance id in a sticky atomic ([fault.rs](../crates/engine/src/fault.rs)) and keeps rendering everything else. Nothing is re-raised. `Engine::fault` and `EngineHandle::fault` report it; the audio callback publishes it in `Telemetry::faulted`/`faulted_device`, the status line shows `ENGINE FAULTED: <device>` and a toast points at Audio > Restart Audio, which rebuilds the engine. The callback also wraps the whole render in `catch_unwind` as a last line: a panic outside any device silences the stream and sets `Telemetry::faulted`.
+- `catch_unwind` costs nothing while nothing panics, so HI-1 holds. The panic path allocates (the payload, the default hook's message); it runs once per faulted device and is a documented exception. The panic hook must not do file I/O on the audio thread.
+- A worker thread that dies outside a job loses the nodes it owned; the barrier stops waiting for them, records their devices as faulted and the worker gets no more work. `Pool::new` returns a `PoolError` when no worker could be started, and the engine then renders single-threaded (the output does not depend on the worker count).
+- `RunningStream::stop` returns an error instead of aborting when the backend does not release the stream within 5 s.
+- Offline renders never abort: `try_render_offline*` ([offline.rs](../crates/engine/src/offline.rs)) return an `OfflineError` for a rejected scripted edit, a full queue or a device that panicked (no audio is returned for a render that lost a device), `atomik_render::RenderError::Engine` carries it to the CLI (non-zero exit), the export and freeze workers and the QA server's `bounce`. The un-prefixed `render_offline*` functions panic on that error and exist for tests.
+- **All of this depends on unwinding.** Under `panic = "abort"` every `catch_unwind` (devices, decoders, plugin boundaries, workers) does nothing and a contained fault becomes a process abort. `[profile.release]` sets `panic = "unwind"` with a comment, and `unwind_invariant.rs` in [crates/engine/tests](../crates/engine/tests) fails if any profile sets `abort`. Tests: `a_panicking_device_is_contained` ([multicore.rs](../crates/engine/tests/multicore.rs)), `a_panicking_decoder_returns_error` ([decode.rs](../crates/audio-file/src/decode.rs)).
+
 ### HI-3: graph validity
 
 | Mechanism | Where |
