@@ -482,3 +482,116 @@ fn the_view_owns_the_keyboard_only_while_a_value_is_typed() {
     handle(&mut arr, &doc, &[key_down(Key::Escape)]);
     assert!(!arr.is_text_owner());
 }
+
+// ---------------------------------------------------------------- points
+
+use atomik_ui::{PointField, PointShown};
+
+fn points_shown(sel: &[usize]) -> (ArrangementView, RackDoc) {
+    let doc = song_doc();
+    let mut arr = shown(&doc, &[4]);
+    arr.set_selected_points(ClipId(4), sel);
+    (arr, doc)
+}
+
+fn contents(actions: &[UiAction]) -> Vec<(Vec<atomik_model::AutomationPoint>, Option<u64>)> {
+    commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Song(SongCommand::SetClipContent {
+                content: atomik_model::ClipContent::Automation(p),
+                merge,
+                ..
+            }) => Some((p, merge)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn entry(at: Point, text: &str) -> Vec<UiEvent> {
+    let mut events = vec![down_mods(at, Modifiers::NONE, 2)];
+    events.extend(typed(text));
+    events.push(key_down(Key::Enter));
+    events
+}
+
+#[test]
+fn selected_points_replace_the_clip_fields_with_position_and_value() {
+    let (mut arr, doc) = points_shown(&[1]);
+    assert!(arr.inspector_shows_points());
+    assert_eq!(
+        arr.inspector_point_value(PointField::Position),
+        Some(PointShown::Value((2 * BAR) as f64))
+    );
+    assert_eq!(
+        arr.inspector_point_value(PointField::Value),
+        Some(PointShown::Value(6000.0))
+    );
+    let t = texts(&mut arr, &doc);
+    for want in ["AUTOMATION", "1 point", "POSITION", "VALUE"] {
+        assert!(t.iter().any(|s| s == want), "{want} in {t:?}");
+    }
+    assert!(
+        !t.iter().any(|s| s == "LOOP LENGTH"),
+        "the clip fields are hidden"
+    );
+    let (arr, _) = points_shown(&[0, 1]);
+    assert_eq!(
+        arr.inspector_point_value(PointField::Value),
+        Some(PointShown::Mixed)
+    );
+    let (arr, _) = points_shown(&[]);
+    assert!(!arr.inspector_shows_points());
+}
+
+#[test]
+fn typing_a_relative_value_moves_every_point_and_clamps_each_to_the_lane_range() {
+    let (mut arr, doc) = points_shown(&[0, 1]);
+    let at = arr.inspector_point_part(PointField::Value, 0).unwrap();
+    let c = contents(&handle(&mut arr, &doc, &entry(at, "+100")));
+    assert_eq!(c.len(), 1, "one undo step");
+    assert!((c[0].0[0].value - 400.0).abs() < 1e-3);
+    assert!((c[0].0[1].value - 6100.0).abs() < 1e-3);
+    // A huge entry stops each point at the top of the range.
+    let (mut arr, doc) = points_shown(&[0, 1]);
+    let c = contents(&handle(&mut arr, &doc, &entry(at, "+9999999")));
+    let top = c[0].0[0].value;
+    assert!(top > 300.0 && (c[0].0[1].value - top).abs() < 1e-3, "{c:?}");
+}
+
+#[test]
+fn point_positions_move_by_the_same_ticks_and_a_collision_sends_nothing() {
+    let (mut arr, doc) = points_shown(&[1, 2]);
+    let at = arr.inspector_point_part(PointField::Position, 3).unwrap();
+    let c = contents(&handle(&mut arr, &doc, &entry(at, "+240")));
+    assert_eq!(c[0].0[1].tick, 2 * BAR + 240);
+    assert_eq!(c[0].0[2].tick, 3 * BAR + 240);
+    // Point 0 typed onto bar 2 is free; bar 3 is where point 1 sits and sends nothing.
+    let (mut arr, doc) = points_shown(&[0]);
+    let at = arr.inspector_point_part(PointField::Position, 0).unwrap();
+    assert!(!contents(&handle(&mut arr, &doc, &entry(at, "2"))).is_empty());
+    assert!(contents(&handle(&mut arr, &doc, &entry(at, "3"))).is_empty());
+}
+
+#[test]
+fn a_point_drag_is_one_merge_group_and_the_wheel_is_one_step() {
+    let (mut arr, doc) = points_shown(&[1]);
+    let at = arr.inspector_point_part(PointField::Value, 0).unwrap();
+    let a = handle(
+        &mut arr,
+        &doc,
+        &[
+            down(at),
+            mv(Point::new(at.x, at.y - 6.0)),
+            up(Point::new(at.x, at.y - 6.0)),
+        ],
+    );
+    let c = contents(&a);
+    assert_eq!(c.len(), 1);
+    assert!(c[0].1.is_some());
+    assert!(c[0].0[1].value > 6000.0);
+    assert!(matches!(a.last(), Some(UiAction::EndMerge)));
+    let c = contents(&handle(&mut arr, &doc, &[wheel(at, 1.0)]));
+    assert_eq!(c.len(), 1);
+    assert_eq!(c[0].1, None);
+}

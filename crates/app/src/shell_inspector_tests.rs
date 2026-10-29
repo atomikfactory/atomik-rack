@@ -201,3 +201,81 @@ fn the_arrange_inspector_toggles_edits_two_clips_in_one_undo_step_and_takes_the_
     s.execute(AppCommand::ToggleInspector);
     assert!(!s.core().arrangement().inspector_visible() && !s.ui_state().show_inspector);
 }
+
+#[test]
+fn the_note_strip_shows_with_the_same_switch_and_edits_two_notes_in_one_undo_step() {
+    use atomik_core::PPQ;
+    use atomik_model::{Clip, Command, DeviceKey, Note, SongCommand};
+    use atomik_ui::NoteField;
+    let mut s = shell();
+    let dev = DeviceKey("a".into());
+    s.core_mut()
+        .apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: "atomik.poly-synth".into(),
+            key: Some(dev.clone()),
+        })
+        .unwrap();
+    let song = |s: &mut Shell<NullBackend>, c: SongCommand| {
+        s.core_mut().apply_command(Command::Song(c)).unwrap();
+    };
+    song(
+        &mut s,
+        SongCommand::AddTrack {
+            device: dev.clone(),
+        },
+    );
+    song(
+        &mut s,
+        SongCommand::AddClip {
+            device: dev,
+            lane: 0,
+            clip: Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 4 * PPQ,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                scale: None,
+                controllers: Vec::new(),
+                grid: None,
+                content: ClipContent::Notes(vec![
+                    Note::new(0, PPQ, 60, 0.8),
+                    Note::new(PPQ, PPQ, 64, 0.8),
+                ]),
+            },
+        },
+    );
+    s.core_mut().open_piano_roll(ClipId(1));
+    s.execute(AppCommand::ToggleInspector);
+    assert!(s.core().piano_roll().inspector_visible());
+    assert!(
+        s.core().arrangement().inspector_visible(),
+        "one switch for both strips"
+    );
+    s.core_mut().piano_roll_mut().set_selected_notes(&[0, 1]);
+    s.core_mut().after_view_change();
+    let before = s.core().doc().clone();
+    let p = s
+        .core()
+        .piano_roll()
+        .inspector_part_point(NoteField::Pitch, 0)
+        .expect("the strip fits in the pane");
+    down(&mut s, p, 2);
+    up(&mut s, p);
+    assert!(s.core().piano_roll().is_text_owner());
+    for c in ['+', '2'] {
+        tap(&mut s, Key::Char(c));
+    }
+    tap(&mut s, Key::Space);
+    assert!(!s.core().is_playing(), "Space does not play while typing");
+    tap(&mut s, Key::Enter);
+    let keys: Vec<u8> = match &s.core().doc().song.clip(ClipId(1)).unwrap().2.content {
+        ClipContent::Notes(n) => n.iter().map(|n| n.key).collect(),
+        _ => panic!("not notes"),
+    };
+    assert_eq!(keys, vec![62, 66]);
+    s.execute(AppCommand::Undo);
+    assert_eq!(s.core().doc(), &before, "one undo step for both notes");
+}
