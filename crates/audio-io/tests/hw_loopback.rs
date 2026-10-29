@@ -232,7 +232,7 @@ fn hw_vb_cable_impulse_round_trip() {
         telemetry.xruns,
         telemetry.late_callbacks + telemetry.render_overruns + telemetry.stream_errors
     );
-    let engine = stream.stop();
+    let engine = stream.stop().unwrap();
     drop(capture);
     drop(engine);
 

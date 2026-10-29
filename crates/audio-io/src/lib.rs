@@ -183,6 +183,13 @@ pub struct Telemetry {
     /// Smoothed output latency in frames: the output callback's `playback - callback`
     /// (the engine's own 64-frame FIFO is not included). 0 before the first callback.
     pub output_latency_frames: u32,
+    /// True once the engine has faulted: a device panicked while rendering (it is silent from
+    /// then on and everything else keeps sounding), or the render callback itself caught a
+    /// panic (the callback is then silent). Sticky until the stream is rebuilt.
+    pub faulted: bool,
+    /// The engine's device instance id of the first device that panicked, when that is what
+    /// faulted; `None` for a fault outside any device (or no fault).
+    pub faulted_device: Option<u32>,
 }
 
 /// What kind of xrun an [`XrunEvent`] reports.

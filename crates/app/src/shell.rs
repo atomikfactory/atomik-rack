@@ -330,6 +330,8 @@ pub struct Shell<B: AudioBackend> {
     /// The open windows: the main window always, a detached pane's while it is detached.
     wins: BTreeMap<WindowKind, WinState>,
     status: String,
+    /// The engine fault already announced with a toast (cleared when the fault is).
+    fault_announced: bool,
     repaint: bool,
     /// What holds the pointer, and the window the press happened in.
     capture: Option<(WindowKind, Capture)>,
@@ -506,6 +508,7 @@ impl<B: AudioBackend> Shell<B> {
             ui,
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
+            fault_announced: false,
             repaint: true,
             capture: None,
             focus: Pane::Rack,
@@ -4445,6 +4448,18 @@ impl<B: AudioBackend> Shell<B> {
         let mut status = self.core.sink_mut().poll().clone();
         status.notes_target = target;
         status.streaming = self.core.song_assets().values().any(|a| a.is_stream());
+        status.faulted_name = status
+            .faulted_device
+            .and_then(|id| self.core.device_name_of_instance(id));
+        if status.faulted && !self.fault_announced {
+            self.fault_announced = true;
+            let what = crate::status::faulted_text(&status);
+            self.notify(format!(
+                "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
+            ));
+        } else if !status.faulted {
+            self.fault_announced = false;
+        }
         let mut text = status_text(&status);
         if let Some(alert) = self.core.pdc_alert() {
             text = format!("{alert} \u{b7} {text}");

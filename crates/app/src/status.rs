@@ -40,6 +40,14 @@ pub struct AudioStatus {
     pub input_latency_frames: u32,
     /// Smoothed output latency in frames, 0 until measured.
     pub output_latency_frames: u32,
+    /// True once the engine has faulted: a device panicked while rendering and is silent, or
+    /// the render callback caught a panic. Sticky until the engine is rebuilt.
+    pub faulted: bool,
+    /// The engine's instance id of the device that panicked first, when a device did.
+    pub faulted_device: Option<u32>,
+    /// The faulted device's name, resolved by the shell for the status line (empty when the
+    /// fault is outside any device, or the name is unknown).
+    pub faulted_name: Option<String>,
     /// Streamed audio the engine could not deliver in time (frames of silence events) since
     /// the stream started.
     pub stream_underruns: u64,
@@ -69,6 +77,9 @@ pub fn status_text(s: &AudioStatus) -> String {
             s.dsp_peak * 100.0
         ));
         parts.push(format!("xruns {}", s.xruns));
+        if s.faulted {
+            parts.push(faulted_text(s));
+        }
         if s.streaming || s.stream_underruns > 0 {
             parts.push(format!("underruns {}", s.stream_underruns));
         }
@@ -90,6 +101,14 @@ pub fn status_text(s: &AudioStatus) -> String {
         (None, None) => "MIDI off".to_string(),
     });
     parts.join(" \u{b7} ")
+}
+
+/// `ENGINE FAULTED: <device>` (the device that panicked; the engine keeps sounding the rest).
+pub fn faulted_text(s: &AudioStatus) -> String {
+    match &s.faulted_name {
+        Some(name) => format!("ENGINE FAULTED: {name}"),
+        None => "ENGINE FAULTED".to_string(),
+    }
 }
 
 /// The settings dialog's note about the input the running stream opened.
@@ -157,6 +176,16 @@ mod tests {
             notes_target: Some("Bass".into()),
             ..AudioStatus::default()
         }
+    }
+
+    #[test]
+    fn a_faulted_engine_names_the_device() {
+        let mut s = running();
+        assert!(!status_text(&s).contains("FAULTED"));
+        s.faulted = true;
+        assert!(status_text(&s).contains("\u{b7} ENGINE FAULTED \u{b7}"));
+        s.faulted_name = Some("Bass".into());
+        assert!(status_text(&s).contains("ENGINE FAULTED: Bass"));
     }
 
     #[test]
