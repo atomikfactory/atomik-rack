@@ -12,7 +12,7 @@ use atomik_app::app_core::Pane;
 use atomik_app::commands::AppCommand;
 use atomik_app::session::{LiveSession, SystemBackend};
 use atomik_app::settings::AudioSettings;
-use atomik_app::shell::{Shell, ShellOptions, ShellRequest};
+use atomik_app::shell::{PendingAction, Shell, ShellOptions, ShellRequest};
 use atomik_app::windows::WindowKind;
 use atomik_render::wav::{SampleFormat, read_wav_file, write_wav_file};
 use atomik_ui::cpu_canvas::CpuCanvas;
@@ -196,6 +196,13 @@ impl Session {
             "focus": format!("{:?}", self.shell.focus()),
             "lower_pane": format!("{:?}", self.shell.lower_pane()),
             "library": self.shell.library_root().map(|p| p.to_string_lossy().into_owned()),
+            "recent_files": self
+                .shell
+                .core()
+                .recent()
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
             "recording": self.shell.core().is_recording(),
             "armed_lanes": self
                 .shell
@@ -323,13 +330,21 @@ fn os_name(os: Os) -> &'static str {
 
 fn request_json(r: ShellRequest) -> Value {
     let (name, note) = match r {
-        ShellRequest::ConfirmDiscard(_) => (
-            "confirm_discard",
-            "the document has unsaved changes: repeat the command with confirm true to discard them",
+        ShellRequest::ConfirmSave {
+            then: PendingAction::Command(_),
+        } => (
+            "confirm_save",
+            "the document has unsaved changes (the app asks Save, Don't Save or Cancel): save with session_save and repeat the command, or repeat it with confirm true to discard them",
         ),
-        ShellRequest::ConfirmDiscardOpen(_) => (
-            "confirm_discard_open",
-            "the document has unsaved changes: open the project with session_open instead, or save first",
+        ShellRequest::ConfirmSave {
+            then: PendingAction::OpenFile(_),
+        } => (
+            "confirm_save_open",
+            "the document has unsaved changes: save with session_save first, or open the project with session_open instead",
+        ),
+        ShellRequest::PickSaveFileThen { .. } => (
+            "pick_save_file",
+            "a file dialog: use session_save with a path",
         ),
         ShellRequest::Quit => ("quit", "the app asked to quit; the session stays open"),
         ShellRequest::PickOpenFile => (
@@ -461,7 +476,7 @@ fn library_folder(server: &Server, name: &str) -> Result<PathBuf, String> {
 fn status_def() -> Value {
     definition(
         "session_status",
-        "The open session: title, unsaved changes, status line, focused pane, undo/redo \
+        "The open session: title, unsaved changes, the recent songs, status line, focused pane, undo/redo \
 availability, whether a take records, the automation lanes armed for recording, window size, and the document (devices, cables, song; automation lanes with their write mode).",
         &[(
             "include_params",
@@ -558,7 +573,7 @@ fn command_def() -> Value {
         "session_command",
         "Runs a menu command by id (see session_commands), as the menu or its shortcut would. \
 A command that needs a native dialog or a confirmation is reported in `requests`, not run \
-silently; `confirm` true accepts a discard-changes question. A freeze or bounce (sequencer.freeze_track, sequencer.bounce_in_place ...) renders on a worker: the session has no frame loop, so the call waits for the render to finish (and the track to be frozen) unless `wait` is false; `message` then carries what it said (for example `Froze Lead`).",
+silently; `confirm` true answers the unsaved-changes question (Save, Don't Save, Cancel) with Don't Save. A freeze or bounce (sequencer.freeze_track, sequencer.bounce_in_place ...) renders on a worker: the session has no frame loop, so the call waits for the render to finish (and the track to be frozen) unless `wait` is false; `message` then carries what it said (for example `Froze Lead`).",
         &[
             (
                 "id",
@@ -568,7 +583,7 @@ silently; `confirm` true accepts a discard-changes question. A freeze or bounce 
             (
                 "confirm",
                 "boolean",
-                "Accept the 'discard unsaved changes' question.",
+                "Answer the 'unsaved changes' question with Don't Save (discard them and carry on).",
             ),
             (
                 "wait",
@@ -643,7 +658,9 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let mut done = Vec::new();
     while let Some(r) = raised.pop() {
         match r {
-            ShellRequest::ConfirmDiscard(c) if confirm => raised.extend(shell.confirmed(c)),
+            ShellRequest::ConfirmSave {
+                then: then @ PendingAction::Command(_),
+            } if confirm => raised.extend(shell.discard_then(then)),
             other => done.push(request_json(other)),
         }
     }
