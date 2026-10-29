@@ -2,6 +2,7 @@
 
 use crate::clipboard::Clipboard;
 use crate::record::{InputQuantize, RecordedNote, Take};
+use crate::record_over::{KeepEvents, RecordMode, keep_events_follow_up, note_take_command};
 use crate::sink::EngineSink;
 use crate::target::{NoteTarget, Target};
 use atomik_core::{NoteKind, ParamId, SampleRate, Tempo, Ticks};
@@ -16,9 +17,9 @@ use atomik_model::console::{
     VCA_SOLO_PARAM, VcaFeed, is_console_type,
 };
 use atomik_model::{
-    ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY, ModelError,
-    RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, empty_doc, load_project, new_project_doc,
-    register_stand_ins, save_patch,
+    ClipContent, ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY,
+    ModelError, RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, WorkflowCommand, empty_doc,
+    load_project, new_project_doc, register_stand_ins, save_patch,
 };
 use atomik_render::project::song_input_with_warps;
 use atomik_ui::kurbo::Point;
@@ -252,6 +253,14 @@ pub struct AppCore<S: EngineSink> {
     /// The length the pre-count toggle returns to (1 to 4).
     pre_count_resume: u8,
     quantize: InputQuantize,
+    /// What a finished MIDI take does with the clips already on its lane.
+    record_mode: RecordMode,
+    /// What a note edit does with notes that start past their clip's end.
+    keep_events: KeepEvents,
+    /// The note clip an open drag edited, to complete under `keep_events` when the drag ends.
+    keep_pending: Option<ClipId>,
+    /// The next applied command is folded into the undo step before it (a follow-up).
+    join_next: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -452,6 +461,10 @@ impl<S: EngineSink> AppCore<S> {
             pre_count_bars: 0,
             pre_count_resume: 1,
             quantize: InputQuantize::Off,
+            record_mode: RecordMode::default(),
+            keep_events: KeepEvents::default(),
+            keep_pending: None,
+            join_next: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -619,8 +632,25 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_flush_dirty();
         let merge = param_merge(&command);
         let hint = self.snapshot_hint_after(&command);
-        match self.document.apply(command, &self.registry) {
+        let joined = std::mem::take(&mut self.join_next);
+        let note_edit = if joined || self.keep_events == KeepEvents::Keep {
+            None
+        } else {
+            note_edit_of(&command)
+        };
+        let applied = if joined {
+            self.document.apply_joined(command, &self.registry)
+        } else {
+            self.document.apply(command, &self.registry)
+        };
+        match applied {
             Ok(ops) => {
+                match note_edit {
+                    // A drag: the clip is completed when it ends.
+                    Some((id, true)) => self.keep_pending = Some(id),
+                    Some((id, false)) => self.complete_note_edit(id),
+                    None => {}
+                }
                 if let Some(hint) = hint {
                     self.snapshot_hint = hint;
                     self.console.set_snapshot_hint(hint);
@@ -650,6 +680,9 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             UiAction::EndMerge => {
+                if let Some(id) = self.keep_pending.take() {
+                    self.complete_note_edit(id);
+                }
                 self.document.end_merge();
                 self.release_automation();
             }
@@ -2241,6 +2274,38 @@ impl<S: EngineSink> AppCore<S> {
         self.quantize = quantize;
     }
 
+    /// What a finished MIDI take does with the clips already on its lane.
+    pub fn record_mode(&self) -> RecordMode {
+        self.record_mode
+    }
+
+    /// Sets the record mode for the next takes.
+    pub fn set_record_mode(&mut self, mode: RecordMode) {
+        self.record_mode = mode;
+    }
+
+    /// What a note edit does with notes that start past their clip's end.
+    pub fn keep_events(&self) -> KeepEvents {
+        self.keep_events
+    }
+
+    /// Sets the keep-events policy (see [`crate::record_over`]).
+    pub fn set_keep_events(&mut self, policy: KeepEvents) {
+        self.keep_events = policy;
+    }
+
+    /// Completes the edit of note clip `id` under the keep-events policy: the follow-up commands
+    /// join the undo step of the edit.
+    fn complete_note_edit(&mut self, id: ClipId) {
+        let commands = keep_events_follow_up(self.doc(), id, self.keep_events);
+        for command in commands {
+            self.join_next = true;
+            // A rejection is already reported.
+            let _ = self.apply_command(command);
+            self.join_next = false;
+        }
+    }
+
     /// The transport position shown (song ticks): the engine's when it runs, else the last
     /// locate.
     pub fn position(&self) -> i64 {
@@ -2396,7 +2461,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Ends the take at the transport position of `state` and writes its clips: per track one
-    /// `AddClip`, or one `NewTakeGroup` when the loop made several passes (one undo step each).
+    /// `AddClip`, or one `NewTakeGroup` when the loop made several passes, or in Layer mode one
+    /// merge into the clip under the take (one undo step each; see [`crate::record_over`]).
     fn finish_take(&mut self, state: &TransportState) {
         if self.take.is_none() {
             return;
@@ -2423,7 +2489,7 @@ impl<S: EngineSink> AppCore<S> {
                 None => by_device.push((device, vec![clip])),
             }
         }
-        for (device, mut clips) in by_device {
+        for (device, clips) in by_device {
             // The lane picked when the take began, unless it is gone by now (or no longer a
             // note lane): then the first one.
             let lane = lanes
@@ -2436,21 +2502,9 @@ impl<S: EngineSink> AppCore<S> {
                         .is_some_and(|t| t.is_note_lane(*l))
                 })
                 .unwrap_or(0);
-            let command = if clips.len() > 1 {
-                SongCommand::NewTakeGroup {
-                    device,
-                    lane,
-                    takes: clips,
-                }
-            } else {
-                SongCommand::AddClip {
-                    device,
-                    lane,
-                    clip: clips.remove(0),
-                }
-            };
+            let command = note_take_command(self.doc(), device, lane, clips, self.record_mode);
             // A rejection is already reported.
-            let _ = self.apply_command(Command::Song(command));
+            let _ = self.apply_command(command);
             self.document.end_merge();
         }
     }
@@ -2512,6 +2566,22 @@ fn param_merge(command: &Command) -> Option<u64> {
     match command {
         Command::SetParam { merge, .. } => *merge,
         Command::Batch(commands) => commands.iter().find_map(param_merge),
+        _ => None,
+    }
+}
+
+/// The note clip a command edits and whether it is a drag step (`true`): the commands the
+/// keep-events policy follows up (a note list set by an editor, notes pasted or duplicated).
+fn note_edit_of(command: &Command) -> Option<(ClipId, bool)> {
+    match command {
+        Command::Song(SongCommand::SetClipContent {
+            id,
+            content: ClipContent::Notes(_),
+            merge,
+        }) => Some((*id, merge.is_some())),
+        Command::Workflow(
+            WorkflowCommand::PasteNotes { clip, .. } | WorkflowCommand::DuplicateNotes { clip, .. },
+        ) => Some((*clip, false)),
         _ => None,
     }
 }

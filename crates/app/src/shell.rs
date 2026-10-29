@@ -1484,6 +1484,8 @@ impl<B: AudioBackend> Shell<B> {
     fn apply_workflow_to_views(&mut self) {
         self.core
             .set_autosave_minutes(self.workflow.autosave_minutes);
+        self.core.set_record_mode(self.workflow.record_mode);
+        self.core.set_keep_events(self.workflow.keep_events);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);

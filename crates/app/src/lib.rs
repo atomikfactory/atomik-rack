@@ -38,6 +38,7 @@ pub mod plugin_setup;
 pub(crate) mod plugin_test_support;
 pub mod recent;
 pub mod record;
+pub mod record_over;
 pub mod recovery;
 pub mod session;
 pub mod settings;
