@@ -300,13 +300,18 @@ fn the_command_toggles_the_column_and_the_menu_check_follows() {
 }
 
 #[test]
-fn the_view_menu_shows_f4_for_it() {
+fn the_view_menu_shows_f9_for_it() {
     let s = shell();
-    assert_eq!(view_menu_item(&s).shortcut.as_deref(), Some("F4"));
+    let want = if s.profile() == Profile::Standard {
+        "F9"
+    } else {
+        "F4"
+    };
+    assert_eq!(view_menu_item(&s).shortcut.as_deref(), Some(want));
 }
 
 #[test]
-fn f4_toggles_it_on_every_os_and_profile() {
+fn the_file_browser_key_toggles_it_on_every_os_and_profile() {
     for os in [Os::Windows, Os::Linux, Os::Mac] {
         for profile in Profile::ALL {
             let session = LiveSession::new(NullBackend, AudioSettings::default(), false);
@@ -320,9 +325,14 @@ fn f4_toggles_it_on_every_os_and_profile() {
                 },
             );
             s.handle(&UiEvent::Resize(Size::new(1200.0, 800.0)));
-            tap(&mut s, os, "F4");
+            let f = if profile == Profile::Standard {
+                "F9"
+            } else {
+                "F4"
+            };
+            tap(&mut s, os, f);
             assert!(s.layout().file_browser.is_some(), "{os:?} {profile:?}");
-            tap(&mut s, os, "F4");
+            tap(&mut s, os, f);
             assert!(s.layout().file_browser.is_none(), "{os:?} {profile:?}");
         }
     }
@@ -352,10 +362,15 @@ fn hiding_the_panel_leaves_another_focus_alone() {
 }
 
 #[test]
-fn f4_is_a_command_even_while_the_panel_has_the_focus() {
+fn the_toggle_key_is_a_command_even_while_the_panel_has_the_focus() {
     let mut s = shown();
     click_in_panel(&mut s);
-    tap(&mut s, Os::Windows, "F4");
+    let f = if s.profile() == Profile::Standard {
+        "F9"
+    } else {
+        "F4"
+    };
+    tap(&mut s, Os::Windows, f);
     assert!(s.layout().file_browser.is_none());
     assert_ne!(s.focus(), Pane::FileBrowser);
 }

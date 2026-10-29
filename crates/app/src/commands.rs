@@ -1,4 +1,4 @@
-//! App commands and the menu model shared by the in-window menu bar and the native (macOS)
+//! App .filter(|c| !matches!(c, AppCommand::ToggleFileBrowser | AppCommand::TogglePianoKeys))ommands and the menu model shared by the in-window menu bar and the native (macOS)
 //! menus.
 //!
 //! Keys are not decided here: every [`AppCommand`] maps to a command id of the registry
@@ -95,6 +95,8 @@ pub enum AppCommand {
     ToggleBrowser,
     /// View ▸ File Browser (the docked audio file panel on the left).
     ToggleFileBrowser,
+    /// View ▸ Piano Keys (the on-screen keyboard strip above the status bar).
+    TogglePianoKeys,
     /// View ▸ Rack Navigator (the overview strip at the right of the rack).
     ToggleRackNavigator,
     /// View ▸ Arrangement (show or hide the song area below the transport bar).
@@ -381,6 +383,7 @@ impl AppCommand {
             AppCommand::ZoomReset => ("view.zoom_reset", None),
             AppCommand::ToggleBrowser => ("view.toggle_browser", None),
             AppCommand::ToggleFileBrowser => ("view.toggle_file_browser", None),
+            AppCommand::TogglePianoKeys => ("view.toggle_piano_keys", None),
             AppCommand::ToggleSong => ("view.toggle_song", None),
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
@@ -565,6 +568,7 @@ impl AppCommand {
             ("view.zoom_reset", None) => AppCommand::ZoomReset,
             ("view.toggle_browser", None) => AppCommand::ToggleBrowser,
             ("view.toggle_file_browser", None) => AppCommand::ToggleFileBrowser,
+            ("view.toggle_piano_keys", None) => AppCommand::TogglePianoKeys,
             ("view.toggle_song", None) => AppCommand::ToggleSong,
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
@@ -835,6 +839,8 @@ pub struct MenuState {
     pub browser: bool,
     /// File browser panel shown.
     pub file_browser: bool,
+    /// Piano Keys strip shown.
+    pub piano_keys: bool,
     /// Undo possible.
     pub can_undo: bool,
     /// Redo possible.
@@ -1226,6 +1232,7 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::ToggleFileBrowser,
                     state.file_browser,
                 ),
+                check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
                 check("Rack", AppCommand::ToggleRack, state.rack),
                 check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
                 check(
@@ -1785,6 +1792,7 @@ mod tests {
             cables: CableVisibility::Show,
             browser: false,
             file_browser: false,
+            piano_keys: false,
             can_undo: true,
             can_redo: false,
             can_edit: false,
@@ -1873,6 +1881,7 @@ mod tests {
             AppCommand::ZoomReset,
             AppCommand::ToggleBrowser,
             AppCommand::ToggleFileBrowser,
+            AppCommand::TogglePianoKeys,
             AppCommand::ToggleSong,
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
@@ -2165,7 +2174,7 @@ mod tests {
     ) -> Option<AppCommand> {
         use atomik_ui::keymap::{ContextStack, Resolution};
         match keymap.resolve_event(key, modifiers, &ContextStack::global()) {
-            // F4 (the file browser) is new: it is not part of the old function being compared.
+            // The file browser and the piano keys are new: they are not part of the old function being compared.
             Resolution::Bound(list) => list
                 .iter()
                 .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref()))
@@ -2391,6 +2400,7 @@ mod tests {
                 "Actual Size",
                 "Device Browser",
                 "File Browser",
+                "Piano Keys",
                 "Rack",
                 "Detach Rack",
                 "Detach Mixer",
@@ -2590,6 +2600,7 @@ mod tests {
                 cables: CableVisibility::HoverOnly,
                 browser: true,
                 file_browser: false,
+                piano_keys: false,
                 can_undo: false,
                 can_redo: true,
                 can_edit: true,

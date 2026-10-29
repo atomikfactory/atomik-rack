@@ -619,6 +619,7 @@ mod tests {
             cables: CableVisibility::Show,
             browser: false,
             file_browser: false,
+            piano_keys: false,
             can_undo: false,
             can_redo: false,
             can_edit: false,
