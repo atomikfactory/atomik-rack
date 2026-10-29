@@ -596,6 +596,7 @@ impl<B: AudioBackend> Shell<B> {
             let arrangement = shell.core.arrangement_mut();
             arrangement.set_tempo_lane(shell.ui.show_tempo_lane);
             arrangement.set_marker_strip(shell.ui.show_marker_strip);
+            arrangement.set_inspector(shell.ui.show_inspector);
             arrangement.set_marker_list(shell.ui.show_marker_list);
         }
         shell
@@ -1712,6 +1713,7 @@ impl<B: AudioBackend> Shell<B> {
             console_links: view.show_console_links(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
+            inspector: self.core.arrangement().inspector_visible(),
             marker_list: self.core.arrangement().marker_list_visible(),
             rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
@@ -4038,6 +4040,13 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !self.core.arrangement().marker_strip_visible();
                 self.core.arrangement_mut().set_marker_strip(show);
                 self.ui.show_marker_strip = show;
+                self.save_ui_state();
+                Vec::new()
+            }
+            AppCommand::ToggleInspector => {
+                let show = !self.core.arrangement().inspector_visible();
+                self.core.arrangement_mut().set_inspector(show);
+                self.ui.show_inspector = show;
                 self.save_ui_state();
                 Vec::new()
             }

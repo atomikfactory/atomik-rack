@@ -10,7 +10,7 @@
 //! { "rack_split": 0.5, "show_song": true, "input_quantize": "1/16",
 //!   "show_console": false, "console_maximised": false,
 //!   "show_console_devices": true, "show_console_links": false, "show_tempo_lane": false,
-//!   "show_marker_strip": true, "show_marker_list": false,
+//!   "show_marker_strip": true, "show_inspector": false, "show_marker_list": false,
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
@@ -59,6 +59,8 @@ pub struct UiState {
     /// The arrangement shows the marker strip under its ruler. An absent key in the file means
     /// shown.
     pub show_marker_strip: bool,
+    /// The arrangement shows the inspector strip under its lanes. An absent key means hidden.
+    pub show_inspector: bool,
     /// The arrangement shows the marker list at its right edge.
     pub show_marker_list: bool,
     /// The rack navigator (the overview strip at the right of the rack) shows. An absent key in
@@ -104,6 +106,7 @@ impl Default for UiState {
             show_console_links: false,
             show_tempo_lane: false,
             show_marker_strip: true,
+            show_inspector: false,
             show_marker_list: false,
             show_rack_navigator: true,
             track_zoom: 1.0,
@@ -234,6 +237,7 @@ mod tests {
             show_console_links: true,
             show_tempo_lane: true,
             show_marker_strip: false,
+            show_inspector: true,
             show_marker_list: true,
             show_rack_navigator: false,
             console_notice_seen: true,

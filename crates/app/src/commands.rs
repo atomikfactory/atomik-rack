@@ -129,6 +129,9 @@ pub enum AppCommand {
     /// View > Marker Strip: the strip of markers and ranges under the arrangement's ruler
     /// (saved with the view state).
     ToggleMarkerStrip,
+    /// View > Inspector: the strip under the arrangement's track lanes with the selected clips'
+    /// position, length and loop as editable fields (saved with the view state).
+    ToggleInspector,
     /// View > Marker List: the list of markers and ranges docked at the right edge of the
     /// arrangement (saved with the view state).
     ToggleMarkerList,
@@ -406,6 +409,7 @@ impl AppCommand {
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
+            AppCommand::ToggleInspector => ("view.toggle_inspector", None),
             AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
             AppCommand::AddMarker => ("transport.add_marker", None),
             AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
@@ -588,6 +592,7 @@ impl AppCommand {
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
+            ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
             ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
             ("transport.add_marker", None) => AppCommand::AddMarker,
             ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
@@ -874,6 +879,8 @@ pub struct MenuState {
     pub tempo_lane: bool,
     /// The arrangement shows the marker strip.
     pub marker_strip: bool,
+    /// The arrangement shows the inspector strip.
+    pub inspector: bool,
     /// The arrangement shows the marker list.
     pub marker_list: bool,
     /// The rack navigator is on.
@@ -1278,6 +1285,7 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::ToggleMarkerList,
                     state.marker_list,
                 ),
+                check("Inspector", AppCommand::ToggleInspector, state.inspector),
                 MenuEntry::Separator,
                 item("Find Parameter\u{2026}", AppCommand::FindParameter),
                 check(
@@ -1799,6 +1807,7 @@ mod tests {
             console_links: false,
             tempo_lane: false,
             marker_strip: false,
+            inspector: false,
             marker_list: false,
             rack_navigator: true,
             rack: true,
@@ -1873,6 +1882,7 @@ mod tests {
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleMarkerStrip,
+            AppCommand::ToggleInspector,
             AppCommand::ToggleMarkerList,
             AppCommand::FindParameter,
             AppCommand::FollowSelection,
@@ -2397,6 +2407,7 @@ mod tests {
                 "Tempo Lane",
                 "Marker Strip",
                 "Marker List",
+                "Inspector",
                 "Find Parameter\u{2026}",
                 "Automation Follows Selection",
                 "Show Automation Lane",
@@ -2601,6 +2612,7 @@ mod tests {
                 console_links: false,
                 tempo_lane: false,
                 marker_strip: false,
+                inspector: false,
                 marker_list: false,
                 rack_navigator: true,
                 rack: true,
