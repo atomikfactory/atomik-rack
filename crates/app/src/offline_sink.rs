@@ -211,6 +211,10 @@ impl EngineSink for OfflineSink {
         Ok(())
     }
 
+    fn play_note(&mut self, _target: Target, _kind: NoteKind) -> Result<(), EngineError> {
+        Ok(())
+    }
+
     fn set_recording(&mut self, _devices: &[DeviceInstanceId]) {}
 
     fn drain_recorded(&mut self, _out: &mut Vec<RecordedNote>) {}

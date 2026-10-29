@@ -66,6 +66,9 @@ impl MidiPort for FakeMidi {
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
         self.link.send_now(target, kind)
     }
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        self.link.play_now(target, kind)
+    }
 }
 
 impl AudioBackend for &Fake {
