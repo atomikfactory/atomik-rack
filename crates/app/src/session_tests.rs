@@ -150,6 +150,7 @@ fn settings() -> AudioSettings {
         metronome_gain: 0.5,
         input_device: None,
         record_offset_frames: 0,
+        pre_count_bars: 0,
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
         surface: crate::settings::SurfaceSettings::default(),

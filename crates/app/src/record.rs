@@ -12,6 +12,10 @@
 //!   with [`atomik_engine::SongSnapshot::position_at`] and the latest published
 //!   [`TransportState`] (exact in song frames, including loop wraps). Events that arrive
 //!   before the engine reports `playing` wait for the first playing state.
+//! - **Pre-count.** A take that starts with a count-in ([`Take::counting_in`]) records nothing
+//!   until the song starts: the engine reports `playing` false while it counts, and the events
+//!   that fall before the song's first frame (the engine frame the count state announces) are
+//!   dropped, so the origin and the clip start at the position the count-in held.
 //! - **Loop wraps: one clip per pass, stacked as takes.** Each loop pass (`loop_count` since
 //!   the take began) is its own *lap*. A note still held when the loop wraps is closed at the
 //!   loop end of its lap; its later note-off is ignored. On stop, every lap with notes becomes
@@ -231,6 +235,10 @@ pub struct Take {
     controllers: BTreeMap<(DeviceInstanceId, u64), CtlTake>,
     /// Events waiting for a playing transport state.
     pending: Vec<RecordedNote>,
+    /// The take starts with a count-in: events before the song starts are dropped.
+    count_in: bool,
+    /// The engine frame the song starts at, once a count state announced it.
+    song_start: u64,
 }
 
 impl Take {
@@ -253,7 +261,17 @@ impl Take {
             notes: BTreeMap::new(),
             controllers: BTreeMap::new(),
             pending: Vec::new(),
+            count_in: false,
+            song_start: 0,
         }
+    }
+
+    /// Marks the take as starting with a count-in (the pre-count): nothing played before the
+    /// song starts is recorded.
+    #[must_use]
+    pub fn counting_in(mut self, on: bool) -> Self {
+        self.count_in = on;
+        self
     }
 
     /// The note lane each armed track records to.
@@ -281,6 +299,13 @@ impl Take {
         position: impl Fn(&TransportState, u64) -> SongPosition,
     ) {
         self.pending.extend_from_slice(events);
+        if self.count_in {
+            if state.pre_roll_frames > 0 {
+                self.song_start = state.engine_frame + state.pre_roll_frames;
+            }
+            let start = self.song_start;
+            self.pending.retain(|e| e.frame >= start);
+        }
         if !state.playing {
             return;
         }

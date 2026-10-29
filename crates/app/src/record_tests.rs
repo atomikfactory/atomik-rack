@@ -40,6 +40,8 @@ fn state(loop_range: Option<(i64, i64)>) -> TransportState {
         loop_start,
         loop_end,
         loop_enabled: loop_range.is_some(),
+        pre_roll_frames: 0,
+        pre_roll_beat: 0,
     }
 }
 
@@ -540,4 +542,46 @@ fn new_keeps_the_note_lane_of_each_armed_track() {
     assert_eq!(t.lanes().get(&DeviceKey("bass".into())), Some(&2));
     assert_eq!(t.lanes().get(&DeviceKey("lead".into())), Some(&0));
     assert_eq!(t.devices().len(), 2);
+}
+
+#[test]
+fn a_take_that_counts_in_records_nothing_before_the_song_starts() {
+    let snap = snapshot(120.0);
+    // The count-in runs from engine frame 0 and the song starts at E0.
+    let counting = TransportState {
+        playing: false,
+        engine_frame: 0,
+        pre_roll_frames: E0,
+        pre_roll_beat: 2,
+        ..state(None)
+    };
+    let mut t = take(None).counting_in(true);
+    feed(
+        &mut t,
+        &snap,
+        &counting,
+        &[on(40, E0 / 2), off(40, E0 / 2 + 10)],
+    );
+    let st = state(None);
+    let note = frame_at(&snap, PPQ, 0, 0);
+    feed(&mut t, &snap, &st, &[on(41, note), off(41, note + 2000)]);
+    let origin = t.origin().expect("the song started");
+    assert_eq!(origin.0, 0, "the take starts where the song does");
+    let clips = t.finish(stop(&snap, &st, note + 4000), InputQuantize::Off);
+    assert_eq!(clips.len(), 1);
+    let n = notes(&clips[0].1);
+    assert_eq!(n.len(), 1, "only the note played after the count");
+    assert_eq!(n[0].key, 41);
+    assert!(near(n[0].tick, PPQ), "{}", n[0].tick);
+    assert_eq!(clips[0].1.start, 0, "the clip starts at bar 1");
+}
+
+#[test]
+fn a_take_without_a_count_in_keeps_events_that_precede_the_first_playing_state() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    feed(&mut t, &snap, &st, &[on(40, E0 - 10), off(40, E0 + 500)]);
+    let clips = t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::Off);
+    assert_eq!(notes(&clips[0].1).len(), 1);
 }

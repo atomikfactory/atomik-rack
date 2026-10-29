@@ -635,6 +635,8 @@ impl<B: AudioBackend> Shell<B> {
         if (gain - shell.core.metronome_gain()).abs() > f32::EPSILON {
             shell.core.set_metronome_gain(gain);
         }
+        let pre_count = shell.core.sink().settings().pre_count_bars;
+        shell.core.set_pre_count_bars(pre_count);
         shell.layout_view();
         shell.poll_status();
         shell
@@ -1699,6 +1701,7 @@ impl<B: AudioBackend> Shell<B> {
             recording: self.core.is_recording(),
             loop_enabled: song.loop_enabled,
             metronome: self.core.metronome(),
+            pre_count: self.core.pre_count_bars() > 0,
             quantize: self.core.input_quantize(),
             console: self.console_visible(),
             console_maximised: self.maximised(),
@@ -3746,6 +3749,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RenameNoteLane
             | AppCommand::DeleteNoteLane
             | AppCommand::ToggleLaneMute
+            | AppCommand::ToggleChase
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_) => {
                 self.track_command(command);
@@ -3990,6 +3994,13 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::Transport(action) => {
                 self.core.transport_action(action);
+                Vec::new()
+            }
+            AppCommand::TogglePreCount => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.pre_count_bars = self.core.pre_count_toggled();
+                self.apply_settings(settings);
+                self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
             AppCommand::Quantize(q) => {
@@ -4539,6 +4550,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn apply_settings(&mut self, settings: AudioSettings) {
         let gain = settings.metronome_gain;
+        let pre_count = settings.pre_count_bars;
         let session = self.core.sink_mut();
         if session.set_settings(settings.clone()) == SettingsChange::RestartAudio {
             session.set_enabled(true);
@@ -4547,6 +4559,9 @@ impl<B: AudioBackend> Shell<B> {
         self.configure_surface();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
+        }
+        if pre_count != self.core.pre_count_bars() {
+            self.core.set_pre_count_bars(pre_count);
         }
         if let Some(path) = &self.settings_path
             && let Err(e) = settings::save(path, &settings)

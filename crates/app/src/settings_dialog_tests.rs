@@ -123,8 +123,10 @@ fn the_sections_cover_every_setting() {
             "Worker threads",
             "Worker linger (spins)",
             "Record offset (frames)",
+            "Pre-count (bars)",
         ]
     );
+    assert_eq!(labels(&d, "Pre-count (bars)"), ["Off", "1", "2", "3", "4"]);
     assert_eq!(labels(&d, "Audio host"), ["WASAPI", "ASIO"]);
     assert_eq!(
         labels(&d, "Output device"),
@@ -388,4 +390,19 @@ fn the_dialog_shows_how_many_input_channels_are_open() {
             .iter()
             .any(|(_, n)| n.starts_with("Input:"))
     );
+}
+
+#[test]
+fn the_pre_count_is_a_chip_row_that_edits_the_draft() {
+    let mut d = SettingsDialog::new(current(), lists());
+    assert!(d.is_selected(&Choice::PreCount(0)));
+    // At the bottom of the scrolling list: choose without a click.
+    d.choose(Choice::PreCount(2));
+    assert!(d.is_selected(&Choice::PreCount(2)));
+    assert!(!d.is_selected(&Choice::PreCount(0)));
+    let apply = d.layout(VIEW).apply.center();
+    let DialogOutcome::Apply(s) = click(&mut d, apply) else {
+        panic!("apply");
+    };
+    assert_eq!(s.pre_count_bars, 2);
 }

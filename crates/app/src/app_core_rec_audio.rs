@@ -571,7 +571,8 @@ impl<S: EngineSink> AppCore<S> {
         };
         if self.sink.stream_primed() || waited >= PRIME_WAIT_FRAMES {
             self.pending_play = None;
-            self.send_transport(TransportCommand::Play);
+            let command = super::play_command(self.pending_pre_roll.take());
+            self.send_transport(command);
         } else {
             self.pending_play = Some(waited + 1);
         }

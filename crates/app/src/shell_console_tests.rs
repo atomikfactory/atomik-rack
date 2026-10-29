@@ -181,7 +181,8 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             "Mixer",
             "Create",
             "Track",
-            "Audio"
+            "Audio",
+            "Options"
         ]
     );
     let mixer: Vec<_> = model[4]

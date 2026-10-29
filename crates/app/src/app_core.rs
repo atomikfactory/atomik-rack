@@ -8,8 +8,8 @@ use atomik_core::{NoteKind, ParamId, SampleRate, Tempo, Ticks};
 use atomik_device_sdk::{DeviceDescriptor, Registry, SocketId};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, EngineConfig, EngineError, Graph, GraphError,
-    MAX_COMPENSATION_SECONDS, PdcReport, SongPosition, SongSnapshot, Topology, TransportCommand,
-    TransportState, compile_song,
+    MAX_COMPENSATION_SECONDS, PdcReport, PreRoll, SongPosition, SongSnapshot, Topology,
+    TransportCommand, TransportState, compile_song,
 };
 use atomik_model::console::{
     BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM,
@@ -247,6 +247,10 @@ pub struct AppCore<S: EngineSink> {
     playing: bool,
     metronome: bool,
     metronome_gain: f32,
+    /// Bars of click counted in before a recording starts (0 = off).
+    pre_count_bars: u8,
+    /// The length the pre-count toggle returns to (1 to 4).
+    pre_count_resume: u8,
     quantize: InputQuantize,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
@@ -283,6 +287,8 @@ pub struct AppCore<S: EngineSink> {
     engine_inputs: u16,
     /// A Play waiting for the streamer's read-ahead: UI frames waited so far.
     pending_play: Option<u32>,
+    /// The count-in the waiting Play starts with, if any.
+    pending_pre_roll: Option<PreRoll>,
     /// Effect meter feed: the last publish sequence applied per device.
     fx_meter_seq: BTreeMap<DeviceKey, u64>,
     /// Effect meter feed: the reused read buffer (never reallocated after construction).
@@ -429,6 +435,7 @@ impl<S: EngineSink> AppCore<S> {
             audio: AudioState::new(),
             engine_inputs: 0,
             pending_play: None,
+            pending_pre_roll: None,
             fx_meter_seq: BTreeMap::new(),
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             plugin_params: PluginParamsView::new(theme),
@@ -442,6 +449,8 @@ impl<S: EngineSink> AppCore<S> {
             playing: false,
             metronome: false,
             metronome_gain: DEFAULT_METRONOME_GAIN,
+            pre_count_bars: 0,
+            pre_count_resume: 1,
             quantize: InputQuantize::Off,
             take: None,
             autorec: autorec::AutoRec::new(),
@@ -1031,6 +1040,7 @@ impl<S: EngineSink> AppCore<S> {
         self.cancel_audio_recording();
         self.playing = false;
         self.pending_play = None;
+        self.pending_pre_roll = None;
         let config = engine_config(self.doc());
         self.engine_inputs = config.input_channels;
         self.audio.monitor_sent.clear();
@@ -2197,6 +2207,30 @@ impl<S: EngineSink> AppCore<S> {
         self.send_metronome();
     }
 
+    /// Bars of pre-count a recording starts with (0 = off).
+    pub fn pre_count_bars(&self) -> u8 {
+        self.pre_count_bars
+    }
+
+    /// Sets the pre-count (clamped to 0..=4 bars); a non-zero length is the one the toggle
+    /// returns to.
+    pub fn set_pre_count_bars(&mut self, bars: u8) {
+        self.pre_count_bars = bars.min(crate::settings::MAX_PRE_COUNT_BARS);
+        if self.pre_count_bars > 0 {
+            self.pre_count_resume = self.pre_count_bars;
+        }
+        self.show_transport();
+    }
+
+    /// The length the pre-count toggle switches to: off when it is on, else the length it had.
+    pub fn pre_count_toggled(&self) -> u8 {
+        if self.pre_count_bars > 0 {
+            0
+        } else {
+            self.pre_count_resume
+        }
+    }
+
     /// The input quantize applied to recorded notes.
     pub fn input_quantize(&self) -> InputQuantize {
         self.quantize
@@ -2257,18 +2291,39 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn play(&mut self) {
+        self.play_from(None);
+    }
+
+    /// Starts playback, after `count_in` when there is one (the transport holds its position
+    /// while the click counts).
+    fn play_from(&mut self, count_in: Option<PreRoll>) {
         // Streamed audio is prefetched only while the engine renders: wait for the read-ahead
         // (a few UI frames), so playback does not start with an underrun.
         if self.sink.stream_primed() {
-            self.send_transport(TransportCommand::Play);
+            self.send_transport(play_command(count_in));
         } else {
             self.pending_play = Some(0);
+            self.pending_pre_roll = count_in;
         }
         self.playing = true;
     }
 
+    /// The count-in a recording started now would have: the pre-count's bars at the position
+    /// the transport stands at. `None` when the pre-count is off, the transport already runs or
+    /// there is no song to count tempo and meter from.
+    fn recording_count_in(&self) -> Option<PreRoll> {
+        if self.playing || self.pre_count_bars == 0 {
+            return None;
+        }
+        let rate = f64::from(self.doc().sample_rate);
+        self.snapshot
+            .as_ref()?
+            .pre_roll(Ticks(self.position.max(0)), self.pre_count_bars, rate)
+    }
+
     fn stop(&mut self) {
         self.pending_play = None;
+        self.pending_pre_roll = None;
         let state = self.sink.transport_state();
         self.send_transport(TransportCommand::Stop);
         self.playing = false;
@@ -2313,11 +2368,12 @@ impl<S: EngineSink> AppCore<S> {
             // Nothing can record: the reason was reported.
             return;
         }
-        let take = Take::new(tracks, loop_range, meter);
+        let count_in = self.recording_count_in();
+        let take = Take::new(tracks, loop_range, meter).counting_in(count_in.is_some());
         self.sink.set_recording(&take.devices());
         self.take = Some(take);
         if !self.playing {
-            self.play();
+            self.play_from(count_in);
         }
     }
 
@@ -2414,6 +2470,8 @@ impl<S: EngineSink> AppCore<S> {
             recording,
             metronome: self.metronome,
             position: self.position,
+            pre_count: self.pre_count_bars,
+            count_in: self.sink.transport_state().pre_roll_beat,
         });
     }
 
@@ -2441,6 +2499,11 @@ impl<S: EngineSink> AppCore<S> {
             self.engine_result(result);
         }
     }
+}
+
+/// The command that starts playback, with a count-in when there is one.
+fn play_command(count_in: Option<PreRoll>) -> TransportCommand {
+    count_in.map_or(TransportCommand::Play, TransportCommand::PlayWithPreRoll)
 }
 
 /// The drag-merge id of a parameter command (the first one inside a batch): `Some` means a
