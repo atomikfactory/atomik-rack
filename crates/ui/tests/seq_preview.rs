@@ -86,6 +86,7 @@ fn preview_pngs() {
         recording: false,
         metronome: true,
         position: 2 * BAR + PPQ + PPQ / 2,
+        ..TransportState::default()
     });
     let _ = bar.handle(&mv(Point::new(0.0, 0.0)), &doc, &reg);
     let (w, h) = size(BAR_BOUNDS);

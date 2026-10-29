@@ -1468,6 +1468,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("transport.pre_count", "Pre-count", G::Transport, C::Global).menu(),
     cmd(
         "transport.prev_marker",
         "Previous Marker",
