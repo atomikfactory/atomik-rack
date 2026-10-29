@@ -3,6 +3,7 @@
 //! context-menu items of the strip and the markers.
 
 use super::*;
+use crate::commands::menus;
 use crate::session::NullBackend;
 use atomik_model::{Marker, RangeMarker, SongCommand};
 use atomik_ui::ContextTarget;
@@ -263,13 +264,13 @@ fn the_locator_menu_commands_set_each_locator_at_the_playhead_one_undo_step_each
 fn the_menus_list_the_marker_items() {
     let s = shell();
     let menus = menus(&s.menu_state(), s.keymap());
-    let labels = |title: &str| -> Vec<(&'static str, Option<String>)> {
+    let labels = |title: &str| -> Vec<(String, Option<String>)> {
         menus
             .iter()
             .find(|m| m.title == title)
             .unwrap()
             .items()
-            .map(|i| (i.label, i.shortcut.clone()))
+            .map(|i| (i.label.to_string(), i.shortcut.clone()))
             .collect()
     };
     let transport = labels("Transport");

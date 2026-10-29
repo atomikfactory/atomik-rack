@@ -165,7 +165,7 @@ fn the_view_menu_lists_the_step_editor_after_the_sample_editor() {
         .entries
         .iter()
         .filter_map(|e| match e {
-            crate::commands::MenuEntry::Item(i) => Some(i.label),
+            crate::commands::MenuEntry::Item(i) => Some(i.label.as_ref()),
             _ => None,
         })
         .collect();

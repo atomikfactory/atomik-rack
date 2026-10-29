@@ -132,11 +132,18 @@ fn unsaved_changes_are_confirmed_before_they_are_discarded() {
         ('n', AppCommand::New),
         ('q', AppCommand::Quit),
     ] {
-        assert_eq!(s.handle(&ctrl(c)), vec![ShellRequest::ConfirmDiscard(cmd)]);
+        assert_eq!(
+            s.handle(&ctrl(c)),
+            vec![ShellRequest::ConfirmSave {
+                then: PendingAction::Command(cmd)
+            }]
+        );
     }
     assert_eq!(
         s.execute(AppCommand::StressRack),
-        vec![ShellRequest::ConfirmDiscard(AppCommand::StressRack)]
+        vec![ShellRequest::ConfirmSave {
+            then: PendingAction::Command(AppCommand::StressRack)
+        }]
     );
     assert_eq!(
         s.confirmed(AppCommand::Open),

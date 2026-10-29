@@ -103,6 +103,11 @@ pub fn run(cli: Cli) -> Result<(), String> {
     }
     let session = LiveSession::new(SystemBackend, settings, !cli.no_audio);
     let mut core = AppCore::with_doc(session, doc, None);
+    // The recent songs are read before a project named on the command line is opened, so that
+    // it takes its place in the list.
+    if let Some(path) = settings_path.as_deref().map(crate::recent::recent_path) {
+        core.set_recent_path(path);
+    }
     core.configure_plugins(plugin_config);
     if cli.stress_audio {
         // 16 generated audio tracks next to the 8 instrument tracks (files are reused
@@ -203,6 +208,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
     shell.core_mut().set_plugin_load_paints_first(true);
     if let Some(path) = cli.keymap.clone() {
         shell.use_keymap_file(path);
+    }
+    // With the preference on, a start that names no project continues with the last song.
+    if cli.starts_empty() {
+        shell.restore_last_project();
     }
     for message in [settings_error.map(|e| e.to_string()), open_error]
         .into_iter()
@@ -398,6 +407,34 @@ impl App {
         // (editors closed, the crash journal removed: a clean exit).
         self.shell.core_mut().sink_mut().shutdown();
         self.shell.core_mut().shutdown_plugins();
+    }
+
+    /// Asks where to save the project (or the patch, with `export`); the chosen path, with the
+    /// extension added when the name has none, or `None` when the dialog is cancelled.
+    fn pick_save_path(&self, export: bool) -> Option<PathBuf> {
+        let (ext, filter, title) = if export {
+            ("json", "Atomik Rack patch", "Export patch")
+        } else {
+            ("atomik", "Atomik Rack project", "Save project")
+        };
+        let stem = self
+            .shell
+            .core()
+            .file()
+            .and_then(|p| p.file_stem())
+            .map_or_else(|| "project".to_string(), |n| n.to_string_lossy().into());
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(filter, &[ext])
+            .set_file_name(format!("{stem}.{ext}"));
+        if let Some(w) = self.parent_window() {
+            dialog = dialog.set_parent(w);
+        }
+        let mut path = dialog.save_file()?;
+        if path.extension().is_none() {
+            path.set_extension(ext);
+        }
+        Some(path)
     }
 
     /// The window the dialogs belong to: the one that last had the focus.
@@ -856,33 +893,19 @@ impl App {
                 }
                 ShellRequest::PickSaveFile | ShellRequest::PickExportFile => {
                     let export = request == ShellRequest::PickExportFile;
-                    let (ext, filter, title) = if export {
-                        ("json", "Atomik Rack patch", "Export patch")
-                    } else {
-                        ("atomik", "Atomik Rack project", "Save project")
-                    };
-                    let stem = self
-                        .shell
-                        .core()
-                        .file()
-                        .and_then(|p| p.file_stem())
-                        .map_or_else(|| "project".to_string(), |n| n.to_string_lossy().into());
-                    let mut dialog = rfd::FileDialog::new()
-                        .set_title(title)
-                        .add_filter(filter, &[ext])
-                        .set_file_name(format!("{stem}.{ext}"));
-                    if let Some(w) = self.parent_window() {
-                        dialog = dialog.set_parent(w);
-                    }
-                    if let Some(mut path) = dialog.save_file() {
-                        if path.extension().is_none() {
-                            path.set_extension(ext);
-                        }
+                    if let Some(path) = self.pick_save_path(export) {
                         if export {
                             self.shell.export_to(&path);
                         } else {
                             self.shell.save_to(&path);
                         }
+                    }
+                }
+                ShellRequest::PickSaveFileThen { then } => {
+                    // A cancelled dialog ends the pending action: nothing is lost, nothing happens.
+                    if let Some(path) = self.pick_save_path(false) {
+                        let more = self.shell.save_to_then(&path, then);
+                        self.handle_requests(event_loop, more);
                     }
                 }
                 ShellRequest::PickExportKeymap => {
@@ -982,32 +1005,26 @@ impl App {
                         self.shell.set_library_folder(folder);
                     }
                 }
-                ShellRequest::ConfirmDiscard(command) => {
+                ShellRequest::ConfirmSave { then } => {
+                    // Yes saves, No discards, Cancel leaves everything as it is.
                     let mut dialog = rfd::MessageDialog::new()
                         .set_level(rfd::MessageLevel::Warning)
                         .set_title("Unsaved changes")
-                        .set_description("The rack has unsaved changes. Discard them?")
-                        .set_buttons(rfd::MessageButtons::YesNo);
+                        .set_description(
+                            "The rack has unsaved changes. Save them first?
+
+Yes saves, No discards the changes, Cancel keeps the song open.",
+                        )
+                        .set_buttons(rfd::MessageButtons::YesNoCancel);
                     if let Some(w) = self.parent_window() {
                         dialog = dialog.set_parent(w);
                     }
-                    if dialog.show() == rfd::MessageDialogResult::Yes {
-                        let more = self.shell.confirmed(command);
-                        self.handle_requests(event_loop, more);
-                    }
-                }
-                ShellRequest::ConfirmDiscardOpen(path) => {
-                    let mut dialog = rfd::MessageDialog::new()
-                        .set_level(rfd::MessageLevel::Warning)
-                        .set_title("Unsaved changes")
-                        .set_description("The rack has unsaved changes. Discard them?")
-                        .set_buttons(rfd::MessageButtons::YesNo);
-                    if let Some(w) = self.parent_window() {
-                        dialog = dialog.set_parent(w);
-                    }
-                    if dialog.show() == rfd::MessageDialogResult::Yes {
-                        self.shell.open_file(&path);
-                    }
+                    let more = match dialog.show() {
+                        rfd::MessageDialogResult::Yes => self.shell.save_then(then),
+                        rfd::MessageDialogResult::No => self.shell.discard_then(then),
+                        _ => Vec::new(),
+                    };
+                    self.handle_requests(event_loop, more);
                 }
                 ShellRequest::FocusWindow(kind) => self.focus_window(kind),
                 ShellRequest::ToggleMaximise(kind) => {

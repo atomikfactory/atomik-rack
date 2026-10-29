@@ -715,7 +715,7 @@ fn saving_and_opening_a_project_keep_the_recent_list() {
     next.set_recent_path(list.clone());
     assert_eq!(next.recent(), [a.clone(), b.clone()]);
     next.forget_recent(&a);
-    assert_eq!(next.recent(), [b.clone()]);
+    assert_eq!(next.recent(), std::slice::from_ref(&b));
     next.clear_recent();
     let mut after = core();
     after.set_recent_path(list.clone());
