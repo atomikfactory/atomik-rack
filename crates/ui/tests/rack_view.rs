@@ -400,13 +400,9 @@ fn escape_cancels_a_cable_drag() {
 fn dragging_from_a_connected_input_detaches_and_redrags() {
     let (doc, reg, mut v) = back_view();
     let input = v.socket_center(&sref("delay", "in_l")).unwrap();
+    // Nothing is cut at the press: the cable goes only when it is released elsewhere.
     let a = v.handle(&down(input), &doc, &reg);
-    assert_eq!(
-        commands(&a),
-        vec![Command::Disconnect {
-            to: sref("delay", "in_l")
-        }]
-    );
+    assert!(commands(&a).is_empty());
     // The loose end now belongs to synth.out_l.
     assert_eq!(
         v.socket_highlight(&sref("synth", "out_l")),
@@ -417,10 +413,12 @@ fn dragging_from_a_connected_input_detaches_and_redrags() {
     let b = v.handle(&up(to), &doc, &reg);
     assert_eq!(
         commands(&b),
-        vec![Command::Connect(cable(
-            ("synth", "out_l"),
-            ("mixer", "ch2_in_r")
-        ))]
+        vec![Command::Batch(vec![
+            Command::Disconnect {
+                to: sref("delay", "in_l")
+            },
+            Command::Connect(cable(("synth", "out_l"), ("mixer", "ch2_in_r"))),
+        ])]
     );
 }
 
@@ -434,12 +432,12 @@ fn dropping_on_an_occupied_input_replaces_its_cable() {
     let a = v.handle(&up(to), &doc, &reg);
     assert_eq!(
         commands(&a),
-        vec![
+        vec![Command::Batch(vec![
             Command::Disconnect {
                 to: sref("delay", "in_l")
             },
             Command::Connect(cable(("synth", "out_r"), ("delay", "in_l"))),
-        ]
+        ])]
     );
 }
 

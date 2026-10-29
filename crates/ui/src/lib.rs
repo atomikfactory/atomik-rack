@@ -67,8 +67,10 @@
 //!   button of a built-in effect's name strip toggles its `bypass` param and veils the panel
 //!   body while on ([`autolayout::has_strip_bypass`]; plugins have their own BYPASS in the
 //!   panel); on the back,
-//!   drag between jacks to patch (dragging a connected input detaches its cable first;
-//!   dropping on an occupied input replaces its cable); double-click empty rack space opens
+//!   drag between jacks to patch (dragging a connected input picks its cable up, and it is
+//!   cut only when released, so Esc leaves it; dropping on an occupied input replaces its
+//!   cable; an `_l` jack dropped on an `_l` jack cables the `_r` pair too, Alt makes it one
+//!   cable; right-click a jack for the menu of [`JackMenu`]); double-click empty rack space opens
 //!   the browser, where typing filters and double-click/Enter adds a device below the
 //!   selection.
 //! - **The document is the single source of truth.** The view never mutates it; after
@@ -403,7 +405,8 @@ pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
-    COLUMN_GAP, CableVisibility, Flip, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
+    COLUMN_GAP, CableVisibility, Flip, JackChoice, JackGroup, JackMenu, JackOp, JackPeer,
+    LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use sample_editor::SampleEditorView;

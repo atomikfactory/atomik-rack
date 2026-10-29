@@ -186,17 +186,20 @@ impl RackView {
         }
     }
 
-    /// Scrolls the rack the least that shows device `i` from its top (all of it when it fits).
+    /// Scrolls the rack the least that shows device `i` from its top-left (all of it when it
+    /// fits), across the columns as well as down them.
     pub(super) fn reveal_device(&mut self, i: usize) {
         let area = self.rack_area();
-        let d = &self.devices[i];
-        let (top, bottom) = (d.y, d.y + d.height);
-        let view_top = area.y0 + super::RACK_MARGIN + top * self.zoom - self.scroll.y;
-        let view_bottom = area.y0 + super::RACK_MARGIN + bottom * self.zoom - self.scroll.y;
-        if view_top < area.y0 || view_bottom > area.y1 {
-            self.scroll.y = area.y0 + super::RACK_MARGIN + top * self.zoom - (area.y0 + 8.0);
-            self.clamp_scroll();
+        let r = self.devices[i].rect();
+        let tl = self.rack_to_view(r.origin());
+        let br = self.rack_to_view(Point::new(r.x1, r.y1));
+        if tl.x < area.x0 || br.x > area.x1 {
+            self.scroll.x += tl.x - (area.x0 + 8.0);
         }
+        if tl.y < area.y0 || br.y > area.y1 {
+            self.scroll.y += tl.y - (area.y0 + 8.0);
+        }
+        self.clamp_scroll();
         self.repaint = true;
     }
 
