@@ -49,7 +49,7 @@ use atomik_engine::{
 };
 use atomik_model::console::{SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM, VCA_SOLO_PARAM};
 use atomik_model::song::{
-    effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_notes,
+    effective_tracks, flatten_audio, flatten_automation, flatten_controllers, flatten_notes_with,
 };
 use atomik_model::{
     AutomationPoint, ControllerKind, Curve, DeviceKey, ExpandedRack, FadeCurve, LaneKind,
@@ -110,7 +110,7 @@ pub fn notes_input(desc: &DeviceDescriptor) -> Option<SocketId> {
 ///   skipped when its device has no engine id (`id_of` returns `None`), its type is not in
 ///   `registry`, or it has no Notes input and is not an automation track (see
 ///   [`atomik_model::song::Track::is_automation_only`]).
-/// - Notes: [`flatten_notes`]; automation: [`flatten_automation`] of every automation lane
+/// - Notes: [`flatten_notes_with`] (note tails per [`atomik_model::song::Song::tails`]); automation: [`flatten_automation`] of every automation lane
 ///   whose param key the descriptor knows, with the descriptor's `ParamId`.
 /// - Tempo map from `song.tempo` (steps and ramps) and the meter map from `song.meter`.
 /// - No audio: see [`song_input_with_assets`].
@@ -316,7 +316,7 @@ pub fn song_input_with_warps(
             None if track.is_automation_only() => SocketId(0),
             None => continue,
         };
-        let notes = flatten_notes(track)
+        let notes = flatten_notes_with(track, song.tails)
             .into_iter()
             .map(|(tick, length, key, velocity)| SongNote {
                 tick: Ticks(tick),
