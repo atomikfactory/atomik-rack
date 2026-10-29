@@ -1043,7 +1043,7 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         self.file = Some(file.to_path_buf());
-        self.saved = self.doc().clone();
+        self.set_saved(self.doc().clone());
         Ok(())
     }
 

@@ -683,8 +683,9 @@ impl App {
 
     /// Sets each window's title when it changed.
     fn update_titles(&mut self) {
+        let main = self.shell.title();
         for (kind, w) in &mut self.windows {
-            if let Some(title) = window_logic::changed(&w.title, &self.shell.title_in(*kind)) {
+            if let Some(title) = window_logic::changed(&w.title, &kind.title(main.clone())) {
                 w.window.set_title(&title);
                 w.title = title;
             }

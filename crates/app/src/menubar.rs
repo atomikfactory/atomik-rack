@@ -117,6 +117,12 @@ impl MenuBar {
         matches!(&menus[menu].entries[row], MenuEntry::Item(it) if it.enabled)
     }
 
+    /// What the bar shows of the pointer: the open menu and the highlighted title or entry.
+    /// A move that leaves it as it was changes nothing on screen.
+    pub fn look(&self) -> (Option<usize>, Option<usize>) {
+        (self.open, self.hover)
+    }
+
     /// The highlighted entry of the open dropdown: the pointer's and the keyboard's.
     pub fn highlighted_item(&self) -> Option<usize> {
         self.open.and(self.hover)

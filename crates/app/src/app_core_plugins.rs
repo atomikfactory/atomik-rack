@@ -1211,7 +1211,7 @@ impl<S: EngineSink> AppCore<S> {
         if layout {
             let mut base = Document::new(self.saved.clone());
             if base.apply(command, &self.registry).is_ok() {
-                self.saved = base.doc().clone();
+                self.set_saved(base.doc().clone());
             }
         }
         Ok(())
@@ -1899,7 +1899,7 @@ impl<S: EngineSink> AppCore<S> {
         })?;
         self.open_str(&text, None)?;
         // Not clean: the user has not saved it anywhere.
-        self.saved = atomik_model::empty_doc();
+        self.set_saved(atomik_model::empty_doc());
         Ok(())
     }
 

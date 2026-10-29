@@ -107,7 +107,7 @@ fn undo_depth(c: &mut AppCore<RecordingSink>) -> usize {
 #[test]
 fn the_control_follows_the_lane_while_the_song_plays_and_the_document_stays() {
     let mut c = core();
-    c.saved = c.doc().clone();
+    c.set_saved(c.doc().clone());
     let doc = c.doc().clone();
     let stored = c
         .doc()
