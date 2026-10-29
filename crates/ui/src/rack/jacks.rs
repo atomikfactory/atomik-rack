@@ -172,6 +172,8 @@ pub struct JackMenu {
     pub groups: Vec<JackGroup>,
     /// The devices cabled to the jack.
     pub peers: Vec<JackPeer>,
+    /// The jack is an audio output (the menu offers a new mixer channel for it).
+    pub audio_output: bool,
     /// Add a console channel fed by this jack (an audio output nothing is cabled to).
     pub channel: Option<JackOp>,
 }
@@ -411,6 +413,7 @@ impl RackView {
             jack: jack.clone(),
             groups,
             peers,
+            audio_output: end.kind == SocketKind::Audio && end.direction == Direction::Output,
             channel: self.channel_op(&end, jack, doc),
         })
     }

@@ -2672,6 +2672,9 @@ mod snapshots;
 #[path = "app_core_midimap.rs"]
 mod midimap;
 
+#[path = "app_core_jacks.rs"]
+mod jack_ops;
+
 #[path = "app_core_macros.rs"]
 mod macro_ops;
 pub use macro_ops::{Revealed, SEARCH_ROWS};
@@ -2836,6 +2839,10 @@ mod setups_tests;
 #[cfg(test)]
 #[path = "app_core_containers_tests.rs"]
 mod containers_tests;
+
+#[cfg(test)]
+#[path = "app_core_jacks_tests.rs"]
+mod jacks_tests;
 
 #[cfg(test)]
 #[path = "app_core_macros_tests.rs"]
