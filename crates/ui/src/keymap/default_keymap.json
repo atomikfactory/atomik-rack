@@ -6,6 +6,7 @@
       "bindings": [
         { "command": "file.new", "context": "global", "chords": ["Cmd+N"] },
         { "command": "file.open", "context": "global", "chords": ["Cmd+O"] },
+        { "command": "file.close", "context": "global", "chords": ["Cmd+W"] },
         { "command": "file.save", "context": "global", "chords": ["Cmd+S"] },
         { "command": "file.save_as", "context": "global", "chords": ["Cmd+Shift+S"] },
         { "command": "file.quit", "context": "global", "chords": ["Cmd+Q"] },

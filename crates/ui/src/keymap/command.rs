@@ -142,6 +142,8 @@ pub const CABLE_ARGS: &[&str] = &["show", "hover", "hide"];
 pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 /// The values of `transport.go_locator`.
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
+/// The values of `file.open_recent`: the place in the recent list, 0 the newest song.
+pub const RECENT_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7"];
 /// The values of `sequencer.set_snap`.
 pub const SNAP_ARGS: &[&str] = &[
     "off",
@@ -501,6 +503,14 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     ),
     cmd(
+        "file.clear_recent",
+        "Clear Recent Songs",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd("file.close", "Close", G::Global, C::Global).menu(),
+    cmd(
         "file.export_loop_audio",
         "Export Loop as Audio File",
         G::Global,
@@ -547,6 +557,9 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
     cmd("file.open", "Open", G::Global, C::Global).menu(),
+    cmd("file.open_recent", "Open Recent", G::Global, C::Global)
+        .arg(RECENT_ARGS)
+        .menu(),
     cmd("file.quit", "Quit", G::Global, C::Global).menu(),
     cmd(
         "file.relink_audio",
