@@ -34,7 +34,7 @@ use vello::kurbo::{Point, Rect};
 /// Height of the strip in logical pixels.
 pub const INSPECTOR_HEIGHT: f64 = 38.0;
 /// Pixels between two fields.
-const GAP: f64 = 8.0;
+pub(super) const GAP: f64 = 8.0;
 /// Width of the Match button.
 const MATCH_W: f64 = 54.0;
 /// Height of a field.
@@ -393,6 +393,10 @@ impl ArrangementView {
     /// Takes the events the strip owns: presses, wheel turns and moves over it, the rest of a
     /// drag on a field, and every key while a value is typed. True when the event is consumed.
     pub(super) fn insp_event(&mut self, event: &UiEvent, out: &mut Vec<UiAction>) -> bool {
+        // Selected points replace the clip fields; a gesture begun on one goes on.
+        if self.inspector_shows_points() || self.pts.editing() || self.pts.dragging() {
+            return self.pt_event(event, out);
+        }
         match event {
             UiEvent::PointerDown {
                 pos,
@@ -637,6 +641,10 @@ impl ArrangementView {
             )
             .weight(600),
         );
+        if self.inspector_shows_points() {
+            self.paint_point_fields(c);
+            return;
+        }
         for field in FIELDS {
             let Some(r) = self.inspector_field_rect(field) else {
                 continue;
@@ -674,6 +682,9 @@ impl ArrangementView {
     pub(super) fn insp_help(&self, pos: Point) -> Option<crate::tooltip::Help> {
         if !self.insp_contains(pos) {
             return None;
+        }
+        if self.inspector_shows_points() {
+            return self.pt_help(pos);
         }
         if let Some(r) = self.inspector_match_rect().filter(|r| r.contains(pos)) {
             return Some(crate::tooltip::Help::new(

@@ -54,7 +54,9 @@ mod audio_edit;
 mod heights;
 mod help;
 mod inspector;
+mod points;
 pub use inspector::{ClipField, INSPECTOR_HEIGHT};
+pub use points::{PointField, PointShown};
 mod lanes;
 mod markers;
 mod meters;
@@ -676,6 +678,7 @@ pub struct ArrangementView {
     /// The marker strip, the marker list and their state.
     mk: markers::MarkerUi,
     insp: inspector::InspectorUi,
+    pts: points::PointInspectorUi,
     /// Vertical zoom and the track height drag.
     th: heights::HeightUi,
     /// Folders, the selection of several tracks and the text being typed in the track list.
@@ -764,6 +767,7 @@ impl ArrangementView {
             ctx_meter: None,
             mk: markers::MarkerUi::default(),
             insp: inspector::InspectorUi::default(),
+            pts: points::PointInspectorUi::default(),
             th: heights::HeightUi::default(),
             og: organise::OrgUi::default(),
             au: audio_edit::AudioUi::default(),

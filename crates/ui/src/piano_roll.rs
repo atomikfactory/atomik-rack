@@ -30,6 +30,9 @@ use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, Meter, PPQ, Snap, TimeAxis, snap_floor, snap_round};
 use crate::tooltip::Help;
 use crate::viewport::{Tool, ViewportState};
+mod inspector;
+pub use inspector::{NOTE_INSPECTOR_HEIGHT, NoteField};
+
 use atomik_device_sdk::Registry;
 use atomik_model::theory::{Scale, ScaleKind, detect_scale, pitch_name};
 use atomik_model::{
@@ -284,7 +287,11 @@ enum Drag {
 #[derive(Debug)]
 pub struct PianoRollView {
     st: SeqTheme,
+    /// The roll without the inspector strip.
     bounds: Rect,
+    /// The whole rectangle the host gave the view.
+    outer: Rect,
+    insp: inspector::NoteInspectorUi,
     scale: f64,
     axis: TimeAxis,
     scroll_y: f64,
@@ -342,6 +349,8 @@ impl PianoRollView {
         Self {
             st,
             bounds: Rect::new(0.0, 0.0, 800.0, 400.0),
+            outer: Rect::new(0.0, 0.0, 800.0, 400.0),
+            insp: inspector::NoteInspectorUi::default(),
             scale: 1.0,
             axis: TimeAxis::new(KEYBOARD_WIDTH, 200.0),
             scroll_y: 0.0,
@@ -415,7 +424,14 @@ impl PianoRollView {
     }
 
     /// Places the view in the window (logical pixels).
-    pub fn set_bounds(&mut self, bounds: Rect) {
+    pub fn set_bounds(&mut self, outer: Rect) {
+        self.outer = outer;
+        let strip = if self.insp.visible {
+            inspector::NOTE_INSPECTOR_HEIGHT.min(outer.height() / 2.0)
+        } else {
+            0.0
+        };
+        let bounds = Rect::new(outer.x0, outer.y0, outer.x1, outer.y1 - strip);
         if bounds != self.bounds {
             self.bounds = bounds;
             self.axis.x0 = bounds.x0 + KEYBOARD_WIDTH;
@@ -424,9 +440,13 @@ impl PianoRollView {
         }
     }
 
-    /// The view's rectangle.
+    /// The view's rectangle (the inspector strip included).
+    #[allow(
+        clippy::misnamed_getters,
+        reason = "`bounds` is the roll without the inspector strip"
+    )]
     pub fn bounds(&self) -> Rect {
-        self.bounds
+        self.outer
     }
 
     /// Sets the display scale factor (also set by [`UiEvent::ScaleChanged`]).
@@ -1198,6 +1218,9 @@ impl PianoRollView {
         if !matches!(self.drag, Drag::None) {
             return None;
         }
+        if let Some(h) = self.insp_help(pos) {
+            return Some(h);
+        }
         match self.hit(pos) {
             Hit::Top(Some(item)) => Some(self.top_help(item)),
             Hit::CtlChip(chip, _) => {
@@ -1360,6 +1383,9 @@ impl PianoRollView {
             return out;
         }
         if self.clip.is_none() {
+            return out;
+        }
+        if self.insp.visible && self.insp_event(event, &mut out) {
             return out;
         }
         match event {
@@ -2762,8 +2788,8 @@ impl PianoRollView {
         let b = self.bounds;
         let c = canvas;
         c.push_transform(Affine::scale(self.scale));
-        c.push_clip(&b.into());
-        sp::rect(c, b, self.st.background);
+        c.push_clip(&self.outer.into());
+        sp::rect(c, self.outer, self.st.background);
         if self.clip.is_some() {
             self.paint_grid(c);
             self.paint_ruler(c);
@@ -2787,6 +2813,7 @@ impl PianoRollView {
         self.paint_top_bar(c);
         if self.clip.is_some() {
             self.paint_scale_bar(c);
+            self.paint_inspector(c);
         }
         if self.focused {
             sp::line(c, b.x0, b.y0 + 0.5, b.x1, b.y0 + 0.5, self.st.base.focus);

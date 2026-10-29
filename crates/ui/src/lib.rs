@@ -372,8 +372,8 @@ pub use action::{
 };
 pub use arrangement::{
     ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,
-    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton,
-    TrackLevel, TrackMeterInfo,
+    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, PointField,
+    PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
@@ -395,7 +395,7 @@ pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
-pub use piano_roll::PianoRollView;
+pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;

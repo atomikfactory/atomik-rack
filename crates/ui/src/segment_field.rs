@@ -330,8 +330,14 @@ impl SegmentEdit {
 
     /// Applies a key.
     pub fn key(&mut self, key: &Key) -> EditKey {
+        self.key_with(key, |_| false)
+    }
+
+    /// Applies a key, taking the characters `extra` accepts besides digits, dots and signs (a
+    /// note name takes letters and `#`).
+    pub fn key_with(&mut self, key: &Key, extra: impl Fn(char) -> bool) -> EditKey {
         match key {
-            Key::Char(c) if c.is_ascii_digit() || matches!(c, '.' | '+' | '-') => {
+            Key::Char(c) if c.is_ascii_digit() || matches!(c, '.' | '+' | '-') || extra(*c) => {
                 if self.fresh {
                     self.text.clear();
                     self.fresh = false;
@@ -427,4 +433,35 @@ pub fn paint<C: Canvas + ?Sized>(
             );
         }
     }
+}
+
+/// Paints a one-value field (a pitch, a velocity, a parameter value) in the rectangle `r`: the
+/// label above, `text` at the right (`typing` replaces it with the text being typed).
+pub fn paint_scalar<C: Canvas + ?Sized>(
+    c: &mut C,
+    st: &SeqTheme,
+    r: Rect,
+    label: &str,
+    text: &str,
+    typing: Option<&str>,
+    enabled: bool,
+) {
+    let t = &st.base;
+    sp::lcd(c, st, r, typing.map(|_| t.focus));
+    sp::label(
+        c,
+        label,
+        r.x0 + PAD,
+        r.y0 + 10.0,
+        6.5,
+        t.text_muted,
+        Align::Start,
+    );
+    let color = if enabled { t.highlight } else { t.text_muted };
+    let shown = typing.map_or_else(|| text.to_owned(), |s| format!("{s}_"));
+    c.text(
+        &TextRun::new(shown, pt(r.x1 - PAD, r.y1 - 7.0), 12.0, color)
+            .weight(600)
+            .align(Align::End),
+    );
 }

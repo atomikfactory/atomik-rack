@@ -219,7 +219,7 @@ impl ArrangementView {
     /// the `Text` context over `Sequencer`, so plain keys reach [`Self::handle`] instead of
     /// commands.
     pub fn is_text_owner(&self) -> bool {
-        self.mk.rename.is_some() || self.org_editing() || self.insp.editing()
+        self.mk.rename.is_some() || self.org_editing() || self.insp.editing() || self.pts.editing()
     }
 
     /// The name being typed, if an edit is open.
