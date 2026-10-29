@@ -601,6 +601,10 @@ impl<B: AudioBackend> Shell<B> {
         }
         shell
             .core
+            .piano_roll_mut()
+            .set_inspector(shell.ui.show_inspector);
+        shell
+            .core
             .arrangement_mut()
             .set_track_zoom(shell.ui.track_zoom);
         shell
@@ -1655,6 +1659,9 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Sequencer])
             }
             Pane::Arrangement => ContextStack::new(&[Context::Sequencer]),
+            Pane::PianoRoll if self.core.piano_roll().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
+            }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
             Pane::SeqEditor if self.core.seq_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor])
@@ -4046,6 +4053,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ToggleInspector => {
                 let show = !self.core.arrangement().inspector_visible();
                 self.core.arrangement_mut().set_inspector(show);
+                self.core.piano_roll_mut().set_inspector(show);
                 self.ui.show_inspector = show;
                 self.save_ui_state();
                 Vec::new()
