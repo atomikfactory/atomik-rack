@@ -119,13 +119,17 @@ impl NativeMenus {
                         let accel = accelerator(item.shortcut.as_deref());
                         match item.checked {
                             Some(checked) => {
-                                let c =
-                                    CheckMenuItem::new(item.label, item.enabled, checked, accel);
+                                let c = CheckMenuItem::new(
+                                    item.label.as_ref(),
+                                    item.enabled,
+                                    checked,
+                                    accel,
+                                );
                                 sub.append(&c).ok()?;
                                 items.push((c.id().clone(), item.command, Item::Check(c)));
                             }
                             None => {
-                                let i = MenuItem::new(item.label, item.enabled, accel);
+                                let i = MenuItem::new(item.label.as_ref(), item.enabled, accel);
                                 sub.append(&i).ok()?;
                                 items.push((i.id().clone(), item.command, Item::Plain(i)));
                             }
