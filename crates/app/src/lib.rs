@@ -36,6 +36,7 @@ pub mod platform;
 pub mod plugin_setup;
 #[cfg(test)]
 pub(crate) mod plugin_test_support;
+pub mod recent;
 pub mod record;
 pub mod recovery;
 pub mod session;

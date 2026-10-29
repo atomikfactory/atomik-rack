@@ -1063,6 +1063,7 @@ impl<S: EngineSink> AppCore<S> {
             source,
         })?;
         self.open_str(&text, Some(file))?;
+        self.note_recent();
         self.recover_orphan_recordings();
         Ok(())
     }
@@ -1087,12 +1088,16 @@ impl<S: EngineSink> AppCore<S> {
     /// becomes a bundle folder (module docs), so the current file may be
     /// `<dir>/<name>/<name>.atomik`.
     pub fn save_as(&mut self, path: &Path) -> Result<(), AppError> {
-        if self.document.referenced_assets().is_empty() {
+        let saved = if self.document.referenced_assets().is_empty() {
             self.write_project(path, None)
         } else {
             let (file, root) = save_as_layout(path);
             self.write_project(&file, Some(root))
+        };
+        if saved.is_ok() {
+            self.note_recent();
         }
+        saved
     }
 
     fn write_project(&mut self, file: &Path, root: Option<PathBuf>) -> Result<(), AppError> {
