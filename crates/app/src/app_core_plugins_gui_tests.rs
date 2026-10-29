@@ -387,7 +387,10 @@ fn recovery_snapshots_are_written_every_minute_rotate_to_three_and_never_touch_t
     core.plugin_tick(0.0);
     core.plugin_tick(500.0);
     core.wait_recovery_writes();
-    assert!(!dir.join("recovery").exists());
+    assert!(std::fs::read_dir(dir.join("recovery")).is_ok_and(|d| {
+        d.filter_map(Result::ok)
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".recover.atomik"))
+    }));
     add_plugin(&mut core, SYNTH, "lead");
     core.save_as(&project).unwrap();
     let user_file = std::fs::read(&project).unwrap();

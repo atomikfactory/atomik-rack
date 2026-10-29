@@ -2523,6 +2523,10 @@ pub use plugins::{
 };
 
 #[cfg(test)]
+#[path = "app_core_autosave_tests.rs"]
+mod autosave_tests;
+
+#[cfg(test)]
 #[path = "app_core_rec_audio_tests.rs"]
 mod rec_audio_tests;
 

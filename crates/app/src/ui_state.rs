@@ -122,13 +122,33 @@ impl Default for UiState {
 }
 
 impl UiState {
-    /// Reads `path`; the defaults when it is missing or invalid.
+    /// Reads `path`; the defaults when it is missing or invalid (see [`Self::load_checked`]).
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Self>(&t).ok())
-            .map(Self::sanitized)
-            .unwrap_or_default()
+        Self::load_checked(path).0
+    }
+
+    /// Reads `path`. A missing file gives the defaults. A file that cannot be parsed is renamed
+    /// `<name>.bad` and gives the defaults and a message to show once.
+    pub fn load_checked(path: &Path) -> (Self, Option<String>) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return (Self::default(), None);
+        };
+        match serde_json::from_str::<Self>(&text) {
+            Ok(state) => (state.sanitized(), None),
+            Err(why) => {
+                let note = match crate::recovery::quarantine(path) {
+                    Some(bad) => format!(
+                        "window state could not be read ({why}); it was kept as {} and the                          defaults are used",
+                        bad.file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+                    ),
+                    None => {
+                        format!("window state could not be read ({why}); the defaults are used")
+                    }
+                };
+                (Self::default(), Some(note))
+            }
+        }
     }
 
     /// Writes `path` (creating its directory).

@@ -113,6 +113,8 @@ struct Batch {
     errors: Vec<String>,
     /// Set when the files relink missing assets instead of adding clips.
     relink: Option<relink::RelinkJob>,
+    /// Track names that replace the file name (recovered recordings), by file.
+    names: BTreeMap<PathBuf, String>,
 }
 
 /// Everything audio of an open project.
@@ -158,7 +160,15 @@ pub(super) struct AudioState {
     pub(super) rx: Receiver<Msg>,
     scratch_root: PathBuf,
     scratch_count: u32,
+    /// Unfinished recordings of a dead session already taken up this run.
+    recovered: BTreeSet<PathBuf>,
+    /// The `rec-*.wav` files whose audio is now in the project, deleted once it is saved.
+    recovered_files: Vec<PathBuf>,
 }
+
+/// How long a recording in the shared scratch folder must have been left alone before it is
+/// taken for an orphan (a live recorder refreshes its file about once a second).
+const ORPHAN_QUIET: Duration = Duration::from_secs(60);
 
 impl AudioState {
     pub(super) fn new() -> Self {
@@ -194,6 +204,8 @@ impl AudioState {
                 std::process::id()
             )),
             scratch_count: 0,
+            recovered: BTreeSet::new(),
+            recovered_files: Vec::new(),
         }
     }
 
@@ -671,6 +683,65 @@ impl<S: EngineSink> AppCore<S> {
         self.start_batch(paths, target, tick, samples, None);
     }
 
+    /// Takes up the unfinished recordings a session that is gone left in this project's bundle
+    /// and in the scratch bundles (see [`crate::recovery`]): each file becomes a track named
+    /// `Recovered take N` with one clip at the start of the song, an undo step per track. The
+    /// `rec-*.wav` file is deleted only after the project is saved, so discarding the project
+    /// loses nothing. Returns how many files were queued. Without a recovery folder (no
+    /// configuration directory) nothing is scanned: there is no way to tell a live recorder
+    /// from a dead one.
+    pub fn recover_orphan_recordings(&mut self) -> usize {
+        let Some(folder) = self.recovery_folder() else {
+            return 0;
+        };
+        let bundles: Vec<PathBuf> = self
+            .audio
+            .bundle
+            .iter()
+            .filter(|b| !b.scratch)
+            .map(|b| b.bundle.root().to_path_buf())
+            .collect();
+        let scratch = self.scratch_scan_folder();
+        let alive = |pid| crate::recovery::session_alive(&folder, pid);
+        let found = crate::recovery::scan_orphans(
+            &bundles,
+            scratch.as_deref().map(|dir| (dir, ORPHAN_QUIET)),
+            &alive,
+        );
+        let found: Vec<_> = found
+            .into_iter()
+            .filter(|o| !self.audio.recovered.contains(&o.path))
+            .collect();
+        if found.is_empty() {
+            return 0;
+        }
+        let mut names = BTreeMap::new();
+        for o in &found {
+            let tracks = found
+                .iter()
+                .filter(|p| (p.pid, p.take) == (o.pid, o.take))
+                .count();
+            let name = if tracks > 1 {
+                format!("Recovered take {} track {}", o.take + 1, o.track + 1)
+            } else {
+                format!("Recovered take {}", o.take + 1)
+            };
+            names.insert(o.path.clone(), name);
+        }
+        let paths: Vec<PathBuf> = found.iter().map(|o| o.path.clone()).collect();
+        for p in &paths {
+            self.audio.recovered.insert(p.clone());
+        }
+        let count = paths.len();
+        let Some(batch) = self.start_batch(paths, ImportTarget::NewTracks, 0, None, None) else {
+            return 0;
+        };
+        if let Some(b) = self.audio.batches.get_mut(&batch) {
+            b.names = names;
+        }
+        count
+    }
+
     fn start_batch(
         &mut self,
         paths: Vec<PathBuf>,
@@ -678,13 +749,16 @@ impl<S: EngineSink> AppCore<S> {
         tick: i64,
         samples: Option<SampleImport>,
         relink: Option<relink::RelinkJob>,
-    ) {
+    ) -> Option<u64> {
         if paths.is_empty() {
-            return;
+            return None;
         }
         let bundle = match self.import_bundle() {
             Ok(b) => b,
-            Err(e) => return self.reject(e),
+            Err(e) => {
+                self.reject(e);
+                return None;
+            }
         };
         let batch = self.audio.next_batch;
         self.audio.next_batch += 1;
@@ -700,6 +774,7 @@ impl<S: EngineSink> AppCore<S> {
                 done: 0,
                 errors: Vec::new(),
                 relink,
+                names: BTreeMap::new(),
             },
         );
         let rate = self.doc().sample_rate;
@@ -713,10 +788,14 @@ impl<S: EngineSink> AppCore<S> {
             paths,
         );
         match started {
-            Ok(()) => self.audio.pending += 1,
+            Ok(()) => {
+                self.audio.pending += 1;
+                Some(batch)
+            }
             Err(e) => {
                 self.audio.batches.remove(&batch);
                 self.reject(format!("audio import: cannot start a worker: {e}"));
+                None
             }
         }
     }
@@ -740,9 +819,18 @@ impl<S: EngineSink> AppCore<S> {
             {
                 self.register_sample(batch, &loaded)
             } else {
-                self.place(batch, &loaded)
+                self.place(batch, &loaded, path)
             }
         });
+        let recovered = outcome.is_ok()
+            && self
+                .audio
+                .batches
+                .get(&batch)
+                .is_some_and(|b| b.names.contains_key(path));
+        if recovered {
+            self.audio.recovered_files.push(path.to_path_buf());
+        }
         if let Some(b) = self.audio.batches.get_mut(&batch) {
             b.done += 1;
             if let Err(e) = outcome {
@@ -779,14 +867,19 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Registers the asset and adds its track and clip.
-    fn place(&mut self, batch: u64, loaded: &Loaded) -> Result<(), String> {
+    fn place(&mut self, batch: u64, loaded: &Loaded, from: &Path) -> Result<(), String> {
         let info = loaded
             .info
             .clone()
             .ok_or_else(|| "not an imported asset".to_owned())?;
-        let (target, tick, cursor) = {
+        let (target, tick, cursor, renamed) = {
             let b = self.audio.batches.get(&batch).ok_or("import cancelled")?;
-            (b.target.clone(), b.tick, b.cursor)
+            (
+                b.target.clone(),
+                b.tick,
+                b.cursor,
+                b.names.get(from).cloned(),
+            )
         };
         let run = |core: &mut Self, command: Command| {
             core.apply_command(command).map_err(|e| e.to_string())
@@ -811,10 +904,12 @@ impl<S: EngineSink> AppCore<S> {
                 (key, cursor)
             }
             ImportTarget::NewTracks => {
-                let stem = Path::new(&info.original_name)
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .filter(|s| !s.trim().is_empty());
+                let stem = renamed.or_else(|| {
+                    Path::new(&info.original_name)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .filter(|s| !s.trim().is_empty())
+                });
                 run(
                     self,
                     Command::Song(SongCommand::AddAudioTrack { name: stem }),
@@ -967,7 +1062,9 @@ impl<S: EngineSink> AppCore<S> {
             path: file.clone(),
             source,
         })?;
-        self.open_str(&text, Some(file))
+        self.open_str(&text, Some(file))?;
+        self.recover_orphan_recordings();
+        Ok(())
     }
 
     // ------------------------------------------------------------------ save
@@ -1044,6 +1141,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.file = Some(file.to_path_buf());
         self.set_saved(self.doc().clone());
+        // The recovered recordings are in the saved project now: their files can go.
+        for path in std::mem::take(&mut self.audio.recovered_files) {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
