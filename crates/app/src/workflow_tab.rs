@@ -35,6 +35,8 @@ pub enum Pref {
     FollowSelection,
     /// Buttons show a help tooltip.
     ShowTooltips,
+    /// Start with the song that was open last time.
+    OpenLastProject,
 }
 
 /// One switch.
@@ -133,6 +135,7 @@ impl WorkflowTab {
             Pref::FollowSong => self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips,
+            Pref::OpenLastProject => self.prefs.open_last_project,
         }
     }
 
@@ -145,6 +148,9 @@ impl WorkflowTab {
             Pref::FollowSong => self.prefs.follow_song = !self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection = !self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips = !self.prefs.show_tooltips,
+            Pref::OpenLastProject => {
+                self.prefs.open_last_project = !self.prefs.open_last_project;
+            }
         }
     }
 
@@ -179,6 +185,11 @@ impl WorkflowTab {
                 Pref::ShowTooltips,
                 "Show tooltips",
                 "A button says what it does, with its shortcut, after the pointer rests on it.",
+            ),
+            (
+                Pref::OpenLastProject,
+                "Open last project at start-up",
+                "Start with the song that was open last time (a project named on the command line wins).",
             ),
         ] {
             toggles.push(Toggle {
