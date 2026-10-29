@@ -277,6 +277,12 @@ Say in "How it was tested" which of these you ran and what they showed (for exam
 3. For a loop, set the locators first (drag them in the ruler with `session_pointer`), then `session_export` with `span` `loop`: `frames` is exactly the frames between the locators and `tail_frames` is 0. With `sample_rate` `44100` the length is `round(frames * 44100 / 48000)`.
 4. `session_command` `file.export_song_audio` only raises the native file dialog, reported as `pick_export_audio`: use `session_export` to write the file.
 
+### Recipe: play the Piano Keys with the keyboard
+
+1. `session_command` `view.toggle_piano_keys` (or `session_key` `F4`) shows the strip and gives it the focus; `session_texts` shows the key labels and the octave (`C4`) and velocity readouts.
+2. `session_key` with `text` `asdf` presses and releases the keys of the home row: each is a note on and off to the armed track (or the selected device) on the same live note path as a MIDI keyboard, and the take recorder is offered the same notes. `z` and `x` shift the octave, `1` to `0` set the velocity, and `shift` is the sustain pedal. The session has no engine and no MIDI link, so nothing sounds and no take is captured there: read the effect on the strip with `session_texts` (octave and velocity) and `session_screenshot`; the recorded take is covered by the `app_core_keys_tests`.
+3. Letters are commands again as soon as the strip loses the focus (a click elsewhere) or its mode is MOUSE.
+
 ## Limits and notes
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.
