@@ -1280,7 +1280,8 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
-    .decline(),
+    .decline()
+    .menu(),
     cmd(
         "sequencer.toggle_folder",
         "Collapse or Expand Folder",
