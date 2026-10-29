@@ -120,6 +120,7 @@ impl KeysButton {
 pub struct PianoKeysView {
     st: SeqTheme,
     bounds: Rect,
+    scale: f64,
     focused: bool,
     mode: KeysMode,
     octave: u8,
@@ -149,6 +150,7 @@ impl PianoKeysView {
         Self {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 800.0, PIANO_KEYS_HEIGHT),
+            scale: 1.0,
             focused: false,
             mode: KeysMode::Computer,
             octave: DEFAULT_OCTAVE,
@@ -172,6 +174,11 @@ impl PianoKeysView {
     /// Where the strip is, in window logical pixels.
     pub fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
+    }
+
+    /// Display scale factor (the strip paints in logical units).
+    pub fn set_scale(&mut self, scale: f64) {
+        self.scale = scale.max(0.1);
     }
 
     /// Where the strip is.
@@ -644,6 +651,12 @@ impl PianoKeysView {
 
     /// Draws the strip inside its bounds.
     pub fn paint(&self, c: &mut dyn Canvas) {
+        c.push_transform(vello::kurbo::Affine::scale(self.scale));
+        self.paint_logical(c);
+        c.pop_transform();
+    }
+
+    fn paint_logical(&self, c: &mut dyn Canvas) {
         let t = &self.st.base;
         let b = self.bounds;
         c.fill_with(b, self.st.header);
