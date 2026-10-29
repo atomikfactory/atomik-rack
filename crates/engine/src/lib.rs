@@ -8,6 +8,7 @@ mod audio;
 mod console;
 mod controllers;
 mod engine;
+mod fault;
 mod graph;
 mod interface;
 mod live;
@@ -38,7 +39,9 @@ pub use graph::{Cable, DeviceInstanceId, Endpoint, EngineConfig, Graph, GraphErr
 pub use interface::{INTERFACE_TYPE_ID, MAX_INTERFACE_CHANNELS, interface_descriptor};
 pub use live::{EngineOptions, FrameClock, LiveNoteSender, WorkerConfig};
 pub use offline::{
-    OfflineJob, render_offline, render_offline_scripted, render_offline_song, render_offline_with,
+    OfflineError, OfflineJob, render_offline, render_offline_scripted, render_offline_song,
+    render_offline_with, try_render_offline, try_render_offline_scripted, try_render_offline_song,
+    try_render_offline_with,
 };
 pub use plan::RenderPlan;
 pub use player::{HOLD_CAPACITY, lane_value};

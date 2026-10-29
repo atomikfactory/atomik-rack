@@ -37,16 +37,18 @@
 //! * **Determinism.** A device's output depends only on its own state and its gathered
 //!   inputs, which are identical whatever thread runs it; the scatter order is the plan order.
 //!   So output is bit-identical for any worker count.
-//! * **Panics.** A device panic on a worker is caught (`catch_unwind`, free when nothing
-//!   panics), the node is still returned, and the audio thread re-raises a panic after the
-//!   level, like the single-threaded path would.
+//! * **Panics.** A device panic is caught where the device runs (`Node::run`, `catch_unwind`,
+//!   free when nothing panics): the node is marked faulted and silent, still returned to the
+//!   audio thread, and the audio thread records the engine's sticky fault. Nothing is re-raised.
+//!   A worker thread that dies outside a job loses the nodes it owned; those devices are
+//!   recorded as faulted and the worker is no longer used.
 
 use crate::arena::{Arena, RoutingPlan};
 use crate::console::Meters;
+use crate::fault::FaultState;
 use crate::plan::{Node, count_overflow};
 use atomik_core::{Batch, TimeInfo};
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{JoinHandle, Thread};
@@ -85,8 +87,18 @@ struct Link {
     done: Consumer<Job>,
     thread: Thread,
     handle: Option<JoinHandle<()>>,
+    /// The thread exited outside a job: it is no longer given work (audio thread only).
+    dead: bool,
     /// Jobs handed to this worker and not yet returned (audio thread only).
     pending: usize,
+}
+
+/// Why a worker pool could not be created.
+#[derive(Debug, thiserror::Error)]
+pub enum PoolError {
+    /// The operating system refused to start a render worker thread.
+    #[error("cannot start a render worker thread: {0}")]
+    Spawn(#[source] std::io::Error),
 }
 
 /// The worker threads of one engine. Created and dropped on the non-RT side.
@@ -96,36 +108,50 @@ pub(crate) struct Pool {
 }
 
 impl Pool {
-    /// Spawns `threads` workers; each calls `on_thread_start` before anything else.
-    ///
-    /// # Panics
-    /// If the OS refuses to spawn a thread.
-    pub(crate) fn new(threads: u16, on_thread_start: Option<fn()>, linger: u64) -> Self {
+    /// Spawns `threads` workers; each calls `on_thread_start` before anything else. If the OS
+    /// refuses a thread the pool degrades to the workers it got (see [`Pool::len`]); it is an
+    /// error only when it got none.
+    pub(crate) fn new(
+        threads: u16,
+        on_thread_start: Option<fn()>,
+        linger: u64,
+    ) -> Result<Self, PoolError> {
         let shared = Arc::new(Shared {
             shutdown: AtomicBool::new(false),
             idle_spins: AtomicU64::new(0),
             parks: AtomicU64::new(0),
             linger,
         });
-        let links = (0..threads)
-            .map(|k| {
-                let (jobs, jobs_rx) = RingBuffer::new(WORKER_QUEUE_CAPACITY);
-                let (done_tx, done) = RingBuffer::new(WORKER_QUEUE_CAPACITY);
-                let shared = Arc::clone(&shared);
-                let handle = std::thread::Builder::new()
-                    .name(format!("atomik-render-{}", k + 1))
-                    .spawn(move || worker(jobs_rx, done_tx, &shared, on_thread_start))
-                    .expect("spawn render worker thread");
-                Link {
+        let mut links = Vec::with_capacity(usize::from(threads));
+        let mut first_error = None;
+        for k in 0..threads {
+            let (jobs, jobs_rx) = RingBuffer::new(WORKER_QUEUE_CAPACITY);
+            let (done_tx, done) = RingBuffer::new(WORKER_QUEUE_CAPACITY);
+            let worker_shared = Arc::clone(&shared);
+            let spawned = std::thread::Builder::new()
+                .name(format!("atomik-render-{}", k + 1))
+                .spawn(move || worker(jobs_rx, done_tx, &worker_shared, on_thread_start));
+            match spawned {
+                Ok(handle) => links.push(Link {
                     jobs,
                     done,
                     thread: handle.thread().clone(),
                     handle: Some(handle),
+                    dead: false,
                     pending: 0,
+                }),
+                Err(e) => {
+                    first_error = Some(e);
+                    break;
                 }
-            })
-            .collect();
-        Self { links, shared }
+            }
+        }
+        if links.is_empty()
+            && let Some(source) = first_error
+        {
+            return Err(PoolError::Spawn(source));
+        }
+        Ok(Self { links, shared })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -176,7 +202,7 @@ fn worker(
     loop {
         if let Ok(mut job) = jobs.pop() {
             let (node, time, stage, last) = (&mut job.node, job.time, job.stage, job.last);
-            job.panicked = catch_unwind(AssertUnwindSafe(|| node.run(time, stage, last))).is_err();
+            job.panicked = node.run(time, stage, last);
             // At most WORKER_QUEUE_CAPACITY jobs are in flight per worker, so this fits.
             while let Err(PushError::Full(back)) = done.push(job) {
                 job = back;
@@ -209,8 +235,7 @@ impl RoutingPlan {
     /// while waiting for the level's last device). Returns the barrier spins: busy-wait
     /// iterations in which the audio thread found no finished node to collect.
     ///
-    /// # Panics
-    /// If a device panicked on a worker (re-raised here once every node is back).
+    /// A device that panics is caught and recorded in `fault`; nothing is re-raised.
     #[allow(clippy::too_many_arguments)] // Justification: one call site; all are borrowed state.
     pub(crate) fn process_parallel(
         &mut self,
@@ -221,29 +246,26 @@ impl RoutingPlan {
         pool: &mut Pool,
         arena: &mut Arena,
         meters: &Meters,
+        fault: &FaultState,
     ) -> u64 {
         self.read_host_inputs(host_in, meters);
-        let mut panicked = false;
         let mut spins = 0u64;
         for level in 0..self.level_starts.len().saturating_sub(1) {
             let (a, b) = (self.level_starts[level], self.level_starts[level + 1]);
             if b - a <= 1 || pool.links.is_empty() {
-                self.run_sequential(a, b, time, dropped, arena, meters);
+                self.run_sequential(a, b, time, dropped, arena, meters, fault);
             } else {
-                let (level_panicked, level_spins) =
-                    self.run_level(a, b, time, dropped, pool, arena, meters);
-                panicked |= level_panicked;
+                let level_spins = self.run_level(a, b, time, dropped, pool, arena, meters, fault);
                 spins = spins.saturating_add(level_spins);
             }
         }
-        assert!(!panicked, "a device panicked on a render worker thread");
         self.write_host_outputs(host_out);
         spins
     }
 
     /// Runs one level of `n = b - a > 1` devices in parallel. Nodes move from their arena
-    /// slots to the workers and back (the job carries the slot index). Returns whether a worker
-    /// caught a device panic, and the barrier spins of this level. Gathering (summing and PDC
+    /// slots to the workers and back (the job carries the slot index). Returns the barrier
+    /// spins of this level; device panics are recorded in `fault`. Gathering (summing and PDC
     /// delay lines) and scattering (meters) stay on the audio thread.
     #[allow(clippy::too_many_arguments)] // Justification: one call site; all are borrowed state.
     fn run_level(
@@ -255,7 +277,8 @@ impl RoutingPlan {
         pool: &mut Pool,
         arena: &mut Arena,
         meters: &Meters,
-    ) -> (bool, u64) {
+        fault: &FaultState,
+    ) -> u64 {
         let Self {
             devices,
             steps,
@@ -283,6 +306,9 @@ impl RoutingPlan {
         let participants = (pool.links.len() + 1).min(n);
         let mut outstanding = 0usize;
         for (w, link) in pool.links.iter_mut().enumerate().take(participants - 1) {
+            if link.dead {
+                continue; // its share stays home and runs on the audio thread
+            }
             let mut sent = false;
             for step in level.iter().skip(w + 1).step_by(participants) {
                 let index = slot_of(step);
@@ -324,18 +350,23 @@ impl RoutingPlan {
         }
         // 3. The audio thread runs whatever stayed home (its share and any overflow).
         for step in level {
-            if let Some(node) = arena.node_mut(slot_of(step)) {
-                node.run(time, step.stage, step.last);
+            if let Some(node) = arena.node_mut(slot_of(step))
+                && node.run(time, step.stage, step.last)
+            {
+                fault.record(devices[step.device].id);
             }
         }
         // 4. Barrier: wait until every handed-over node is back.
-        let mut panicked = false;
         let mut spins = 0u64;
         while outstanding > 0 {
             let mut progressed = false;
             for link in pool.links.iter_mut().filter(|l| l.pending > 0) {
                 while let Ok(job) = link.done.pop() {
-                    panicked |= job.panicked;
+                    if job.panicked
+                        && let Some(device) = devices.iter().find(|d| d.slot == job.index)
+                    {
+                        fault.record(device.id);
+                    }
                     arena.nodes[job.index] = Some(job.node);
                     outstanding -= 1;
                     link.pending -= 1;
@@ -343,8 +374,18 @@ impl RoutingPlan {
                 }
                 if link.pending > 0 && link.handle.as_ref().is_some_and(JoinHandle::is_finished) {
                     // The worker died outside a job (its `on_thread_start` panicked): the
-                    // nodes it owns can never come back.
-                    panic!("a render worker thread exited while it owned devices");
+                    // nodes it owns can never come back. Their devices are faulted, the
+                    // barrier stops waiting for them and the worker gets no more work.
+                    link.dead = true;
+                    outstanding -= link.pending;
+                    link.pending = 0;
+                    for step in level {
+                        let dev = &devices[step.device];
+                        if arena.nodes.get(dev.slot).is_some_and(Option::is_none) {
+                            fault.record(dev.id);
+                        }
+                    }
+                    progressed = true;
                 }
             }
             if !progressed {
@@ -358,6 +399,6 @@ impl RoutingPlan {
                 node.scatter(&step.routes, slots, note_slots, meters);
             }
         }
-        (panicked, spins)
+        spins
     }
 }

@@ -5,12 +5,8 @@ atomik_testkit::install_alloc_guard!();
 mod common;
 
 use atomik_core::{BATCH, NoteKind, ParamId};
-use atomik_device_sdk::{
-    Device, DeviceDescriptor, DeviceKind, Direction, PrepareInfo, ProcessContext, SocketDescriptor,
-    SocketId, SocketKind,
-};
 use atomik_engine::{EngineConfig, Graph, ScheduledNote, WORKER_SPIN_LIMIT, new_engine};
-use atomik_testkit::fakes::{ConstantSource, Passthrough};
+use atomik_testkit::fakes::{ConstantSource, Panicker, Passthrough};
 use common::patches::{Built, NodeSpec, fake_graph, notes_for, real_patch, sixteen_synths};
 use common::*;
 use proptest::prelude::*;
@@ -246,47 +242,74 @@ fn render_levels_follow_dependencies() {
 // A device that panics in `process`: a worker panic must surface on the audio thread, not hang.
 // ---------------------------------------------------------------------------------------------
 
-static PANICKER: DeviceDescriptor = DeviceDescriptor {
-    stages: &[],
-    type_id: "test.panicker",
-    name: "Panicker",
-    kind: DeviceKind::Utility,
-    version: 1,
-    params: &[],
-    sockets: &[SocketDescriptor {
-        id: SocketId(0),
-        key: "audio_out",
-        name: "audio_out",
-        kind: SocketKind::Audio,
-        direction: Direction::Output,
-    }],
-};
-
-struct Panicker;
-
-impl Device for Panicker {
-    fn descriptor(&self) -> &'static DeviceDescriptor {
-        &PANICKER
+/// Two sources in one level, one of them the `Panicker`; `panicker_first` picks which runs on
+/// the audio thread. Renders without the allocation guard (the panic path allocates by design)
+/// and returns the output channels and the fault.
+fn render_with_panicker(
+    threads: u16,
+    panicker_first: bool,
+) -> (
+    Vec<Vec<f32>>,
+    Option<atomik_engine::DeviceInstanceId>,
+    usize,
+) {
+    let c = cfg(0, 2);
+    let mut g = Graph::new(&c);
+    let (steady, bad);
+    if panicker_first {
+        bad = g.add_device(Panicker::boxed());
+        steady = g.add_device(ConstantSource::boxed(0.5));
+    } else {
+        steady = g.add_device(ConstantSource::boxed(0.5));
+        bad = g.add_device(Panicker::boxed());
     }
-    fn prepare(&mut self, _: &PrepareInfo) {}
-    fn reset(&mut self) {}
-    fn set_param(&mut self, _: ParamId, _: f32) {}
-    fn process(&mut self, _: &mut ProcessContext<'_>) {
-        panic!("device failure");
+    g.connect(ep(steady, ConstantSource::AUDIO_OUT), iface(&g, "out_1"))
+        .unwrap();
+    g.connect(ep(bad, Panicker::AUDIO_OUT), iface(&g, "out_2"))
+        .unwrap();
+    let (mut engine, mut handle) = engine_with(c, threads, None);
+    assert_eq!(engine.worker_count(), usize::from(threads));
+    handle.submit_plan(g.compile().unwrap()).unwrap();
+    let mut left = vec![0.0f32; BATCH * 4];
+    let mut right = vec![0.0f32; BATCH * 4];
+    engine.render(&[], &mut [&mut left[..], &mut right[..]]);
+    assert_eq!(engine.fault(), handle.fault());
+    assert_eq!(engine.fault(), Some(bad));
+    (vec![left, right], engine.fault(), BATCH)
+}
+
+#[test]
+fn a_panicking_device_is_contained() {
+    for threads in [0u16, 3] {
+        for panicker_first in [false, true] {
+            let (out, fault, latency) = render_with_panicker(threads, panicker_first);
+            assert!(fault.is_some(), "{threads} workers");
+            // The engine kept rendering: the steady source sounds once the FIFO latency has
+            // passed, and the faulted device is silent for every batch.
+            assert!(
+                out[0][latency..].iter().all(|s| (s - 0.5).abs() < 1e-7),
+                "{threads} workers, panicker first: {panicker_first}"
+            );
+            assert!(out[1].iter().all(|s| *s == 0.0));
+        }
     }
 }
 
 #[test]
-#[should_panic(expected = "worker")]
-fn worker_panic_surfaces_on_the_audio_thread() {
+fn a_faulted_device_stays_silent_and_the_engine_keeps_rendering() {
     let c = cfg(0, 1);
     let mut g = Graph::new(&c);
-    g.add_device(ConstantSource::boxed(0.0)); // level 0, audio thread
-    g.add_device(Box::new(Panicker)); // level 0, worker
-    let (mut engine, mut handle) = engine_with(c, 1, None);
+    g.add_device(ConstantSource::boxed(0.0));
+    g.add_device(Panicker::boxed());
+    let (mut engine, mut handle) = engine_with(c, 3, None);
     handle.submit_plan(g.compile().unwrap()).unwrap();
+    assert_eq!(handle.fault(), None);
     let mut out = vec![0.0f32; BATCH];
-    engine.render(&[], &mut [&mut out[..]]);
+    for _ in 0..50 {
+        engine.render(&[], &mut [&mut out[..]]);
+    }
+    assert!(engine.fault().is_some());
+    assert_eq!(handle.dropped_events(), 0);
 }
 
 // ---------------------------------------------------------------------------------------------
