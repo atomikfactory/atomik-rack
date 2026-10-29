@@ -64,6 +64,14 @@
 //!   first beat of a bar. A click is a 30 ms decaying sine burst from a table computed when the
 //!   engine is created (1760 Hz accent at full level, 1320 Hz at 0.6), added to interface
 //!   outputs 1/2 times the gain, only while playing (stopping cuts it).
+//! * **Pre-roll.** `PlayWithPreRoll` holds the position while a counter of frames (a whole
+//!   number of batches, planned off the audio thread by `SongSnapshot::pre_roll`) runs down one
+//!   batch at a time. The transport is not playing meanwhile: no notes, automation or audio, and
+//!   devices see `playing` false. The click's onsets (`i * frames / beats`, the first of each
+//!   bar accented) sound whatever the metronome switch says. At zero the batch that follows
+//!   starts the song from the held position as a Play does (chase included), loop and all, so a
+//!   loop is counted in once. Stop, or a plain Play, cancels it. The state carries the frames
+//!   left and the beat of the bar being counted.
 //! * **Tempo.** With a song loaded, the song's tempo map drives positions and `TimeInfo::tempo`
 //!   (the tempo at the batch start, the instantaneous one inside a ramp) and `TimeInfo::time_signature`
 //!   (the meter at the batch start); `set_tempo` only matters for song-less racks, where it
@@ -73,8 +81,8 @@ use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
 use crate::graph::DeviceInstanceId;
 use crate::seq::{
-    ChaseNote, CompiledTrack, SongCurve, SongPoint, SongSnapshot, TrackCursor, TransportCommand,
-    TransportState,
+    ChaseNote, CompiledTrack, PreRoll, SongCurve, SongPoint, SongSnapshot, TrackCursor,
+    TransportCommand, TransportState,
 };
 use crate::stream::{StreamRequest, StreamStats};
 use atomik_core::{
@@ -159,7 +167,11 @@ pub(crate) struct TransportCell {
     song_frame: AtomicU64,
     loop_start: AtomicU64,
     loop_end: AtomicU64,
+    pre_roll: AtomicU64,
 }
+
+/// The bits of the published pre-roll word that hold the frames left.
+const PRE_ROLL_FRAMES_MASK: u64 = (1 << 48) - 1;
 
 impl TransportCell {
     /// Publishes `s` (single writer; wait-free: a few stores).
@@ -176,6 +188,11 @@ impl TransportCell {
         self.loop_start
             .store(s.loop_start as u64, Ordering::Relaxed);
         self.loop_end.store(s.loop_end as u64, Ordering::Relaxed);
+        // The beat sits above the 48 bits of frames (a pre-roll is minutes at most).
+        self.pre_roll.store(
+            s.pre_roll_frames & PRE_ROLL_FRAMES_MASK | u64::from(s.pre_roll_beat) << 48,
+            Ordering::Relaxed,
+        );
         self.seq.store(seq + 2, Ordering::Release);
     }
 
@@ -192,6 +209,7 @@ impl TransportCell {
                 continue;
             }
             let flags = self.flags.load(Ordering::Relaxed);
+            let pre_roll = self.pre_roll.load(Ordering::Relaxed);
             let s = TransportState {
                 playing: flags & 1 != 0,
                 tick: self.tick.load(Ordering::Relaxed) as i64,
@@ -201,6 +219,8 @@ impl TransportCell {
                 loop_start: self.loop_start.load(Ordering::Relaxed) as i64,
                 loop_end: self.loop_end.load(Ordering::Relaxed) as i64,
                 loop_enabled: flags & 2 != 0,
+                pre_roll_frames: pre_roll & PRE_ROLL_FRAMES_MASK,
+                pre_roll_beat: (pre_roll >> 48) as u16,
             };
             fence(Ordering::Acquire); // the data loads happen before the re-check
             if self.seq.load(Ordering::Relaxed) == before {
@@ -506,6 +526,13 @@ pub(crate) struct BatchTime {
     pub(crate) time_signature: (u8, u8),
 }
 
+/// A count-in in progress: the plan and the frames left.
+#[derive(Debug, Clone, Copy)]
+struct Counting {
+    plan: PreRoll,
+    remaining: u64,
+}
+
 /// The RT player state (owned by the engine).
 pub(crate) struct Player {
     song: Option<Box<SongSnapshot>>,
@@ -518,6 +545,10 @@ pub(crate) struct Player {
     loop_enabled: bool,
     metronome: bool,
     gain: f32,
+    /// The count-in that runs before the song starts, if any.
+    pre_roll: Option<Counting>,
+    /// Whether this batch's click onsets are a count-in's (they sound with the metronome off).
+    counting: bool,
     /// Tick of the song-less transport at the start of the next batch: it advances with the
     /// engine at the engine tempo, so it stays continuous across tempo changes.
     free_tick: f64,
@@ -559,6 +590,8 @@ impl Player {
             loop_enabled: false,
             metronome: false,
             gain: 0.0,
+            pre_roll: None,
+            counting: false,
             free_tick: 0.0,
             events: Vec::with_capacity(crate::engine::SONG_EVENT_CAPACITY),
             next_event: 0,
@@ -690,6 +723,7 @@ impl Player {
         };
         match command {
             TransportCommand::Play => {
+                self.pre_roll = None;
                 if !*playing {
                     *playing = true;
                     if let Some((tracks, cursors)) = parts.as_mut() {
@@ -698,10 +732,28 @@ impl Player {
                     }
                 }
             }
+            TransportCommand::PlayWithPreRoll(plan) => {
+                // Already playing: nothing to count in. The song starts when the count ends
+                // (`run`), so a Stop or a Play in between cancels it.
+                if !*playing {
+                    self.pre_roll = (plan.frames > 0 && plan.beats > 0).then_some(Counting {
+                        plan,
+                        remaining: plan.frames.div_ceil(BATCH as u64) * BATCH as u64,
+                    });
+                    if self.pre_roll.is_none() {
+                        *playing = true;
+                        if let Some((tracks, cursors)) = parts.as_mut() {
+                            seek(map, sr, tracks, cursors, *pos);
+                            chase(map, sr, tracks, cursors, *pos, 0, &mut em);
+                        }
+                    }
+                }
+            }
             TransportCommand::Stop => {
+                self.pre_roll = None;
+                self.click = None;
                 if *playing {
                     *playing = false;
-                    self.click = None;
                     if let Some((tracks, cursors)) = parts.as_mut() {
                         em.all_off(tracks, cursors);
                     }
@@ -778,6 +830,8 @@ impl Player {
             stats,
             free_tick,
             hold,
+            pre_roll,
+            counting,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
@@ -814,6 +868,15 @@ impl Player {
                 }
             }
         }
+        // The count-in ends on a batch boundary: the song starts here, from the held position.
+        if pre_roll.is_some_and(|c| c.remaining == 0) {
+            *pre_roll = None;
+            *playing = true;
+            if let Some((tracks, cursors)) = parts.as_mut() {
+                seek(map, sr, tracks, cursors, *pos);
+                chase(map, sr, tracks, cursors, *pos, 0, &mut em);
+            }
+        }
         if *playing
             && let Some((ls, le)) = lp
             && *pos == le
@@ -831,6 +894,13 @@ impl Player {
             loop_start: self.loop_start,
             loop_end: self.loop_end,
             loop_enabled: self.loop_enabled,
+            pre_roll_frames: pre_roll.map_or(0, |c| c.remaining),
+            pre_roll_beat: pre_roll.map_or(0, |c| {
+                let elapsed = c.plan.frames.saturating_sub(c.remaining);
+                let beats = u64::from(c.plan.beats.max(1));
+                let beat = (elapsed * beats / c.plan.frames.max(1)).min(beats - 1);
+                (beat % u64::from(c.plan.per_bar.max(1))) as u16 + 1
+            }),
         });
         let tick0 = map.tick(*pos as f64, sr);
         let tempo = Tempo::new(map.bpm(tick0)).unwrap_or(engine_tempo);
@@ -850,6 +920,29 @@ impl Player {
             time_signature: meters.meter_at(tick.floor() as i64),
         };
         *click_count = 0;
+        *counting = false;
+        if let Some(c) = pre_roll.as_mut() {
+            // Counting in: the position holds, nothing of the song plays, and the clicks that
+            // fall in this batch are queued.
+            *counting = true;
+            let elapsed = c.plan.frames - c.remaining;
+            let beats = u64::from(c.plan.beats);
+            let mut i = (elapsed * beats).div_ceil(c.plan.frames.max(1));
+            while i < beats {
+                let at = c.plan.onset(i);
+                if at >= elapsed + BATCH as u64 {
+                    break;
+                }
+                if at >= elapsed && *click_count < clicks.len() {
+                    let accent = i % u64::from(c.plan.per_bar.max(1)) == 0;
+                    clicks[*click_count] = ((at - elapsed) as u16, accent);
+                    *click_count += 1;
+                }
+                i += 1;
+            }
+            c.remaining -= BATCH as u64;
+            return time;
+        }
         if !*playing {
             return time;
         }
@@ -920,7 +1013,7 @@ impl Player {
 
     /// Adds the metronome to interface outputs 1/2 (after the routing wrote them).
     pub(crate) fn mix_metronome(&mut self, out: &mut [Batch]) {
-        if !self.playing || !self.metronome {
+        if !self.counting && (!self.playing || !self.metronome) {
             self.click = None;
             return;
         }
