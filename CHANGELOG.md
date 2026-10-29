@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **Autosave for every project.** A changed project is copied to the recovery folder every few minutes (Settings, Workflow, **Autosave**: off, 1, 2, 5 by default, 10, 15 or 30 minutes), with or without plugins, by a background thread, so a frame never waits for it. After Atomik ends unexpectedly the next start shows a banner with OPEN RECOVERY. Unfinished audio recordings left by the crashed run come back as a `Recovered take` track in the project; the recording file is deleted only after you save.
+
+### Fixed
+- **`settings.json` and `ui-state.json` can no longer be left truncated.** They are written to a temporary file and renamed. A file that cannot be read is kept as `.bad` and Atomik starts with the defaults and says so.
+
 ### Changed
 - **Moving the pointer over the app costs next to nothing.** The document carries a revision number that changes with every edit, undo, redo and data sync; the unsaved-changes mark (` *` in the title) is compared once per change instead of once per input event, the sequencer and the piano roll read the document again only when it changed, and a pointer move that changes nothing no longer repaints any window. A hover that changes what is shown, or a drag, still repaints, and only the window it happens in. Large songs no longer slow the pointer down.
 
