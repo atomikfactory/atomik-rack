@@ -342,6 +342,7 @@ pub mod rack;
 pub mod relink_panel;
 pub mod sample_editor;
 pub mod scene_canvas;
+pub mod segment_field;
 pub mod seq_edit;
 pub mod seq_editor;
 pub mod seq_paint;
@@ -370,8 +371,9 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, HEIGHT_LARGE, HEIGHT_SMALL, LaneButton, LaneMenu,
-    MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton, TrackLevel, TrackMeterInfo,
+    ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,
+    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton,
+    TrackLevel, TrackMeterInfo,
 };
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};

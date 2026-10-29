@@ -53,6 +53,8 @@ use vello::peniko::Color;
 mod audio_edit;
 mod heights;
 mod help;
+mod inspector;
+pub use inspector::{ClipField, INSPECTOR_HEIGHT};
 mod lanes;
 mod markers;
 mod meters;
@@ -673,6 +675,7 @@ pub struct ArrangementView {
     ctx_meter: Option<usize>,
     /// The marker strip, the marker list and their state.
     mk: markers::MarkerUi,
+    insp: inspector::InspectorUi,
     /// Vertical zoom and the track height drag.
     th: heights::HeightUi,
     /// Folders, the selection of several tracks and the text being typed in the track list.
@@ -760,6 +763,7 @@ impl ArrangementView {
             ctx_tempo: None,
             ctx_meter: None,
             mk: markers::MarkerUi::default(),
+            insp: inspector::InspectorUi::default(),
             th: heights::HeightUi::default(),
             og: organise::OrgUi::default(),
             au: audio_edit::AudioUi::default(),
@@ -785,11 +789,16 @@ impl ArrangementView {
     /// width off the right edge.
     fn apply_bounds(&mut self) {
         let o = self.outer;
+        let y1 = if self.insp.visible {
+            (o.y1 - inspector::INSPECTOR_HEIGHT).max(o.y0 + RULER_HEIGHT)
+        } else {
+            o.y1
+        };
         let bounds = if self.mk.list {
             let x1 = (o.x1 - markers::MARKER_LIST_WIDTH).max(o.x0 + TRACK_LIST_WIDTH + 64.0);
-            Rect::new(o.x0, o.y0, x1.min(o.x1), o.y1)
+            Rect::new(o.x0, o.y0, x1.min(o.x1), y1)
         } else {
-            o
+            Rect::new(o.x0, o.y0, o.x1, y1)
         };
         if bounds != self.bounds {
             self.bounds = bounds;
@@ -2219,6 +2228,9 @@ impl ArrangementView {
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
         self.sync_current(doc, registry);
         let mut out = Vec::new();
+        if self.insp.visible && self.insp_event(event, &mut out) {
+            return out;
+        }
         match event {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
             UiEvent::Resize(_) => {}
@@ -4326,6 +4338,7 @@ impl ArrangementView {
         sp::line(canvas, tl.x0 - 0.5, b.y0, tl.x0 - 0.5, b.y1, sep);
         sp::line(canvas, b.x0, tl.y0 - 0.5, b.x1, tl.y0 - 0.5, sep);
         self.paint_marker_list(canvas);
+        self.paint_inspector(canvas);
         self.paint_org_overlay(canvas);
         if let Some(m) = &self.menu {
             paint_menu(canvas, &self.st, m);
