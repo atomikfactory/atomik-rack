@@ -30,7 +30,8 @@ use crate::Warning;
 use crate::plugins::PluginHost;
 use atomik_core::BATCH;
 use atomik_engine::{
-    Engine, EngineHandle, OfflineJob, SongSnapshot, TimedEdit, Topology, TransportCommand,
+    Engine, EngineHandle, OfflineError, OfflineJob, SongSnapshot, TimedEdit, Topology,
+    TransportCommand,
 };
 use atomik_plugin_host::ManagerEvent;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -180,11 +181,12 @@ fn digest(events: Vec<ManagerEvent>, warnings: &mut Vec<Warning>) -> bool {
 /// the per-batch plugin step of the module docs. The transport commands that precede the song
 /// (loop, metronome) are queued by the caller before this call.
 ///
-/// `control` can end the render early (the result is then `None`); the pre-roll is short and
-/// is not interrupted.
+/// `control` can end the render early (the result is then `Ok(None)`); the pre-roll is short and
+/// is not interrupted. A rejected edit, a full queue or a device that panicked while rendering
+/// is an [`OfflineError`]: no audio is returned for a render that lost a device.
 ///
 /// # Panics
-/// If the engine has already rendered, or if the song, an edit or a note cannot be queued.
+/// If the engine has already rendered.
 pub fn render_song_with_plugins(
     engine: &mut Engine,
     handle: &mut EngineHandle,
@@ -193,7 +195,7 @@ pub fn render_song_with_plugins(
     edits: Vec<TimedEdit>,
     pass: &mut PluginPass<'_>,
     control: &RenderControl<'_>,
-) -> Option<Vec<Vec<f32>>> {
+) -> Result<Option<Vec<Vec<f32>>>, OfflineError> {
     assert_eq!(
         engine.host_frames(),
         0,
@@ -212,6 +214,9 @@ pub fn render_song_with_plugins(
         let mut outs: Vec<&mut [f32]> = outs.iter_mut().map(Vec::as_mut_slice).collect();
         engine.render(&ins, &mut outs);
         handle.collect_garbage();
+        if let Some(device) = engine.fault() {
+            return Err(OfflineError::DeviceFaulted(device));
+        }
         if pass.after_batch(handle) {
             quiet = 0;
         } else {
@@ -242,11 +247,11 @@ pub fn render_song_with_plugins(
 /// `topology` is the routing model of the engine's plan (`Graph::topology`), whose epoch is read
 /// before the first batch. Problems are returned as warnings.
 ///
-/// `control` can end the render early (the result is then `None`).
+/// `control` can end the render early (the result is then `Ok(None)`). Errors are those of
+/// [`render_song_with_plugins`].
 ///
 /// # Panics
-/// As [`render_song_with_plugins`]: if the engine has already rendered, or if the song or an
-/// edit cannot be queued.
+/// If the engine has already rendered.
 #[allow(
     clippy::too_many_arguments,
     reason = "the engine and its handle, the job, and what the loop follows and reports"
@@ -260,7 +265,7 @@ pub fn render_song_following_latency(
     mut topology: Topology,
     warnings: &mut Vec<Warning>,
     control: &RenderControl<'_>,
-) -> Option<Vec<Vec<f32>>> {
+) -> Result<Option<Vec<Vec<f32>>>, OfflineError> {
     assert_eq!(
         engine.host_frames(),
         0,
@@ -274,7 +279,7 @@ pub fn render_song_following_latency(
 
 /// The song loop of the two bounces above: queues the song and `Play`, then renders in
 /// [`BATCH`]-frame blocks and calls `after_batch` once after each batch (and its garbage
-/// collection), before the next one. `None` when `control` stopped it.
+/// collection), before the next one. `Ok(None)` when `control` stopped it.
 fn song_in_batches(
     engine: &mut Engine,
     handle: &mut EngineHandle,
@@ -283,15 +288,15 @@ fn song_in_batches(
     mut edits: Vec<TimedEdit>,
     control: &RenderControl<'_>,
     mut after_batch: impl FnMut(&mut EngineHandle),
-) -> Option<Vec<Vec<f32>>> {
+) -> Result<Option<Vec<Vec<f32>>>, OfflineError> {
     let channels = engine.output_channels();
     let inputs = engine.input_channels();
     handle
         .submit_song(song)
-        .expect("song_in_batches: the control queue has room for the song");
+        .map_err(|_| OfflineError::QueueFull { queue: "song" })?;
     handle
         .transport(TransportCommand::Play)
-        .expect("song_in_batches: the control queue has room for Play");
+        .map_err(|_| OfflineError::QueueFull { queue: "transport" })?;
     let mut notes = job.notes.to_vec();
     notes.sort_by_key(|n| n.frame);
     edits.sort_by_key(|e| e.frame);
@@ -305,7 +310,7 @@ fn song_in_batches(
     let mut batches = 0usize;
     while pos < total {
         if control.cancelled() {
-            return None;
+            return Ok(None);
         }
         if batches.is_multiple_of(PROGRESS_BATCHES)
             && let Some(progress) = control.progress
@@ -317,14 +322,14 @@ fn song_in_batches(
         let end = (pos + n) as u64;
         while let Some(edit) = edits.next_if(|e| e.frame < end) {
             let frame = edit.frame;
-            if let Err(e) = handle.schedule(frame, edit.edit) {
-                panic!("song_in_batches: edit at frame {frame} rejected: {e}");
-            }
+            handle
+                .schedule(frame, edit.edit)
+                .map_err(|source| OfflineError::Edit { frame, source })?;
         }
         while let Some(note) = notes.get(next_note).filter(|note| note.frame < end) {
             handle
                 .send_note(*note)
-                .expect("song_in_batches: note queue full");
+                .map_err(|_| OfflineError::QueueFull { queue: "note" })?;
             next_note += 1;
         }
         for (ch, buf) in block_in.iter_mut().enumerate() {
@@ -337,6 +342,9 @@ fn song_in_batches(
         let mut outs: Vec<&mut [f32]> = out.iter_mut().map(|o| &mut o[pos..pos + n]).collect();
         engine.render(&ins, &mut outs);
         handle.collect_garbage();
+        if let Some(device) = engine.fault() {
+            return Err(OfflineError::DeviceFaulted(device));
+        }
         after_batch(handle);
         pos += n;
     }
@@ -346,7 +354,7 @@ fn song_in_batches(
     for channel in &mut out {
         channel.drain(..latency);
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 #[cfg(test)]

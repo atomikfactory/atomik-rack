@@ -991,7 +991,7 @@ pub fn render_text(
             atomik_render::build::build(&patch, &registry).map_err(|e| e.to_string())?;
         let warnings = built.warnings.drain(..).map(|w| w.to_string()).collect();
         Ok(Bounced {
-            channels: render_built(built, block),
+            channels: render_built(built, block).map_err(|e| e.to_string())?,
             sample_rate: patch.sample_rate,
             warnings,
             wall_s: started.elapsed().as_secs_f64(),
