@@ -519,11 +519,11 @@ fn a_version_22_project_loads_with_hard_cuts_and_bounces_the_same_as_before() {
     assert_eq!(r.channels[0].len(), 240_000);
     // Saved by the new version it says so, loads again, and bounces the same bytes.
     let resaved = save_project(&doc);
-    assert!(resaved.contains("\"version\": 34") && resaved.contains("\"xfade\": \"off\""));
+    assert!(resaved.contains("\"version\": 35") && resaved.contains("\"xfade\": \"off\""));
     assert!(bits(&bounce_text(&resaved, &bundle, 64)) == bits(&r));
     // The same file with the version bumped and no "xfade" keys crossfades instead: only the
     // overlap (beats 2..3) differs.
-    let bumped = V22_PROJECT.replace("\"version\": 22", "\"version\": 34");
+    let bumped = V22_PROJECT.replace("\"version\": 22", "\"version\": 35");
     let x = bounce_text(&bumped, &bundle, 512);
     let beat = 24_000;
     for ch in 0..2 {
