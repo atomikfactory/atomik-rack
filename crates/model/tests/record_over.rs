@@ -595,3 +595,49 @@ fn tails_need_version_35_and_must_be_true() {
     let e = load_project(&falsy, &reg).unwrap_err().to_string();
     assert!(e.contains("tails"), "{e}");
 }
+
+// ---- Document::apply_joined -------------------------------------------------------------------
+
+#[test]
+fn apply_joined_folds_a_follow_up_into_the_step_before_it() {
+    let reg = registry();
+    let mut d = lead(&reg);
+    d.apply(
+        add_clip("lead", 0, notes_clip(0, BAR, vec![note(0, 10, 60, 0.5)])),
+        &reg,
+    )
+    .unwrap();
+    let id = last(&d);
+    let before = save_project(d.doc());
+    d.apply(
+        sc(SongCommand::SetClipContent {
+            id,
+            content: ClipContent::Notes(vec![note(0, 10, 60, 0.5), note(BAR, 10, 61, 0.5)]),
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    d.apply_joined(
+        sc(SongCommand::SetClipGeometry {
+            id,
+            start: 0,
+            length: 2 * BAR,
+            offset: 0,
+            loop_length: None,
+            muted: false,
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(lane_clips(&d)[0].length, 2 * BAR);
+    d.undo(&reg).unwrap();
+    assert_eq!(
+        save_project(d.doc()),
+        before,
+        "one undo reverts the edit and its follow-up"
+    );
+    d.redo(&reg).unwrap();
+    assert_eq!(lane_clips(&d)[0].length, 2 * BAR);
+}

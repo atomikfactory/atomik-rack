@@ -1118,6 +1118,29 @@ impl Document {
         Ok(ops)
     }
 
+    /// Applies `command` and folds it into the undo step before it, so one undo reverts both: a
+    /// follow-up that completes the edit just made (the clip a note edit had to grow, say). The
+    /// command is planned and validated like [`Document::apply`]; with no earlier step, or when
+    /// the command changes nothing the history records, it is an ordinary step.
+    pub fn apply_joined(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let depth = self.undo.len();
+        self.merge = None;
+        let ops = self.apply(command, registry)?;
+        if depth >= 1
+            && self.undo.len() == depth + 1
+            && let Some(latest) = self.undo.pop()
+            && let Some(previous) = self.undo.pop()
+        {
+            self.undo.push(Edit::Compound(vec![previous, latest]));
+        }
+        self.merge = None;
+        Ok(ops)
+    }
+
     /// Undoes the last step; `None` when there is nothing to undo.
     pub fn undo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
         self.merge = None;
