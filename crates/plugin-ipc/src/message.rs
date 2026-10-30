@@ -4,7 +4,9 @@
 //! named by the `"t"` field. [`WireLayout`] reuses the field names (and the text values) of the
 //! scan JSON, so a layout reads the same everywhere.
 
-use atomik_device_sdk::{Channels, PluginKindHint, PluginLayout, PluginParamInfo};
+use atomik_device_sdk::{
+    Channels, MAX_PLUGIN_PARAMS, PluginKindHint, PluginLayout, PluginParamInfo,
+};
 use atomik_plugin_host::{BackendError, LogLevel, NativeParent, ParamPhase};
 use serde::{Deserialize, Serialize};
 
@@ -452,6 +454,8 @@ impl From<&PluginLayout> for WireLayout {
             params: l
                 .params
                 .iter()
+                // The app keeps no more than this many (and its reader takes no larger reply).
+                .take(MAX_PLUGIN_PARAMS)
                 .map(|p| {
                     let min = finite(p.min, 0.0);
                     WireParam {
