@@ -573,9 +573,13 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                         if let Some(name) = &l.name {
                             lane["name"] = json!(name);
                         }
-                        if l.muted {
-                            lane["muted"] = json!(true);
-                        }
+                    }
+                    // A muted note or automation lane, and an automation lane's static value.
+                    if l.muted {
+                        lane["muted"] = json!(true);
+                    }
+                    if let Some(v) = l.static_value {
+                        lane["static"] = json!(v);
                     }
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {

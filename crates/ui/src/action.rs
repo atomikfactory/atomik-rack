@@ -376,6 +376,14 @@ pub enum UiAction {
         /// The control's param key.
         param: String,
     },
+    /// A click on a control with the edit-automation role held (Alt, or Option): the same as
+    /// the control menu's Edit Automation (`automation.edit_control`), for that control.
+    EditAutomation {
+        /// The device that owns the control.
+        device: DeviceKey,
+        /// The control's param key.
+        param: String,
+    },
     /// The Macros panel ([`crate::MacrosView`]) asks for something: move a macro, edit or remove an
     /// assignment, name a macro, make a bank, learn a controller for a macro, or close.
     Macros(crate::macros_panel::MacrosAction),
@@ -505,6 +513,11 @@ pub enum TransportAction {
     ToggleRecord,
     /// Toggle the metronome click.
     ToggleMetronome,
+    /// Toggle the creation of automation lanes for the parameters moved during a take (the
+    /// AUTO LANES switch next to Record).
+    ToggleAutoLanes,
+    /// Let the lanes held by a hand-moved value play again (the OVERRIDE lamp).
+    ClearOverride,
 }
 
 /// Something the file browser shows in its list: a folder, or a library collection.

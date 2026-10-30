@@ -74,6 +74,7 @@ impl<S: EngineSink> AppCore<S> {
     /// Hands the views the values to show. Returns whether any view's set changed (the caller
     /// then syncs the views).
     pub(super) fn update_shown_values(&mut self) -> bool {
+        self.prune_override();
         let shown = self.automation_shown();
         let a = self.view.set_shown_values(&shown);
         let b = self.console.set_shown_values(&shown);

@@ -18,6 +18,8 @@ pub enum Role {
     FineAdjust,
     /// Click: reset a control to its default.
     ResetParam,
+    /// Click: show the automation lane of a control (adding it when missing).
+    EditAutomation,
     /// Click: range select.
     RangeSelect,
     /// Click: toggle an item in the selection.
@@ -28,7 +30,7 @@ pub enum Role {
 
 impl Role {
     /// Every role, in listing order.
-    pub const ALL: [Role; 8] = [
+    pub const ALL: [Role; 9] = [
         Role::AlternateTool,
         Role::DisableSnap,
         Role::CopyDrag,
@@ -37,6 +39,7 @@ impl Role {
         Role::Constrain,
         Role::FineAdjust,
         Role::ResetParam,
+        Role::EditAutomation,
     ];
 
     /// The source modules that act on this role. A role with none is not wired: Settings does
@@ -49,6 +52,7 @@ impl Role {
             Role::CopyDrag => &["arrangement"],
             Role::FineAdjust => &["rack/selection", "console"],
             Role::ResetParam => &["rack/selection", "console"],
+            Role::EditAutomation => &["rack/selection", "console"],
             Role::Constrain => &[],
         }
     }
@@ -71,6 +75,7 @@ impl Role {
             Role::Constrain => "constrain",
             Role::FineAdjust => "fine_adjust",
             Role::ResetParam => "reset_param",
+            Role::EditAutomation => "edit_automation",
             Role::RangeSelect => "range_select",
             Role::ToggleSelect => "toggle_select",
             Role::DisableSnap => "disable_snap",
@@ -95,6 +100,7 @@ impl Role {
             Role::Constrain => "Constrain",
             Role::FineAdjust => "Fine adjust",
             Role::ResetParam => "Reset parameter",
+            Role::EditAutomation => "Edit automation",
         }
     }
 }
@@ -179,6 +185,11 @@ impl Roles {
             b(R::Constrain, shift, G::DragItem),
             b(R::FineAdjust, shift, G::DragControl),
             b(R::ResetParam, cmd, G::ClickControl),
+            b(
+                R::EditAutomation,
+                m(false, false, true, false),
+                G::ClickControl,
+            ),
         ];
         Roles {
             os,

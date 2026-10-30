@@ -71,8 +71,8 @@ fn refused(reg: &Registry, text: &str) -> String {
 }
 
 #[test]
-fn the_project_version_is_thirty_one() {
-    assert_eq!(PROJECT_VERSION, 35);
+fn the_project_version_is_current() {
+    assert_eq!(PROJECT_VERSION, 36);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn load_project_version_29_file_loads_one_note_lane_and_resaves_as_30() {
     assert_eq!(loaded.song.tracks[0].note_lane_count(), 1);
     // A project of single unnamed lanes differs from its version 29 file in the version line.
     assert_eq!(save_project(&loaded), new);
-    assert_eq!(new.replacen("\"version\": 35", "\"version\": 29", 1), old);
+    assert_eq!(new.replacen("\"version\": 36", "\"version\": 29", 1), old);
 }
 
 #[test]
@@ -233,17 +233,14 @@ fn load_project_refuses_muted_false_and_a_non_boolean() {
 fn load_project_refuses_name_and_muted_on_automation_and_audio_lanes() {
     let reg = registry();
     let text = save_project(laned(&reg).doc());
-    for field in ["name", "muted"] {
-        let bad = with_lanes(&text, |l| {
-            l[3][field] = if field == "name" {
-                json!("x")
-            } else {
-                json!(true)
-            };
-        });
-        let e = refused(&reg, &bad);
-        assert!(e.contains(field) && e.contains("unknown field"), "{e}");
-    }
+    // An automation lane has no name; from version 36 it can be muted, before that it cannot.
+    let bad = with_lanes(&text, |l| l[3]["name"] = json!("x"));
+    let e = refused(&reg, &bad);
+    assert!(e.contains("name") && e.contains("unknown field"), "{e}");
+    let muted = with_lanes(&text, |l| l[3]["muted"] = json!(true));
+    assert!(load_project(&muted, &reg).is_ok());
+    let e = refused(&reg, &at_version(&muted, 35));
+    assert!(e.contains("muted") && e.contains("unknown field"), "{e}");
     let reg = audio_registry();
     let d = with_audio_track(&reg);
     let text = save_project(d.doc());

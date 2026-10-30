@@ -272,13 +272,7 @@ fn two_touches_make_two_clips_and_the_lane_plays_between_them() {
     );
     assert_eq!(
         holds(&c.sink_mut().take()),
-        [
-            vec![pid(&c, CUTOFF)],
-            vec![],
-            vec![pid(&c, CUTOFF)],
-            vec![],
-            vec![]
-        ]
+        [vec![pid(&c, CUTOFF)], vec![], vec![pid(&c, CUTOFF)], vec![]]
     );
 }
 
@@ -652,4 +646,295 @@ fn a_take_on_a_channel_fader_lane_writes_its_automation_track_in_one_undo_step()
     assert!(points.len() >= 2 && (points.last().unwrap().value - 0.9).abs() < 1e-3);
     // The take is one undo step, on top of the knob moves.
     assert_eq!(depth(&mut c), before + 1);
+}
+
+/// How many undo steps the document has (undone and redone again).
+fn undo_depth(c: &mut AppCore<RecordingSink>) -> usize {
+    let mut n = 0;
+    while c.undo() {
+        n += 1;
+    }
+    while c.redo() {}
+    n
+}
+
+// ------------------------------------------------------------------ a muted lane holds its value
+
+/// A one-point step clip on lane `lane` of `a`: the lane gives `value` from `start` on.
+fn step_clip(start: i64, length: i64, value: f32) -> atomik_model::Clip {
+    atomik_model::Clip {
+        id: atomik_model::ClipId(0),
+        start,
+        length,
+        offset: 0,
+        loop_length: None,
+        muted: false,
+        scale: None,
+        controllers: Vec::new(),
+        grid: None,
+        content: ClipContent::Automation(vec![AutomationPoint {
+            tick: 0,
+            value,
+            curve: atomik_model::Curve::Step,
+        }]),
+    }
+}
+
+fn add_step_clip(c: &mut AppCore<RecordingSink>, lane: usize, clip: atomik_model::Clip) {
+    c.apply_command(song(SongCommand::AddClip {
+        device: key("a"),
+        lane,
+        clip,
+    }))
+    .unwrap();
+}
+
+#[test]
+fn muting_a_lane_holds_the_value_it_gave_at_the_playhead_in_one_undo_step() {
+    let mut c = core();
+    add_step_clip(&mut c, 1, step_clip(BAR, BAR, 4000.0));
+    let before = c.doc().clone();
+    c.transport_action(TransportAction::Locate(BAR + PPQ));
+    let depth = undo_depth(&mut c);
+    c.toggle_automation_lane_mute(&key("a"), CUTOFF);
+    let doc = c.doc();
+    assert!(doc.song.tracks[0].lanes[1].muted);
+    assert_eq!(
+        doc.param_value(&key("a"), CUTOFF, c.registry()),
+        Some(4000.0),
+        "the param keeps what the lane gave"
+    );
+    assert_eq!(undo_depth(&mut c), depth + 1, "one undo step");
+    // Unmuting changes only the flag.
+    c.toggle_automation_lane_mute(&key("a"), CUTOFF);
+    assert!(!c.doc().song.tracks[0].lanes[1].muted);
+    assert!(c.undo());
+    assert!(c.undo());
+    assert_eq!(c.doc(), &before);
+}
+
+#[test]
+fn muting_a_lane_that_plays_nothing_changes_only_its_flag() {
+    let mut c = core();
+    let value = c.doc().param_value(&key("a"), RESO, c.registry());
+    c.toggle_automation_lane_mute(&key("a"), RESO);
+    assert!(c.doc().song.tracks[0].lanes[2].muted);
+    assert_eq!(c.doc().param_value(&key("a"), RESO, c.registry()), value);
+}
+
+// ------------------------------------------------------------------ auto-created lanes
+
+const DRIVE: &str = "filter.key_track";
+
+/// A core with synths `a` and `b` and no lane at all (the start-up calls taken).
+fn bare() -> AppCore<RecordingSink> {
+    let mut c = rack_only_core();
+    for k in ["a", "b"] {
+        c.apply_command(Command::AddDevice {
+            index: usize::MAX,
+            type_id: SYNTH.to_string(),
+            key: Some(key(k)),
+        })
+        .unwrap();
+    }
+    c.sink_mut().take();
+    c
+}
+
+fn set_on(
+    c: &mut AppCore<RecordingSink>,
+    device: &str,
+    param: &str,
+    value: f32,
+    merge: Option<u64>,
+) {
+    c.apply_command(Command::SetParam {
+        key: key(device),
+        param: param.into(),
+        value,
+        merge,
+    })
+    .unwrap();
+}
+
+/// The automation lanes of `device`'s track as `(param, clip count)`.
+fn lanes_of(c: &AppCore<RecordingSink>, device: &str) -> Vec<(String, usize)> {
+    c.doc()
+        .song
+        .track(&key(device))
+        .map(|t| {
+            t.lanes
+                .iter()
+                .filter_map(|l| match &l.kind {
+                    atomik_model::LaneKind::Automation(p) => Some((p.clone(), l.clips.len())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn recording_needs_an_armed_lane_or_auto_create_lanes() {
+    let mut c = bare();
+    record(&mut c);
+    assert!(!c.is_recording());
+    c.transport_action(TransportAction::ToggleAutoLanes);
+    assert!(c.auto_create_lanes());
+    record(&mut c);
+    assert!(c.is_recording() && c.is_playing());
+    // The switch is session state: nothing in the project.
+    assert!(!atomik_model::save_project(c.doc()).contains("auto"));
+}
+
+#[test]
+fn two_knobs_on_two_devices_make_two_lanes_with_clips_and_one_undo_removes_them() {
+    let mut c = bare();
+    c.set_auto_create_lanes(true);
+    record(&mut c);
+    c.sink_mut().take();
+    at(&mut c, 1000, 0);
+    set_on(&mut c, "a", CUTOFF, 1000.0, Some(7));
+    // A lane that is still to be made holds nothing in the engine.
+    assert!(holds(&c.sink_mut().take()).is_empty());
+    at(&mut c, 2000, 0);
+    set_on(&mut c, "a", CUTOFF, 5000.0, Some(7));
+    release(&mut c);
+    at(&mut c, 3000, 0);
+    set_on(&mut c, "b", DRIVE, 0.5, Some(8));
+    at(&mut c, 4000, 0);
+    set_on(&mut c, "b", DRIVE, 0.9, Some(8));
+    release(&mut c);
+    // Nothing is written before the take ends.
+    assert!(lanes_of(&c, "a").is_empty() && lanes_of(&c, "b").is_empty());
+    let depth = undo_depth(&mut c);
+    at(&mut c, 6000, 0);
+    record(&mut c);
+    assert!(!c.is_recording());
+    assert_eq!(lanes_of(&c, "a"), [(CUTOFF.to_string(), 1)]);
+    assert_eq!(lanes_of(&c, "b"), [(DRIVE.to_string(), 1)]);
+    assert_eq!(
+        undo_depth(&mut c),
+        depth + 1,
+        "lanes and clips are one undo step"
+    );
+    assert!(c.doc().validate().is_ok());
+    assert!(c.undo());
+    assert!(lanes_of(&c, "a").is_empty() && lanes_of(&c, "b").is_empty());
+    assert!(
+        c.doc().song.track(&key("b")).is_none(),
+        "no empty track is left"
+    );
+    assert!(c.redo());
+    assert_eq!(lanes_of(&c, "b"), [(DRIVE.to_string(), 1)]);
+}
+
+#[test]
+fn a_parameter_with_a_lane_records_only_when_armed_even_with_auto_create_on() {
+    let mut c = core();
+    c.set_auto_create_lanes(true);
+    arm(&mut c, CUTOFF);
+    record(&mut c);
+    at(&mut c, 1000, 0);
+    set(&mut c, CUTOFF, 1000.0, Some(7));
+    at(&mut c, 2000, 0);
+    set(&mut c, CUTOFF, 6000.0, Some(7));
+    release(&mut c);
+    // The resonance lane exists but is not armed: it takes nothing.
+    set(&mut c, RESO, 0.4, Some(9));
+    release(&mut c);
+    at(&mut c, 4000, 0);
+    record(&mut c);
+    assert_eq!(clips(&c, 1).len(), 1);
+    assert!(clips(&c, 2).is_empty());
+    assert_eq!(c.doc().song.track(&key("a")).unwrap().lanes.len(), 3);
+}
+
+#[test]
+fn a_macro_driven_parameter_is_ignored_with_a_message() {
+    let mut c = bare();
+    assert!(c.assign_to_macro(&key("b"), "filter.resonance", 0, true));
+    let bank = c.doc().banks().last().unwrap().key.clone();
+    c.set_auto_create_lanes(true);
+    record(&mut c);
+    at(&mut c, 1000, 0);
+    // The driven param refuses a direct edit; the engine-side change of a driven param that
+    // reaches the take (a plugin window, say) is what the message is about.
+    let ops = [SyncOp::ParamChanged {
+        key: key("b"),
+        param: "filter.resonance".into(),
+        value: 0.3,
+    }];
+    c.capture_automation(&ops, Some(3));
+    assert!(
+        c.last_rejection().unwrap().contains("driven by a macro"),
+        "{:?}",
+        c.last_rejection()
+    );
+    // The macro's own knob is an ordinary param and gets its lane.
+    c.apply_command(Command::SetParam {
+        key: bank.clone(),
+        param: "macro1".into(),
+        value: 0.7,
+        merge: Some(4),
+    })
+    .unwrap();
+    at(&mut c, 2000, 0);
+    release(&mut c);
+    at(&mut c, 3000, 0);
+    record(&mut c);
+    assert!(lanes_of(&c, "b").is_empty(), "no lane for the driven param");
+    assert_eq!(lanes_of(&c, &bank.0), [("macro1".to_string(), 1)]);
+}
+
+// ------------------------------------------------------------------ override
+
+#[test]
+fn a_control_moved_by_hand_during_playback_holds_its_lane_until_stop() {
+    let mut c = core();
+    add_step_clip(&mut c, 1, step_clip(0, 4 * BAR, 1000.0));
+    c.transport_action(TransportAction::Play);
+    at(&mut c, 500, 0);
+    c.sink_mut().take();
+    let cutoff = pid(&c, CUTOFF);
+    // A change without a gesture id (a text entry, a click) does not override.
+    set(&mut c, CUTOFF, 2000.0, None);
+    assert_eq!(c.overridden_lanes(), 0);
+    set(&mut c, CUTOFF, 3000.0, Some(5));
+    release(&mut c);
+    assert_eq!(c.overridden_lanes(), 1);
+    assert_eq!(holds(&c.sink_mut().take()), [vec![cutoff]]);
+    // The control shows the user's value, not the lane's.
+    assert!(
+        !c.automation_shown()
+            .contains_key(&(key("a"), CUTOFF.to_string()))
+    );
+    // The lamp clears it; moving again holds again; Stop clears it too.
+    c.transport_action(TransportAction::ClearOverride);
+    assert_eq!(c.overridden_lanes(), 0);
+    assert_eq!(holds(&c.sink_mut().take()), [Vec::new()]);
+    set(&mut c, CUTOFF, 3500.0, Some(6));
+    assert_eq!(c.overridden_lanes(), 1);
+    c.transport_action(TransportAction::Stop);
+    assert_eq!(c.overridden_lanes(), 0);
+    // A parameter without a lane is never overridden.
+    c.transport_action(TransportAction::Play);
+    set(&mut c, DRIVE, 0.5, Some(7));
+    assert_eq!(c.overridden_lanes(), 0);
+}
+
+#[test]
+fn an_override_is_dropped_when_its_lane_is_removed_and_on_a_locate() {
+    let mut c = core();
+    add_step_clip(&mut c, 2, step_clip(0, BAR, 0.2));
+    c.transport_action(TransportAction::Play);
+    at(&mut c, 100, 0);
+    set(&mut c, RESO, 0.6, Some(5));
+    assert_eq!(c.overridden_lanes(), 1);
+    c.delete_automation_lane(&key("a"), RESO);
+    c.feed_automation_values();
+    assert_eq!(c.overridden_lanes(), 0, "the lane is gone");
+    set(&mut c, CUTOFF, 0.6, Some(5));
+    c.transport_action(TransportAction::Locate(0));
+    assert_eq!(c.overridden_lanes(), 0);
 }

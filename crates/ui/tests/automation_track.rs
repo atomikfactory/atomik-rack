@@ -74,15 +74,34 @@ fn delay() -> DeviceKey {
 }
 
 #[test]
-fn the_header_has_a_mute_button_and_no_solo_arm_or_add_lane() {
+fn the_header_has_a_mute_button_and_a_lane_picker_but_no_solo_or_arm() {
     let (d, reg, mut v) = setup();
     assert!(
         v.track_button_center(&delay(), TrackButton::Expand)
             .is_some()
     );
-    for b in [TrackButton::Solo, TrackButton::Arm, TrackButton::AddLane] {
+    for b in [TrackButton::Solo, TrackButton::Arm] {
         assert!(v.track_button_center(&delay(), b).is_none(), "{b:?}");
     }
+    // The picker lists the params with a check mark on the ones that have a lane; clicking the
+    // lane that is the track's only one removes the lane and so the track.
+    let picker = v
+        .track_button_center(&delay(), TrackButton::AddLane)
+        .unwrap();
+    let a = click(&d, &reg, &mut v, picker);
+    assert!(a.is_empty());
+    let items = v.param_menu_items();
+    let at = items.iter().position(|k| k == MIX).unwrap();
+    assert!(v.param_menu_checked()[at]);
+    let row = v.param_menu_row_center(at).unwrap();
+    let a = click(&d, &reg, &mut v, row);
+    assert_eq!(
+        song_commands(&a),
+        vec![SongCommand::RemoveAutomationLane {
+            device: delay(),
+            param: MIX.into(),
+        }]
+    );
     let p = v.track_button_center(&delay(), TrackButton::Mute).unwrap();
     let a = click(&d, &reg, &mut v, p);
     assert_eq!(

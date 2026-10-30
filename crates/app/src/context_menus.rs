@@ -74,6 +74,8 @@ pub struct MenuEnable {
     pub control_assign: bool,
     /// Control menu: the control has an automation lane to edit (Edit Automation works).
     pub control_lane: bool,
+    /// Control menu: the lane of the control exists (Clear Automation works).
+    pub control_has_lane: bool,
     /// Control menu: a macro drives the param (Remove from Macro works).
     pub control_driven: bool,
 }
@@ -436,6 +438,17 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     checked: Some(e.lane.muted),
                 },
                 Spec::Separator,
+                item("sequencer.delete_automation_lane", e.lane.automation),
+                Spec::Item {
+                    command: "sequencer.mute_automation_lane",
+                    arg: None,
+                    label: None,
+                    enabled: e.lane.automation,
+                    checked: Some(e.lane.automation_muted),
+                },
+                item("sequencer.set_lane_static", e.lane.automation),
+                item("sequencer.clear_lane_static", e.lane.automation_static),
+                Spec::Separator,
                 item("sequencer.freeze_track", e.freeze.can_freeze),
                 item("sequencer.unfreeze_track", e.freeze.can_unfreeze),
                 Spec::Separator,
@@ -591,6 +604,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             });
             vec![
                 item("automation.edit_control", e.control_lane),
+                item("automation.clear_control", e.control_has_lane),
+                item("automation.static_control", e.control_lane),
                 Spec::Separator,
                 item("midi.learn_control", true),
                 item("midi.forget_control", e.control_mapped),
@@ -1044,6 +1059,10 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
                 Some("Fold Automation Lanes"),
                 Some("Unfold Automation Lanes")
             ]
@@ -1115,6 +1134,7 @@ mod tests {
                 can_rename: true,
                 can_delete: true,
                 muted: true,
+                ..LaneMenu::default()
             },
             ..MenuEnable::default()
         };

@@ -401,6 +401,12 @@ impl AppCommand {
             AppCommand::Transport(TransportAction::ToggleMetronome) => {
                 ("transport.metronome", None)
             }
+            AppCommand::Transport(TransportAction::ToggleAutoLanes) => {
+                ("transport.auto_create_lanes", None)
+            }
+            AppCommand::Transport(TransportAction::ClearOverride) => {
+                ("transport.clear_override", None)
+            }
             AppCommand::Transport(TransportAction::Locate(_)) => return None,
             AppCommand::TogglePreCount => ("transport.pre_count", None),
             AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
@@ -586,6 +592,12 @@ impl AppCommand {
             ("transport.record", None) => AppCommand::Transport(TransportAction::ToggleRecord),
             ("transport.metronome", None) => {
                 AppCommand::Transport(TransportAction::ToggleMetronome)
+            }
+            ("transport.auto_create_lanes", None) => {
+                AppCommand::Transport(TransportAction::ToggleAutoLanes)
+            }
+            ("transport.clear_override", None) => {
+                AppCommand::Transport(TransportAction::ClearOverride)
             }
             ("transport.pre_count", None) => AppCommand::TogglePreCount,
             ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
@@ -872,6 +884,8 @@ pub struct MenuState {
     pub loop_enabled: bool,
     /// The metronome is on.
     pub metronome: bool,
+    /// A take also creates the lanes of the parameters moved during it.
+    pub auto_lanes: bool,
     /// The pre-count (the count-in of a recording) is on.
     pub pre_count: bool,
     /// Input quantize for recording.
@@ -1332,6 +1346,11 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     "Metronome",
                     transport(TransportAction::ToggleMetronome),
                     state.metronome,
+                ),
+                check(
+                    "Auto-create Lanes",
+                    transport(TransportAction::ToggleAutoLanes),
+                    state.auto_lanes,
                 ),
                 MenuEntry::Separator,
                 item("Add Marker", AppCommand::AddMarker),
@@ -1818,6 +1837,7 @@ mod tests {
             recording: false,
             loop_enabled: false,
             metronome: false,
+            auto_lanes: false,
             pre_count: false,
             quantize: InputQuantize::Off,
             console: false,
@@ -2035,6 +2055,8 @@ mod tests {
             TransportAction::ToggleLoop,
             TransportAction::ToggleRecord,
             TransportAction::ToggleMetronome,
+            TransportAction::ToggleAutoLanes,
+            TransportAction::ClearOverride,
         ] {
             v.push(AppCommand::Transport(t));
         }
@@ -2628,6 +2650,7 @@ mod tests {
                 recording: false,
                 loop_enabled: true,
                 metronome: false,
+                auto_lanes: false,
                 pre_count: false,
                 quantize: InputQuantize::Eighth,
                 console: true,

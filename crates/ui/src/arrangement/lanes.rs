@@ -22,7 +22,7 @@ use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::keymap::CommandOutcome;
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
-use atomik_model::{DeviceKey, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand};
+use atomik_model::{DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand};
 use vello::kurbo::{Point, Rect, RoundedRect};
 
 /// What the track header menu needs to know about the selected lane.
@@ -36,6 +36,12 @@ pub struct LaneMenu {
     pub can_delete: bool,
     /// The selected lane is muted (the Mute item is checked).
     pub muted: bool,
+    /// An automation lane header was pressed last: the lane items below act on it.
+    pub automation: bool,
+    /// That automation lane is muted (the Mute Automation Lane item is checked).
+    pub automation_muted: bool,
+    /// That automation lane has a static value (Clear Static Value is on).
+    pub automation_static: bool,
 }
 
 impl ArrangementView {
@@ -220,7 +226,11 @@ impl ArrangementView {
         let Some(t) = self.song.tracks.get(track) else {
             return;
         };
-        let Some(l) = t.lanes.get(lane).filter(|_| t.is_note_lane(lane)) else {
+        let Some(l) = t
+            .lanes
+            .get(lane)
+            .filter(|l| t.is_note_lane(lane) || matches!(l.kind, LaneKind::Automation(_)))
+        else {
             return;
         };
         out.push(song_cmd(SongCommand::SetLaneMuted {
@@ -275,20 +285,57 @@ impl ArrangementView {
     /// items of the track header menu need: the state of the selected track and lane.
     pub fn lane_menu(&self) -> LaneMenu {
         let Some((d, lane)) = self.selected_lane() else {
-            return LaneMenu::default();
+            return self.automation_menu();
         };
         let Some(t) = self.song.track(d) else {
-            return LaneMenu::default();
+            return self.automation_menu();
         };
         if t.is_audio() || t.is_automation_only() || t.frozen.is_some() {
-            return LaneMenu::default();
+            return self.automation_menu();
         }
         LaneMenu {
             can_add: t.note_lane_count() < MAX_NOTE_LANES,
             can_rename: true,
             can_delete: t.note_lane_count() > 1,
             muted: t.lanes.get(lane).is_some_and(|l| l.muted),
+            ..self.automation_menu()
         }
+    }
+
+    /// The automation part of [`LaneMenu`].
+    fn automation_menu(&self) -> LaneMenu {
+        let (automation, automation_muted, automation_static) = self.automation_lane_menu();
+        LaneMenu {
+            automation,
+            automation_muted,
+            automation_static,
+            ..LaneMenu::default()
+        }
+    }
+
+    /// The automation lane whose header was pressed last, if it still exists: what the lane items
+    /// of the track header menu act on (`sequencer.delete_automation_lane` and the like).
+    pub fn picked_automation_lane(&self) -> Option<&(DeviceKey, String)> {
+        let lane = self.picked_lane.as_ref()?;
+        self.song.track(&lane.0)?.automation_lane(&lane.1)?;
+        Some(lane)
+    }
+
+    /// The state of the picked automation lane for the track header menu (all false without
+    /// one).
+    pub fn automation_lane_menu(&self) -> (bool, bool, bool) {
+        let Some((d, p)) = self.picked_automation_lane() else {
+            return (false, false, false);
+        };
+        let lane = self
+            .song
+            .track(d)
+            .and_then(|t| t.automation_lane(p).and_then(|i| t.lanes.get(i)));
+        (
+            true,
+            lane.is_some_and(|l| l.muted),
+            lane.is_some_and(|l| l.static_value.is_some()),
+        )
     }
 
     /// The lane commands of the registry. `None` for a command that is not one of them.

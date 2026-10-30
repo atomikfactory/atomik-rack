@@ -1783,6 +1783,7 @@ impl<B: AudioBackend> Shell<B> {
             recording: self.core.is_recording(),
             loop_enabled: song.loop_enabled,
             metronome: self.core.metronome(),
+            auto_lanes: self.core.auto_create_lanes(),
             pre_count: self.core.pre_count_bars() > 0,
             quantize: self.core.input_quantize(),
             console: self.console_visible(),
@@ -2963,6 +2964,44 @@ impl<B: AudioBackend> Shell<B> {
                     self.show_arrangement_focus();
                 }
             }
+            ("automation.clear_control", None) => {
+                if let Some((device, param)) = self.control_target.clone() {
+                    self.core.clear_automation_of(&device, &param);
+                }
+            }
+            ("automation.static_control", None) => {
+                if let Some((device, param)) = self.control_target.clone() {
+                    self.core.set_static_from_control(&device, &param);
+                }
+            }
+            ("sequencer.delete_automation_lane", None) => {
+                if let Some((device, param)) =
+                    self.core.arrangement().picked_automation_lane().cloned()
+                {
+                    self.core.delete_automation_lane(&device, &param);
+                }
+            }
+            ("sequencer.mute_automation_lane", None) => {
+                if let Some((device, param)) =
+                    self.core.arrangement().picked_automation_lane().cloned()
+                {
+                    self.core.toggle_automation_lane_mute(&device, &param);
+                }
+            }
+            ("sequencer.set_lane_static", None) => {
+                if let Some((device, param)) =
+                    self.core.arrangement().picked_automation_lane().cloned()
+                {
+                    self.core.set_static_from_control(&device, &param);
+                }
+            }
+            ("sequencer.clear_lane_static", None) => {
+                if let Some((device, param)) =
+                    self.core.arrangement().picked_automation_lane().cloned()
+                {
+                    self.core.clear_lane_static(&device, &param);
+                }
+            }
             ("midi.learn_control", None) => {
                 if let Some((device, param)) = self.control_target.clone() {
                     self.core
@@ -3520,6 +3559,10 @@ impl<B: AudioBackend> Shell<B> {
                 .control_target
                 .as_ref()
                 .is_some_and(|(d, p)| core.has_lane_for(d, p)),
+            control_has_lane: self
+                .control_target
+                .as_ref()
+                .is_some_and(|(d, p)| core.has_lane_to_clear(d, p)),
             control_assign: self
                 .control_target
                 .as_ref()
@@ -3702,6 +3745,12 @@ impl<B: AudioBackend> Shell<B> {
                     self.pending.extend(requests);
                 }
                 UiAction::ImportAudioDialog => self.pending.push(ShellRequest::PickImportFiles),
+                // Alt-click on a control: its automation lane, as the control menu's item.
+                UiAction::EditAutomation { device, param } => {
+                    if self.core.show_lane_of(device, param) {
+                        self.show_arrangement_focus();
+                    }
+                }
                 // The piano roll's QUANT button: the panel's last settings, on the roll.
                 UiAction::Quantize(QuantizeAction::ApplyLast) => {
                     self.apply_last_quantize(Pane::PianoRoll);

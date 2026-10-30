@@ -739,11 +739,15 @@ fn selecting_an_automation_track_arms_nothing_and_reports_nothing() {
     let track = s.core().doc().song.track(&key("fx")).unwrap();
     assert!(!track.armed, "an automation track cannot be armed");
     assert_eq!(s.core().last_rejection(), None);
-    // Its menus offer no notes, no note lanes and no freeze.
+    // Its menus offer no notes, no note lanes and no freeze; the lane it shows in its header is
+    // the one the automation items act on.
     assert!(!s.core().arrangement().chase_menu().0);
     assert_eq!(
         s.core().arrangement().lane_menu(),
-        atomik_ui::LaneMenu::default()
+        atomik_ui::LaneMenu {
+            automation: true,
+            ..atomik_ui::LaneMenu::default()
+        }
     );
     assert!(!s.core().freeze_menu().can_freeze);
 }

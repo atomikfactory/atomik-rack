@@ -110,7 +110,14 @@ pub(crate) enum Edit {
         old: Option<WriteMode>,
         new: Option<WriteMode>,
     },
-    /// The name and mute state of a note lane (`(name, muted)`).
+    /// The static value of an automation lane (see [`Lane::static_value`]).
+    LaneStatic {
+        device: DeviceKey,
+        lane: usize,
+        old: Option<f32>,
+        new: Option<f32>,
+    },
+    /// The name and mute state of a lane (`(name, muted)`).
     LaneMeta {
         device: DeviceKey,
         lane: usize,
@@ -532,6 +539,17 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::LaneStatic {
+                device,
+                lane,
+                old,
+                new,
+            } => Edit::LaneStatic {
+                device,
+                lane,
+                old: new,
+                new: old,
+            },
             Edit::Frozen { device, old, new } => Edit::Frozen {
                 device,
                 old: new,
@@ -893,6 +911,12 @@ impl Edit {
                 let lane = lane_mut(doc, device, *lane)?;
                 lane.name.clone_from(&new.0);
                 lane.muted = new.1;
+                vec![SyncOp::SongChanged]
+            }
+            Edit::LaneStatic {
+                device, lane, new, ..
+            } => {
+                lane_mut(doc, device, *lane)?.static_value = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::Frozen { device, new, .. } => {

@@ -628,6 +628,8 @@ impl<S: EngineSink> AppCore<S> {
     pub fn apply_command(&mut self, command: Command) -> Result<(), ModelError> {
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
+        // Muting an automation lane holds the value it gave.
+        let command = self.hold_on_mute(command);
         // The creation chain tells the model which tracks an earlier auto-route armed.
         let command = self.prepare_creation(command);
         // A workflow command (paste, duplicate, join) selects what it created once it ran.
@@ -2420,6 +2422,11 @@ impl<S: EngineSink> AppCore<S> {
                 self.metronome = !self.metronome;
                 self.send_metronome();
             }
+            TransportAction::ToggleAutoLanes => {
+                let on = !self.autorec.auto_create;
+                self.set_auto_create_lanes(on);
+            }
+            TransportAction::ClearOverride => self.clear_override(),
         }
         self.show_transport();
     }
@@ -2474,12 +2481,14 @@ impl<S: EngineSink> AppCore<S> {
         self.send_transport(TransportCommand::Stop);
         self.playing = false;
         self.finish_take(&state);
+        self.clear_override();
     }
 
     fn locate(&mut self, tick: i64) {
         // A take assumes an uninterrupted transport: a jump ends it.
         let state = self.sink.transport_state();
         self.finish_take(&state);
+        self.clear_override();
         self.send_transport(TransportCommand::Locate(Ticks(tick)));
         self.position = tick;
     }
@@ -2487,7 +2496,7 @@ impl<S: EngineSink> AppCore<S> {
     fn start_recording(&mut self) {
         if !self.doc().song.tracks.iter().any(|t| t.armed) && !self.has_armed_lanes() {
             self.reject(
-                "recording needs an armed track or automation lane: arm one with its R button in the arrangement"
+                "recording needs an armed track or automation lane: arm one with its R button in the arrangement, or turn on Auto-create lanes"
                     .to_string(),
             );
             return;
@@ -2607,6 +2616,8 @@ impl<S: EngineSink> AppCore<S> {
             position: self.position,
             pre_count: self.pre_count_bars,
             count_in: self.sink.transport_state().pre_roll_beat,
+            auto_lanes: self.autorec.auto_create,
+            overrides: self.autorec.overridden.len().min(usize::from(u8::MAX)) as u8,
         });
     }
 
