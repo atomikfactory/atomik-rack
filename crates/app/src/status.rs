@@ -1,5 +1,7 @@
 //! The status bar text: host, device, buffer, DSP load, xruns and MIDI.
 
+use atomik_audio_io::StreamState;
+
 /// What the status bar shows about the live session.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AudioStatus {
@@ -55,6 +57,12 @@ pub struct AudioStatus {
     pub streaming: bool,
     /// Work dropped or late on the real-time side; the non-zero counters are shown.
     pub overload: OverloadStats,
+    /// Whether the stream still calls back (see [`atomik_audio_io::Liveness`]).
+    pub stream_state: StreamState,
+    /// Stream error callbacks since the stream started (they are part of `xruns` too).
+    pub stream_errors: u64,
+    /// How long the callbacks have been silent while the stream is stalled, in milliseconds.
+    pub stream_silent_ms: u64,
 }
 
 /// The counters of work the real-time side had to drop or could not do in time. The audio
@@ -71,7 +79,8 @@ pub struct OverloadStats {
     pub tap_overflow_frames: u64,
     /// Events a plugin could not take or give, summed over the plugins in the rack.
     pub plugin_drops: u64,
-    /// Times the control path (MIDI and automation to the engine) found its queue stalled.
+    /// Control messages lost to a full queue: pushes to the engine (parameters, routing,
+    /// transport, ...) it had no room for, and MIDI control messages the inbox dropped.
     pub control_stalled: u64,
     /// Sandbox batches whose result came back after the audio thread needed it, summed over the
     /// sandboxed plugins in the rack.
@@ -128,6 +137,12 @@ pub fn status_text(s: &AudioStatus) -> String {
             s.dsp_peak * 100.0
         ));
         parts.push(format!("xruns {}", s.xruns));
+        if s.stream_errors > 0 {
+            parts.push(format!("stream errors {}", s.stream_errors));
+        }
+        if let Some(alert) = stream_alert(s) {
+            parts.push(alert);
+        }
         if s.faulted {
             parts.push(faulted_text(s));
         }
@@ -153,6 +168,65 @@ pub fn status_text(s: &AudioStatus) -> String {
         (None, None) => "MIDI off".to_string(),
     });
     parts.join(" \u{b7} ")
+}
+
+/// `AUDIO DEVICE LOST` or `AUDIO STOPPED` when the stream does not deliver audio although it is
+/// open (the device was unplugged, or the driver stopped calling back); `None` while it runs.
+pub fn stream_alert(s: &AudioStatus) -> Option<String> {
+    match s.stream_state {
+        StreamState::Lost => Some("AUDIO DEVICE LOST".to_string()),
+        StreamState::Stalled => Some(format!(
+            "AUDIO STOPPED ({:.1} s without audio)",
+            s.stream_silent_ms as f64 / 1000.0
+        )),
+        StreamState::Off | StreamState::Starting | StreamState::Running => None,
+    }
+}
+
+/// The settings dialog's note about the buffer and the latency of the running stream.
+pub fn latency_note(s: &AudioStatus) -> Option<String> {
+    if !s.running {
+        return None;
+    }
+    let ms = |f: u32| f64::from(f) * 1000.0 / f64::from(s.sample_rate.max(1));
+    let mut text = match s.buffer_frames {
+        Some(n) => format!("Buffer {n} frames ({:.1} ms)", ms(n)),
+        None => "Buffer size not reported yet".to_string(),
+    };
+    if s.sample_rate > 0 && s.output_latency_frames > 0 {
+        text.push_str(&format!(
+            "; latency out {:.1} ms",
+            ms(s.output_latency_frames)
+        ));
+        if s.input_channels_open > 0 && s.input_latency_frames > 0 {
+            text.push_str(&format!(", in {:.1} ms", ms(s.input_latency_frames)));
+        }
+    }
+    text.push('.');
+    Some(text)
+}
+
+/// The settings dialog's warning when the open input and output are different devices: their
+/// clocks drift apart, which clicks in monitored input and recorded takes. `None` for one
+/// device, without input, and while audio is off.
+pub fn drift_note(s: &AudioStatus) -> Option<String> {
+    if !s.running || s.input_channels_open == 0 {
+        return None;
+    }
+    let input = s.input_device.as_deref()?;
+    if input.eq_ignore_ascii_case(&s.device) {
+        return None;
+    }
+    let lost = if s.overload.input_overruns > 0 {
+        format!(" {} input frames lost so far.", s.overload.input_overruns)
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "Warning: input ({input}) and output ({}) are different devices; their clocks drift \
+         apart and the input clicks. Use one interface for both.{lost}",
+        s.device
+    ))
 }
 
 /// `ENGINE FAULTED: <device>` (the device that panicked; the engine keeps sounding the rest).
@@ -347,6 +421,76 @@ mod tests {
         };
         assert!(status_text(&one).contains("xruns 2 \u{b7} input overruns 3 \u{b7} MIDI"));
         assert!(!one.overload.is_clear());
+    }
+
+    #[test]
+    fn a_dead_stream_and_stream_errors_show_in_the_status_bar() {
+        let mut s = running();
+        s.stream_state = StreamState::Running;
+        assert!(stream_alert(&s).is_none());
+        assert!(!status_text(&s).contains("stream errors"));
+        s.stream_errors = 2;
+        s.stream_state = StreamState::Stalled;
+        s.stream_silent_ms = 1_500;
+        assert_eq!(
+            status_text(&s),
+            "WASAPI \u{b7} Virtual Cable Input \u{b7} 48 kHz \u{b7} buffer 480 \
+             \u{b7} DSP 3% (peak 5%) \u{b7} xruns 2 \u{b7} stream errors 2 \
+             \u{b7} AUDIO STOPPED (1.5 s without audio) \u{b7} MIDI Example Keyboard \u{2192} Bass"
+        );
+        s.stream_state = StreamState::Lost;
+        assert!(status_text(&s).contains("stream errors 2 \u{b7} AUDIO DEVICE LOST \u{b7} MIDI"));
+        assert!(stream_alert(&AudioStatus::default()).is_none());
+    }
+
+    #[test]
+    fn the_dialog_notes_give_the_buffer_and_latency() {
+        assert_eq!(latency_note(&AudioStatus::default()), None);
+        let mut s = running();
+        assert_eq!(latency_note(&s).unwrap(), "Buffer 480 frames (10.0 ms).");
+        s.output_latency_frames = 960;
+        s.input_channels_open = 2;
+        s.input_latency_frames = 480;
+        assert_eq!(
+            latency_note(&s).unwrap(),
+            "Buffer 480 frames (10.0 ms); latency out 20.0 ms, in 10.0 ms."
+        );
+        s.buffer_frames = None;
+        assert!(
+            latency_note(&s)
+                .unwrap()
+                .starts_with("Buffer size not reported yet;")
+        );
+    }
+
+    #[test]
+    fn distinct_input_and_output_devices_show_the_drift_warning_and_one_device_does_not() {
+        let mut s = AudioStatus {
+            input_channels_open: 2,
+            input_device: Some("Example USB ASIO".into()),
+            ..running()
+        };
+        let warning = drift_note(&s).expect("different devices drift");
+        assert!(
+            warning.contains("Example USB ASIO") && warning.contains("Virtual Cable Input"),
+            "{warning}"
+        );
+        assert!(!warning.contains("frames lost"));
+        s.overload.input_overruns = 480;
+        assert!(
+            drift_note(&s)
+                .unwrap()
+                .contains("480 input frames lost so far.")
+        );
+        // The same device (any case), no input, or audio off: no warning.
+        s.input_device = Some("virtual cable input".into());
+        assert_eq!(drift_note(&s), None);
+        s.input_device = Some("Other".into());
+        s.input_channels_open = 0;
+        assert_eq!(drift_note(&s), None);
+        s.input_channels_open = 2;
+        s.running = false;
+        assert_eq!(drift_note(&s), None);
     }
 
     #[test]
