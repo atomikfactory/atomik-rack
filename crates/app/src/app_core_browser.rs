@@ -385,7 +385,12 @@ impl<S: EngineSink> AppCore<S> {
     /// [`BrowseAction::LayoutChanged`] belong to the shell and are ignored here.
     pub fn browse(&mut self, action: BrowseAction) {
         match action {
-            BrowseAction::Show(place) => self.show(place),
+            BrowseAction::Show(place) => {
+                if let Place::Folder(folder) = &place {
+                    self.remember_patch_folder(folder);
+                }
+                self.show(place)
+            }
             BrowseAction::Parent => {
                 if let Some(Place::Folder(path)) = self.file_browser.location()
                     && let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
@@ -460,7 +465,16 @@ impl<S: EngineSink> AppCore<S> {
             | BrowseAction::DragFiles(_)
             | BrowseAction::LayoutChanged => {}
             // Loading, opening and renaming library items is the library work of the app.
+            // Aimed at a device, a patch is for that device: it is applied and accepted.
+            BrowseAction::Load(path)
+                if self.patch_browse_device().is_some()
+                    && classify(&path, false) == Some(atomik_library::FileKind::Patch) =>
+            {
+                self.accept_patch(&path);
+            }
             BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
+            BrowseAction::Audition(path) => self.audition_patch(&path),
+            BrowseAction::Cancel => self.cancel_patch_browse(),
             BrowseAction::OpenProject(path) => self.open_library_project(&path),
             BrowseAction::RenameItem { path, to } => self.rename_library_item(&path, &to),
         }

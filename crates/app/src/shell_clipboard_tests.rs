@@ -336,6 +336,9 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "edit.paste_settings",
             "rack.reset_device",
             "rack.save_patch",
+            "rack.browse_patch",
+            "rack.patch_prev",
+            "rack.patch_next",
         ]
     );
     let text = |id: &str| {
