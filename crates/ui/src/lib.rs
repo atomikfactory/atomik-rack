@@ -372,7 +372,7 @@ pub mod widget;
 pub mod zone_edit;
 
 pub use action::{
-    BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
+    BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
     ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,

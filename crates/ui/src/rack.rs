@@ -1,6 +1,6 @@
 //! The rack view: the root of the UI. See the crate docs for the hosting contract.
 
-use crate::action::{ContextTarget, SliceMode, UiAction};
+use crate::action::{ContextTarget, PatchOp, SliceMode, UiAction};
 use crate::autolayout::{self, PanelSpec};
 use crate::breadcrumb::{self, CrumbHit};
 use crate::browser::{BROWSER_WIDTH, Browser, CreateKind};
@@ -157,6 +157,8 @@ enum Hit {
     Plugin(usize, PluginButton),
     /// The BYPASS switch of a built-in effect's name strip.
     Bypass(usize),
+    /// A part of the patch strip on the foot of a name plate.
+    Patch(usize, PatchOp),
     /// A socket cell of the Audio I/O panel (device index, socket): lamp, meter, clip lamp.
     IoCell(usize, usize),
     /// The clip lamp of an Audio I/O socket (click resets it).
@@ -212,6 +214,7 @@ impl Hit {
             | Hit::MacroName(i, _)
             | Hit::Plugin(i, _)
             | Hit::Bypass(i)
+            | Hit::Patch(i, _)
             | Hit::Control(i, _)
             | Hit::IoCell(i, _)
             | Hit::IoClip(i, _)
@@ -1486,6 +1489,17 @@ impl RackView {
                         false,
                     );
                 }
+                if self.flip == Flip::Front && paint::has_patch_strip(d.device.as_ref(), d.folded) {
+                    let strip = paint::patch_strip(d.height);
+                    for (rect, op) in [
+                        (strip.prev, PatchOp::Previous),
+                        (strip.name, PatchOp::Browse),
+                        (strip.next, PatchOp::Next),
+                        (strip.save, PatchOp::Save),
+                    ] {
+                        tree.add(pn, rect + off, Hit::Patch(i, op), false);
+                    }
+                }
                 if d.fx == Some(FxKind::AudioTrack) && !d.folded && self.flip == Flip::Front {
                     tree.add(
                         pn,
@@ -2003,6 +2017,22 @@ impl RackView {
             .then(|| self.rack_to_view(paint::fold_button_center(d.height, d.folded) + d.offset()))
     }
 
+    /// The centre of a part of the patch strip of device `key` (logical view coordinates), when
+    /// its plate has one (unfolded devices of the document, console devices excepted).
+    pub fn patch_strip_center(&self, key: &DeviceKey, op: PatchOp) -> Option<Point> {
+        let d = &self.devices[self.device_index(key)?];
+        paint::has_patch_strip(d.device.as_ref(), d.folded).then(|| {
+            let strip = paint::patch_strip(d.height);
+            let rect = match op {
+                PatchOp::Previous => strip.prev,
+                PatchOp::Browse => strip.name,
+                PatchOp::Next => strip.next,
+                PatchOp::Save => strip.save,
+            };
+            self.rack_to_view(rect.center() + d.offset())
+        })
+    }
+
     /// The BYPASS switch of an effect's name strip (logical view coordinates, front or back
     /// side): `None` for a device without one (instruments, utilities, plugins, the
     /// interface).
@@ -2460,6 +2490,16 @@ impl RackView {
                         u16::from(m) + 1
                     ))
                 }
+                Some(Hit::Patch(i, op)) if self.button_tips => {
+                    let name = &self.devices[i].device.as_ref()?.patch_name;
+                    Some(match op {
+                        PatchOp::Previous => "Previous patch of this device type".to_string(),
+                        PatchOp::Next => "Next patch of this device type".to_string(),
+                        PatchOp::Browse if name.is_empty() => "Browse patches".to_string(),
+                        PatchOp::Browse => format!("{name}: browse patches"),
+                        PatchOp::Save => "Save this device as a patch".to_string(),
+                    })
+                }
                 Some(Hit::Bypass(i)) if self.button_tips => {
                     let player = self.devices[i]
                         .desc
@@ -2629,6 +2669,16 @@ impl RackView {
                 if paths.iter().any(|p| library_drop::is_library(p)) {
                     self.set_drop_hover(None);
                     self.set_drop_pad(None);
+                    // A patch dropped on the patch strip of a device is for that device.
+                    if let Some(path) = library_drop::patch_item(paths)
+                        && let Some(Hit::Patch(i, _)) = self.hit(*pos)
+                    {
+                        out.push(UiAction::ApplyLibraryPatch {
+                            path: path.clone(),
+                            device: self.devices[i].key.clone(),
+                        });
+                        return out;
+                    }
                     if let Some(path) = library_drop::rack_item(paths)
                         && self.rack_area().contains(*pos)
                     {
@@ -2947,6 +2997,13 @@ impl RackView {
                 }));
             }
             (Hit::Bypass(i), PointerButton::Primary) => self.bypass_down(i, out),
+            (Hit::Patch(i, op), PointerButton::Primary) => {
+                self.select(i, out);
+                out.push(UiAction::DevicePatch {
+                    device: self.devices[i].key.clone(),
+                    op,
+                });
+            }
             (Hit::Name(i), PointerButton::Primary) if clicks >= 2 => {
                 self.begin_device_rename(i, out)
             }

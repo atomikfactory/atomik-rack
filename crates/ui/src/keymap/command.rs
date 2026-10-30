@@ -355,6 +355,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.copy", "Copy", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.copy_settings", "Copy Settings", G::Edit, C::Rack),
     cmd("edit.cut", "Cut", G::Edit, C::Global).decline().menu(),
     cmd("edit.delete", "Delete", G::Edit, C::Global)
         .decline()
@@ -365,6 +366,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.paste_settings", "Paste Settings", G::Edit, C::Rack),
     cmd(
         "edit.quantize_options",
         "Quantize Options",
@@ -938,6 +940,8 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
+    cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
+    cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),
     cmd(
