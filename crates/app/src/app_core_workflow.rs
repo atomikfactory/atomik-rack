@@ -31,6 +31,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::StepEditor => self.step_editor.command(id, arg, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.command(id, arg, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.command(id, arg, doc, &self.registry),
+            Pane::AudioEditor => self.audio_editor.command(id, arg, doc, &self.registry),
             Pane::Console => self.console.command(id, arg, doc, &self.registry),
             _ => CommandOutcome::Declined,
         };
@@ -157,6 +158,7 @@ impl<S: EngineSink> AppCore<S> {
     pub fn set_roles(&mut self, roles: &Roles) {
         self.arrangement.set_roles(roles.clone());
         self.piano_roll.set_roles(roles.clone());
+        self.audio_editor.set_roles(roles.clone());
         self.view.set_roles(roles.clone());
         self.console.set_roles(roles.clone());
     }
@@ -189,6 +191,8 @@ impl<S: EngineSink> AppCore<S> {
             self.close_step_editor();
         } else if self.slice_editor_device().is_some() {
             self.close_slice_editor();
+        } else if self.audio_editor_clip().is_some() {
+            self.close_audio_editor();
         } else if self.seq_editor_device().is_some() {
             self.close_seq_editor();
         } else if self.container_editor_device().is_some() {

@@ -629,6 +629,10 @@ impl<B: AudioBackend> Shell<B> {
             .set_inspector(shell.ui.show_inspector);
         shell
             .core
+            .audio_editor_mut()
+            .set_mode(shell.ui.audio_editor_mode);
+        shell
+            .core
             .arrangement_mut()
             .set_track_zoom(shell.ui.track_zoom);
         shell
@@ -1747,6 +1751,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
+            Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
+            }
+            Pane::AudioEditor => ContextStack::new(&[Context::Editor, Context::Sequencer]),
             Pane::SeqEditor if self.core.seq_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor])
             }
@@ -2010,6 +2018,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
+            self.core.audio_editor_mut().set_bounds(song);
             self.core.seq_editor_mut().set_bounds(song);
             self.core.container_editor_mut().set_bounds(song);
             self.core.plugin_params_mut().set_bounds(song);
@@ -2117,6 +2126,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::PluginParams
         } else if self.core.piano_roll_clip().is_some() {
             Pane::PianoRoll
+        } else if self.core.audio_editor_clip().is_some() {
+            Pane::AudioEditor
         } else {
             Pane::Arrangement
         }
@@ -2138,6 +2149,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SampleEditor
             | Pane::StepEditor
             | Pane::SliceEditor
+            | Pane::AudioEditor
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams
@@ -2151,6 +2163,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SampleEditor
             | Pane::StepEditor
             | Pane::SliceEditor
+            | Pane::AudioEditor
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
@@ -2180,6 +2193,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .slice_editor_mut()
             .set_focused(pane == Pane::SliceEditor);
+        self.core
+            .audio_editor_mut()
+            .set_focused(pane == Pane::AudioEditor);
         self.core
             .seq_editor_mut()
             .set_focused(pane == Pane::SeqEditor);
@@ -3246,11 +3262,24 @@ impl<B: AudioBackend> Shell<B> {
                 .arrangement()
                 .selected_clips()
                 .into_iter()
-                .find(|id| song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes()))
+                .find(|id| {
+                    song.clip(*id)
+                        .is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())
+                })
         };
         if let Some(id) = selected {
             self.reveal_lower_pane();
-            let action = UiAction::OpenPianoRoll(id);
+            let is_audio = self
+                .core
+                .doc()
+                .song
+                .clip(id)
+                .is_some_and(|(_, _, c)| c.content.is_audio());
+            let action = if is_audio {
+                UiAction::OpenAudioEditor(id)
+            } else {
+                UiAction::OpenPianoRoll(id)
+            };
             self.core.handle_action(action.clone());
             self.pane_actions(&[action]);
         } else {
@@ -3403,15 +3432,18 @@ impl<B: AudioBackend> Shell<B> {
         let zoom = self.core.arrangement().track_zoom();
         let roll = self.core.piano_roll();
         let (keys, snap_scale, fold) = (roll.key_height(), roll.snap_to_scale(), roll.fold());
+        let audio_mode = self.core.audio_editor().mode();
         if (zoom - self.ui.track_zoom).abs() > f64::EPSILON
             || (keys - self.ui.piano_roll_key_height).abs() > f64::EPSILON
             || snap_scale != self.ui.piano_roll_snap_scale
             || fold != self.ui.piano_roll_fold
+            || audio_mode != self.ui.audio_editor_mode
         {
             self.ui.track_zoom = zoom;
             self.ui.piano_roll_key_height = keys;
             self.ui.piano_roll_snap_scale = snap_scale;
             self.ui.piano_roll_fold = fold;
+            self.ui.audio_editor_mode = audio_mode;
             self.save_ui_state();
         }
     }
@@ -3562,7 +3594,7 @@ impl<B: AudioBackend> Shell<B> {
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)
-                    .is_some_and(|(_, _, c)| c.content.is_notes())
+                    .is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())
             }),
             master_only: pane == Pane::Rack
                 && core.view().selection_len() == 1
@@ -3827,6 +3859,12 @@ impl<B: AudioBackend> Shell<B> {
                         self.set_focus(Pane::Arrangement);
                     }
                 }
+                UiAction::OpenAudioEditor(_) => self.show_audio_editor(),
+                UiAction::CloseAudioEditor => {
+                    if self.focus == Pane::AudioEditor {
+                        self.set_focus(Pane::Arrangement);
+                    }
+                }
                 UiAction::OpenSliceEditor(_) => self.show_slice_editor(),
                 UiAction::CloseSliceEditor => {
                     if self.focus == Pane::SliceEditor {
@@ -4000,6 +4038,21 @@ impl<B: AudioBackend> Shell<B> {
                 self.repaint = true;
             }
         }
+    }
+
+    /// The audio clip editor was opened (the core did it): make sure the lower pane shows it and
+    /// give it the keys.
+    fn show_audio_editor(&mut self) {
+        if self.core.audio_editor_clip().is_none() {
+            return;
+        }
+        if !self.ui.show_song || self.lower_is_console() {
+            self.ui.show_song = true;
+            self.ui.show_console = false;
+            self.console_changed();
+        }
+        self.layout_view();
+        self.set_focus(Pane::AudioEditor);
     }
 
     /// The slice editor was opened (the core did it): make sure the lower pane shows it and
@@ -5108,6 +5161,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),
+                    Pane::AudioEditor => self.core.audio_editor().needs_repaint(),
                     Pane::SeqEditor => self.core.seq_editor().needs_repaint(),
                     Pane::ContainerEditor => self.core.container_editor().needs_repaint(),
                     Pane::PluginParams => self.core.plugin_params().needs_repaint(),

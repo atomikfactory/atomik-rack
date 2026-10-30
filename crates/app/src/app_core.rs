@@ -24,9 +24,9 @@ use atomik_model::{
 use atomik_render::project::song_input_with_warps;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{
-    ArrangementView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView, Help, PianoRollView,
-    PluginParamsView, RackView, SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView,
-    Theme, TransportAction, TransportBar, UiAction, UiEvent,
+    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView,
+    Help, PianoRollView, PluginParamsView, RackView, SampleEditorView, SeqEditorView,
+    SliceEditorView, StepEditorView, Theme, TransportAction, TransportBar, UiAction, UiEvent,
 };
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -82,6 +82,8 @@ pub enum Pane {
     StepEditor,
     /// The slice editor (in place of the arrangement).
     SliceEditor,
+    /// The audio clip editor (in place of the arrangement).
+    AudioEditor,
     /// The sequencer grid editor (in place of the arrangement).
     SeqEditor,
     /// The container editor, splits and macros (in place of the arrangement).
@@ -224,6 +226,7 @@ pub struct AppCore<S: EngineSink> {
     sample_editor: SampleEditorView,
     step_editor: StepEditorView,
     slice_editor: SliceEditorView,
+    audio_editor: AudioEditorView,
     seq_editor: SeqEditorView,
     container_editor: ContainerEditorView,
     /// The container editor is shown (the view has no close of its own).
@@ -430,6 +433,7 @@ impl<S: EngineSink> AppCore<S> {
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
             slice_editor: SliceEditorView::new(theme.clone()),
+            audio_editor: AudioEditorView::new(theme.clone()),
             seq_editor: SeqEditorView::new(theme.clone()),
             container_editor: ContainerEditorView::new(theme.clone()),
             container_open: false,
@@ -754,6 +758,9 @@ impl<S: EngineSink> AppCore<S> {
             }
             UiAction::OpenSliceEditor(key) => self.open_slice_editor(key),
             UiAction::CloseSliceEditor => self.close_slice_editor(),
+            UiAction::OpenAudioEditor(id) => self.open_audio_editor(id),
+            UiAction::CloseAudioEditor => self.close_audio_editor(),
+            UiAction::ClipToSlicer(id) => self.clip_to_slicer(id),
             UiAction::SliceLoop { device, mode } => self.slice_loop(device, mode),
             UiAction::SlicesToTrack { device } => self.slices_to_track(device),
             UiAction::ImportSamples {
@@ -832,6 +839,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.help_at(pos),
             Pane::StepEditor => self.step_editor.help_at(pos),
             Pane::SliceEditor => self.slice_editor.help_at(pos),
+            Pane::AudioEditor => self.audio_editor.help_at(pos),
             Pane::SeqEditor => self.seq_editor.help_at(pos),
             Pane::ContainerEditor => self.container_editor.help_at(pos),
             Pane::PluginParams => self.plugin_params.help_at(pos),
@@ -864,6 +872,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.handle(event, doc, &self.registry),
+            Pane::AudioEditor => self.audio_editor.handle(event, doc, &self.registry),
             Pane::SeqEditor => self.seq_editor.handle(event, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.handle(event, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
@@ -982,6 +991,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sample_editor.sync(doc, &self.registry);
         self.step_editor.sync(doc, &self.registry);
         self.slice_editor.sync(doc, &self.registry);
+        self.audio_editor.sync(doc, &self.registry);
         self.seq_editor.sync(doc, &self.registry);
         self.container_editor.sync(doc, &self.registry);
         if self.plugin_params_open {
@@ -990,6 +1000,8 @@ impl<S: EngineSink> AppCore<S> {
         self.sample_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         self.slice_editor
+            .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
+        self.audio_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         // The clip inspector shows what the arrangement has selected.
         self.transport_bar
@@ -1005,6 +1017,9 @@ impl<S: EngineSink> AppCore<S> {
         }
         if self.slice_editor.device().is_some() && !self.slice_editor.is_present() {
             self.close_slice_editor();
+        }
+        if self.audio_editor.clip().is_some() && !self.audio_editor.is_present() {
+            self.close_audio_editor();
         }
         if self.seq_editor.device().is_some() && !self.seq_editor.is_present() {
             self.close_seq_editor();
@@ -1104,6 +1119,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_sample_editor();
         self.close_step_editor();
         self.close_slice_editor();
+        self.close_audio_editor();
         self.close_seq_editor();
         self.close_container_editor();
         // A new project shows the top level of the rack (the scope is view state).
@@ -2159,6 +2175,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.paint(canvas, doc, &self.registry),
+            Pane::AudioEditor => self.audio_editor.paint(canvas, doc, &self.registry),
             Pane::SeqEditor => self.seq_editor.paint(canvas, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.paint(canvas, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
@@ -2215,6 +2232,7 @@ impl<S: EngineSink> AppCore<S> {
             self.close_sample_editor();
             self.close_step_editor();
             self.close_slice_editor();
+            self.close_audio_editor();
             self.close_seq_editor();
             self.close_container_editor();
             self.release_piano_roll_audition();
@@ -2732,6 +2750,9 @@ mod drums;
 #[path = "app_core_slicer.rs"]
 mod slicer;
 
+#[path = "app_core_audio_editor.rs"]
+mod clip_editor;
+
 #[path = "app_core_players.rs"]
 mod players;
 
@@ -2984,6 +3005,10 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "app_core_warp_tests.rs"]
 mod warp_tests;
+
+#[cfg(test)]
+#[path = "app_core_audio_editor_tests.rs"]
+mod audio_editor_tests;
 
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]

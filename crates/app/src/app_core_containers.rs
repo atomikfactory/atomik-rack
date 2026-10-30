@@ -309,6 +309,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_sample_editor();
         self.close_step_editor();
         self.close_slice_editor();
+        self.close_audio_editor();
         self.close_seq_editor();
         self.container_editor.open(container);
         self.container_open = true;
