@@ -60,6 +60,8 @@ use atomik_device_sdk::{Registry, RegistryError};
 atomik_testkit::install_alloc_guard!();
 
 #[cfg(test)]
+mod midi_chart;
+#[cfg(test)]
 mod test_support;
 /// Hand-made panel layout for a built-in device type, or `None` to use the
 /// layout generated from the descriptor. Layouts are added as the UI matures.
@@ -338,6 +340,31 @@ mod tests {
                                     },
                                 },
                             );
+                        }
+                        // Controllers: pedal, volume, expression, pressure, bend and the
+                        // bend-range RPN, a note-off held by the pedal, then the pedal up.
+                        let cc = |controller, value| NoteKind::Cc { controller, value };
+                        for (offset, kind) in [
+                            (4, cc(64, 1.0)),
+                            (4, cc(7, 0.8)),
+                            (4, cc(11, 0.9)),
+                            (5, NoteKind::ChannelPressure { value: 0.4 }),
+                            (
+                                5,
+                                NoteKind::PolyPressure {
+                                    key: 64,
+                                    value: 0.6,
+                                },
+                            ),
+                            (5, NoteKind::PitchBend { value: 0.5 }),
+                            (6, cc(101, 0.0)),
+                            (6, cc(100, 0.0)),
+                            (6, cc(6, 7.0 / 127.0)),
+                            (6, cc(38, 0.0)),
+                            (7, NoteKind::Off { key: keys[0] }),
+                            (8, cc(64, 0.0)),
+                        ] {
+                            h.push_note(s.key, NoteEvent { offset, kind });
                         }
                     } else if s.direction.is_input() {
                         *h.input_mut(s.key) = [0.25; atomik_core::BATCH];
