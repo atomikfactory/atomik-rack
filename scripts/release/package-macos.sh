@@ -24,7 +24,8 @@ rm -rf dist
 mkdir -p "dist/$name"
 app="dist/$name/Atomik Rack.app"
 macos="$app/Contents/MacOS"
-mkdir -p "$macos"
+mkdir -p "$macos" "$app/Contents/Resources"
+cp assets/icon/atomik-rack.icns "$app/Contents/Resources/atomik-rack.icns"
 for bin in $bins; do
   lipo -create "$arm/$bin" "$x64/$bin" -output "$macos/$bin"
   chmod +x "$macos/$bin"
@@ -47,6 +48,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleExecutable</key><string>atomik</string>
+  <key>CFBundleIconFile</key><string>atomik-rack</string>
   <key>CFBundleIdentifier</key><string>com.atomikfactory.atomik-rack</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Atomik Rack</string>

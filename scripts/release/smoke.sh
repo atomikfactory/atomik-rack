@@ -119,6 +119,7 @@ smoke_archive() {
       app="$dir/Atomik Rack.app"
       codesign --verify --deep --strict --verbose=2 "$app"
       plutil -p "$app/Contents/Info.plist"
+      test -f "$app/Contents/Resources/atomik-rack.icns" || { echo "error: no icon in the app bundle" >&2; exit 1; }
       lipo -archs "$bindir/atomik"
       otool -L "$bindir/atomik"
       ;;
@@ -165,6 +166,8 @@ smoke_deb() {
     exit 1
   fi
   test -f /usr/share/applications/atomik-rack.desktop || { echo "error: no desktop entry" >&2; exit 1; }
+  grep -q "^Icon=atomik-rack$" /usr/share/applications/atomik-rack.desktop || { echo "error: the desktop entry has no icon" >&2; exit 1; }
+  test -f /usr/share/icons/hicolor/256x256/apps/atomik-rack.png || { echo "error: no icon installed" >&2; exit 1; }
   echo "== remove"
   sudo apt-get remove -y -q atomik-rack
   cleanup_cmd=""
@@ -243,6 +246,7 @@ smoke_dmg() {
   echo "== app bundle"
   codesign --verify --deep --strict --verbose=2 "$app"
   plutil -p "$app/Contents/Info.plist"
+  test -f "$app/Contents/Resources/atomik-rack.icns" || { echo "error: no icon in the app bundle" >&2; exit 1; }
   lipo -archs "$app/Contents/MacOS/atomik"
   echo "== signature"
   codesign --display --verbose=2 "$app" 2>&1 | grep -E '^(Authority|TeamIdentifier|Signature|flags)' || true

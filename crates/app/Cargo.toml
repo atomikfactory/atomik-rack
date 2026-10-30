@@ -64,6 +64,10 @@ clap.workspace = true
 # default-features off: the gtk3 feature is only for Linux, where we do not use muda.
 muda = { workspace = true, default-features = false }
 
+# Windows only: embeds the application icon in atomik.exe (build.rs; a no-op elsewhere).
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+
 [dev-dependencies]
 # The key-script helpers (`keymap::script`) for the end-to-end key tests of the shell.
 atomik-ui = { workspace = true, features = ["testkit"] }

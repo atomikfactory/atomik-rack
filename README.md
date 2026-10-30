@@ -1,5 +1,9 @@
 # Atomik Rack
 
+<p align="center">
+  <img src="assets/icon/atomik-rack.png" alt="Atomik Rack logo" width="160">
+</p>
+
 [![CI](https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml/badge.svg)](https://github.com/atomikfactory/atomik-rack/actions/workflows/ci.yml)
 [![Licence: GPL-3.0-or-later](https://img.shields.io/badge/licence-GPL--3.0--or--later-blue.svg)](LICENSE)
 

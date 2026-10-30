@@ -51,11 +51,14 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 LicenseFile={#RepoDir}\LICENSE
+; The logo of the installer and uninstaller programs themselves (atomik.exe carries it too).
+SetupIconFile={#RepoDir}\assets\icon\atomik-rack.ico
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; atomik.exe has the logo embedded (crates/app/build.rs): the Apps list shows it.
 UninstallDisplayIcon={app}\atomik.exe
 UninstallDisplayName=Atomik Rack
 ChangesAssociations=yes
@@ -79,8 +82,8 @@ Source: "{#RepoDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoDir}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Atomik Rack"; Filename: "{app}\atomik.exe"
-Name: "{autodesktop}\Atomik Rack"; Filename: "{app}\atomik.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Atomik Rack"; Filename: "{app}\atomik.exe"; IconFilename: "{app}\atomik.exe"
+Name: "{autodesktop}\Atomik Rack"; Filename: "{app}\atomik.exe"; IconFilename: "{app}\atomik.exe"; Tasks: desktopicon
 
 [Registry]
 ; HKA is HKLM for a per-machine install and HKCU for a per-user one.

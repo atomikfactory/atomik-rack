@@ -58,9 +58,28 @@ Jobs of `build.yml`:
 
 Inside the packages the versions are: the installer shows `0.1.0` (`0.1.0-rc.1` for a release candidate, `0.1.0-nightly.20261024+abc1234` for a nightly) and carries the numeric file version `0.1.0.0`; the Debian package version turns the pre-release marker into a tilde so that it sorts before the release (`0.1.0~rc.1`, `0.1.0~nightly20261024`). `scripts/release/version-info.sh` derives all of them from the label.
 
-`Atomik Rack.app` holds all five programs in `Contents/MacOS/`, so the app finds `atomik-plugin-scan` and `atomik-plugin-host` beside its executable. `Contents/Info.plist` sets the identifier `com.atomikfactory.atomik-rack`, the name `Atomik Rack`, the executable `atomik`, the version from `Cargo.toml` (without any pre-release suffix), `NSHighResolutionCapable`, a microphone usage text for audio input, and `LSMinimumSystemVersion`, which `package-macos.sh` reads from the built binaries (the higher of the two architectures' deployment targets, Rust's default). There is no icon yet.
+`Atomik Rack.app` holds all five programs in `Contents/MacOS/`, so the app finds `atomik-plugin-scan` and `atomik-plugin-host` beside its executable. `Contents/Info.plist` sets the identifier `com.atomikfactory.atomik-rack`, the name `Atomik Rack`, the executable `atomik`, the version from `Cargo.toml` (without any pre-release suffix), `NSHighResolutionCapable`, a microphone usage text for audio input, `CFBundleIconFile` (the icon, `Contents/Resources/atomik-rack.icns`), and `LSMinimumSystemVersion`, which `package-macos.sh` reads from the built binaries (the higher of the two architectures' deployment targets, Rust's default).
 
-The `.deb` puts the real files in `/opt/atomik-rack` and symlinks `/usr/bin/atomik`, `atomik-render`, `atomik-play`, `atomik-plugin-scan` and `atomik-plugin-host` to them. The app looks for the scanner and the plugin host beside its own executable, resolved with `std::env::current_exe()`, which on Linux follows the symlink, so they are found in `/opt/atomik-rack` however the program is started. `Depends` is worked out from what the programs link (`scripts/release/deb-depends.sh`: the libraries they need mapped to Debian packages, and `libc6 (>= N)` from the newest glibc symbol they use), so the package installs on a system at least as new as the build machine's Ubuntu. There is no icon in the repository yet, so the desktop entry has none.
+The `.deb` puts the real files in `/opt/atomik-rack` and symlinks `/usr/bin/atomik`, `atomik-render`, `atomik-play`, `atomik-plugin-scan` and `atomik-plugin-host` to them. The app looks for the scanner and the plugin host beside its own executable, resolved with `std::env::current_exe()`, which on Linux follows the symlink, so they are found in `/opt/atomik-rack` however the program is started. `Depends` is worked out from what the programs link (`scripts/release/deb-depends.sh`: the libraries they need mapped to Debian packages, and `libc6 (>= N)` from the newest glibc symbol they use), so the package installs on a system at least as new as the build machine's Ubuntu. The desktop entry says `Icon=atomik-rack` and the logo is installed in the hicolor theme (`/usr/share/icons/hicolor/{128x128,256x256,512x512}/apps/atomik-rack.png`).
+
+### The application icon
+
+The logo is the owner's own artwork, kept unchanged as `assets/icon/atomik-rack.png` (the master, 1254 x 1254 RGBA). Everything else in `assets/icon/` is derived from it by the `make_icons` example, which crops the master to the square around the artwork (4 % margin) and scales it with area averaging on premultiplied colour (the artwork is never redrawn or recoloured):
+
+```sh
+cargo run --release -p atomik-app --example make_icons -- assets/icon/atomik-rack.png assets/icon
+```
+
+It writes `atomik-rack-128.png`, `-256.png` and `-512.png`, `atomik-rack.ico` (16, 24, 32, 48, 64 and 128 pixel bitmap frames and a 256 pixel PNG frame) and `atomik-rack.icns` (PNG entries from 16 to 512 pixels, the 2x sizes included). Run it and commit the result when the master changes. Where each platform gets its icon:
+
+| Where | How |
+| --- | --- |
+| Window, taskbar, Alt-Tab (Windows, X11) | `assets/icon/atomik-rack-128.png` is embedded with `include_bytes!` (`crates/app/src/app_icon.rs`) and set on the main window and the detached Rack and Mixer windows. macOS and some Wayland compositors ignore window icons. |
+| `atomik.exe` in Explorer, the Start menu, the taskbar pin | `crates/app/build.rs` embeds `atomik-rack.ico` (resource `crates/app/windows/atomik.rc`) with the `embed-resource` crate, a Windows-only build dependency that needs the resource compiler of the Windows SDK (installed with the MSVC build tools). Other platforms skip it. |
+| Windows installer | `SetupIconFile` in `scripts/release/windows/atomik-rack.iss` (`atomik-rack.ico`); the shortcuts and the Apps list use the icon of `atomik.exe`. |
+| macOS | `package-macos.sh` copies `atomik-rack.icns` into `Contents/Resources` and `Info.plist` names it with `CFBundleIconFile`. |
+| Debian, Ubuntu | `package-deb.sh` installs the 128, 256 and 512 pixel PNGs in `/usr/share/icons/hicolor/<size>x<size>/apps/atomik-rack.png`; the desktop entry has `Icon=atomik-rack`. |
+| README | `assets/icon/atomik-rack.png` |
 
 ### Smoke checks
 

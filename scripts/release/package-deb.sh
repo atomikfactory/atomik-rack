@@ -22,6 +22,11 @@ trap 'rm -rf "$root"' EXIT
 opt="$root/opt/atomik-rack"
 mkdir -p "$opt" "$root/usr/bin" "$root/usr/share/applications" "$root/usr/share/mime/packages" \
   "$root/usr/share/doc/atomik-rack" "$root/DEBIAN"
+for size in 128 256 512; do
+  mkdir -p "$root/usr/share/icons/hicolor/${size}x${size}/apps"
+  install -m 0644 "assets/icon/atomik-rack-$size.png" \
+    "$root/usr/share/icons/hicolor/${size}x${size}/apps/atomik-rack.png"
+done
 for bin in $bins; do
   install -m 0755 "target/release/$bin" "$opt/$bin"
   # The release profile keeps line tables for backtraces (debug = 1): the package does not need them.
@@ -34,12 +39,12 @@ cat > "$root/usr/share/applications/atomik-rack.desktop" <<'DESKTOP'
 Type=Application
 Name=Atomik Rack
 Comment=A rack of devices you patch and play
+Icon=atomik-rack
 Exec=atomik %f
 Terminal=false
 Categories=AudioVideo;Audio;Midi;Music;
 MimeType=application/x-atomik-project;
 DESKTOP
-# There is no icon in the repository yet, so the entry has none.
 
 cat > "$root/usr/share/mime/packages/atomik-rack.xml" <<'MIME'
 <?xml version="1.0" encoding="UTF-8"?>

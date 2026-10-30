@@ -1,0 +1,3 @@
+// The Windows resources of atomik.exe: the application icon (the lowest icon id is the one
+// Explorer shows). Compiled by build.rs through the resource compiler of the Windows SDK.
+1 ICON "../../assets/icon/atomik-rack.ico"

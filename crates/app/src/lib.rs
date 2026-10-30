@@ -9,6 +9,7 @@
 //! - [`EngineSink`] is implemented by the live session and by [`sink::RecordingSink`] in tests.
 
 pub mod app_core;
+pub mod app_icon;
 pub mod audio_import;
 pub mod audio_record;
 pub mod audio_relink;
