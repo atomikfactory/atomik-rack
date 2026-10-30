@@ -66,7 +66,7 @@ const SECTION_ORDER: [&str; 10] = [
 fn section_prefix(key: &str) -> &str {
     match key {
         "sound" | "algorithm" | "feedback" | "index" | "wheel.to_index" => "fm",
-        "voices" | "spread" => "play",
+        "voices" | "spread" | "bend.range" => "play",
         "pitch_cv_trim" | "pan_cv_trim" | "master.level_cv_trim" | "cv.index_amount" => "cv",
         _ => autolayout::group_prefix(key),
     }
@@ -86,6 +86,7 @@ pub fn fm_label(key: &str) -> Option<&'static str> {
         "play.glide" => "Glide",
         "voices" => "Voices",
         "spread" => "Spread",
+        "bend.range" => "Bend",
         "pitch_cv_trim" => "Pitch",
         "cv.index_amount" => "Index",
         "master.level_cv_trim" => "Level",
@@ -142,6 +143,9 @@ pub fn fm_help(key: &str) -> Option<&'static str> {
         "master.level" => "Output level",
         "pitch_cv_trim" => "How far the pitch CV moves the pitch (24 semitones at full)",
         "cv.index_amount" => "How far the index CV moves the modulation index",
+        "bend.range" => {
+            "Pitch bend range each way in semitones; a controller message can set it too"
+        }
         "master.level_cv_trim" => "How far the level CV moves the output level",
         "pan_cv_trim" => "How far the pan CV moves the sound across the stereo field",
         _ => return None,

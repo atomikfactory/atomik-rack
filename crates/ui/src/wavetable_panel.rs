@@ -60,7 +60,7 @@ const SECTION_ORDER: [&str; 11] = [
 /// instead of one section each.
 fn section_prefix(key: &str) -> &str {
     match key {
-        "voices" | "velocity.amp" => "voice",
+        "voices" | "velocity.amp" | "bend.range" => "voice",
         "pitch_cv_trim"
         | "pan_cv_trim"
         | "filter.resonance_cv_trim"
@@ -84,6 +84,7 @@ pub fn wavetable_label(key: &str) -> Option<&'static str> {
         "env.mod.to_pitch" | "lfo.to_pitch" => "Pitch",
         "lfo.to_cutoff" => "Cutoff",
         "velocity.amp" => "Velocity",
+        "bend.range" => "Bend",
         "cv.cutoff_amount" => "Cutoff",
         "cv.position_amount" => "Position",
         "pitch_cv_trim" => "Pitch",
