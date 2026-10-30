@@ -55,6 +55,12 @@ pub(crate) fn join_track(doc: &RackDoc, new: &DeviceKey, source: &DeviceKey) -> 
     changed.then(|| layout(song, order_of(song), &org))
 }
 
+/// The edit that gives the document the organisation `org` (cleaned first), the track order
+/// unchanged.
+pub(crate) fn org_edit(song: &Song, org: Organisation) -> Edit {
+    layout(song, order_of(song), &org)
+}
+
 /// The folder `id` of a cleaned organisation.
 fn group_mut(org: &mut Organisation, id: u32) -> Result<&mut TrackGroup, ModelError> {
     org.groups

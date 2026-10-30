@@ -383,6 +383,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | SongCommand::AddAutomationLane { device, .. }
             | SongCommand::AddNoteLane { device, .. }
             | SongCommand::RemoveNoteLane { device, .. }
+            | SongCommand::RemoveAutomationLane { device, .. }
+            | SongCommand::SetLaneStatic { device, .. }
             | SongCommand::RenameLane { device, .. }
             | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
             SongCommand::AddTake { group, .. } => doc

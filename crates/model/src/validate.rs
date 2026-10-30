@@ -6,7 +6,7 @@
 //! point it was made (in debug builds after every command, and before a project is written)
 //! rather than as a file that does not load or a render that stops short.
 
-use crate::song::{Clip, ClipContent, MAX_TICK};
+use crate::song::{Clip, ClipContent, LaneKind, MAX_TICK};
 use crate::song_cmd::{check_end, check_geometry, check_note};
 use crate::{DeviceKey, RackDevice, RackDoc};
 
@@ -151,6 +151,19 @@ impl RackDoc {
                 found.add(&at, format!("{} is not in the rack", track.device));
             }
             for (l, lane) in track.lanes.iter().enumerate() {
+                let is_automation = matches!(lane.kind, LaneKind::Automation(_));
+                if lane
+                    .static_value
+                    .is_some_and(|v| !is_automation || !v.is_finite())
+                {
+                    found.add(
+                        format!("{at}.lanes[{l}]"),
+                        "a static value is a finite number on an automation lane only",
+                    );
+                }
+                if lane.muted && lane.kind.is_audio() {
+                    found.add(format!("{at}.lanes[{l}]"), "an audio lane cannot be muted");
+                }
                 for (c, clip) in lane.clips.iter().enumerate() {
                     let path = format!("{at}.lanes[{l}].clips[{c}]");
                     validate_clip(&path, clip, found);

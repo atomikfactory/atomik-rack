@@ -281,7 +281,7 @@ fn set_lane_muted_toggles_one_lane_reports_song_changed_and_undoes() {
 }
 
 #[test]
-fn set_lane_muted_rejects_a_no_op_automation_lanes_and_missing_lanes() {
+fn set_lane_muted_takes_automation_lanes_and_rejects_a_no_op_and_missing_lanes() {
     let r = registry();
     let mut d = arranged(&r);
     let e = rejected(&mut d, &r, mute("a", 0, false));
@@ -289,8 +289,11 @@ fn set_lane_muted_rejects_a_no_op_automation_lanes_and_missing_lanes() {
     d.apply(mute("a", 0, true), &r).unwrap();
     let e = rejected(&mut d, &r, mute("a", 0, true));
     assert!(e.to_string().contains("already"), "{e}");
+    // An automation lane takes a mute (it holds what its param has); a lane that is not there
+    // does not.
+    d.apply(mute("a", 1, true), &r).unwrap();
     let e = rejected(&mut d, &r, mute("a", 1, true));
-    assert!(e.to_string().contains("not a note lane"), "{e}");
+    assert!(e.to_string().contains("already"), "{e}");
     rejected(&mut d, &r, mute("a", 5, true));
 }
 

@@ -37,6 +37,11 @@
 //!   always `Step`: between pieces and clips the value holds. In a looped clip the content
 //!   value inside the window is computed from all points, so a ramp towards a point at or after
 //!   the loop end is honoured up to the loop end.
+//! - **Static value.** A lane with a [`Lane::static_value`] gives it wherever no piece plays: a
+//!   Step point at tick 0 when the first piece starts later, one at the end of each piece that is
+//!   not followed at once by the next, and the lone point `(0, value, Step)` when no clip has a
+//!   point at all. The engine holds the last point, so it needs no part in this. A muted lane
+//!   flattens to nothing.
 //! - **Controllers.** [`flatten_controllers`] treats each controller lane of a note clip like an
 //!   automation lane (same pieces, offsets, loops and hiding), with one difference: a lane says
 //!   nothing before its first point, so a piece emits a point at its start only when the lane
@@ -180,17 +185,24 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
     let Some(lane) = track
         .lanes
         .get(lane)
-        .filter(|l| matches!(l.kind, LaneKind::Automation(_)))
+        .filter(|l| matches!(l.kind, LaneKind::Automation(_)) && !l.muted)
     else {
         return Vec::new();
     };
     let mut out: Vec<(i64, f32, Curve)> = Vec::new();
+    // The end of the last piece, where the static value takes over unless a piece follows.
+    let mut open_end: Option<i64> = None;
     for (clip, s, e, cs) in audible_pieces(lane) {
         let ClipContent::Automation(points) = &clip.content else {
             continue;
         };
         if points.is_empty() {
             continue;
+        }
+        if let (Some(v), Some(end)) = (lane.static_value, open_end.take())
+            && end < s
+        {
+            out.push((end, v, Curve::Step));
         }
         let ce = cs + (e - s);
         out.push((s, value_at(points, cs).0, value_at(points, cs).1));
@@ -204,6 +216,20 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
                 out.push((e - 1, value_at(points, ce - 1).0, Curve::Step));
             } else {
                 out[last].2 = Curve::Step;
+            }
+        }
+        open_end = Some(e);
+    }
+    if let Some(v) = lane.static_value {
+        match open_end {
+            // No clip plays: the static value holds the whole song.
+            None => out.push((0, v, Curve::Step)),
+            Some(end) => {
+                out.push((end, v, Curve::Step));
+                // Before the first piece.
+                if out.first().is_some_and(|p| p.0 > 0) {
+                    out.insert(0, (0, v, Curve::Step));
+                }
             }
         }
     }

@@ -1341,10 +1341,15 @@ impl Document {
                                     | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetLaneFolded { .. }
+                                    | SongCommand::AddAutomationLane { .. }
+                                    | SongCommand::RemoveAutomationLane { .. }
+                                    | SongCommand::SetLaneMuted { .. }
+                                    | SongCommand::SetLaneStatic { .. }
+                                    | SongCommand::SetLaneWriteMode { .. }
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor and SetLaneFolded can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

@@ -894,7 +894,7 @@ fn the_organisation_round_trips_canonically_and_matches_the_golden_text() {
     let d = organised(&reg);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 35);
+    assert_eq!(v["version"], 36);
     assert_eq!(
         v["song"]["groups"],
         json!([

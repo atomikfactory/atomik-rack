@@ -910,7 +910,15 @@ pub(crate) fn plan(
             muted,
         } => {
             let t = &song.tracks[track_index(doc, &device)?];
-            let l = note_lane_of(t, lane)?;
+            let l = t
+                .lanes
+                .get(lane)
+                .filter(|l| !l.kind.is_audio())
+                .ok_or_else(|| {
+                    bad(format!(
+                        "lane {lane} of {device} is not a note or automation lane"
+                    ))
+                })?;
             if l.muted == muted {
                 return Err(bad(format!(
                     "lane {lane} of {device} is already {}",
@@ -922,6 +930,85 @@ pub(crate) fn plan(
                 new: (l.name.clone(), muted),
                 device,
                 lane,
+            }
+        }
+        SongCommand::RemoveAutomationLane { device, param } => {
+            let ti = track_index(doc, &device)?;
+            let t = &song.tracks[ti];
+            let Some(lane) = t
+                .lanes
+                .iter()
+                .position(|l| matches!(&l.kind, LaneKind::Automation(p) if *p == param))
+            else {
+                return Err(bad(format!("{device} has no automation lane for {param}")));
+            };
+            let key = (device.clone(), param.clone());
+            let mut parts = Vec::new();
+            if song.org.folded_lanes.contains(&key) {
+                let mut org = song.normalised_org();
+                org.folded_lanes.remove(&key);
+                parts.push(crate::organise_cmd::org_edit(song, org));
+            }
+            if let Some(mode) = song.lane_write.get(&key) {
+                parts.push(Edit::LaneWrite {
+                    device: device.clone(),
+                    param,
+                    old: Some(*mode),
+                    new: None,
+                });
+            }
+            // A track that holds automation lanes alone has no reason to stay without one.
+            parts.push(if t.lanes.len() == 1 {
+                Edit::Track {
+                    index: ti,
+                    old: Some(t.clone()),
+                    new: None,
+                }
+            } else {
+                Edit::Lane {
+                    index: lane,
+                    old: Some(t.lanes[lane].clone()),
+                    device,
+                    new: None,
+                }
+            });
+            if parts.len() == 1 {
+                parts.remove(0)
+            } else {
+                Edit::Compound(parts)
+            }
+        }
+        SongCommand::SetLaneStatic {
+            device,
+            param,
+            value,
+        } => {
+            let t = &song.tracks[track_index(doc, &device)?];
+            let Some(lane) = t
+                .lanes
+                .iter()
+                .position(|l| matches!(&l.kind, LaneKind::Automation(p) if *p == param))
+            else {
+                return Err(bad(format!("{device} has no automation lane for {param}")));
+            };
+            let desc = device_descriptor(doc, registry, &device)?;
+            let value = match value {
+                Some(v) if v.is_nan() => return Err(range("the static value is NaN")),
+                // A dead plugin param has no descriptor: its value is kept as it is.
+                Some(v) => Some(desc.param_by_key(&param).map_or(v, |p| p.clamp(v))),
+                None => None,
+            };
+            let old = t.lanes[lane].static_value;
+            if old == value {
+                return Err(bad(format!(
+                    "the {param} lane of {device} already has that static value"
+                )));
+            }
+            Edit::LaneStatic {
+                device,
+                lane,
+                old,
+                new: value,
             }
         }
         SongCommand::SetLaneWriteMode {

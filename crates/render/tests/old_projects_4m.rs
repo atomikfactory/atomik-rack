@@ -45,7 +45,7 @@ fn every_committed_project_is_format_10_and_saves_back_byte_for_byte() {
     for path in &files {
         let text = std::fs::read_to_string(path).unwrap();
         assert!(
-            text.contains("\"version\": 35"),
+            text.contains("\"version\": 36"),
             "{}: current format",
             path.display()
         );

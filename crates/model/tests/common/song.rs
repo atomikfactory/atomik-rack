@@ -4,7 +4,7 @@
 use super::*;
 use atomik_model::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, LaneKind, Note, RackDoc, SongCommand,
-    TempoEvent,
+    TempoEvent, Track,
 };
 use proptest::prelude::*;
 
@@ -89,6 +89,9 @@ pub enum SongOp {
     RemoveTrack(usize),
     Flags(usize, bool, bool, bool),
     AddLane(usize, usize),
+    /// An automation lane (picked by index over all tracks) and what to do with it: 0 remove,
+    /// 1 mute or unmute, 2 set a static value (the last number), 3 clear the static value.
+    LaneOp(usize, u8, u8),
     AddClip(usize, usize, Geo, u64, bool),
     RemoveClip(usize),
     Geometry(usize, Geo, Option<u64>),
@@ -127,6 +130,7 @@ pub fn song_op() -> impl Strategy<Value = SongOp> {
         1 => i().prop_map(SongOp::RemoveTrack),
         1 => (i(), any::<bool>(), any::<bool>(), any::<bool>()).prop_map(|(t, a, b, c)| SongOp::Flags(t, a, b, c)),
         2 => (i(), i()).prop_map(|(t, p)| SongOp::AddLane(t, p)),
+        2 => (i(), 0u8..4, any::<u8>()).prop_map(|(l, a, v)| SongOp::LaneOp(l, a, v)),
         6 => (i(), i(), geo(), any::<u64>(), prop::bool::weighted(0.1)).prop_map(|(t, l, g, s, bad)| SongOp::AddClip(t, l, g, s, bad)),
         1 => i().prop_map(SongOp::RemoveClip),
         3 => (i(), geo(), proptest::option::of(0u64..3)).prop_map(|(c, g, m)| SongOp::Geometry(c, g, m)),
@@ -273,6 +277,43 @@ pub fn resolve_song(
                 device: k,
                 param: params[p % params.len()].key.into(),
             })
+        }
+        SongOp::LaneOp(i, action, v) => {
+            let lanes: Vec<(&Track, usize, &str)> = doc
+                .song
+                .tracks
+                .iter()
+                .flat_map(|t| {
+                    t.lanes
+                        .iter()
+                        .enumerate()
+                        .filter_map(move |(l, lane)| match &lane.kind {
+                            LaneKind::Automation(p) => Some((t, l, p.as_str())),
+                            _ => None,
+                        })
+                })
+                .collect();
+            let (t, lane, param) = *lanes.get(i % lanes.len().max(1))?;
+            let device = t.device.clone();
+            let param = param.to_owned();
+            match action {
+                0 => sc(SongCommand::RemoveAutomationLane { device, param }),
+                1 => sc(SongCommand::SetLaneMuted {
+                    device,
+                    lane,
+                    muted: !t.lanes[lane].muted,
+                }),
+                2 => sc(SongCommand::SetLaneStatic {
+                    device,
+                    param,
+                    value: Some(f32::from(*v) / 8.0),
+                }),
+                _ => sc(SongCommand::SetLaneStatic {
+                    device,
+                    param,
+                    value: None,
+                }),
+            }
         }
         SongOp::AddClip(t, l, Geo(s, len, o, lp, m), seed, bad) => {
             let t = track(*t)?;

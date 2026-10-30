@@ -384,9 +384,18 @@ pub struct Lane {
     /// The name of a note lane (`None` shows the default, see [`Track::lane_label`]). Always
     /// `None` on automation and audio lanes.
     pub name: Option<String>,
-    /// A muted note lane plays nothing (its clips stay and stay editable). Always `false` on
-    /// automation and audio lanes.
+    /// A muted note lane plays nothing (its clips stay and stay editable). A muted automation
+    /// lane drives nothing: its param keeps the value it has (muting through the app first
+    /// holds the value the lane gave at that moment). Always `false` on audio lanes.
     pub muted: bool,
+    /// The value an automation lane gives its param wherever no clip is audible: before the
+    /// first clip, between clips and after the last one (see [`flatten_automation`]). With no
+    /// clips the lane holds it for the whole song. `None` (the default) holds the first value
+    /// before the first point and the last after the last, as a lane always did. Always `None`
+    /// on note and audio lanes.
+    ///
+    /// [`flatten_automation`]: crate::song::flatten_automation
+    pub static_value: Option<f32>,
     /// Clips, sorted by (start, id).
     pub clips: Vec<Clip>,
     /// Stacked takes and their comps (notes and audio lanes only; see [`crate::takes`]). Each
@@ -594,15 +603,37 @@ pub enum SongCommand {
         /// characters.
         name: Option<String>,
     },
-    /// Mute or unmute a note lane (see [`Lane::muted`]); setting the value it has is an error.
-    /// One undo step.
+    /// Mute or unmute a note or automation lane (see [`Lane::muted`]); setting the value it has
+    /// is an error. One undo step. Muting an automation lane stops it driving its param, which
+    /// keeps the value it has in the document: the app sends a `SetParam` with the value the lane
+    /// gave at that moment in the same [`crate::Command::Batch`].
     SetLaneMuted {
         /// Device (track).
         device: DeviceKey,
-        /// Index of the note lane.
+        /// Index of the lane.
         lane: usize,
         /// The new state.
         muted: bool,
+    },
+    /// Remove an automation lane with its clips (one undo step; its write mode and fold go with
+    /// it). A track that holds automation lanes alone goes with its last lane. The lane must
+    /// exist.
+    RemoveAutomationLane {
+        /// Device (track).
+        device: DeviceKey,
+        /// Param key of the lane.
+        param: String,
+    },
+    /// Set or clear (`None`) the static value of an automation lane (see
+    /// [`Lane::static_value`]); the value is clamped to the param's range, and setting what the
+    /// lane has is an error. One undo step.
+    SetLaneStatic {
+        /// Device (track).
+        device: DeviceKey,
+        /// Param key of the lane.
+        param: String,
+        /// The value, or `None` for no static value.
+        value: Option<f32>,
     },
     /// Set the write mode of an automation lane (see [`Song::lane_write`]); the lane must
     /// exist. One undo step. Reports [`crate::SyncOp::ViewChanged`] only: the engine never sees
@@ -1323,6 +1354,7 @@ impl Lane {
             kind,
             name: None,
             muted: false,
+            static_value: None,
             clips: Vec::new(),
             take_groups: Vec::new(),
         }
