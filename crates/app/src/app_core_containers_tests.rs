@@ -1036,6 +1036,9 @@ fn engine_facing_code_never_walks_the_raw_document_lists() {
         // The device above a top-level slot of `CreateEffectAt`.
         ("app_core_clipboard.rs", "doc.devices[at.index - 1]"),
         ("app_core_containers.rs", "doc.devices"),
+        // All Notes Off reaches every top-level device; `target_of` resolves a container to the
+        // notes input of its split device.
+        ("app_core_workflow.rs", "for d in &self.doc().devices"),
         // What a freeze render depends on: the document's own cables around the chain, compared
         // when the render is done (nothing is sent to the engine).
         ("app_core_freeze.rs", "doc.cables"),
