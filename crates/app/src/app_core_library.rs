@@ -223,8 +223,8 @@ impl<S: EngineSink> AppCore<S> {
         target: LoadTarget,
     ) -> Result<(), String> {
         let name = file_name(path);
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("'{name}' cannot be read: {e}"))?;
+        let text = atomik_model::read_document_text(path)
+            .map_err(|e| format!("'{name}' cannot be read: {e}"))?;
         let snapshot = load_device_item(&text, &self.registry)
             .map_err(|e| format!("'{name}' cannot be loaded: {e}"))?;
         if kind == FileKind::Container && ItemKind::of(&snapshot) != ItemKind::Container {
@@ -273,8 +273,8 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         let name = file_name(path);
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("'{name}' cannot be read: {e}"))?;
+        let text = atomik_model::read_document_text(path)
+            .map_err(|e| format!("'{name}' cannot be read: {e}"))?;
         let file = load_clip_file(&text).map_err(|e| format!("'{name}' cannot be loaded: {e}"))?;
         let span = file.clip.length;
         let clips = ClipSnapshot {

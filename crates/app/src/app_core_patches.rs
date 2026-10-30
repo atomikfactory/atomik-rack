@@ -134,8 +134,8 @@ impl<S: EngineSink> AppCore<S> {
         trial: bool,
     ) -> Result<(), String> {
         let name = file_name(path);
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("'{name}' cannot be read: {e}"))?;
+        let text = atomik_model::read_document_text(path)
+            .map_err(|e| format!("'{name}' cannot be read: {e}"))?;
         let mut snapshot = load_device_item(&text, &self.registry)
             .map_err(|e| format!("'{name}' cannot be loaded: {e}"))?;
         let Some(patch) = snapshot.single_device() else {

@@ -71,7 +71,7 @@ pub(crate) fn read_project_text(
             file.display()
         ));
     }
-    let text = std::fs::read_to_string(&file)
+    let text = atomik_model::read_document_text(&file)
         .map_err(|e| format!("{}: cannot read: {e}", file.display()))?;
     Ok((file, text))
 }

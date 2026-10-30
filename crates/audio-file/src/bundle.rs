@@ -246,9 +246,15 @@ impl Bundle {
         }
     }
 
-    /// Loads a whole asset into memory.
+    /// Loads a whole asset into memory. A NaN or infinite sample reads as silence.
     pub fn load(&self, hash: &str) -> Result<AudioData> {
         read_wav_f32(&self.require(hash)?)
+    }
+
+    /// [`Self::load`] that also counts the non-finite samples it replaced (an asset this crate
+    /// stored has none; a file placed in the bundle by hand can).
+    pub fn load_counted(&self, hash: &str) -> Result<crate::Decoded> {
+        crate::read_wav_f32_limited(&self.require(hash)?, u64::MAX)
     }
 
     /// Opens a seekable streaming reader over an asset (for assets too large for RAM).
