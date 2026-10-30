@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- **Moving the pointer over the app costs next to nothing.** The document carries a revision number that changes with every edit, undo, redo and data sync; the unsaved-changes mark (` *` in the title) is compared once per change instead of once per input event, the sequencer and the piano roll read the document again only when it changed, and a pointer move that changes nothing no longer repaints any window. A hover that changes what is shown, or a drag, still repaints, and only the window it happens in. Large songs no longer slow the pointer down.
+
 ## [0.2.0-rc.2] - 2026-10-28
 
 ### Added

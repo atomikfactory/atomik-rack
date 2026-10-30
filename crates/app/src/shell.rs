@@ -2696,10 +2696,20 @@ impl<B: AudioBackend> Shell<B> {
         }
         let model = self.menu_model();
         if let Some(bar) = &mut self.menubar {
+            let before = bar.look();
             match bar.handle(event, &model) {
                 MenuBarOutcome::Ignored => {}
                 MenuBarOutcome::Consumed => {
-                    self.repaint = true;
+                    // A move that leaves the bar as it was (the pointer inside one title)
+                    // shows nothing new, and one that changes it only repaints the main
+                    // window, where the bar is.
+                    let moved = matches!(event, UiEvent::PointerMove { .. });
+                    let changed = bar.look() != before;
+                    if !moved {
+                        self.repaint = true;
+                    } else if changed && let Some(w) = self.win_mut(WindowKind::Main) {
+                        w.dirty = true;
+                    }
                     self.leave_hover();
                     return Vec::new();
                 }
@@ -3071,7 +3081,31 @@ impl<B: AudioBackend> Shell<B> {
     /// Sends an event to a pane: the rack view gets its own coordinates (below the menu
     /// bar), the sequencer views window coordinates.
     fn forward(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
-        self.repaint = true;
+        let actions = self.forward_to(pane, event);
+        self.mark_forwarded(pane, event, &actions);
+        actions
+    }
+
+    /// What a forwarded event repaints. Actions can change the document or another pane, so
+    /// every window is marked; an event without actions changed only the view that took it,
+    /// so only the window showing that pane is marked, and a pointer move or modifier change
+    /// marks nothing: the views raise their own `needs_repaint` when what they show changes
+    /// (a hover, a drag), so a move over nothing paints nothing.
+    fn mark_forwarded(&mut self, pane: Pane, event: &UiEvent, actions: &[UiAction]) {
+        if !actions.is_empty() {
+            self.repaint = true;
+        } else if !matches!(
+            event,
+            UiEvent::PointerMove { .. } | UiEvent::PointerLeave | UiEvent::ModifiersChanged { .. }
+        ) {
+            let window = self.window_of(pane);
+            if let Some(w) = self.win_mut(window) {
+                w.dirty = true;
+            }
+        }
+    }
+
+    fn forward_to(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
             if matches!(pane, Pane::Console | Pane::Arrangement)
@@ -4744,6 +4778,10 @@ mod tests;
 #[cfg(test)]
 #[path = "shell_tooltip_tests.rs"]
 mod tooltip_tests;
+
+#[cfg(test)]
+#[path = "shell_repaint_tests.rs"]
+mod repaint_tests;
 
 #[cfg(test)]
 #[path = "shell_windows_tests.rs"]

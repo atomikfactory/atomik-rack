@@ -618,6 +618,10 @@ pub struct ArrangementView {
     vp: ViewportState,
     song: Song,
     synced: bool,
+    /// The document revision [`Self::sync_at`] last synced at (`None` after a plain [`Self::sync`]).
+    synced_rev: Option<u64>,
+    /// The revision of the document the host hands the next calls (see [`Self::set_doc_revision`]).
+    doc_rev: Option<u64>,
     device_sig: Vec<(DeviceKey, String, String, Option<[u8; 3]>)>,
     /// The colour chip of each track whose console channel is in a VCA group (the group's colour,
     /// a neutral grey when it has none).
@@ -720,6 +724,8 @@ impl ArrangementView {
             vp: ViewportState::new(),
             song,
             synced: false,
+            synced_rev: None,
+            doc_rev: None,
             device_sig: Vec::new(),
             vca_chips: BTreeMap::new(),
             rows: Vec::new(),
@@ -1431,6 +1437,39 @@ impl ArrangementView {
 
     /// Updates the view from the document. Emits nothing; cheap when nothing changed.
     pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
+        self.synced_rev = None;
+        self.sync_doc(doc, registry);
+    }
+
+    /// [`Self::sync`] for a document known by its revision ([`atomik_model::Document::revision`]):
+    /// the view has nothing to read while the revision is the one it last synced at (the
+    /// device signature, the audio headers and the VCA chips are not built, the song is not
+    /// compared), unless something marked the view out of date (`synced` false).
+    pub fn sync_at(&mut self, doc: &RackDoc, registry: &Registry, revision: u64) {
+        if self.synced && self.synced_rev == Some(revision) {
+            return;
+        }
+        self.sync_doc(doc, registry);
+        self.synced_rev = Some(revision);
+    }
+
+    /// Tells the view the revision ([`atomik_model::Document::revision`]) of the document the
+    /// next `handle`, `command` and `paint` calls get, so their own sync can skip the compare
+    /// while it is unchanged; `None` (the default) syncs every time. The host sets it right
+    /// before such a call and clears it right after: a stale number would hide a change.
+    pub fn set_doc_revision(&mut self, revision: Option<u64>) {
+        self.doc_rev = revision;
+    }
+
+    /// The sync `handle`, `command` and `paint` start with.
+    fn sync_current(&mut self, doc: &RackDoc, registry: &Registry) {
+        match self.doc_rev {
+            Some(revision) => self.sync_at(doc, registry, revision),
+            None => self.sync(doc, registry),
+        }
+    }
+
+    fn sync_doc(&mut self, doc: &RackDoc, registry: &Registry) {
         let sig: Vec<_> = doc
             .devices
             .iter()
@@ -2178,7 +2217,7 @@ impl ArrangementView {
     /// Handles one event and returns what the app must do. Calls [`Self::sync`] first.
     /// `Resize` is ignored (use [`Self::set_bounds`]).
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         let mut out = Vec::new();
         match event {
             UiEvent::ScaleChanged(s) => self.set_scale(*s),
@@ -3761,7 +3800,7 @@ impl ArrangementView {
         doc: &RackDoc,
         registry: &Registry,
     ) -> CommandOutcome {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         let outcome = self.run_command(id, arg);
         if outcome.is_taken() {
             self.repaint = true;
@@ -4270,7 +4309,7 @@ impl ArrangementView {
     /// Paints the view into its bounds. The canvas receives **physical pixels** (everything
     /// is scaled by the scale factor), like [`crate::RackView::paint`].
     pub fn paint(&mut self, canvas: &mut dyn Canvas, doc: &RackDoc, registry: &Registry) {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         let b = self.bounds;
         canvas.push_transform(Affine::scale(self.scale));
         canvas.push_clip(&self.outer.into());

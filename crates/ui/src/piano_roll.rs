@@ -305,6 +305,10 @@ pub struct PianoRollView {
     vp: ViewportState,
     clip_id: Option<ClipId>,
     clip: Option<Clip>,
+    /// The document revision and clip id [`Self::sync_at`] last read the clip at.
+    clip_rev: Option<(u64, Option<ClipId>)>,
+    /// The revision of the document the host hands the next calls (see [`Self::set_doc_revision`]).
+    doc_rev: Option<u64>,
     device: Option<DeviceKey>,
     title: String,
     accent: Color,
@@ -354,6 +358,8 @@ impl PianoRollView {
             snap: Snap::default(),
             vp: ViewportState::new(),
             clip_id: None,
+            clip_rev: None,
+            doc_rev: None,
             clip: None,
             device: None,
             title: String::new(),
@@ -385,6 +391,7 @@ impl PianoRollView {
         }
         self.clip_id = Some(id);
         self.clip = None;
+        self.clip_rev = None;
         self.drag = Drag::None;
         self.fit_pending = true;
         self.rows_dirty = true;
@@ -395,6 +402,7 @@ impl PianoRollView {
     pub fn close(&mut self) {
         self.clip_id = None;
         self.clip = None;
+        self.clip_rev = None;
         self.device = None;
         self.drag = Drag::None;
         self.selection.clear();
@@ -881,24 +889,68 @@ impl PianoRollView {
     // ------------------------------------------------------------------ sync
 
     /// Reads the open clip from the document. Emits nothing.
-    pub fn sync(&mut self, doc: &RackDoc, _registry: &Registry) {
+    pub fn sync(&mut self, doc: &RackDoc, registry: &Registry) {
+        self.clip_rev = None;
+        self.sync_from(doc, registry, None);
+    }
+
+    /// Tells the view the revision ([`atomik_model::Document::revision`]) of the document the
+    /// next `handle`, `command` and `paint` calls get, so their own sync can skip the search
+    /// of the open clip while it is unchanged; `None` (the default) reads it every time. The
+    /// host sets it right before such a call and clears it right after: a stale number would
+    /// hide a change.
+    pub fn set_doc_revision(&mut self, revision: Option<u64>) {
+        self.doc_rev = revision;
+    }
+
+    /// The sync `handle`, `command` and `paint` start with.
+    fn sync_current(&mut self, doc: &RackDoc, registry: &Registry) {
+        match self.doc_rev {
+            Some(revision) => self.sync_at(doc, registry, revision),
+            None => self.sync(doc, registry),
+        }
+    }
+
+    /// [`Self::sync`] for a document known by its revision ([`atomik_model::Document::revision`]):
+    /// while the revision and the open clip are the ones the clip was last read at, the document
+    /// is not searched or compared for it again.
+    pub fn sync_at(&mut self, doc: &RackDoc, registry: &Registry, revision: u64) {
+        self.sync_from(doc, registry, Some(revision));
+    }
+
+    fn sync_from(&mut self, doc: &RackDoc, _registry: &Registry, revision: Option<u64>) {
         let Some(id) = self.clip_id else {
             return;
         };
+        if let Some(rev) = revision
+            && self.clip_rev == Some((rev, Some(id)))
+        {
+            self.sync_rest(doc);
+            return;
+        }
+        self.clip_rev = revision.map(|rev| (rev, Some(id)));
         let found = doc.song.tracks.iter().find_map(|t| {
             t.lanes
                 .iter()
                 .find_map(|l| l.clips.iter().find(|c| c.id == id))
                 .map(|c| (t, c))
         });
-        let (clip, device) = match found {
-            Some((t, c)) => (Some(c.clone()), Some(t.device.clone())),
-            None => (None, None),
-        };
         // The clip grid counts content ticks from the clip start: the meter in effect there.
-        let meter = Meter::at(&doc.song, clip.as_ref().map_or(0, |c| c.start));
-        if clip != self.clip || device != self.device || meter != self.meter {
+        let meter = Meter::at(&doc.song, found.map_or(0, |(_, c)| c.start));
+        // Compared in place: the clip (every note and controller lane) is cloned only when it
+        // differs from the one the view holds.
+        let same_clip = match found {
+            Some((t, c)) => {
+                self.clip.as_ref() == Some(c) && self.device.as_ref() == Some(&t.device)
+            }
+            None => self.clip.is_none() && self.device.is_none(),
+        };
+        if !same_clip || meter != self.meter {
             self.rows_dirty = true;
+            let (clip, device) = match found {
+                Some((t, c)) => (Some(c.clone()), Some(t.device.clone())),
+                None => (None, None),
+            };
             self.clip = clip;
             self.device = device;
             self.meter = meter;
@@ -910,6 +962,11 @@ impl PianoRollView {
             }
             self.repaint = true;
         }
+        self.sync_rest(doc);
+    }
+
+    /// The part of the sync that follows the view's own state: rows, accent, title, fit.
+    fn sync_rest(&mut self, doc: &RackDoc) {
         self.refresh_rows(false);
         if let Some(d) = &self.device {
             let accent = sp::device_accent(&self.st.base, doc, d);
@@ -1290,7 +1347,7 @@ impl PianoRollView {
 
     /// Handles one event and returns what the app must do. Calls [`Self::sync`] first.
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         let mut out = Vec::new();
         if let UiEvent::ScaleChanged(s) = event {
             self.set_scale(*s);
@@ -2109,7 +2166,7 @@ impl PianoRollView {
         doc: &RackDoc,
         registry: &Registry,
     ) -> CommandOutcome {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         if self.clip.is_none() {
             return CommandOutcome::Declined;
         }
@@ -2701,7 +2758,7 @@ impl PianoRollView {
 
     /// Paints the roll into its bounds (physical pixels, scaled like the other views).
     pub fn paint(&mut self, canvas: &mut dyn Canvas, doc: &RackDoc, registry: &Registry) {
-        self.sync(doc, registry);
+        self.sync_current(doc, registry);
         let b = self.bounds;
         let c = canvas;
         c.push_transform(Affine::scale(self.scale));

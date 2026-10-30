@@ -203,6 +203,12 @@ pub struct AppCore<S: EngineSink> {
     sink: S,
     file: Option<PathBuf>,
     saved: RackDoc,
+    /// Counts the baselines `saved` has had (see `set_saved`).
+    saved_gen: u64,
+    /// `is_dirty` for the (document revision, saved generation) it was last computed at.
+    dirty_memo: std::cell::Cell<Option<(u64, u64, bool)>>,
+    /// The document revision every view was last synced at by `after_view_change`.
+    views_synced_at: Option<u64>,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
     arrangement: ArrangementView,
@@ -376,6 +382,9 @@ impl<S: EngineSink> AppCore<S> {
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
+            saved_gen: 0,
+            dirty_memo: std::cell::Cell::new(None),
+            views_synced_at: None,
             document: Document::new(doc),
             view,
             ids: BTreeMap::new(),
@@ -493,8 +502,25 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// True when the rack differs from the last opened or saved state.
+    ///
+    /// The structural compare runs once per document change or new baseline, not once per
+    /// call; undoing back to the saved state is still clean because the compare is kept.
     pub fn is_dirty(&self) -> bool {
-        self.doc() != &self.saved
+        let at = (self.document.revision(), self.saved_gen);
+        if let Some((rev, generation, dirty)) = self.dirty_memo.get()
+            && (rev, generation) == at
+        {
+            return dirty;
+        }
+        let dirty = self.doc() != &self.saved;
+        self.dirty_memo.set(Some((at.0, at.1, dirty)));
+        dirty
+    }
+
+    /// Takes `doc` as the state the rack is compared with (open, save, the plugin layout syncs).
+    pub(super) fn set_saved(&mut self, doc: RackDoc) {
+        self.saved = doc;
+        self.saved_gen += 1;
     }
 
     /// The window title: `Atomik Rack — <file name>` (`Untitled` without a file), with ` *`
@@ -704,12 +730,23 @@ impl<S: EngineSink> AppCore<S> {
     /// Forwards a UI event to one pane's view (in that view's coordinates: the rack view's
     /// own, the sequencer views' window-logical ones) and handles the actions.
     pub fn handle_pane_event(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
+        let revision = self.document.revision();
         let doc = self.document.doc();
         let actions = match pane {
             Pane::Rack => self.view.handle(event, doc, &self.registry),
             Pane::Transport => self.transport_bar.handle(event, doc, &self.registry),
-            Pane::Arrangement => self.arrangement.handle(event, doc, &self.registry),
-            Pane::PianoRoll => self.piano_roll.handle(event, doc, &self.registry),
+            Pane::Arrangement => {
+                self.arrangement.set_doc_revision(Some(revision));
+                let actions = self.arrangement.handle(event, doc, &self.registry);
+                self.arrangement.set_doc_revision(None);
+                actions
+            }
+            Pane::PianoRoll => {
+                self.piano_roll.set_doc_revision(Some(revision));
+                let actions = self.piano_roll.handle(event, doc, &self.registry);
+                self.piano_roll.set_doc_revision(None);
+                actions
+            }
             Pane::Console => self.console.handle(event, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
@@ -737,7 +774,14 @@ impl<S: EngineSink> AppCore<S> {
                 plain && self.selection_changed && self.console.selected_strips().len() == 1;
             self.selection_changed = false;
         }
-        self.after_view_change();
+        let idle = actions.is_empty()
+            && matches!(
+                event,
+                UiEvent::PointerMove { .. }
+                    | UiEvent::PointerLeave
+                    | UiEvent::ModifiersChanged { .. }
+            );
+        self.after_pane_event(idle);
         actions
     }
 
@@ -774,15 +818,17 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Re-syncs the views and publishes the live-notes target. Call after changing a view
-    /// directly.
+    /// directly: this is the forced variant, it reads every view again whatever the revision.
+    /// [`Self::after_pane_event`] is the gated one.
     pub fn after_view_change(&mut self) {
+        let revision = self.document.revision();
         // The controls show the automation at the playhead (and the param an edit just moved
         // its new value): the views below sync with the values of this moment.
         self.update_shown_values();
         let doc = self.document.doc();
         self.view.sync(doc, &self.registry);
-        self.arrangement.sync(doc, &self.registry);
-        self.piano_roll.sync(doc, &self.registry);
+        self.arrangement.sync_at(doc, &self.registry, revision);
+        self.piano_roll.sync_at(doc, &self.registry, revision);
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
         self.sample_editor.sync(doc, &self.registry);
@@ -825,6 +871,27 @@ impl<S: EngineSink> AppCore<S> {
         self.sync_midi_marks();
         self.follow_selected_device();
         self.target.set(self.notes_target());
+        self.views_synced_at = Some(revision);
+    }
+
+    /// What follows an event of `pane`, `idle` when it was a pointer move or a modifier change
+    /// that sent no action. An idle event of a document that has not changed since the views
+    /// last synced has nothing to read: only the shown automation values are forwarded (the
+    /// three views that show them sync when one changed). Every other event takes
+    /// [`Self::after_view_change`], as does the first one after the document changed.
+    fn after_pane_event(&mut self, idle: bool) {
+        if idle && self.views_synced_at == Some(self.document.revision()) {
+            if self.update_shown_values() {
+                let doc = self.document.doc();
+                self.view.sync(doc, &self.registry);
+                self.console.sync(doc, &self.registry);
+                if self.plugin_params_open {
+                    self.plugin_params.sync(doc, &self.registry);
+                }
+            }
+            return;
+        }
+        self.after_view_change();
     }
 
     // ------------------------------------------------------------------ files
@@ -874,7 +941,7 @@ impl<S: EngineSink> AppCore<S> {
         // A new document does not keep the old one's plugin instances.
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;
-        self.saved = doc.clone();
+        self.set_saved(doc.clone());
         self.document = Document::new(doc);
         self.file = file;
         self.rejection = None;
@@ -1889,12 +1956,21 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Paints one pane (physical pixels; the sequencer views draw inside their bounds).
     pub fn paint_pane(&mut self, pane: Pane, canvas: &mut dyn Canvas) {
+        let revision = self.document.revision();
         let doc = self.document.doc();
         match pane {
             Pane::Rack => self.view.paint(canvas, doc, &self.registry),
             Pane::Transport => self.transport_bar.paint(canvas, doc, &self.registry),
-            Pane::Arrangement => self.arrangement.paint(canvas, doc, &self.registry),
-            Pane::PianoRoll => self.piano_roll.paint(canvas, doc, &self.registry),
+            Pane::Arrangement => {
+                self.arrangement.set_doc_revision(Some(revision));
+                self.arrangement.paint(canvas, doc, &self.registry);
+                self.arrangement.set_doc_revision(None);
+            }
+            Pane::PianoRoll => {
+                self.piano_roll.set_doc_revision(Some(revision));
+                self.piano_roll.paint(canvas, doc, &self.registry);
+                self.piano_roll.set_doc_revision(None);
+            }
             Pane::Console => self.console.paint(canvas, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
@@ -2465,6 +2541,10 @@ mod freeze_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_tests.rs"]
 mod plugins_tests;
+
+#[cfg(test)]
+#[path = "app_core_revision_tests.rs"]
+mod revision_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugins_gui_tests.rs"]

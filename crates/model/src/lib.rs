@@ -851,6 +851,16 @@ pub struct Document {
     merge: Option<MergeKey>,
     /// The clip id allocated by the last `AddClip`, `DuplicateClip` or `SplitClip`.
     last_clip: Option<ClipId>,
+    /// Changes whenever [`Document::doc`] may have changed (see [`Document::revision`]).
+    revision: u64,
+}
+
+/// The source of document revisions: process wide, so two documents (a replaced one and the
+/// one that took its place) never share a revision.
+static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_revision() -> u64 {
+    REVISIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What a drag-merge group is keyed on: consecutive commands with an equal key merge.
@@ -896,6 +906,7 @@ impl Document {
             redo: Vec::new(),
             merge: None,
             last_clip: None,
+            revision: next_revision(),
         }
     }
 
@@ -904,10 +915,30 @@ impl Document {
         &self.doc
     }
 
+    /// A number that differs after every change of [`Document::doc`]: `apply` (the silent data
+    /// syncs and asset registrations included), `undo`, `redo` and an asset prune that removed
+    /// something take a new one, a rejected command keeps it, and a new `Document` starts with
+    /// one no other document has had. Equal revisions mean equal documents, so a view that has
+    /// synced at revision `r` has nothing to do while the revision is still `r`; the converse
+    /// does not hold (a change and its undo leave two different numbers on equal content).
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Applies a command (validated with `registry`) and records it for undo.
     ///
     /// The returned [`SyncOp`]s must be processed in order (see [`SyncOp`]).
     pub fn apply(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let ops = self.apply_inner(command, registry)?;
+        self.revision = next_revision();
+        Ok(ops)
+    }
+
+    fn apply_inner(
         &mut self,
         command: Command,
         registry: &Registry,
@@ -1091,6 +1122,7 @@ impl Document {
         let edit = self.undo.pop()?;
         let ops = edit.inverse().perform(&mut self.doc);
         self.redo.push(edit);
+        self.revision = next_revision();
         Some(ops)
     }
 
@@ -1100,6 +1132,7 @@ impl Document {
         let edit = self.redo.pop()?;
         let ops = edit.perform(&mut self.doc);
         self.undo.push(edit);
+        self.revision = next_revision();
         Some(ops)
     }
 
@@ -1127,7 +1160,11 @@ impl Document {
     /// not an undoable command: it removes nothing a step could bring back.
     pub fn prune_unreferenced_assets(&mut self) {
         let keep = self.referenced_assets();
+        let before = self.doc.assets.len();
         self.doc.assets.retain(|h, _| keep.contains(h));
+        if self.doc.assets.len() != before {
+            self.revision = next_revision();
+        }
     }
 
     /// Whether undo is possible.
