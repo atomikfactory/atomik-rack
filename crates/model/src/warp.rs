@@ -198,8 +198,9 @@ fn rel_source(w: &WarpSettings, spt: f64, dt: f64) -> f64 {
         (None, Some(b)) => b.source as f64 - (b.tick as f64 - dt) * spt,
         (Some(a), None) => a.source as f64 + (dt - a.tick as f64) * spt,
         (Some(a), Some(b)) => {
-            let t = (dt - a.tick as f64) / (b.tick - a.tick) as f64;
-            a.source as f64 + t * (b.source - a.source) as f64
+            // Multiply before dividing: a marker on the natural line gives its exact frame.
+            a.source as f64
+                + (dt - a.tick as f64) * (b.source - a.source) as f64 / (b.tick - a.tick) as f64
         }
     }
 }
@@ -213,8 +214,8 @@ fn rel_tick(w: &WarpSettings, spt: f64, src: f64) -> f64 {
         (None, Some(b)) => b.tick as f64 - (b.source as f64 - src) / spt,
         (Some(a), None) => a.tick as f64 + (src - a.source as f64) / spt,
         (Some(a), Some(b)) => {
-            let t = (src - a.source as f64) / (b.source - a.source) as f64;
-            a.tick as f64 + t * (b.tick - a.tick) as f64
+            a.tick as f64
+                + (src - a.source as f64) * (b.tick - a.tick) as f64 / (b.source - a.source) as f64
         }
     }
 }

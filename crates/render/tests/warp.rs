@@ -381,3 +381,88 @@ fn a_saved_warp_project_loads_and_bounces_the_same() {
     };
     assert_eq!(bits(&r1), bits(&render(&again, 256, 0)));
 }
+
+/// 93.75 BPM plays 2 source frames per tick, so markers on the line `source = 2 * tick` are at
+/// their natural positions and change nothing.
+fn natural_markers(ticks: &[i64]) -> Vec<atomik_model::WarpMarker> {
+    ticks
+        .iter()
+        .map(|&t| atomik_model::WarpMarker {
+            tick: t,
+            source: 2 * t as u64,
+        })
+        .collect()
+}
+
+#[test]
+fn markers_at_their_natural_positions_bounce_like_a_warped_clip_without_markers() {
+    let clip = 4 * PPQ;
+    for mode in [WarpMode::Beats, WarpMode::Tonal, WarpMode::Repitch] {
+        let bounce = |markers: Vec<atomik_model::WarpMarker>| {
+            let s = song("natural", &clicks(BEAT / 2, 6 * BEAT), |d, a| {
+                let mut w = on(93.75, mode);
+                w.markers = markers;
+                put(d, a, 0, clip, w);
+            });
+            bits(&render(&s, 512, 0))
+        };
+        let plain = bounce(Vec::new());
+        let ends = natural_markers(&[0, clip]);
+        let inner = natural_markers(&[0, PPQ, 2 * PPQ, 3 * PPQ, clip]);
+        assert_eq!(plain, bounce(ends), "{mode:?}: the two ends");
+        assert_eq!(plain, bounce(inner), "{mode:?}: markers between them");
+        if mode != WarpMode::Repitch {
+            // Off the beat the repitch resampler sees a slope rounded in its last bit.
+            let odd = natural_markers(&[0, PPQ, 2 * PPQ + 777, clip]);
+            assert_eq!(plain, bounce(odd), "{mode:?}: a marker off the beat");
+        }
+    }
+}
+
+#[test]
+fn an_edited_marker_moves_its_hit_and_leaves_the_rest_of_the_clip_where_it_was() {
+    let clip = 4 * PPQ;
+    let bounce = |markers: Vec<atomik_model::WarpMarker>| {
+        let s = song("edited", &clicks(BEAT, 6 * BEAT), |d, a| {
+            let mut w = on(93.75, WarpMode::Beats);
+            w.markers = markers;
+            put(d, a, 0, clip, w);
+        });
+        render(&s, 512, 0)
+    };
+    let plain = bounce(Vec::new());
+    // The click at source frame 48 000 plays at tick 24 000 (2 source frames per tick). A marker
+    // pins it half a beat later; the ends stay.
+    let hit = 24_000;
+    let later = hit + PPQ / 2;
+    let edited = bounce(vec![
+        atomik_model::WarpMarker { tick: 0, source: 0 },
+        atomik_model::WarpMarker {
+            tick: later,
+            source: 48_000,
+        },
+        atomik_model::WarpMarker {
+            tick: clip,
+            source: 2 * clip as u64,
+        },
+    ]);
+    let (p, e) = (&plain.channels[0], &edited.channels[0]);
+    let peak = p.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(peak > 0.01);
+    // Frames per tick of the song: 120 BPM, 24 000 frames a beat.
+    let frame_of = |tick: i64| (tick as f64 * 24_000.0 / PPQ as f64) as usize;
+    let moved_from = frame_of(hit);
+    let moved_to = frame_of(later);
+    let at = |x: &[f32], near: usize| first_over(x, near.saturating_sub(1500), peak * 0.3);
+    assert!(at(p, moved_from).abs_diff(moved_from) < 400);
+    let got = at(e, moved_to);
+    assert!(
+        got.abs_diff(moved_to) < 600,
+        "the edited hit is due at {moved_to}, found at {got}"
+    );
+    // The clip start is pinned: the first hit is where it was.
+    assert!(at(e, 0).abs_diff(at(p, 0)) < 200);
+    // And the end: the audio after the clip is silent in both.
+    let end = frame_of(clip);
+    assert!(rms(&e[end + 2000..end + 8000]) < 0.01);
+}
