@@ -28,6 +28,13 @@ impl RackView {
             .is_active(Role::ResetParam, modifiers, GestureClass::ClickControl)
     }
 
+    /// Whether the edit-automation role is held with `modifiers` (a click on a control shows
+    /// its automation lane).
+    pub(super) fn edit_automation_click(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::EditAutomation, modifiers, GestureClass::ClickControl)
+    }
+
     pub(super) fn fine_adjust(&self, modifiers: Modifiers) -> bool {
         self.roles
             .is_active(Role::FineAdjust, modifiers, GestureClass::DragControl)

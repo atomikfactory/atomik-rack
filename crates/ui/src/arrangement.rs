@@ -136,8 +136,10 @@ const NOTE_BUTTONS: [TrackButton; 5] = [
     TrackButton::Arm,
     TrackButton::AddLane,
 ];
-/// Header controls of an automation track (no solo, arm or note lane to add to).
-const AUTOMATION_BUTTONS: [TrackButton; 2] = [TrackButton::Expand, TrackButton::Mute];
+/// Header controls of an automation track (no solo, arm or note lane to add to; the lane picker
+/// adds and removes its lanes).
+const AUTOMATION_BUTTONS: [TrackButton; 3] =
+    [TrackButton::Expand, TrackButton::Mute, TrackButton::AddLane];
 /// Header controls of an audio track.
 const AUDIO_BUTTONS: [TrackButton; 6] = [
     TrackButton::Expand,
@@ -191,8 +193,8 @@ pub enum TrackButton {
     Monitor,
 }
 
-/// A control in the header of a lane: the automation lanes have the first three, the note lanes
-/// the mute button.
+/// A control in the header of a lane: the automation lanes have fold, arm, write mode, mute and
+/// delete, the note lanes the mute button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneButton {
     /// Mute the note lane, or unmute it.
@@ -203,6 +205,8 @@ pub enum LaneButton {
     Arm,
     /// Cycle the write mode: Overwrite, Touch, Latch.
     Mode,
+    /// Delete the automation lane (the X at the right end of its header).
+    Delete,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -344,12 +348,14 @@ struct Menu {
     hover: Option<usize>,
     /// The row of the current choice (input menu), drawn lit.
     current: Option<usize>,
+    /// Rows drawn with a check mark (the lanes the track has, in the parameter menu).
+    checked: Vec<bool>,
 }
 
 /// What a menu row does.
 #[derive(Debug, Clone)]
 enum MenuKind {
-    /// Add an automation lane for the row's param.
+    /// Add an automation lane for the row's param, or remove it when the row is checked.
     Param,
     /// Choose the audio input; row `i` selects `options[i]`.
     Input(Vec<InputSel>),
@@ -645,6 +651,9 @@ pub struct ArrangementView {
     /// The note lane picked per track (the lane recordings, pastes and imports land on): view
     /// state, not saved.
     note_lane_sel: BTreeMap<DeviceKey, usize>,
+    /// The automation lane whose header was pressed last (view state): what the lane items of
+    /// the track header menu act on.
+    picked_lane: Option<(DeviceKey, String)>,
     /// The selected automation points of one clip (positions in its point list).
     point_sel: Option<(ClipId, BTreeSet<usize>)>,
     menu: Option<Menu>,
@@ -743,6 +752,7 @@ impl ArrangementView {
             selection: Selection::new(),
             selected_track: None,
             note_lane_sel: BTreeMap::new(),
+            picked_lane: None,
             point_sel: None,
             menu: None,
             drag: Drag::None,
@@ -875,11 +885,20 @@ impl ArrangementView {
             row.y0 + row.height() / 2.0
         };
         let indent = self.track_indent(track);
-        match button {
-            LaneButton::Fold => Rect::new(x + indent + 3.0, cy - 7.0, x + indent + 15.0, cy + 7.0),
-            LaneButton::Mute => self.lane_mute_rect(row, 1),
-            LaneButton::Mode => Rect::new(x + 134.0, cy - 8.0, x + 168.0, cy + 8.0),
-            LaneButton::Arm => Rect::new(x + 174.0, cy - 8.0, x + 194.0, cy + 8.0),
+        let at = |x0: f64, x1: f64| Rect::new(x + x0, cy - 8.0, x + x1, cy + 8.0);
+        match (button, lane == 0) {
+            (LaneButton::Fold, _) => {
+                Rect::new(x + indent + 3.0, cy - 7.0, x + indent + 15.0, cy + 7.0)
+            }
+            // The first lane of an automation track shares its header line: only write mode and
+            // arm fit there (the menu and the lane picker do the rest).
+            (LaneButton::Mode, true) => at(134.0, 168.0),
+            (LaneButton::Arm, true) => at(174.0, 194.0),
+            (LaneButton::Mute | LaneButton::Delete, true) => Rect::ZERO,
+            (LaneButton::Mode, false) => at(115.0, 145.0),
+            (LaneButton::Arm, false) => at(148.0, 166.0),
+            (LaneButton::Mute, false) => at(169.0, 187.0),
+            (LaneButton::Delete, false) => at(190.0, 204.0),
         }
     }
 
@@ -1426,6 +1445,15 @@ impl ArrangementView {
             .unwrap_or_default()
     }
 
+    /// Which rows of the open "add automation lane" menu are checked: the params that already
+    /// have a lane (a click on one removes it).
+    pub fn param_menu_checked(&self) -> Vec<bool> {
+        self.menu
+            .as_ref()
+            .map(|m| m.checked.clone())
+            .unwrap_or_default()
+    }
+
     /// Centre of menu row `i`, when visible.
     pub fn param_menu_row_center(&self, i: usize) -> Option<Point> {
         self.menu.as_ref()?.row_rect(i).map(|r| r.center())
@@ -1864,6 +1892,10 @@ impl ArrangementView {
         let indent = self.track_indent(track);
         let by = |dx: f64| Rect::new(r.x0 + dx, r.y0, r.x1 + dx, r.y1);
         match button {
+            // The automation track's picker is a small "+" before its first lane's controls.
+            TrackButton::AddLane if self.is_automation_track(track) => {
+                Rect::new(r.x0 - 4.0 + indent, r.y0, r.x0 + 22.0 + indent, r.y1)
+            }
             TrackButton::Expand | TrackButton::AddLane => by(indent),
             TrackButton::Mute | TrackButton::Solo | TrackButton::Arm => {
                 by(if row.height() < COMPACT_BELOW {
@@ -2127,7 +2159,13 @@ impl ArrangementView {
                         let buttons: &[LaneButton] = if folded {
                             &[LaneButton::Fold]
                         } else {
-                            &[LaneButton::Fold, LaneButton::Arm, LaneButton::Mode]
+                            &[
+                                LaneButton::Fold,
+                                LaneButton::Arm,
+                                LaneButton::Mode,
+                                LaneButton::Mute,
+                                LaneButton::Delete,
+                            ]
                         };
                         for &b in buttons {
                             if self.lane_button_rect(rr, track, lane, b).contains(pos) {
@@ -2399,10 +2437,14 @@ impl ArrangementView {
                 && button == PointerButton::Primary
             {
                 match &m.kind {
-                    MenuKind::Param => out.push(song_cmd(SongCommand::AddAutomationLane {
-                        device: m.device.clone(),
-                        param: m.items[i].0.clone(),
-                    })),
+                    MenuKind::Param => {
+                        let (device, param) = (m.device.clone(), m.items[i].0.clone());
+                        out.push(song_cmd(if m.checked.get(i).copied().unwrap_or(false) {
+                            SongCommand::RemoveAutomationLane { device, param }
+                        } else {
+                            SongCommand::AddAutomationLane { device, param }
+                        }));
+                    }
                     MenuKind::Input(options) => {
                         let current = self
                             .audio_header(&m.device)
@@ -2418,6 +2460,10 @@ impl ArrangementView {
             return;
         }
         let primary = button == PointerButton::Primary;
+        // A press anywhere but on a header forgets the automation lane picked before.
+        if !matches!(hit, Hit::Header(_) | Hit::LaneButton(..)) {
+            self.picked_lane = None;
+        }
         let tool = self.vp.effective_tool(modifiers);
         if !matches!(hit, Hit::TempoPoint(_) | Hit::MeterTag(_)) {
             self.tempo_sel = None;
@@ -2632,6 +2678,15 @@ impl ArrangementView {
             self.toggle_selected_track(&device);
             return;
         }
+        // The automation lane whose header was pressed is the one the lane items of the menu act
+        // on (none when the press was on a track header or a note lane).
+        self.picked_lane = self.row_at(pos.y).and_then(|r| match r.kind {
+            RowKind::Lane { track: t, lane } if t == track && lane > 0 => self.lane_id(t, lane),
+            RowKind::Lane { track: t, lane: 0 } if t == track && self.is_automation_track(t) => {
+                self.lane_id(t, 0)
+            }
+            _ => None,
+        });
         self.set_selected_track(Some(device));
         if button == PointerButton::Secondary {
             out.push(UiAction::ContextMenu {
@@ -2696,6 +2751,7 @@ impl ArrangementView {
     }
 
     fn lane_button(&mut self, track: usize, lane: usize, b: LaneButton, out: &mut Vec<UiAction>) {
+        self.picked_lane = self.lane_id(track, lane);
         if b == LaneButton::Mute {
             self.lane_mute_button(track, lane, out);
             return;
@@ -2704,6 +2760,12 @@ impl ArrangementView {
             return;
         };
         match b {
+            LaneButton::Delete => {
+                out.push(song_cmd(SongCommand::RemoveAutomationLane {
+                    device,
+                    param,
+                }));
+            }
             LaneButton::Fold => {
                 let folded = !self.song.lane_folded(&device, &param);
                 out.push(song_cmd(SongCommand::SetLaneFolded {
@@ -2761,6 +2823,8 @@ impl ArrangementView {
                         LaneKind::Notes | LaneKind::Audio => None,
                     })
                     .collect();
+                // Every parameter the track can have a lane for; the ones it has are checked
+                // and a click on one removes its lane.
                 let items: Vec<(String, String)> = doc
                     .device(&t.device)
                     .and_then(|d| registry.get(&d.type_id))
@@ -2768,7 +2832,7 @@ impl ArrangementView {
                         f.descriptor
                             .params
                             .iter()
-                            .filter(|p| !used.contains(p.key))
+                            .filter(|p| !p.key.starts_with("internal."))
                             .map(|p| (p.key.to_string(), p.name.to_string()))
                             .collect()
                     })
@@ -2776,6 +2840,10 @@ impl ArrangementView {
                 if items.is_empty() {
                     return;
                 }
+                let checked = items
+                    .iter()
+                    .map(|(k, _)| used.contains(k.as_str()))
+                    .collect();
                 let Some(row) = self.row_of(track, 0) else {
                     return;
                 };
@@ -2788,6 +2856,7 @@ impl ArrangementView {
                     scroll: 0,
                     hover: None,
                     current: None,
+                    checked,
                 };
                 self.open_menu(menu);
             }
@@ -2812,6 +2881,7 @@ impl ArrangementView {
                     scroll: 0,
                     hover: None,
                     current: options.iter().position(|o| *o == current),
+                    checked: Vec::new(),
                 };
                 self.open_menu(menu);
             }
@@ -5389,6 +5459,41 @@ impl ArrangementView {
             armed.then_some(st.record),
             hovered(LaneButton::Arm),
         );
+        if lane > 0 {
+            let muted = self
+                .song
+                .tracks
+                .get(track)
+                .and_then(|t| t.lanes.get(lane))
+                .is_some_and(|l| l.muted);
+            let mr = self.lane_button_rect(hr, track, lane, LaneButton::Mute);
+            sp::button(
+                c,
+                st,
+                mr,
+                "M",
+                muted.then_some(st.mute),
+                hovered(LaneButton::Mute),
+            );
+            let dr = self.lane_button_rect(hr, track, lane, LaneButton::Delete);
+            sp::button(c, st, dr, "", None, hovered(LaneButton::Delete));
+            let col = if hovered(LaneButton::Delete) {
+                t.text
+            } else {
+                t.text_muted
+            };
+            let ctr = dr.center();
+            for (a, b) in [((-3.0, -3.0), (3.0, 3.0)), ((-3.0, 3.0), (3.0, -3.0))] {
+                c.stroke_with(
+                    vello::kurbo::Line::new(
+                        pt(ctr.x + a.0, ctr.y + a.1),
+                        pt(ctr.x + b.0, ctr.y + b.1),
+                    ),
+                    1.4,
+                    col,
+                );
+            }
+        }
         if armed && self.recording {
             sp::rect(
                 c,
@@ -5479,13 +5584,15 @@ impl ArrangementView {
             let x = hr.x0 + 56.0 + self.track_indent(track);
             sp::label(
                 c,
-                &fit_label(p.name, 134.0 - (x - hr.x0) - 4.0, 9.0),
+                &fit_label(p.name, 100.0 - (x - hr.x0) - 4.0, 9.0),
                 x,
                 hr.y0 + 44.0,
                 9.0,
                 t.text_muted,
                 Align::Start,
             );
+            let ar = self.track_button_rect(hr, track, TrackButton::AddLane);
+            sp::button(c, st, ar, "+", None, hovered(TrackButton::AddLane));
             self.paint_lane_buttons(c, hr, track, 0);
             return;
         }
@@ -5674,6 +5781,15 @@ fn paint_menu(c: &mut dyn Canvas, st: &SeqTheme, m: &Menu) {
             t.text,
             Align::Start,
         );
+        if m.checked.get(i).copied().unwrap_or(false) {
+            // The check mark at the right end of the row.
+            let (x, y) = (rr.x1 - 14.0, rr.center().y);
+            let mut tick = BezPath::new();
+            tick.move_to(pt(x - 4.0, y));
+            tick.line_to(pt(x - 1.0, y + 3.0));
+            tick.line_to(pt(x + 4.5, y - 3.5));
+            c.stroke(&tick.into(), &Stroke::new(1.6), &st.selection.into());
+        }
     }
     if m.items.len() > MENU_ROWS {
         let frac = MENU_ROWS as f64 / m.items.len() as f64;
@@ -5700,7 +5816,7 @@ fn value_range(r: Rect) -> (f64, f64) {
 }
 
 /// Room for the name of an automation lane in its header, left of the write controls.
-const LANE_NAME_WIDTH: f64 = 104.0;
+const LANE_NAME_WIDTH: f64 = 86.0;
 /// The most a compact header (one line) moves its M, S and R buttons for the indent: the last
 /// one ends 4 px inside the track list.
 const COMPACT_SHIFT: f64 = 24.0;

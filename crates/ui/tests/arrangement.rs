@@ -117,21 +117,40 @@ fn param_picker_adds_an_automation_lane() {
     assert!(a.is_empty());
     let items = v.param_menu_items();
     assert!(!items.is_empty());
+    let checked = v.param_menu_checked();
+    let at = |key: &str| items.iter().position(|k| k == key).unwrap();
     assert!(
-        !items.iter().any(|k| k == "filter.cutoff"),
-        "existing lanes are not offered"
+        checked[at("filter.cutoff")],
+        "a param with a lane is checked"
     );
-    let i = items.iter().position(|k| k == "filter.resonance").unwrap();
+    assert!(!checked[at("filter.resonance")]);
+    assert!(
+        !items.iter().any(|k| k.starts_with("internal.")),
+        "internal params have no lane"
+    );
+    // The first row without a lane adds one, the row of the lane that exists removes it.
+    let i = checked.iter().position(|c| !c).unwrap();
     let row = v.param_menu_row_center(i).unwrap();
     let a = run(|e| v.handle(e, &doc, &reg), &[down(row), up(row)]);
     assert_eq!(
         song_commands(&a),
         vec![SongCommand::AddAutomationLane {
             device: key("bass"),
-            param: "filter.resonance".into()
+            param: items[i].clone()
         }]
     );
     assert!(v.param_menu_items().is_empty(), "the menu closes");
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    let row = v.param_menu_row_center(at("filter.cutoff")).unwrap();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(row), up(row)]);
+    assert_eq!(
+        song_commands(&a),
+        vec![SongCommand::RemoveAutomationLane {
+            device: key("bass"),
+            param: "filter.cutoff".into()
+        }],
+        "a checked row removes its lane"
+    );
     // Escape closes an open menu without emitting.
     let _ = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
     let a = v.handle(&press(Key::Escape, Modifiers::NONE), &doc, &reg);

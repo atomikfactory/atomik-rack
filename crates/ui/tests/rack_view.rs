@@ -902,11 +902,73 @@ fn a_click_with_the_reset_role_held_resets_a_knob() {
         let _ = v.handle(&up(c), &doc, &reg);
         set_param(&a)
     };
-    v.set_roles(Roles::defaults(Os::Windows).with(Role::ResetParam, Mods::parse("Alt").unwrap()));
+    v.set_roles(
+        Roles::defaults(Os::Windows)
+            .with(Role::EditAutomation, Mods::parse("Ctrl+Alt").unwrap())
+            .with(Role::ResetParam, Mods::parse("Alt").unwrap()),
+    );
     assert_eq!(press(&mut v, alt).len(), 1, "Alt resets now");
     let ctrl = Modifiers {
         ctrl: true,
         ..Modifiers::NONE
     };
     assert!(press(&mut v, ctrl).is_empty(), "Ctrl no longer does");
+}
+
+#[test]
+fn a_click_with_the_edit_automation_role_held_asks_for_the_lane_and_changes_nothing() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (doc, reg) = (reference_doc(), registry());
+    let mut v = view(&doc, &reg);
+    let c = v.control_center(&key("delay"), "mix").unwrap();
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let press = |v: &mut RackView, m: Modifiers| {
+        let a = v.handle(
+            &UiEvent::PointerDown {
+                pos: c,
+                button: PointerButton::Primary,
+                modifiers: m,
+                clicks: 1,
+            },
+            &doc,
+            &reg,
+        );
+        let _ = v.handle(
+            &UiEvent::PointerUp {
+                pos: c,
+                button: PointerButton::Primary,
+                modifiers: m,
+            },
+            &doc,
+            &reg,
+        );
+        a
+    };
+    let a = press(&mut v, alt);
+    assert!(
+        a.contains(&UiAction::EditAutomation {
+            device: key("delay"),
+            param: "mix".into(),
+        }),
+        "{a:?}"
+    );
+    assert!(set_param(&a).is_empty(), "no value change: {a:?}");
+    // A plain click does not ask for the lane.
+    let a = press(&mut v, Modifiers::NONE);
+    assert!(
+        !a.iter()
+            .any(|a| matches!(a, UiAction::EditAutomation { .. }))
+    );
+    // The role follows the remap and the other roles keep theirs.
+    v.set_roles(
+        Roles::defaults(Os::Windows).with(Role::EditAutomation, Mods::parse("Ctrl+Alt").unwrap()),
+    );
+    let a = press(&mut v, alt);
+    assert!(
+        !a.iter()
+            .any(|a| matches!(a, UiAction::EditAutomation { .. }))
+    );
 }

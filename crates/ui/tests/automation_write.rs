@@ -131,3 +131,116 @@ fn an_armed_lane_changes_the_display_and_a_take_marks_it() {
     assert_eq!(idle, idle2);
     assert_ne!(idle2, rec2, "the playhead itself turns red");
 }
+
+// ---------------------------------------------------------------- delete, mute, pick
+
+#[test]
+fn the_delete_button_removes_the_lane_and_the_mute_button_mutes_it() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    let x = v
+        .lane_button_center(&key("bass"), CUTOFF, LaneButton::Delete)
+        .unwrap();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(x), up(x)]);
+    assert_eq!(
+        song_commands(&a),
+        vec![SongCommand::RemoveAutomationLane {
+            device: key("bass"),
+            param: CUTOFF.into(),
+        }]
+    );
+    let lane = doc
+        .song
+        .track(&key("bass"))
+        .unwrap()
+        .automation_lane(CUTOFF);
+    let m = v
+        .lane_button_center(&key("bass"), CUTOFF, LaneButton::Mute)
+        .unwrap();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(m), up(m)]);
+    assert_eq!(
+        song_commands(&a),
+        vec![SongCommand::SetLaneMuted {
+            device: key("bass"),
+            lane: lane.unwrap(),
+            muted: true,
+        }]
+    );
+}
+
+#[test]
+fn the_buttons_do_not_overlap_and_stay_inside_the_header() {
+    let (doc, reg) = (song_doc(), registry());
+    let v = arrangement(&doc, &reg);
+    let xs: Vec<f64> = [
+        LaneButton::Mode,
+        LaneButton::Arm,
+        LaneButton::Mute,
+        LaneButton::Delete,
+    ]
+    .into_iter()
+    .map(|b| v.lane_button_center(&key("bass"), CUTOFF, b).unwrap().x)
+    .collect();
+    assert!(xs.windows(2).all(|w| w[1] - w[0] >= 18.0), "{xs:?}");
+    assert!(*xs.last().unwrap() < atomik_ui::arrangement::TRACK_LIST_WIDTH);
+}
+
+#[test]
+fn a_press_on_a_lane_button_picks_the_lane_the_menu_items_act_on() {
+    let (mut doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    assert_eq!(v.picked_automation_lane(), None);
+    assert_eq!(v.automation_lane_menu(), (false, false, false));
+    let p = v
+        .lane_button_center(&key("bass"), CUTOFF, LaneButton::Arm)
+        .unwrap();
+    let _ = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    assert_eq!(
+        v.picked_automation_lane(),
+        Some(&(key("bass"), CUTOFF.to_string()))
+    );
+    assert_eq!(v.automation_lane_menu(), (true, false, false));
+    let t = doc
+        .song
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("bass"))
+        .unwrap();
+    let i = t.automation_lane(CUTOFF).unwrap();
+    t.lanes[i].muted = true;
+    t.lanes[i].static_value = Some(1000.0);
+    v.sync(&doc, &reg);
+    assert_eq!(v.automation_lane_menu(), (true, true, true));
+    // The pick goes with the lane.
+    let t = doc
+        .song
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("bass"))
+        .unwrap();
+    t.lanes.remove(i);
+    v.sync(&doc, &reg);
+    assert_eq!(v.picked_automation_lane(), None);
+}
+
+#[test]
+fn a_muted_lane_lights_its_mute_button() {
+    let (mut doc, reg) = (song_doc(), registry());
+    let mut v = arrangement(&doc, &reg);
+    let paint = |v: &mut atomik_ui::ArrangementView, doc: &atomik_model::RackDoc| {
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, doc, &registry());
+        dl.to_json()
+    };
+    let idle = paint(&mut v, &doc);
+    let t = doc
+        .song
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("bass"))
+        .unwrap();
+    let i = t.automation_lane(CUTOFF).unwrap();
+    t.lanes[i].muted = true;
+    v.sync(&doc, &reg);
+    assert_ne!(idle, paint(&mut v, &doc));
+}

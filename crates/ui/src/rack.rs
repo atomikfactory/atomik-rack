@@ -3186,6 +3186,15 @@ impl RackView {
             device: self.devices[i].key.clone(),
             param: p.key.to_owned(),
         });
+        // A primary click with the edit-automation role held shows the control's lane and does
+        // nothing else (no drag, no change of value).
+        if button == PointerButton::Primary && self.edit_automation_click(modifiers) {
+            out.push(UiAction::EditAutomation {
+                device: self.devices[i].key.clone(),
+                param: p.key.to_owned(),
+            });
+            return;
+        }
         // A param a macro drives is locked, but its right-click menu stays (Remove from Macro).
         if self.driven_by(i, p.key).is_some()
             && !(self.scope.is_empty() && button == PointerButton::Secondary)

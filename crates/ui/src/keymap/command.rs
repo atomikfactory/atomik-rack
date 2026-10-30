@@ -285,8 +285,20 @@ const COMMANDS: &[CommandDef] = &[
     cmd("audio.restart", "Restart Audio", G::Global, C::Global).menu(),
     cmd("audio.settings", "Settings", G::Global, C::Global).menu(),
     cmd(
+        "automation.clear_control",
+        "Clear Automation",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
         "automation.edit_control",
         "Edit Automation",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "automation.static_control",
+        "Set Static Automation Value",
         G::Mixer,
         C::Global,
     ),
@@ -1033,6 +1045,18 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.clear_lane_static",
+        "Clear Static Value",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
+        "sequencer.delete_automation_lane",
+        "Delete Automation Lane",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
         "sequencer.delete_note_lane",
         "Delete Note Lane",
         G::Sequencer,
@@ -1209,6 +1233,12 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.mute_automation_lane",
+        "Mute Automation Lane",
+        G::Sequencer,
+        C::Sequencer,
+    ),
+    cmd(
         "sequencer.open_clip",
         "Open Clip",
         G::Sequencer,
@@ -1273,6 +1303,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .rep(),
+    cmd(
+        "sequencer.set_lane_static",
+        "Set Static Value",
+        G::Sequencer,
+        C::Sequencer,
+    ),
     cmd("sequencer.set_snap", "Set Snap", G::Sequencer, C::Sequencer).arg(SNAP_ARGS),
     cmd(
         "sequencer.snap_toggle",
@@ -1437,6 +1473,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "transport.auto_create_lanes",
+        "Auto-create Lanes",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "transport.bar_back",
         "Back One Bar",
         G::Transport,
@@ -1450,6 +1493,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .rep(),
+    cmd(
+        "transport.clear_override",
+        "Clear Override",
+        G::Transport,
+        C::Global,
+    ),
     cmd(
         "transport.forward_bar",
         "Fast Forward One Bar",

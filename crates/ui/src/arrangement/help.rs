@@ -27,9 +27,12 @@ fn track_button(b: TrackButton, rect: Rect) -> Help {
 fn lane_button(b: LaneButton, rect: Rect) -> Help {
     let help = |text: &'static str| Help::new(rect, text);
     match b {
-        LaneButton::Mute => {
-            Help::new(rect, "Mute this note lane").with_command("sequencer.toggle_lane_mute")
-        }
+        LaneButton::Mute => Help::new(
+            rect,
+            "Mute this lane (an automation lane holds the value its parameter has)",
+        )
+        .with_command("sequencer.toggle_lane_mute"),
+        LaneButton::Delete => help("Delete this automation lane and its clips"),
         LaneButton::Fold => help("Fold the lane to a thin strip, or unfold it"),
         LaneButton::Arm => help("Arm this lane for automation recording"),
         LaneButton::Mode => help("Write mode: click to cycle overwrite, touch, latch"),
@@ -73,7 +76,7 @@ impl ArrangementView {
             Hit::TrackMeter(track) => self.meter_help(rect_of(track, 0)?, track),
             Hit::LaneButton(track, lane, b) => {
                 let rr = rect_of(track, lane)?;
-                let rect = if b == LaneButton::Mute {
+                let rect = if b == LaneButton::Mute && self.is_note_lane(track, lane) {
                     let hr = Rect::new(self.bounds.x0, rr.y0, self.axis.x0, rr.y1);
                     self.lane_mute_rect(hr, lane)
                 } else {

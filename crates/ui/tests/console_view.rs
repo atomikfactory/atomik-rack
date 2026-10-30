@@ -1056,7 +1056,11 @@ fn a_click_with_the_reset_role_held_resets_a_control() {
         [("ch-bass".to_string(), "fader".to_string(), 0.75, None)]
     );
     v.handle(&up(p), &doc, &reg);
-    v.set_roles(Roles::defaults(Os::Windows).with(Role::ResetParam, Mods::parse("Alt").unwrap()));
+    v.set_roles(
+        Roles::defaults(Os::Windows)
+            .with(Role::EditAutomation, Mods::parse("Ctrl+Alt").unwrap())
+            .with(Role::ResetParam, Mods::parse("Alt").unwrap()),
+    );
     assert!(
         set_params(&click(&mut v)).is_empty(),
         "Ctrl no longer resets"

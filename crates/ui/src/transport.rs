@@ -32,6 +32,16 @@ pub use rec_input::{RecInput, RecInputPart};
 pub const TRANSPORT_HEIGHT: f64 = 44.0;
 const BUTTON_W: f64 = 34.0;
 const BUTTON_H: f64 = 26.0;
+/// The width of the auto-create-lanes switch, a small one next to Record.
+const AUTO_LANES_W: f64 = 20.0;
+/// The width of a transport button.
+fn button_width(b: TransportButton) -> f64 {
+    if b == TransportButton::AutoLanes {
+        AUTO_LANES_W
+    } else {
+        BUTTON_W
+    }
+}
 const TEMPO_TEXT_MAX: usize = 7;
 /// `32/16`.
 const METER_TEXT_MAX: usize = 5;
@@ -119,6 +129,10 @@ pub struct TransportState {
     pub pre_count: u8,
     /// The beat of the bar being counted in (1-based) while the pre-count runs, else 0.
     pub count_in: u16,
+    /// A take also creates the lanes of the parameters moved during it (AUTO LANES).
+    pub auto_lanes: bool,
+    /// How many lanes hold a value moved by hand while the song plays (0: no OVERRIDE lamp).
+    pub overrides: u8,
 }
 
 /// A transport bar button.
@@ -132,17 +146,20 @@ pub enum TransportButton {
     Play,
     /// Record.
     Record,
+    /// Create automation lanes for the parameters moved during a take, on/off.
+    AutoLanes,
     /// Loop on/off.
     Loop,
     /// Metronome on/off.
     Metronome,
 }
 
-const BUTTONS: [TransportButton; 6] = [
+const BUTTONS: [TransportButton; 7] = [
     TransportButton::ReturnToZero,
     TransportButton::Stop,
     TransportButton::Play,
     TransportButton::Record,
+    TransportButton::AutoLanes,
     TransportButton::Loop,
     TransportButton::Metronome,
 ];
@@ -419,11 +436,13 @@ impl TransportBar {
     }
 
     fn button_rect(&self, b: TransportButton) -> Rect {
-        let i = BUTTONS.iter().position(|x| *x == b).unwrap_or(0) as f64;
-        let gap = if i >= 4.0 { 14.0 } else { 0.0 };
-        let x = self.bounds.x0 + 12.0 + i * (BUTTON_W + 4.0) + gap;
+        let i = BUTTONS.iter().position(|x| *x == b).unwrap_or(0);
+        // The buttons in a row, 4 px apart; the loop and the metronome stand a little apart.
+        let before: f64 = BUTTONS[..i].iter().map(|x| button_width(*x) + 4.0).sum();
+        let gap = if i >= 5 { 14.0 } else { 0.0 };
+        let x = self.bounds.x0 + 12.0 + before + gap;
         let y = self.bounds.center().y - BUTTON_H / 2.0;
-        Rect::new(x, y, x + BUTTON_W, y + BUTTON_H)
+        Rect::new(x, y, x + button_width(b), y + BUTTON_H)
     }
 
     /// Position (bbt), time, tempo and meter readouts.
@@ -437,6 +456,20 @@ impl TransportBar {
             x += w + 8.0;
         }
         out
+    }
+
+    /// The OVERRIDE lamp: in the top right corner of the time readout, shown only while some
+    /// lane holds a hand-moved value.
+    pub fn override_rect(&self) -> Option<Rect> {
+        (self.state.overrides > 0).then(|| {
+            let r = self.lcd_rects()[1];
+            Rect::new(r.x1 - 56.0, r.y0 + 3.0, r.x1 - 4.0, r.y0 + 14.0)
+        })
+    }
+
+    /// Centre of the OVERRIDE lamp (`None` while it is not shown).
+    pub fn override_center(&self) -> Option<Point> {
+        self.override_rect().map(|r| r.center())
     }
 
     /// The command that sets the BPM of event `event` (`None` when nothing changes).
@@ -652,9 +685,12 @@ impl TransportBar {
                         TransportButton::Stop => TransportAction::Stop,
                         TransportButton::Play => TransportAction::Play,
                         TransportButton::Record => TransportAction::ToggleRecord,
+                        TransportButton::AutoLanes => TransportAction::ToggleAutoLanes,
                         TransportButton::Loop => TransportAction::ToggleLoop,
                         TransportButton::Metronome => TransportAction::ToggleMetronome,
                     }));
+                } else if self.override_rect().is_some_and(|r| r.contains(*pos)) {
+                    out.push(UiAction::Transport(TransportAction::ClearOverride));
                 } else if *clicks >= 2 && self.lcd_rects()[2].contains(*pos) {
                     self.begin_tempo_edit(None);
                 } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
@@ -721,6 +757,14 @@ impl TransportBar {
         {
             return Some(Self::button_help(b, self.button_rect(b)));
         }
+        if let Some(r) = self.override_rect()
+            && r.contains(pos)
+        {
+            return Some(Help::new(
+                r,
+                "Some lanes hold a value you moved while the song plays: click to let them play again",
+            ));
+        }
         let [_, _, tempo, meter] = self.lcd_rects();
         if tempo.contains(pos) {
             return Some(Help::new(
@@ -745,6 +789,10 @@ impl TransportBar {
             TransportButton::Stop => help("Stop", "transport.stop"),
             TransportButton::Play => help("Play, or stop while playing", "transport.play_stop"),
             TransportButton::Record => help("Record into the armed tracks", "transport.record"),
+            TransportButton::AutoLanes => help(
+                "Auto-create lanes: a take also records the parameters you move, adding their lanes",
+                "transport.auto_create_lanes",
+            ),
             TransportButton::Loop => help("Loop the loop range on or off", "transport.loop"),
             TransportButton::Metronome => help("Metronome click on or off", "transport.metronome"),
         }
@@ -823,6 +871,7 @@ impl TransportBar {
             let lit = match btn {
                 TransportButton::Play => self.state.playing.then_some(st.solo),
                 TransportButton::Record => self.state.recording.then_some(st.record),
+                TransportButton::AutoLanes => self.state.auto_lanes.then_some(st.record),
                 TransportButton::Loop => self.loop_enabled.then_some(st.loop_on),
                 TransportButton::Metronome => self.state.metronome.then_some(t.focus),
                 _ => None,
@@ -883,6 +932,18 @@ impl TransportBar {
             t.text_muted,
             Align::Start,
         );
+        if let Some(r) = self.override_rect() {
+            c.fill_with(RoundedRect::from_rect(r, 3.0), st.solo);
+            sp::label(
+                c,
+                "OVERRIDE",
+                r.center().x,
+                r.y1 - 2.5,
+                6.5,
+                t.plate,
+                Align::Center,
+            );
+        }
         c.text(
             &TextRun::new(time, pt(time_r.x1 - 8.0, time_r.y1 - 7.0), 12.0, lcd_text)
                 .weight(600)
@@ -972,6 +1033,17 @@ fn paint_icon(c: &mut dyn Canvas, b: TransportButton, ctr: Point, col: Color) {
             );
         }
         TransportButton::Record => c.fill_with(Circle::new(ctr, 5.0), col),
+        TransportButton::AutoLanes => {
+            // An automation curve with a small plus: a lane that appears by itself.
+            let mut curve = BezPath::new();
+            curve.move_to(pt(x - 6.0, y + 5.0));
+            curve.line_to(pt(x - 3.0, y - 1.0));
+            curve.line_to(pt(x, y + 3.0));
+            curve.line_to(pt(x + 3.0, y - 0.5));
+            c.stroke(&curve.into(), &Stroke::new(1.3), &col.into());
+            c.fill_with(Rect::new(x + 1.0, y - 6.75, x + 6.0, y - 5.5), col);
+            c.fill_with(Rect::new(x + 2.75, y - 8.5, x + 4.25, y - 3.75), col);
+        }
         TransportButton::Loop => {
             let r = RoundedRect::new(x - 7.0, y - 4.0, x + 7.0, y + 4.0, 4.0);
             c.stroke(&r.into(), &Stroke::new(1.6), &col.into());

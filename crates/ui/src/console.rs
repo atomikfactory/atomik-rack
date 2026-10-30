@@ -777,6 +777,13 @@ impl ConsoleView {
         self.roles = roles;
     }
 
+    /// Whether the edit-automation role is held with `modifiers` (a click on a control shows
+    /// its automation lane).
+    fn edit_automation_click(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::EditAutomation, modifiers, GestureClass::ClickControl)
+    }
+
     /// Whether the reset role is held with `modifiers` (a click on a control sets its default).
     fn reset_click(&self, modifiers: Modifiers) -> bool {
         self.roles
@@ -3027,6 +3034,18 @@ impl ConsoleView {
                 device: v.key.clone(),
                 param: param.to_owned(),
             });
+        }
+        // A primary click with the edit-automation role held shows the control's lane and does
+        // nothing else.
+        if button == PointerButton::Primary
+            && self.edit_automation_click(modifiers)
+            && let Some(v) = self.view_of(t)
+        {
+            out.push(UiAction::EditAutomation {
+                device: v.key.clone(),
+                param: param.to_owned(),
+            });
+            return;
         }
         // A param a macro drives is locked, but its right-click menu stays (Remove from Macro).
         if let Some(m) = self.driven_by(t, param)

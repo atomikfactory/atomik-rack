@@ -562,3 +562,49 @@ fn the_count_in_shows_its_beat_in_place_of_the_position() {
     assert!(counting.contains(&"3".to_string()), "{counting:?}");
     assert!(!counting.contains(&"POS".to_string()), "{counting:?}");
 }
+
+#[test]
+fn the_auto_lanes_switch_sits_next_to_record_and_toggles() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    let rec = v.button_center(TransportButton::Record);
+    let auto = v.button_center(TransportButton::AutoLanes);
+    assert!(auto.x > rec.x && auto.x - rec.x < 40.0, "{rec:?} {auto:?}");
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(auto), up(auto)]);
+    assert_eq!(
+        a,
+        vec![UiAction::Transport(TransportAction::ToggleAutoLanes)]
+    );
+    // Lit while on.
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    let off = dl.to_json();
+    v.set_state(TransportState {
+        auto_lanes: true,
+        ..TransportState::default()
+    });
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert_ne!(off, dl.to_json());
+}
+
+#[test]
+fn the_override_lamp_shows_only_while_a_lane_is_held_and_a_click_clears_it() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    assert!(v.override_center().is_none());
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert!(!dl.texts().contains(&"OVERRIDE"));
+    v.set_state(TransportState {
+        overrides: 2,
+        ..TransportState::default()
+    });
+    let mut dl = DisplayList::new();
+    v.paint(&mut dl, &doc, &reg);
+    assert!(dl.texts().contains(&"OVERRIDE"));
+    let p = v.override_center().unwrap();
+    let a = run(|e| v.handle(e, &doc, &reg), &[down(p), up(p)]);
+    assert_eq!(a, vec![UiAction::Transport(TransportAction::ClearOverride)]);
+    assert!(v.help_at(p).is_some());
+}
