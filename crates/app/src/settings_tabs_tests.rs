@@ -1072,7 +1072,10 @@ fn only_the_roles_a_gesture_reads_are_listed() {
         .collect();
     let expected: Vec<Role> = Role::listed().collect();
     assert_eq!(listed, expected);
-    assert!(!listed.contains(&Role::Constrain));
+    assert!(
+        listed.contains(&Role::Constrain),
+        "the constrain role has gestures now"
+    );
     assert!(listed.contains(&Role::FineAdjust) && listed.contains(&Role::CopyDrag));
 }
 
