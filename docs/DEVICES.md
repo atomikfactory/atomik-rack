@@ -20,7 +20,7 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 
 | Key | Kind | Direction | Notes |
 |---|---|---|---|
-| `notes_in` | Notes | in | Note on, note off and all-notes-off |
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, the mod wheel (CC 1), sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. Reads 0 when unconnected. |
 | `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1 (see "CV inputs: the trim convention"). |
 | `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (result clamped to 0..1). |
@@ -69,6 +69,7 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 | `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
 
 ### Behaviour (as built)
 
@@ -119,7 +120,7 @@ Every table is a row of 16 frames; `position` 0 is the first frame and 1 the las
 
 | Key | Kind | Direction | Notes |
 |---|---|---|---|
-| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend and the mod wheel (CC 1) |
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, the mod wheel (CC 1), sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves. |
 | `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1. |
 | `position_cv_in` | CV | in | Adds `cv.position_amount` × CV to the frame position of both oscillators (result clamped to 0..1). |
@@ -182,10 +183,11 @@ Every table is a row of 16 frames; `position` 0 is the first frame and 1 the las
 | `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
 
 ### Behaviour (as built)
 
-- **Voices, stealing, velocity and channel messages** are the poly synth's: Idle → Attack → Decay → Sustain → Release → Idle; a same-key note-on retriggers the voice from its current level; with every allowed voice busy the oldest started voice fades out over 2 ms and the new note starts after it; amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)); pitch bend moves every voice by up to ±2 semitones and the mod wheel adds up to one semitone of LFO vibrato; both survive `AllOff` and `reset` clears them.
+- **Voices, stealing, velocity and channel messages** are the poly synth's: Idle → Attack → Decay → Sustain → Release → Idle; a same-key note-on retriggers the voice from its current level; with every allowed voice busy the oldest started voice fades out over 2 ms and the new note starts after it; amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)); pitch bend moves every voice by up to `bend.range` semitones (default 2) and the mod wheel adds up to one semitone of LFO vibrato; both survive `AllOff` and `reset` clears them; the sustain pedal, volume, expression and pressure are the shared performance controllers described under "MIDI".
 - **Frame position** of oscillator *n* = `oscN.position` + `env.mod.to_posN` × mod envelope + `lfo.to_posN` × LFO + `cv.position_amount` × `position_cv_in`, clamped to 0..1. It is evaluated every 16 samples per voice and ramps linearly in between.
 - **Pitch** (semitones) = key + the oscillator's octave, semitone and cents + `env.mod.to_pitch` × mod envelope + LFO × (`lfo.to_pitch` + mod wheel) + bend + `pitch_cv_trim` × 24 × `pitch_cv_in`.
 - **Filter.** Cutoff = `filter.cutoff` × 2^(`env_amount`·6·mod envelope + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV), clamped to 20 Hz … 0.45 × sample rate. There is one filter per channel, so the unison spread survives it.
@@ -225,7 +227,7 @@ In every routing operator 4 is the feedback operator.
 
 | Key | Kind | Direction | Notes |
 |---|---|---|---|
-| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend (±2 semitones) and the mod wheel (CC 1) |
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, the mod wheel (CC 1), sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
 | `pitch_cv_in` | CV | in | Raises the pitch of every voice by `pitch_cv_trim` × 24 semitones at CV +1. |
 | `index_cv_in` | CV | in | Adds `cv.index_amount` × CV to the modulation index. |
 | `level_cv_in` | CV | in | Scales the output by `master.level_cv_trim` × 24 × CV decibels (when cabled). |
@@ -273,6 +275,7 @@ Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve 
 | `cv.index_amount` | −2 to 2 | 1 | none | Linear | no |
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
 
 ### Behaviour (as built)
 
@@ -337,6 +340,7 @@ A sample played as a cloud of short grains, with up to 16 voices. Each voice sta
 | `env.mod.*` | | A 5 ms, D 600 ms, S 0, R 300 ms | The mod envelope, with `to_position` (fraction), `to_size`, `to_density` (octaves), `to_pitch` (semitones). |
 | `lfo.wave`, `lfo.rate` | | sine, 0.5 Hz | The LFO, with `to_position`, `to_size`, `to_density`, `to_pitch`, `to_cutoff`. |
 | `wheel.to_position`, `wheel.to_spray` | | 0, 50 % | Mod wheel (CC 1); by default it opens the spray. |
+| `bend.range` | 0 to 24 st | 2 | Pitch-bend range each way. The sustain pedal, volume, expression and pressure are described under "MIDI". |
 | `cv.pitch_amount`, `cv.position_amount`, `cv.density_amount`, `cv.cutoff_amount`, `master.level_cv_trim` | | 12 st, 50 %, 2 oct, 2 oct, 1 | Scale of the CV inputs. |
 
 Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_cv_in`, `level_cv_in`, `out_l`, `out_r`.
@@ -1059,7 +1063,7 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 
 | Key | Kind | Direction | Notes |
 |---|---|---|---|
-| `notes_in` | Notes | in | Note on, note off and all-notes-off |
+| `notes_in` | Notes | in | Note on, note off, all-notes-off, pitch bend, sustain (CC 64), volume (CC 7), expression (CC 11), pressure and RPN 0 (see "MIDI") |
 | `pitch_cv_in` | CV | in | Clamped to −1..+1. +1 raises the pitch by `cv.pitch_amount` semitones. Reads 0 when unconnected. |
 | `cutoff_cv_in` | CV | in | Clamped to −1..+1. +1 raises the cutoff by `cv.cutoff_amount` octaves (only with the filter on). |
 | `resonance_cv_in` | CV | in | Adds `filter.resonance_cv_trim` × CV to the normalised resonance (only with the filter on). |
@@ -1102,6 +1106,7 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 | `filter.resonance_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `master.level_cv_trim` | −1 to 1 | 1 | none | Linear | no |
 | `pan_cv_trim` | −1 to 1 | 1 | none | Linear | no |
+| `bend.range` | 0 to 24 | 2 | semitones | Linear | no |
 
 ### Zones (the sample map)
 
@@ -1109,7 +1114,7 @@ A zone has a key range, a velocity range (1–127; a note velocity `v` maps to r
 
 ### Behaviour (as built)
 
-- **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi`)/12 + (zone cents + `tune.fine`)/1200 + (LFO·`lfo.to_pitch` + CV·`cv.pitch_amount`)/12). The ratio is updated every 16 samples. A root-key note without modulation reads every frame of the asset bit for bit; an octave up reads every second frame. Assets are already at the session rate, so there is no rate conversion.
+- **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi` + pitch bend)/12 + (zone cents + `tune.fine`)/1200 + (LFO·`lfo.to_pitch` + CV·`cv.pitch_amount`)/12). The ratio is updated every 16 samples. A root-key note without modulation reads every frame of the asset bit for bit; an octave up reads every second frame. Assets are already at the session rate, so there is no rate conversion.
 - **Interpolation.** 4-point, third-order Hermite. The four frames are clamped to the buffer, so a read never leaves it.
 - **Position.** The playhead is a whole frame plus an `f64` fraction. It advances by the ratio with integer carries, so a loop wraps on the exact frame and nothing drifts.
 - **Loops.** A forward loop plays `loop_start`..`loop_end` and wraps. A ping-pong loop plays `loop_start`..`loop_end − 1` forwards and backwards, each end frame once per turn. A loop only starts once the playhead reaches `loop_start`, so a run-in before it plays once. A loop of one frame holds that frame.
@@ -1636,6 +1641,31 @@ Six per slot *k* = 1 to 8, ids `6(k-1)` to `6(k-1)+5`, all discrete, in this ord
 - Offsets are preserved and non-decreasing per output. An output that is not connected simply drops its events. Latency 0. `process`, `set_param` and `reset` never allocate (fixed 8 x 128 tables).
 
 ---
+
+## MIDI
+
+Note events carry more than notes: pitch bend, controllers (CC), channel pressure and polyphonic pressure reach an instrument from a keyboard, a recorded or drawn controller lane, a note player above it, or a patch. The chart lists what each instrument does with them. A `yes` is checked by rendering: the test sends the message to a fresh device and compares the output with a render without it (`cargo test -p atomik-devices midi_chart`), so this table cannot drift from the code.
+
+| Device | Pitch bend | Bend range (RPN 0) | Mod wheel (CC 1) | Sustain (CC 64) | Volume (CC 7) | Expression (CC 11) | Pressure source |
+|---|---|---|---|---|---|---|---|
+| `atomik.poly-synth` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.wavetable-synth` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.fm-synth` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.granular` | yes | yes | yes | yes | yes | yes | yes |
+| `atomik.sampler` | yes | yes | no | yes | yes | yes | yes |
+| `atomik.audio-track` | no | no | no | no | no | no | no |
+| `atomik.drum-machine` | no | no | no | no | no | no | no |
+| `atomik.loop-slicer` | no | no | no | no | no | no | no |
+
+The five melodic instruments (poly synth, wavetable synth, FM synth, grain sampler and sampler) share one helper, `ControllerState` ([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does, identically in each:
+
+- **Sustain (CC 64).** A value of 64 or more is the pedal down. While it is down a note-off is held back and the voice keeps sounding; when the pedal goes up every held-back key is released at the frame of the pedal event. A note-on of a held-back key forgets the hold (the key is down again), a same-key retrigger works as usual, and `AllOff` (stop, a locate) releases everything and forgets the holds. In the FM synth's mono modes the held keys stay in the key stack until the pedal goes up. A one-shot zone of the sampler ignores note-offs, so the pedal changes nothing for it. A device that has never received the controller behaves exactly as before.
+- **Volume (CC 7) and expression (CC 11).** Both start at full. The output is scaled by (volume × expression)², smoothed over 5 ms and applied per sample after the soft limiter and the level CV, so a change lands at its event frame and ramps without a click. At full the gain is exactly 1 and the output is bit for bit the old one. The controllers are device state: `reset` (and so a stop of the engine) returns them to full.
+- **Pitch bend and its range.** The bend moves every voice by up to the bend range each way, `bend.range` semitones (0 to 24, default 2). The registered parameter 0 changes the range from the keyboard or a lane: CC 101 = 0 and CC 100 = 0 select it, CC 6 sets the semitones and CC 38 the cents (a data entry with no selection, or after another parameter or the null parameter 127/127, does nothing). Setting the param also sets the range; `reset` returns to the param's value. The sampler plays the bend as a change of the playback ratio of every voice.
+- **Pressure.** Channel pressure and the polyphonic pressure of each key are kept per instrument as one modulation source (`0..=1`, the larger of the channel value and the key's value). No parameter reads it yet: it is the input a modulation matrix will route, and the MIDI chart marks only that the source exists. `reset` clears it.
+- **Real-time safety and determinism.** The hold list is two words, the pressure table is a fixed array of 128 values and nothing is allocated on the audio thread. Every change takes effect at the frame of its event, so a render does not depend on how the engine cuts the blocks.
+
+The mod wheel (CC 1) and the other controllers keep the per-instrument meaning in each device's table. Controllers an instrument does not list are ignored.
 
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 

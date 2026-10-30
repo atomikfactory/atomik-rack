@@ -33,7 +33,7 @@
 //! * **Pitch.** A grain reads the window at `2^(semitones/12)` source frames per output frame:
 //!   `pitch.key_track` of the distance between the key and the zone's root key (100 % follows the
 //!   keyboard, 0 plays every key at the recorded pitch), `pitch.transpose` and `pitch.fine`, the
-//!   zone's transpose and tune, the pitch bend (two semitones), the pitch CV, the LFO and the mod
+//!   zone's transpose and tune, the pitch bend (`bend.range`, default two semitones), the pitch CV, the LFO and the mod
 //!   envelope, and, per grain, a random offset of up to `pitch.random` cents either way. The ratio
 //!   is limited to 1/32 to 8 and read with a four-point Hermite; above a step of 1 the read
 //!   low-passes by a triangular multi-tap average so a high transposition does not alias
@@ -97,6 +97,7 @@ use atomik_dsp::{
     pan_gains_mono,
 };
 
+use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
 use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::{derive_seed, soft_limit};
 
@@ -189,7 +190,8 @@ const P_CV_POSITION: u32 = 46;
 const P_CV_DENSITY: u32 = 47;
 const P_CV_CUTOFF: u32 = 48;
 const P_CV_LEVEL: u32 = 49;
-const PARAM_COUNT: usize = 50;
+const P_BEND_RANGE: u32 = 50;
+const PARAM_COUNT: usize = 51;
 
 static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
     param(
@@ -642,6 +644,15 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::None,
         false,
     ),
+    param(
+        P_BEND_RANGE,
+        "bend.range",
+        "Bend range",
+        (0.0, MAX_BEND_RANGE, DEFAULT_BEND_RANGE),
+        Lin,
+        Unit::Semitones,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -749,8 +760,6 @@ pub fn factory() -> DeviceFactory {
 
 /// Samples between control-rate updates of a voice.
 const CONTROL_INTERVAL: u32 = 16;
-/// Pitch bend range in semitones each way.
-const BEND_RANGE: f32 = 2.0;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
 /// Master gain smoothing time.
@@ -811,7 +820,7 @@ struct Shared {
     cv_density: f32,
     cv_cutoff: f32,
     cv_level_db: f32,
-    /// Pitch bend in semitones.
+    /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
@@ -1482,6 +1491,8 @@ pub struct Granular {
     next_order: u64,
     lfo: Lfo,
     master: Smoother,
+    /// Sustain, volume, expression, pressure and the bend range.
+    ctl: ControllerState,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -1516,6 +1527,7 @@ impl Granular {
             next_order: 0,
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
+            ctl: ControllerState::new(),
             fresh: true,
             seed: 0,
             windows: WindowBank::new(),
@@ -1615,12 +1627,17 @@ impl Granular {
             P_CV_DENSITY => s.cv_density = v,
             P_CV_CUTOFF => s.cv_cutoff = v,
             P_CV_LEVEL => s.cv_level_db = v * CV_LEVEL_RANGE_DB,
+            P_BEND_RANGE => {
+                self.ctl.set_bend_range(v);
+                self.shared.bend = self.ctl.bend_semitones();
+            }
             _ => {}
         }
     }
 
     /// Starts a voice for the first zone that matches the note (or the built-in source).
     fn note_on(&mut self, key: u8, velocity: f32) {
+        self.ctl.note_on(key);
         let banks = Banks {
             current: self.current.as_deref(),
             draining: None,
@@ -1656,15 +1673,34 @@ impl Granular {
     fn handle(&mut self, kind: NoteKind) {
         match kind {
             NoteKind::On { key, velocity } => self.note_on(key, velocity),
-            NoteKind::Off { key } => self.note_off(key),
-            NoteKind::AllOff => self.voices.iter_mut().for_each(Voice::release),
-            NoteKind::PitchBend { value } => self.shared.bend = value.clamp(-1.0, 1.0) * BEND_RANGE,
+            NoteKind::Off { key } => {
+                if self.ctl.note_off(key) {
+                    self.note_off(key);
+                }
+            }
+            NoteKind::AllOff => {
+                self.ctl.all_off();
+                self.voices.iter_mut().for_each(Voice::release);
+            }
             NoteKind::Cc {
                 controller: 1,
                 value,
             } => self.shared.wheel = value.clamp(0.0, 1.0),
-            // The other controllers, pressure and expressions are ignored.
-            _ => {}
+            // Pedal, volume, expression, pressure, bend and its range.
+            _ => {
+                if self.ctl.handle(kind) == Effect::ReleaseHeld {
+                    let mut keys = [0u8; 128];
+                    let mut n = 0;
+                    self.ctl.release_held(|key| {
+                        keys[n] = key;
+                        n += 1;
+                    });
+                    for &key in &keys[..n] {
+                        self.note_off(key);
+                    }
+                }
+                self.shared.bend = self.ctl.bend_semitones();
+            }
         }
     }
 }
@@ -1687,6 +1723,7 @@ impl Device for Granular {
             v.menv.set_sample_rate(sr);
         }
         self.master.set_time(MASTER_SMOOTH_MS, sr);
+        self.ctl.set_sample_rate(sr);
         self.lfo = Lfo::new(derive_seed(info.seed, 0));
         self.apply_all();
         self.reset();
@@ -1710,6 +1747,7 @@ impl Device for Granular {
         self.frames = 0;
         self.grains_active = 0;
         self.voices_active = 0;
+        self.ctl.reset();
         self.shared.bend = 0.0;
         self.shared.wheel = 0.0;
     }
@@ -1786,6 +1824,7 @@ impl Device for Granular {
         let cv_density = *ctx.input(DENSITY_CV_IN);
         let cv_cutoff = *ctx.input(CUTOFF_CV_IN);
         let mut mix = [[0.0f32; BATCH]; 2];
+        let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
@@ -1844,6 +1883,7 @@ impl Device for Granular {
                     &mut f,
                 );
             }
+            self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
         }
         let level_on = ctx.is_connected(LEVEL_CV_IN);
@@ -1856,6 +1896,8 @@ impl Device for Granular {
             }
             *l = soft_limit(*l * m);
             *r = soft_limit(*r * m);
+            *l *= ctl_gain[n];
+            *r *= ctl_gain[n];
         }
         *ctx.output(OUT_L) = mix[0];
         *ctx.output(OUT_R) = mix[1];

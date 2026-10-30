@@ -4,7 +4,10 @@
 //! panel values and the factory sounds.
 
 use super::*;
-use crate::test_support::{SR, harness, off, on, sweep_params_min_max};
+use crate::test_support::{
+    SR, assert_bend_range, assert_sustain_pedal, assert_volume_and_expression, harness, off, on,
+    sweep_params_min_max,
+};
 use atomik_core::NoteEvent;
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::no_alloc::assert_no_alloc;
@@ -268,7 +271,7 @@ fn descriptor_validates_and_lists_the_documented_params_and_sockets() {
     assert_eq!(DESCRIPTOR.type_id, "atomik.granular");
     assert_eq!(DESCRIPTOR.name, "Grain Sampler");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
-    assert_eq!(PARAMS.len(), 50);
+    assert_eq!(PARAMS.len(), 51);
     for (i, p) in DESCRIPTOR.params.iter().enumerate() {
         assert_eq!(p.id.0 as usize, i, "{}", p.key);
         assert!(
@@ -1483,6 +1486,41 @@ fn the_amp_envelope_attacks_sustains_and_releases() {
     render(&mut h, seconds(0.5));
     assert_eq!(voices_of(&h), 0, "the voice ends after its release");
     assert_eq!(grains_of(&h), 0);
+}
+
+/// The built-in source with a quick release.
+fn performance_synth() -> DeviceHarness {
+    let (mut h, _) = granular();
+    h.set_param("env.amp.release", 5.0);
+    h
+}
+
+#[test]
+fn sustain_pedal_holds_the_release_until_pedal_up() {
+    assert_sustain_pedal(performance_synth, &OUT, ROOT);
+}
+
+#[test]
+fn volume_and_expression_scale_the_output() {
+    assert_volume_and_expression(performance_synth, &OUT, ROOT);
+}
+
+#[test]
+fn bend_range_param_and_rpn_zero() {
+    assert_bend_range(performance_synth, &OUT, ROOT);
+}
+
+#[test]
+fn pressure_reaches_the_modulation_source() {
+    let mut s = Granular::new();
+    s.handle(NoteKind::ChannelPressure { value: 0.5 });
+    s.handle(NoteKind::PolyPressure {
+        key: 60,
+        value: 0.75,
+    });
+    assert_eq!((s.ctl.pressure(60), s.ctl.pressure(61)), (0.75, 0.5));
+    s.reset();
+    assert_eq!(s.ctl.pressure(60), 0.0);
 }
 
 #[test]

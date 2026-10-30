@@ -2,7 +2,10 @@
 //! voices, envelopes, aliasing, the mono modes, the CVs and the factory sounds.
 
 use super::*;
-use crate::test_support::{SR, assert_keys, harness, off, on, sweep_params_min_max};
+use crate::test_support::{
+    SR, assert_bend_range, assert_keys, assert_sustain_pedal, assert_volume_and_expression,
+    harness, off, on, sweep_params_min_max,
+};
 use atomik_core::NoteEvent;
 use atomik_testkit::harness::DeviceHarness;
 use atomik_testkit::signal::{db, dominant_frequency, magnitude_spectrum, max_step, peak, rms};
@@ -138,6 +141,7 @@ fn descriptor_validates() {
             "cv.index_amount",
             "master.level_cv_trim",
             "pan_cv_trim",
+            "bend.range",
         ]
         .map(String::from),
     );
@@ -156,7 +160,7 @@ fn descriptor_validates() {
             "lfo_cv_out",
         ],
     );
-    assert_eq!(PARAMS.len(), 69);
+    assert_eq!(PARAMS.len(), 70);
     assert_eq!(DESCRIPTOR.type_id, "atomik.fm-synth");
     assert_eq!(DESCRIPTOR.kind, DeviceKind::Instrument);
     assert_eq!(
@@ -384,6 +388,63 @@ fn a_fixed_operator_ignores_the_key() {
         let f = freq_of(fixed, key);
         assert!((f - 1_000.0).abs() < 1.5, "key {key}: {f}");
     }
+}
+
+/// One steady operator with a quick release.
+fn performance_synth() -> DeviceHarness {
+    let (mut h, _) = synth();
+    pure(&mut h);
+    for n in 1..=4 {
+        h.set_param(&format!("op{n}.release"), 5.0);
+    }
+    h
+}
+
+#[test]
+fn sustain_pedal_holds_the_release_until_pedal_up() {
+    assert_sustain_pedal(performance_synth, &OUT, 57);
+}
+
+#[test]
+fn sustain_pedal_holds_the_mono_voice_and_the_key_stack() {
+    let mut s = FmSynth::new();
+    s.set_param(ParamId(P_MODE), 1.0);
+    let pedal = |value| NoteKind::Cc {
+        controller: 64,
+        value,
+    };
+    s.handle(pedal(1.0));
+    s.handle(NoteKind::On {
+        key: 60,
+        velocity: 1.0,
+    });
+    s.handle(NoteKind::Off { key: 60 });
+    assert!(s.voices[0].gated, "the pedal holds the mono voice");
+    s.handle(pedal(0.0));
+    assert!(!s.voices[0].gated, "pedal up releases it");
+}
+
+#[test]
+fn volume_and_expression_scale_the_output() {
+    assert_volume_and_expression(performance_synth, &OUT, 57);
+}
+
+#[test]
+fn bend_range_param_and_rpn_zero() {
+    assert_bend_range(performance_synth, &OUT, 57);
+}
+
+#[test]
+fn pressure_reaches_the_modulation_source() {
+    let mut s = FmSynth::new();
+    s.handle(NoteKind::ChannelPressure { value: 0.5 });
+    s.handle(NoteKind::PolyPressure {
+        key: 60,
+        value: 0.75,
+    });
+    assert_eq!((s.ctl.pressure(60), s.ctl.pressure(61)), (0.75, 0.5));
+    s.reset();
+    assert_eq!(s.ctl.pressure(60), 0.0);
 }
 
 #[test]
