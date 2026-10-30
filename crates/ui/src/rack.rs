@@ -555,6 +555,8 @@ pub struct RackView {
     rename: Option<Rename>,
     /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
     button_tips: bool,
+    /// The device the patch browser is aimed at: its patch name is drawn in the browse colour.
+    patch_browse: Option<DeviceKey>,
     /// The container whose inside is shown: the local keys from the top level down (empty =
     /// the top level). View state, not in the document.
     scope: Vec<DeviceKey>,
@@ -750,6 +752,7 @@ impl RackView {
             pages: BTreeMap::new(),
             rename: None,
             button_tips: true,
+            patch_browse: None,
             scope: Vec::new(),
             scope_names: Vec::new(),
             pending_scope: None,
@@ -807,6 +810,22 @@ impl RackView {
     /// Whether console devices are shown in the rack.
     pub fn show_console_devices(&self) -> bool {
         self.show_console
+    }
+
+    /// Aims the patch browse colour at device `key` (or at none): its patch name is drawn in
+    /// orange while the file browser applies patches to it.
+    pub fn set_patch_browse(&mut self, key: Option<DeviceKey>) {
+        if self.patch_browse == key {
+            return;
+        }
+        let old = std::mem::replace(&mut self.patch_browse, key);
+        for d in &mut self.devices {
+            if Some(&d.key) == old.as_ref() || Some(&d.key) == self.patch_browse.as_ref() {
+                d.revision += 1;
+                d.lists = [None, None];
+            }
+        }
+        self.repaint = true;
     }
 
     /// Shows or hides the hover tooltips of the buttons the rack explains by itself (BYPASS,
@@ -2025,7 +2044,7 @@ impl RackView {
             let strip = paint::patch_strip(d.height);
             let rect = match op {
                 PatchOp::Previous => strip.prev,
-                PatchOp::Browse => strip.name,
+                PatchOp::Browse | PatchOp::Siblings => strip.name,
                 PatchOp::Next => strip.next,
                 PatchOp::Save => strip.save,
             };
@@ -2495,8 +2514,14 @@ impl RackView {
                     Some(match op {
                         PatchOp::Previous => "Previous patch of this device type".to_string(),
                         PatchOp::Next => "Next patch of this device type".to_string(),
-                        PatchOp::Browse if name.is_empty() => "Browse patches".to_string(),
-                        PatchOp::Browse => format!("{name}: browse patches"),
+                        PatchOp::Browse | PatchOp::Siblings if name.is_empty() => {
+                            "Browse patches (right-click: the patches of this folder)".to_string()
+                        }
+                        PatchOp::Browse | PatchOp::Siblings => {
+                            format!(
+                                "{name}: browse patches (right-click: the patches of this folder)"
+                            )
+                        }
                         PatchOp::Save => "Save this device as a patch".to_string(),
                     })
                 }
@@ -3002,6 +3027,13 @@ impl RackView {
                 out.push(UiAction::DevicePatch {
                     device: self.devices[i].key.clone(),
                     op,
+                });
+            }
+            (Hit::Patch(i, PatchOp::Browse), PointerButton::Secondary) => {
+                self.select(i, out);
+                out.push(UiAction::DevicePatch {
+                    device: self.devices[i].key.clone(),
+                    op: PatchOp::Siblings,
                 });
             }
             (Hit::Name(i), PointerButton::Primary) if clicks >= 2 => {
@@ -3907,6 +3939,7 @@ impl RackView {
                     side: self.flip,
                     folded: d.folded,
                     height: d.height,
+                    patch_browse: self.patch_browse.as_ref() == Some(&d.key),
                     seed: paint::seed_of(&d.key.0),
                     pad: d.pad,
                     pad_names: &d.pad_names,

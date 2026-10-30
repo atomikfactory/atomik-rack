@@ -87,6 +87,9 @@ mixer.value_page_up | mixer | PageUp
 mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
+rack.browse_patch | rack | Ctrl+Shift+B
+rack.patch_next | rack | Ctrl+Right
+rack.patch_prev | rack | Ctrl+Left
 sequencer.nudge_left | sequencer | Ctrl+Left
 sequencer.nudge_left_beat | sequencer | Ctrl+Shift+Left
 sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Left

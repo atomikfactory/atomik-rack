@@ -12,6 +12,10 @@ const fn ca(r: u8, g: u8, b: u8, a: u8) -> Color {
     Color::from_rgba8(r, g, b, a)
 }
 
+/// The orange of the patch browsing focus: the band of the file browser and the patch name on
+/// the device plate it is aimed at.
+pub const PATCH_TARGET: Color = c(0xf0, 0x8a, 0x2e);
+
 /// Theme tokens.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {

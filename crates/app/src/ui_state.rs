@@ -27,6 +27,7 @@ use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
 use atomik_ui::{AudioMode, FileBrowserView};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The UI state file name.
@@ -93,6 +94,11 @@ pub struct UiState {
     pub file_browser_auto_preview: bool,
     /// The folder the file list showed last.
     pub file_browser_folder: Option<PathBuf>,
+    /// The folder the patch browser last used for each device type (type id to folder), so
+    /// Browse on a device opens where its type was last browsed. Absent entries mean the
+    /// library's Patches folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub patch_folders: BTreeMap<String, PathBuf>,
     /// Which panes live in their own window and where every window was. An absent key means
     /// everything attached.
     pub windows: WindowsState,
@@ -124,6 +130,7 @@ impl Default for UiState {
             file_browser_tree_fraction: DEFAULT_TREE_FRACTION,
             file_browser_auto_preview: true,
             file_browser_folder: None,
+            patch_folders: BTreeMap::new(),
             windows: WindowsState::default(),
         }
     }

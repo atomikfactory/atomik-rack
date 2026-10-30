@@ -619,3 +619,67 @@ fn a_loaded_item_applies_to_a_device_of_the_same_type() {
     one_step(&mut d, &r, apply("t", &snapshot));
     assert_same_sound(device(&d, "t"), device(&d, "s"));
 }
+
+// ---------------------------------------------------------------------- trials
+
+/// A trial of patch applications records no undo step; committing it leaves one step that
+/// goes back to the original, and cancelling it restores the original and the redo history.
+#[test]
+fn a_trial_is_one_undo_step_when_committed_and_nothing_when_cancelled() {
+    let r = registry();
+    let type_id = SYNTH;
+    let mut setup = Vec::new();
+    setup.extend(tweak(&r, type_id, "src"));
+    let mut d = doc_with(&r, &[(type_id, "src"), (type_id, "dst")], setup);
+    let snapshot = patch_of(&d, "src");
+    let original = device(&d, "dst").clone();
+    let depth = d.undo_depth();
+
+    for _ in 0..50 {
+        d.apply_trial(apply("dst", &snapshot), &r).unwrap();
+        d.apply_trial(reset("dst"), &r).unwrap();
+    }
+    d.apply_trial(apply("dst", &snapshot), &r).unwrap();
+    assert!(d.in_trial());
+    assert_eq!(d.undo_depth(), depth, "a trial records no undo step");
+    assert_same_sound(device(&d, "dst"), device(&d, "src"));
+    let trialled = d.clone();
+
+    // Cancel: the device is as it was, byte for byte.
+    let mut cancelled = trialled.clone();
+    let ops = cancelled.cancel_trial().unwrap();
+    assert!(!ops.is_empty());
+    assert!(!cancelled.in_trial());
+    assert_eq!(device(&cancelled, "dst"), &original);
+    assert_eq!(cancelled.undo_depth(), depth);
+
+    // Commit: exactly one step, and undo restores the original.
+    let mut committed = trialled;
+    committed.commit_trial();
+    assert!(!committed.in_trial());
+    assert_eq!(committed.undo_depth(), depth + 1);
+    assert_same_sound(device(&committed, "dst"), device(&committed, "src"));
+    committed.undo(&r).unwrap();
+    assert_eq!(device(&committed, "dst"), &original);
+    assert_eq!(committed.undo_depth(), depth);
+}
+
+#[test]
+fn undo_waits_for_the_trial_and_the_redo_history_survives_a_cancel() {
+    let r = registry();
+    let type_id = SYNTH;
+    let mut d = doc_with(&r, &[(type_id, "src"), (type_id, "dst")], vec![]);
+    run(&mut d, &r, tweak(&r, type_id, "src"));
+    let snapshot = patch_of(&d, "src");
+    d.undo(&r).unwrap();
+    assert!(d.can_redo());
+    d.apply_trial(apply("dst", &snapshot), &r).unwrap();
+    assert!(d.undo(&r).is_none(), "undo is refused during a trial");
+    d.cancel_trial().unwrap();
+    assert!(d.can_redo(), "the redo history comes back");
+    // A trial that changes nothing the history records leaves everything alone.
+    let mut e = doc_with(&r, &[(type_id, "src")], vec![]);
+    assert!(!e.in_trial());
+    e.commit_trial();
+    assert_eq!(e.undo_depth(), 1);
+}

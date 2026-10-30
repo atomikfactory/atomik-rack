@@ -5,6 +5,8 @@ use vello::kurbo::Rect;
 
 /// Height of the header (search field and toggles).
 pub(super) const HEADER_H: f64 = 34.0;
+/// Height of the band that names the target device of patch browsing.
+pub(super) const BANNER_H: f64 = 16.0;
 /// Height of the search field and the toggle buttons.
 pub(super) const FIELD_H: f64 = 22.0;
 /// Horizontal padding.
@@ -43,6 +45,8 @@ pub(super) const ELLIPSIS_W: f64 = 14.0;
 /// The regions of the panel.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Layout {
+    /// The band naming the patch target (empty without one).
+    pub banner: Rect,
     /// Header band.
     pub header: Rect,
     /// Search field.
@@ -66,10 +70,23 @@ pub(super) struct Layout {
 }
 
 /// Splits `bounds` into the regions of the panel.
-pub(super) fn layout(bounds: Rect, tree_fraction: f64) -> Layout {
+/// `banner` adds the band that names the device the panel applies patches to, above the header.
+pub(super) fn layout(bounds: Rect, tree_fraction: f64, banner: bool) -> Layout {
+    let band = if banner { BANNER_H } else { 0.0 };
+    let banner_rect = Rect::new(
+        bounds.x0,
+        bounds.y0,
+        bounds.x1,
+        (bounds.y0 + band).min(bounds.y1),
+    );
     let right = (bounds.x1 - HANDLE_W).max(bounds.x0);
     let bottom = |y: f64| y.min(bounds.y1).max(bounds.y0);
-    let header = Rect::new(bounds.x0, bounds.y0, right, bottom(bounds.y0 + HEADER_H));
+    let header = Rect::new(
+        bounds.x0,
+        banner_rect.y1,
+        right,
+        bottom(banner_rect.y1 + HEADER_H),
+    );
     let top = header.y0 + (HEADER_H - FIELD_H) / 2.0;
     let preview_btn = Rect::new(
         (right - PAD - 24.0).max(bounds.x0),
@@ -99,6 +116,7 @@ pub(super) fn layout(bounds: Rect, tree_fraction: f64) -> Layout {
     let list = Rect::new(bounds.x0, colhdr.y1, right, bounds.y1.max(colhdr.y1));
     let handle = Rect::new(bounds.x1 - HANDLE_W, bounds.y0, bounds.x1, bounds.y1);
     Layout {
+        banner: banner_rect,
         header,
         search,
         recursive_btn,
@@ -324,7 +342,7 @@ mod tests {
     #[test]
     fn regions_stack_without_gaps_or_overlap() {
         let b = bounds(300.0, 600.0);
-        let l = layout(b, 0.4);
+        let l = layout(b, 0.4, false);
         assert_eq!(l.header.y0, b.y0);
         assert_eq!(l.tree.y0, l.header.y1);
         assert_eq!(l.splitter.y0, l.tree.y1);
@@ -341,18 +359,18 @@ mod tests {
     #[test]
     fn tree_fraction_is_clamped_and_leaves_room_for_the_list() {
         let b = bounds(300.0, 600.0);
-        let lo = layout(b, 0.0);
+        let lo = layout(b, 0.0, false);
         assert!((lo.tree.height() - (600.0 - HEADER_H) * 0.1).abs() < 1e-9);
-        let hi = layout(bounds(300.0, 1000.0), 5.0);
+        let hi = layout(bounds(300.0, 1000.0), 5.0, false);
         assert!((hi.tree.height() - (1000.0 - HEADER_H) * 0.9).abs() < 1e-9);
-        let tiny = layout(bounds(300.0, 120.0), 0.9);
+        let tiny = layout(bounds(300.0, 120.0), 0.9, false);
         assert!(tiny.list.height() >= ROW_H - 1e-9);
         assert!(tiny.list.y1 <= 140.0 + 1e-9);
     }
 
     #[test]
     fn header_controls_fit_at_min_width() {
-        let l = layout(bounds(200.0, 400.0), 0.4);
+        let l = layout(bounds(200.0, 400.0), 0.4, false);
         assert!(l.search.width() > 80.0);
         assert!(l.search.x1 <= l.recursive_btn.x0);
         assert!(l.recursive_btn.x1 <= l.preview_btn.x0);

@@ -271,6 +271,9 @@ pub struct AppCore<S: EngineSink> {
     keep_pending: Option<ClipId>,
     /// The next applied command is folded into the undo step before it (a follow-up).
     join_next: bool,
+    /// The next applied command is a step of the open patch trial: no undo entry (see
+    /// `Document::apply_trial`).
+    trial_next: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -323,7 +326,8 @@ pub struct AppCore<S: EngineSink> {
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
-    /// Where each device last took a patch from (the patch strip's previous and next).
+    /// Where each device last took a patch from, the patch browsing target and the lists it
+    /// steps through.
     patches: patches::PatchState,
 }
 
@@ -486,6 +490,7 @@ impl<S: EngineSink> AppCore<S> {
             warp_imports: crate::import_warp::WarpImports::default(),
             keep_pending: None,
             join_next: false,
+            trial_next: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -636,6 +641,11 @@ impl<S: EngineSink> AppCore<S> {
     /// Applies a command and syncs the engine and the view. On rejection nothing changes and
     /// the view shows the error.
     pub fn apply_command(&mut self, command: Command) -> Result<(), ModelError> {
+        // Anything but a step of the patch trial accepts the trial first (it is one undo step).
+        let trial = std::mem::take(&mut self.trial_next);
+        if !trial {
+            self.commit_patch_browse();
+        }
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
         // Muting an automation lane holds the value it gave.
@@ -662,7 +672,9 @@ impl<S: EngineSink> AppCore<S> {
             note_edit_of(&command)
         };
         let applied = catch_unwind(AssertUnwindSafe(|| {
-            if joined {
+            if trial {
+                self.document.apply_trial(command, &self.registry)
+            } else if joined {
                 self.document.apply_joined(command, &self.registry)
             } else {
                 self.document.apply(command, &self.registry)
@@ -935,6 +947,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Undoes the last step; false when there is nothing to undo.
     pub fn undo(&mut self) -> bool {
+        self.commit_patch_browse();
         self.plugins_flush_dirty();
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo(&self.registry)));
         self.after_history_step(done, "undo")
@@ -942,6 +955,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Redoes the last undone step; false when there is nothing to redo.
     pub fn redo(&mut self) -> bool {
+        self.commit_patch_browse();
         self.plugins_flush_dirty();
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo(&self.registry)));
         self.after_history_step(done, "redo")
@@ -1130,6 +1144,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;
         self.set_saved(doc.clone());
+        self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
         self.file = file;
         self.rejection = None;

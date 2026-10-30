@@ -107,8 +107,11 @@ mixer.value_page_up | mixer | PageUp
 mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
+rack.browse_patch | rack | Cmd+Shift+B
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
+rack.patch_next | rack | Cmd+Right
+rack.patch_prev | rack | Cmd+Left
 rack.select_next | rack | Down
 rack.select_prev | rack | Up
 sequencer.audio_crossfade toggle | sequencer | X

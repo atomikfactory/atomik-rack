@@ -493,6 +493,8 @@ pub enum PatchOp {
     Browse,
     /// The save button.
     Save,
+    /// A right-click on the patch name: a pop-up of the patches of the same type in the folder.
+    Siblings,
 }
 
 /// What a context menu was opened on (see [`UiAction::ContextMenu`]).
@@ -624,6 +626,13 @@ pub enum BrowseAction {
     Preview(PathBuf),
     /// Stop the preview.
     StopPreview,
+    /// With a patch target ([`crate::FileBrowserView::set_patch_target`]): this patch row was
+    /// selected (clicked, or stepped to with the arrow keys). Apply it to the target device as
+    /// a preview with no undo step.
+    Audition(PathBuf),
+    /// With a patch target: Escape. Put the target device back as it was and end patch
+    /// browsing.
+    Cancel,
     /// Toggle favourite on these files together (see `LibraryDb::toggle_favorite`).
     ToggleFavorite(Vec<PathBuf>),
     /// Tag these files.

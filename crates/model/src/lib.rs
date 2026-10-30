@@ -899,6 +899,10 @@ pub struct Document {
     last_clip: Option<ClipId>,
     /// Changes whenever [`Document::doc`] may have changed (see [`Document::revision`]).
     revision: u64,
+    /// The steps of an open trial, oldest first (see [`Document::apply_trial`]).
+    trial: Vec<Edit>,
+    /// The redo history an open trial set aside.
+    trial_redo: Vec<Edit>,
 }
 
 /// The source of document revisions: process wide, so two documents (a replaced one and the
@@ -960,6 +964,8 @@ impl Document {
             merge: None,
             last_clip: None,
             revision: next_revision(),
+            trial: Vec::new(),
+            trial_redo: Vec::new(),
         }
     }
 
@@ -1211,6 +1217,86 @@ impl Document {
         Ok(ops)
     }
 
+    /// Applies `command` as one more step of a trial: the document changes and the sync ops
+    /// come back, but no undo step is recorded and the redo history is kept aside. A trial is
+    /// a run of previews (stepping through the patches of a device, say) that the user then
+    /// accepts with [`Document::commit_trial`], one undo step for the whole run, or drops with
+    /// [`Document::cancel_trial`], which puts the document back. Nothing else may be applied
+    /// while a trial is open (the caller ends it first); undo and redo refuse to run.
+    ///
+    /// # Errors
+    /// As [`Document::apply`]; a rejected command leaves the trial as it was.
+    pub fn apply_trial(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let redo = std::mem::take(&mut self.redo);
+        let depth = self.undo.len();
+        let ops = match self.apply(command, registry) {
+            Ok(ops) => ops,
+            Err(e) => {
+                self.redo = redo;
+                return Err(e);
+            }
+        };
+        if self.undo.len() > depth
+            && let Some(step) = self.undo.pop()
+        {
+            if self.trial.is_empty() {
+                self.trial_redo = redo;
+            }
+            self.trial.push(step);
+        } else if self.trial.is_empty() {
+            // The command changed nothing the history records: the redo history stays.
+            self.redo = redo;
+        }
+        self.merge = None;
+        Ok(ops)
+    }
+
+    /// Whether a trial is open ([`Document::apply_trial`] ran and was not ended).
+    pub fn in_trial(&self) -> bool {
+        !self.trial.is_empty()
+    }
+
+    /// Accepts the open trial: its steps become one undo step (none when it changed nothing).
+    pub fn commit_trial(&mut self) {
+        self.merge = None;
+        self.trial_redo.clear();
+        match self.trial.len() {
+            0 => {}
+            1 => self.undo.append(&mut self.trial),
+            _ => {
+                let steps = std::mem::take(&mut self.trial);
+                self.undo.push(Edit::Compound(steps));
+            }
+        }
+    }
+
+    /// Drops the open trial: the document is as it was before it, and so is the redo history.
+    /// The sync ops to apply come back (empty without a trial).
+    ///
+    /// # Errors
+    /// [`ModelError::Invariant`] when a step does not fit the document (the trial stays open
+    /// with the steps that were not undone).
+    pub fn cancel_trial(&mut self) -> Result<Vec<SyncOp>, ModelError> {
+        self.merge = None;
+        let mut ops = Vec::new();
+        while let Some(step) = self.trial.pop() {
+            match step.inverse().perform(&mut self.doc) {
+                Ok(more) => ops.extend(more),
+                Err(fault) => {
+                    self.trial.push(step);
+                    return Err(fault.into());
+                }
+            }
+        }
+        self.redo = std::mem::take(&mut self.trial_redo);
+        self.revision = next_revision();
+        Ok(ops)
+    }
+
     /// Undoes the last step; `None` when there is nothing to undo (or when the step cannot be
     /// undone: it stays where it is and the document is unchanged; [`Document::try_undo`] says
     /// why).
@@ -1231,6 +1317,9 @@ impl Document {
     /// document is as it was and the step stays on the undo stack.
     pub fn try_undo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
+        if self.in_trial() {
+            return Ok(None);
+        }
         let Some(edit) = self.undo.pop() else {
             return Ok(None);
         };
@@ -1253,6 +1342,9 @@ impl Document {
     /// As [`Document::try_undo`]; the step stays on the redo stack.
     pub fn try_redo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
+        if self.in_trial() {
+            return Ok(None);
+        }
         let Some(edit) = self.redo.pop() else {
             return Ok(None);
         };
@@ -1282,7 +1374,7 @@ impl Document {
     /// keeps exactly these files in the bundle's `Audio/` folder on save.
     pub fn referenced_assets(&self) -> BTreeSet<String> {
         let mut out = self.doc.referenced_assets();
-        for edit in self.undo.iter().chain(&self.redo) {
+        for edit in self.undo.iter().chain(&self.redo).chain(&self.trial) {
             edit.collect_assets(&mut out);
         }
         out
