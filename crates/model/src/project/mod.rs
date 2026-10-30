@@ -376,6 +376,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+mod legacy;
 mod read_clip;
 mod read_console;
 mod read_devices;
@@ -388,13 +389,13 @@ mod write_clip;
 mod write_console;
 mod write_devices;
 
+use legacy::*;
 use read_clip::*;
 use read_console::*;
 use read_devices::*;
 use read_legacy::*;
 use read_song::*;
 use read_track::*;
-use schema::*;
 use write_clip::*;
 use write_console::*;
 
