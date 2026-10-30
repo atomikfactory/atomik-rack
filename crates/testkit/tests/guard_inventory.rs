@@ -12,6 +12,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/ac_u2.rs",
     "render/audio_demo.rs",
     "render/audio_editing.rs",
+    "render/audio_nan.rs",
     "render/audio_project.rs",
     "render/automation_only.rs",
     "render/automation_shown.rs",
