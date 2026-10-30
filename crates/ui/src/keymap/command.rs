@@ -391,6 +391,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "editor.audio_add_transients",
+        "Add Markers at Transients",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
         "editor.audio_mode_overview",
         "Audio Editor: Overview",
         G::Editor,
@@ -1583,6 +1590,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("tool.pencil", "Pencil Tool", G::Tools, C::Sequencer),
     cmd("tool.razor", "Razor Tool", G::Tools, C::Sequencer),
     cmd("tool.select", "Select Tool", G::Tools, C::Sequencer),
+    cmd("tool.speaker", "Speaker Tool", G::Tools, C::Sequencer),
     cmd(
         "transport.add_marker",
         "Add Marker",

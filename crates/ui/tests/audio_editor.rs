@@ -365,3 +365,205 @@ fn the_arrangement_opens_an_audio_clip_with_open_clip() {
         "{out:?}"
     );
 }
+
+// ------------------------------------------------------------------ transients and the speaker
+
+/// The first source frame of clip 10 in its asset.
+const OFFSET: u64 = RATE as u64;
+
+fn detect_requests(actions: &[UiAction]) -> Vec<(ClipId, u8)> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::DetectTransients { clip, sensitivity } => Some((*clip, *sensitivity)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The x of the asset frame `frame` of clip 10 once warp is on.
+fn x_of_frame(v: &AudioEditorView, d: &Document, frame: u64) -> f64 {
+    let tick = warp_of(d).ticks_at_source(RATE, (frame - OFFSET) as f64);
+    v.tick_x(tick.round() as i64)
+}
+
+#[test]
+fn slice_mode_and_the_sensitivity_buttons_ask_for_the_transients() {
+    let (mut d, reg, mut v) = setup();
+    let p = v.mode_button_center(AudioMode::Slice);
+    let a = feed(&mut v, &mut d, &reg, &[down(p), up(p)]);
+    assert_eq!(detect_requests(&a), vec![(CLIP, 50)]);
+    v.sync(d.doc(), &reg);
+    let more = v.sensitivity_up_center();
+    let a = feed(&mut v, &mut d, &reg, &[down(more), up(more)]);
+    assert_eq!(detect_requests(&a), vec![(CLIP, 60)]);
+    assert_eq!(v.sensitivity(), 60);
+    let less = v.sensitivity_down_center();
+    let a = feed(
+        &mut v,
+        &mut d,
+        &reg,
+        &[down(less), up(less), down(less), up(less)],
+    );
+    assert_eq!(detect_requests(&a), vec![(CLIP, 50), (CLIP, 40)]);
+    // At the ends the buttons do nothing.
+    v.set_sensitivity(100);
+    let a = feed(&mut v, &mut d, &reg, &[down(more), up(more)]);
+    assert!(detect_requests(&a).is_empty());
+    // Overview mode asks for nothing.
+    let ov = v.mode_button_center(AudioMode::Overview);
+    let a = feed(&mut v, &mut d, &reg, &[down(ov), up(ov)]);
+    assert!(detect_requests(&a).is_empty());
+}
+
+#[test]
+fn a_double_click_near_a_transient_snaps_the_marker_to_it() {
+    let (mut d, reg, mut v) = setup();
+    slice_mode(&mut v, &mut d, &reg);
+    let frame = OFFSET + 30_011;
+    v.set_transients(vec![frame, OFFSET + 70_000]);
+    let x = x_of_frame(&v, &d, frame);
+    let depth = d.undo_depth();
+    let y = mid_y(&v);
+    feed(&mut v, &mut d, &reg, &dbl(Point::new(x + 3.0, y)));
+    assert_eq!(d.undo_depth(), depth + 1);
+    let m = markers_of(&d);
+    assert!(
+        m.iter().any(|m| m.source == 30_011),
+        "the marker is on the transient frame: {m:?}"
+    );
+    // Far from a transient the marker lands where the pointer is, not on a transient.
+    v.sync(d.doc(), &reg);
+    let far = x_of_frame(&v, &d, OFFSET + 50_000);
+    feed(&mut v, &mut d, &reg, &dbl(Point::new(far, y)));
+    let m = markers_of(&d);
+    assert_eq!(m.len(), 4, "{m:?}");
+}
+
+#[test]
+fn add_all_puts_a_marker_on_every_transient_in_one_undo_step() {
+    let (mut d, reg, mut v) = setup();
+    slice_mode(&mut v, &mut d, &reg);
+    let c = v.add_all_button_center();
+    // Nothing detected yet: a refusal, no command.
+    let a = feed(&mut v, &mut d, &reg, &[down(c), up(c)]);
+    assert!(commands(&a).is_empty());
+    assert!(v.status().contains("No transients"), "{}", v.status());
+    v.set_transients(vec![OFFSET + 10_000, OFFSET + 20_000, OFFSET + 40_000]);
+    let depth = d.undo_depth();
+    let a = feed(&mut v, &mut d, &reg, &[down(c), up(c)]);
+    assert_eq!(commands(&a).len(), 1);
+    assert_eq!(d.undo_depth(), depth + 1);
+    let m = markers_of(&d);
+    for want in [10_000, 20_000, 40_000] {
+        assert!(m.iter().any(|m| m.source == want), "{want}: {m:?}");
+    }
+    // The command form is the same; with every transient marked it says so.
+    v.sync(d.doc(), &reg);
+    let out = v.command("editor.audio_add_transients", None, d.doc(), &reg);
+    assert!(
+        matches!(out, CommandOutcome::Handled(ref a) if a.is_empty()),
+        "{out:?}"
+    );
+    assert!(v.status().contains("already"), "{}", v.status());
+    d.undo(&reg).unwrap();
+    assert!(
+        markers_of(&d)
+            .iter()
+            .all(|m| ![10_000, 20_000, 40_000].contains(&m.source))
+    );
+}
+
+#[test]
+fn the_speaker_plays_from_the_press_to_the_end_of_the_clip_and_stops_on_release() {
+    let (mut d, reg, mut v) = setup();
+    let s = v.speaker_button_center();
+    feed(&mut v, &mut d, &reg, &[down(s), up(s)]);
+    assert!(v.speaker());
+    let w = v.wave_rect();
+    let p = Point::new(w.x0 + w.width() / 2.0, mid_y(&v));
+    let a = feed(&mut v, &mut d, &reg, &[down(p)]);
+    let [
+        UiAction::AuditionSpan {
+            asset,
+            start_frame,
+            end_frame,
+            reverse,
+            gain_db,
+        },
+    ] = &a[..]
+    else {
+        panic!("{a:?}")
+    };
+    assert_eq!(asset, HASH_A);
+    assert!(!reverse);
+    assert_eq!(*gain_db, -3.0);
+    assert!(
+        *start_frame > OFFSET && start_frame < end_frame,
+        "{start_frame}..{end_frame}"
+    );
+    assert!(v.is_dragging());
+    let a = feed(&mut v, &mut d, &reg, &[up(p)]);
+    assert_eq!(a, vec![UiAction::StopAudition]);
+    assert!(!v.is_dragging());
+    // Nothing was edited, and a double-click does not add a marker while the speaker is on.
+    v.set_mode(AudioMode::Slice);
+    let depth = d.undo_depth();
+    let a = feed(&mut v, &mut d, &reg, &dbl(p));
+    assert!(commands(&a).is_empty());
+    assert_eq!(d.undo_depth(), depth);
+    // Escape during the audition stops it.
+    feed(&mut v, &mut d, &reg, &[down(p)]);
+    let a = feed(&mut v, &mut d, &reg, &[press(Key::Escape, Modifiers::NONE)]);
+    assert_eq!(a, vec![UiAction::StopAudition]);
+    // The toggle command switches it off again.
+    assert!(matches!(
+        v.command("tool.speaker", None, d.doc(), &reg),
+        CommandOutcome::Handled(_)
+    ));
+    assert!(!v.speaker());
+}
+
+#[test]
+fn the_toolbar_shows_the_transient_and_speaker_controls() {
+    let (mut d, reg, mut v) = setup();
+    slice_mode(&mut v, &mut d, &reg);
+    let mut dl = atomik_ui::DisplayList::new();
+    v.paint(&mut dl, d.doc(), &reg);
+    let texts: Vec<String> = dl.texts().into_iter().map(str::to_string).collect();
+    for want in ["SENS", "50", "ADD ALL", "SPEAKER"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+}
+
+#[test]
+fn the_speaker_tool_in_the_arrangement_auditions_an_audio_clip_while_held() {
+    let (d, reg, _) = setup();
+    let mut arr = audio_arrangement(d.doc(), &reg);
+    arr.set_tool(atomik_ui::Tool::Speaker);
+    let r = arr.clip_rect(CLIP).expect("the clip is shown");
+    let p = Point::new(r.x0 + r.width() / 2.0, r.y0 + r.height() / 2.0);
+    let a = arr.handle(&down(p), d.doc(), &reg);
+    let [
+        UiAction::AuditionSpan {
+            asset,
+            start_frame,
+            end_frame,
+            reverse,
+            ..
+        },
+    ] = &a[..]
+    else {
+        panic!("{a:?}")
+    };
+    assert_eq!(asset, HASH_A);
+    assert!(!reverse && *start_frame > OFFSET && start_frame < end_frame);
+    let a = arr.handle(&up(p), d.doc(), &reg);
+    assert_eq!(a, vec![UiAction::StopAudition]);
+    // A note clip and an empty lane do not audition, and nothing is selected, drawn or moved.
+    let note = arr.clip_rect(ClipId(1)).expect("the note clip");
+    let q = Point::new(note.x0 + 10.0, note.y0 + note.height() / 2.0);
+    let a = arr.handle(&down(q), d.doc(), &reg);
+    assert!(a.is_empty(), "{a:?}");
+    assert!(arr.handle(&up(q), d.doc(), &reg).is_empty());
+}

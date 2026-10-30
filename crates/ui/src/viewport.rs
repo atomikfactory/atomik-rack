@@ -21,11 +21,22 @@ pub enum Tool {
     Eraser,
     /// Razor: a click splits the clip or note under the pointer at the snapped position.
     Razor,
+    /// Speaker: pressing on an audio clip plays the audio under the pointer as it is in its file, unprocessed, until the button is released. Only the arrangement uses it.
+    Speaker,
 }
 
 impl Tool {
     /// Every tool, in palette order.
-    pub const ALL: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Razor];
+    pub const ALL: [Tool; 5] = [
+        Tool::Select,
+        Tool::Pencil,
+        Tool::Eraser,
+        Tool::Razor,
+        Tool::Speaker,
+    ];
+
+    /// The tools of a note editor, in palette order: all but the speaker.
+    pub const NOTE: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Razor];
 
     /// The registry command that selects this tool.
     pub fn command_id(self) -> &'static str {
@@ -34,6 +45,7 @@ impl Tool {
             Tool::Pencil => "tool.pencil",
             Tool::Eraser => "tool.eraser",
             Tool::Razor => "tool.razor",
+            Tool::Speaker => "tool.speaker",
         }
     }
 
@@ -49,6 +61,7 @@ impl Tool {
             Tool::Pencil => "PEN",
             Tool::Eraser => "ERS",
             Tool::Razor => "CUT",
+            Tool::Speaker => "SPK",
         }
     }
 
