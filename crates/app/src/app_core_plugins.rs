@@ -363,6 +363,16 @@ impl PluginState {
     }
 }
 
+/// The flat plugin devices of an expansion.
+pub(super) fn plugin_keys(expanded: &atomik_model::ExpandedRack) -> Vec<DeviceKey> {
+    expanded
+        .devices
+        .iter()
+        .filter(|d| d.plugin.is_some())
+        .map(|d| d.key.clone())
+        .collect()
+}
+
 /// The flat plugin devices of an expansion that publish meter values.
 pub(super) fn metered_with_plugins(expanded: &atomik_model::ExpandedRack) -> Vec<DeviceKey> {
     let mut keys = super::containers::metered_keys(expanded);
@@ -2031,6 +2041,14 @@ impl<S: EngineSink> AppCore<S> {
             .recovery
             .as_ref()
             .map(|r| r.dir.path().to_path_buf())
+    }
+
+    /// The files the diagnostics report summarises: the plugin scan cache and the plugin journal.
+    pub fn plugin_state_files(&self) -> (Option<PathBuf>, Option<PathBuf>) {
+        (
+            self.plugins.paths.cache.clone(),
+            self.plugins.paths.journal.clone(),
+        )
     }
 
     /// The folder holding the session scratch bundles to scan for unfinished recordings.

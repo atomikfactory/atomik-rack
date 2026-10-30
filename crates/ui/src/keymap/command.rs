@@ -621,6 +621,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Files,
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
+    cmd(
+        "help.export_diagnostics",
+        "Export Diagnostics",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("keys.note", "Play Note", G::Keys, C::Keys).arg(KEYS_NOTE_ARGS),
     cmd("keys.octave_down", "Octave Down", G::Keys, C::Keys).rep(),
     cmd("keys.octave_up", "Octave Up", G::Keys, C::Keys).rep(),
@@ -1732,7 +1739,7 @@ mod tests {
             assert!(!d.label.trim().is_empty(), "{}", d.id);
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
-                Group::Global => &["file", "audio"],
+                Group::Global => &["file", "audio", "help"],
                 Group::Transport => &["transport"],
                 Group::View => &["view"],
                 Group::Edit => &["edit"],

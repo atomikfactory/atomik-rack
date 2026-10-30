@@ -234,6 +234,8 @@ pub struct AppCore<S: EngineSink> {
     macro_sent: BTreeMap<(DeviceKey, String), f32>,
     /// The flat devices whose published meter values feed the views (metered effects, players).
     meter_devices: Vec<DeviceKey>,
+    /// The flat plugin devices: their meter values carry the drop and late-batch counters.
+    plugin_devices: Vec<DeviceKey>,
     /// The VCA feed last sent to each strip (a strip not listed has the default one), so only
     /// a change reaches the engine; forgotten when the engine is rebuilt.
     vca_sent: BTreeMap<DeviceKey, VcaFeed>,
@@ -431,6 +433,7 @@ impl<S: EngineSink> AppCore<S> {
             split_sent: BTreeMap::new(),
             macro_sent: BTreeMap::new(),
             meter_devices: Vec::new(),
+            plugin_devices: Vec::new(),
             vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
@@ -1102,6 +1105,7 @@ impl<S: EngineSink> AppCore<S> {
         let expanded = self.doc().expand(&self.registry);
         self.macro_sent = containers::macro_values(&expanded);
         self.meter_devices = plugins::metered_with_plugins(&expanded);
+        self.plugin_devices = plugins::plugin_keys(&expanded);
         self.analysers
             .set_devices(analysers::analyser_keys(&expanded));
         for device in &expanded.devices {
@@ -1186,6 +1190,31 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         self.fx_meter_buf = buf;
+    }
+
+    /// The drops and late sandbox batches the plugins in the rack report, summed:
+    /// `(plugin_drops, late_sandbox_batches)`. Each plugin device publishes both as running
+    /// totals among its meter values (see `atomik_plugin_host`'s device); this is a lock-free
+    /// read per plugin, for the status bar a few times a second.
+    pub fn plugin_overload(&self) -> (u64, u64) {
+        // Positions of the two counters in a plugin device's meter values.
+        const DROPPED: usize = 4;
+        const LATE: usize = 5;
+        let mut buf = [0.0_f32; LATE + 1];
+        let (mut dropped, mut late) = (0.0_f64, 0.0_f64);
+        for key in &self.plugin_devices {
+            let Some(id) = self.ids.get(key) else {
+                continue;
+            };
+            let Some((n, _)) = self.sink.read_device_meter_values(*id, &mut buf) else {
+                continue;
+            };
+            if n > LATE {
+                dropped += f64::from(buf[DROPPED]);
+                late += f64::from(buf[LATE]);
+            }
+        }
+        (dropped as u64, late as u64)
     }
 
     fn sync_ops(&mut self, ops: &[SyncOp]) {
@@ -1318,6 +1347,7 @@ impl<S: EngineSink> AppCore<S> {
         if let Some(exp) = &expanded {
             self.macro_sent = containers::macro_values(exp);
             self.meter_devices = plugins::metered_with_plugins(exp);
+            self.plugin_devices = plugins::plugin_keys(exp);
             self.analysers.set_devices(analysers::analyser_keys(exp));
         }
         self.flush_song(&mut stale);

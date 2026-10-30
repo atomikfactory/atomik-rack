@@ -87,6 +87,16 @@ fn a_session_opens_the_starter_project_and_closes() {
     assert_eq!(v["document"]["devices"].as_array().unwrap().len(), 1);
     assert_eq!(v["window"]["logical"], json!([1280.0, 860.0]));
     assert!(v["status_text"].as_str().unwrap().contains("audio off"));
+    for key in [
+        "dropped_events",
+        "input_overruns",
+        "tap_overflow_frames",
+        "plugin_drops",
+        "control_stalled",
+        "late_sandbox_batches",
+    ] {
+        assert_eq!(v["overload"][key], 0, "{key}");
+    }
     assert_eq!(ok(&mut s, "session_close", json!({}))["closed"], true);
     assert!(call(&mut s, "session_status", json!({})).is_error);
 }

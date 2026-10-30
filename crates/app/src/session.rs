@@ -225,6 +225,10 @@ pub struct LiveSession<B: AudioBackend> {
     latency: Arc<AtomicU64>,
     tap: Arc<RecordTap>,
     hub: Arc<ControlHub>,
+    /// The overflow counter of the audio recording tap that runs (or ran last).
+    audio_tap_overflow: Option<Arc<AtomicU64>>,
+    /// Frames the earlier taps of this stream dropped.
+    tap_overflow_base: u64,
     status: AudioStatus,
 }
 
@@ -255,6 +259,8 @@ impl<B: AudioBackend> LiveSession<B> {
             latency: Arc::new(AtomicU64::new(FALLBACK_LATENCY_FRAMES)),
             tap: Arc::new(RecordTap::new()),
             hub: Arc::new(ControlHub::new()),
+            audio_tap_overflow: None,
+            tap_overflow_base: 0,
             status,
         }
     }
@@ -335,6 +341,12 @@ impl<B: AudioBackend> LiveSession<B> {
             self.status.faulted = t.faulted || r.handle.fault().is_some();
             self.status.faulted_device = r.handle.fault().map(|id| id.0);
             self.status.stream_underruns = r.handle.stream_underruns();
+            self.status.overload.dropped_events = r.handle.dropped_events();
+            self.status.overload.tap_overflow_frames = self.tap_overflow_base
+                + self
+                    .audio_tap_overflow
+                    .as_ref()
+                    .map_or(0, |c| c.load(Ordering::Relaxed));
             if t.buffer_frames > 0 {
                 self.status.buffer_frames = Some(t.buffer_frames);
                 self.latency
@@ -371,6 +383,8 @@ impl<B: AudioBackend> LiveSession<B> {
                 self.status.error = stop_error;
             }
         }
+        self.audio_tap_overflow = None;
+        self.tap_overflow_base = 0;
         self.status = AudioStatus {
             host: self.settings.host.label().to_string(),
             error: self.status.error.take(),
@@ -672,11 +686,17 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         capacity_frames: usize,
         controls: Arc<TapControls>,
     ) -> Option<EngineRecordTap> {
-        self.running
+        let tap = self
+            .running
             .as_mut()?
             .handle
             .record_tap_gained(channels, capacity_frames, controls)
-            .ok()
+            .ok()?;
+        // A new tap replaces the last: what the last one dropped stays counted.
+        if let Some(last) = self.audio_tap_overflow.replace(tap.overflow_counter()) {
+            self.tap_overflow_base += last.load(Ordering::Relaxed);
+        }
+        Some(tap)
     }
 
     fn stop_audio_record(&mut self) {
