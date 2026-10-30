@@ -10,6 +10,13 @@ use atomik_ui::kurbo::Point;
 use std::path::{Path, PathBuf};
 use winit::dpi::{LogicalPosition, PhysicalPosition, Position};
 
+/// The icon of every app window (taskbar, Alt-Tab, title bar), from the embedded logo. `None`
+/// leaves the system's default. macOS ignores it: the Dock icon comes from the bundle.
+pub(super) fn window_icon() -> Option<winit::window::Icon> {
+    let icon = crate::app_icon::app_icon()?;
+    winit::window::Icon::from_rgba(icon.rgba.clone(), icon.size, icon.size).ok()
+}
+
 /// The units of desktop positions on this OS: points on macOS, physical pixels elsewhere
 /// (per-monitor DPI on Windows, X11).
 pub(super) const fn desktop_space() -> DesktopSpace {
@@ -172,6 +179,11 @@ pub(super) fn presents_with_vsync(open_windows: usize) -> bool {
 mod tests {
     use super::*;
     use crate::windows::{ZOrder, to_desktop, window_under};
+
+    #[test]
+    fn the_window_icon_is_built_from_the_embedded_logo() {
+        assert!(window_icon().is_some());
+    }
 
     #[test]
     fn only_a_lone_window_waits_for_the_vertical_blank() {

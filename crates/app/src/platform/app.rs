@@ -477,7 +477,8 @@ impl App {
             .with_title(self.shell.title_in(kind))
             .with_inner_size(LogicalSize::new(placement.size.0, placement.size.1))
             .with_min_inner_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
-            .with_maximized(placement.maximised);
+            .with_maximized(placement.maximised)
+            .with_window_icon(window_logic::window_icon());
         if let Some(pos) = placement.pos {
             attributes = attributes.with_position(window_logic::position_for(space, pos));
         }
