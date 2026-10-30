@@ -18,6 +18,7 @@
 //! | Operation | Moves | Sound |
 //! |---|---|---|
 //! | [`add_at_tick`], [`add_at_source`] | nothing: the marker is pinned at the position the clip plays that frame at (rounded to a source frame) | unchanged |
+//! | [`add_at_sources`] | nothing: [`add_at_source`] for every frame of a list (the detected transients) | unchanged |
 //! | [`move_stretch`] | the marker in time, its audio frame with it | the audio on both sides stretches |
 //! | [`move_decoupled`] | the marker along the audio: tick and source move together on the current time map | the audio around it keeps its place |
 //! | [`move_group`] | the marker in time and every marker after it (or before it) in proportion, as an accordion | the audio between them stretches evenly |
@@ -189,6 +190,36 @@ pub fn add_at_source(
         list[at].source = source;
     }
     Ok((list, at))
+}
+
+/// Adds a marker at each of the source frames `sources` (from the clip's source offset), as
+/// [`add_at_source`] does one by one: a frame the clip does not play inside it, one on a marker
+/// or too close to one is skipped, and the list stops growing at the most markers a clip holds.
+/// Errors only when no marker could be added.
+pub fn add_at_sources(
+    warp: &WarpSettings,
+    rate: u32,
+    length: i64,
+    sources: &[u64],
+) -> Result<Vec<WarpMarker>, SliceError> {
+    check(length)?;
+    let mut current = warp.clone();
+    let mut added = false;
+    for &source in sources {
+        match add_at_source(&current, rate, length, source) {
+            Ok((list, _)) => {
+                current.markers = list;
+                added = true;
+            }
+            Err(SliceError::TooMany) => break,
+            Err(_) => {}
+        }
+    }
+    if added {
+        Ok(current.markers)
+    } else {
+        Err(SliceError::NoRoom)
+    }
 }
 
 /// Removes the marker at `index`.
@@ -487,6 +518,30 @@ mod tests {
     }
 
     #[test]
+    fn markers_are_added_at_every_listed_frame_in_one_list() {
+        let w = warp(Vec::new());
+        // 2 source frames per tick: frame 400 plays at tick 200, 1000 at tick 500.
+        let out = add_at_sources(&w, RATE, 1000, &[1000, 400, 400, 0, 5_000_000]).unwrap();
+        assert_eq!(out, vec![m(0, 0), m(200, 400), m(500, 1000), m(1000, 2000)]);
+        assert!(is_natural(&out, &w, RATE));
+        assert_eq!(
+            add_at_sources(&w, RATE, 1000, &[0, 9_999_999]),
+            Err(SliceError::NoRoom)
+        );
+        assert_eq!(add_at_sources(&w, RATE, 1, &[10]), Err(SliceError::Empty));
+    }
+
+    #[test]
+    fn adding_many_frames_stops_at_the_marker_limit() {
+        let w = warp(Vec::new());
+        let sources: Vec<u64> = (1..=MAX_WARP_MARKERS as u64 + 50).map(|i| i * 4).collect();
+        let length = (MAX_WARP_MARKERS as i64 + 100) * 2;
+        let out = add_at_sources(&w, RATE, length, &sources).unwrap();
+        assert!(out.len() <= MAX_WARP_MARKERS);
+        assert!(warp(out).validate().is_ok());
+    }
+
+    #[test]
     fn the_marker_count_is_limited() {
         let gaps: Vec<(i64, u64)> = (0..MAX_WARP_MARKERS - 1).map(|_| (2, 2)).collect();
         let (list, length) = list_of(0, &gaps);
@@ -525,6 +580,7 @@ mod tests {
                 delete(&w, RATE, length, index).ok(),
                 add_at_tick(&w, RATE, length, at).ok().map(|(l, _)| l),
                 add_at_source(&w, RATE, length, source).ok().map(|(l, _)| l),
+                add_at_sources(&w, RATE, length, &[source, source / 2, source + 7]).ok(),
             ];
             for out in results.into_iter().flatten() {
                 prop_assert!(valid(&out, length), "{out:?}");
