@@ -1134,7 +1134,7 @@ may break APIs and the patch and project formats.
   reproducible; another seed gives another take. Applying is baked into the note times, one undo
   step over all selected clips, and playback and bounces are unchanged; two notes of one key that
   land on the same tick both stay (the later moves one tick on). Audio clips, controller lane points
-  and the takes of a take group are left alone. Ctrl+K (Cmd+K on macOS, as in Reason) quantizes the
+  and the takes of a take group are left alone. Ctrl+K (Cmd+K on macOS) quantizes the
   selected notes of the piano roll or the selected clips of the arrangement at once with the panel's
   last settings (Q does the same in the legacy profile), Edit > Quantize does it from the menu
   (enabled with a selection, like Cut and Copy), and the piano roll's toolbar has a QUANT button

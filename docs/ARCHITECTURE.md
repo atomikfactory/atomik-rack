@@ -1702,8 +1702,7 @@ engine, the audio thread and the file format are untouched.
 
 ### 2.21 Note lanes
 
-A track holds one or more note lanes that feed its device together, like the lanes of a Reason
-track: lane `i` for `i < Track::note_lane_count()` is `lanes[i]`, the note lanes come first, then
+A track holds one or more note lanes that feed its device together: lane `i` for `i < Track::note_lane_count()` is `lanes[i]`, the note lanes come first, then
 the automation lanes; an audio track keeps its single audio lane. A lane has an optional `name` and
 a `muted` flag (fields of the lane, not part of `LaneKind`, whose equality decides which lane a move
 or paste matches). `Track::lane_label` is what the headers show: the name, else "Notes", "Notes 2",
