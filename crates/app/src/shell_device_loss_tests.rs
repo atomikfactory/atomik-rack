@@ -84,12 +84,8 @@ impl AudioBackend for Fake {
         })
     }
 
-    fn open_midi(
-        &self,
-        name: &str,
-        link: MidiLink,
-    ) -> Result<MidiConnection, (MidiError, MidiLink)> {
-        Err((MidiError::PortNotFound(name.to_string()), link))
+    fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {
+        Err(MidiError::PortNotFound(name.to_string()))
     }
 }
 

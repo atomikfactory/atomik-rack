@@ -14,7 +14,7 @@ use crate::audio_record::record_offset_frames;
 use crate::midi::{MidiConnection, MidiLink};
 use crate::midi_control::ControlHub;
 use crate::record::{RecordTap, RecordedNote};
-use crate::settings::{AudioSettings, LastGood};
+use crate::settings::{AudioSettings, LastGood, MidiInputRole};
 use crate::sink::EngineSink;
 use crate::status::AudioStatus;
 use crate::target::{NoteTarget, Target};
@@ -78,12 +78,8 @@ pub trait MidiPort {
     fn port_name(&self) -> &str;
     /// Notes dropped because the live queue was full.
     fn dropped(&self) -> u64;
-    /// Closes the port and hands the link (with the engine's live sender) back.
-    fn close(self) -> MidiLink;
-    /// Sends a note now on the link's live queue (audition; [`MidiLink::send_now`]).
-    fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
-    /// Plays a note now as played input: [`MidiLink::play_now`].
-    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
+    /// Closes the port.
+    fn close(self);
 }
 
 /// The outside world: audio devices and MIDI ports.
@@ -110,8 +106,9 @@ pub trait AudioBackend {
         engine: Engine,
         clock: Arc<FrameClock>,
     ) -> Result<Self::Stream, IoError>;
-    /// Opens a MIDI input; on failure the link is handed back.
-    fn open_midi(&self, name: &str, link: MidiLink) -> Result<Self::Midi, (MidiError, MidiLink)>;
+    /// Opens a MIDI input that feeds the engine through `link` (shared with the other open
+    /// ports).
+    fn open_midi(&self, name: &str, link: MidiLink) -> Result<Self::Midi, MidiError>;
 }
 
 /// The real devices (`atomik-audio-io`, midir).
@@ -137,14 +134,8 @@ impl MidiPort for MidiConnection {
     fn dropped(&self) -> u64 {
         MidiConnection::dropped(self)
     }
-    fn close(self) -> MidiLink {
-        MidiConnection::close(self)
-    }
-    fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        MidiConnection::send_now(self, target, kind)
-    }
-    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        MidiConnection::play_now(self, target, kind)
+    fn close(self) {
+        MidiConnection::close(self);
     }
 }
 
@@ -174,11 +165,7 @@ impl AudioBackend for SystemBackend {
         atomik_audio_io::start_with_input(spec, input_device, engine, clock)
     }
 
-    fn open_midi(
-        &self,
-        name: &str,
-        link: MidiLink,
-    ) -> Result<MidiConnection, (MidiError, MidiLink)> {
+    fn open_midi(&self, name: &str, link: MidiLink) -> Result<MidiConnection, MidiError> {
         MidiConnection::open(name, link)
     }
 }
@@ -209,12 +196,8 @@ impl AudioBackend for NullBackend {
         Err(IoError::HostUnavailable("none (null backend)".into()))
     }
 
-    fn open_midi(
-        &self,
-        name: &str,
-        link: MidiLink,
-    ) -> Result<MidiConnection, (MidiError, MidiLink)> {
-        Err((MidiError::PortNotFound(name.to_string()), link))
+    fn open_midi(&self, name: &str, _link: MidiLink) -> Result<MidiConnection, MidiError> {
+        Err(MidiError::PortNotFound(name.to_string()))
     }
 }
 
@@ -223,7 +206,7 @@ impl AudioBackend for NullBackend {
 pub enum SettingsChange {
     /// Nothing changed.
     None,
-    /// Only the MIDI input changed; it was reopened, the engine kept running.
+    /// Only the MIDI inputs changed; the ports were opened or closed, the engine kept running.
     MidiReopened,
     /// Audio settings changed: restart the engine from the document
     /// ([`crate::AppCore::rebuild_engine`]).
@@ -237,9 +220,20 @@ struct Running<B: AudioBackend> {
     /// The host device's `(input, output)` channel counts.
     host_channels: (u16, u16),
     stream: B::Stream,
-    midi: Option<B::Midi>,
-    /// The live link while no MIDI port is open.
-    idle_link: Option<MidiLink>,
+    /// The open MIDI input ports, in settings order.
+    midi: Vec<OpenInput<B::Midi>>,
+    /// The live link every port shares (also the audition and Piano Keys path); `None` when the
+    /// engine gave no live sender.
+    link: Option<MidiLink>,
+}
+
+/// An open MIDI port and the setting it was opened for.
+struct OpenInput<M> {
+    /// The name in the settings (the port's full name is the port's).
+    wanted: String,
+    /// What the port was opened as.
+    role: MidiInputRole,
+    port: M,
 }
 
 /// Engine, stream and MIDI input for the app.
@@ -343,7 +337,7 @@ impl<B: AudioBackend> LiveSession<B> {
         self.latency.load(Ordering::Relaxed)
     }
 
-    /// Applies new settings. A MIDI-only change reopens the MIDI input at once; any other
+    /// Applies new settings. A MIDI-only change opens and closes the MIDI ports at once; any other
     /// change asks for an audio restart.
     pub fn set_settings(&mut self, mut settings: AudioSettings) -> SettingsChange {
         // The last working configuration is the session's to track, not the dialog's.
@@ -358,8 +352,8 @@ impl<B: AudioBackend> LiveSession<B> {
         if audio_changed {
             self.status.host = self.settings.host.label().to_string();
             SettingsChange::RestartAudio
-        } else if old.midi_input != self.settings.midi_input {
-            self.reopen_midi();
+        } else if old.midi_inputs != self.settings.midi_inputs {
+            self.sync_midi();
             SettingsChange::MidiReopened
         } else {
             SettingsChange::None
@@ -425,12 +419,14 @@ impl<B: AudioBackend> LiveSession<B> {
                 host_channels: _,
                 stream,
                 midi,
-                idle_link,
+                link,
             } = r;
             // MIDI first (it feeds the engine), then the stream, which hands the engine back
             // so it is dropped here and not on the audio thread.
-            drop(midi.map(MidiPort::close));
-            drop(idle_link);
+            for open in midi {
+                open.port.close();
+            }
+            drop(link);
             let stop_error = match stream.stop() {
                 Ok(engine) => {
                     drop(engine);
@@ -523,32 +519,80 @@ impl<B: AudioBackend> LiveSession<B> {
         self.notice.take()
     }
 
-    /// Closes the MIDI port (if any) and opens the one in the settings, keeping the engine.
-    fn reopen_midi(&mut self) {
+    /// Brings the open MIDI ports in line with the settings, keeping the engine: a port that is
+    /// no longer enabled (or changed what it is for) is closed, an enabled one that is not open
+    /// is opened, and the ports that stay as they are are not touched (a held note keeps its
+    /// port). A port that fails to open is reported in the status and retried by the next call
+    /// (a controller that was plugged in since).
+    fn sync_midi(&mut self) {
         let Some(r) = &mut self.running else {
             return;
         };
-        let link = match (r.midi.take(), r.idle_link.take()) {
-            (Some(midi), _) => midi.close(),
-            (None, Some(link)) => link,
-            // The live sender is gone (cannot happen: it is always in one of the two).
-            (None, None) => return,
-        };
-        self.status.midi_port = None;
-        self.status.midi_error = None;
-        match &self.settings.midi_input {
-            None => r.idle_link = Some(link),
-            Some(name) => match self.backend.open_midi(name, link) {
-                Ok(midi) => {
-                    self.status.midi_port = Some(midi.port_name().to_string());
-                    r.midi = Some(midi);
-                }
-                Err((e, link)) => {
-                    self.status.midi_error = Some(e.to_string());
-                    r.idle_link = Some(link);
-                }
-            },
+        let wanted: Vec<(String, MidiInputRole)> = self
+            .settings
+            .enabled_midi_inputs()
+            .map(|i| (i.name.clone(), i.role))
+            .collect();
+        let mut keep = Vec::with_capacity(r.midi.len());
+        for open in std::mem::take(&mut r.midi) {
+            if wanted
+                .iter()
+                .any(|(name, role)| *name == open.wanted && *role == open.role)
+            {
+                keep.push(open);
+            } else {
+                open.port.close();
+            }
         }
+        let mut errors = Vec::new();
+        let listed = self.backend.list_midi().ok();
+        if let Some(link) = &r.link {
+            for (name, role) in &wanted {
+                if keep.iter().any(|o| o.wanted == *name) {
+                    continue;
+                }
+                // Two settings that name one port (a full name and a substring of it) open it
+                // once.
+                let full = listed
+                    .as_ref()
+                    .and_then(|l| crate::midi::match_port(l, name).ok().map(|i| &l[i]));
+                if full.is_some_and(|f| keep.iter().any(|o| o.port.port_name() == f)) {
+                    continue;
+                }
+                let link = link.with_plays_notes(*role == MidiInputRole::Keyboard);
+                match self.backend.open_midi(name, link) {
+                    Ok(port) => keep.push(OpenInput {
+                        wanted: name.clone(),
+                        role: *role,
+                        port,
+                    }),
+                    Err(e) => errors.push(e.to_string()),
+                }
+            }
+        }
+        // Settings order, so the status lists the ports the way the dialog does.
+        keep.sort_by_key(|o| wanted.iter().position(|(name, _)| *name == o.wanted));
+        r.midi = keep;
+        self.status.midi_port = (!r.midi.is_empty()).then(|| {
+            r.midi
+                .iter()
+                .map(|o| o.port.port_name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        });
+        self.status.midi_error = (!errors.is_empty()).then(|| errors.join("; "));
+    }
+
+    /// Opens the enabled MIDI ports that are not open: a controller plugged in after start-up
+    /// (or that a failed open left out) comes up without restarting the audio.
+    pub fn rescan_midi(&mut self) {
+        self.sync_midi();
+    }
+
+    /// Whether every enabled MIDI port is open (nothing for [`Self::rescan_midi`] to do): the
+    /// last sync left no port it could not open.
+    pub fn midi_complete(&self) -> bool {
+        self.running.is_none() || self.status.midi_error.is_none()
     }
 }
 
@@ -603,24 +647,26 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             stream_state: StreamState::Starting,
             ..AudioStatus::default()
         };
-        let idle_link = sender.map(|sender| MidiLink {
-            sender,
-            clock,
-            target: Arc::clone(&self.target),
-            sample_rate: config.sample_rate.hz(),
-            latency: Arc::clone(&self.latency),
-            tap: Arc::clone(&self.tap),
-            hub: Arc::clone(&self.hub),
+        let link = sender.map(|sender| {
+            MidiLink::new(
+                sender,
+                clock,
+                Arc::clone(&self.target),
+                config.sample_rate.hz(),
+                Arc::clone(&self.latency),
+                Arc::clone(&self.tap),
+                Arc::clone(&self.hub),
+            )
         });
         self.running = Some(Running {
             meters: handle.meters(),
             host_channels: (info.input_channels, info.output_channels),
             handle,
             stream,
-            midi: None,
-            idle_link,
+            midi: Vec::new(),
+            link,
         });
-        self.reopen_midi();
+        self.sync_midi();
     }
 
     fn insert_device(
@@ -737,24 +783,16 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     }
 
     fn live_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        let Some(r) = &mut self.running else {
-            return Ok(());
-        };
-        match (&mut r.midi, &mut r.idle_link) {
-            (Some(midi), _) => midi.send_now(target, kind),
-            (None, Some(link)) => link.send_now(target, kind),
-            (None, None) => Ok(()),
+        match self.running.as_ref().and_then(|r| r.link.as_ref()) {
+            Some(link) => link.send_now(target, kind),
+            None => Ok(()),
         }
     }
 
     fn play_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        let Some(r) = &mut self.running else {
-            return Ok(());
-        };
-        match (&mut r.midi, &mut r.idle_link) {
-            (Some(midi), _) => midi.play_now(target, kind),
-            (None, Some(link)) => link.play_now(target, kind),
-            (None, None) => Ok(()),
+        match self.running.as_ref().and_then(|r| r.link.as_ref()) {
+            Some(link) => link.play_now(target, kind),
+            None => Ok(()),
         }
     }
 

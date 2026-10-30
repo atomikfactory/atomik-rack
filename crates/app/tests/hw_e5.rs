@@ -47,7 +47,7 @@ fn cable_settings(buffer: u32, _input: bool) -> AudioSettings {
         output_device: Some(PLAYBACK.into()),
         input_device: Some(CAPTURE.into()),
         buffer_frames: buffer,
-        midi_input: None,
+        midi_inputs: Vec::new(),
         workers: 2,
         stream_threshold_bytes: Some(STRESS_AUDIO_THRESHOLD_BYTES),
         ..AudioSettings::default()
