@@ -129,12 +129,13 @@ pub const DEFAULT_BAR_PX: f64 = 96.0;
 /// Minimum clip length with snapping off (a 64th note).
 const MIN_TICKS: i64 = PPQ / 16;
 /// Header controls of a note track.
-const NOTE_BUTTONS: [TrackButton; 5] = [
+const NOTE_BUTTONS: [TrackButton; 6] = [
     TrackButton::Expand,
     TrackButton::Mute,
     TrackButton::Solo,
     TrackButton::Arm,
     TrackButton::AddLane,
+    TrackButton::Keys,
 ];
 /// Header controls of an automation track (no solo, arm or note lane to add to; the lane picker
 /// adds and removes its lanes).
@@ -191,6 +192,30 @@ pub enum TrackButton {
     Input,
     /// Cycle the monitor mode off / auto / on (audio tracks).
     Monitor,
+    /// The arrow that marks the track receiving the master keyboard; in Separated mode a click
+    /// sends the keyboard to this track (note tracks).
+    Keys,
+}
+
+/// A button in the corner above the track list: the master mute and solo clear every track's,
+/// the third switches Manual Rec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CornerButton {
+    /// Clear every mute.
+    ClearMutes,
+    /// Clear every solo.
+    ClearSolos,
+    /// Manual Rec: selecting a track does not arm it.
+    ManualRec,
+}
+
+impl CornerButton {
+    /// Every button, left to right.
+    pub const ALL: [CornerButton; 3] = [
+        CornerButton::ClearMutes,
+        CornerButton::ClearSolos,
+        CornerButton::ManualRec,
+    ];
 }
 
 /// A control in the header of a lane: the automation lanes have fold, arm, write mode, mute and
@@ -262,6 +287,8 @@ enum ClipPart {
 enum Hit {
     Snap,
     Tool(Tool),
+    /// A button of the corner under the snap selector.
+    CornerButton(CornerButton),
     Corner,
     /// The bottom edge of the header of track `i` (drag to resize the track).
     TrackEdge(usize),
@@ -678,6 +705,13 @@ pub struct ArrangementView {
     /// The automation lane that follows the selected parameter (view state): drawn highlighted
     /// and shown open even when it is folded.
     follow: Option<(DeviceKey, String)>,
+    /// Selecting a track does not arm it (the app's Manual Rec switch): view state.
+    manual_rec: bool,
+    /// The track that receives the master keyboard (its header arrow is lit): view state set by
+    /// the app.
+    keys_track: Option<DeviceKey>,
+    /// Master keyboard Separated mode: the header arrows can be clicked to choose the track.
+    keys_separated: bool,
     /// A reveal of the followed lane waits for the next rebuild of the rows.
     reveal_pending: bool,
     selection: Selection<ClipId>,
@@ -783,6 +817,9 @@ impl ArrangementView {
             lane_params: Vec::new(),
             collapsed: BTreeSet::new(),
             follow: None,
+            manual_rec: false,
+            keys_track: None,
+            keys_separated: false,
             reveal_pending: false,
             selection: Selection::new(),
             selected_track: None,
@@ -1020,6 +1057,63 @@ impl ArrangementView {
     /// Whether follow is on.
     pub fn follow(&self) -> bool {
         self.vp.follow()
+    }
+
+    /// Shows whether Manual Rec is on (the app owns the switch).
+    pub fn set_manual_rec(&mut self, on: bool) {
+        if self.manual_rec != on {
+            self.manual_rec = on;
+            self.repaint = true;
+        }
+    }
+
+    /// Shows which track receives the master keyboard (its header arrow is lit) and whether
+    /// the arrows can be clicked to choose it (Separated mode).
+    pub fn set_master_keyboard(&mut self, track: Option<DeviceKey>, separated: bool) {
+        if self.keys_track != track || self.keys_separated != separated {
+            self.keys_track = track;
+            self.keys_separated = separated;
+            self.repaint = true;
+        }
+    }
+
+    /// A button of the corner above the track list.
+    fn corner_button_rect(&self, button: CornerButton) -> Rect {
+        let (x, y) = (self.bounds.x0 + 12.0, self.bounds.y0 + 27.0);
+        match button {
+            CornerButton::ClearMutes => Rect::new(x, y, x + 20.0, y + 11.0),
+            CornerButton::ClearSolos => Rect::new(x + 24.0, y, x + 44.0, y + 11.0),
+            CornerButton::ManualRec => Rect::new(x + 52.0, y, x + 112.0, y + 11.0),
+        }
+    }
+
+    /// One undo step that clears every mute (`solo` false) or every solo of the song tracks;
+    /// `None` when none is set.
+    fn clear_flags(&self, solo: bool) -> Option<UiAction> {
+        let commands: Vec<Command> = self
+            .song
+            .tracks
+            .iter()
+            .filter(|t| if solo { t.solo } else { t.muted })
+            .map(|t| {
+                Command::Song(SongCommand::SetTrackFlags {
+                    device: t.device.clone(),
+                    muted: t.muted && solo,
+                    solo: t.solo && !solo,
+                    armed: t.armed,
+                })
+            })
+            .collect();
+        (!commands.is_empty()).then_some(UiAction::Command(Command::Batch(commands)))
+    }
+
+    /// The action of a corner button.
+    fn corner_action(&self, button: CornerButton) -> Vec<UiAction> {
+        match button {
+            CornerButton::ClearMutes => self.clear_flags(false).into_iter().collect(),
+            CornerButton::ClearSolos => self.clear_flags(true).into_iter().collect(),
+            CornerButton::ManualRec => vec![UiAction::ToggleManualRec],
+        }
     }
 
     /// Switches follow on or off (the workflow preference sets the start state).
@@ -1914,7 +2008,10 @@ impl ArrangementView {
                 TrackButton::Mute => Rect::new(x + 112.0, top, x + 132.0, bottom),
                 TrackButton::Solo => Rect::new(x + 136.0, top, x + 156.0, bottom),
                 TrackButton::Arm => Rect::new(x + 160.0, top, x + 180.0, bottom),
-                TrackButton::AddLane | TrackButton::Input | TrackButton::Monitor => Rect::ZERO,
+                TrackButton::AddLane
+                | TrackButton::Input
+                | TrackButton::Monitor
+                | TrackButton::Keys => Rect::ZERO,
             };
         }
         match button {
@@ -1925,6 +2022,7 @@ impl ArrangementView {
             TrackButton::AddLane => Rect::new(x + 108.0, y + 33.0, x + 162.0, y + 49.0),
             TrackButton::Input => Rect::new(x + 104.0, y + 33.0, x + 164.0, y + 49.0),
             TrackButton::Monitor => Rect::new(x + 168.0, y + 33.0, x + 200.0, y + 49.0),
+            TrackButton::Keys => Rect::new(x + 172.0, y + 8.0, x + 187.0, y + 24.0),
         }
     }
 
@@ -1951,7 +2049,7 @@ impl ArrangementView {
                 })
             }
             TrackButton::Input => Rect::new(r.x0 + indent, r.y0, r.x1, r.y1),
-            TrackButton::Monitor => r,
+            TrackButton::Monitor | TrackButton::Keys => r,
         }
     }
 
@@ -2088,6 +2186,12 @@ impl ArrangementView {
                     .find(|t| self.tool_rect(*t).contains(pos))
                 {
                     return Hit::Tool(t);
+                }
+                if let Some(b) = CornerButton::ALL
+                    .into_iter()
+                    .find(|b| self.corner_button_rect(*b).contains(pos))
+                {
+                    return Hit::CornerButton(b);
                 }
                 return if self.snap_rect().contains(pos) {
                     Hit::Snap
@@ -2605,6 +2709,7 @@ impl ArrangementView {
             }
             Hit::Snap => self.snap = self.snap.cycle(false),
             Hit::Tool(t) if primary => self.set_tool(t),
+            Hit::CornerButton(b) if primary => out.extend(self.corner_action(b)),
             Hit::RulerLabel if primary && tool == Tool::Razor => {
                 // The razor in the ruler splits every track at the snapped position.
                 let at = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
@@ -2938,6 +3043,15 @@ impl ArrangementView {
                     checked: Vec::new(),
                 };
                 self.open_menu(menu);
+            }
+            TrackButton::Keys => {
+                // Standard mode follows the selection: the arrow only shows where the keyboard
+                // plays. Separated mode lets a click choose; a second click hands it back.
+                if self.keys_separated {
+                    let device = t.device.clone();
+                    let next = (self.keys_track.as_ref() != Some(&device)).then_some(device);
+                    out.push(UiAction::SetMasterKeyboard(next));
+                }
             }
             TrackButton::Monitor => {
                 let device = t.device.clone();
@@ -4385,6 +4499,13 @@ impl ArrangementView {
                 }
                 None => CommandOutcome::Declined,
             },
+            "sequencer.clear_mutes" | "sequencer.clear_solos" => {
+                match self.clear_flags(id == "sequencer.clear_solos") {
+                    Some(action) => CommandOutcome::Handled(vec![action]),
+                    None => CommandOutcome::Declined,
+                }
+            }
+            "sequencer.manual_rec" => CommandOutcome::Handled(vec![UiAction::ToggleManualRec]),
             "sequencer.follow" => {
                 self.vp.toggle_follow();
                 CommandOutcome::Handled(Vec::new())
@@ -5955,6 +6076,27 @@ impl ArrangementView {
             self.paint_lane_buttons(c, hr, track, 0);
             return;
         }
+        if !tr.is_audio() {
+            // The master keyboard arrow: lit on the track the keyboard plays.
+            let kr = self.track_button_rect(hr, track, TrackButton::Keys);
+            let on = self.keys_track.as_ref() == Some(&tr.device);
+            let hot = hovered(TrackButton::Keys) && self.keys_separated;
+            sp::button(c, st, kr, "", on.then_some(t.highlight), hot);
+            let ctr = kr.center();
+            let mut arrow = BezPath::new();
+            arrow.move_to(pt(ctr.x - 4.0, ctr.y - 4.0));
+            arrow.line_to(pt(ctr.x + 4.0, ctr.y));
+            arrow.line_to(pt(ctr.x - 4.0, ctr.y + 4.0));
+            arrow.close_path();
+            let col = if on {
+                t.text
+            } else if self.keys_separated {
+                t.text_muted
+            } else {
+                t.text_muted.with_alpha(0.4)
+            };
+            c.fill_with(arrow, col);
+        }
         if tr.is_audio() {
             let header = self.audio_header(&tr.device);
             let input = header.map_or(InputSel::Off, |h| h.input);
@@ -6061,6 +6203,35 @@ impl ArrangementView {
                 if active { t.highlight } else { t.text_muted },
                 Align::Center,
             );
+            for button in CornerButton::ALL {
+                let r = self.corner_button_rect(button);
+                let (label, on) = match button {
+                    CornerButton::ClearMutes => ("M", self.song.tracks.iter().any(|t| t.muted)),
+                    CornerButton::ClearSolos => ("S", self.song.tracks.iter().any(|t| t.solo)),
+                    CornerButton::ManualRec => ("MAN REC", self.manual_rec),
+                };
+                let lit = match button {
+                    CornerButton::ClearMutes => st.mute,
+                    CornerButton::ClearSolos => st.solo,
+                    CornerButton::ManualRec => st.record,
+                };
+                let hover = self.hover == Some(Hit::CornerButton(button));
+                sp::lcd(
+                    c,
+                    st,
+                    r,
+                    (hover || on).then_some(if on { lit } else { t.focus }),
+                );
+                sp::label(
+                    c,
+                    label,
+                    r.center().x,
+                    r.center().y + 2.5,
+                    7.0,
+                    if on { lit } else { t.text_muted },
+                    Align::Center,
+                );
+            }
         }
     }
 }

@@ -378,9 +378,9 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,
-    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, PointField,
-    PointShown, TrackButton, TrackLevel, TrackMeterInfo,
+    ArrangementView, AudioHandle, ClipField, CornerButton, HEIGHT_LARGE, HEIGHT_SMALL,
+    INSPECTOR_HEIGHT, LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource,
+    PointField, PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use audio_editor::{AudioEditorView, AudioMode};
 pub use browser::device_rows;

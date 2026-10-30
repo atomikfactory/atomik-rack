@@ -72,6 +72,13 @@ pub enum UiAction {
         /// The lane's param key.
         param: String,
     },
+    /// The arrow of a track header (Separated master keyboard mode) or the command: the track
+    /// `Some(device)` now receives the master keyboard whatever is selected, `None` hands it
+    /// back to the selection. View state, not an undo step.
+    SetMasterKeyboard(Option<DeviceKey>),
+    /// The Manual Rec switch of the arrangement corner: toggles whether selecting a track arms
+    /// it. View state, not an undo step.
+    ToggleManualRec,
     /// Preview a key on a device (piano-roll keyboard or a new/moved note): note on when
     /// `on`, note off otherwise. Every `on` is followed by a matching `off`.
     Audition {

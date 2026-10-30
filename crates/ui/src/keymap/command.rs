@@ -296,6 +296,13 @@ use Group as G;
 /// Every command, sorted by id.
 const COMMANDS: &[CommandDef] = &[
     cmd("audio.plugins", "Plugins", G::Global, C::Global).menu(),
+    cmd(
+        "audio.rescan_midi",
+        "Rescan MIDI Ports",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("audio.restart", "Restart Audio", G::Global, C::Global).menu(),
     cmd("audio.settings", "Settings", G::Global, C::Global).menu(),
     cmd(
@@ -1122,6 +1129,20 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd(
+        "sequencer.clear_mutes",
+        "Clear All Mutes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.clear_solos",
+        "Clear All Solos",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.close_clip",
         "Close Clip",
         G::Sequencer,
@@ -1219,6 +1240,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .decline(),
+    cmd(
+        "sequencer.manual_rec",
+        "Manual Record Arming",
+        G::Sequencer,
+        C::Sequencer,
+    ),
     cmd(
         "sequencer.marker_add_here",
         "Add Marker Here",
