@@ -353,7 +353,7 @@ impl RackView {
         self.abs_key(k)
     }
 
-    fn up_socket(&self, s: &SocketRef) -> SocketRef {
+    pub(super) fn up_socket(&self, s: &SocketRef) -> SocketRef {
         SocketRef {
             device: self.up(&s.device),
             socket: s.socket.clone(),
@@ -418,6 +418,10 @@ impl RackView {
             UiAction::ControlMenu { device, param, at } => UiAction::ControlMenu {
                 device: k(device),
                 param,
+                at,
+            },
+            UiAction::JackMenu { socket, at } => UiAction::JackMenu {
+                socket: self.up_socket(&socket),
                 at,
             },
             UiAction::ParamTouched { device, param } => UiAction::ParamTouched {

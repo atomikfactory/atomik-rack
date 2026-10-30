@@ -359,6 +359,14 @@ pub enum UiAction {
         /// Where the menu opens.
         at: vello::kurbo::Point,
     },
+    /// A right click on a jack on the back of the rack. `at` is the pointer position in the
+    /// coordinates of the emitting view; the shell builds the menu ([`crate::JackMenu`]).
+    JackMenu {
+        /// The jack (path key inside a container).
+        socket: atomik_model::SocketRef,
+        /// Where the menu opens.
+        at: vello::kurbo::Point,
+    },
     /// A press on a control (a knob, a fader or a switch of a rack panel or a console strip, a
     /// row of the parameter pane), whatever it goes on to do: the parameter is the one the user
     /// is touching. The shell uses it to make the arrangement follow the selection.

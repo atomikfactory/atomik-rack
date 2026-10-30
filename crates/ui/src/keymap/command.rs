@@ -854,6 +854,7 @@ const COMMANDS: &[CommandDef] = &[
     .rep(),
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
+    cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),

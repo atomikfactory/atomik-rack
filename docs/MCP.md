@@ -283,6 +283,13 @@ Say in "How it was tested" which of these you ran and what they showed (for exam
 2. `session_key` with `text` `asdf` presses and releases the keys of the home row: each is a note on and off to the armed track (or the selected device) on the same live note path as a MIDI keyboard, and the take recorder is offered the same notes. `z` and `x` shift the octave, `1` to `0` set the velocity, and `shift` is the sustain pedal. The session has no engine and no MIDI link, so nothing sounds and no take is captured there: read the effect on the strip with `session_texts` (octave and velocity) and `session_screenshot`; the recorded take is covered by the `app_core_keys_tests`.
 3. Letters are commands again as soon as the strip loses the focus (a click elsewhere) or its mode is MOUSE.
 
+### Recipe: patch with the jacks
+
+1. `session_command` `view.toggle_flip` shows the back of the rack; `session_texts` lists the jack names and `session_screenshot` the cables. A jack's position is not in the text list: read it from a screenshot (the jacks of a device sit in a row under its name strip).
+2. `session_pointer` `drag` from one jack to another with `steps` of 4 or more (so the target is under the pointer at the release) adds the cable. From an `_l` jack to an `_l` jack it adds the `_r` cable too, in one undo step: `project_inspect` shows both cables, `edit.undo` removes both. `modifiers` `["alt"]` on the drag makes it one cable.
+3. A `down` on a connected input picks its cable up (it disappears from the screenshot), a `session_key` `Escape` puts it back and nothing is changed; a `drag` that ends on empty rack cuts it, and a `drag` that ends on another input moves it, each in one undo step.
+4. `session_pointer` `click` with `button` `secondary` on a jack opens its menu (`session_texts` lists Connect to, Disconnect, Scroll to Connected Device and, on an audio output, New Mixer Channel). Hover Connect to, then a device, and `click` a jack: an entry marked with `*` is an input that is taken, and choosing it replaces its cable. Grey entries cannot be chosen: nothing fits, nothing is connected, or the pair is not free. Hovering a jack for a second (`action` `move`, `wait` 1) answers with its tooltip, which names the jack at the other end ("In L from Poly Synth > Out L").
+
 ## Limits and notes
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.

@@ -705,12 +705,13 @@ fn rack_cables_to_summing_inputs_add_instead_of_replacing() {
     r.handle(&down(from), &doc, &reg);
     r.handle(&mv(to), &doc, &reg);
     let a = r.handle(&up(to), &doc, &reg);
+    // The summing input keeps the other cable, and the right pair comes with the left one.
     assert_eq!(
         commands(&a),
-        [Command::Connect(cable(
-            ("lead", "out_l"),
-            ("master", "bus_l")
-        ))]
+        [Command::Batch(vec![
+            Command::Connect(cable(("lead", "out_l"), ("master", "bus_l"))),
+            Command::Connect(cable(("lead", "out_r"), ("master", "bus_r"))),
+        ])]
     );
 }
 

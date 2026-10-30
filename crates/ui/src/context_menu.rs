@@ -342,6 +342,12 @@ impl ContextMenu {
         Self::panel(build_entries(specs, registry, keymap), at, bounds)
     }
 
+    /// A menu of rows built by the caller (a menu whose labels and arguments are not known
+    /// until it opens, like the jack menu), placed at `at` and moved inside `bounds`.
+    pub fn from_entries(entries: Vec<Entry>, at: Point, bounds: Size) -> Self {
+        Self::panel(entries, at, bounds)
+    }
+
     /// One panel of `entries` at `at`, moved inside `bounds`.
     fn panel(entries: Vec<Entry>, at: Point, bounds: Size) -> Self {
         let width = panel_width(&entries);

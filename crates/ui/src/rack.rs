@@ -45,7 +45,9 @@ mod drum_input;
 mod fx_input;
 mod help;
 mod io_input;
+mod jacks;
 mod navigator;
+pub use jacks::{JackChoice, JackGroup, JackMenu, JackOp, JackPeer};
 pub use navigator::NAVIGATOR_WIDTH;
 mod master_input;
 mod name_input;
@@ -2375,6 +2377,7 @@ impl RackView {
             .iter()
             .filter(|c| self.sockets.contains_key(&c.from) && self.sockets.contains_key(&c.to))
             .filter(|c| self.show_links || !self.links.contains(c))
+            .filter(|c| !self.is_detached(c))
             .filter(|c| match self.cable_visibility {
                 CableVisibility::Show => true,
                 CableVisibility::Hide => false,
@@ -2428,11 +2431,7 @@ impl RackView {
                 Some(format!("{}  {}", autolayout::control_label(p), text))
             }
             Drag::None => match self.hover {
-                Some(Hit::Socket(i, slot)) => {
-                    let d = &self.devices[i];
-                    let s = &d.desc?.sockets[d.spec.back[slot].socket];
-                    Some(s.name.to_string())
-                }
+                Some(Hit::Socket(i, slot)) => self.jack_tooltip(i, slot),
                 Some(h @ (Hit::IoCell(..) | Hit::IoClip(..) | Hit::IoHeader(_))) => {
                     self.io_tooltip(h)
                 }
@@ -3132,8 +3131,9 @@ impl RackView {
                     self.control_down(i, slot, button, clicks, modifiers, out);
                 }
             }
-            (Hit::Socket(i, slot), PointerButton::Primary) => {
-                self.cable_down(i, slot, rp, doc, out)
+            (Hit::Socket(i, slot), PointerButton::Primary) => self.cable_down(i, slot, rp, doc),
+            (Hit::Socket(i, slot), PointerButton::Secondary) => {
+                self.jack_menu_down(i, slot, pos, out)
             }
             (Hit::Rack, PointerButton::Primary) if clicks >= 2 => {
                 self.set_browser_visible(true);
@@ -3253,14 +3253,7 @@ impl RackView {
         }
     }
 
-    fn cable_down(
-        &mut self,
-        i: usize,
-        slot: usize,
-        rp: Point,
-        doc: &RackDoc,
-        out: &mut Vec<UiAction>,
-    ) {
+    fn cable_down(&mut self, i: usize, slot: usize, rp: Point, doc: &RackDoc) {
         let Some(g) = self.socket_geo(i, slot).cloned() else {
             return;
         };
@@ -3270,7 +3263,6 @@ impl RackView {
             && let Some(c) = doc.cables.iter().find(|c| c.to == g.end.at)
             && let Some(from) = self.sockets.get(&c.from)
         {
-            out.push(UiAction::Command(Command::Disconnect { to: c.to.clone() }));
             anchor = from.end.clone();
             detached = Some(c.clone());
         }
@@ -3318,29 +3310,7 @@ impl RackView {
                 };
                 let target = self.drop_target().map(|g| g.end.clone());
                 self.drag = Drag::None;
-                if let Some(t) = target {
-                    let cable = cables::orient(&anchor, &t);
-                    // A summing input takes any number of cables: only an identical cable
-                    // counts as existing; a plain input's cable is replaced.
-                    let summing = [&anchor, &t]
-                        .iter()
-                        .any(|e| e.direction == Direction::SummingInput);
-                    let existing = doc.cables.iter().find(|c| {
-                        c.to == cable.to
-                            && Some(*c) != detached.as_ref()
-                            && (!summing || **c == cable)
-                    });
-                    match existing {
-                        Some(e) if *e == cable => {}
-                        Some(_) => {
-                            out.push(UiAction::Command(Command::Disconnect {
-                                to: cable.to.clone(),
-                            }));
-                            out.push(UiAction::Command(Command::Connect(cable)));
-                        }
-                        None => out.push(UiAction::Command(Command::Connect(cable))),
-                    }
-                }
+                self.cable_up(&anchor, target, detached, modifiers, doc, out);
             }
             Drag::Move {
                 dev,
@@ -3708,6 +3678,11 @@ impl RackView {
             // With nothing to cancel or unfocus, Escape clears the selection.
             Key::Escape if matches!(self.drag, Drag::None) && self.tree.focused().is_none() => {
                 self.clear_selection_by_click();
+            }
+            // A cable drag ends with nothing changed: a cable picked up from an input stays.
+            Key::Escape if matches!(self.drag, Drag::Cable { .. }) => {
+                self.drag = Drag::None;
+                self.update_hover(self.pointer);
             }
             Key::Escape => self.cancel_drag(out),
             Key::Tab => {

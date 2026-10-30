@@ -6,11 +6,13 @@
 use crate::commands::FreezeMenu;
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
+use atomik_ui::JackMenu;
+use atomik_ui::JackOp;
 use atomik_ui::arrangement::{AudioMenu, LaneMenu, OrgMenu};
 use atomik_ui::chord_edit::{
     ARP_GATES, ARP_OCTAVES, ArpPattern, STRUM_AMOUNTS, Stamp, StrumDirection, strum_ticks,
 };
-use atomik_ui::context_menu::Spec;
+use atomik_ui::context_menu::{Entry, MenuItemDef, Spec, SubmenuDef};
 use atomik_ui::key_rows::Fold;
 use atomik_ui::keymap::{ROOT_ARGS, SCALE_ARGS};
 use atomik_ui::piano_roll::NoteTools;
@@ -674,10 +676,209 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
     }
 }
 
+/// The registry command every entry of the jack menu runs, with the entry as its argument.
+const JACK_COMMAND: &str = "rack.jack";
+
+/// The rows of the pop-up menu of a jack: where its cable can go (a submenu per device, in rack
+/// order, an occupied input starred because choosing it replaces its cable), Disconnect, Scroll
+/// to Connected Device, and New Mixer Channel on an audio output. Entries that cannot be chosen
+/// are greyed. The labels are the document's own names, so the rows are built whole instead of
+/// from registry commands.
+pub fn jack_entries(menu: &JackMenu) -> Vec<Entry> {
+    let item = |label: String, op: &JackOp, enabled: bool| {
+        Entry::Item(MenuItemDef {
+            command: JACK_COMMAND.to_string(),
+            arg: Some(op.encode()),
+            label,
+            shortcut: None,
+            enabled,
+            checked: None,
+        })
+    };
+    let submenu = |label: &str, entries: Vec<Entry>| {
+        Entry::Submenu(SubmenuDef {
+            label: label.to_string(),
+            enabled: !entries.is_empty(),
+            entries,
+        })
+    };
+    let mut rows = vec![submenu(
+        "Connect to",
+        menu.groups
+            .iter()
+            .map(|g| {
+                submenu(
+                    &g.device,
+                    g.jacks
+                        .iter()
+                        .map(|j| {
+                            let label = if j.occupied {
+                                format!("{} *", j.label)
+                            } else {
+                                j.label.clone()
+                            };
+                            item(label, &j.op, true)
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )];
+    rows.push(Entry::Separator);
+    rows.push(item(
+        "Disconnect".to_string(),
+        &JackOp::Disconnect(menu.jack.clone()),
+        !menu.peers.is_empty(),
+    ));
+    rows.push(match menu.peers.as_slice() {
+        [one] => item(
+            "Scroll to Connected Device".to_string(),
+            &JackOp::Reveal(one.device.clone()),
+            true,
+        ),
+        many => submenu(
+            "Scroll to Connected Device",
+            many.iter()
+                .map(|p| item(p.name.clone(), &JackOp::Reveal(p.device.clone()), true))
+                .collect(),
+        ),
+    });
+    if menu.audio_output {
+        rows.push(Entry::Separator);
+        let op = menu
+            .channel
+            .clone()
+            .unwrap_or_else(|| JackOp::Disconnect(menu.jack.clone()));
+        rows.push(item(
+            "New Mixer Channel".to_string(),
+            &op,
+            menu.channel.is_some(),
+        ));
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use atomik_model::theory::Scale;
+
+    fn jack(label: &str, from: &str, to: &str, occupied: bool) -> atomik_ui::JackChoice {
+        let cable = atomik_model::Cable {
+            from: sock("a", from),
+            to: sock("b", to),
+        };
+        atomik_ui::JackChoice {
+            label: label.into(),
+            occupied,
+            op: if occupied {
+                JackOp::Replace(cable)
+            } else {
+                JackOp::Connect(cable)
+            },
+        }
+    }
+
+    fn sock(d: &str, s: &str) -> atomik_model::SocketRef {
+        atomik_model::SocketRef {
+            device: atomik_model::DeviceKey(d.into()),
+            socket: s.into(),
+        }
+    }
+
+    fn jack_menu(groups: Vec<atomik_ui::JackGroup>, peers: usize, channel: bool) -> JackMenu {
+        JackMenu {
+            jack: sock("a", "out_l"),
+            groups,
+            peers: (0..peers)
+                .map(|i| atomik_ui::JackPeer {
+                    device: atomik_model::DeviceKey(format!("p{i}")),
+                    name: format!("Peer {i}"),
+                })
+                .collect(),
+            audio_output: true,
+            channel: channel.then(|| JackOp::NewChannel {
+                device: atomik_model::DeviceKey("a".into()),
+                out_l: "out_l".into(),
+                out_r: "out_r".into(),
+            }),
+        }
+    }
+
+    fn row<'a>(rows: &'a [Entry], label: &str) -> &'a Entry {
+        rows.iter()
+            .find(|e| match e {
+                Entry::Item(i) => i.label == label,
+                Entry::Submenu(s) => s.label == label,
+                Entry::Separator => false,
+            })
+            .unwrap_or_else(|| panic!("no row {label}"))
+    }
+
+    #[test]
+    fn the_jack_menu_lists_devices_and_stars_the_occupied_inputs() {
+        let groups = vec![atomik_ui::JackGroup {
+            device: "Delay".into(),
+            jacks: vec![
+                jack("In L", "out_l", "in_l", false),
+                jack("In R", "out_l", "in_r", true),
+            ],
+        }];
+        let rows = jack_entries(&jack_menu(groups, 1, true));
+        let Entry::Submenu(connect) = row(&rows, "Connect to") else {
+            panic!("a submenu");
+        };
+        assert!(connect.enabled);
+        let Entry::Submenu(delay) = row(&connect.entries, "Delay") else {
+            panic!("a submenu per device");
+        };
+        let Entry::Item(free) = row(&delay.entries, "In L") else {
+            panic!("an item");
+        };
+        let Entry::Item(taken) = row(&delay.entries, "In R *") else {
+            panic!("the occupied jack is starred");
+        };
+        assert!(free.enabled && taken.enabled);
+        assert_eq!(free.command, "rack.jack");
+        assert!(matches!(
+            JackOp::parse(taken.arg.as_deref().unwrap()),
+            Some(JackOp::Replace(_))
+        ));
+        assert!(matches!(
+            JackOp::parse(free.arg.as_deref().unwrap()),
+            Some(JackOp::Connect(_))
+        ));
+    }
+
+    #[test]
+    fn the_jack_menu_greys_what_cannot_be_done() {
+        // Nothing compatible, nothing cabled, a pair that is not free.
+        let rows = jack_entries(&jack_menu(Vec::new(), 0, false));
+        assert!(matches!(row(&rows, "Connect to"), Entry::Submenu(s) if !s.enabled));
+        assert!(matches!(row(&rows, "Disconnect"), Entry::Item(i) if !i.enabled));
+        assert!(
+            matches!(row(&rows, "Scroll to Connected Device"), Entry::Submenu(s) if !s.enabled)
+        );
+        assert!(matches!(row(&rows, "New Mixer Channel"), Entry::Item(i) if !i.enabled));
+        // The same jack, cabled and free: all of it is on.
+        let rows = jack_entries(&jack_menu(Vec::new(), 1, true));
+        assert!(matches!(row(&rows, "Disconnect"), Entry::Item(i) if i.enabled));
+        assert!(matches!(row(&rows, "Scroll to Connected Device"), Entry::Item(i) if i.enabled));
+        assert!(matches!(row(&rows, "New Mixer Channel"), Entry::Item(i) if i.enabled));
+        // Two connected devices make a submenu of their names; an input has no channel row.
+        let rows = jack_entries(&jack_menu(Vec::new(), 2, true));
+        let Entry::Submenu(peers) = row(&rows, "Scroll to Connected Device") else {
+            panic!("a submenu");
+        };
+        assert_eq!(peers.entries.len(), 2);
+        let mut m = jack_menu(Vec::new(), 0, false);
+        m.audio_output = false;
+        assert!(
+            !jack_entries(&m)
+                .iter()
+                .any(|e| matches!(e, Entry::Item(i) if i.label == "New Mixer Channel"))
+        );
+    }
 
     fn ids(target: ContextTarget, e: &MenuEnable) -> Vec<(&'static str, bool)> {
         specs(target, e)

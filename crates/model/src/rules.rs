@@ -215,6 +215,28 @@ pub(crate) fn check_cable(
     Ok(())
 }
 
+impl RackDoc {
+    /// Whether `cable` could be added to the top-level rack: the same rules `Command::Connect`
+    /// applies (kinds, directions, no cycle), judged without changing anything. With
+    /// `replacing` the rules are judged as if that cable were removed first (the cable an
+    /// occupied plain input gives up).
+    pub fn cable_fits(
+        &self,
+        registry: &Registry,
+        cable: &Cable,
+        replacing: Option<&Cable>,
+    ) -> bool {
+        match replacing.filter(|r| self.cables.contains(r)) {
+            None => check_cable(self, registry, cable).is_ok(),
+            Some(r) => {
+                let mut scratch = self.clone();
+                scratch.cables.retain(|c| c != r);
+                check_cable(&scratch, registry, cable).is_ok()
+            }
+        }
+    }
+}
+
 /// The rules of one cable that do not depend on the rest of the graph: output → input, one
 /// kind, a plain input takes one cable, a summing input not the same cable twice. `existing`
 /// are the cables of the same scope.

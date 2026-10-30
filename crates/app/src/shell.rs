@@ -2942,6 +2942,10 @@ impl<B: AudioBackend> Shell<B> {
                         .midi_forget(atomik_model::MidiTarget::Param { device, param });
                 }
             }
+            ("rack.jack", Some(op)) => {
+                self.repaint = true;
+                self.core.jack_op(op);
+            }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
             ("sequencer.audio_to_notes", None) => self.open_notes(),
@@ -3478,8 +3482,7 @@ impl<B: AudioBackend> Shell<B> {
         let enable = self.menu_enable(pane);
         let specs = context_menus::specs(target, &enable);
         // It opens in the window that shows the pane, sized to that window.
-        let window = self.window_of(pane);
-        let size = self.window_size(window).unwrap_or_else(|| self.size());
+        let (window, size) = self.menu_window(pane);
         let menu = ContextMenu::build(
             &specs,
             &atomik_ui::keymap::Registry::bundled(),
@@ -3487,6 +3490,43 @@ impl<B: AudioBackend> Shell<B> {
             at,
             size,
         );
+        self.show_context_menu(pane, window, menu);
+    }
+
+    /// Opens the pop-up menu of jack `jack` at the window point `at`: the rows come from the
+    /// rack view's [`atomik_ui::JackMenu`], so they hold the project's own device names.
+    fn open_jack_menu(&mut self, jack: &atomik_model::SocketRef, at: Point) {
+        let Some(menu) = self
+            .core
+            .view()
+            .jack_menu(jack, self.core.doc(), self.core.registry())
+        else {
+            return;
+        };
+        let (window, size) = self.menu_window(Pane::Rack);
+        let menu = ContextMenu::from_entries(context_menus::jack_entries(&menu), at, size);
+        self.show_context_menu(Pane::Rack, window, menu);
+    }
+
+    /// The window that shows `pane` and its size: where a menu of the pane opens.
+    fn menu_window(&self, pane: Pane) -> (WindowKind, Size) {
+        let window = self.window_of(pane);
+        (
+            window,
+            self.window_size(window).unwrap_or_else(|| self.size()),
+        )
+    }
+
+    /// The rack view's point `at` in window coordinates (the rack sits below the menu bar).
+    fn rack_window_point(&self, at: Point) -> Point {
+        let o = self
+            .pane_rect(Pane::Rack)
+            .map_or(Point::ORIGIN, |(_, r)| r.origin());
+        Point::new(at.x + o.x, at.y + o.y)
+    }
+
+    /// Shows `menu` as the open context menu of `pane`, in `window`.
+    fn show_context_menu(&mut self, pane: Pane, window: WindowKind, menu: ContextMenu) {
         self.context_menu = Some(OpenContextMenu { menu, pane, window });
         // The pointer press that opened it must not keep a drag alive.
         self.capture = None;
@@ -3575,6 +3615,11 @@ impl<B: AudioBackend> Shell<B> {
                 UiAction::ControlMenu { device, param, at } => {
                     self.control_target = Some((device.clone(), param.clone()));
                     (ContextTarget::Control, *at)
+                }
+                UiAction::JackMenu { socket, at } => {
+                    let at = self.rack_window_point(*at);
+                    self.open_jack_menu(socket, at);
+                    continue;
                 }
                 _ => continue,
             };
@@ -5171,6 +5216,10 @@ mod midi_tests;
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]
 mod console_tests;
+
+#[cfg(test)]
+#[path = "shell_jacks_tests.rs"]
+mod jacks_tests;
 
 #[cfg(test)]
 #[path = "shell_midimap_tests.rs"]
