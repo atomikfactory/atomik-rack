@@ -1864,6 +1864,28 @@ audio adds `atomik-audio-io`: the callback publishes `(engine host frame, instan
 `FrameClock` (so MIDI can be mapped to an exact frame) and counts xruns and DSP load. cpal has no
 duplex stream, so captured samples reach the render callback through a wait-free ring.
 
+**A stream that stops.** The callback only counts itself. `atomik_audio_io::Liveness` compares the
+callback counter with the clock on the UI thread (the status poll, four times a second): no new
+callback for more than `max(4 periods, 250 ms)` is `StreamState::Stalled` (a stream that never
+called back gets two seconds), and clears by itself when the callbacks return. The stream error
+callback sets `Telemetry::device_lost` when cpal reports the device gone or the stream invalid
+(`StreamState::Lost`, final until the stream is rebuilt). The shell announces either once with a
+toast that names Audio > Restart Audio, shows `AUDIO STOPPED` or `AUDIO DEVICE LOST` in the status
+bar, and, when `device_loss.reset_to_default` is on in the settings, reopens the host's default
+devices (a lost device at once, a stalled one after two seconds of silence) without saving them.
+Input that the capture ring could not hold, or that the render callback discarded to bound the
+latency, is `Telemetry::input_overruns` (frames; the first discard, of what was captured before the
+output started, is not counted). The Audio Settings dialog warns when the open input and output are
+different devices, since their clocks drift apart; a device named like the output is the default
+input, so one interface for both is what opens unless another input is chosen.
+
+**Settings that do not open.** `LiveSession` remembers the device configuration that last opened a
+stream (`device_loss.last_good` in `settings.json`). When the current one fails to open, at
+start-up or in Apply, the session opens the remembered one instead and `Shell` says so;
+`apply_settings` writes the file only with devices that opened, so a configuration that fails is
+never saved. Without a remembered configuration audio stays off with the error and the file keeps
+the old devices.
+
 ## 5. The engine's console features
 
 [crates/engine/src/console.rs](../crates/engine/src/console.rs), with the devices `atomik.channel` and `atomik.master`.
@@ -4003,9 +4025,10 @@ stderr is their output).
 - **Overload counters.** `status::OverloadStats` gathers what the real-time side dropped or could
   not do in time: note events dropped (`EngineHandle::dropped_events`), input overruns, frames the
   audio recording tap lost, plugin events dropped and sandbox batches that came back late (summed
-  from the plugin devices' meter values), and control stalls. The status bar shows each counter only
-  when it is not zero, and `session_status` reports all of them under `overload`. Input overruns and
-  control stalls are display slots: nothing counts them yet.
+  from the plugin devices' meter values), and control stalls (pushes to the engine that found its
+  queue full, plus MIDI control messages the inbox dropped). The status bar shows each counter only
+  when it is not zero, and `session_status` reports all of them under `overload`. A headless
+  session has no audio stream, so its input overruns read 0.
 - **Help > Export Diagnostics.** [diagnostics.rs](../crates/app/src/diagnostics.rs) writes one text
   file: version and platform, the status line and every counter, `settings.json`, a summary of the
   plugin cache and the plugin journal, the last crash report and the end of the log. Everything

@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **An unplugged or stalled audio device is noticed, and a device that fails never becomes the
+  setting.** When no audio callback arrives for a quarter of a second (or four buffers, if longer)
+  the status bar shows `AUDIO STOPPED`, and a driver that reports the device gone shows
+  `AUDIO DEVICE LOST`; a toast says so once and points at Audio > Restart Audio. Audio Settings has a
+  new choice, **If the audio device is lost**: offer the restart (default) or switch to the default
+  devices by itself, keeping the chosen device in `settings.json` for when it is back. Stream
+  errors are counted in the status bar. When the input and the output are different devices the
+  dialog warns that their clocks drift apart, and shows the buffer and the input and output
+  latency; the **input overruns** counter now counts the captured frames that were lost to that
+  drift, and **control stalled** counts control messages that found a full queue. Audio settings
+  that fail to open, at start-up or in Apply, fall back to the last configuration that opened (with
+  a message) and are never saved. `settings.json` gets a `device_loss` object; no project format
+  change.
 - **Plugin processes that never outlive the app, and hung ones are replaced.** A sandboxed plugin's
   process now ends with the app however the app ends (a job object on Windows, a watchdog thread
   in every child that also covers a child stuck inside a plugin call and a closed control
