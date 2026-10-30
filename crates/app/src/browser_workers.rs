@@ -428,6 +428,7 @@ pub(crate) fn item_info(path: &Path, kind: FileKind) -> Option<ItemInfo> {
     Some(ItemInfo {
         detail: summary.detail,
         category: String::new(),
+        device_type: summary.device_type.unwrap_or_default(),
     })
 }
 

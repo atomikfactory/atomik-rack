@@ -276,6 +276,13 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    /// Shows the folder `folder` in the file browser (which the caller has made visible).
+    pub(super) fn show_folder(&mut self, folder: PathBuf) {
+        if self.browser.shown {
+            self.show(Place::Folder(folder));
+        }
+    }
+
     /// Lists the shown place again and selects the row of the renamed item `path` once it is
     /// there (without opening another rename entry).
     pub(super) fn show_renamed(&mut self, path: PathBuf) {

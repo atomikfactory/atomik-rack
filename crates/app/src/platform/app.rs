@@ -913,6 +913,24 @@ impl App {
                         self.handle_requests(event_loop, more);
                     }
                 }
+                ShellRequest::PickSavePatch { dir, name } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Save device patch")
+                        .add_filter("Atomik patch", &[atomik_library::PATCH_EXT])
+                        .set_file_name(name);
+                    if dir.is_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension(atomik_library::PATCH_EXT);
+                        }
+                        self.shell.save_patch_to(&path);
+                    }
+                }
                 ShellRequest::PickExportKeymap => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title("Export keyboard shortcuts")

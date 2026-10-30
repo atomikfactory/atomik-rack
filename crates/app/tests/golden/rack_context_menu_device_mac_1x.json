@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[232.00,471.00,470.40,776.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[230.00,468.00,468.40,773.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[230.00,468.00,468.40,773.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[232.00,471.00,470.40,881.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[230.00,468.00,468.40,878.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[230.00,468.00,468.40,878.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[262.00,488.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Cmd+X","at":[454.40,488.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[262.00,512.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -21,5 +21,10 @@
 {"text":"Use as Send Effect","at":[262.00,689.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Disconnect","at":[262.00,713.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Go to Track","at":[262.00,737.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
-{"text":"Save to Library","at":[262.00,761.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
+{"text":"Save to Library","at":[262.00,761.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rect":[240.00,773.00,458.40,774.00]},"brush":"#ffffff1c"},
+{"text":"Copy Settings","at":[262.00,794.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Paste Settings","at":[262.00,818.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"},
+{"text":"Reset Device","at":[262.00,842.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Save Patch","at":[262.00,866.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
 ]}

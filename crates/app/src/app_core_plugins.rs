@@ -1332,6 +1332,30 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// A patch (or its undo or redo) replaced the state blob of the plugin behind `device`: the
+    /// live instance restores it. A device without an instance takes the document's state when
+    /// one is created, and a state of `None` (a reset) leaves the instance as it is.
+    pub(super) fn plugin_state_changed(&mut self, device: &DeviceKey) {
+        let blob = self
+            .doc()
+            .resolve(device)
+            .and_then(|d| d.plugin.as_deref())
+            .and_then(|p| p.state.as_deref().cloned());
+        let (Some(blob), Some(id)) = (blob, self.plugins.instances.get(device).copied()) else {
+            return;
+        };
+        match self.plugins.host.manager().restore_state(id, &blob) {
+            Ok(()) => {
+                self.plugins.no_capture.remove(device);
+            }
+            Err(e) => {
+                self.plugins
+                    .failed
+                    .insert(device.clone(), format!("restore failed: {e}"));
+            }
+        }
+    }
+
     /// True while the commands being applied came from the plugin's own window.
     pub(super) fn echo_suppressed(&self) -> bool {
         self.plugins.from_plugin
