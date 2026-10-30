@@ -29,6 +29,12 @@ Please include:
 
 Examples of relevant issues: memory-safety bugs, crashes or hangs triggered by a crafted patch, project or audio file, path-handling problems (for example in project bundles), and vulnerable dependencies not yet caught by `cargo deny`.
 
+The readers of these files are bounded and fuzzed: a file may claim any size, but a reader allocates
+no more than the file can account for and refuses what exceeds a documented limit (project files
+256 MiB, an audio file 2^30 samples in memory, a MIDI file two million events per track). The fuzz
+targets are in `fuzz/` and run on a schedule (see `docs/TESTING.md`). A crafted file that gets past
+a limit, aborts the program or makes it run out of memory is a vulnerability worth reporting.
+
 ## Third-party plugins
 
 Plugin hosting is off until the user enables it. When it is on, each plugin instance runs in its own

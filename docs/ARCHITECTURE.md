@@ -2448,7 +2448,17 @@ as before (`crates/render/tests/macros.rs`).
 Nothing in this crate runs on the audio thread. Every function may allocate and block on disk.
 
 - **Decode** (`decode_file`, `decode_bytes`): WAV, AIFF, FLAC, MP3 and OGG through symphonia. A
-  decoder panic becomes an error. Lossless sources must decode completely.
+  decoder panic becomes an error. Lossless sources must decode completely. The in-memory decode
+  holds at most `DEFAULT_MAX_SAMPLES` (2^30 samples, 4 GiB of `f32`) and checks the size before it
+  grows a buffer, since an allocation failure aborts the process and no `catch_unwind` sees it;
+  `decode_file_with` and `decode_bytes_with` take the limit as a parameter and also return the
+  count of repaired samples (`Decoded`). `AudioData::new` turns every NaN and infinity into silence
+  (`new_counted` says how many), so nothing non-finite reaches the mixer; `AssetInfo` carries the
+  count of an import.
+- **WAV** (`read_wav_f32`, `read_wav_f32_limited`, `WavStreamReader`): the header's sample count is a
+  claim, so the allocation of a whole read is bounded by what the file's own size can fill. The
+  streaming reader walks the chunks itself with 64-bit offsets (RIFF, and RF64 with its `ds64`
+  size), so an asset above 4 GiB streams; a data size the file cannot hold is cut to the file.
 - **Resample** (`resample`): a fixed-parameter rubato sinc resampler with an exact alignment
   correction, so the result never depends on the caller. Used on import when the file's rate differs
   from the session rate.
@@ -4199,6 +4209,25 @@ Tests: the `GraphError` cases in [graph.rs](../crates/engine/src/graph.rs), the 
 This invariant is process, not code: contributions must be original work or compatibly licensed (see
 [CONTRIBUTING.md](../CONTRIBUTING.md)). No build script or test refers to anything outside this
 repository.
+
+### Untrusted input
+
+A project, a patch, a MIDI file, an audio file or a message from a plugin child can be corrupt or
+made to be hostile. Each reader refuses or bounds it before the size it claims is allocated:
+
+| Input | Bound | Where |
+|---|---|---|
+| Project, patch, clip and library item files | read only when the file is within `MAX_DOCUMENT_BYTES` (256 MiB; `ATOMIK_MAX_PROJECT_MIB` raises it), the refusal names the size | `read_document_text` in [read_limit.rs](../crates/model/src/read_limit.rs), used by the app, the renderer and the QA server |
+| Audio files | at most `DEFAULT_MAX_SAMPLES` held in memory; a WAV header's sample count never sizes an allocation beyond the file; NaN and infinity become silence and are counted | [decode.rs](../crates/audio-file/src/decode.rs), [wav.rs](../crates/audio-file/src/wav.rs), [data.rs](../crates/audio-file/src/data.rs) |
+| Standard MIDI Files | `MAX_TRACKS`, `MAX_EVENTS_PER_TRACK` and `MAX_EVENTS`; a chunk that claims more than the file has is read to its end | [smf.rs](../crates/midi-io/src/smf.rs) |
+| Sandbox control channel | a frame and its blob over `MAX_FRAME_BYTES` are refused before anything is allocated; the blob grows as bytes arrive | `read_frame` in [frame.rs](../crates/plugin-ipc/src/frame.rs) |
+
+Tests: the bounded-input tests (a header that claims gigabytes, under a counting allocator) in
+[audio-file/tests/bounded.rs](../crates/audio-file/tests/bounded.rs), the robustness property tests
+of [audio-file](../crates/audio-file/tests/robustness.rs),
+[midi-io](../crates/midi-io/tests/robustness.rs) and
+[model](../crates/model/tests/robustness.rs), and the fuzz targets of [fuzz/](../fuzz) that run on a
+schedule (see [TESTING.md](TESTING.md#fuzzing)).
 
 ## 9. The audio interface pseudo-device
 

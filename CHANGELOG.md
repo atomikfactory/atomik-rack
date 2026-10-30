@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Fuzzing of the readers of untrusted files.** `fuzz/` holds `cargo-fuzz` targets for project
+  files, patches, clip files, library items and the library database, Standard MIDI Files, audio
+  files (the whole-file decoder, the WAV readers and the preview decoder) and the control channel
+  of the plugin sandbox, with seed corpora made from the committed fixtures
+  (`scripts/fuzz-seed.sh`). A scheduled workflow runs each target for five minutes every week and
+  uploads a failing input; it never runs on a pull request, and the fuzz crate is outside the
+  workspace, so the normal build and test do not need a nightly toolchain. New tests that run on
+  every push cover the same ground on stable: truncated, corrupted and oversized audio, MIDI and
+  project files (1 000 cases for MIDI) and an allocation bound for a lying WAV header.
 - **Device patches.** Every device panel (except the console devices) has a patch strip on the foot
   of its name plate: **previous** and **next** arrows, the **patch name** (click it to browse
   patches, below) and a **save** button. A patch of one device (`.atomikpatch`) now applies to a
@@ -275,6 +284,21 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **A hostile or corrupt file can no longer make the program run out of memory.** A WAV header that
+  claims billions of samples no longer sizes an allocation (a 44-byte file that said so used to be
+  asked for gigabytes, and running out of memory aborts the program with unsaved work); an audio
+  file holds at most 2^30 samples in memory (4 GiB, about 3 hours of 96 kHz stereo) and says "audio
+  too long" past that; a project, patch, clip or library item file over 256 MiB is refused before
+  it is read, with a message that names its size (set `ATOMIK_MAX_PROJECT_MIB` to open a larger
+  one); and a Standard MIDI File keeps at most about two million events per track and eight million
+  in all (a longer one is refused with a message).
+- **NaN and infinite samples in an audio file become silence.** An import stores them as zero and
+  says so in the toast ("2 invalid samples (NaN or infinite) replaced with silence"); a bounce of a
+  project whose bundle holds such a file is finite and lists the count in its warnings; the
+  streaming reader does the same. A file without such samples reads bit for bit as before.
+- **Audio files above 4 GiB stream.** The seekable reader of long recordings and imports reads RIFF
+  and RF64 files with 64-bit offsets (it used to stop at the 32-bit limit of its WAV library), and a
+  data size that the file cannot hold is cut to the file instead of failing later.
 - **A command that does not fit the document is refused, not fatal.** Every edit now checks what it
   names before it changes anything, and a step that does not fit leaves the document and its undo
   history as they were with an error, where it used to abort the program with unsaved work. The app
