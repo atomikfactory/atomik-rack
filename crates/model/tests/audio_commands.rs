@@ -1049,3 +1049,177 @@ fn a_reversed_clip_refuses_a_transposition() {
     let cmd = set_audio(&d, a, |c| c.warp.transpose_cents = 100, None);
     rejects(&mut d, cmd, &reg);
 }
+
+// ---- warp markers, split at markers, asset names ---------------------------------------------
+
+fn markers(d: &Document, id: atomik_model::ClipId) -> Vec<atomik_model::WarpMarker> {
+    match &doc_clip(d.doc(), id).content {
+        ClipContent::Audio(a) => a.warp.markers.clone(),
+        _ => panic!("not audio"),
+    }
+}
+
+fn wm(tick: i64, source: u64) -> atomik_model::WarpMarker {
+    atomik_model::WarpMarker { tick, source }
+}
+
+#[test]
+fn set_warp_markers_is_one_undo_step_and_keeps_the_rest_of_the_content() {
+    let reg = audio_registry();
+    let (mut d, a, _) = two_clips(&reg);
+    let before = d.doc().clone();
+    let list = vec![wm(0, 0), wm(4000, 9000), wm(15_360, 40_000)];
+    let ops = d
+        .apply(
+            sc(SongCommand::SetWarpMarkers {
+                id: a,
+                markers: list.clone(),
+                merge: None,
+            }),
+            &reg,
+        )
+        .unwrap();
+    assert!(ops.contains(&SyncOp::SongChanged));
+    assert_eq!(markers(&d, a), list);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+    d.redo(&reg).unwrap();
+    assert_eq!(markers(&d, a), list);
+}
+
+#[test]
+fn a_marker_drag_is_one_merge_group() {
+    let reg = audio_registry();
+    let (mut d, a, _) = two_clips(&reg);
+    let before = d.doc().clone();
+    for tick in [4000, 4100, 4200] {
+        d.apply(
+            sc(SongCommand::SetWarpMarkers {
+                id: a,
+                markers: vec![wm(0, 0), wm(tick, 9000), wm(15_360, 40_000)],
+                merge: Some(7),
+            }),
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(markers(&d, a)[1].tick, 4200);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn set_warp_markers_rejections() {
+    let reg = audio_registry();
+    let (mut d, a, _) = two_clips(&reg);
+    let set = |markers| {
+        sc(SongCommand::SetWarpMarkers {
+            id: a,
+            markers,
+            merge: None,
+        })
+    };
+    // Equal to the current list.
+    rejects(&mut d, set(Vec::new()), &reg);
+    // Not increasing in source.
+    rejects(&mut d, set(vec![wm(0, 100), wm(10, 100)]), &reg);
+    // Past the end of the clip.
+    rejects(&mut d, set(vec![wm(0, 0), wm(15_361, 100)]), &reg);
+}
+
+#[test]
+fn split_at_every_marker_is_one_batch_and_one_undo_step() {
+    let reg = audio_registry();
+    let (mut d, a, _) = two_clips(&reg);
+    d.apply(
+        sc(SongCommand::SetWarpMarkers {
+            id: a,
+            markers: vec![
+                wm(0, 0),
+                wm(3000, 9000),
+                wm(9000, 20_000),
+                wm(15_360, 40_000),
+            ],
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let before = d.doc().clone();
+    let first = doc_clip(d.doc(), a);
+    let start = first.start;
+    let next = d.doc().song.next_clip_id;
+    d.apply(
+        Command::Batch(vec![
+            sc(SongCommand::SplitClip {
+                id: a,
+                at: start + 3000,
+            }),
+            sc(SongCommand::SplitClip {
+                id: atomik_model::ClipId(next),
+                at: start + 9000,
+            }),
+        ]),
+        &reg,
+    )
+    .unwrap();
+    let lens: Vec<i64> = [
+        a,
+        atomik_model::ClipId(next),
+        atomik_model::ClipId(next + 1),
+    ]
+    .iter()
+    .map(|id| doc_clip(d.doc(), *id).length)
+    .collect();
+    assert_eq!(lens, vec![3000, 6000, 6360]);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn rename_asset_is_an_undoable_edit() {
+    let reg = audio_registry();
+    let mut d = with_assets(&reg);
+    let id = hash(1);
+    let old = d.doc().assets[&id].original_name.clone();
+    d.apply(
+        Command::RenameAsset {
+            asset: id.clone(),
+            name: "  Take 4  ".into(),
+        },
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().assets[&id].original_name, "Take 4");
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().assets[&id].original_name, old);
+    d.redo(&reg).unwrap();
+    assert_eq!(d.doc().assets[&id].original_name, "Take 4");
+    for bad in ["", "   ", "tab\there", &"x".repeat(201)] {
+        rejects(
+            &mut d,
+            Command::RenameAsset {
+                asset: id.clone(),
+                name: bad.into(),
+            },
+            &reg,
+        );
+    }
+    // The same name, and an unknown asset.
+    rejects(
+        &mut d,
+        Command::RenameAsset {
+            asset: id,
+            name: "Take 4".into(),
+        },
+        &reg,
+    );
+    rejects(
+        &mut d,
+        Command::RenameAsset {
+            asset: hash(99),
+            name: "x".into(),
+        },
+        &reg,
+    );
+}

@@ -58,6 +58,12 @@ pub(crate) enum Edit {
         old: String,
         new: String,
     },
+    /// The display name of a pool asset.
+    AssetName {
+        asset: String,
+        old: String,
+        new: String,
+    },
     Color {
         key: DeviceKey,
         old: Option<[u8; 3]>,
@@ -450,6 +456,9 @@ impl Edit {
             Edit::Zones { old, new, .. } => {
                 out.extend(old.iter().chain(new).map(|z| z.asset.clone()));
             }
+            Edit::AssetName { asset, .. } => {
+                out.insert(asset.clone());
+            }
             _ => {}
         }
     }
@@ -484,6 +493,11 @@ impl Edit {
             },
             Edit::Name { key, old, new } => Edit::Name {
                 key,
+                old: new,
+                new: old,
+            },
+            Edit::AssetName { asset, old, new } => Edit::AssetName {
+                asset,
                 old: new,
                 new: old,
             },
@@ -816,6 +830,13 @@ impl Edit {
             }
             Edit::Name { key, new, .. } => {
                 device_mut(doc, key)?.name.clone_from(new);
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::AssetName { asset, new, .. } => {
+                match doc.assets.get_mut(asset) {
+                    Some(meta) => meta.original_name.clone_from(new),
+                    None => return fail(format!("there is no asset {asset}")),
+                }
                 vec![SyncOp::ViewChanged]
             }
             Edit::Color { key, new, .. } => {
