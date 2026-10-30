@@ -1,10 +1,11 @@
 //! 32-bit float WAV I/O and the seekable streaming reader.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::data::AudioData;
+use crate::decode::Decoded;
 use crate::error::{AudioFileError, Result};
 
 fn map_hound(e: hound::Error) -> AudioFileError {
@@ -35,15 +36,41 @@ pub fn write_wav_f32(path: &Path, data: &AudioData) -> Result<()> {
 }
 
 /// Reads a WAV file via `hound`. 32-bit float is exact; integer PCM is scaled by `2^-(bits-1)`.
+/// A NaN or infinite sample becomes silence. The memory taken never exceeds what the file's
+/// own size can fill, whatever its header claims.
 pub fn read_wav_f32(path: &Path) -> Result<AudioData> {
+    read_wav_f32_limited(path, u64::MAX).map(|d| d.audio)
+}
+
+/// [`read_wav_f32`] that refuses a file of more than `max_samples` samples (all channels) and
+/// counts the non-finite samples it replaced.
+pub fn read_wav_f32_limited(path: &Path, max_samples: u64) -> Result<Decoded> {
+    let file_len = std::fs::metadata(path)?.len();
     let mut r = hound::WavReader::open(path).map_err(map_hound)?;
     let spec = r.spec();
     let nch = usize::from(spec.channels);
     if nch == 0 {
         return Err(AudioFileError::Decode("WAV has no channels".into()));
     }
-    let total = r.len() as usize;
-    let mut channels = vec![Vec::with_capacity(total / nch); nch];
+    // The header's sample count is a claim. The file cannot hold more samples than its bytes
+    // allow, so that bounds the allocation; a file that falls short of its claim ends in the
+    // read error below.
+    let bytes_per_sample = u64::from(spec.bits_per_sample.div_ceil(8)).max(1);
+    let total = u64::from(r.len()).min(file_len / bytes_per_sample);
+    if total > max_samples {
+        return Err(AudioFileError::Unsupported(format!(
+            "audio too long ({total} samples, all channels; the limit is {max_samples})"
+        )));
+    }
+    let per_channel = usize::try_from(total / nch as u64).unwrap_or(usize::MAX);
+    let mut channels = vec![Vec::new(); nch];
+    for channel in &mut channels {
+        channel.try_reserve_exact(per_channel).map_err(|_| {
+            AudioFileError::Unsupported(format!(
+                "audio too long ({total} samples, all channels) for the memory available"
+            ))
+        })?;
+    }
     match (spec.sample_format, spec.bits_per_sample) {
         (hound::SampleFormat::Float, 32) => {
             for (i, s) in r.samples::<f32>().enumerate() {
@@ -63,16 +90,141 @@ pub fn read_wav_f32(path: &Path) -> Result<AudioData> {
             "WAV data ends inside a frame".into(),
         ));
     }
-    AudioData::new(spec.sample_rate, channels)
+    let (audio, replaced) = AudioData::new_counted(spec.sample_rate, channels)?;
+    Ok(Decoded { audio, replaced })
+}
+
+/// Frames read from the file per system call by [`WavStreamReader`].
+const STREAM_CHUNK_FRAMES: usize = 4096;
+
+/// Format tags of the `fmt ` chunk.
+const TAG_FLOAT: u16 = 3;
+const TAG_EXTENSIBLE: u16 = 0xFFFE;
+
+/// Where the samples of a WAV file are.
+struct WavLayout {
+    channels: usize,
+    sample_rate: u32,
+    /// Offset of the first sample in the file.
+    data_start: u64,
+    /// Whole frames of data the file really holds.
+    frames: u64,
+}
+
+fn le_u16(b: &[u8]) -> u16 {
+    u16::from_le_bytes([b[0], b[1]])
+}
+
+fn le_u32(b: &[u8]) -> u32 {
+    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+fn le_u64(b: &[u8]) -> u64 {
+    u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+}
+
+/// Walks the chunks of a RIFF or RF64 WAV file (32-bit float only) with 64-bit offsets: the
+/// size fields of RIFF are 32-bit, so hound cannot reach past 4 GiB, and RF64 keeps the real
+/// size of the data chunk in its `ds64` chunk. A data size the file cannot hold (a recording cut
+/// short, a size field of `0xFFFF_FFFF` left by a writer that streams) is cut to the file.
+fn read_layout(file: &mut File) -> Result<WavLayout> {
+    let file_len = file.metadata()?.len();
+    let short = |_: std::io::Error| AudioFileError::Decode("WAV header is cut short".into());
+    let mut head = [0u8; 12];
+    file.read_exact(&mut head).map_err(short)?;
+    let rf64 = match &head[..4] {
+        b"RIFF" => false,
+        b"RF64" | b"BW64" => true,
+        _ => return Err(AudioFileError::Decode("WAV: not a RIFF file".into())),
+    };
+    if &head[8..12] != b"WAVE" {
+        return Err(AudioFileError::Decode("WAV: not a WAVE file".into()));
+    }
+    let mut pos = 12u64;
+    let mut ds64_data = None;
+    let mut fmt: Option<(u16, usize, u32, u16)> = None;
+    loop {
+        if pos.saturating_add(8) > file_len {
+            return Err(AudioFileError::Decode("WAV has no data chunk".into()));
+        }
+        let mut chunk = [0u8; 8];
+        file.seek(SeekFrom::Start(pos))?;
+        file.read_exact(&mut chunk).map_err(short)?;
+        let id = [chunk[0], chunk[1], chunk[2], chunk[3]];
+        let size = u64::from(le_u32(&chunk[4..]));
+        let body = pos + 8;
+        match &id {
+            b"ds64" if rf64 => {
+                let mut b = [0u8; 16];
+                file.read_exact(&mut b).map_err(short)?;
+                ds64_data = Some(le_u64(&b[8..]));
+            }
+            b"fmt " => {
+                if size < 16 {
+                    return Err(AudioFileError::Decode("WAV fmt chunk is too short".into()));
+                }
+                let mut b = [0u8; 40];
+                let want = usize::try_from(size).unwrap_or(40).min(40);
+                file.read_exact(&mut b[..want]).map_err(short)?;
+                let mut tag = le_u16(&b);
+                if tag == TAG_EXTENSIBLE && want >= 26 {
+                    tag = le_u16(&b[24..]);
+                }
+                fmt = Some((
+                    tag,
+                    usize::from(le_u16(&b[2..])),
+                    le_u32(&b[4..]),
+                    le_u16(&b[14..]),
+                ));
+            }
+            b"data" => {
+                let Some((tag, channels, sample_rate, bits)) = fmt else {
+                    return Err(AudioFileError::Decode(
+                        "WAV data before its fmt chunk".into(),
+                    ));
+                };
+                if tag != TAG_FLOAT || bits != 32 {
+                    return Err(AudioFileError::Unsupported(
+                        "streaming needs 32-bit float WAV".into(),
+                    ));
+                }
+                if channels == 0 {
+                    return Err(AudioFileError::Decode("WAV has no channels".into()));
+                }
+                let claimed = match ds64_data {
+                    Some(n) if rf64 && size == u64::from(u32::MAX) => n,
+                    _ => size,
+                };
+                let available = file_len.saturating_sub(body);
+                let bytes = claimed.min(available);
+                return Ok(WavLayout {
+                    channels,
+                    sample_rate,
+                    data_start: body,
+                    frames: bytes / (4 * channels as u64),
+                });
+            }
+            _ => {}
+        }
+        pos = body.saturating_add(size).saturating_add(size & 1);
+    }
 }
 
 /// Seekable chunked reader over a 32-bit float WAV file (the engine's disk-streaming thread
 /// uses it). Not realtime-safe to open; `read_frames` itself never allocates.
+///
+/// Offsets are 64-bit: assets above 4 GiB (RF64 files, or plain WAV files whose size field was
+/// left at its maximum) stream like any other.
 pub struct WavStreamReader {
-    reader: hound::WavReader<BufReader<File>>,
+    file: File,
     channels: usize,
     sample_rate: u32,
     frames: u64,
+    data_start: u64,
+    /// The frame the file position is at, when known (the next sequential read needs no seek).
+    position: Option<u64>,
+    /// Bytes read from the file before they are split into channels.
+    scratch: Vec<u8>,
 }
 
 impl std::fmt::Debug for WavStreamReader {
@@ -88,23 +240,16 @@ impl std::fmt::Debug for WavStreamReader {
 impl WavStreamReader {
     /// Opens a WAV file written by this crate (32-bit float). Other formats are `Unsupported`.
     pub fn open(path: &Path) -> Result<Self> {
-        let reader = hound::WavReader::open(path).map_err(map_hound)?;
-        let spec = reader.spec();
-        if spec.sample_format != hound::SampleFormat::Float || spec.bits_per_sample != 32 {
-            return Err(AudioFileError::Unsupported(
-                "streaming needs 32-bit float WAV".into(),
-            ));
-        }
-        if spec.channels == 0 {
-            return Err(AudioFileError::Decode("WAV has no channels".into()));
-        }
-        let channels = usize::from(spec.channels);
-        let frames = u64::from(reader.duration());
+        let mut file = File::open(path)?;
+        let layout = read_layout(&mut file)?;
         Ok(Self {
-            reader,
-            channels,
-            sample_rate: spec.sample_rate,
-            frames,
+            file,
+            channels: layout.channels,
+            sample_rate: layout.sample_rate,
+            frames: layout.frames,
+            data_start: layout.data_start,
+            position: None,
+            scratch: vec![0; 4 * layout.channels * STREAM_CHUNK_FRAMES],
         })
     }
 
@@ -127,7 +272,8 @@ impl WavStreamReader {
     ///
     /// The number of frames wanted is the common length of the `out` vectors, which are never
     /// resized. Returns the frames actually read (fewer at the end of the file, 0 at or past it);
-    /// the unread tail of every vector is zero-filled. Does not allocate.
+    /// the unread tail of every vector is zero-filled. A NaN or infinite sample reads as
+    /// silence. Does not allocate.
     pub fn read_frames(&mut self, start_frame: u64, out: &mut [Vec<f32>]) -> Result<usize> {
         if out.len() != self.channels {
             return Err(AudioFileError::InvalidData(format!(
@@ -145,18 +291,35 @@ impl WavStreamReader {
         let avail = self.frames.saturating_sub(start_frame);
         let n = want.min(usize::try_from(avail).unwrap_or(usize::MAX));
         if n > 0 {
-            let start = u32::try_from(start_frame)
-                .map_err(|_| AudioFileError::InvalidData("start frame beyond 2^32".into()))?;
-            self.reader.seek(start)?;
-            let mut samples = self.reader.samples::<f32>();
-            for i in 0..n {
-                for ch in out.iter_mut() {
-                    let s = samples
-                        .next()
-                        .ok_or_else(|| AudioFileError::Decode("WAV data truncated".into()))?;
-                    ch[i] = s.map_err(map_hound)?;
-                }
+            let frame_bytes = 4 * self.channels as u64;
+            if self.position != Some(start_frame) {
+                // The cursor is unknown from here until the read succeeds.
+                self.position = None;
+                self.file
+                    .seek(SeekFrom::Start(self.data_start + start_frame * frame_bytes))?;
             }
+            self.position = None;
+            let mut done = 0;
+            while done < n {
+                let take = (n - done).min(STREAM_CHUNK_FRAMES);
+                let bytes = &mut self.scratch[..take * 4 * self.channels];
+                self.file.read_exact(bytes).map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        AudioFileError::Decode("WAV data truncated".into())
+                    } else {
+                        AudioFileError::Io(e)
+                    }
+                })?;
+                for (i, frame) in bytes.chunks_exact(4 * self.channels).enumerate() {
+                    let (samples, _) = frame.as_chunks::<4>();
+                    for (ch, raw) in out.iter_mut().zip(samples) {
+                        let s = f32::from_le_bytes(*raw);
+                        ch[done + i] = if s.is_finite() { s } else { 0.0 };
+                    }
+                }
+                done += take;
+            }
+            self.position = Some(start_frame + n as u64);
         }
         for ch in out.iter_mut() {
             ch[n..].fill(0.0);

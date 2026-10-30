@@ -339,7 +339,12 @@ mod tests {
 
     #[test]
     fn nan_samples_are_ignored_and_empty_buckets_are_zero() {
-        let d = AudioData::new(8000, vec![vec![f32::NAN, 0.5, f32::NAN, f32::NAN]]).unwrap();
+        // The constructor would turn the NaNs into silence; the public fields can still hold
+        // them (a peak computation is defensive about it).
+        let mut d = AudioData::new(8000, vec![vec![0.0, 0.5, 0.0, 0.0]]).unwrap();
+        d.channels[0][0] = f32::NAN;
+        d.channels[0][2] = f32::NAN;
+        d.channels[0][3] = f32::NAN;
         let p = compute_peaks(&d, 2).unwrap();
         assert_eq!(p.channels[0], [(0.5, 0.5), (0.0, 0.0)]);
     }
