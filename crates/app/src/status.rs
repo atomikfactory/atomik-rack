@@ -63,6 +63,52 @@ pub struct AudioStatus {
     pub stream_errors: u64,
     /// How long the callbacks have been silent while the stream is stalled, in milliseconds.
     pub stream_silent_ms: u64,
+    /// MIDI clock in and out.
+    pub sync: SyncStatus,
+}
+
+/// What MIDI clock is doing (see [`crate::settings::SyncSettings`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SyncStatus {
+    /// The clock is being sent.
+    pub clock_out: bool,
+    /// The input port the clock is followed from, while it is open.
+    pub clock_in_port: Option<String>,
+    /// Why the clock in is off although it is switched on, if it is.
+    pub clock_in_error: Option<String>,
+    /// The transport follows the clock: its buttons do nothing.
+    pub following: bool,
+    /// The tempo measured from the clock, in BPM.
+    pub external_tempo: Option<f64>,
+    /// The sender runs (Start or Continue came, Stop did not).
+    pub external_running: bool,
+    /// Clocks have come since the last look.
+    pub receiving: bool,
+}
+
+impl SyncStatus {
+    /// The pieces of the status line: nothing when clock is off.
+    pub fn parts(&self) -> Vec<String> {
+        let mut parts = Vec::new();
+        if self.clock_out {
+            parts.push("clock out".to_string());
+        }
+        if let Some(e) = &self.clock_in_error {
+            parts.push(format!("clock in error: {e}"));
+        } else if self.following {
+            let run = if self.external_running {
+                "running"
+            } else {
+                "stopped"
+            };
+            parts.push(match (self.receiving, self.external_tempo) {
+                (true, Some(bpm)) => format!("following clock {bpm:.1} BPM ({run})"),
+                (false, Some(bpm)) => format!("no clock, last {bpm:.1} BPM"),
+                _ => "waiting for clock".to_string(),
+            });
+        }
+        parts
+    }
 }
 
 /// The counters of work the real-time side had to drop or could not do in time. The audio
@@ -167,6 +213,7 @@ pub fn status_text(s: &AudioStatus) -> String {
         (None, Some(e)) => format!("MIDI error: {e}"),
         (None, None) => "MIDI off".to_string(),
     });
+    parts.extend(s.sync.parts());
     parts.join(" \u{b7} ")
 }
 

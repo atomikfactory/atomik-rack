@@ -34,6 +34,13 @@ struct Fake {
     broken_device: RefCell<Option<String>>,
     /// What the MIDI output thread sent, as `(port, bytes)`.
     out_wire: OutWire,
+    /// The clock inputs opened, and the cell the last one feeds.
+    clock_opened: RefCell<Vec<String>>,
+    clock_cell: RefCell<Option<Arc<atomik_engine::ExternalClock>>>,
+    /// How many opened clock inputs were closed (dropped).
+    clock_closes: Arc<std::sync::atomic::AtomicUsize>,
+    /// Opening a clock input fails while this is set.
+    clock_missing: Cell<bool>,
 }
 
 /// What a fake MIDI output was sent: `(port, bytes)` in order.
@@ -52,6 +59,15 @@ impl atomik_midi_io::out::MidiOutPort for FakeOut {
             .unwrap()
             .push((self.name.clone(), bytes.to_vec()));
         Ok(())
+    }
+}
+
+/// A fake open clock input: counts its close.
+struct ClockGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for ClockGuard {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -207,6 +223,19 @@ impl AudioBackend for &Fake {
         })
     }
 
+    fn open_clock_in(
+        &self,
+        name: &str,
+        cell: Arc<atomik_engine::ExternalClock>,
+    ) -> Result<Box<dyn std::any::Any + Send>, MidiError> {
+        if self.clock_missing.get() {
+            return Err(MidiError::PortNotFound(name.to_string()));
+        }
+        self.clock_opened.borrow_mut().push(name.to_owned());
+        *self.clock_cell.borrow_mut() = Some(cell);
+        Ok(Box::new(ClockGuard(Arc::clone(&self.clock_closes))))
+    }
+
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {
         let i = crate::midi::match_port(&self.visible(), name)?;
         let port = self.visible()[i].clone();
@@ -240,6 +269,7 @@ fn settings() -> AudioSettings {
         plugins: atomik_plugin_host::PluginSettings::default(),
         surface: crate::settings::SurfaceSettings::default(),
         midi_out_port: None,
+        sync: crate::settings::SyncSettings::default(),
         device_loss: crate::settings::DeviceLossSettings::default(),
     }
 }
@@ -1235,4 +1265,191 @@ fn removing_the_device_or_stopping_the_session_releases_what_it_started() {
             ("Synth".to_string(), vec![0xB0, 123, 0]),
         ]
     );
+}
+
+// ---- MIDI clock -------------------------------------------------------------------------
+
+fn sync_settings(f: impl FnOnce(&mut crate::settings::SyncSettings)) -> AudioSettings {
+    let mut s = settings();
+    f(&mut s.sync);
+    s
+}
+
+fn clock_out_to(port: &str, offset_ms: i32) -> AudioSettings {
+    sync_settings(|y| {
+        y.clock_out = true;
+        y.out_ports = vec![crate::settings::ClockOutPort {
+            name: port.into(),
+            offset_ms,
+        }];
+    })
+}
+
+#[test]
+fn clock_out_runs_the_output_thread_without_a_midi_out_device_and_sends_the_engines_clock() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, clock_out_to("Drum Machine", 0), true);
+    s.reset(&config(48_000.0));
+    let r = s.running.as_ref().unwrap();
+    assert!(r.midi_out.is_some(), "the thread runs for the clock alone");
+    assert!(r.handle.sync_out().config().enabled);
+    // The engine writes its clock into the tap; the thread sends it to the port.
+    let tap = r.handle.sync_out().tap();
+    tap_push(&tap, 0, &[0xFA]);
+    tap_push(&tap, 0, &[0xF8]);
+    let wire = wait_for_out(&fake, 2);
+    assert_eq!(
+        wire,
+        vec![
+            ("Drum Machine".to_string(), vec![0xFA]),
+            ("Drum Machine".to_string(), vec![0xF8])
+        ]
+    );
+    s.poll();
+    assert!(s.status().sync.clock_out);
+    assert!(crate::status::status_text(s.status()).contains("clock out"));
+}
+
+#[test]
+fn clock_out_needs_a_port_and_follows_the_settings() {
+    let fake = Fake::default();
+    // On but with no port: nothing is generated and no thread runs.
+    let mut s = LiveSession::new(&fake, sync_settings(|y| y.clock_out = true), true);
+    s.reset(&config(48_000.0));
+    let r = s.running.as_ref().unwrap();
+    assert!(r.midi_out.is_none());
+    assert!(!r.handle.sync_out().config().enabled);
+    // A port makes it run; the options reach the engine.
+    let mut next = clock_out_to("Synth", 3);
+    next.sync.send_while_stopped = true;
+    next.sync.send_position = false;
+    next.sync.restart_on_locate = false;
+    s.set_settings(next);
+    let cfg = s.running.as_ref().unwrap().handle.sync_out().config();
+    assert_eq!(
+        (
+            cfg.enabled,
+            cfg.while_stopped,
+            cfg.song_position,
+            cfg.restart_on_locate
+        ),
+        (true, true, false, false)
+    );
+    assert!(s.running.as_ref().unwrap().midi_out.is_some());
+}
+
+#[test]
+fn switching_clock_out_off_keeps_the_route_until_the_stop_is_out() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, clock_out_to("Synth", 0), true);
+    s.reset(&config(48_000.0));
+    assert!(s.running.as_ref().unwrap().sync_route);
+    s.set_settings(settings());
+    assert!(
+        !s.running
+            .as_ref()
+            .unwrap()
+            .handle
+            .sync_out()
+            .config()
+            .enabled
+    );
+    // The route stays a moment for the Stop the engine sends, then leaves.
+    assert!(s.running.as_ref().unwrap().sync_route);
+    s.poll_at(clock_now());
+    assert!(s.running.as_ref().unwrap().sync_route);
+    s.poll_at(clock_now() + Duration::from_secs(1));
+    assert!(!s.running.as_ref().unwrap().sync_route);
+    // Switched on again before it left: the route stays.
+    let mut s = LiveSession::new(&fake, clock_out_to("Synth", 0), true);
+    s.reset(&config(48_000.0));
+    s.set_settings(settings());
+    s.set_settings(clock_out_to("Synth", 0));
+    s.poll_at(clock_now() + Duration::from_secs(1));
+    assert!(s.running.as_ref().unwrap().sync_route);
+}
+
+fn follow(port: &str) -> AudioSettings {
+    sync_settings(|y| {
+        y.follow_clock = true;
+        y.clock_in_port = Some(port.into());
+    })
+}
+
+#[test]
+fn following_opens_the_clock_port_once_and_closing_it_ends_the_following() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, follow("Sequencer"), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(*fake.clock_opened.borrow(), vec!["Sequencer".to_string()]);
+    let cell = fake.clock_cell.borrow().clone().unwrap();
+    assert!(cell.following());
+    assert!(s.sync_status().following);
+    // The same settings again do not reopen it.
+    s.set_settings(follow("Sequencer"));
+    assert_eq!(fake.clock_opened.borrow().len(), 1);
+    // The tempo and the transport of the clock show in the status.
+    cell.publish(&atomik_engine::ExternalState {
+        tempo: Some(97.5),
+        running: true,
+        position: 0,
+        locates: 1,
+        clocks: 10,
+    });
+    s.poll();
+    assert!(s.status().sync.receiving);
+    let text = crate::status::status_text(s.status());
+    assert!(
+        text.contains("following clock 97.5 BPM (running)"),
+        "{text}"
+    );
+    // No new clocks since the last poll: it says so.
+    s.poll();
+    assert!(!s.status().sync.receiving);
+    assert!(crate::status::status_text(s.status()).contains("no clock, last 97.5 BPM"));
+    // Off: the port closes and the engine takes its own transport back.
+    s.set_settings(settings());
+    assert_eq!(fake.clock_closes.load(Ordering::Relaxed), 1);
+    assert!(!cell.following());
+    assert!(!s.sync_status().following);
+    // Another port replaces the first.
+    s.set_settings(follow("Sequencer"));
+    s.set_settings(follow("Other"));
+    assert_eq!(fake.clock_closes.load(Ordering::Relaxed), 2);
+    assert_eq!(fake.clock_opened.borrow().last().unwrap(), "Other");
+}
+
+#[test]
+fn a_clock_port_that_will_not_open_is_reported_and_tried_again_on_rescan() {
+    let fake = Fake::default();
+    fake.clock_missing.set(true);
+    let mut s = LiveSession::new(&fake, follow("Sequencer"), true);
+    s.reset(&config(48_000.0));
+    let status = s.sync_status();
+    assert!(!status.following);
+    assert!(
+        status
+            .clock_in_error
+            .as_deref()
+            .unwrap()
+            .contains("Sequencer")
+    );
+    s.poll();
+    assert!(crate::status::status_text(s.status()).contains("clock in error"));
+    // The port comes back.
+    fake.clock_missing.set(false);
+    s.rescan_midi();
+    assert!(s.sync_status().following);
+    assert_eq!(s.sync_status().clock_in_error, None);
+}
+
+#[test]
+fn a_restarted_engine_follows_again() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, follow("Sequencer"), true);
+    s.reset(&config(48_000.0));
+    s.reset(&config(44_100.0));
+    assert_eq!(fake.clock_opened.borrow().len(), 2);
+    assert!(fake.clock_cell.borrow().as_ref().unwrap().following());
+    assert_eq!(fake.clock_closes.load(Ordering::Relaxed), 1);
 }

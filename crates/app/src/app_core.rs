@@ -1280,6 +1280,10 @@ impl<S: EngineSink> AppCore<S> {
         if state.playing || state.engine_frame > 0 {
             self.position = state.tick;
         }
+        // Following a MIDI clock, the clock starts and stops the transport: the buttons show it.
+        if self.sink.sync_status().following {
+            self.playing = state.playing;
+        }
         self.feed_take(&state);
         self.show_transport();
         self.feed_automation_values();
@@ -2512,6 +2516,23 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Runs a transport request (see the type docs).
     pub fn transport_action(&mut self, action: TransportAction) {
+        // The transport belongs to the MIDI clock being followed.
+        if matches!(
+            action,
+            TransportAction::Play
+                | TransportAction::Stop
+                | TransportAction::TogglePlay
+                | TransportAction::ReturnToZero
+                | TransportAction::Locate(_)
+                | TransportAction::ToggleRecord
+        ) && self.sink.sync_status().following
+        {
+            self.reject(
+                "the transport follows the MIDI clock: switch Options > Sync > Follow MIDI Clock off to use it"
+                    .to_string(),
+            );
+            return;
+        }
         match action {
             TransportAction::Play => self.play(),
             TransportAction::Stop => self.stop(),
@@ -3091,6 +3112,10 @@ mod patches_tests;
 #[cfg(test)]
 #[path = "app_core_midi_out_tests.rs"]
 mod midi_out_tests;
+
+#[cfg(test)]
+#[path = "app_core_sync_tests.rs"]
+mod sync_tests;
 
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]
