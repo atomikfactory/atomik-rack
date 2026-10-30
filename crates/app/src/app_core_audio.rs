@@ -327,6 +327,8 @@ impl<S: EngineSink> AppCore<S> {
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         self.slice_editor
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
+        self.audio_editor
+            .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         // The waveform of a granular sampler's panel.
         self.view
             .set_sample_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
@@ -337,6 +339,8 @@ impl<S: EngineSink> AppCore<S> {
             self.sample_editor
                 .set_samples(&loaded.hash, Arc::clone(data));
             self.slice_editor
+                .set_samples(&loaded.hash, Arc::clone(data));
+            self.audio_editor
                 .set_samples(&loaded.hash, Arc::clone(data));
         }
         self.audio
@@ -351,6 +355,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.clear_peaks(hash);
         self.sample_editor.clear_peaks(hash);
         self.slice_editor.clear_peaks(hash);
+        self.audio_editor.clear_peaks(hash);
         self.view.clear_sample_peaks(hash);
     }
 

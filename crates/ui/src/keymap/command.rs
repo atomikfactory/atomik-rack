@@ -384,6 +384,48 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     ),
     cmd(
+        "editor.audio_add_marker",
+        "Add Marker at Pointer",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_mode_overview",
+        "Audio Editor: Overview",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_mode_slice",
+        "Audio Editor: Slice",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_revert",
+        "Revert Markers",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_split_markers",
+        "Split Clip at Markers",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_to_slicer",
+        "Clip to Loop Slicer",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
         "editor.chordify",
         "Chordify Selection",
         G::Editor,

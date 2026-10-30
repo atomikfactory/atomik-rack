@@ -47,6 +47,7 @@ mod rack_columns;
 mod record_over;
 mod relink;
 mod rules;
+pub mod slice_edit;
 mod slices;
 mod song_cmd;
 mod steps;
@@ -152,6 +153,7 @@ pub use organise::{
     OutlineKind, TrackGroup,
 };
 use rack_columns::Placement;
+pub use slice_edit::SliceError;
 pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
@@ -166,11 +168,14 @@ pub use validate::Violation;
 pub use warp::{
     AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,
     WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
-    source_at_tick, tick_at_source, warp_job, warp_jobs,
+    source_at_tick, tick_at_source, warp_job, warp_jobs, warped_at_song_tempo,
 };
 
 /// Most host input channels a document may ask for (the engine interface's limit).
 pub const MAX_INPUT_CHANNELS: u16 = 32;
+
+/// Longest display name of a pool asset, in characters.
+pub const MAX_ASSET_NAME: usize = 200;
 
 /// What the sample pool stores about an asset. Assets are immutable and identified by
 /// their content hash (`atomik-audio-file`: 64 lowercase hex digits).
@@ -439,6 +444,16 @@ pub enum Command {
         /// The asset that takes its place.
         to: String,
     },
+    /// Renames a pool asset (one undo step): the name the file browser, the clip editor and the
+    /// clip labels show. The name is trimmed and must be 1..=[`MAX_ASSET_NAME`] characters
+    /// without control characters; a name equal to the current one is rejected. Reports
+    /// [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    RenameAsset {
+        /// The asset id.
+        asset: String,
+        /// The new display name.
+        name: String,
+    },
     /// Set the interface's input channel count (0..=[`MAX_INPUT_CHANNELS`]).
     /// Cables from inputs above the new count are removed in the same step. Reports
     /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
@@ -650,6 +665,7 @@ pub enum Command {
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
 /// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
+/// | `RenameAsset` | `ViewChanged` |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
@@ -1000,6 +1016,7 @@ impl Document {
                 | SongCommand::SetClipContent { merge: Some(m), .. }
                 | SongCommand::SetClipControllers { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
+                | SongCommand::SetWarpMarkers { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
             Command::Workflow(
@@ -1339,6 +1356,8 @@ impl Document {
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
+                                    | SongCommand::SetWarpMarkers { .. }
+                                    | SongCommand::SplitClip { .. }
                                     | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetLaneFolded { .. }
@@ -1350,7 +1369,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
@@ -1583,6 +1602,7 @@ impl Document {
             Command::Plugin(c) => plugin_cmd::plan(doc, registry, c)?,
             Command::RegisterAsset { .. } => unreachable!("handled before planning"),
             Command::RelinkAsset { from, to } => relink::plan(doc, &from, &to)?,
+            Command::RenameAsset { asset, name } => rules::plan_rename_asset(doc, &asset, &name)?,
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {

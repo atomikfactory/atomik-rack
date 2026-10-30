@@ -232,6 +232,15 @@ pub enum UiAction {
     OpenSliceEditor(DeviceKey),
     /// Close the slice editor and show the arrangement again.
     CloseSliceEditor,
+    /// Open this audio clip in the audio clip editor (double-click on an audio clip, Enter): call
+    /// [`crate::AudioEditorView::open`] and show it in place of the arrangement. Opening another
+    /// clip while the editor is open keeps its mode.
+    OpenAudioEditor(ClipId),
+    /// Close the audio clip editor and show the arrangement again.
+    CloseAudioEditor,
+    /// Make a Loop Slicer from the audio clip: a new device that slices the clip's span of its
+    /// file at the clip's warp markers, as one undo step (the app owns the device keys).
+    ClipToSlicer(ClipId),
     /// Slice the loop of `device` (the Slice button of the slicer panel or of the slice editor).
     /// The UI has no samples, so the **app** computes the markers and applies one
     /// [`atomik_model::Command::SetZones`] built with [`atomik_model::slices_from_markers`]

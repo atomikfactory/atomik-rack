@@ -1076,6 +1076,19 @@ pub enum SongCommand {
         /// Drag-merge group.
         merge: Option<u64>,
     },
+    /// Replaces the warp markers of an audio clip (one undo step; `merge` groups the commands of a
+    /// drag). The markers are checked as in [`crate::WarpSettings::validate`] and must not lie
+    /// past the clip's end; the rest of the content (warp on or off, mode, tempo) is kept, so a
+    /// clip with warp off keeps its markers for later. A list equal to the current one is
+    /// rejected.
+    SetWarpMarkers {
+        /// Clip id.
+        id: ClipId,
+        /// The new markers: ticks from the clip start, source frames from its source offset.
+        markers: Vec<crate::WarpMarker>,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
     /// Strip silence from an audio clip in one undo step: the clip becomes the given pieces
     /// of itself, each a separate clip, and the parts between them are gone. `pieces` are
     /// frame ranges `[start, end)` from the clip start (see [`crate::strip_silence`] for the

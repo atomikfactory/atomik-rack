@@ -286,6 +286,7 @@ mod analyser_paint;
 pub mod arp_panel;
 pub mod arrangement;
 pub mod audio;
+pub mod audio_editor;
 pub mod autolayout;
 pub mod breadcrumb;
 pub mod browser;
@@ -378,6 +379,7 @@ pub use arrangement::{
     LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, PointField,
     PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
+pub use audio_editor::{AudioEditorView, AudioMode};
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
 pub use console::{ConsoleButton, ConsoleView, console_shortcut, fader_db, is_console_device};
