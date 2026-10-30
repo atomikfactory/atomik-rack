@@ -871,6 +871,7 @@ pub(crate) fn new_device(
         plugin: None,
         column: 0,
         patch_name: String::new(),
+        midi_out: None,
     }
 }
 

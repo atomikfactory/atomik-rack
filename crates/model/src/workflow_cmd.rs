@@ -428,6 +428,16 @@ pub enum WorkflowCommand {
         /// characters; empty for none.
         name: String,
     },
+    /// Sets the output port of a MIDI Out device (`None` goes back to the fallback port of the app
+    /// settings). Reports `ViewChanged`; the app re-routes the device. Refused on any other device
+    /// type.
+    SetMidiOutPort {
+        /// The device (path key).
+        device: DeviceKey,
+        /// The port name: trimmed, at most [`crate::MAX_MIDI_OUT_PORT_CHARS`] characters, no control
+        /// characters.
+        port: Option<String>,
+    },
     /// Adds the tracks of a MIDI file, and optionally its tempo map, meter map and markers, as
     /// one undo step (see [`crate::MidiImport`]): per track a new instrument with its console
     /// channel, an unarmed song track and a note clip. Reports the compound sync ops of the
@@ -568,6 +578,11 @@ pub(crate) fn plan(
         WorkflowCommand::SetPatchName { device, name } => {
             plain(crate::device_patch::plan_set_name(doc, &device, &name))
         }
+        WorkflowCommand::SetMidiOutPort { device, port } => plain(crate::midi_out::plan_set_port(
+            doc,
+            &device,
+            port.as_deref(),
+        )),
         WorkflowCommand::ImportMidi(import) => {
             plain(crate::midi_import::plan(doc, registry, import))
         }
