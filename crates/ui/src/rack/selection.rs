@@ -20,6 +20,19 @@ impl RackView {
         self.roles = roles;
     }
 
+    /// Whether the fine-adjust role is held with `modifiers` (a drag or a wheel notch of a
+    /// control moves it by a tenth).
+    /// Whether the reset role is held with `modifiers` (a click on a control sets its default).
+    pub(super) fn reset_click(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::ResetParam, modifiers, GestureClass::ClickControl)
+    }
+
+    pub(super) fn fine_adjust(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::FineAdjust, modifiers, GestureClass::DragControl)
+    }
+
     /// The selected devices in rack order, as the document names them (path keys inside a
     /// container).
     pub fn selection(&self) -> Vec<DeviceKey> {

@@ -411,3 +411,51 @@ fn a_group_keeps_its_relative_tracks_and_offsets_across_lanes() {
     d.undo(&reg).expect("a step");
     assert_eq!(d.doc(), &before, "the whole group is one undo step");
 }
+
+#[test]
+fn a_remapped_copy_drag_role_decides_which_modifier_copies() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (mut v, doc, reg) = setup();
+    v.set_roles(
+        Roles::defaults(Os::Windows).with(Role::CopyDrag, Mods::parse("Ctrl+Shift").unwrap()),
+    );
+    let from = grab(&v, 2);
+    let target = v.lane_rect(&key("keys"), 0).unwrap();
+    let to = Point::new(from.x, target.center().y);
+    let drag = |v: &mut ArrangementView, m: Modifiers| {
+        let events = [
+            ev_down(from, m),
+            UiEvent::PointerMove {
+                pos: to,
+                modifiers: m,
+            },
+            ev_up(to, m),
+        ];
+        move_cmds(&run_events(v, &doc, &reg, &events))
+    };
+    let both = Modifiers {
+        ctrl: true,
+        shift: true,
+        ..Modifiers::NONE
+    };
+    let copied = drag(&mut v, both);
+    assert_eq!(copied.len(), 1);
+    assert!(copied[0].1, "Ctrl+Shift copies once remapped");
+    let (mut v, doc, reg) = setup();
+    v.set_roles(
+        Roles::defaults(Os::Windows).with(Role::CopyDrag, Mods::parse("Ctrl+Shift").unwrap()),
+    );
+    let events = [
+        ev_down(from, ctrl()),
+        UiEvent::PointerMove {
+            pos: to,
+            modifiers: ctrl(),
+        },
+        ev_up(to, ctrl()),
+    ];
+    let moved = move_cmds(&run_events(&mut v, &doc, &reg, &events));
+    assert!(
+        moved.iter().all(|m| !m.1),
+        "Ctrl no longer copies: {moved:?}"
+    );
+}

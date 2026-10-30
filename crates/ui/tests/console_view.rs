@@ -998,3 +998,67 @@ fn a_pointer_press_elsewhere_commits_the_edit_and_losing_the_focus_cancels_it() 
     v.set_focused(false);
     assert!(!v.is_text_owner());
 }
+
+fn alt() -> Modifiers {
+    Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    }
+}
+
+#[test]
+fn a_remapped_fine_adjust_role_makes_the_other_modifier_fine() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (doc, reg, mut v) = setup();
+    v.set_roles(Roles::defaults(Os::Windows).with(Role::FineAdjust, Mods::parse("Alt").unwrap()));
+    let p = v.control_center(&key("ch-lead"), "input.gain").unwrap();
+    v.handle(&down(p), &doc, &reg);
+    let a = v.handle(&mv_with(p - Vec2::new(0.0, 100.0), alt()), &doc, &reg);
+    assert!(close(set_params(&a)[0].2, 2.4), "Alt is fine now: {a:?}");
+    v.handle(&key_event(Key::Escape, Modifiers::NONE), &doc, &reg);
+    v.handle(&down(p), &doc, &reg);
+    let b = v.handle(
+        &mv_with(p - Vec2::new(0.0, 100.0), Modifiers::SHIFT),
+        &doc,
+        &reg,
+    );
+    assert!(
+        set_params(&b)[0].2 > 2.4 + 1e-3,
+        "Shift is coarse now: {b:?}"
+    );
+}
+
+#[test]
+fn a_click_with_the_reset_role_held_resets_a_control() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (doc, reg, mut v) = setup();
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    let click = |v: &mut ConsoleView| {
+        v.handle(
+            &UiEvent::PointerDown {
+                pos: p,
+                button: PointerButton::Primary,
+                modifiers: ctrl,
+                clicks: 1,
+            },
+            &doc,
+            &reg,
+        )
+    };
+    v.set_roles(Roles::defaults(Os::Windows));
+    let a = click(&mut v);
+    assert_eq!(
+        set_params(&a),
+        [("ch-bass".to_string(), "fader".to_string(), 0.75, None)]
+    );
+    v.handle(&up(p), &doc, &reg);
+    v.set_roles(Roles::defaults(Os::Windows).with(Role::ResetParam, Mods::parse("Alt").unwrap()));
+    assert!(
+        set_params(&click(&mut v)).is_empty(),
+        "Ctrl no longer resets"
+    );
+}

@@ -855,3 +855,58 @@ fn the_jacks_of_an_active_cv_cable_light_up_even_when_cables_are_hidden() {
     v.set_cv_activity(&[(lfo_cable(), 1.0)], 0.016);
     assert_ne!(paint_back(&mut v, &doc, &reg), base);
 }
+
+#[test]
+fn a_remapped_fine_adjust_role_makes_alt_fine_and_shift_coarse() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (doc, reg) = (reference_doc(), registry());
+    let mut v = view(&doc, &reg);
+    v.set_roles(Roles::defaults(Os::Windows).with(Role::FineAdjust, Mods::parse("Alt").unwrap()));
+    let c = v.control_center(&key("delay"), "mix").unwrap();
+    let start = param(&doc, &reg, 1, "mix");
+    let to = c - Vec2::new(0.0, KNOB_PIXELS_PER_RANGE / 4.0);
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let _ = v.handle(&down(c), &doc, &reg);
+    let a = v.handle(&mv_with(to, alt), &doc, &reg);
+    assert!((set_param(&a)[0].1 - (start + 0.025)).abs() < 1e-4, "{a:?}");
+    let _ = v.handle(&up(c), &doc, &reg);
+    let _ = v.handle(&down(c), &doc, &reg);
+    let b = v.handle(&mv_with(to, Modifiers::SHIFT), &doc, &reg);
+    assert!((set_param(&b)[0].1 - (start + 0.25)).abs() < 1e-4, "{b:?}");
+}
+
+#[test]
+fn a_click_with_the_reset_role_held_resets_a_knob() {
+    use atomik_ui::keymap::{Mods, Os, Role, Roles};
+    let (doc, reg) = (reference_doc(), registry());
+    let mut v = view(&doc, &reg);
+    let c = v.control_center(&key("delay"), "mix").unwrap();
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let press = |v: &mut RackView, m: Modifiers| {
+        let a = v.handle(
+            &UiEvent::PointerDown {
+                pos: c,
+                button: PointerButton::Primary,
+                modifiers: m,
+                clicks: 1,
+            },
+            &doc,
+            &reg,
+        );
+        let _ = v.handle(&up(c), &doc, &reg);
+        set_param(&a)
+    };
+    v.set_roles(Roles::defaults(Os::Windows).with(Role::ResetParam, Mods::parse("Alt").unwrap()));
+    assert_eq!(press(&mut v, alt).len(), 1, "Alt resets now");
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    assert!(press(&mut v, ctrl).is_empty(), "Ctrl no longer does");
+}

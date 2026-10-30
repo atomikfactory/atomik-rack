@@ -2801,7 +2801,7 @@ impl RackView {
                 let Some((p, _, _)) = self.param_of(dev, slot) else {
                     return;
                 };
-                let v = drag.update(p, last_y - pos.y, modifiers.shift);
+                let v = drag.update(p, last_y - pos.y, self.fine_adjust(modifiers));
                 if v.to_bits() != value.to_bits() {
                     out.push(param_cmd(&self.devices[dev].key, p.key, v, Some(merge)));
                 }
@@ -3207,8 +3207,8 @@ impl RackView {
                 });
             }
             (ControlKind::Knob | ControlKind::Fader, PointerButton::Primary) => {
-                // A double-click or a Ctrl/Cmd-click resets to the default.
-                if clicks >= 2 || modifiers.command() {
+                // A double-click or a click with the reset role held resets to the default.
+                if clicks >= 2 || self.reset_click(modifiers) {
                     out.push(param_cmd(&key, p.key, p.clamp(p.default), None));
                 } else {
                     let ppr = if kind == ControlKind::Fader {
@@ -3398,7 +3398,9 @@ impl RackView {
         if matches!(self.drag, Drag::None)
             && let Some(Hit::Control(i, slot)) = self.hit(pos)
         {
-            if let Some(a) = self.step_control(i, slot, delta.y.signum(), modifiers.shift) {
+            if let Some(a) =
+                self.step_control(i, slot, delta.y.signum(), self.fine_adjust(modifiers))
+            {
                 out.push(a);
             }
             return;
@@ -3664,7 +3666,7 @@ impl RackView {
             Some(Hit::Control(i, s)) => Some((i, s)),
             _ => None,
         };
-        let fine = modifiers.shift;
+        let fine = self.fine_adjust(modifiers);
         let grid = match self.tree.focused().map(|n| *self.tree.data(n)) {
             Some(Hit::PresetGrid(i)) => Some(i),
             _ => None,

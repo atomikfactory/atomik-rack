@@ -73,7 +73,7 @@ use crate::console_snapshots::{self as cs, CompareView, SnapView};
 use crate::console_vca::{self as cv, VCA_LEVEL, VcaPart, VcaView};
 use crate::display_list::DisplayList;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
-use crate::keymap::CommandOutcome;
+use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
 use crate::paint::{self, fit_label};
 use crate::seq_paint::{self as sp, SeqTheme};
 use crate::theme::{Theme, mix};
@@ -663,6 +663,7 @@ struct RenameState {
 /// The console view. See the module documentation for hosting.
 #[derive(Debug)]
 pub struct ConsoleView {
+    roles: Roles,
     st: SeqTheme,
     bounds: Rect,
     scale: f64,
@@ -722,6 +723,7 @@ impl ConsoleView {
     /// An empty view; call [`Self::set_bounds`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         Self {
+            roles: Roles::defaults(crate::keymap::Os::host()),
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 1000.0, 600.0),
             scale: 1.0,
@@ -769,6 +771,23 @@ impl ConsoleView {
     }
 
     // ------------------------------------------------------------------ host API
+
+    /// Replaces the role table (the shell pushes it on every keymap change).
+    pub fn set_roles(&mut self, roles: Roles) {
+        self.roles = roles;
+    }
+
+    /// Whether the reset role is held with `modifiers` (a click on a control sets its default).
+    fn reset_click(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::ResetParam, modifiers, GestureClass::ClickControl)
+    }
+
+    /// Whether the fine-adjust role is held with `modifiers`.
+    fn fine_adjust(&self, modifiers: Modifiers) -> bool {
+        self.roles
+            .is_active(Role::FineAdjust, modifiers, GestureClass::DragControl)
+    }
 
     /// Places the view in the window (logical pixels).
     pub fn set_bounds(&mut self, bounds: Rect) {
@@ -2017,8 +2036,8 @@ impl ConsoleView {
                 pos,
                 button,
                 clicks,
-                ..
-            } => self.pointer_down(*pos, *button, *clicks, doc, registry, &mut out),
+                modifiers,
+            } => self.pointer_down(*pos, *button, *clicks, *modifiers, doc, registry, &mut out),
             UiEvent::PointerUp { pos, modifiers, .. } => {
                 self.pointer_up(*pos, *modifiers, &mut out)
             }
@@ -2092,11 +2111,16 @@ impl ConsoleView {
             && self.view_of(t).is_some_and(|v| v.on("solo"))
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the press, its modifiers and the document the strip reads"
+    )]
     fn pointer_down(
         &mut self,
         pos: Point,
         button: PointerButton,
         clicks: u8,
+        modifiers: Modifiers,
         doc: &RackDoc,
         registry: &Registry,
         out: &mut Vec<UiAction>,
@@ -2198,7 +2222,7 @@ impl ConsoleView {
             (Hit::Ctrl(t, c), PointerButton::Primary) if self.is_bypass_all(t, c) => {
                 self.press_bypass_all(t, c, doc, registry, out);
             }
-            (Hit::Ctrl(t, c), _) => self.ctrl_down(t, c, button, clicks, out),
+            (Hit::Ctrl(t, c), _) => self.ctrl_down(t, c, button, clicks, modifiers, out),
             _ => {}
         }
     }
@@ -2990,6 +3014,7 @@ impl ConsoleView {
         c: usize,
         button: PointerButton,
         clicks: u8,
+        modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) {
         let Some((pc, p, value)) = self.ctrl_of(t, c) else {
@@ -3016,7 +3041,7 @@ impl ConsoleView {
         }
         match (kind, button) {
             (CtrlKind::Knob | CtrlKind::Slider | CtrlKind::Fader, PointerButton::Primary) => {
-                if clicks >= 2 {
+                if clicks >= 2 || self.reset_click(modifiers) {
                     out.extend(self.set_param(t, param, p.clamp(p.default), None));
                     return;
                 }
@@ -3083,7 +3108,7 @@ impl ConsoleView {
                     dy += pos.x - last.x;
                 }
                 let param = pc.param;
-                let v = drag.update(p, dy, modifiers.shift);
+                let v = drag.update(p, dy, self.fine_adjust(modifiers));
                 if v.to_bits() != value.to_bits() {
                     out.extend(self.set_param(target, param, v, Some(merge)));
                 }
@@ -3123,7 +3148,7 @@ impl ConsoleView {
                     return;
                 };
                 let id = v.id;
-                let new = drag.update(&VCA_LEVEL, last.y - pos.y, modifiers.shift);
+                let new = drag.update(&VCA_LEVEL, last.y - pos.y, self.fine_adjust(modifiers));
                 if new.to_bits() != value.to_bits() {
                     out.push(UiAction::Command(Command::Console(
                         ConsoleCommand::SetVcaLevel {
@@ -3251,7 +3276,7 @@ impl ConsoleView {
             && let Hit::Ctrl(t, c) = hit
             && !modifiers.command()
         {
-            out.extend(self.step(t, c, delta.y.signum(), modifiers.shift));
+            out.extend(self.step(t, c, delta.y.signum(), self.fine_adjust(modifiers)));
             return;
         }
         if matches!(self.drag, Drag::None)
@@ -3259,8 +3284,8 @@ impl ConsoleView {
             && !modifiers.command()
             && let Some(v) = self.vcas.get(i)
         {
-            let next =
-                widget::wheel_value(&VCA_LEVEL, v.level_db, delta.y.signum(), modifiers.shift);
+            let fine = self.fine_adjust(modifiers);
+            let next = widget::wheel_value(&VCA_LEVEL, v.level_db, delta.y.signum(), fine);
             if next.to_bits() != v.level_db.to_bits() {
                 out.push(UiAction::Command(Command::Console(
                     ConsoleCommand::SetVcaLevel {

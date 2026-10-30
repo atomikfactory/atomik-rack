@@ -25,7 +25,7 @@ use crate::audio::{self, InputSel, TempoMap};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
-use crate::keymap::{CommandOutcome, Roles};
+use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
 use crate::library_drop;
 use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
@@ -3071,10 +3071,13 @@ impl ArrangementView {
                     return;
                 }
                 let was_selected = self.selection.contains(&id);
-                // Ctrl adds the clip to the selection, and a drag from it copies the
-                // selection; a click without a drag takes a selected clip out again (on the
-                // release). Ctrl with Alt is the disable-snap role: a plain toggle.
-                let copy = modifiers.command() && !modifiers.alt;
+                // The copy-drag role adds the clip to the selection, and a drag from it copies
+                // the selection; a click without a drag takes a selected clip out again (on the
+                // release). A modifier set that is another role (disable snap) is no copy.
+                let copy =
+                    self.vp
+                        .roles()
+                        .is_active(Role::CopyDrag, modifiers, GestureClass::DragItem);
                 if copy {
                     self.selection.add(id);
                 } else {

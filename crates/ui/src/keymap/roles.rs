@@ -39,6 +39,30 @@ impl Role {
         Role::ResetParam,
     ];
 
+    /// The source modules that act on this role. A role with none is not wired: Settings does
+    /// not list it (a remap saved earlier stays in `keymap.json`), and the registry test checks
+    /// that each module named here does read the role.
+    pub const fn consumers(self) -> &'static [&'static str] {
+        match self {
+            Role::AlternateTool | Role::DisableSnap => &["viewport"],
+            Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
+            Role::CopyDrag => &["arrangement"],
+            Role::FineAdjust => &["rack/selection", "console"],
+            Role::ResetParam => &["rack/selection", "console"],
+            Role::Constrain => &[],
+        }
+    }
+
+    /// Whether something acts on this role when it is held.
+    pub const fn is_wired(self) -> bool {
+        !self.consumers().is_empty()
+    }
+
+    /// The roles Settings lists: those that are wired, in listing order.
+    pub fn listed() -> impl Iterator<Item = Role> {
+        Role::ALL.into_iter().filter(|r| r.is_wired())
+    }
+
     /// The id used in `keymap.json`'s `roles`.
     pub fn id(self) -> &'static str {
         match self {
@@ -396,6 +420,57 @@ mod tests {
             );
             assert!(Roles::defaults(os).is_on(Role::AlternateTool));
         }
+    }
+
+    /// The sources of the consumer modules, for the registry test.
+    fn source_of(module: &str) -> &'static str {
+        match module {
+            "viewport" => include_str!("../viewport.rs"),
+            "rack/selection" => include_str!("../rack/selection.rs"),
+            "arrangement" => include_str!("../arrangement.rs"),
+            "console" => include_str!("../console.rs"),
+            other => panic!("no source registered for {other}"),
+        }
+    }
+
+    #[test]
+    fn every_listed_role_has_a_consumer_that_reads_it() {
+        let listed: Vec<Role> = Role::listed().collect();
+        assert!(listed.len() >= 6, "{listed:?}");
+        for role in listed {
+            let name = format!("Role::{role:?}");
+            for module in role.consumers() {
+                assert!(
+                    source_of(module).contains(&name),
+                    "{module} does not read {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_roles_without_a_consumer_are_not_listed_but_stay_known() {
+        let unlisted: Vec<Role> = Role::ALL.into_iter().filter(|r| !r.is_wired()).collect();
+        assert_eq!(unlisted, [Role::Constrain]);
+        for role in unlisted {
+            assert!(!Role::listed().any(|r| r == role));
+            assert_eq!(Role::from_id(role.id()), Some(role));
+        }
+    }
+
+    #[test]
+    fn the_snap_off_default_on_windows_is_ctrl_alt_which_altgr_also_sends() {
+        // AltGr reports Ctrl+Alt on many European layouts, so on Windows typing with it
+        // while dragging switches snapping off. The default stays; Settings remaps it.
+        let r = Roles::defaults(Os::Windows);
+        assert_eq!(
+            r.binding(Role::DisableSnap).unwrap().mods,
+            m(true, false, true, false)
+        );
+        let altgr = held(true, true, false, false);
+        assert!(r.is_active(Role::DisableSnap, altgr, GestureClass::Hold));
+        let remapped = r.with(Role::DisableSnap, m(false, false, true, true));
+        assert!(!remapped.is_active(Role::DisableSnap, altgr, GestureClass::Hold));
     }
 
     #[test]
