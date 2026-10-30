@@ -52,7 +52,7 @@ pub use device::{METER_VALUES, PluginDevice};
 pub use fpenv::{FLUSH_SUPPORTED, FtzGuard, denormals_flushed};
 pub use journal::{CrashJournal, InUsePlugin, RecoveryDir, blacklist_in_use};
 pub use manager::{
-    InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle, PluginManager,
+    HUNG, InstantiateRequest, LOST, ManagerError, ManagerEvent, PluginHandle, PluginManager,
     PluginProvider,
 };
 pub use scan::{

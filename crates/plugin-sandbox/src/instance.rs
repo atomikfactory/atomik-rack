@@ -16,6 +16,7 @@ use atomik_plugin_host::{
     PluginInstance, PluginMessage, PluginProcessor, warmed,
 };
 use atomik_plugin_ipc::{FromChild, ParentPort, ToChild, WireParent};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -37,6 +38,8 @@ pub(crate) struct RemoteInstance {
     latency: u32,
     /// Activated for an offline bounce: `poll` flushes the child's notifications.
     offline_active: bool,
+    /// The last text the child gave for each param, shown while it is too busy to answer.
+    texts: BTreeMap<u32, String>,
 }
 
 fn unexpected_none(what: &str) -> BackendError {
@@ -95,6 +98,7 @@ impl RemoteInstance {
             has_gui,
             latency,
             offline_active: false,
+            texts: BTreeMap::new(),
         })
     }
 
@@ -104,6 +108,15 @@ impl RemoteInstance {
 
     fn period(sample_rate: f64) -> Duration {
         Duration::from_secs_f64(BATCH as f64 / sample_rate).max(MIN_PERIOD)
+    }
+
+    /// How many late batches in a row make `hung` long, at one batch per `period`; 0 turns the
+    /// guard off.
+    fn hang_batches(period: Duration, hung: Duration) -> u32 {
+        if hung.is_zero() {
+            return 0;
+        }
+        (hung.as_secs_f64() / period.as_secs_f64()).ceil().max(1.0) as u32
     }
 
     /// An `Ok`-or-`GuiOpened` reply (the child may say either to an `OpenGui`).
@@ -163,13 +176,22 @@ impl PluginInstance for RemoteInstance {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
             .ok_or_else(|| BackendError::Failed("the plugin is already active".to_string()))?;
-        Ok(Box::new(RemoteProcessor::new(
+        let period = Self::period(cfg.sample_rate);
+        let mut processor = RemoteProcessor::new(
             port,
             Arc::clone(&self.port),
             wait_all,
-            Self::period(cfg.sample_rate),
+            period,
             self.timeouts().watchdog,
-        )))
+        );
+        if !wait_all {
+            // Live only: an offline batch waits for its answer up to the watchdog instead.
+            processor = processor.with_hang_guard(
+                Self::hang_batches(period, self.timeouts().hung),
+                self.link.shared().hung_flag(),
+            );
+        }
+        Ok(Box::new(processor))
     }
 
     fn deactivate(&mut self, processor: Box<dyn PluginProcessor>) {
@@ -220,21 +242,26 @@ impl PluginInstance for RemoteInstance {
         if !plain.is_finite() {
             return None;
         }
-        let reply = self
+        // A plugin too busy to answer is not a failed one: the last text it gave stays up.
+        let Ok(reply) = self
             .link
-            .call(
-                "ParamText",
-                self.timeouts().text,
-                |rid| ToChild::ParamText {
+            .soft_call("ParamText", self.timeouts().text, |rid| {
+                ToChild::ParamText {
                     id: rid,
                     param: id,
                     plain,
-                },
-                None,
-            )
-            .ok()?;
+                }
+            })
+        else {
+            return self.texts.get(&id).cloned();
+        };
         match reply.msg {
-            FromChild::Text { text, .. } => text,
+            FromChild::Text { text, .. } => {
+                if let Some(text) = &text {
+                    self.texts.insert(id, text.clone());
+                }
+                text
+            }
             _ => None,
         }
     }
@@ -246,10 +273,10 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn close_gui(&mut self) {
-        let call = self.timeouts().call;
+        let call = self.timeouts().text;
         let _ = self
             .link
-            .call("CloseGui", call, |id| ToChild::CloseGui { id }, None);
+            .soft_call("CloseGui", call, |id| ToChild::CloseGui { id });
     }
 
     fn poll(&mut self) {
@@ -265,6 +292,9 @@ impl PluginInstance for RemoteInstance {
                 .link
                 .call("Flush", call, |id| ToChild::Flush { id }, None);
         }
+        // The param edits the reader held back go to the messenger now, just before the manager
+        // drains it.
+        self.link.shared().flush_edits();
     }
 
     fn has_gui(&self) -> bool {
@@ -272,10 +302,10 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn default_pins(&mut self) -> Vec<u32> {
-        let call = self.timeouts().call;
+        let call = self.timeouts().text;
         match self
             .link
-            .call("DefaultPins", call, |id| ToChild::DefaultPins { id }, None)
+            .soft_call("DefaultPins", call, |id| ToChild::DefaultPins { id })
         {
             Ok(Reply {
                 msg: FromChild::Pins { pins, .. },
@@ -286,13 +316,18 @@ impl PluginInstance for RemoteInstance {
     }
 
     fn take_layout_changed(&mut self) -> bool {
-        let call = self.timeouts().call;
-        match self.link.call(
-            "TakeLayoutChanged",
-            call,
-            |id| ToChild::TakeLayoutChanged { id },
-            None,
-        ) {
+        // The child tells a layout change once: one whose answer came after its call gave up
+        // is kept for this one.
+        if let Some(layout) = self.link.shared().take_late_layout() {
+            self.layout = layout.into();
+            return true;
+        }
+        let call = self.timeouts().text;
+        match self
+            .link
+            .soft_call("TakeLayoutChanged", call, |id| ToChild::TakeLayoutChanged {
+                id,
+            }) {
             Ok(Reply {
                 msg:
                     FromChild::LayoutChanged {
@@ -339,5 +374,22 @@ impl PluginInstance for RemoteInstance {
 
     fn is_lost(&self) -> bool {
         self.link.is_lost()
+    }
+
+    fn begin_shutdown(&mut self) {
+        self.link.begin_shutdown();
+    }
+}
+
+#[cfg(test)]
+impl RemoteInstance {
+    /// Notifications refused for being out of bounds.
+    pub(crate) fn rejected_frames(&self) -> u64 {
+        self.link.shared().rejected()
+    }
+
+    /// True while the child misses cosmetic calls.
+    pub(crate) fn is_slow(&self) -> bool {
+        self.link.is_slow()
     }
 }

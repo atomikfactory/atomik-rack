@@ -12,6 +12,7 @@ use atomik_plugin_host::{
     PluginEvent, PluginIo, PluginProcessor, ProcessStatus, SleepRule, TailLength,
 };
 use atomik_plugin_ipc::{AudioOp, Deadline, MAX_EVENTS_IN, ParentPort, Poll, Ticket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -34,6 +35,12 @@ pub(crate) struct RemoteProcessor {
     carry: Vec<PluginEvent>,
     /// The carry followed by the new batch's events, as submitted.
     merged: Vec<PluginEvent>,
+    /// Late batches in a row.
+    late_streak: u32,
+    /// How many make the child hung (0: never; offline batches are not counted).
+    hang_after: u32,
+    /// Set when the child is declared hung, for the main thread to give the reason.
+    hung: Option<Arc<AtomicBool>>,
 }
 
 /// What became of the request that was in flight before a new exchange.
@@ -64,7 +71,38 @@ impl RemoteProcessor {
             watchdog,
             carry: Vec::with_capacity(MAX_EVENTS_IN),
             merged: Vec::with_capacity(MAX_EVENTS_IN),
+            late_streak: 0,
+            hang_after: 0,
+            hung: None,
         }
+    }
+
+    /// Declares the child hung after `batches` late batches in a row: the block is marked dead
+    /// (so the engine sees `Lost` from then on) and `flag` is set; the main thread ends the
+    /// process. Only atomic stores happen on the audio thread.
+    pub fn with_hang_guard(mut self, batches: u32, flag: Arc<AtomicBool>) -> Self {
+        self.hang_after = batches;
+        self.hung = Some(flag);
+        self
+    }
+
+    /// Counts the batch's result for the hang guard.
+    fn note(&mut self, status: ProcessStatus) -> ProcessStatus {
+        if status != ProcessStatus::Late {
+            self.late_streak = 0;
+        } else if self.hang_after > 0 && !self.offline {
+            self.late_streak = self.late_streak.saturating_add(1);
+            if self.late_streak >= self.hang_after {
+                if let Some(flag) = &self.hung {
+                    flag.store(true, Ordering::Release);
+                }
+                if let Some(port) = &self.port {
+                    port.mark_dead();
+                }
+                return ProcessStatus::Lost;
+            }
+        }
+        status
     }
 
     /// Keeps the events of a batch that was not submitted. When the carry is full the newest
@@ -208,20 +246,9 @@ impl RemoteProcessor {
     }
 }
 
-impl PluginProcessor for RemoteProcessor {
-    fn start_processing(&mut self) -> bool {
-        self.run_op(AudioOp::Start).unwrap_or(false)
-    }
-
-    fn stop_processing(&mut self) {
-        let _ = self.run_op(AudioOp::Stop);
-    }
-
-    fn reset(&mut self) {
-        let _ = self.run_op(AudioOp::Reset);
-    }
-
-    fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
+impl RemoteProcessor {
+    /// Runs one batch, without the hang guard.
+    fn process_batch(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
         let (offline, watchdog, period) = (self.offline, self.watchdog, self.period);
         let Self {
             port,
@@ -258,6 +285,25 @@ impl PluginProcessor for RemoteProcessor {
             }
             Poll::TimedOut | Poll::Pending => ProcessStatus::Late,
         }
+    }
+}
+
+impl PluginProcessor for RemoteProcessor {
+    fn start_processing(&mut self) -> bool {
+        self.run_op(AudioOp::Start).unwrap_or(false)
+    }
+
+    fn stop_processing(&mut self) {
+        let _ = self.run_op(AudioOp::Stop);
+    }
+
+    fn reset(&mut self) {
+        let _ = self.run_op(AudioOp::Reset);
+    }
+
+    fn process(&mut self, io: &mut PluginIo<'_>) -> ProcessStatus {
+        let status = self.process_batch(io);
+        self.note(status)
     }
 
     fn sleep_rule(&self) -> SleepRule {

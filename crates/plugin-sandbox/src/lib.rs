@@ -26,6 +26,7 @@ use atomik_device_sdk::{PluginFormat, PluginRef};
 use atomik_plugin_host::{BackendError, HostHandle, PluginBackend, PluginInstance, ScannedPlugin};
 use atomik_plugin_ipc::{
     Doorbell, DoorbellName, ParentPort, SharedBlock, block_file_name, default_block_dir,
+    sweep_stale_blocks,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -69,10 +70,14 @@ pub struct SandboxConfig {
     pub create_timeout: Duration,
     /// Every other main-thread call.
     pub call_timeout: Duration,
-    /// Param text (asked often by the UI).
+    /// The calls that only polish the interface (param text, pins, layout, closing the editor):
+    /// a miss never stops the child, see [`SandboxConfig::new`].
     pub text_timeout: Duration,
     /// Offline (bounce) audio: how long a batch may take before the child counts as hung.
     pub offline_watchdog: Duration,
+    /// Live audio: how long a child may answer no batch at all before it is stopped and the
+    /// app reloads it. Zero turns this off.
+    pub hung_after: Duration,
     /// The host is a bounce, not the live app: every batch waits for the child (up to the
     /// watchdog) and the plugin's notifications are flushed after each batch, whatever run
     /// mode the plugin is told (a `--plugin-mode realtime` bounce is still rendered offline).
@@ -81,7 +86,11 @@ pub struct SandboxConfig {
 }
 
 impl SandboxConfig {
-    /// The default timeouts (10 s, 2 s, 250 ms, 30 s) for `command`, for the live app.
+    /// The default timeouts (10 s, 2 s, 250 ms, 30 s, 3 s) for `command`, for the live app.
+    ///
+    /// A call that matters (create, activate, state, deactivate) that is not answered in time
+    /// stops the child. A cosmetic one only drops its request: the child is marked slow after a
+    /// few misses in a row and stopped after many.
     pub fn new(command: HostCommand) -> Self {
         Self {
             command,
@@ -89,6 +98,7 @@ impl SandboxConfig {
             call_timeout: Duration::from_secs(2),
             text_timeout: Duration::from_millis(250),
             offline_watchdog: Duration::from_secs(30),
+            hung_after: Duration::from_secs(3),
             bounce: false,
         }
     }
@@ -105,6 +115,9 @@ pub struct SandboxBackend {
     live: Arc<AtomicUsize>,
 }
 
+/// How long a slow instance is left alone between two cosmetic calls.
+const SLOW_RETRY: Duration = Duration::from_secs(1);
+
 /// The number the next instance's block and doorbell carry: one counter for the whole process,
 /// since the CLAP and the VST3 backend share the block folder and the doorbell namespace.
 static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
@@ -112,6 +125,11 @@ static NEXT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 impl SandboxBackend {
     /// A backend for `format` that starts children with `config`.
     pub fn new(format: PluginFormat, config: SandboxConfig) -> Self {
+        // Files left by an app that crashed (Unix keeps them): once per process.
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(|| {
+            sweep_stale_blocks(&default_block_dir());
+        });
         Self {
             format,
             config,
@@ -145,6 +163,8 @@ impl SandboxBackend {
             call: self.config.call_timeout,
             text: self.config.text_timeout,
             watchdog: self.config.offline_watchdog,
+            hung: self.config.hung_after,
+            slow_retry: SLOW_RETRY,
             bounce: self.config.bounce,
         }
     }

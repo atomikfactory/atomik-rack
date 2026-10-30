@@ -80,6 +80,9 @@ pub(crate) fn spawn_process(
         cmd.creation_flags(0x0800_0000);
     }
     let mut child = cmd.spawn()?;
+    // The child ends with the app, however the app ends. A child that cannot be bound still
+    // watches its parent itself.
+    let _ = atomik_plugin_ipc::lifetime::bind_child(&child);
     let missing = |what: &str| io::Error::other(format!("no {what} pipe"));
     let writer = child.stdin.take().ok_or_else(|| missing("stdin"))?;
     let reader = child.stdout.take().ok_or_else(|| missing("stdout"))?;
