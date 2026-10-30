@@ -402,7 +402,7 @@ impl KeyboardTab {
                 rect: Rect::new(0.0, y, inner, y + HEADER),
             });
             y += HEADER;
-            for role in Role::ALL {
+            for role in Role::listed() {
                 let Some(binding) = self.editor.roles().binding(role) else {
                     continue;
                 };

@@ -1056,3 +1056,32 @@ fn the_other_tabs_do_not_show_the_surface_sections_and_back_to_audio_shows_the_a
         assert!(texts.contains(&t), "{t} in {texts:?}");
     }
 }
+
+#[test]
+fn only_the_roles_a_gesture_reads_are_listed() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Keyboard);
+    scroll_to_end(&mut d);
+    let listed: Vec<Role> = kb(&d)
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Role { role, .. } => Some(*role),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<Role> = Role::listed().collect();
+    assert_eq!(listed, expected);
+    assert!(!listed.contains(&Role::Constrain));
+    assert!(listed.contains(&Role::FineAdjust) && listed.contains(&Role::CopyDrag));
+}
+
+#[test]
+fn a_remap_of_an_unlisted_role_survives_a_save_and_load() {
+    use atomik_ui::keymap::UserKeymap;
+    let text = r#"{"version": 1, "roles": {"constrain": "Alt"}}"#;
+    let (user, _) = UserKeymap::from_json(text).unwrap();
+    assert!(user.roles.contains_key("constrain"));
+    let (again, _) = UserKeymap::from_json(&user.to_json()).unwrap();
+    assert_eq!(again.roles.get("constrain"), user.roles.get("constrain"));
+}

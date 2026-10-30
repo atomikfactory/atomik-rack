@@ -1046,7 +1046,15 @@ fn double_click_and_ctrl_click_reset_to_the_default() {
                 UiEvent::PointerDown {
                     pos: p,
                     button: PointerButton::Primary,
-                    modifiers: Modifiers::CTRL,
+                    // The reset role is Cmd on macOS and Ctrl elsewhere.
+                    modifiers: if cfg!(target_os = "macos") {
+                        Modifiers {
+                            meta: true,
+                            ..Modifiers::NONE
+                        }
+                    } else {
+                        Modifiers::CTRL
+                    },
                     clicks: 1,
                 }
             };

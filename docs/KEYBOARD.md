@@ -33,6 +33,24 @@ The locator clicks win over the razor in the ruler. In the grid the playhead and
 
 Up increases and down decreases, and a value stops at the end of its range.
 
+## Modifier roles
+
+A role is a modifier held during a pointer gesture, not a chord. Settings, Keyboard lists the roles that a gesture acts on, and remapping one changes that gesture at once. A role is told apart from the others of its gesture by the exact modifiers held (`Alt` alone and `Ctrl+Alt` are different holds).
+
+| Role | Other systems | macOS | Result |
+|---|---|---|---|
+| Alternate tool | `Alt` | `Ctrl` | The pointer acts with the alternate tool while held |
+| Disable snap | `Ctrl+Alt` | `Cmd+Opt` | No snap while dragging |
+| Copy while dragging | `Ctrl` | `Opt` | Dragging clips in the arrangement drops a copy |
+| Toggle selection | `Ctrl` | `Cmd` | A click adds the item to the selection or takes it out |
+| Range select | `Shift` | `Shift` | A click selects from the last clicked item to this one |
+| Fine adjust | `Shift` | `Shift` | A drag or a wheel notch on a knob or fader in the rack and the mixer moves a tenth as far |
+| Reset parameter | `Ctrl` | `Cmd` | A click on a knob or fader in the rack and the mixer sets its default (a double-click does too) |
+
+Constrain is a role in the keymap but no gesture reads it yet, so Settings does not list it; a remap of it that is already in `keymap.json` is kept. The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
+
+Many European keyboard layouts report AltGr as `Ctrl+Alt` (the default of Disable snap outside macOS): typing a character with AltGr while dragging switches snapping off. Remap Disable snap in Settings, Keyboard if that gets in the way.
+
 ## Tooltips
 
 Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip under it that says what the button does, with the shortcut of its command when it has one (printed as the menus print it, so a key you rebind in Settings, Keyboard shows at once). The tooltip hides on a press, a key, the wheel, or when the pointer leaves the button. Settings, Workflow, **Show tooltips** (on by default) switches them off; the value readout shown while a knob or fader is dragged stays.
