@@ -1,4 +1,4 @@
-//! App commands and the menu model shared by the in-window menu bar and the native (macOS)
+//! App .filter(|c| !matches!(c, AppCommand::ToggleFileBrowser | AppCommand::TogglePianoKeys))ommands and the menu model shared by the in-window menu bar and the native (macOS)
 //! menus.
 //!
 //! Keys are not decided here: every [`AppCommand`] maps to a command id of the registry
@@ -8,8 +8,9 @@
 use crate::record::InputQuantize;
 use atomik_model::{FadeCurve, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
-use atomik_ui::keymap::Keymap;
+use atomik_ui::keymap::{Keymap, RECENT_ARGS};
 use atomik_ui::{CableVisibility, Flip, TransportAction};
+use std::borrow::Cow;
 
 /// Something the user asked the app to do (menu item or shortcut).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,12 @@ pub enum AppCommand {
     New,
     /// File ▸ Open….
     Open,
+    /// File ▸ Open Recent ▸ a song: the song at this place of the recent list (0 is the newest).
+    OpenRecent(usize),
+    /// File ▸ Open Recent ▸ Clear Menu: forget the recent songs.
+    ClearRecent,
+    /// File ▸ Close: end the song and start a new empty one (asks about unsaved changes).
+    Close,
     /// File ▸ Save.
     Save,
     /// File ▸ Save As….
@@ -88,6 +95,8 @@ pub enum AppCommand {
     ToggleBrowser,
     /// View ▸ File Browser (the docked audio file panel on the left).
     ToggleFileBrowser,
+    /// View ▸ Piano Keys (the on-screen keyboard strip above the status bar).
+    TogglePianoKeys,
     /// View ▸ Rack Navigator (the overview strip at the right of the rack).
     ToggleRackNavigator,
     /// View ▸ Arrangement (show or hide the song area below the transport bar).
@@ -106,6 +115,11 @@ pub enum AppCommand {
     Transport(TransportAction),
     /// Transport ▸ Input Quantize.
     Quantize(InputQuantize),
+    /// Options ▸ Pre-count (Ctrl+P): the count-in of a recording on or off. It is a setting
+    /// (`pre_count_bars`), so the shell applies and saves it.
+    TogglePreCount,
+    /// Options ▸ Chase Notes: the selected track's note chase on or off.
+    ToggleChase,
     /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
     ToggleConsoleDevices,
     /// View > Show Console Links: draw the channel to master cables on the back of
@@ -117,6 +131,9 @@ pub enum AppCommand {
     /// View > Marker Strip: the strip of markers and ranges under the arrangement's ruler
     /// (saved with the view state).
     ToggleMarkerStrip,
+    /// View > Inspector: the strip under the arrangement's track lanes with the selected clips'
+    /// position, length and loop as editable fields (saved with the view state).
+    ToggleInspector,
     /// View > Marker List: the list of markers and ranges docked at the right edge of the
     /// arrangement (saved with the view state).
     ToggleMarkerList,
@@ -329,6 +346,9 @@ impl AppCommand {
         Some(match self {
             AppCommand::New => ("file.new", None),
             AppCommand::Open => ("file.open", None),
+            AppCommand::OpenRecent(i) => ("file.open_recent", Some(RECENT_ARGS.get(*i)?)),
+            AppCommand::ClearRecent => ("file.clear_recent", None),
+            AppCommand::Close => ("file.close", None),
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
             AppCommand::ImportAudio => ("file.import_audio", None),
@@ -363,6 +383,7 @@ impl AppCommand {
             AppCommand::ZoomReset => ("view.zoom_reset", None),
             AppCommand::ToggleBrowser => ("view.toggle_browser", None),
             AppCommand::ToggleFileBrowser => ("view.toggle_file_browser", None),
+            AppCommand::TogglePianoKeys => ("view.toggle_piano_keys", None),
             AppCommand::ToggleSong => ("view.toggle_song", None),
             AppCommand::TogglePianoRoll => ("view.toggle_piano_roll", None),
             AppCommand::ToggleSampleEditor => ("view.toggle_sample_editor", None),
@@ -378,6 +399,8 @@ impl AppCommand {
                 ("transport.metronome", None)
             }
             AppCommand::Transport(TransportAction::Locate(_)) => return None,
+            AppCommand::TogglePreCount => ("transport.pre_count", None),
+            AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
             AppCommand::Quantize(InputQuantize::Off) => ("transport.input_quantize", Some("off")),
             AppCommand::Quantize(InputQuantize::Eighth) => {
                 ("transport.input_quantize", Some("eighth"))
@@ -389,6 +412,7 @@ impl AppCommand {
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
             AppCommand::ToggleMarkerStrip => ("view.toggle_marker_strip", None),
+            AppCommand::ToggleInspector => ("view.toggle_inspector", None),
             AppCommand::ToggleMarkerList => ("view.toggle_marker_list", None),
             AppCommand::AddMarker => ("transport.add_marker", None),
             AppCommand::AddRangeFromLoop => ("transport.add_range_from_loop", None),
@@ -505,6 +529,11 @@ impl AppCommand {
         Some(match (id, arg) {
             ("file.new", None) => AppCommand::New,
             ("file.open", None) => AppCommand::Open,
+            ("file.open_recent", Some(n)) => {
+                AppCommand::OpenRecent(RECENT_ARGS.iter().position(|a| *a == n)?)
+            }
+            ("file.clear_recent", None) => AppCommand::ClearRecent,
+            ("file.close", None) => AppCommand::Close,
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
             ("file.import_audio", None) => AppCommand::ImportAudio,
@@ -539,6 +568,7 @@ impl AppCommand {
             ("view.zoom_reset", None) => AppCommand::ZoomReset,
             ("view.toggle_browser", None) => AppCommand::ToggleBrowser,
             ("view.toggle_file_browser", None) => AppCommand::ToggleFileBrowser,
+            ("view.toggle_piano_keys", None) => AppCommand::TogglePianoKeys,
             ("view.toggle_song", None) => AppCommand::ToggleSong,
             ("view.toggle_piano_roll", None) => AppCommand::TogglePianoRoll,
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
@@ -553,6 +583,8 @@ impl AppCommand {
             ("transport.metronome", None) => {
                 AppCommand::Transport(TransportAction::ToggleMetronome)
             }
+            ("transport.pre_count", None) => AppCommand::TogglePreCount,
+            ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
             ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::Off),
             ("transport.input_quantize", Some("eighth")) => {
                 AppCommand::Quantize(InputQuantize::Eighth)
@@ -564,6 +596,7 @@ impl AppCommand {
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
             ("view.toggle_tempo_lane", None) => AppCommand::ToggleTempoLane,
             ("view.toggle_marker_strip", None) => AppCommand::ToggleMarkerStrip,
+            ("view.toggle_inspector", None) => AppCommand::ToggleInspector,
             ("view.toggle_marker_list", None) => AppCommand::ToggleMarkerList,
             ("transport.add_marker", None) => AppCommand::AddMarker,
             ("transport.add_range_from_loop", None) => AppCommand::AddRangeFromLoop,
@@ -806,6 +839,8 @@ pub struct MenuState {
     pub browser: bool,
     /// File browser panel shown.
     pub file_browser: bool,
+    /// Piano Keys strip shown.
+    pub piano_keys: bool,
     /// Undo possible.
     pub can_undo: bool,
     /// Redo possible.
@@ -832,6 +867,8 @@ pub struct MenuState {
     pub loop_enabled: bool,
     /// The metronome is on.
     pub metronome: bool,
+    /// The pre-count (the count-in of a recording) is on.
+    pub pre_count: bool,
     /// Input quantize for recording.
     pub quantize: InputQuantize,
     /// The console shows in the lower pane.
@@ -848,6 +885,8 @@ pub struct MenuState {
     pub tempo_lane: bool,
     /// The arrangement shows the marker strip.
     pub marker_strip: bool,
+    /// The arrangement shows the inspector strip.
+    pub inspector: bool,
     /// The arrangement shows the marker list.
     pub marker_list: bool,
     /// The rack navigator is on.
@@ -966,8 +1005,9 @@ pub struct FreezeMenu {
 /// One menu item.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuItem {
-    /// Label (`…` marks items that open a dialog).
-    pub label: &'static str,
+    /// Label (`…` marks items that open a dialog). Most are fixed texts; the recent songs are
+    /// named after their files.
+    pub label: Cow<'static, str>,
     /// What it does.
     pub command: AppCommand,
     /// Shortcut text derived from the keymap and the OS, e.g. `Ctrl+S` (`Cmd+S` on macOS).
@@ -985,6 +1025,36 @@ pub enum MenuEntry {
     Item(MenuItem),
     /// A separator line.
     Separator,
+    /// An entry that opens a list of its own (File ▸ Open Recent).
+    Submenu(Submenu),
+}
+
+/// A submenu: a label and the entries it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Submenu {
+    /// Text of the entry in the menu.
+    pub label: &'static str,
+    /// The entries, top to bottom.
+    pub entries: Vec<MenuEntry>,
+}
+
+impl Submenu {
+    /// The items (separators skipped).
+    pub fn items(&self) -> impl Iterator<Item = &MenuItem> {
+        self.entries.iter().flat_map(MenuEntry::items)
+    }
+}
+
+impl MenuEntry {
+    /// The items this entry is or holds: none for a separator, the entry itself for an item,
+    /// the items of its entries for a submenu.
+    pub fn items(&self) -> Box<dyn Iterator<Item = &MenuItem> + '_> {
+        match self {
+            MenuEntry::Item(i) => Box::new(std::iter::once(i)),
+            MenuEntry::Separator => Box::new(std::iter::empty()),
+            MenuEntry::Submenu(s) => Box::new(s.items()),
+        }
+    }
 }
 
 /// A top-level menu.
@@ -997,21 +1067,24 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// The items (separators skipped).
+    /// The items (separators skipped, the items of submenus included).
     pub fn items(&self) -> impl Iterator<Item = &MenuItem> {
-        self.entries.iter().filter_map(|e| match e {
-            MenuEntry::Item(i) => Some(i),
-            MenuEntry::Separator => None,
-        })
+        self.entries.iter().flat_map(MenuEntry::items)
     }
 }
 
 /// The menu bar: File, Edit, View, Transport, Mixer, Audio. Shortcut texts come from `keymap`
 /// (its OS decides `Ctrl` or `Cmd`); no key is written in this function.
 pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
-    let make = |label, command: AppCommand, checked, enabled| {
+    menus_with_recent(state, keymap, &[])
+}
+
+/// [`menus`], with the File ▸ Open Recent submenu listing `recent` (the label of each song,
+/// newest first; at most [`RECENT_ARGS`]'s length are shown).
+pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) -> Vec<Menu> {
+    let make = |label: &'static str, command: AppCommand, checked, enabled| {
         MenuEntry::Item(MenuItem {
-            label,
+            label: Cow::Borrowed(label),
             command,
             shortcut: command.shortcut_text(keymap),
             checked,
@@ -1025,12 +1098,35 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
     let quantize =
         |label, q: InputQuantize| check(label, AppCommand::Quantize(q), state.quantize == q);
     let transport = AppCommand::Transport;
+    let open_recent = MenuEntry::Submenu(Submenu {
+        label: "Open Recent",
+        entries: recent
+            .iter()
+            .take(RECENT_ARGS.len())
+            .enumerate()
+            .map(|(i, name)| {
+                MenuEntry::Item(MenuItem {
+                    label: Cow::Owned(name.clone()),
+                    command: AppCommand::OpenRecent(i),
+                    shortcut: None,
+                    checked: None,
+                    enabled: true,
+                })
+            })
+            .chain([
+                MenuEntry::Separator,
+                enabled("Clear Menu", AppCommand::ClearRecent, !recent.is_empty()),
+            ])
+            .collect(),
+    });
     vec![
         Menu {
             title: "File",
             entries: vec![
                 item("New", AppCommand::New),
                 item("Open\u{2026}", AppCommand::Open),
+                open_recent,
+                item("Close", AppCommand::Close),
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
@@ -1136,6 +1232,7 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ToggleFileBrowser,
                     state.file_browser,
                 ),
+                check("Piano Keys", AppCommand::TogglePianoKeys, state.piano_keys),
                 check("Rack", AppCommand::ToggleRack, state.rack),
                 check("Detach Rack", AppCommand::DetachRack, state.rack_detached),
                 check(
@@ -1195,6 +1292,7 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                     AppCommand::ToggleMarkerList,
                     state.marker_list,
                 ),
+                check("Inspector", AppCommand::ToggleInspector, state.inspector),
                 MenuEntry::Separator,
                 item("Find Parameter\u{2026}", AppCommand::FindParameter),
                 check(
@@ -1650,6 +1748,32 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
                 ),
             ],
         },
+        // The playback and recording settings, gathered: each entry is the command it already
+        // has in its own menu, which keeps working.
+        Menu {
+            title: "Options",
+            entries: vec![
+                check(
+                    "Click",
+                    transport(TransportAction::ToggleMetronome),
+                    state.metronome,
+                ),
+                check("Pre-count", AppCommand::TogglePreCount, state.pre_count),
+                MenuEntry::Separator,
+                quantize("Input Quantize: Off", InputQuantize::Off),
+                quantize("Input Quantize: 1/8", InputQuantize::Eighth),
+                quantize("Input Quantize: 1/16", InputQuantize::Sixteenth),
+                MenuEntry::Separator,
+                item("Chase Notes", AppCommand::ToggleChase),
+                check(
+                    "Delay Compensation",
+                    AppCommand::ToggleCompensation,
+                    state.compensation,
+                ),
+                MenuEntry::Separator,
+                item("Settings\u{2026}", AppCommand::AudioSettings),
+            ],
+        },
     ]
 }
 
@@ -1668,6 +1792,7 @@ mod tests {
             cables: CableVisibility::Show,
             browser: false,
             file_browser: false,
+            piano_keys: false,
             can_undo: true,
             can_redo: false,
             can_edit: false,
@@ -1681,6 +1806,7 @@ mod tests {
             recording: false,
             loop_enabled: false,
             metronome: false,
+            pre_count: false,
             quantize: InputQuantize::Off,
             console: false,
             console_maximised: false,
@@ -1689,6 +1815,7 @@ mod tests {
             console_links: false,
             tempo_lane: false,
             marker_strip: false,
+            inspector: false,
             marker_list: false,
             rack_navigator: true,
             rack: true,
@@ -1719,6 +1846,10 @@ mod tests {
         let mut v = vec![
             AppCommand::New,
             AppCommand::Open,
+            AppCommand::OpenRecent(0),
+            AppCommand::OpenRecent(7),
+            AppCommand::ClearRecent,
+            AppCommand::Close,
             AppCommand::Save,
             AppCommand::SaveAs,
             AppCommand::ImportAudio,
@@ -1750,6 +1881,7 @@ mod tests {
             AppCommand::ZoomReset,
             AppCommand::ToggleBrowser,
             AppCommand::ToggleFileBrowser,
+            AppCommand::TogglePianoKeys,
             AppCommand::ToggleSong,
             AppCommand::TogglePianoRoll,
             AppCommand::ToggleSampleEditor,
@@ -1759,6 +1891,7 @@ mod tests {
             AppCommand::ToggleConsoleLinks,
             AppCommand::ToggleTempoLane,
             AppCommand::ToggleMarkerStrip,
+            AppCommand::ToggleInspector,
             AppCommand::ToggleMarkerList,
             AppCommand::FindParameter,
             AppCommand::FollowSelection,
@@ -1892,6 +2025,8 @@ mod tests {
         ] {
             v.push(AppCommand::Transport(t));
         }
+        v.push(AppCommand::TogglePreCount);
+        v.push(AppCommand::ToggleChase);
         for q in [
             InputQuantize::Off,
             InputQuantize::Eighth,
@@ -1943,7 +2078,8 @@ mod tests {
     #[test]
     fn menu_commands_in_the_registry_all_have_a_menu_item() {
         let keymap = legacy(Os::Windows);
-        let model = menus(&state(), &keymap);
+        let recent: Vec<String> = (0..8).map(|i| format!("song {i}")).collect();
+        let model = menus_with_recent(&state(), &keymap, &recent);
         let in_menu: Vec<AppCommand> = model
             .iter()
             .flat_map(Menu::items)
@@ -2038,7 +2174,7 @@ mod tests {
     ) -> Option<AppCommand> {
         use atomik_ui::keymap::{ContextStack, Resolution};
         match keymap.resolve_event(key, modifiers, &ContextStack::global()) {
-            // F4 (the file browser) is new: it is not part of the old function being compared.
+            // The file browser and the piano keys are new: they are not part of the old function being compared.
             Resolution::Bound(list) => list
                 .iter()
                 .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref()))
@@ -2204,15 +2340,18 @@ mod tests {
                 "Mixer",
                 "Create",
                 "Track",
-                "Audio"
+                "Audio",
+                "Options"
             ]
         );
-        let labels = |i: usize| m[i].items().map(|it| it.label).collect::<Vec<_>>();
+        let labels = |i: usize| m[i].items().map(|it| it.label.as_ref()).collect::<Vec<_>>();
         assert_eq!(
             labels(0),
             [
                 "New",
                 "Open\u{2026}",
+                "Clear Menu",
+                "Close",
                 "Save",
                 "Save As\u{2026}",
                 "Import Audio\u{2026}",
@@ -2261,6 +2400,7 @@ mod tests {
                 "Actual Size",
                 "Device Browser",
                 "File Browser",
+                "Piano Keys",
                 "Rack",
                 "Detach Rack",
                 "Detach Mixer",
@@ -2277,6 +2417,7 @@ mod tests {
                 "Tempo Lane",
                 "Marker Strip",
                 "Marker List",
+                "Inspector",
                 "Find Parameter\u{2026}",
                 "Automation Follows Selection",
                 "Show Automation Lane",
@@ -2392,6 +2533,62 @@ mod tests {
                 "Audio to Notes\u{2026}"
             ]
         );
+        assert_eq!(
+            labels(8),
+            [
+                "Click",
+                "Pre-count",
+                "Input Quantize: Off",
+                "Input Quantize: 1/8",
+                "Input Quantize: 1/16",
+                "Chase Notes",
+                "Delay Compensation",
+                "Settings\u{2026}"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_options_menu_reuses_the_commands_of_their_own_menus() {
+        let m = menus(&state(), &legacy(Os::Windows));
+        let options = &m[8];
+        assert_eq!(options.title, "Options");
+        let command = |label: &str| {
+            options
+                .items()
+                .find(|i| i.label.as_ref() == label)
+                .unwrap_or_else(|| panic!("no {label}"))
+                .command
+        };
+        assert_eq!(
+            command("Click"),
+            AppCommand::Transport(TransportAction::ToggleMetronome)
+        );
+        assert_eq!(command("Pre-count"), AppCommand::TogglePreCount);
+        assert_eq!(command("Chase Notes"), AppCommand::ToggleChase);
+        assert_eq!(
+            command("Delay Compensation"),
+            AppCommand::ToggleCompensation
+        );
+        assert_eq!(command("Settings\u{2026}"), AppCommand::AudioSettings);
+        // Pre-count has a key in the standard profile and shows it.
+        let standard = Keymap::bundled(Profile::Standard, Os::Windows);
+        let m = menus(&state(), &standard);
+        let pre = m[8]
+            .items()
+            .find(|i| i.label.as_ref() == "Pre-count")
+            .unwrap();
+        assert_eq!(pre.shortcut.as_deref(), Some("Ctrl+P"));
+        let on = MenuState {
+            pre_count: true,
+            ..state()
+        };
+        let m = menus(&on, &standard);
+        let pre = m[8]
+            .items()
+            .find(|i| i.label.as_ref() == "Pre-count")
+            .unwrap();
+        assert_eq!(pre.checked, Some(true));
     }
 
     #[test]
@@ -2403,6 +2600,7 @@ mod tests {
                 cables: CableVisibility::HoverOnly,
                 browser: true,
                 file_browser: false,
+                piano_keys: false,
                 can_undo: false,
                 can_redo: true,
                 can_edit: true,
@@ -2416,6 +2614,7 @@ mod tests {
                 recording: false,
                 loop_enabled: true,
                 metronome: false,
+                pre_count: false,
                 quantize: InputQuantize::Eighth,
                 console: true,
                 console_maximised: false,
@@ -2424,6 +2623,7 @@ mod tests {
                 console_links: false,
                 tempo_lane: false,
                 marker_strip: false,
+                inspector: false,
                 marker_list: false,
                 rack_navigator: true,
                 rack: true,

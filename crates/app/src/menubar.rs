@@ -38,13 +38,89 @@ pub fn text_width(text: &str) -> f64 {
     text.chars().count() as f64 * CHAR_WIDTH
 }
 
+/// The width of a list of `entries`: the widest text with its shortcut and the room for the
+/// marks, never less than the minimum.
+fn list_width(entries: &[MenuEntry]) -> f64 {
+    entries
+        .iter()
+        .map(|e| match e {
+            MenuEntry::Item(it) => {
+                text_width(&it.label)
+                    + it.shortcut.as_deref().map_or(0.0, |s| text_width(s) + 32.0)
+                    + 48.0
+            }
+            MenuEntry::Submenu(sub) => text_width(sub.label) + 48.0,
+            MenuEntry::Separator => 0.0,
+        })
+        .fold(DROPDOWN_MIN_WIDTH, f64::max)
+}
+
+/// The rectangle of each of `entries` stacked from `top`, `x0..x1` wide, and the bottom.
+fn list_rows(entries: &[MenuEntry], x0: f64, x1: f64, top: f64) -> (Vec<Rect>, f64) {
+    let mut y = top;
+    let rows = entries
+        .iter()
+        .map(|e| {
+            let h = match e {
+                MenuEntry::Item(_) | MenuEntry::Submenu(_) => ITEM_HEIGHT,
+                MenuEntry::Separator => SEPARATOR_HEIGHT,
+            };
+            let r = Rect::new(x0, y, x1, y + h);
+            y += h;
+            r
+        })
+        .collect();
+    (rows, y)
+}
+
+/// Whether `entry` can be highlighted and chosen.
+fn is_selectable(entry: &MenuEntry) -> bool {
+    match entry {
+        MenuEntry::Item(it) => it.enabled,
+        MenuEntry::Submenu(_) => true,
+        MenuEntry::Separator => false,
+    }
+}
+
+/// The entry after (or before) `at` in `entries` that can be chosen, wrapping round. From
+/// nothing, Down steps on to the first and Up to the last.
+fn step(entries: &[MenuEntry], at: Option<usize>, down: bool) -> Option<usize> {
+    let rows = entries.len();
+    let mut at = at.unwrap_or(if down { rows.max(1) - 1 } else { 0 });
+    for _ in 0..rows {
+        at = if down {
+            (at + 1) % rows
+        } else {
+            (at + rows - 1) % rows
+        };
+        if is_selectable(&entries[at]) {
+            return Some(at);
+        }
+    }
+    None
+}
+
+/// The first (or last) entry of `entries` that can be chosen.
+fn edge(entries: &[MenuEntry], first: bool) -> Option<usize> {
+    let mut rows = (0..entries.len()).filter(|r| is_selectable(&entries[*r]));
+    if first { rows.next() } else { rows.next_back() }
+}
+
 /// The in-window menu bar state.
 #[derive(Debug, Clone, Default)]
 pub struct MenuBar {
     open: Option<usize>,
     hover: Option<usize>,
+    /// The entry of the open dropdown whose submenu is open.
+    sub: Option<usize>,
+    /// The highlighted entry of the open submenu.
+    sub_hover: Option<usize>,
     pointer: Point,
 }
+
+/// What the bar shows of the pointer and the keyboard: the open menu, its highlighted entry,
+/// the open submenu and its highlighted entry.
+pub type BarLook = (Option<usize>, Option<usize>, Option<usize>, Option<usize>);
 
 impl MenuBar {
     /// A closed bar.
@@ -66,6 +142,8 @@ impl MenuBar {
     pub fn close(&mut self) {
         self.open = None;
         self.hover = None;
+        self.sub = None;
+        self.sub_hover = None;
     }
 
     /// The title rectangles, left to right.
@@ -86,35 +164,67 @@ impl MenuBar {
     pub fn dropdown(menus: &[Menu], i: usize) -> Option<(Rect, Vec<Rect>)> {
         let menu = menus.get(i)?;
         let title = *Self::title_rects(menus).get(i)?;
-        let width = menu
-            .items()
-            .map(|it| {
-                text_width(it.label)
-                    + it.shortcut.as_deref().map_or(0.0, |s| text_width(s) + 32.0)
-                    + 48.0
-            })
-            .fold(DROPDOWN_MIN_WIDTH, f64::max);
-        let mut y = MENU_BAR_HEIGHT + 4.0;
-        let rows: Vec<Rect> = menu
-            .entries
-            .iter()
-            .map(|e| {
-                let h = match e {
-                    MenuEntry::Item(_) => ITEM_HEIGHT,
-                    MenuEntry::Separator => SEPARATOR_HEIGHT,
-                };
-                let r = Rect::new(title.x0 + 4.0, y, title.x0 + 4.0 + width - 8.0, y + h);
-                y += h;
-                r
-            })
-            .collect();
-        let panel = Rect::new(title.x0, MENU_BAR_HEIGHT, title.x0 + width, y + 4.0);
+        let width = list_width(&menu.entries);
+        let (rows, bottom) = list_rows(
+            &menu.entries,
+            title.x0 + 4.0,
+            title.x0 + width - 4.0,
+            MENU_BAR_HEIGHT + 4.0,
+        );
+        let panel = Rect::new(title.x0, MENU_BAR_HEIGHT, title.x0 + width, bottom + 4.0);
         Some((panel, rows))
     }
 
-    /// Whether entry `row` of menu `menu` can be highlighted and chosen.
-    fn selectable(menus: &[Menu], menu: usize, row: usize) -> bool {
-        matches!(&menus[menu].entries[row], MenuEntry::Item(it) if it.enabled)
+    /// The flyout of the submenu at `row` of menu `menu` and the rectangle of each of its
+    /// entries: to the right of the dropdown, level with the row. `None` when that entry is
+    /// not a submenu.
+    pub fn flyout(menus: &[Menu], menu: usize, row: usize) -> Option<(Rect, Vec<Rect>)> {
+        let MenuEntry::Submenu(sub) = menus.get(menu)?.entries.get(row)? else {
+            return None;
+        };
+        let (panel, rows) = Self::dropdown(menus, menu)?;
+        let width = list_width(&sub.entries);
+        let x0 = panel.x1 - 2.0;
+        let top = rows.get(row)?.y0;
+        let (entries, bottom) = list_rows(&sub.entries, x0 + 4.0, x0 + width - 4.0, top);
+        Some((Rect::new(x0, top - 4.0, x0 + width, bottom + 4.0), entries))
+    }
+
+    /// The entries of the open submenu.
+    fn sub_entries<'a>(&self, menus: &'a [Menu]) -> Option<&'a [MenuEntry]> {
+        match menus.get(self.open?)?.entries.get(self.sub?)? {
+            MenuEntry::Submenu(s) => Some(&s.entries),
+            _ => None,
+        }
+    }
+
+    /// The item of the open submenu under `p`.
+    fn sub_item_at(&self, menus: &[Menu], p: Point) -> Option<usize> {
+        let (_, rows) = Self::flyout(menus, self.open?, self.sub?)?;
+        let i = rows.iter().position(|r| r.contains(p))?;
+        matches!(self.sub_entries(menus)?[i], MenuEntry::Item(_)).then_some(i)
+    }
+
+    fn in_flyout(&self, menus: &[Menu], p: Point) -> bool {
+        self.open
+            .zip(self.sub)
+            .and_then(|(m, r)| Self::flyout(menus, m, r))
+            .is_some_and(|(panel, _)| panel.contains(p))
+    }
+
+    /// Opens the submenu at `row` (the keyboard's Right): its first choosable entry is lit.
+    fn open_sub(&mut self, menus: &[Menu], row: usize) {
+        self.sub = Some(row);
+        self.sub_hover = self
+            .sub_entries(menus)
+            .and_then(|e| e.iter().position(is_selectable));
+    }
+
+    /// What the bar shows of the pointer: the open menu and the highlighted title or entry,
+    /// and the same for the open submenu. A move that leaves it as it was changes nothing on
+    /// screen.
+    pub fn look(&self) -> BarLook {
+        (self.open, self.hover, self.sub, self.sub_hover)
     }
 
     /// The highlighted entry of the open dropdown: the pointer's and the keyboard's.
@@ -129,13 +239,18 @@ impl MenuBar {
     fn item_at(&self, menus: &[Menu], p: Point) -> Option<usize> {
         let (_, rows) = Self::dropdown(menus, self.open?)?;
         let i = rows.iter().position(|r| r.contains(p))?;
-        matches!(menus[self.open?].entries[i], MenuEntry::Item(_)).then_some(i)
+        matches!(
+            menus[self.open?].entries[i],
+            MenuEntry::Item(_) | MenuEntry::Submenu(_)
+        )
+        .then_some(i)
     }
 
     fn in_dropdown(&self, menus: &[Menu], p: Point) -> bool {
         self.open
             .and_then(|i| Self::dropdown(menus, i))
             .is_some_and(|(panel, _)| panel.contains(p))
+            || self.in_flyout(menus, p)
     }
 
     /// Handles an event (logical window coordinates).
@@ -146,9 +261,30 @@ impl MenuBar {
                 self.pointer = *pos;
                 if self.open.is_some() {
                     if let Some(t) = Self::title_at(menus, *pos) {
+                        if self.open != Some(t) {
+                            self.sub = None;
+                            self.sub_hover = None;
+                        }
                         self.open = Some(t);
                     }
-                    self.hover = self.item_at(menus, *pos);
+                    if self.in_flyout(menus, *pos) {
+                        // The row of the submenu stays lit while its entries are chosen.
+                        self.hover = self.sub;
+                        self.sub_hover = self.sub_item_at(menus, *pos);
+                    } else {
+                        self.hover = self.item_at(menus, *pos);
+                        if let (Some(i), Some(open)) = (self.hover, self.open) {
+                            // Resting on a submenu row opens it; any other row closes it.
+                            let is_sub = matches!(menus[open].entries[i], MenuEntry::Submenu(_));
+                            if is_sub && self.sub != Some(i) {
+                                self.sub = Some(i);
+                                self.sub_hover = None;
+                            } else if !is_sub {
+                                self.sub = None;
+                                self.sub_hover = None;
+                            }
+                        }
+                    }
                     MenuBarOutcome::Consumed
                 } else if in_bar(*pos) {
                     let hover = Self::title_at(menus, *pos);
@@ -166,6 +302,8 @@ impl MenuBar {
                     if *button == PointerButton::Primary {
                         self.open = if self.open == Some(t) { None } else { Some(t) };
                         self.hover = None;
+                        self.sub = None;
+                        self.sub_hover = None;
                     }
                     return MenuBarOutcome::Consumed;
                 }
@@ -194,11 +332,32 @@ impl MenuBar {
                 if *button != PointerButton::Primary {
                     return MenuBarOutcome::Consumed;
                 }
+                if self.in_flyout(menus, *pos) {
+                    let chosen = self
+                        .sub_item_at(menus, *pos)
+                        .zip(self.sub_entries(menus))
+                        .and_then(|(i, entries)| match &entries[i] {
+                            MenuEntry::Item(item) if item.enabled => Some(item.command),
+                            _ => None,
+                        });
+                    return match chosen {
+                        Some(command) => {
+                            self.close();
+                            MenuBarOutcome::Command(command)
+                        }
+                        None => MenuBarOutcome::Consumed,
+                    };
+                }
                 match self.item_at(menus, *pos) {
                     Some(i) => match &menus[open].entries[i] {
                         MenuEntry::Item(item) if item.enabled => {
                             self.close();
                             MenuBarOutcome::Command(item.command)
+                        }
+                        MenuEntry::Submenu(_) => {
+                            // A click opens the submenu again if the pointer had left it.
+                            self.sub = Some(i);
+                            MenuBarOutcome::Consumed
                         }
                         _ => MenuBarOutcome::Consumed,
                     },
@@ -213,62 +372,8 @@ impl MenuBar {
                 }
             }
             UiEvent::Key { key, pressed, .. } if self.open.is_some() => {
-                if !*pressed {
-                    return MenuBarOutcome::Consumed;
-                }
-                let Some(open) = self.open else {
-                    return MenuBarOutcome::Consumed;
-                };
-                match key {
-                    Key::Escape => self.close(),
-                    // The bar's dropdowns have no submenus, so Right on an item moves on too.
-                    Key::Left | Key::Right => {
-                        let n = menus.len().max(1);
-                        let next = if *key == Key::Left {
-                            (open + n - 1) % n
-                        } else {
-                            (open + 1) % n
-                        };
-                        self.open = Some(next);
-                        self.hover = (0..menus[next].entries.len())
-                            .find(|r| Self::selectable(menus, next, *r));
-                    }
-                    Key::Down | Key::Up => {
-                        let rows = menus[open].entries.len();
-                        let down = *key == Key::Down;
-                        // From nothing, Down steps on to the first item and Up to the last.
-                        let mut at = self.hover.unwrap_or(if down { rows.max(1) - 1 } else { 0 });
-                        for _ in 0..rows {
-                            at = if down {
-                                (at + 1) % rows
-                            } else {
-                                (at + rows - 1) % rows
-                            };
-                            if Self::selectable(menus, open, at) {
-                                self.hover = Some(at);
-                                break;
-                            }
-                        }
-                    }
-                    Key::Home | Key::End => {
-                        let rows = 0..menus[open].entries.len();
-                        let pick = if *key == Key::Home {
-                            rows.clone().find(|r| Self::selectable(menus, open, *r))
-                        } else {
-                            rows.rev().find(|r| Self::selectable(menus, open, *r))
-                        };
-                        self.hover = pick.or(self.hover);
-                    }
-                    Key::Enter | Key::Space => {
-                        if let Some(i) = self.hover
-                            && let MenuEntry::Item(item) = &menus[open].entries[i]
-                            && item.enabled
-                        {
-                            self.close();
-                            return MenuBarOutcome::Command(item.command);
-                        }
-                    }
-                    _ => {}
+                if *pressed {
+                    return self.key(key.clone(), menus);
                 }
                 MenuBarOutcome::Consumed
             }
@@ -282,6 +387,91 @@ impl MenuBar {
             }
             _ => MenuBarOutcome::Ignored,
         }
+    }
+
+    /// A key pressed while a dropdown is open. Up, Down, Home and End move in the submenu once
+    /// it has a lit entry and in the dropdown otherwise; Right opens the submenu of the lit
+    /// entry and Left closes it (Left and Right move between menus when no submenu is involved).
+    fn key(&mut self, key: Key, menus: &[Menu]) -> MenuBarOutcome {
+        let Some(open) = self.open else {
+            return MenuBarOutcome::Consumed;
+        };
+        let in_sub = self.sub.is_some() && self.sub_hover.is_some();
+        let lit_submenu = self
+            .hover
+            .filter(|i| matches!(menus[open].entries[*i], MenuEntry::Submenu(_)));
+        match key {
+            Key::Escape if self.sub.is_some() => {
+                self.sub = None;
+                self.sub_hover = None;
+            }
+            Key::Escape => self.close(),
+            Key::Left if self.sub.is_some() => {
+                self.sub = None;
+                self.sub_hover = None;
+            }
+            Key::Right if in_sub => {}
+            Key::Right if lit_submenu.is_some() => {
+                if let Some(row) = lit_submenu {
+                    self.open_sub(menus, row);
+                }
+            }
+            Key::Left | Key::Right => {
+                let n = menus.len().max(1);
+                let next = if key == Key::Left {
+                    (open + n - 1) % n
+                } else {
+                    (open + 1) % n
+                };
+                self.open = Some(next);
+                self.sub = None;
+                self.sub_hover = None;
+                self.hover = edge(&menus[next].entries, true);
+            }
+            Key::Down | Key::Up | Key::Home | Key::End => {
+                let (entries, at) = match self.sub_entries(menus) {
+                    Some(entries) if in_sub => (entries, self.sub_hover),
+                    _ => (menus[open].entries.as_slice(), self.hover),
+                };
+                let pick = match key {
+                    Key::Down | Key::Up => step(entries, at, key == Key::Down),
+                    _ => edge(entries, key == Key::Home),
+                };
+                let pick = pick.or(at);
+                if in_sub {
+                    self.sub_hover = pick;
+                } else {
+                    self.hover = pick;
+                    self.sub = None;
+                    self.sub_hover = None;
+                }
+            }
+            Key::Enter | Key::Space => {
+                if in_sub {
+                    let chosen =
+                        self.sub_hover
+                            .zip(self.sub_entries(menus))
+                            .and_then(|(i, entries)| match &entries[i] {
+                                MenuEntry::Item(item) if item.enabled => Some(item.command),
+                                _ => None,
+                            });
+                    if let Some(command) = chosen {
+                        self.close();
+                        return MenuBarOutcome::Command(command);
+                    }
+                } else if let Some(row) = lit_submenu {
+                    self.open_sub(menus, row);
+                } else if let Some(i) = self.hover
+                    && let MenuEntry::Item(item) = &menus[open].entries[i]
+                    && item.enabled
+                {
+                    self.close();
+                    return MenuBarOutcome::Command(item.command);
+                }
+            }
+            _ => {}
+        }
+        MenuBarOutcome::Consumed
     }
 
     /// Paints the bar across `width` and the open dropdown (logical units).
@@ -312,52 +502,98 @@ impl MenuBar {
         let Some((panel, rows)) = Self::dropdown(menus, open) else {
             return;
         };
-        canvas.fill_with(
-            RoundedRect::from_rect(panel + atomik_ui::kurbo::Vec2::new(2.0, 3.0), 6.0),
-            Color::from_rgba8(0, 0, 0, 90),
+        paint_list(
+            canvas,
+            theme,
+            panel,
+            &menus[open].entries,
+            &rows,
+            self.hover,
         );
-        canvas.fill_with(RoundedRect::from_rect(panel, 6.0), theme.browser_bg);
-        canvas.stroke_with(RoundedRect::from_rect(panel, 6.0), 1.0, theme.section_line);
-        for (i, (entry, r)) in menus[open].entries.iter().zip(&rows).enumerate() {
-            match entry {
-                MenuEntry::Separator => {
-                    let y = r.center().y;
-                    canvas.fill_with(
-                        Rect::new(r.x0 + 6.0, y - 0.5, r.x1 - 6.0, y + 0.5),
-                        theme.section_line,
-                    );
+        if let Some(row) = self.sub
+            && let Some((panel, rows)) = Self::flyout(menus, open, row)
+            && let Some(entries) = self.sub_entries(menus)
+        {
+            paint_list(canvas, theme, panel, entries, &rows, self.sub_hover);
+        }
+    }
+}
+
+/// Paints a list of entries (a dropdown or a flyout) in `panel`, `lit` highlighted.
+fn paint_list(
+    canvas: &mut dyn Canvas,
+    theme: &Theme,
+    panel: Rect,
+    entries: &[MenuEntry],
+    rows: &[Rect],
+    lit: Option<usize>,
+) {
+    canvas.fill_with(
+        RoundedRect::from_rect(panel + atomik_ui::kurbo::Vec2::new(2.0, 3.0), 6.0),
+        Color::from_rgba8(0, 0, 0, 90),
+    );
+    canvas.fill_with(RoundedRect::from_rect(panel, 6.0), theme.browser_bg);
+    canvas.stroke_with(RoundedRect::from_rect(panel, 6.0), 1.0, theme.section_line);
+    for (i, (entry, r)) in entries.iter().zip(rows).enumerate() {
+        match entry {
+            MenuEntry::Separator => {
+                let y = r.center().y;
+                canvas.fill_with(
+                    Rect::new(r.x0 + 6.0, y - 0.5, r.x1 - 6.0, y + 0.5),
+                    theme.section_line,
+                );
+            }
+            MenuEntry::Item(item) => {
+                if lit == Some(i) && item.enabled {
+                    canvas.fill_with(RoundedRect::from_rect(*r, 4.0), theme.selection);
                 }
-                MenuEntry::Item(item) => {
-                    if self.hover == Some(i) && item.enabled {
-                        canvas.fill_with(RoundedRect::from_rect(*r, 4.0), theme.selection);
-                    }
-                    let color = if item.enabled {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    };
-                    let base = r.y0 + 16.5;
-                    if item.checked == Some(true) {
-                        canvas.text(&TextRun::new(
-                            "\u{2713}",
-                            Point::new(r.x0 + 8.0, base),
-                            FONT,
-                            color,
-                        ));
-                    }
+                let color = if item.enabled {
+                    theme.text
+                } else {
+                    theme.text_muted
+                };
+                let base = r.y0 + 16.5;
+                if item.checked == Some(true) {
                     canvas.text(&TextRun::new(
-                        item.label,
-                        Point::new(r.x0 + 28.0, base),
+                        "\u{2713}",
+                        Point::new(r.x0 + 8.0, base),
                         FONT,
                         color,
                     ));
-                    if let Some(s) = item.shortcut.as_deref() {
-                        canvas.text(
-                            &TextRun::new(s, Point::new(r.x1 - 10.0, base), 12.0, theme.text_muted)
-                                .align(Align::End),
-                        );
-                    }
                 }
+                canvas.text(&TextRun::new(
+                    item.label.as_ref(),
+                    Point::new(r.x0 + 28.0, base),
+                    FONT,
+                    color,
+                ));
+                if let Some(s) = item.shortcut.as_deref() {
+                    canvas.text(
+                        &TextRun::new(s, Point::new(r.x1 - 10.0, base), 12.0, theme.text_muted)
+                            .align(Align::End),
+                    );
+                }
+            }
+            MenuEntry::Submenu(sub) => {
+                if lit == Some(i) {
+                    canvas.fill_with(RoundedRect::from_rect(*r, 4.0), theme.selection);
+                }
+                let base = r.y0 + 16.5;
+                canvas.text(&TextRun::new(
+                    sub.label,
+                    Point::new(r.x0 + 28.0, base),
+                    FONT,
+                    theme.text,
+                ));
+                canvas.text(
+                    &TextRun::new(
+                        "\u{25B8}",
+                        Point::new(r.x1 - 10.0, base),
+                        12.0,
+                        theme.text_muted,
+                    )
+                    .align(Align::End),
+                );
             }
         }
     }
@@ -383,6 +619,7 @@ mod tests {
             cables: CableVisibility::Show,
             browser: false,
             file_browser: false,
+            piano_keys: false,
             can_undo: false,
             can_redo: false,
             can_edit: false,
@@ -396,6 +633,7 @@ mod tests {
             recording: false,
             loop_enabled: false,
             metronome: false,
+            pre_count: false,
             quantize: crate::record::InputQuantize::Off,
             console: false,
             console_maximised: false,
@@ -404,6 +642,7 @@ mod tests {
             console_links: false,
             tempo_lane: false,
             marker_strip: false,
+            inspector: false,
             marker_list: false,
             rack_navigator: true,
             rack: true,
@@ -724,5 +963,163 @@ mod tests {
             pressed: false,
         };
         assert_eq!(bar.handle(&release, &m), MenuBarOutcome::Consumed);
+    }
+
+    fn model_with_recent() -> Vec<Menu> {
+        let keymap = atomik_ui::keymap::Keymap::bundled(
+            atomik_ui::keymap::Profile::Legacy,
+            atomik_ui::keymap::Os::Windows,
+        );
+        let recent = ["first".to_string(), "second".to_string()];
+        crate::commands::menus_with_recent(&state(), &keymap, &recent)
+    }
+
+    /// The row of File's Open Recent entry.
+    fn recent_row(m: &[Menu]) -> usize {
+        m[0].entries
+            .iter()
+            .position(|e| matches!(e, MenuEntry::Submenu(_)))
+            .unwrap()
+    }
+
+    /// Centre of the entry `at` of the flyout of File's Open Recent.
+    fn flyout_center(m: &[Menu], at: usize) -> Point {
+        MenuBar::flyout(m, 0, recent_row(m)).unwrap().1[at].center()
+    }
+
+    #[test]
+    fn resting_on_open_recent_opens_its_flyout_and_a_click_chooses_a_song() {
+        let m = model_with_recent();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        let (_, rows) = MenuBar::dropdown(&m, 0).unwrap();
+        let row = recent_row(&m);
+        bar.handle(&mv(rows[row].center()), &m);
+        assert_eq!(bar.look(), (Some(0), Some(row), Some(row), None));
+        // Into the flyout: the row stays lit and the entry under the pointer too.
+        bar.handle(&mv(flyout_center(&m, 1)), &m);
+        assert_eq!(bar.look(), (Some(0), Some(row), Some(row), Some(1)));
+        let at = flyout_center(&m, 1);
+        assert_eq!(bar.handle(&down(at), &m), MenuBarOutcome::Consumed);
+        assert_eq!(
+            bar.handle(&up(at), &m),
+            MenuBarOutcome::Command(AppCommand::OpenRecent(1))
+        );
+        assert!(!bar.is_open());
+        assert_eq!(bar.look(), (None, None, None, None));
+    }
+
+    #[test]
+    fn leaving_the_open_recent_row_for_another_closes_the_flyout() {
+        let m = model_with_recent();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        let (_, rows) = MenuBar::dropdown(&m, 0).unwrap();
+        let row = recent_row(&m);
+        bar.handle(&mv(rows[row].center()), &m);
+        bar.handle(&mv(rows[row - 1].center()), &m);
+        assert_eq!(bar.look().2, None);
+        // A click on the row opens it too.
+        bar.handle(&mv(rows[row].center()), &m);
+        bar.handle(&mv(rows[row - 1].center()), &m);
+        bar.handle(&up(rows[row].center()), &m);
+        assert_eq!(bar.look().2, Some(row));
+    }
+
+    #[test]
+    fn the_flyout_sits_beside_the_row_and_a_disabled_entry_is_not_chosen() {
+        let empty = {
+            let keymap = atomik_ui::keymap::Keymap::bundled(
+                atomik_ui::keymap::Profile::Legacy,
+                atomik_ui::keymap::Os::Windows,
+            );
+            menus(&state(), &keymap)
+        };
+        let row = recent_row(&empty);
+        let (panel, rows) = MenuBar::dropdown(&empty, 0).unwrap();
+        let (fly, entries) = MenuBar::flyout(&empty, 0, row).unwrap();
+        assert!(fly.x0 >= panel.x1 - 3.0 && fly.y0 <= rows[row].y0);
+        assert!(
+            MenuBar::flyout(&empty, 0, row - 1).is_none(),
+            "an item has no flyout"
+        );
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&empty)[0].center()), &empty);
+        bar.handle(&mv(rows[row].center()), &empty);
+        // The list is empty: Clear Menu is the last entry and is disabled.
+        let clear = entries.last().unwrap().center();
+        bar.handle(&mv(clear), &empty);
+        bar.handle(&down(clear), &empty);
+        assert_eq!(bar.handle(&up(clear), &empty), MenuBarOutcome::Consumed);
+        assert!(bar.is_open());
+    }
+
+    #[test]
+    fn right_opens_the_flyout_and_enter_chooses_inside_it() {
+        let m = model_with_recent();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        let row = recent_row(&m);
+        // Step down to Open Recent.
+        for _ in 0..40 {
+            if bar.highlighted_item() == Some(row) {
+                break;
+            }
+            press(&mut bar, &m, Key::Down);
+        }
+        assert_eq!(bar.highlighted_item(), Some(row));
+        assert_eq!(
+            bar.look().2,
+            None,
+            "the keyboard does not open it by moving"
+        );
+        press(&mut bar, &m, Key::Right);
+        assert_eq!(bar.look(), (Some(0), Some(row), Some(row), Some(0)));
+        assert_eq!(
+            bar.open_menu(),
+            Some(0),
+            "Right opened the list, not the next menu"
+        );
+        press(&mut bar, &m, Key::Down);
+        assert_eq!(bar.look().3, Some(1));
+        assert_eq!(
+            press(&mut bar, &m, Key::Enter),
+            MenuBarOutcome::Command(AppCommand::OpenRecent(1))
+        );
+        assert!(!bar.is_open());
+    }
+
+    #[test]
+    fn left_and_escape_close_the_flyout_before_the_menu() {
+        let m = model_with_recent();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        let row = recent_row(&m);
+        while bar.highlighted_item() != Some(row) {
+            press(&mut bar, &m, Key::Down);
+        }
+        press(&mut bar, &m, Key::Right);
+        press(&mut bar, &m, Key::Left);
+        assert_eq!(bar.look(), (Some(0), Some(row), None, None));
+        press(&mut bar, &m, Key::Right);
+        press(&mut bar, &m, Key::Escape);
+        assert_eq!(bar.look(), (Some(0), Some(row), None, None));
+        press(&mut bar, &m, Key::Escape);
+        assert!(!bar.is_open());
+    }
+
+    #[test]
+    fn the_flyout_paints_its_songs() {
+        let m = model_with_recent();
+        let mut bar = MenuBar::new();
+        bar.handle(&down(MenuBar::title_rects(&m)[0].center()), &m);
+        let (_, rows) = MenuBar::dropdown(&m, 0).unwrap();
+        bar.handle(&mv(rows[recent_row(&m)].center()), &m);
+        let mut list = DisplayList::new();
+        bar.paint(&mut list, &Theme::dark(), &m, 800.0);
+        let json = list.to_json();
+        for text in ["Open Recent", "first", "second", "Clear Menu"] {
+            assert!(json.contains(&format!("\"text\":\"{text}\"")), "{text}");
+        }
     }
 }

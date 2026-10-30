@@ -265,6 +265,9 @@ pub(crate) struct TelemetryState {
     max_spins: AtomicU64,
     events_dropped: AtomicU64,
     buffer_frames: AtomicU32,
+    /// Sticky engine fault: 0 none, `u64::MAX` the callback itself panicked, else the faulted
+    /// device's instance id + 1.
+    fault: AtomicU64,
     load: LoadMeter,
     /// Input capture-to-callback delay, output callback-to-playback delay, and the frames
     /// waiting in the input ring after each render (all smoothed, in frames).
@@ -276,6 +279,20 @@ pub(crate) struct TelemetryState {
 impl TelemetryState {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Publishes the engine's fault state (one relaxed store; the callback calls it each time).
+    pub(crate) fn set_fault(&self, device: Option<u32>) {
+        let value = device.map_or(0, |id| u64::from(id) + 1);
+        // A callback-level panic is never overwritten by a device fault.
+        if self.fault.load(Ordering::Relaxed) != u64::MAX {
+            self.fault.store(value, Ordering::Relaxed);
+        }
+    }
+
+    /// Records that the render callback itself panicked (sticky).
+    pub(crate) fn set_callback_panicked(&self) {
+        self.fault.store(u64::MAX, Ordering::Relaxed);
     }
 
     /// Records one audio callback (wait-free, never allocates); returns its xrun, if any.
@@ -350,6 +367,7 @@ impl TelemetryState {
         let late_callbacks = self.late.load(Ordering::Relaxed);
         let render_overruns = self.overruns.load(Ordering::Relaxed);
         let stream_errors = self.errors.load(Ordering::Relaxed);
+        let fault = self.fault.load(Ordering::Relaxed);
         Telemetry {
             callbacks: self.callbacks.load(Ordering::Relaxed),
             xruns: late_callbacks + render_overruns + stream_errors,
@@ -363,6 +381,11 @@ impl TelemetryState {
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
             input_latency_frames: self.in_capture.get().saturating_add(self.in_backlog.get()),
             output_latency_frames: self.out_playback.get(),
+            faulted: fault != 0,
+            faulted_device: match fault {
+                0 | u64::MAX => None,
+                n => u32::try_from(n - 1).ok(),
+            },
         }
     }
 }
@@ -370,6 +393,21 @@ impl TelemetryState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_device_fault_is_sticky_and_a_callback_panic_wins() {
+        let state = TelemetryState::new();
+        assert!(!state.snapshot().faulted);
+        state.set_fault(Some(7));
+        let t = state.snapshot();
+        assert!(t.faulted);
+        assert_eq!(t.faulted_device, Some(7));
+        state.set_callback_panicked();
+        state.set_fault(Some(7));
+        let t = state.snapshot();
+        assert!(t.faulted);
+        assert_eq!(t.faulted_device, None);
+    }
 
     #[allow(clippy::disallowed_methods)] // Justification: test-only origin of a simulated timeline.
     fn origin() -> Instant {

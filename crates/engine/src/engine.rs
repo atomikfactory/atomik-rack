@@ -46,6 +46,7 @@
 
 use crate::arena::{Arena, RoutingPlan};
 use crate::console::{Latencies, Meters};
+use crate::fault::FaultState;
 use crate::graph::{DeviceInstanceId, EngineConfig, Graph};
 use crate::live::LiveNoteSender;
 use crate::plan::{Node, RenderPlan, mix_seed};
@@ -379,6 +380,8 @@ pub struct Engine {
     note_rx: Consumer<ScheduledNote>,
     live_rx: Consumer<ScheduledNote>,
     dropped: Arc<AtomicU64>,
+    /// The first device that panicked while rendering (sticky), shared with the handle.
+    fault: Arc<FaultState>,
     host_frames: u64,
     in_fifo: Vec<Batch>,
     out_fifo: Vec<Batch>,
@@ -415,6 +418,7 @@ pub struct EngineHandle {
     note_tx: Producer<ScheduledNote>,
     live_tx: Option<Producer<ScheduledNote>>,
     dropped: Arc<AtomicU64>,
+    fault: Arc<FaultState>,
     mirror: Mirror,
     /// Published transport state.
     transport: Arc<TransportCell>,
@@ -485,7 +489,9 @@ pub fn new_engine_with_arena(
             0 => crate::workers::WORKER_SPIN_LIMIT,
             n => n,
         };
-        engine.pool = Some(Pool::new(workers.threads, workers.on_thread_start, linger));
+        // If the OS refuses every worker thread the engine renders single-threaded: the
+        // output does not depend on the worker count.
+        engine.pool = Pool::new(workers.threads, workers.on_thread_start, linger).ok();
     }
     (engine, handle)
 }
@@ -498,6 +504,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let (note_tx, note_rx) = RingBuffer::new(caps.notes);
     let (live_tx, live_rx) = RingBuffer::new(NOTE_QUEUE_CAPACITY);
     let dropped = Arc::new(AtomicU64::new(0));
+    let fault = Arc::new(FaultState::default());
     let (request_tx, request_rx) = RingBuffer::new(REQUEST_CAPACITY);
     let stream_stats = Arc::new(StreamStats::default());
     let player = Player::new(cfg.sample_rate.hz(), request_tx, Arc::clone(&stream_stats));
@@ -520,6 +527,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         note_rx,
         live_rx,
         dropped: Arc::clone(&dropped),
+        fault: Arc::clone(&fault),
         host_frames: 0,
         in_fifo: vec![[0.0; BATCH]; usize::from(cfg.input_channels)],
         out_fifo: vec![[0.0; BATCH]; usize::from(cfg.output_channels)],
@@ -544,6 +552,7 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         note_tx,
         live_tx: Some(live_tx),
         dropped,
+        fault,
         mirror: Mirror::new(caps.arena),
         transport,
         hold,
@@ -1007,6 +1016,12 @@ impl EngineHandle {
         })
     }
 
+    /// The first device that panicked while rendering, if any (sticky; see [`Engine::fault`]).
+    /// Cheap and lock-free, so a UI can poll it every frame.
+    pub fn fault(&self) -> Option<DeviceInstanceId> {
+        self.fault.get()
+    }
+
     /// Note events dropped so far (per-batch overflow or undeliverable targets).
     pub fn dropped_events(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
@@ -1141,6 +1156,13 @@ impl Engine {
         self.max_render_spins = self.max_render_spins.max(self.last_render_spins);
     }
 
+    /// The first device that panicked while rendering, if any. Sticky: the device is silent
+    /// from then on and the engine keeps rendering everything else; rebuild the engine to clear
+    /// it. See [`EngineHandle::fault`] for the non-RT view.
+    pub fn fault(&self) -> Option<DeviceInstanceId> {
+        self.fault.get()
+    }
+
     /// Total host frames rendered so far (the timeline position of the next `render` call's
     /// first input frame). Published with [`crate::FrameClock`] by audio hosts.
     pub fn host_frames(&self) -> u64 {
@@ -1248,6 +1270,7 @@ impl Engine {
                 &self.dropped,
                 &mut self.arena,
                 &self.meters,
+                &self.fault,
             ),
             (Some(routing), Some(pool)) => {
                 let spins = routing.process_parallel(
@@ -1258,6 +1281,7 @@ impl Engine {
                     pool,
                     &mut self.arena,
                     &self.meters,
+                    &self.fault,
                 );
                 self.last_render_spins = self.last_render_spins.saturating_add(spins);
             }

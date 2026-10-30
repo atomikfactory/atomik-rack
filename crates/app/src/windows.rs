@@ -36,6 +36,19 @@ pub enum WindowKind {
     Console,
 }
 
+impl WindowKind {
+    /// The title of this window's OS window, given the main window's title `main`; a detached
+    /// pane names itself first.
+    pub fn title(self, main: String) -> String {
+        let project = main.strip_prefix("Atomik Rack \u{2014} ").unwrap_or(&main);
+        match self {
+            Self::Main => main.clone(),
+            Self::Rack => format!("Rack \u{2014} {project}"),
+            Self::Console => format!("Mixer \u{2014} {project}"),
+        }
+    }
+}
+
 /// Where a window was last, in the units the platform reports.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

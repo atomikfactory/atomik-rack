@@ -35,6 +35,8 @@ pub enum Pref {
     FollowSelection,
     /// Buttons show a help tooltip.
     ShowTooltips,
+    /// Start with the song that was open last time.
+    OpenLastProject,
 }
 
 /// One switch.
@@ -65,6 +67,54 @@ pub struct LibraryRow {
     pub default: Rect,
 }
 
+/// The autosave row: the period and the button that steps through the choices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutosaveRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The period as shown (`Off`, `5 min`).
+    pub value: String,
+    /// The button that steps to the next choice.
+    pub button: Rect,
+}
+
+/// Which setting a [`CycleRow`] steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cycle {
+    /// What a finished MIDI take does with the clips already on its lane.
+    RecordMode,
+    /// What a note edit does with notes that start past their clip's end.
+    KeepEvents,
+}
+
+/// A row with a button that steps through the choices of a setting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CycleRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The setting.
+    pub which: Cycle,
+    /// Its label.
+    pub label: &'static str,
+    /// One line saying what it does.
+    pub description: &'static str,
+    /// The current choice as shown.
+    pub value: String,
+    /// The button that steps to the next choice.
+    pub button: Rect,
+}
+
+/// The autosave periods the button steps through, in minutes (0 is off).
+const AUTOSAVE_CHOICES: [u32; 7] = [0, 1, 2, 5, 10, 15, 30];
+
+/// The choice after `minutes`; a value that is not a choice starts the cycle over at off.
+fn next_autosave(minutes: u32) -> u32 {
+    AUTOSAVE_CHOICES
+        .iter()
+        .position(|&m| m == minutes)
+        .map_or(0, |i| AUTOSAVE_CHOICES[(i + 1) % AUTOSAVE_CHOICES.len()])
+}
+
 /// Longest folder text shown, in characters; a longer path keeps its tail.
 const PATH_CHARS: usize = 44;
 
@@ -75,6 +125,10 @@ pub struct WorkflowLayout {
     pub toggles: Vec<Toggle>,
     /// The library folder row under them.
     pub library: LibraryRow,
+    /// The autosave row under the library row.
+    pub autosave: AutosaveRow,
+    /// The rows that step through a choice, under the autosave row.
+    pub cycles: Vec<CycleRow>,
     /// The note under them.
     pub note: (Point, String),
 }
@@ -109,6 +163,7 @@ impl WorkflowTab {
             Pref::FollowSong => self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips,
+            Pref::OpenLastProject => self.prefs.open_last_project,
         }
     }
 
@@ -121,6 +176,9 @@ impl WorkflowTab {
             Pref::FollowSong => self.prefs.follow_song = !self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection = !self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips = !self.prefs.show_tooltips,
+            Pref::OpenLastProject => {
+                self.prefs.open_last_project = !self.prefs.open_last_project;
+            }
         }
     }
 
@@ -156,6 +214,11 @@ impl WorkflowTab {
                 "Show tooltips",
                 "A button says what it does, with its shortcut, after the pointer rests on it.",
             ),
+            (
+                Pref::OpenLastProject,
+                "Open last project at start-up",
+                "Start with the song that was open last time (a project named on the command line wins).",
+            ),
         ] {
             toggles.push(Toggle {
                 rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -181,9 +244,45 @@ impl WorkflowTab {
             ),
         };
         y += ROW + GAP;
+        let autosave = AutosaveRow {
+            rect: Rect::new(x0, y, x0 + inner, y + ROW),
+            value: match self.prefs.autosave_minutes {
+                0 => "Off".to_string(),
+                m => format!("{m} min"),
+            },
+            button: Rect::new(x0 + inner - BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+        };
+        y += ROW + GAP;
+        let mut cycles = Vec::new();
+        for (which, label, description, value) in [
+            (
+                Cycle::RecordMode,
+                "Recording over clips",
+                "Replace adds the take as a new clip or take group; Layer merges it into the clip under it.",
+                self.prefs.record_mode.label(),
+            ),
+            (
+                Cycle::KeepEvents,
+                "Notes outside a clip",
+                "A note placed past its clip's end: Keep leaves it silent, Expand lengthens the clip, New clip moves it.",
+                self.prefs.keep_events.label(),
+            ),
+        ] {
+            cycles.push(CycleRow {
+                rect: Rect::new(x0, y, x0 + inner, y + ROW),
+                which,
+                label,
+                description,
+                value: value.to_string(),
+                button: Rect::new(x0 + inner - 2.0 * BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+            });
+            y += ROW + GAP;
+        }
         WorkflowLayout {
             toggles,
             library,
+            autosave,
+            cycles,
             note: (
                 Point::new(x0, y + 12.0),
                 "Saved in workflow.json next to settings.json when you press Apply.".to_string(),
@@ -214,6 +313,21 @@ impl WorkflowTab {
                 }
                 if layout.library.default.contains(*pos) {
                     self.prefs.library_folder = None;
+                }
+                if layout.autosave.button.contains(*pos) {
+                    self.prefs.autosave_minutes = next_autosave(self.prefs.autosave_minutes);
+                }
+                for row in &layout.cycles {
+                    if row.button.contains(*pos) {
+                        match row.which {
+                            Cycle::RecordMode => {
+                                self.prefs.record_mode = self.prefs.record_mode.next();
+                            }
+                            Cycle::KeepEvents => {
+                                self.prefs.keep_events = self.prefs.keep_events.next();
+                            }
+                        }
+                    }
                 }
                 let hit = layout.toggles.into_iter().find(|t| t.rect.contains(*pos));
                 if let Some(t) = hit {
@@ -283,6 +397,73 @@ impl WorkflowTab {
             canvas.text(
                 &TextRun::new(
                     label,
+                    Point::new(r.center().x, r.y0 + 18.5),
+                    12.0,
+                    theme.text,
+                )
+                .align(Align::Center),
+            );
+        }
+        let auto = &l.autosave;
+        canvas.text(&TextRun::new(
+            "Autosave",
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 20.0),
+            13.0,
+            theme.text,
+        ));
+        canvas.text(&TextRun::new(
+            "A changed project is copied to the recovery folder this often; the next start offers it after a crash.",
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 38.0),
+            11.0,
+            theme.text_muted,
+        ));
+        {
+            let r = auto.button;
+            let lit = self.hover.is_some_and(|p| r.contains(p));
+            canvas.fill_with(
+                RoundedRect::from_rect(r, 6.0),
+                if lit {
+                    theme.selection
+                } else {
+                    theme.browser_row
+                },
+            );
+            canvas.text(
+                &TextRun::new(
+                    auto.value.clone(),
+                    Point::new(r.center().x, r.y0 + 18.5),
+                    12.0,
+                    theme.text,
+                )
+                .align(Align::Center),
+            );
+        }
+        for row in &l.cycles {
+            canvas.text(&TextRun::new(
+                row.label,
+                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 20.0),
+                13.0,
+                theme.text,
+            ));
+            canvas.text(&TextRun::new(
+                row.description,
+                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 38.0),
+                11.0,
+                theme.text_muted,
+            ));
+            let r = row.button;
+            let lit = self.hover.is_some_and(|p| r.contains(p));
+            canvas.fill_with(
+                RoundedRect::from_rect(r, 6.0),
+                if lit {
+                    theme.selection
+                } else {
+                    theme.browser_row
+                },
+            );
+            canvas.text(
+                &TextRun::new(
+                    row.value.clone(),
                     Point::new(r.center().x, r.y0 + 18.5),
                     12.0,
                     theme.text,

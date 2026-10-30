@@ -96,6 +96,7 @@ fn section_prefix(key: &str) -> &str {
     match key {
         "sound" | "voices" | "master.level" => "main",
         "velocity.amp" => "amp.env",
+        "bend.range" => "pitch",
         "master.level_cv_trim" => "cv",
         _ if key.starts_with("pos.") || key.starts_with("wheel.") => "position",
         _ if key.starts_with("env.amp.") => "amp.env",
@@ -134,6 +135,7 @@ pub fn granular_label(key: &str) -> Option<&'static str> {
         "env.mod.to_density" | "lfo.to_density" | "cv.density_amount" => "Density",
         "env.mod.to_pitch" | "lfo.to_pitch" | "cv.pitch_amount" => "Pitch",
         "lfo.to_cutoff" | "cv.cutoff_amount" => "Cutoff",
+        "bend.range" => "Bend",
         "master.level_cv_trim" => "Level",
         _ => return None,
     })
@@ -210,6 +212,9 @@ pub fn granular_help(key: &str) -> Option<&'static str> {
         "cv.position_amount" => "How far the position CV moves the position",
         "cv.density_amount" => "How far the density CV changes the density, in octaves",
         "cv.cutoff_amount" => "How far the cutoff CV moves the cutoff, in octaves",
+        "bend.range" => {
+            "Pitch bend range each way in semitones; a controller message can set it too"
+        }
         "master.level_cv_trim" => "How far the level CV moves the output level",
         _ => return None,
     })

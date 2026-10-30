@@ -15,6 +15,9 @@
 //! - **Notes.** A note plays when its content tick falls inside a piece of an audible span; it
 //!   is cut at the end of that piece (the clip end, the loop repetition end, or where a later
 //!   clip takes over). Notes outside the loop window or before the offset never play.
+//! - **Tails.** With [`Song::tails`] on ([`flatten_notes_with`]) a note is not cut at the end of
+//!   its piece: only its start is held to the audible span, and it plays for its own length
+//!   (the engine releases it at a loop wrap and at stop). Everything else above is unchanged.
 //! - **Swing.** A note clip with a [`StepGrid`](super::StepGrid) swings
 //!   its notes before anything else: with `s` the step length in ticks, a note whose content
 //!   tick `t` (`Note::tick`, counted from the content start, so the clip offset and the loop
@@ -118,6 +121,14 @@ fn audible_pieces(lane: &Lane) -> Vec<(&Clip, i64, i64, i64)> {
 /// the earlier lane comes first. Track mute and solo are not applied here; see
 /// [`effective_tracks`].
 pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
+    flatten_notes_with(track, false)
+}
+
+/// [`flatten_notes`] with the tails switch of [`Song::tails`]: with `tails` a note keeps its own
+/// length (only its start must fall in an audible piece, so the note rings out past the clip
+/// end, the loop end or the start of a later clip); without it the note is cut at the end of
+/// its piece.
+pub fn flatten_notes_with(track: &Track, tails: bool) -> Vec<(i64, i64, u8, f32)> {
     let mut out = Vec::new();
     for lane in track.note_lanes().filter(|l| !l.muted) {
         for (clip, s, e, cs) in audible_pieces(lane) {
@@ -132,7 +143,8 @@ pub fn flatten_notes(track: &Track) -> Vec<(i64, i64, u8, f32)> {
                     continue; // muted, or swung out of the piece
                 }
                 let t = s + (tick - cs);
-                out.push((t, n.length.min(e - t), n.key, n.velocity));
+                let length = if tails { n.length } else { n.length.min(e - t) };
+                out.push((t, length, n.key, n.velocity));
             }
         }
     }

@@ -74,6 +74,7 @@ fn transport_state_follows_play_stop_locate_and_loop() {
             loop_start: PPQ,
             loop_end: 3 * PPQ,
             loop_enabled: true,
+            ..TransportState::default()
         }
     );
     // Play again: the loop wraps at 72000 back to 24000.

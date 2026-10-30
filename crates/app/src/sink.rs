@@ -66,6 +66,10 @@ pub trait EngineSink {
     fn transport_state(&self) -> TransportState;
     /// Sends one live note to `target` now, on the live note path (audition).
     fn live_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
+    /// Plays one note of played input (the Piano Keys) to `target` as a note from the MIDI
+    /// input is: on the live note path, and offered to the take recorder when its device is
+    /// armed. Audition ([`Self::live_note`]) is never recorded.
+    fn play_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
     /// Arms (non-empty) or disarms (empty) MIDI recording: live notes routed to one of
     /// `devices` are captured with their engine frame.
     fn set_recording(&mut self, devices: &[DeviceInstanceId]);
@@ -252,6 +256,13 @@ pub enum SinkCall {
         /// The event.
         kind: NoteKind,
     },
+    /// [`EngineSink::play_note`].
+    PlayNote {
+        /// Target device and socket.
+        target: Target,
+        /// The event.
+        kind: NoteKind,
+    },
     /// [`EngineSink::set_recording`].
     Recording(Vec<DeviceInstanceId>),
     /// [`EngineSink::preview_start`] (the stream itself is held in
@@ -287,6 +298,10 @@ pub struct RecordingSink {
     pub state: TransportState,
     /// What [`EngineSink::drain_recorded`] hands out next (tests script live input).
     pub recorded: Vec<RecordedNote>,
+    /// The devices armed for recording ([`EngineSink::set_recording`]).
+    pub armed: Vec<DeviceInstanceId>,
+    /// The engine frame [`EngineSink::play_note`] stamps on a note it captures (tests move it).
+    pub live_frame: u64,
     /// What [`EngineSink::fill_latencies`] reports per device (tests script latencies).
     pub latencies: BTreeMap<DeviceInstanceId, u32>,
     /// What [`EngineSink::latency_epoch`] returns.
@@ -423,7 +438,21 @@ impl EngineSink for RecordingSink {
         self.record(SinkCall::LiveNote { target, kind })
     }
 
+    fn play_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        self.record(SinkCall::PlayNote { target, kind })?;
+        // Like the live session: a note to an armed device is captured with its frame.
+        if self.armed.contains(&target.0) && !matches!(kind, NoteKind::AllOff) {
+            self.recorded.push(RecordedNote {
+                device: target.0,
+                kind,
+                frame: self.live_frame,
+            });
+        }
+        Ok(())
+    }
+
     fn set_recording(&mut self, devices: &[DeviceInstanceId]) {
+        self.armed = devices.to_vec();
         self.calls.push(SinkCall::Recording(devices.to_vec()));
     }
 

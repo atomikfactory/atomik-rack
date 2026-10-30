@@ -128,7 +128,7 @@
 //! [`ShellRequest`]s.
 
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, menus};
+use crate::commands::{AppCommand, Menu, MenuState, menus_with_recent};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -146,17 +146,18 @@ use atomik_ui::CursorHint;
 use atomik_ui::browser::CreateKind;
 use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
-    Context, ContextStack, Keymap, KeymapEditor, Os, Profile, Roles, Route, Router, UserKeymap,
+    Context, ContextStack, KEYS_NOTE_ARGS, Keymap, KeymapEditor, Os, Profile, Resolution, Roles,
+    Route, Router, UserKeymap,
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip,
     Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent,
-    WarpAction, WarpValues, WarpView,
+    NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
+    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -220,11 +221,19 @@ pub enum ShellRequest {
     /// panel's IMPORT), starting in [`Shell::midi_preset_dir`], then call
     /// [`Shell::import_midi_preset_from`] with the path.
     PickImportMidiPreset,
-    /// The rack has unsaved changes: ask, then call [`Shell::confirmed`] with the command.
-    ConfirmDiscard(AppCommand),
-    /// A project was picked in the library (or dropped on the window) and the rack has unsaved
-    /// changes: ask, then call [`Shell::open_file`] with the path.
-    ConfirmDiscardOpen(PathBuf),
+    /// The rack has unsaved changes and `then` would lose them: ask Save, Don't Save or Cancel.
+    /// Save: call [`Shell::save_then`]; Don't Save: call [`Shell::discard_then`]; Cancel: do
+    /// nothing.
+    ConfirmSave {
+        /// What waits for the answer.
+        then: PendingAction,
+    },
+    /// Show a save-file dialog for a project, then call [`Shell::save_to_then`] with the path
+    /// and `then`. A cancelled dialog ends the pending action.
+    PickSaveFileThen {
+        /// What continues once the project is saved.
+        then: PendingAction,
+    },
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
@@ -245,6 +254,16 @@ pub enum ShellRequest {
     ToggleMaximise(WindowKind),
     /// Close the window and exit.
     Quit,
+}
+
+/// What waits for the answer to the question about unsaved changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingAction {
+    /// A command that replaces or ends the song: New, Open, Close, Quit.
+    Command(AppCommand),
+    /// Open this project (picked in the library, dropped on the window or chosen from the
+    /// recent songs).
+    OpenFile(PathBuf),
 }
 
 /// How the shell is set up.
@@ -282,6 +301,9 @@ pub struct Layout {
     /// The file browser column (only while it shows): the full height below the menu bar, to
     /// the left of everything else.
     pub file_browser: Option<Rect>,
+    /// The Piano Keys strip (only while it shows): the full width right of the file browser,
+    /// above the status bar.
+    pub piano_keys: Option<Rect>,
 }
 
 /// A drag of files that left the file browser: the shell owns it until the release.
@@ -330,6 +352,8 @@ pub struct Shell<B: AudioBackend> {
     /// The open windows: the main window always, a detached pane's while it is detached.
     wins: BTreeMap<WindowKind, WinState>,
     status: String,
+    /// The engine fault already announced with a toast (cleared when the fault is).
+    fault_announced: bool,
     repaint: bool,
     /// What holds the pointer, and the window the press happened in.
     capture: Option<(WindowKind, Capture)>,
@@ -414,6 +438,8 @@ pub struct Shell<B: AudioBackend> {
     /// The right edge of the file browser column as last laid out (0 while hidden), to notice a
     /// resize drag of the panel.
     browser_edge: f64,
+    /// The Piano Keys strip is shown (View > Piano Keys).
+    piano_keys_visible: bool,
     /// The file drag in progress (see [`Capture::FileDrag`]).
     file_drag: Option<FileDrag>,
     /// The help tooltip: what the pointer rests on and whether it shows yet.
@@ -450,10 +476,10 @@ impl<B: AudioBackend> Shell<B> {
     /// Wraps a core.
     pub fn new(core: AppCore<LiveSession<B>>, options: ShellOptions) -> Self {
         let banner = PluginBannerView::new(core.view().theme().clone());
-        let mut ui = options
+        let (mut ui, ui_note) = options
             .ui_state_path
             .as_deref()
-            .map(UiState::load)
+            .map(UiState::load_checked)
             .unwrap_or_default();
         // The one-time notice that console devices are shown now. Only with
         // a state file to remember it in, and not for a user who switched them off already.
@@ -474,7 +500,7 @@ impl<B: AudioBackend> Shell<B> {
             .map(keymap_store::workflow_path);
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
-        let mut startup_notes: Vec<String> = Vec::new();
+        let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
         let user_keymap = match loaded_keymap {
             Some(l) => {
                 startup_notes.extend(l.status);
@@ -506,6 +532,7 @@ impl<B: AudioBackend> Shell<B> {
             ui,
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
+            fault_announced: false,
             repaint: true,
             capture: None,
             focus: Pane::Rack,
@@ -552,6 +579,7 @@ impl<B: AudioBackend> Shell<B> {
             keymap_stamp,
             seq_only_prev: None,
             browser_edge: 0.0,
+            piano_keys_visible: false,
             file_drag: None,
             tips: Tips::default(),
         };
@@ -575,8 +603,13 @@ impl<B: AudioBackend> Shell<B> {
             let arrangement = shell.core.arrangement_mut();
             arrangement.set_tempo_lane(shell.ui.show_tempo_lane);
             arrangement.set_marker_strip(shell.ui.show_marker_strip);
+            arrangement.set_inspector(shell.ui.show_inspector);
             arrangement.set_marker_list(shell.ui.show_marker_list);
         }
+        shell
+            .core
+            .piano_roll_mut()
+            .set_inspector(shell.ui.show_inspector);
         shell
             .core
             .arrangement_mut()
@@ -614,6 +647,8 @@ impl<B: AudioBackend> Shell<B> {
         if (gain - shell.core.metronome_gain()).abs() > f32::EPSILON {
             shell.core.set_metronome_gain(gain);
         }
+        let pre_count = shell.core.sink().settings().pre_count_bars;
+        shell.core.set_pre_count_bars(pre_count);
         shell.layout_view();
         shell.poll_status();
         shell
@@ -1459,6 +1494,10 @@ impl<B: AudioBackend> Shell<B> {
     /// Hands the workflow preferences to the views: the follow start state, whether a create
     /// browser stays open, and the rack flag (through the layout).
     fn apply_workflow_to_views(&mut self) {
+        self.core
+            .set_autosave_minutes(self.workflow.autosave_minutes);
+        self.core.set_record_mode(self.workflow.record_mode);
+        self.core.set_keep_events(self.workflow.keep_events);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);
@@ -1487,14 +1526,16 @@ impl<B: AudioBackend> Shell<B> {
                 .unwrap_or_else(|| "(unbound)".to_string())
         };
         format!(
-            "Keys moved: Record {}, Quantize {}, Split {}, Create {} / {}, Import {}; R is the \
-             razor. Settings > Keyboard > Atomik legacy restores the old keys.",
+            "Keys moved: Record {}, Quantize {}, Split {}, Create {} / {}, Import {}, File Browser {}, \
+             Piano Keys {}; R is the razor. Settings > Keyboard > Atomik legacy restores the old keys.",
             key("transport.record"),
             key("editor.quantize"),
             key("sequencer.split_at_playhead"),
             key("create.instrument"),
             key("create.effect"),
             key("file.import_audio"),
+            key("view.toggle_file_browser"),
+            key("view.toggle_piano_keys"),
         )
     }
 
@@ -1573,7 +1614,13 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The menus, with shortcut texts derived from the active keymap.
     pub fn menu_model(&self) -> Vec<Menu> {
-        menus(&self.menu_state(), self.router.keymap())
+        let recent: Vec<String> = self
+            .core
+            .recent()
+            .iter()
+            .map(|p| crate::recent::menu_label(p))
+            .collect();
+        menus_with_recent(&self.menu_state(), self.router.keymap(), &recent)
     }
 
     /// The modifiers last reported by the window.
@@ -1585,6 +1632,10 @@ impl<B: AudioBackend> Shell<B> {
     /// the modifier state (a hold-style role must not stay on).
     pub fn focus_lost(&mut self) {
         self.router.clear_held();
+        let released = self.core.piano_keys_mut().release_all();
+        for action in released {
+            self.core.handle_action(action);
+        }
         self.clear_tooltip();
         self.modifiers = Modifiers::NONE;
         self.forward_modifiers();
@@ -1621,6 +1672,9 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Sequencer])
             }
             Pane::Arrangement => ContextStack::new(&[Context::Sequencer]),
+            Pane::PianoRoll if self.core.piano_roll().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
+            }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
             Pane::SeqEditor if self.core.seq_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor])
@@ -1644,6 +1698,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Files])
             }
             Pane::FileBrowser => ContextStack::new(&[Context::Files]),
+            Pane::PianoKeys if self.core.piano_keys().is_typing() => {
+                ContextStack::new(&[Context::Keys])
+            }
+            Pane::PianoKeys => ContextStack::global(),
             Pane::Transport | Pane::PluginParams => ContextStack::global(),
         }
     }
@@ -1657,6 +1715,7 @@ impl<B: AudioBackend> Shell<B> {
             cables: view.cable_visibility(),
             browser: view.browser_visible(),
             file_browser: self.ui.file_browser_visible,
+            piano_keys: self.piano_keys_visible,
             can_undo: self.core.document().can_undo(),
             can_redo: self.core.document().can_redo(),
             can_edit: self.core.has_selection(self.live_pane(self.focus)),
@@ -1670,6 +1729,7 @@ impl<B: AudioBackend> Shell<B> {
             recording: self.core.is_recording(),
             loop_enabled: song.loop_enabled,
             metronome: self.core.metronome(),
+            pre_count: self.core.pre_count_bars() > 0,
             quantize: self.core.input_quantize(),
             console: self.console_visible(),
             console_maximised: self.maximised(),
@@ -1678,6 +1738,7 @@ impl<B: AudioBackend> Shell<B> {
             console_links: view.show_console_links(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
+            inspector: self.core.arrangement().inspector_visible(),
             marker_list: self.core.arrangement().marker_list_visible(),
             rack_navigator: view.navigator_visible(),
             rack: self.workflow.rack_visible,
@@ -1736,6 +1797,30 @@ impl<B: AudioBackend> Shell<B> {
         )
     }
 
+    /// The height the Piano Keys strip takes above the status bar (0 while hidden).
+    fn keys_height(&self) -> f64 {
+        if self.piano_keys_visible {
+            PIANO_KEYS_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The Piano Keys strip, when it shows.
+    fn piano_keys_rect(&self) -> Option<Rect> {
+        if !self.piano_keys_visible {
+            return None;
+        }
+        let x0 = self.file_browser_rect().map_or(0.0, |r| r.x1);
+        let y1 = (self.size().height - STATUS_BAR_HEIGHT).max(self.top() + 1.0);
+        Some(Rect::new(
+            x0,
+            (y1 - PIANO_KEYS_HEIGHT).max(self.top()),
+            self.size().width.max(x0 + 1.0),
+            y1,
+        ))
+    }
+
     /// The file browser column, when it shows: the full height below the menu bar. Its width is
     /// the panel's own (it resizes by drag), kept so the rest of the window keeps
     /// [`MIN_REST_WIDTH`].
@@ -1758,7 +1843,8 @@ impl<B: AudioBackend> Shell<B> {
         let w = (self.size().width - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let keys = self.piano_keys_rect();
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
@@ -1767,6 +1853,7 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: Some(Rect::new(x0, top, x1, transport_top)),
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         if !self.ui.show_song {
@@ -1777,6 +1864,7 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: None,
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         if !self.rack_in_main() {
@@ -1792,6 +1880,7 @@ impl<B: AudioBackend> Shell<B> {
                     bottom.max(transport.y1 + 1.0),
                 )),
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
@@ -1810,6 +1899,7 @@ impl<B: AudioBackend> Shell<B> {
                 bottom.max(transport.y1 + 1.0),
             )),
             file_browser: fb,
+            piano_keys: keys,
         }
     }
 
@@ -1837,6 +1927,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core.transport_bar_mut().set_bounds(l.transport);
         if let Some(fb) = l.file_browser {
             self.core.file_browser_mut().set_bounds(fb);
+        }
+        if let Some(keys) = l.piano_keys {
+            self.core.piano_keys_mut().set_bounds(keys);
         }
         self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
@@ -1990,6 +2083,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
+            Pane::PianoKeys if !self.piano_keys_visible => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if !self.rack_in_main() => self.song_pane(),
             other => other,
@@ -2030,6 +2124,13 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .file_browser_mut()
             .set_focused(pane == Pane::FileBrowser);
+        let released = self
+            .core
+            .piano_keys_mut()
+            .set_focused(pane == Pane::PianoKeys);
+        for action in released {
+            self.core.handle_action(action);
+        }
     }
 
     /// The pane under a window point, if any (the divider and the bars are not panes).
@@ -2049,7 +2150,9 @@ impl<B: AudioBackend> Shell<B> {
             return rect.contains(pos).then_some(Ok(pane));
         }
         let l = self.layout();
-        if l.file_browser.is_some_and(|r| r.contains(pos)) {
+        if l.piano_keys.is_some_and(|r| r.contains(pos)) {
+            Some(Ok(Pane::PianoKeys))
+        } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
         } else if l.rack.contains(pos) {
             Some(Ok(Pane::Rack))
@@ -2346,6 +2449,12 @@ impl<B: AudioBackend> Shell<B> {
             // Held-modifier state only; nothing repaints until a role depends on it. The
             // settings dialog learns a role from the modifiers held.
             self.modifiers = *modifiers;
+            if self.live_pane(self.focus) == Pane::PianoKeys {
+                let actions = self.core.piano_keys_mut().set_shift(modifiers.shift);
+                for action in actions {
+                    self.core.handle_action(action);
+                }
+            }
             let size = self.size();
             if let Some(dialog) = &mut self.dialog
                 && dialog.capturing_keys()
@@ -2635,11 +2744,19 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
+            self.piano_keys_modifiers(key, *modifiers, *pressed);
             let stack = self.context_stack();
-            match self.router.route(key, *modifiers, *pressed, &stack) {
+            let mods = self.keys_routing_modifiers(key, *modifiers);
+            match self.router.route(key, mods, *pressed, &stack) {
                 Route::RepeatIgnored => {}
                 Route::Commands(list) => {
                     for resolved in &list {
+                        if resolved.command.starts_with("keys.") {
+                            if self.keys_command(key, &resolved.command, resolved.arg.as_deref()) {
+                                return Vec::new();
+                            }
+                            continue;
+                        }
                         if let Some(requests) =
                             self.run_command(&resolved.command, resolved.arg.as_deref())
                         {
@@ -2696,10 +2813,20 @@ impl<B: AudioBackend> Shell<B> {
         }
         let model = self.menu_model();
         if let Some(bar) = &mut self.menubar {
+            let before = bar.look();
             match bar.handle(event, &model) {
                 MenuBarOutcome::Ignored => {}
                 MenuBarOutcome::Consumed => {
-                    self.repaint = true;
+                    // A move that leaves the bar as it was (the pointer inside one title)
+                    // shows nothing new, and one that changes it only repaints the main
+                    // window, where the bar is.
+                    let moved = matches!(event, UiEvent::PointerMove { .. });
+                    let changed = bar.look() != before;
+                    if !moved {
+                        self.repaint = true;
+                    } else if changed && let Some(w) = self.win_mut(WindowKind::Main) {
+                        w.dirty = true;
+                    }
                     self.leave_hover();
                     return Vec::new();
                 }
@@ -2814,6 +2941,10 @@ impl<B: AudioBackend> Shell<B> {
                     self.core
                         .midi_forget(atomik_model::MidiTarget::Param { device, param });
                 }
+            }
+            ("rack.jack", Some(op)) => {
+                self.repaint = true;
+                self.core.jack_op(op);
             }
             ("sequencer.audio_normalise", None) => self.core.normalise_audio(),
             ("sequencer.audio_strip_silence", None) => self.open_silence(),
@@ -3010,6 +3141,116 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Sends a key no command took to the focused view (numpad keys as the characters they
     /// type).
+    /// Opens or closes the Piano Keys strip. Opening gives it the keyboard focus; closing
+    /// releases its notes.
+    fn set_piano_keys_visible(&mut self, visible: bool) {
+        if visible == self.piano_keys_visible {
+            return;
+        }
+        self.piano_keys_visible = visible;
+        if visible {
+            self.layout_view();
+            self.set_focus(Pane::PianoKeys);
+        } else {
+            if self.focus == Pane::PianoKeys {
+                self.set_focus(Pane::Rack);
+            }
+            let released = self.core.piano_keys_mut().release_all();
+            for action in released {
+                self.core.handle_action(action);
+            }
+            self.layout_view();
+        }
+        self.repaint = true;
+    }
+
+    /// Shift is the sustain pedal while the strip types: tell it what the key event says.
+    fn piano_keys_modifiers(&mut self, key: &Key, modifiers: Modifiers, pressed: bool) {
+        if self.live_pane(self.focus) != Pane::PianoKeys {
+            return;
+        }
+        let mut actions = self.core.piano_keys_mut().set_shift(modifiers.shift);
+        // A computer key came up: its note ends (the router sees the release as well).
+        if !pressed {
+            actions.extend(self.core.piano_keys_mut().type_release(key));
+        }
+        for action in actions {
+            self.core.handle_action(action);
+        }
+    }
+
+    /// The modifiers a key is resolved with: while the strip types, Shift is the sustain pedal
+    /// and does not change which key a letter is, so it is left out when the key plays
+    /// something without it.
+    fn keys_routing_modifiers(&self, key: &Key, modifiers: Modifiers) -> Modifiers {
+        if !modifiers.shift
+            || !self.core.piano_keys().is_typing()
+            || self.live_pane(self.focus) != Pane::PianoKeys
+        {
+            return modifiers;
+        }
+        let plain = Modifiers {
+            shift: false,
+            ..modifiers
+        };
+        let keys = ContextStack::new(&[Context::Keys]);
+        match self.router.keymap().resolve_event(key, plain, &keys) {
+            Resolution::Bound(list) if list.iter().any(|r| r.context == Context::Keys) => plain,
+            _ => modifiers,
+        }
+    }
+
+    /// Runs a `keys.*` command for the key that triggered it; false when it is not one.
+    fn keys_command(&mut self, key: &Key, command: &str, arg: Option<&str>) -> bool {
+        let keys = self.core.piano_keys_mut();
+        let actions = match command {
+            "keys.note" => {
+                let offset = arg.and_then(|a| KEYS_NOTE_ARGS.iter().position(|n| *n == a));
+                match offset {
+                    Some(o) => keys.type_note(key, o as u8),
+                    None => return false,
+                }
+            }
+            "keys.octave_up" => {
+                keys.shift_octave(1);
+                Vec::new()
+            }
+            "keys.octave_down" => {
+                keys.shift_octave(-1);
+                Vec::new()
+            }
+            "keys.velocity" => {
+                match arg.and_then(|a| a.parse::<usize>().ok()) {
+                    Some(step) => keys.set_velocity_step(step),
+                    None => return false,
+                }
+                Vec::new()
+            }
+            _ => return false,
+        };
+        for action in actions {
+            self.core.handle_action(action);
+        }
+        true
+    }
+
+    /// The characters the keymap gives the typed keys, drawn on the strip.
+    fn refresh_key_labels(&mut self) {
+        let keymap = self.router.keymap();
+        let labels: Vec<String> = KEYS_NOTE_ARGS
+            .iter()
+            .map(|arg| {
+                keymap
+                    .chords_of("keys.note", Some(arg))
+                    .into_iter()
+                    .find(|(ctx, _)| *ctx == Context::Keys)
+                    .map(|(_, c)| c.menu_text(keymap.os()))
+                    .unwrap_or_default()
+            })
+            .collect();
+        self.core.piano_keys_mut().set_labels(labels);
+    }
+
     fn route_key(&mut self, event: &UiEvent) {
         let focus = self.live_pane(self.focus);
         self.forward(focus, &text_form(event));
@@ -3017,7 +3258,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn drag_divider(&mut self, pos: Point, grab: f64, released: bool) {
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
@@ -3071,7 +3312,31 @@ impl<B: AudioBackend> Shell<B> {
     /// Sends an event to a pane: the rack view gets its own coordinates (below the menu
     /// bar), the sequencer views window coordinates.
     fn forward(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
-        self.repaint = true;
+        let actions = self.forward_to(pane, event);
+        self.mark_forwarded(pane, event, &actions);
+        actions
+    }
+
+    /// What a forwarded event repaints. Actions can change the document or another pane, so
+    /// every window is marked; an event without actions changed only the view that took it,
+    /// so only the window showing that pane is marked, and a pointer move or modifier change
+    /// marks nothing: the views raise their own `needs_repaint` when what they show changes
+    /// (a hover, a drag), so a move over nothing paints nothing.
+    fn mark_forwarded(&mut self, pane: Pane, event: &UiEvent, actions: &[UiAction]) {
+        if !actions.is_empty() {
+            self.repaint = true;
+        } else if !matches!(
+            event,
+            UiEvent::PointerMove { .. } | UiEvent::PointerLeave | UiEvent::ModifiersChanged { .. }
+        ) {
+            let window = self.window_of(pane);
+            if let Some(w) = self.win_mut(window) {
+                w.dirty = true;
+            }
+        }
+    }
+
+    fn forward_to(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
         if pane != Pane::Rack {
             let actions = self.core.handle_pane_event(pane, event);
             if matches!(pane, Pane::Console | Pane::Arrangement)
@@ -3217,8 +3482,7 @@ impl<B: AudioBackend> Shell<B> {
         let enable = self.menu_enable(pane);
         let specs = context_menus::specs(target, &enable);
         // It opens in the window that shows the pane, sized to that window.
-        let window = self.window_of(pane);
-        let size = self.window_size(window).unwrap_or_else(|| self.size());
+        let (window, size) = self.menu_window(pane);
         let menu = ContextMenu::build(
             &specs,
             &atomik_ui::keymap::Registry::bundled(),
@@ -3226,6 +3490,43 @@ impl<B: AudioBackend> Shell<B> {
             at,
             size,
         );
+        self.show_context_menu(pane, window, menu);
+    }
+
+    /// Opens the pop-up menu of jack `jack` at the window point `at`: the rows come from the
+    /// rack view's [`atomik_ui::JackMenu`], so they hold the project's own device names.
+    fn open_jack_menu(&mut self, jack: &atomik_model::SocketRef, at: Point) {
+        let Some(menu) = self
+            .core
+            .view()
+            .jack_menu(jack, self.core.doc(), self.core.registry())
+        else {
+            return;
+        };
+        let (window, size) = self.menu_window(Pane::Rack);
+        let menu = ContextMenu::from_entries(context_menus::jack_entries(&menu), at, size);
+        self.show_context_menu(Pane::Rack, window, menu);
+    }
+
+    /// The window that shows `pane` and its size: where a menu of the pane opens.
+    fn menu_window(&self, pane: Pane) -> (WindowKind, Size) {
+        let window = self.window_of(pane);
+        (
+            window,
+            self.window_size(window).unwrap_or_else(|| self.size()),
+        )
+    }
+
+    /// The rack view's point `at` in window coordinates (the rack sits below the menu bar).
+    fn rack_window_point(&self, at: Point) -> Point {
+        let o = self
+            .pane_rect(Pane::Rack)
+            .map_or(Point::ORIGIN, |(_, r)| r.origin());
+        Point::new(at.x + o.x, at.y + o.y)
+    }
+
+    /// Shows `menu` as the open context menu of `pane`, in `window`.
+    fn show_context_menu(&mut self, pane: Pane, window: WindowKind, menu: ContextMenu) {
         self.context_menu = Some(OpenContextMenu { menu, pane, window });
         // The pointer press that opened it must not keep a drag alive.
         self.capture = None;
@@ -3314,6 +3615,11 @@ impl<B: AudioBackend> Shell<B> {
                 UiAction::ControlMenu { device, param, at } => {
                     self.control_target = Some((device.clone(), param.clone()));
                     (ContextTarget::Control, *at)
+                }
+                UiAction::JackMenu { socket, at } => {
+                    let at = self.rack_window_point(*at);
+                    self.open_jack_menu(socket, at);
+                    continue;
                 }
                 _ => continue,
             };
@@ -3512,7 +3818,9 @@ impl<B: AudioBackend> Shell<B> {
     /// Opens the project `path` now, or asks first when the rack has unsaved changes.
     fn open_project_request(&mut self, path: PathBuf) {
         if self.core.is_dirty() {
-            self.pending.push(ShellRequest::ConfirmDiscardOpen(path));
+            self.pending.push(ShellRequest::ConfirmSave {
+                then: PendingAction::OpenFile(path),
+            });
         } else {
             self.open_file(&path);
         }
@@ -3618,14 +3926,26 @@ impl<B: AudioBackend> Shell<B> {
         let requests = match command {
             AppCommand::New
             | AppCommand::Open
+            | AppCommand::Close
             | AppCommand::Quit
             | AppCommand::StressRack
             | AppCommand::StressSong => {
                 if self.core.is_dirty() {
-                    vec![ShellRequest::ConfirmDiscard(command)]
+                    vec![ShellRequest::ConfirmSave {
+                        then: PendingAction::Command(command),
+                    }]
                 } else {
                     self.confirmed(command)
                 }
+            }
+            AppCommand::OpenRecent(index) => {
+                self.open_recent(index);
+                Vec::new()
+            }
+            AppCommand::ClearRecent => {
+                self.core.clear_recent();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
             }
             AppCommand::Save => match self.core.save() {
                 Ok(()) => Vec::new(),
@@ -3669,6 +3989,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RenameNoteLane
             | AppCommand::DeleteNoteLane
             | AppCommand::ToggleLaneMute
+            | AppCommand::ToggleChase
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_) => {
                 self.track_command(command);
@@ -3805,6 +4126,10 @@ impl<B: AudioBackend> Shell<B> {
                 view.set_browser_visible(visible);
                 Vec::new()
             }
+            AppCommand::TogglePianoKeys => {
+                self.set_piano_keys_visible(!self.piano_keys_visible);
+                Vec::new()
+            }
             AppCommand::ToggleFileBrowser => {
                 self.set_file_browser_visible(!self.ui.file_browser_visible);
                 Vec::new()
@@ -3915,6 +4240,13 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.transport_action(action);
                 Vec::new()
             }
+            AppCommand::TogglePreCount => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.pre_count_bars = self.core.pre_count_toggled();
+                self.apply_settings(settings);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
             AppCommand::Quantize(q) => {
                 self.core.set_input_quantize(q);
                 self.ui.input_quantize = q;
@@ -3948,6 +4280,14 @@ impl<B: AudioBackend> Shell<B> {
                 let show = !self.core.arrangement().marker_strip_visible();
                 self.core.arrangement_mut().set_marker_strip(show);
                 self.ui.show_marker_strip = show;
+                self.save_ui_state();
+                Vec::new()
+            }
+            AppCommand::ToggleInspector => {
+                let show = !self.core.arrangement().inspector_visible();
+                self.core.arrangement_mut().set_inspector(show);
+                self.core.piano_roll_mut().set_inspector(show);
+                self.ui.show_inspector = show;
                 self.save_ui_state();
                 Vec::new()
             }
@@ -4204,7 +4544,7 @@ impl<B: AudioBackend> Shell<B> {
     pub fn confirmed(&mut self, command: AppCommand) -> Vec<ShellRequest> {
         self.repaint = true;
         match command {
-            AppCommand::New => {
+            AppCommand::New | AppCommand::Close => {
                 self.core.new_document();
                 Vec::new()
             }
@@ -4222,6 +4562,84 @@ impl<B: AudioBackend> Shell<B> {
             }
             other => self.execute_command(other),
         }
+    }
+
+    /// Carries out what waited for the answer about unsaved changes.
+    fn continue_pending(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        match then {
+            PendingAction::Command(command) => self.confirmed(command),
+            PendingAction::OpenFile(path) => {
+                self.open_file(&path);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Save, in the question about unsaved changes: saves the project, then carries on with
+    /// `then`. A project with no file yet asks for one ([`ShellRequest::PickSaveFileThen`]); a
+    /// save that fails is shown and `then` does not happen.
+    pub fn save_then(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        match self.core.save() {
+            Ok(()) => self.continue_pending(then),
+            Err(AppError::NoPath) => vec![ShellRequest::PickSaveFileThen { then }],
+            Err(e) => {
+                self.notify(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// The file picked for [`ShellRequest::PickSaveFileThen`]: saves the project there, then
+    /// carries on with `then`. A save that fails is shown and `then` does not happen.
+    pub fn save_to_then(&mut self, path: &Path, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        match self.core.save_as(path) {
+            Ok(()) => self.continue_pending(then),
+            Err(e) => {
+                self.notify(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// Don't Save, in the question about unsaved changes: carries on with `then`.
+    pub fn discard_then(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        self.continue_pending(then)
+    }
+
+    /// File > Open Recent: the song at place `index` of the recent list. A song that is gone
+    /// leaves the list with a message.
+    fn open_recent(&mut self, index: usize) {
+        let Some(path) = self.core.recent().get(index).cloned() else {
+            return;
+        };
+        if path.exists() {
+            self.open_project_request(path);
+        } else {
+            self.core.forget_recent(&path);
+            self.notify(format!("{} no longer exists", path.display()));
+        }
+    }
+
+    /// Start-up with the "Open last project at start-up" preference on: opens the newest recent
+    /// song. Returns whether a song was opened. A song that is gone leaves the list with a
+    /// message. Call it only when the command line names no project.
+    pub fn restore_last_project(&mut self) -> bool {
+        if !self.workflow.open_last_project {
+            return false;
+        }
+        let Some(path) = self.core.recent().first().cloned() else {
+            return false;
+        };
+        if !path.exists() {
+            self.core.forget_recent(&path);
+            self.notify(format!("{} no longer exists", path.display()));
+            return false;
+        }
+        self.open_file(&path);
+        true
     }
 
     /// Opens a project or patch file (errors are shown in the view).
@@ -4384,6 +4802,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn apply_settings(&mut self, settings: AudioSettings) {
         let gain = settings.metronome_gain;
+        let pre_count = settings.pre_count_bars;
         let session = self.core.sink_mut();
         if session.set_settings(settings.clone()) == SettingsChange::RestartAudio {
             session.set_enabled(true);
@@ -4392,6 +4811,9 @@ impl<B: AudioBackend> Shell<B> {
         self.configure_surface();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
             self.core.set_metronome_gain(gain);
+        }
+        if pre_count != self.core.pre_count_bars() {
+            self.core.set_pre_count_bars(pre_count);
         }
         if let Some(path) = &self.settings_path
             && let Err(e) = settings::save(path, &settings)
@@ -4409,6 +4831,18 @@ impl<B: AudioBackend> Shell<B> {
         let mut status = self.core.sink_mut().poll().clone();
         status.notes_target = target;
         status.streaming = self.core.song_assets().values().any(|a| a.is_stream());
+        status.faulted_name = status
+            .faulted_device
+            .and_then(|id| self.core.device_name_of_instance(id));
+        if status.faulted && !self.fault_announced {
+            self.fault_announced = true;
+            let what = crate::status::faulted_text(&status);
+            self.notify(format!(
+                "{what}. Audio > Restart Audio rebuilds the engine; save your work first."
+            ));
+        } else if !status.faulted {
+            self.fault_announced = false;
+        }
         let mut text = status_text(&status);
         if let Some(alert) = self.core.pdc_alert() {
             text = format!("{alert} \u{b7} {text}");
@@ -4523,6 +4957,9 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn paint_main(&mut self, canvas: &mut dyn Canvas) {
+        if self.piano_keys_visible {
+            self.refresh_key_labels();
+        }
         let scale = self.scale();
         let l = self.layout();
         let (w, h) = (self.size().width, self.size().height);
@@ -4544,6 +4981,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core.paint_pane(Pane::Transport, canvas);
         if l.file_browser.is_some() {
             self.core.paint_pane(Pane::FileBrowser, canvas);
+        }
+        if l.piano_keys.is_some() {
+            self.core.paint_pane(Pane::PianoKeys, canvas);
         }
         if l.song.is_some() {
             let pane = self.song_pane();
@@ -4746,6 +5186,10 @@ mod tests;
 mod tooltip_tests;
 
 #[cfg(test)]
+#[path = "shell_repaint_tests.rs"]
+mod repaint_tests;
+
+#[cfg(test)]
 #[path = "shell_windows_tests.rs"]
 mod windows_tests;
 
@@ -4772,6 +5216,10 @@ mod midi_tests;
 #[cfg(test)]
 #[path = "shell_console_tests.rs"]
 mod console_tests;
+
+#[cfg(test)]
+#[path = "shell_jacks_tests.rs"]
+mod jacks_tests;
 
 #[cfg(test)]
 #[path = "shell_midimap_tests.rs"]
@@ -4888,3 +5336,11 @@ mod library_tests;
 #[cfg(test)]
 #[path = "shell_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "shell_save_tests.rs"]
+mod save_tests;
+
+#[cfg(test)]
+#[path = "shell_piano_keys_tests.rs"]
+mod piano_keys_tests;

@@ -25,8 +25,8 @@
 use crate::controllers::{CtlLane, SongController, expand, validate};
 use crate::graph::DeviceInstanceId;
 use atomik_core::{
-    MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo, TempoMap, TempoPoint,
-    TempoSegment, Ticks, compile_meter, compile_tempo,
+    BATCH, MapError, MeterEvent, MeterMap, MeterSegment, NoteKind, ParamId, Tempo, TempoMap,
+    TempoPoint, TempoSegment, Ticks, compile_meter, compile_tempo,
 };
 use atomik_device_sdk::SocketId;
 
@@ -478,6 +478,37 @@ fn encode(kind: NoteKind) -> u64 {
     }
 }
 
+/// The count-in of `bars` bars at `tick` (see [`SongSnapshot::pre_roll`]).
+pub fn pre_roll(
+    map: TempoMap<'_>,
+    meters: MeterMap<'_>,
+    tick: i64,
+    bars: u8,
+    sample_rate: f64,
+) -> Option<PreRoll> {
+    if bars == 0 {
+        return None;
+    }
+    let tick = tick.max(0);
+    let (num, _) = meters.meter_at(tick);
+    let per_bar = u16::from(num.max(1));
+    let beats = per_bar * u16::from(bars);
+    let ticks = meters.beat_ticks_at(tick) * i64::from(beats);
+    let tpf = map.ticks_per_frame(tick as f64, sample_rate);
+    let raw = if tpf.is_finite() && tpf > 0.0 {
+        ticks as f64 / tpf
+    } else {
+        0.0
+    };
+    let batch = BATCH as f64;
+    let frames = ((raw / batch).round().max(1.0) * batch) as u64;
+    Some(PreRoll {
+        frames,
+        beats,
+        per_bar,
+    })
+}
+
 /// Replays the player's loop wrapping: the song frame and loop count `d` frames after (or
 /// before, `d < 0`) a batch start at song frame `start` with `loops` wraps so far. `lp` is the
 /// active loop `(start frame, end frame)`, `end > start`. See [`SongSnapshot::position_at`].
@@ -536,6 +567,14 @@ impl SongSnapshot {
     /// Fractional tick at a song frame (the exact inverse of [`SongSnapshot::tick_to_frame`]).
     pub fn frame_to_tick_exact(&self, frame: f64, sample_rate: f64) -> f64 {
         self.map().tick(frame, sample_rate)
+    }
+
+    /// The count-in of `bars` bars (0 gives `None`) before `tick`: the beats of the meter at
+    /// `tick`, at the tempo in effect there (the instantaneous one inside a ramp), rounded to a
+    /// whole number of batches. A pure function of the tempo map, the meter map and the sample
+    /// rate.
+    pub fn pre_roll(&self, tick: Ticks, bars: u8, sample_rate: f64) -> Option<PreRoll> {
+        pre_roll(self.map(), self.meter_map(), tick.0, bars, sample_rate)
     }
 
     /// The integer song frame at which the player emits events at `tick`:
@@ -597,6 +636,9 @@ impl SongSnapshot {
 pub enum TransportCommand {
     /// Start playback from the current position.
     Play,
+    /// Count in, then start playback from the current position: the position holds while the
+    /// pre-roll plays its clicks, and nothing of the song sounds until it ends.
+    PlayWithPreRoll(PreRoll),
     /// Stop playback (sends AllOff to every track device).
     Stop,
     /// Move the play position (sends AllOff when playing).
@@ -620,6 +662,27 @@ pub enum TransportCommand {
     },
 }
 
+/// A count-in, computed off the audio thread (see [`SongSnapshot::pre_roll`]) and sent as plain
+/// integers: the audio thread only counts frames down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreRoll {
+    /// Length in frames, a whole number of batches (at least one).
+    pub frames: u64,
+    /// Clicks in the count; the click `i` sounds at frame `i * frames / beats`.
+    pub beats: u16,
+    /// Clicks per bar: every `per_bar`-th click, from the first, is accented.
+    pub per_bar: u16,
+}
+
+impl PreRoll {
+    /// The frame, within the pre-roll, of click `i` (`i < beats`).
+    pub fn onset(&self, i: u64) -> u64 {
+        let beats = u64::from(self.beats.max(1));
+        // Up to 255 beats a bar and a few bars: far from overflowing u64 for any real length.
+        (u128::from(i) * u128::from(self.frames) / u128::from(beats)) as u64
+    }
+}
+
 /// Transport state published by the engine each batch (lock-free; read by UI and recording).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TransportState {
@@ -640,6 +703,11 @@ pub struct TransportState {
     pub loop_end: i64,
     /// Loop enabled.
     pub loop_enabled: bool,
+    /// Frames of pre-roll left at the start of that batch (the song starts that many frames
+    /// later); 0 when no count-in runs. While it is above zero `playing` is false.
+    pub pre_roll_frames: u64,
+    /// The beat of the bar being counted in (1-based) while a pre-roll runs, else 0.
+    pub pre_roll_beat: u16,
 }
 
 #[cfg(test)]
@@ -1106,6 +1174,8 @@ mod tests {
             loop_start: 0,
             loop_end: 0,
             loop_enabled: false,
+            pre_roll_frames: 0,
+            pre_roll_beat: 0,
         }
     }
 

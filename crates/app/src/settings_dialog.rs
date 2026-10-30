@@ -21,8 +21,8 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, HostChoice, LINGER_CHOICES, RECORD_OFFSET_CHOICES,
-    WORKER_CHOICES,
+    AudioSettings, BUFFER_CHOICES, HostChoice, LINGER_CHOICES, PRE_COUNT_CHOICES,
+    RECORD_OFFSET_CHOICES, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -85,6 +85,8 @@ pub enum Choice {
     Input(Option<String>),
     /// The user part of the recording compensation, in frames.
     RecordOffset(i32),
+    /// Bars of pre-count before a recording (0 = off).
+    PreCount(u8),
     /// Buffer size.
     Buffer(u32),
     /// MIDI input (`None` = none).
@@ -312,7 +314,7 @@ impl SettingsDialog {
             }
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 6.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 9.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
@@ -500,6 +502,21 @@ impl SettingsDialog {
                     .collect(),
                 chips: true,
             },
+            Section {
+                title: "Pre-count (bars)",
+                options: PRE_COUNT_CHOICES
+                    .iter()
+                    .map(|b| {
+                        let label = if *b == 0 {
+                            "Off".to_string()
+                        } else {
+                            b.to_string()
+                        };
+                        (label, Choice::PreCount(*b))
+                    })
+                    .collect(),
+                chips: true,
+            },
         ]
     }
 
@@ -583,6 +600,7 @@ impl SettingsDialog {
             Choice::Device(n) => d.output_device == *n,
             Choice::Input(n) => d.input_device == *n,
             Choice::RecordOffset(o) => d.record_offset_frames == *o,
+            Choice::PreCount(b) => d.pre_count_bars == *b,
             Choice::Buffer(b) => d.buffer_frames == *b,
             Choice::Midi(p) => d.midi_input == *p,
             Choice::SurfaceDriver(n) => d.surface.driver == *n,
@@ -610,6 +628,7 @@ impl SettingsDialog {
             Choice::Device(n) => self.draft.output_device = n,
             Choice::Input(n) => self.draft.input_device = n,
             Choice::RecordOffset(o) => self.draft.record_offset_frames = o,
+            Choice::PreCount(b) => self.draft.pre_count_bars = b,
             Choice::Buffer(b) => self.draft.buffer_frames = b,
             Choice::Midi(p) => self.draft.midi_input = p,
             Choice::SurfaceDriver(n) => self.draft.surface.driver = n,
@@ -638,6 +657,10 @@ impl SettingsDialog {
         notes.extend(self.lists.input_note.iter().cloned());
         notes.push(
             "Record offset: positive places recordings earlier (added to the measured latency)."
+                .to_string(),
+        );
+        notes.push(
+            "Pre-count: bars of click before a recording starts; nothing is recorded during them."
                 .to_string(),
         );
         notes.extend(self.lists.errors.iter().cloned());
@@ -898,6 +921,7 @@ impl SettingsDialog {
                     | Choice::Workers(_)
                     | Choice::Linger(_)
                     | Choice::RecordOffset(_)
+                    | Choice::PreCount(_)
             );
             let shape = RoundedRect::from_rect(*r, 5.0);
             if selected {

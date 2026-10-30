@@ -97,3 +97,7 @@ debug = false
 
 [profile.release]
 debug = 1
+# Fault containment depends on unwinding: the engine catches a panicking device with
+# `catch_unwind`, which does nothing under `panic = "abort"`. Never set "abort" in any profile
+# (the `unwind_invariant` test in atomik-engine fails if you do).
+panic = "unwind"

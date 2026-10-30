@@ -62,7 +62,13 @@ fn the_starter_keeps_the_other_fields_of_the_empty_document() {
     assert_eq!(start.output_channels, empty.output_channels);
     assert_eq!(start.input_channels, empty.input_channels);
     assert_eq!(start.assets, empty.assets);
-    assert_eq!(start.song, empty.song, "one transport track as before");
+    assert!(
+        start.song.tails,
+        "a new project lets notes ring past their clip"
+    );
+    let mut song = start.song.clone();
+    song.tails = false;
+    assert_eq!(song, empty.song, "one transport track as before");
 }
 
 #[test]

@@ -9,7 +9,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::{
     AutomationPoint, Command, Curve, DeviceKey, Document, MACRO_BANK_TYPE, MacroCommand,
     ModelError, PROJECT_VERSION, SyncOp, assign_position, assign_value, expand_bank_lane,
-    load_project, macro_index_of, macro_key, new_project_doc, save_project,
+    load_project, macro_index_of, macro_key, save_project,
 };
 use common::song::{add_clip, add_track, auto_clip, point, sc};
 use common::*;
@@ -21,7 +21,7 @@ const FADER: &str = "fader";
 
 fn project() -> (Document, Registry) {
     let r = console_registry();
-    let mut d = Document::new(new_project_doc());
+    let mut d = Document::new(legacy_project_doc());
     run(
         &mut d,
         &r,
@@ -690,9 +690,9 @@ fn channel_strip_params_can_be_driven_except_solo() {
 fn macros_round_trip_in_format_29_in_a_stable_text() {
     let (d, r) = mapped();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 34);
+    assert_eq!(PROJECT_VERSION, 35);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 34);
+    assert_eq!(v["version"], 35);
     let m = &v["macros"];
     let assigns = m["assigns"].as_array().unwrap();
     assert_eq!(assigns.len(), 3);
@@ -717,12 +717,12 @@ fn a_project_without_macros_differs_from_its_version_28_file_in_the_version_line
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("\"macros\""));
-    let v28 = text.replace("\"version\": 34", "\"version\": 28");
+    let v28 = text.replace("\"version\": 35", "\"version\": 28");
     let loaded = load_project(&v28, &r).unwrap();
     assert!(loaded.macros.is_empty());
     assert_eq!(save_project(&loaded), text);
     // Before the format a file has no field for them.
-    let with = save_project(mapped().0.doc()).replace("\"version\": 34", "\"version\": 28");
+    let with = save_project(mapped().0.doc()).replace("\"version\": 35", "\"version\": 28");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("macros"), "{e}");
 }

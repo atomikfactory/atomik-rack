@@ -942,6 +942,8 @@ pub(crate) fn plan(
             }
         }
         SongCommand::NewTakeGroup { .. }
+        | SongCommand::GroupAsTakes { .. }
+        | SongCommand::AddTake { .. }
         | SongCommand::PickTake { .. }
         | SongCommand::SetCompSegment { .. }
         | SongCommand::DeleteTake { .. }

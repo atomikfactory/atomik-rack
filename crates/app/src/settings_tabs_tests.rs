@@ -203,6 +203,7 @@ fn every_command_is_listed_by_area_with_its_chords_for_this_os() {
             "Mixer",
             "Browser",
             "Files",
+            "Piano Keys",
             "Create",
             "Tools"
         ]
@@ -703,7 +704,7 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.toggles.len(), 5);
+    assert_eq!(l.toggles.len(), 6);
     let labels: Vec<&str> = l.toggles.iter().map(|t| t.label).collect();
     assert_eq!(
         labels,
@@ -712,7 +713,8 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
             "Create keeps the browser open",
             "Follow song while playing",
             "Automation follows the selection",
-            "Show tooltips"
+            "Show tooltips",
+            "Open last project at start-up"
         ]
     );
     assert!(!l.toggles[3].on, "following the selection starts off");
@@ -728,6 +730,10 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let l = d.workflow_layout(VIEW).unwrap();
     down(&mut d, l.toggles[4].rect.center());
     assert!(!d.preferences().unwrap().1.show_tooltips);
+    assert!(!l.toggles[5].on, "reopening the last song starts off");
+    let l = d.workflow_layout(VIEW).unwrap();
+    down(&mut d, l.toggles[5].rect.center());
+    assert!(d.preferences().unwrap().1.open_last_project);
     let again = d.workflow_layout(VIEW).unwrap();
     assert!(!again.toggles[0].on && again.toggles[1].on);
     assert!(matches!(
@@ -738,6 +744,31 @@ fn the_workflow_tab_toggles_the_preferences_and_apply_returns_them() {
     let mut c = dialog();
     goto(&mut c, Tab::Workflow);
     assert_eq!(press(&mut c, "Escape", Os::Windows), DialogOutcome::Cancel);
+}
+
+#[test]
+fn the_workflow_tab_steps_the_record_mode_and_the_keep_events_policy() {
+    use crate::record_over::{KeepEvents, RecordMode};
+    let mut d = dialog();
+    goto(&mut d, Tab::Workflow);
+    let l = d.workflow_layout(VIEW).unwrap();
+    assert_eq!(l.cycles.len(), 2);
+    assert_eq!(l.cycles[0].value, "Replace (takes)");
+    assert_eq!(l.cycles[1].value, "Keep");
+    let (_, apply) = d.buttons(VIEW);
+    assert!(
+        l.cycles[1].rect.y1 <= apply.y0,
+        "the rows sit above the Apply button"
+    );
+    down(&mut d, l.cycles[0].button.center());
+    down(&mut d, l.cycles[1].button.center());
+    down(&mut d, l.cycles[1].button.center());
+    let (_, wf) = d.preferences().unwrap();
+    assert_eq!(wf.record_mode, RecordMode::Layer);
+    assert_eq!(wf.keep_events, KeepEvents::NewClip);
+    let l = d.workflow_layout(VIEW).unwrap();
+    assert_eq!(l.cycles[0].value, "Layer");
+    assert_eq!(l.cycles[1].value, "New clip");
 }
 
 #[test]

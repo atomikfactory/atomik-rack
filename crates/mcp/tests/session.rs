@@ -249,10 +249,7 @@ fn an_edit_is_undone_by_command_and_by_chord_and_new_asks_before_discarding() {
 
     // File, New over unsaved changes is a question, not an action.
     let asked = ok(&mut s, "session_command", json!({"id": "file.new"}));
-    assert_eq!(
-        asked["requests"][0]["request"], "confirm_discard",
-        "{asked}"
-    );
+    assert_eq!(asked["requests"][0]["request"], "confirm_save", "{asked}");
     assert_eq!(
         ok(&mut s, "session_status", json!({}))["document"]["song"]["tracks"]
             .as_array()
@@ -582,6 +579,54 @@ fn save_writes_a_project_the_stateless_tools_read_back() {
         json!({"path": std::env::temp_dir().join("atomik-mcp-x.atomik").to_string_lossy()}),
     );
     assert!(outside.is_error);
+}
+
+#[test]
+fn file_close_asks_like_the_menu_and_the_status_lists_the_recent_songs() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/demo.atomik"}),
+    );
+    // A clean song closes at once.
+    let clean = ok(&mut s, "session_command", json!({"id": "file.close"}));
+    assert!(clean["requests"].as_array().unwrap().is_empty(), "{clean}");
+    // With changes, the same question the window asks (Save, Don't Save, Cancel).
+    ok(
+        &mut s,
+        "session_command",
+        json!({"id": "transport.add_marker"}),
+    );
+    let asked = ok(&mut s, "session_command", json!({"id": "file.close"}));
+    assert_eq!(asked["requests"][0]["request"], "confirm_save", "{asked}");
+    assert!(
+        asked["requests"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Close"),
+        "{asked}"
+    );
+    assert_eq!(asked["dirty"], true, "nothing was discarded");
+    // Don't Save.
+    let done = ok(
+        &mut s,
+        "session_command",
+        json!({"id": "file.close", "confirm": true}),
+    );
+    assert!(done["requests"].as_array().unwrap().is_empty(), "{done}");
+    assert_eq!(done["dirty"], false);
+    // The song opened and the song saved are in the recent list, the newest first.
+    let out = tmp("recent.atomik");
+    ok(&mut s, "session_save", json!({"path": out}));
+    let status = ok(&mut s, "session_status", json!({}));
+    let recent = status["recent_files"].as_array().unwrap();
+    assert_eq!(recent.len(), 2, "{status}");
+    assert!(recent[0].as_str().unwrap().ends_with("recent.atomik"));
+    assert!(recent[1].as_str().unwrap().ends_with("demo.atomik"));
+    // The recent songs are commands of the File menu.
+    let row = command_row(&mut s, "file.open_recent");
+    assert_eq!(row["label"], "recent", "{row}");
 }
 
 #[test]

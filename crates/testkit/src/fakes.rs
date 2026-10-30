@@ -106,6 +106,47 @@ impl Device for ConstantSource {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Panicker
+// ---------------------------------------------------------------------------------------------
+
+/// Descriptor of [`Panicker`]: `audio_out` (Audio out).
+pub static PANICKER: DeviceDescriptor = DeviceDescriptor {
+    stages: &[],
+    type_id: "testkit.panicker",
+    name: "Panicker",
+    kind: DeviceKind::Utility,
+    version: 1,
+    params: &[],
+    sockets: &[socket(0, "audio_out", SocketKind::Audio, Direction::Output)],
+};
+
+/// A device whose `process` always panics: for tests of fault containment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Panicker;
+
+impl Panicker {
+    /// Audio output socket.
+    pub const AUDIO_OUT: SocketId = SocketId(0);
+
+    /// Boxed instance.
+    pub fn boxed() -> Box<dyn Device> {
+        Box::new(Self)
+    }
+}
+
+impl Device for Panicker {
+    fn descriptor(&self) -> &'static DeviceDescriptor {
+        &PANICKER
+    }
+    fn prepare(&mut self, _: &PrepareInfo) {}
+    fn reset(&mut self) {}
+    fn set_param(&mut self, _: ParamId, _: f32) {}
+    fn process(&mut self, _: &mut ProcessContext<'_>) {
+        panic!("device failure");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // ImpulseOnNote
 // ---------------------------------------------------------------------------------------------
 

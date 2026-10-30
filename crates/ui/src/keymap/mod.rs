@@ -33,8 +33,8 @@ mod user;
 pub use chord::{Chord, ChordError, ChordKey, Mods, Os, PhysChord};
 pub use command::{
     ARP_GATE_ARGS, ARP_OCTAVE_ARGS, ARP_PATTERN_ARGS, ArgKind, CHORD_ARGS, CommandDef, FOLD_ARGS,
-    Group, INVERSION_ARGS, ROOT_ARGS, Registry, SCALE_ARGS, STRUM_AMOUNT_ARGS,
-    STRUM_DIRECTION_ARGS,
+    Group, INVERSION_ARGS, KEYS_NOTE_ARGS, KEYS_VELOCITY_ARGS, RECENT_ARGS, ROOT_ARGS, Registry,
+    SCALE_ARGS, STRUM_AMOUNT_ARGS, STRUM_DIRECTION_ARGS,
 };
 pub use conflict::{Conflict, Shadow, find_conflicts, find_shadows};
 pub use context::{Context, ContextStack};
@@ -496,6 +496,8 @@ impl Router {
     }
 }
 
+#[cfg(test)]
+mod keys_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

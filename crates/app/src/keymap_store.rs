@@ -11,6 +11,7 @@
 //! - `workflow.json` keeps fields this build does not know (a newer build or a later step of the
 //!   phase, such as the rack layout flags), so saving never drops them.
 
+use crate::record_over::{KeepEvents, RecordMode};
 use atomik_ui::keymap::UserKeymap;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -61,6 +62,15 @@ pub struct WorkflowPrefs {
     /// The library folder the user chose (`None`: the default, see
     /// [`crate::settings::default_library_dir`]).
     pub library_folder: Option<PathBuf>,
+    /// Minutes between autosave snapshots of a changed project (0: off, default 5).
+    pub autosave_minutes: u32,
+    /// Start with the song that was open last time, when no project is named on the command
+    /// line (default off).
+    pub open_last_project: bool,
+    /// What a finished MIDI take does with the clips already on its lane (default Replace).
+    pub record_mode: RecordMode,
+    /// What a note edit does with notes that start past their clip's end (default Keep).
+    pub keep_events: KeepEvents,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -76,6 +86,10 @@ impl Default for WorkflowPrefs {
             rack_visible: true,
             keys_notice_seen: false,
             library_folder: None,
+            autosave_minutes: 5,
+            open_last_project: false,
+            record_mode: RecordMode::default(),
+            keep_events: KeepEvents::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -108,6 +122,21 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .filter(|p| !p.is_empty())
                 .map(PathBuf::from),
+            autosave_minutes: obj
+                .get("autosave_minutes")
+                .and_then(Value::as_u64)
+                .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
+            open_last_project: flag("open_last_project", defaults.open_last_project),
+            record_mode: obj
+                .get("record_mode")
+                .and_then(Value::as_str)
+                .and_then(RecordMode::from_id)
+                .unwrap_or(defaults.record_mode),
+            keep_events: obj
+                .get("keep_events")
+                .and_then(Value::as_str)
+                .and_then(KeepEvents::from_id)
+                .unwrap_or(defaults.keep_events),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -121,6 +150,10 @@ impl WorkflowPrefs {
                             | "rack_visible"
                             | "keys_notice_seen"
                             | "library_folder"
+                            | "autosave_minutes"
+                            | "open_last_project"
+                            | "record_mode"
+                            | "keep_events"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -147,6 +180,22 @@ impl WorkflowPrefs {
             "keys_notice_seen".into(),
             Value::Bool(self.keys_notice_seen),
         );
+        map.insert(
+            "autosave_minutes".into(),
+            Value::from(self.autosave_minutes),
+        );
+        map.insert(
+            "open_last_project".into(),
+            Value::Bool(self.open_last_project),
+        );
+        map.insert(
+            "record_mode".into(),
+            Value::String(self.record_mode.id().into()),
+        );
+        map.insert(
+            "keep_events".into(),
+            Value::String(self.keep_events.id().into()),
+        );
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -165,27 +214,11 @@ impl WorkflowPrefs {
 
 /// Writes `text` to `path` atomically: a temporary file in the same folder, then a rename.
 pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
-    let fail = |e: std::io::Error| format!("{}: {e}", path.display());
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(fail)?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, text).map_err(fail)?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        fail(e)
-    })
+    crate::recovery::atomic_write(path, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Moves an unusable file out of the way as `<name>.bad`.
-fn quarantine(path: &Path) -> Option<PathBuf> {
-    let mut bad = path.as_os_str().to_owned();
-    bad.push(".bad");
-    let bad = PathBuf::from(bad);
-    std::fs::rename(path, &bad).ok().map(|()| bad)
-}
+use crate::recovery::quarantine;
 
 fn read(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(path) {
@@ -517,5 +550,62 @@ mod tests {
         let p = d.join("deeper").join("still").join(KEYMAP_FILE);
         save_user_keymap(&p, &user()).unwrap();
         assert!(p.exists());
+    }
+
+    #[test]
+    fn the_record_mode_and_keep_events_round_trip_and_default_to_replace_and_keep() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(
+            (d.record_mode, d.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        let p = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(
+            (p.record_mode, p.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        // An unknown name or a wrongly typed value is the default.
+        let p = WorkflowPrefs::from_json(r#"{"record_mode": "nope", "keep_events": 3}"#).unwrap();
+        assert_eq!(
+            (p.record_mode, p.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        let set = WorkflowPrefs {
+            record_mode: RecordMode::Layer,
+            keep_events: KeepEvents::NewClip,
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(text.contains("\"record_mode\": \"layer\""), "{text}");
+        assert!(text.contains("\"keep_events\": \"new_clip\""), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(back.extra.is_empty());
+    }
+
+    #[test]
+    fn autosave_minutes_round_trips_defaults_to_five_and_is_clamped() {
+        assert_eq!(WorkflowPrefs::default().autosave_minutes, 5);
+        assert_eq!(WorkflowPrefs::from_json("{}").unwrap().autosave_minutes, 5);
+        let off = WorkflowPrefs::from_json("{\"autosave_minutes\": 0}").unwrap();
+        assert_eq!(off.autosave_minutes, 0);
+        assert_eq!(WorkflowPrefs::from_json(&off.to_json()).unwrap(), off);
+        let big = WorkflowPrefs::from_json("{\"autosave_minutes\": 99999}").unwrap();
+        assert_eq!(big.autosave_minutes, 240);
+        assert!(!big.extra.contains_key("autosave_minutes"));
+    }
+
+    #[test]
+    fn open_last_project_round_trips_and_defaults_to_off() {
+        assert!(!WorkflowPrefs::default().open_last_project);
+        assert!(!WorkflowPrefs::from_json("{}").unwrap().open_last_project);
+        let on = WorkflowPrefs::from_json("{\"open_last_project\": true}").unwrap();
+        assert!(on.open_last_project);
+        assert!(on.to_json().contains("\"open_last_project\": true"));
+        assert_eq!(WorkflowPrefs::from_json(&on.to_json()).unwrap(), on);
+        assert!(!on.extra.contains_key("open_last_project"));
+        // A wrongly typed value is the default.
+        let bad = WorkflowPrefs::from_json("{\"open_last_project\": \"yes\"}").unwrap();
+        assert!(!bad.open_last_project);
     }
 }

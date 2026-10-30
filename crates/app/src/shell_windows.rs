@@ -65,7 +65,7 @@ impl<B: AudioBackend> Shell<B> {
         self.wins.get(&kind)
     }
 
-    fn win_mut(&mut self, kind: WindowKind) -> Option<&mut WinState> {
+    pub(super) fn win_mut(&mut self, kind: WindowKind) -> Option<&mut WinState> {
         self.wins.get_mut(&kind)
     }
 
@@ -291,6 +291,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.core.transport_bar_mut().set_scale(scale);
                 self.core.file_browser_mut().set_scale(scale);
+                self.core.piano_keys_mut().set_scale(scale);
                 // The panes that sit in the main window while attached.
                 if !self.rack_detached() {
                     self.core.handle_event(&UiEvent::ScaleChanged(scale));
@@ -526,17 +527,10 @@ impl<B: AudioBackend> Shell<B> {
     // ------------------------------------------------------------------ painting
 
     /// The title of `window`'s OS window: the main window's is [`Self::title`]; a detached pane
-    /// names itself first.
+    /// names itself first (see [`WindowKind::title`], which serves every window of an event
+    /// from one call of [`Self::title`]).
     pub fn title_in(&self, window: WindowKind) -> String {
-        let title = self.core.title();
-        let project = title
-            .strip_prefix("Atomik Rack \u{2014} ")
-            .unwrap_or(&title);
-        match window {
-            WindowKind::Main => title.clone(),
-            WindowKind::Rack => format!("Rack \u{2014} {project}"),
-            WindowKind::Console => format!("Mixer \u{2014} {project}"),
-        }
+        window.title(self.core.title())
     }
 
     /// A detached pane in its window: the pane from the top left corner, then the overlays.

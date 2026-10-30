@@ -82,6 +82,17 @@ pub enum UiAction {
         /// Note on (`true`) or off (`false`).
         on: bool,
     },
+    /// A note of the Piano Keys strip: note on (`on`, with `velocity` 1..=127) or off. The app
+    /// plays it on the live note path to the armed track, as notes from a MIDI keyboard are,
+    /// so a take records it. Every `on` is followed by a matching `off`.
+    KeysNote {
+        /// MIDI key 0..=127.
+        key: u8,
+        /// 7-bit velocity 1..=127 (ignored for note off).
+        velocity: u8,
+        /// Note on (`true`) or off (`false`).
+        on: bool,
+    },
     /// Switch the lower pane between the arrangement and the console (F5, or the console's
     /// "ARRANGE" button). See [`crate::console_shortcut`].
     ToggleConsole,
@@ -345,6 +356,14 @@ pub enum UiAction {
         device: DeviceKey,
         /// The control's param key.
         param: String,
+        /// Where the menu opens.
+        at: vello::kurbo::Point,
+    },
+    /// A right click on a jack on the back of the rack. `at` is the pointer position in the
+    /// coordinates of the emitting view; the shell builds the menu ([`crate::JackMenu`]).
+    JackMenu {
+        /// The jack (path key inside a container).
+        socket: atomik_model::SocketRef,
         /// Where the menu opens.
         at: vello::kurbo::Point,
     },

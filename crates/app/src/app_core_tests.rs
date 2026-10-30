@@ -689,3 +689,38 @@ pub(super) fn rack_only_core() -> AppCore<RecordingSink> {
         None,
     )
 }
+
+#[test]
+fn saving_and_opening_a_project_keep_the_recent_list() {
+    let list = temp_path("recent-list.json");
+    let a = temp_path("recent-a.atomik");
+    let b = temp_path("recent-b.atomik");
+    let patch = temp_path("recent-patch.json");
+    let mut c = core();
+    c.set_recent_path(list.clone());
+    assert!(c.recent().is_empty());
+    c.save_as(&a).unwrap();
+    c.save_as(&b).unwrap();
+    assert_eq!(c.recent(), [b.clone(), a.clone()]);
+    c.open(&a).unwrap();
+    assert_eq!(c.recent(), [a.clone(), b.clone()], "opening moves it first");
+    // A failed open and a patch leave the list alone.
+    assert!(c.open(&temp_path("recent-missing.atomik")).is_err());
+    c.open_str(demo_v2(), None).unwrap();
+    c.export_patch(&patch).unwrap();
+    c.open(&patch).unwrap();
+    assert_eq!(c.recent(), [a.clone(), b.clone()]);
+    // The list is kept in its file for the next run.
+    let mut next = core();
+    next.set_recent_path(list.clone());
+    assert_eq!(next.recent(), [a.clone(), b.clone()]);
+    next.forget_recent(&a);
+    assert_eq!(next.recent(), std::slice::from_ref(&b));
+    next.clear_recent();
+    let mut after = core();
+    after.set_recent_path(list.clone());
+    assert!(after.recent().is_empty());
+    for f in [&list, &a, &b, &patch] {
+        std::fs::remove_file(f).ok();
+    }
+}

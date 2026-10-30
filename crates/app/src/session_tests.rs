@@ -40,9 +40,9 @@ impl LiveStream for FakeStream {
     fn info(&self) -> &StreamInfo {
         &self.info
     }
-    fn stop(self) -> Engine {
+    fn stop(self) -> Result<Engine, IoError> {
         self.stops.set(self.stops.get() + 1);
-        self.engine
+        Ok(self.engine)
     }
 }
 
@@ -65,6 +65,9 @@ impl MidiPort for FakeMidi {
     }
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
         self.link.send_now(target, kind)
+    }
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        self.link.play_now(target, kind)
     }
 }
 
@@ -150,6 +153,7 @@ fn settings() -> AudioSettings {
         metronome_gain: 0.5,
         input_device: None,
         record_offset_frames: 0,
+        pre_count_bars: 0,
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
         surface: crate::settings::SurfaceSettings::default(),

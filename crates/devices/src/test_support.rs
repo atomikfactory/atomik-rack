@@ -442,3 +442,184 @@ pub fn drum_player_data(variant: u8) -> atomik_device_sdk::PlayerDataRef {
     }
     std::sync::Arc::new(PlayerData::Drums(d))
 }
+
+/// A controller event on a notes socket.
+fn ctl_event(offset: u16, controller: u8, raw: u8) -> NoteEvent {
+    NoteEvent {
+        offset,
+        kind: NoteKind::Cc {
+            controller,
+            value: f32::from(raw) / 127.0,
+        },
+    }
+}
+
+/// Renders `batches` batches, feeding each `(batch, event)` into `notes_in` before its batch.
+fn render_scripted(
+    mut h: DeviceHarness,
+    outs: &[&str],
+    batches: usize,
+    script: &[(usize, NoteEvent)],
+) -> Vec<Vec<f32>> {
+    let mut out: Vec<Vec<f32>> = outs.iter().map(|_| Vec::new()).collect();
+    for b in 0..batches {
+        for (at, e) in script {
+            if *at == b {
+                h.push_note("notes_in", *e);
+            }
+        }
+        for (dst, x) in out.iter_mut().zip(h.render(1, outs)) {
+            dst.extend(x);
+        }
+    }
+    out
+}
+
+/// Frames per batch as an index factor for the scripted renders below.
+const B: usize = atomik_core::BATCH;
+
+/// Instrument contract: with the pedal down a note-off does not end the note, and the release
+/// starts at the frame of the pedal-up event. `make` returns a fresh harness whose sound sustains
+/// and releases within a few ms. Checks that the whole render equals a render without a pedal
+/// whose note-off sits at the pedal-up frame, and that a note-off without a pedal does silence it.
+pub fn assert_sustain_pedal(make: impl Fn() -> DeviceHarness, outs: &[&str], key: u8) {
+    let (t_off, t_up, total) = (100usize, 200usize, 300usize);
+    let up_offset = 10u16;
+    let pedal = [
+        (0, ctl_event(0, 64, 127)),
+        (0, on(1, key, 1.0)),
+        (t_off, off(3, key)),
+        (t_up, ctl_event(up_offset, 64, 0)),
+    ];
+    let reference = [(0, on(1, key, 1.0)), (t_up, off(up_offset, key))];
+    let plain = [(0, on(1, key, 1.0)), (t_off, off(3, key))];
+    let a = render_scripted(make(), outs, total, &pedal);
+    let b = render_scripted(make(), outs, total, &reference);
+    let c = render_scripted(make(), outs, total, &plain);
+    for (n, out) in outs.iter().enumerate() {
+        let held = &a[n][(t_off + 20) * B..t_up * B];
+        let gone = &c[n][(t_off + 100) * B..];
+        let p_held = atomik_testkit::signal::peak(held);
+        let p_gone = atomik_testkit::signal::peak(gone);
+        assert!(p_held > 0.01, "{out}: the pedal holds the note ({p_held})");
+        assert!(
+            p_gone < p_held * 0.05,
+            "{out}: without the pedal the note ends ({p_gone} vs {p_held})"
+        );
+        assert_eq!(a[n], b[n], "{out}: pedal up releases at its own frame");
+        let tail = atomik_testkit::signal::peak(&a[n][(t_up + 100) * B..]);
+        assert!(
+            tail < p_held * 0.05,
+            "{out}: and the note then ends ({tail})"
+        );
+    }
+}
+
+/// Instrument contract: CC 7 and CC 11 scale the output with a square law and CC 11 at zero is
+/// silent; the volume does not change anything while it is full. `make` returns a fresh harness
+/// with a steady sound.
+pub fn assert_volume_and_expression(make: impl Fn() -> DeviceHarness, outs: &[&str], key: u8) {
+    let batches = 120;
+    let play = on(1, key, 1.0);
+    let base = render_scripted(make(), outs, batches, &[(0, play)]);
+    let full = render_scripted(
+        make(),
+        outs,
+        batches,
+        &[
+            (0, ctl_event(0, 7, 127)),
+            (0, ctl_event(0, 11, 127)),
+            (0, play),
+        ],
+    );
+    let half7 = render_scripted(
+        make(),
+        outs,
+        batches,
+        &[(0, ctl_event(0, 7, 64)), (0, play)],
+    );
+    let half11 = render_scripted(
+        make(),
+        outs,
+        batches,
+        &[(0, ctl_event(0, 11, 64)), (0, play)],
+    );
+    let zero = render_scripted(
+        make(),
+        outs,
+        batches,
+        &[(0, ctl_event(0, 11, 0)), (0, play)],
+    );
+    let late = 40 * B;
+    for n in 0..outs.len() {
+        assert_eq!(base[n], full[n], "{}: full volume changes nothing", outs[n]);
+        let r0 = atomik_testkit::signal::rms(&base[n][late..]);
+        assert!(r0 > 0.005, "{}: audible ({r0})", outs[n]);
+        let want = (64.0f32 / 127.0).powi(2);
+        for (name, x) in [("CC 7", &half7[n]), ("CC 11", &half11[n])] {
+            let ratio = atomik_testkit::signal::rms(&x[late..]) / r0;
+            assert!(
+                (ratio - want).abs() < 0.02,
+                "{}: {name} ratio {ratio}",
+                outs[n]
+            );
+        }
+        assert!(
+            atomik_testkit::signal::peak(&zero[n][late..]) < 1e-6,
+            "{}: expression 0 is silent",
+            outs[n]
+        );
+    }
+}
+
+/// Instrument contract: the `bend.range` param and RPN 0 set the pitch-bend range in semitones.
+/// Bend 0.5 at range 4 sounds exactly like bend 1 at the default 2, by the param and by RPN 0
+/// (CC 101/100/6), and differs from no bend. `make` returns a fresh harness.
+pub fn assert_bend_range(make: impl Fn() -> DeviceHarness, outs: &[&str], key: u8) {
+    let batches = 40;
+    let play = (0, on(8, key, 1.0));
+    let bend = |value: f32| {
+        (
+            0,
+            NoteEvent {
+                offset: 3,
+                kind: NoteKind::PitchBend { value },
+            },
+        )
+    };
+    let run =
+        |h: DeviceHarness, script: &[(usize, NoteEvent)]| render_scripted(h, outs, batches, script);
+    let reference = run(make(), &[bend(1.0), play]);
+    let none = run(make(), &[play]);
+    assert_ne!(reference, none, "the bend is heard");
+    let mut by_param = make();
+    by_param.set_param("bend.range", 4.0);
+    assert_eq!(run(by_param, &[bend(0.5), play]), reference, "bend.range");
+    let by_rpn = run(
+        make(),
+        &[
+            (0, ctl_event(0, 101, 0)),
+            (0, ctl_event(1, 100, 0)),
+            (0, ctl_event(2, 6, 4)),
+            bend(0.5),
+            play,
+        ],
+    );
+    assert_eq!(by_rpn, reference, "RPN 0");
+    // The param is the starting point again after a reset.
+    let mut h = make();
+    for (_, e) in [
+        (0, ctl_event(0, 101, 0)),
+        (0, ctl_event(1, 100, 0)),
+        (0, ctl_event(2, 6, 12)),
+    ] {
+        h.push_note("notes_in", e);
+    }
+    h.render(1, outs);
+    h.device_mut().reset();
+    assert_eq!(
+        run(h, &[bend(1.0), play]),
+        reference,
+        "reset restores the param"
+    );
+}

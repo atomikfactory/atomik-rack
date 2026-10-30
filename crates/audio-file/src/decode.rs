@@ -185,3 +185,42 @@ fn decode_inner(mut source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<A
     }
     AudioData::new(rate, channels)
 }
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+    use std::io::Seek;
+
+    /// A source that panics when read, standing in for a decoder bug on malformed data.
+    struct PanickingSource;
+
+    impl Read for PanickingSource {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("decoder bug");
+        }
+    }
+
+    impl Seek for PanickingSource {
+        fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    impl MediaSource for PanickingSource {
+        fn is_seekable(&self) -> bool {
+            false
+        }
+        fn byte_len(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    #[test]
+    fn a_panicking_decoder_returns_error() {
+        let result = decode_source(Box::new(PanickingSource), Some("wav"));
+        assert!(
+            matches!(result, Err(AudioFileError::Decode(_))),
+            "{result:?}"
+        );
+    }
+}

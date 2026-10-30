@@ -109,12 +109,12 @@ impl LiveStream for FakeStream {
         std::mem::take(&mut *self.events.borrow_mut())
     }
 
-    fn stop(self) -> Engine {
+    fn stop(self) -> Result<Engine, atomik_audio_io::IoError> {
         let engine = self.engine.into_inner();
         let mut log = self.log.borrow_mut();
         log.stopped = true;
         log.engine_frames_at_stop = engine.host_frames();
-        engine
+        Ok(engine)
     }
 }
 

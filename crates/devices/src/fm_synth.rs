@@ -44,7 +44,7 @@
 //!   are held under 0.45 of the sample rate.
 //! * **Pitch.** `pitch.env_amount` semitones decay to nothing with `pitch.env_decay` ms after each
 //!   note start; the LFO moves the pitch by `lfo.to_pitch` semitones; pitch bend moves it by up to
-//!   two semitones ([`BEND_RANGE`]). The fixed-frequency operators ignore all of them.
+//!   `bend.range` semitones (default 2). The fixed-frequency operators ignore all of them.
 //! * **LFO.** One global LFO (`lfo.*`: wave, rate; targets pitch, amplitude and index), written
 //!   to `lfo_cv_out` every sample.
 //! * **Play.** `play.mode`: `poly` (up to `voices`, default 8, at most 16: a note that finds no
@@ -75,6 +75,7 @@ use atomik_dsp::{
     Adsr, Lfo, LfoShape, Smoother, balance_gains, flush_denormal, note_to_hz, sin_cycles,
 };
 
+use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
 use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::soft_limit;
 
@@ -136,7 +137,8 @@ const P_CV_PITCH: u32 = P_PITCH_ENV + 13;
 const P_CV_INDEX: u32 = P_PITCH_ENV + 14;
 const P_CV_LEVEL: u32 = P_PITCH_ENV + 15;
 const P_CV_PAN: u32 = P_PITCH_ENV + 16;
-const PARAM_COUNT: usize = P_CV_PAN as usize + 1;
+const P_BEND_RANGE: u32 = P_PITCH_ENV + 17;
+const PARAM_COUNT: usize = P_BEND_RANGE as usize + 1;
 
 /// The fields of an operator, in param order.
 const F_FIXED: usize = 0;
@@ -480,6 +482,15 @@ const fn build_params() -> [ParamDescriptor; PARAM_COUNT] {
             Unit::None,
             false,
         ),
+        param(
+            P_BEND_RANGE,
+            "bend.range",
+            "Bend range",
+            (0.0, MAX_BEND_RANGE, DEFAULT_BEND_RANGE),
+            Lin,
+            Unit::Semitones,
+            false,
+        ),
     ];
     let mut i = 0;
     while i < rest.len() {
@@ -605,8 +616,6 @@ const CONTROL_INTERVAL: u32 = 16;
 const CV_PITCH_RANGE: f32 = 24.0;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
-/// Pitch bend range in semitones each way.
-pub const BEND_RANGE: f32 = 2.0;
 /// Per-voice output gain before the master stage.
 const VOICE_GAIN: f32 = 0.5;
 /// Master gain smoothing time.
@@ -667,7 +676,7 @@ struct Shared {
     /// Share of the way to the new pitch covered per control step (1 is no glide).
     glide_coef: f32,
     spread: f32,
-    /// Pitch bend in semitones.
+    /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
@@ -1016,6 +1025,8 @@ pub struct FmSynth {
     master: Smoother,
     cv_level_db: f32,
     cv_pan_amount: f32,
+    /// Sustain, volume, expression, pressure and the bend range.
+    ctl: ControllerState,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -1077,6 +1088,7 @@ impl FmSynth {
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             cv_level_db: CV_LEVEL_RANGE_DB,
             cv_pan_amount: 1.0,
+            ctl: ControllerState::new(),
             fresh: true,
             seed: 0,
             #[cfg(test)]
@@ -1163,6 +1175,10 @@ impl FmSynth {
             P_CV_INDEX => self.shared.cv_index_amount = v,
             P_CV_LEVEL => self.cv_level_db = v * CV_LEVEL_RANGE_DB,
             P_CV_PAN => self.cv_pan_amount = v,
+            P_BEND_RANGE => {
+                self.ctl.set_bend_range(v);
+                self.shared.bend = self.ctl.bend_semitones();
+            }
             P_VOICES => {
                 self.voice_limit = (v.round().max(1.0) as usize).min(MAX_VOICES);
                 for vc in &mut self.voices[self.voice_limit..] {
@@ -1178,6 +1194,7 @@ impl FmSynth {
     }
 
     fn note_on(&mut self, key: u8, velocity: f32) {
+        self.ctl.note_on(key);
         let p = self.shared;
         if p.mode != PlayMode::Poly {
             return self.mono_note_on(key, velocity);
@@ -1275,27 +1292,48 @@ impl FmSynth {
         match kind {
             NoteKind::On { key, velocity } => self.note_on(key, velocity),
             NoteKind::Off { key } => {
-                if self.shared.mode == PlayMode::Poly {
-                    let alg = self.shared.algorithm;
-                    self.voices
-                        .iter_mut()
-                        .filter(|v| v.sounding_key(alg) == Some(key))
-                        .for_each(Voice::release);
-                } else {
-                    self.mono_note_off(key);
+                if self.ctl.note_off(key) {
+                    self.release_key(key);
                 }
             }
             NoteKind::AllOff => {
+                self.ctl.all_off();
                 self.held_len = 0;
                 self.voices.iter_mut().for_each(Voice::release);
             }
-            NoteKind::PitchBend { value } => self.shared.bend = value.clamp(-1.0, 1.0) * BEND_RANGE,
             NoteKind::Cc {
                 controller: 1,
                 value,
             } => self.shared.wheel = value.clamp(0.0, 1.0),
-            // The other controllers, pressure and expressions are ignored.
-            _ => {}
+            // Pedal, volume, expression, pressure, bend and its range.
+            _ => {
+                if self.ctl.handle(kind) == Effect::ReleaseHeld {
+                    let mut keys = [0u8; 128];
+                    let mut n = 0;
+                    self.ctl.release_held(|key| {
+                        keys[n] = key;
+                        n += 1;
+                    });
+                    for &key in &keys[..n] {
+                        self.release_key(key);
+                    }
+                }
+                self.shared.bend = self.ctl.bend_semitones();
+            }
+        }
+    }
+
+    /// The key is let go (or its held-back release comes due): its voice releases, or in the
+    /// mono modes the voice returns to the key still held.
+    fn release_key(&mut self, key: u8) {
+        if self.shared.mode == PlayMode::Poly {
+            let alg = self.shared.algorithm;
+            self.voices
+                .iter_mut()
+                .filter(|v| v.sounding_key(alg) == Some(key))
+                .for_each(Voice::release);
+        } else {
+            self.mono_note_off(key);
         }
     }
 
@@ -1334,6 +1372,7 @@ impl Device for FmSynth {
             }
         }
         self.master.set_time(MASTER_SMOOTH_MS, sr);
+        self.ctl.set_sample_rate(sr);
         self.lfo = Lfo::new(crate::poly_synth::derive_seed(info.seed, 0));
         self.apply_all();
         self.reset();
@@ -1353,6 +1392,7 @@ impl Device for FmSynth {
         self.next_order = 0;
         self.held_len = 0;
         self.last_pitch = None;
+        self.ctl.reset();
         self.shared.bend = 0.0;
         self.shared.wheel = 0.0;
         self.lfo.reset();
@@ -1382,6 +1422,7 @@ impl Device for FmSynth {
         let cv_pitch = *ctx.input(PITCH_CV_IN);
         let cv_index = *ctx.input(INDEX_CV_IN);
         let (mut left, mut right) = ([0.0f32; BATCH], [0.0f32; BATCH]);
+        let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
@@ -1403,6 +1444,7 @@ impl Device for FmSynth {
             for v in self.voices.iter_mut().filter(|v| v.is_active(p.algorithm)) {
                 v.render(&mut left[start..end], &mut right[start..end], &m, &p);
             }
+            self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
         }
         let level_on = ctx.is_connected(LEVEL_CV_IN);
@@ -1414,6 +1456,8 @@ impl Device for FmSynth {
             }
             left[n] = soft_limit(left[n] * g);
             right[n] = soft_limit(right[n] * g);
+            left[n] *= ctl_gain[n];
+            right[n] *= ctl_gain[n];
         }
         if ctx.is_connected(PAN_CV_IN) {
             // The stereo pair balanced by the pan CV (unity at the centre).

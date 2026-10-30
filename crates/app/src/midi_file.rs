@@ -4,7 +4,7 @@
 //! applies the result as commands.
 //!
 //! **Export** writes what plays, not the raw clips: a clip, a track or the song is flattened
-//! with the model's own rules (`flatten_notes`, `flatten_controllers`: loops, offsets, swing, a
+//! with the model's own rules (`flatten_notes_with`, `flatten_controllers`: loops, offsets, swing, a
 //! later clip hiding an earlier one, muted notes and clips left out), so the file sounds like
 //! the arrangement.
 //!
@@ -38,7 +38,7 @@ use atomik_core::PPQ;
 use atomik_midi_io::smf::{SmfError, SmfEvent, SmfFile, SmfMessage, SmfTrack, read};
 use atomik_model::song::{
     AutomationPoint, Clip, ClipContent, ClipId, Curve, Lane, MAX_MARKER_NAME, MAX_TICK, MeterEvent,
-    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_notes,
+    Note, Song, TempoEvent, Track, bar_ticks, flatten_controllers, flatten_notes_with,
 };
 use atomik_model::{ControllerKind, ControllerLane, DeviceKey};
 use std::collections::BTreeMap;
@@ -268,8 +268,8 @@ fn named(name: &str) -> Timed {
 }
 
 /// The notes and controllers a track plays, as events on `channel` (see the module docs).
-fn play_events(track: &Track, channel: u8) -> Vec<Timed> {
-    let mut out = note_events(&flatten_notes(track), channel);
+fn play_events(track: &Track, channel: u8, tails: bool) -> Vec<Timed> {
+    let mut out = note_events(&flatten_notes_with(track, tails), channel);
     out.extend(controller_events(&flatten_controllers(track), channel));
     out
 }
@@ -312,7 +312,7 @@ pub fn clip_file(song: &Song, clip: &Clip, name: &str) -> Vec<u8> {
         timed(0, 1, SmfMessage::Tempo(micros_of(bpm))),
         timed(0, 1, time_signature(num, den)),
     ];
-    events.extend(play_events(&lone_clip_track(clip), 0));
+    events.extend(play_events(&lone_clip_track(clip), 0, false));
     file(0, vec![smf_track(events, clip.length)]).to_bytes()
 }
 
@@ -321,7 +321,7 @@ pub fn clip_file(song: &Song, clip: &Clip, name: &str) -> Vec<u8> {
 pub fn track_file(song: &Song, track: &Track, name: &str) -> Vec<u8> {
     let mut events = vec![named(name)];
     events.extend(conductor_events(song));
-    events.extend(play_events(track, 0));
+    events.extend(play_events(track, 0, song.tails));
     file(0, vec![smf_track(events, 0)]).to_bytes()
 }
 
@@ -338,7 +338,7 @@ pub fn song_file(song: &Song, name: &str, name_of: &dyn Fn(&DeviceKey) -> String
     for (i, track) in note_tracks.enumerate() {
         let channel = (i % 16) as u8;
         let mut events = vec![named(&name_of(&track.device))];
-        events.extend(play_events(track, channel));
+        events.extend(play_events(track, channel, song.tails));
         tracks.push(smf_track(events, 0));
     }
     file(1, tracks).to_bytes()

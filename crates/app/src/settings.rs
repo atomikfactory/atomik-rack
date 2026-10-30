@@ -22,6 +22,7 @@
 //!   "metronome_gain": 0.5,
 //!   "input_device": null,
 //!   "record_offset_frames": 0,
+//!   "pre_count_bars": 0,
 //!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" }
 //! }
 //! ```
@@ -31,6 +32,8 @@
 //! `worker_linger_spins: 0` is the engine default. `input_device: null` is the device named like
 //! the output when the host lists it as an input, else no input (pick one). A positive
 //! `record_offset_frames` places recordings earlier (see [`crate::audio_record`]).
+//! `pre_count_bars` (0 to 4, default 0 = off) is the count-in a recording starts with: the click
+//! counts that many bars before the song starts, and nothing is recorded during them.
 //! `surface` is the control surface (the Surfaces tab of the settings): a driver id (`"mcu"`, the
 //! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
 //! It is an app setting, not part of the project. `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
@@ -64,6 +67,10 @@ pub const MAX_RECORD_OFFSET: i32 = 48_000;
 pub const RECORD_OFFSET_CHOICES: [i32; 7] = [-480, -240, -96, 0, 96, 240, 480];
 /// Default metronome level (linear gain).
 pub const DEFAULT_METRONOME_GAIN: f32 = 0.5;
+/// Most bars of pre-count.
+pub const MAX_PRE_COUNT_BARS: u8 = 4;
+/// Pre-count lengths offered by the settings dialog (bars; 0 = off).
+pub const PRE_COUNT_CHOICES: [u8; 5] = [0, 1, 2, 3, 4];
 /// Settings file name.
 pub const SETTINGS_FILE: &str = "settings.json";
 
@@ -213,6 +220,8 @@ pub struct AudioSettings {
     /// The user's part of the recording compensation, in frames, `-48000..=48000` (default 0).
     /// Positive places recordings earlier on the timeline ([`crate::audio_record`]).
     pub record_offset_frames: i32,
+    /// Bars of click the app counts in before a recording starts, `0..=4` (default 0 = off).
+    pub pre_count_bars: u8,
     /// Hidden override of the streaming threshold in bytes of decoded f32 audio
     /// (`None` = [`crate::stream_source::STREAM_THRESHOLD_BYTES`]).
     pub stream_threshold_bytes: Option<u64>,
@@ -235,6 +244,7 @@ impl Default for AudioSettings {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             input_device: None,
             record_offset_frames: 0,
+            pre_count_bars: 0,
             stream_threshold_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
             surface: SurfaceSettings::default(),
@@ -280,6 +290,7 @@ impl AudioSettings {
             record_offset_frames: self
                 .record_offset_frames
                 .clamp(-MAX_RECORD_OFFSET, MAX_RECORD_OFFSET),
+            pre_count_bars: self.pre_count_bars.min(MAX_PRE_COUNT_BARS),
             buffer_frames: self.buffer_frames.clamp(MIN_BUFFER, MAX_BUFFER),
             workers: self.workers.min(MAX_WORKERS),
             metronome_gain: if self.metronome_gain.is_finite() {
@@ -368,13 +379,25 @@ pub fn load(path: &Path) -> (AudioSettings, Option<SettingsError>) {
     match std::fs::read_to_string(path) {
         Ok(text) => match AudioSettings::from_json(&text) {
             Ok(s) => (s, None),
-            Err(message) => (
-                AudioSettings::default(),
-                Some(SettingsError::Parse {
-                    path: path.to_path_buf(),
-                    message,
-                }),
-            ),
+            Err(message) => {
+                // Kept as `settings.json.bad` so the next save does not overwrite what the
+                // user may want to repair by hand.
+                let message = match crate::recovery::quarantine(path) {
+                    Some(bad) => format!(
+                        "{message}; the file was kept as {} and the defaults are used",
+                        bad.file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+                    ),
+                    None => format!("{message}; the defaults are used"),
+                };
+                (
+                    AudioSettings::default(),
+                    Some(SettingsError::Parse {
+                        path: path.to_path_buf(),
+                        message,
+                    }),
+                )
+            }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (AudioSettings::default(), None),
         Err(source) => (
@@ -387,16 +410,15 @@ pub fn load(path: &Path) -> (AudioSettings, Option<SettingsError>) {
     }
 }
 
-/// Writes settings to `path`, creating its directory.
+/// Writes settings to `path`, creating its directory. The write is atomic (a temporary file,
+/// then a rename), so a crash never leaves a truncated file.
 pub fn save(path: &Path, settings: &AudioSettings) -> Result<(), SettingsError> {
-    let io = |source| SettingsError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(io)?;
-    }
-    std::fs::write(path, settings.to_json()).map_err(io)
+    crate::recovery::atomic_write(path, settings.to_json().as_bytes()).map_err(|source| {
+        SettingsError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -524,6 +546,7 @@ mod tests {
             metronome_gain: 0.25,
             input_device: Some("Example USB ASIO".into()),
             record_offset_frames: -96,
+            pre_count_bars: 2,
             stream_threshold_bytes: Some(1 << 20),
             plugins: atomik_plugin_host::PluginSettings {
                 enabled: true,
@@ -743,5 +766,14 @@ mod tests {
         assert!((s.metronome_gain - 1.0).abs() < 1e-6);
         let s = AudioSettings::from_json(r#"{"metronome_gain": -1}"#).unwrap();
         assert!(s.metronome_gain.abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_pre_count_is_off_by_default_and_at_most_four_bars() {
+        assert_eq!(AudioSettings::from_json("{}").unwrap().pre_count_bars, 0);
+        let s = AudioSettings::from_json(r#"{"pre_count_bars": 2}"#).unwrap();
+        assert_eq!(s.pre_count_bars, 2);
+        let s = AudioSettings::from_json(r#"{"pre_count_bars": 9}"#).unwrap();
+        assert_eq!(s.pre_count_bars, MAX_PRE_COUNT_BARS);
     }
 }

@@ -44,6 +44,7 @@ mod plugin_cmd;
 mod plugin_io;
 mod project;
 mod rack_columns;
+mod record_over;
 mod relink;
 mod rules;
 mod slices;
@@ -97,6 +98,7 @@ pub use plugin::{
 };
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
+pub use record_over::{covering_note_clip, layered_clip, merge_laps};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
     to_track_notes,
@@ -851,6 +853,16 @@ pub struct Document {
     merge: Option<MergeKey>,
     /// The clip id allocated by the last `AddClip`, `DuplicateClip` or `SplitClip`.
     last_clip: Option<ClipId>,
+    /// Changes whenever [`Document::doc`] may have changed (see [`Document::revision`]).
+    revision: u64,
+}
+
+/// The source of document revisions: process wide, so two documents (a replaced one and the
+/// one that took its place) never share a revision.
+static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_revision() -> u64 {
+    REVISIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What a drag-merge group is keyed on: consecutive commands with an equal key merge.
@@ -896,6 +908,7 @@ impl Document {
             redo: Vec::new(),
             merge: None,
             last_clip: None,
+            revision: next_revision(),
         }
     }
 
@@ -904,10 +917,30 @@ impl Document {
         &self.doc
     }
 
+    /// A number that differs after every change of [`Document::doc`]: `apply` (the silent data
+    /// syncs and asset registrations included), `undo`, `redo` and an asset prune that removed
+    /// something take a new one, a rejected command keeps it, and a new `Document` starts with
+    /// one no other document has had. Equal revisions mean equal documents, so a view that has
+    /// synced at revision `r` has nothing to do while the revision is still `r`; the converse
+    /// does not hold (a change and its undo leave two different numbers on equal content).
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Applies a command (validated with `registry`) and records it for undo.
     ///
     /// The returned [`SyncOp`]s must be processed in order (see [`SyncOp`]).
     pub fn apply(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let ops = self.apply_inner(command, registry)?;
+        self.revision = next_revision();
+        Ok(ops)
+    }
+
+    fn apply_inner(
         &mut self,
         command: Command,
         registry: &Registry,
@@ -1085,12 +1118,36 @@ impl Document {
         Ok(ops)
     }
 
+    /// Applies `command` and folds it into the undo step before it, so one undo reverts both: a
+    /// follow-up that completes the edit just made (the clip a note edit had to grow, say). The
+    /// command is planned and validated like [`Document::apply`]; with no earlier step, or when
+    /// the command changes nothing the history records, it is an ordinary step.
+    pub fn apply_joined(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let depth = self.undo.len();
+        self.merge = None;
+        let ops = self.apply(command, registry)?;
+        if depth >= 1
+            && self.undo.len() == depth + 1
+            && let Some(latest) = self.undo.pop()
+            && let Some(previous) = self.undo.pop()
+        {
+            self.undo.push(Edit::Compound(vec![previous, latest]));
+        }
+        self.merge = None;
+        Ok(ops)
+    }
+
     /// Undoes the last step; `None` when there is nothing to undo.
     pub fn undo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
         self.merge = None;
         let edit = self.undo.pop()?;
         let ops = edit.inverse().perform(&mut self.doc);
         self.redo.push(edit);
+        self.revision = next_revision();
         Some(ops)
     }
 
@@ -1100,6 +1157,7 @@ impl Document {
         let edit = self.redo.pop()?;
         let ops = edit.perform(&mut self.doc);
         self.undo.push(edit);
+        self.revision = next_revision();
         Some(ops)
     }
 
@@ -1127,7 +1185,11 @@ impl Document {
     /// not an undoable command: it removes nothing a step could bring back.
     pub fn prune_unreferenced_assets(&mut self) {
         let keep = self.referenced_assets();
+        let before = self.doc.assets.len();
         self.doc.assets.retain(|h, _| keep.contains(h));
+        if self.doc.assets.len() != before {
+            self.revision = next_revision();
+        }
     }
 
     /// Whether undo is possible.
@@ -1607,10 +1669,13 @@ pub fn empty_doc() -> RackDoc {
 /// `master:main_r -> interface:out_2` (the second skipped below two outputs). No channels, no
 /// returns, compensation on, one transport track as in `empty_doc`. It is built by the same code
 /// that creates the master with the first channel, is deterministic and saves byte-identically.
-/// [`empty_doc`] is unchanged; loaders and Open never call this.
+/// It also turns on note tails ([`Song::tails`]). [`empty_doc`] is unchanged; loaders and Open
+/// never call this.
 pub fn new_project_doc() -> RackDoc {
     let mut doc = empty_doc();
     console_cmd::install_starter_master(&mut doc);
+    // A new project lets notes ring past the end of their clip; a loaded one keeps its own flag.
+    doc.song.tails = true;
     doc
 }
 

@@ -16,7 +16,7 @@ pub trait LiveStream {
     /// What was opened.
     fn info(&self) -> &StreamInfo;
     /// Stops the stream and hands the engine back (to be dropped on the caller's thread).
-    fn stop(self) -> Engine;
+    fn stop(self) -> Result<Engine, IoError>;
     /// Xrun events queued since the previous call, oldest first. The default has none.
     fn drain_events(&self) -> Vec<XrunEvent> {
         Vec::new()
@@ -73,7 +73,7 @@ impl LiveStream for RunningStream {
         RunningStream::info(self)
     }
 
-    fn stop(self) -> Engine {
+    fn stop(self) -> Result<Engine, IoError> {
         RunningStream::stop(self)
     }
 

@@ -40,13 +40,11 @@ type Cache = Mutex<BTreeMap<(u16, u16), &'static DeviceDescriptor>>;
 /// Socket `SocketId(k)` for `k < inputs` is `in_{k+1}` (Audio **output**: host input into the
 /// graph); socket `SocketId(inputs + k)` is `out_{k+1}` (Audio **input**: graph to host output).
 ///
-/// # Panics
-/// If either count exceeds [`MAX_INTERFACE_CHANNELS`].
+/// Counts above [`MAX_INTERFACE_CHANNELS`] are clamped to it: the interface never has more
+/// sockets than the table holds.
 pub fn interface_descriptor(inputs: u16, outputs: u16) -> &'static DeviceDescriptor {
-    assert!(
-        inputs <= MAX_INTERFACE_CHANNELS && outputs <= MAX_INTERFACE_CHANNELS,
-        "the AudioInterface supports at most {MAX_INTERFACE_CHANNELS} inputs and outputs"
-    );
+    let inputs = inputs.min(MAX_INTERFACE_CHANNELS);
+    let outputs = outputs.min(MAX_INTERFACE_CHANNELS);
     static CACHE: OnceLock<Cache> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -129,8 +127,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "at most 32")]
-    fn interface_descriptor_too_many_channels_panics() {
-        let _ = interface_descriptor(33, 2);
+    fn interface_descriptor_clamps_too_many_channels() {
+        assert!(std::ptr::eq(
+            interface_descriptor(33, 99),
+            interface_descriptor(32, 32)
+        ));
     }
 }

@@ -111,6 +111,7 @@ fn kinds(calls: &[SinkCall]) -> Vec<&'static str> {
             SinkCall::Song(_) => "song",
             SinkCall::Transport(_) => "transport",
             SinkCall::LiveNote { .. } => "live",
+            SinkCall::PlayNote { .. } => "play",
             SinkCall::Recording(_) => "recording",
             SinkCall::Hold(_) => "hold",
             SinkCall::PreviewStart { .. } => "preview-start",
@@ -576,6 +577,125 @@ fn recording_turns_live_notes_into_a_clip_on_stop() {
     assert!(undo_before);
     assert!(c.undo());
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
+}
+
+/// With a pre-count the take starts with a count-in: the click counts, nothing played during it
+/// is recorded, and the clip starts where the song does.
+#[test]
+fn recording_with_a_pre_count_records_nothing_before_the_song_starts() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.set_pre_count_bars(1);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    let plan = c
+        .song_snapshot()
+        .unwrap()
+        .pre_roll(Ticks(0), 1, f64::from(c.doc().sample_rate))
+        .unwrap();
+    assert_eq!((plan.beats, plan.per_bar, plan.frames), (4, 4, 96_000));
+    assert_eq!(
+        transports(&calls),
+        [TransportCommand::PlayWithPreRoll(plan)]
+    );
+    assert!(c.is_recording() && c.is_playing());
+    // The engine counts: not playing yet, the song starts 96000 frames after engine frame 1000.
+    let counting = TransportState {
+        playing: false,
+        engine_frame: 1000,
+        pre_roll_frames: 96_000,
+        pre_roll_beat: 1,
+        ..TransportState::default()
+    };
+    c.sink_mut().state = counting;
+    c.sink_mut().recorded = vec![RecordedNote {
+        device: id(1),
+        kind: NoteKind::On {
+            key: 45,
+            velocity: 0.9,
+        },
+        frame: 5000,
+    }];
+    c.frame();
+    let shown = c.transport_bar().state();
+    assert_eq!((shown.pre_count, shown.count_in), (1, 1));
+    // The song starts at engine frame 97000; a note a beat in is recorded, the one before is not.
+    let start = TransportState {
+        playing: true,
+        engine_frame: 97_000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 97_000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::On {
+                key: 48,
+                velocity: 0.5,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::Off { key: 48 },
+            frame: frame(2 * PPQ),
+        },
+    ];
+    c.frame();
+    assert_eq!(c.transport_bar().state().count_in, 0);
+    c.sink_mut().state = TransportState {
+        tick: 3 * PPQ,
+        engine_frame: frame(3 * PPQ),
+        song_frame: frame(3 * PPQ) - 97_000,
+        ..start
+    };
+    transport(&mut c, TransportAction::Stop);
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].start, 0, "the clip starts at bar 1");
+    let ClipContent::Notes(notes) = &clips[0].content else {
+        panic!("note clip")
+    };
+    assert_eq!(notes.len(), 1, "only the note after the count");
+    assert_eq!(notes[0].key, 48);
+    assert!((notes[0].tick - PPQ).abs() <= 1, "{}", notes[0].tick);
+}
+
+#[test]
+fn the_pre_count_counts_in_from_the_position_and_not_when_already_playing() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.set_pre_count_bars(2);
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::Locate(BAR));
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    let plan = c.song_snapshot().unwrap().pre_roll(Ticks(BAR), 2, 48_000.0);
+    assert_eq!(
+        transports(&calls),
+        [TransportCommand::PlayWithPreRoll(plan.unwrap())]
+    );
+    assert_eq!(plan.unwrap().beats, 8);
+    // Already running: a take starts at once, with nothing to count in.
+    transport(&mut c, TransportAction::Stop);
+    transport(&mut c, TransportAction::Play);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    assert!(c.is_recording());
+    assert!(transports(&calls).is_empty(), "{calls:?}");
+}
+
+#[test]
+fn the_pre_count_toggle_returns_to_the_last_length_and_is_clamped() {
+    let mut c = with_track();
+    assert_eq!((c.pre_count_bars(), c.pre_count_toggled()), (0, 1));
+    c.set_pre_count_bars(3);
+    assert_eq!((c.pre_count_bars(), c.pre_count_toggled()), (3, 0));
+    c.set_pre_count_bars(0);
+    assert_eq!(c.pre_count_toggled(), 3, "back to the length it had");
+    c.set_pre_count_bars(9);
+    assert_eq!(c.pre_count_bars(), 4);
 }
 
 /// A track that enters at the top of a player stack records what is played into that entry (the
@@ -1144,4 +1264,301 @@ fn a_clip_on_the_third_lane_opens_in_the_piano_roll_and_deleting_the_lane_closes
     }))
     .unwrap();
     assert_eq!(c.piano_roll_clip(), None);
+}
+
+// ---- record mode: layer ---------------------------------------------------------------------
+
+fn lane_clips(c: &AppCore<RecordingSink>) -> Vec<Clip> {
+    c.doc().song.tracks[0].lanes[0].clips.clone()
+}
+
+fn note_keys(clip: &Clip) -> Vec<u8> {
+    match &clip.content {
+        ClipContent::Notes(n) => n.iter().map(|n| n.key).collect(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Loop recording in Layer mode makes one clip that holds every pass, not a take group.
+#[test]
+fn layer_mode_merges_the_passes_of_a_loop_recording_into_one_clip() {
+    let mut c = with_track();
+    c.set_record_mode(crate::record_over::RecordMode::Layer);
+    arm(&mut c, "a", true);
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (0, BAR),
+            enabled: true,
+        }),
+    );
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        loop_start: 0,
+        loop_end: BAR,
+        loop_enabled: true,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.frame();
+    let ev = |kind, tick| RecordedNote {
+        device: id(1),
+        kind,
+        frame: frame(tick),
+    };
+    let on = |key| NoteKind::On { key, velocity: 0.8 };
+    c.sink_mut().recorded = vec![
+        ev(on(60), PPQ),
+        ev(NoteKind::Off { key: 60 }, PPQ + PPQ / 2),
+        ev(on(62), BAR + 2 * PPQ),
+        ev(NoteKind::Off { key: 62 }, BAR + 2 * PPQ + PPQ / 2),
+    ];
+    c.sink_mut().state = TransportState {
+        tick: 3 * PPQ,
+        engine_frame: frame(BAR + 3 * PPQ),
+        song_frame: frame(3 * PPQ) - 1000,
+        loop_count: 1,
+        ..start
+    };
+    c.frame();
+    let calls = transport(&mut c, TransportAction::Stop);
+    let lane = &c.doc().song.tracks[0].lanes[0];
+    assert!(lane.take_groups.is_empty(), "no take group in Layer mode");
+    assert_eq!(lane.clips.len(), 1);
+    assert_eq!(note_keys(&lane.clips[0]), [60, 62], "every pass sounds");
+    let notes = &songs(&calls).last().unwrap().tracks[0].notes;
+    assert_eq!(notes.iter().map(|n| n.key).collect::<Vec<_>>(), [60, 62]);
+    assert!(c.undo());
+    assert!(
+        lane_clips(&c).is_empty(),
+        "one undo step takes the whole take away"
+    );
+}
+
+/// Recording over an existing clip in Layer mode adds the notes to it and keeps the old ones.
+#[test]
+fn layer_mode_overdubs_into_the_clip_under_the_take() {
+    let mut c = with_track();
+    c.set_record_mode(crate::record_over::RecordMode::Layer);
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 50), (3 * PPQ, 51)]),
+        }),
+    );
+    let old = lane_clips(&c)[0].id;
+    arm(&mut c, "a", true);
+    record_a_note(&mut c, |_| {});
+    let clips = lane_clips(&c);
+    assert_eq!(clips.len(), 1, "merged, not stacked");
+    assert_eq!(clips[0].id, old);
+    assert_eq!(note_keys(&clips[0]), [50, 45, 51]);
+    assert!(c.undo());
+    let clips = lane_clips(&c);
+    assert_eq!(clips.len(), 1);
+    assert_eq!(
+        note_keys(&clips[0]),
+        [50, 51],
+        "the old notes are as they were"
+    );
+}
+
+/// Replace mode is what it always was: the take is a new clip beside the old one, which still
+/// hides it where it starts later.
+#[test]
+fn replace_mode_adds_a_plain_clip_and_a_later_starting_clip_still_hides_it() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(2 * PPQ, &[(0, 50)]),
+        }),
+    );
+    arm(&mut c, "a", true);
+    record_a_note(&mut c, |_| {});
+    assert_eq!(lane_clips(&c).len(), 2);
+    let notes = atomik_model::song::flatten_notes(&c.doc().song.tracks[0]);
+    assert_eq!(
+        notes.iter().map(|n| n.2).collect::<Vec<_>>(),
+        [45, 50],
+        "the recorded note at beat 2 plays; the older clip hides the rest of the take"
+    );
+}
+
+/// Without a clip under its start, a Layer take plays over the clip that starts inside it.
+#[test]
+fn layer_mode_without_a_clip_under_the_take_engulfs_the_clip_that_starts_inside_it() {
+    let mut c = with_track();
+    c.set_record_mode(crate::record_over::RecordMode::Layer);
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(2 * PPQ, &[(0, 50), (2 * PPQ, 51)]),
+        }),
+    );
+    arm(&mut c, "a", true);
+    record_a_note(&mut c, |_| {});
+    let clips = lane_clips(&c);
+    assert_eq!(clips.len(), 2);
+    let notes = atomik_model::song::flatten_notes(&c.doc().song.tracks[0]);
+    // The take is bar 1 (a note at beat 2); the old clip (beats 3 to 7) now starts at bar 2.
+    assert_eq!(notes.iter().map(|n| n.2).collect::<Vec<_>>(), [45, 51]);
+    assert!(c.undo());
+    assert_eq!(lane_clips(&c).len(), 1);
+}
+
+// ---- keep events in clip --------------------------------------------------------------------
+
+fn with_clip_and_policy(
+    policy: crate::record_over::KeepEvents,
+) -> (AppCore<RecordingSink>, ClipId) {
+    let mut c = with_track();
+    c.set_keep_events(policy);
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60)]),
+        }),
+    );
+    let id = lane_clips(&c)[0].id;
+    (c, id)
+}
+
+fn set_notes(id: ClipId, notes: Vec<Note>, merge: Option<u64>) -> UiAction {
+    UiAction::Command(song(SongCommand::SetClipContent {
+        id,
+        content: ClipContent::Notes(notes),
+        merge,
+    }))
+}
+
+fn tick_len(c: &AppCore<RecordingSink>) -> Vec<(i64, i64)> {
+    lane_clips(c).iter().map(|c| (c.start, c.length)).collect()
+}
+
+#[test]
+fn keep_leaves_a_note_past_the_clip_end_where_it_is() {
+    let (mut c, id) = with_clip_and_policy(crate::record_over::KeepEvents::Keep);
+    c.handle_action(set_notes(
+        id,
+        vec![
+            Note::new(0, PPQ, 60, 0.8),
+            Note::new(BAR + PPQ, PPQ, 61, 0.8),
+        ],
+        None,
+    ));
+    assert_eq!(tick_len(&c), [(0, BAR)]);
+    assert_eq!(note_keys(&lane_clips(&c)[0]), [60, 61]);
+}
+
+#[test]
+fn expand_lengthens_the_clip_for_a_drawn_note_in_the_same_undo_step() {
+    let (mut c, id) = with_clip_and_policy(crate::record_over::KeepEvents::Expand);
+    c.handle_action(set_notes(
+        id,
+        vec![
+            Note::new(0, PPQ, 60, 0.8),
+            Note::new(BAR + PPQ, PPQ, 61, 0.8),
+        ],
+        None,
+    ));
+    assert_eq!(
+        tick_len(&c),
+        [(0, 2 * BAR)],
+        "to the bar line after the note"
+    );
+    assert_eq!(note_keys(&lane_clips(&c)[0]), [60, 61]);
+    assert!(c.undo());
+    assert_eq!(tick_len(&c), [(0, BAR)]);
+    assert_eq!(note_keys(&lane_clips(&c)[0]), [60], "one undo reverts both");
+}
+
+#[test]
+fn expand_waits_for_the_end_of_a_drag_and_joins_its_undo_step() {
+    let (mut c, id) = with_clip_and_policy(crate::record_over::KeepEvents::Expand);
+    for tick in [PPQ, BAR / 2, BAR + PPQ] {
+        c.handle_action(set_notes(id, vec![Note::new(tick, PPQ, 60, 0.8)], Some(7)));
+    }
+    assert_eq!(tick_len(&c), [(0, BAR)], "nothing happens mid-drag");
+    c.handle_action(UiAction::EndMerge);
+    assert_eq!(tick_len(&c), [(0, 2 * BAR)]);
+    assert!(c.undo());
+    assert_eq!(tick_len(&c), [(0, BAR)]);
+    let first_tick = match &lane_clips(&c)[0].content {
+        ClipContent::Notes(n) => n[0].tick,
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        first_tick, 0,
+        "the whole drag and the expansion are one step"
+    );
+}
+
+#[test]
+fn expand_follows_a_paste_that_lands_past_the_clip_end() {
+    let (mut c, id) = with_clip_and_policy(crate::record_over::KeepEvents::Expand);
+    let snapshot = atomik_model::NoteSnapshot {
+        notes: vec![Note::new(0, PPQ, 70, 0.8)],
+        span: PPQ,
+    };
+    apply(
+        &mut c,
+        Command::Workflow(atomik_model::WorkflowCommand::PasteNotes {
+            clip: id,
+            at_tick: BAR + 2 * PPQ,
+            notes: snapshot,
+        }),
+    );
+    assert_eq!(tick_len(&c), [(0, 2 * BAR)]);
+    assert!(c.undo());
+    assert_eq!(tick_len(&c), [(0, BAR)]);
+    assert_eq!(note_keys(&lane_clips(&c)[0]), [60]);
+}
+
+#[test]
+fn new_clip_moves_the_outside_notes_to_a_clip_on_the_next_bar() {
+    let (mut c, id) = with_clip_and_policy(crate::record_over::KeepEvents::NewClip);
+    c.handle_action(set_notes(
+        id,
+        vec![
+            Note::new(0, PPQ, 60, 0.8),
+            Note::new(BAR + PPQ, PPQ, 61, 0.8),
+            Note::new(BAR + 2 * PPQ, PPQ, 62, 0.8),
+        ],
+        None,
+    ));
+    let clips = lane_clips(&c);
+    assert_eq!(clips.len(), 2);
+    assert_eq!(tick_len(&c), [(0, BAR), (BAR, BAR)]);
+    assert_eq!(note_keys(&clips[0]), [60]);
+    assert_eq!(note_keys(&clips[1]), [61, 62]);
+    match &clips[1].content {
+        ClipContent::Notes(n) => assert_eq!(n[0].tick, PPQ, "rebased to the new clip"),
+        _ => unreachable!(),
+    }
+    assert!(c.undo());
+    assert_eq!(lane_clips(&c).len(), 1);
+    assert_eq!(note_keys(&lane_clips(&c)[0]), [60]);
+}
+
+#[test]
+fn a_move_that_keeps_every_note_inside_the_clip_changes_nothing_under_any_policy() {
+    for policy in crate::record_over::KeepEvents::ALL {
+        let (mut c, id) = with_clip_and_policy(policy);
+        c.handle_action(set_notes(id, vec![Note::new(PPQ, PPQ, 60, 0.8)], Some(1)));
+        c.handle_action(UiAction::EndMerge);
+        assert_eq!(tick_len(&c), [(0, BAR)], "{policy:?}");
+    }
 }

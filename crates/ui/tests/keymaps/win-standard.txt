@@ -38,6 +38,7 @@ editor.transpose_up | editor | Ctrl+Up
 editor.zoom_keys_in | editor | Shift+H
 editor.zoom_keys_out | editor | Shift+G
 editor.zoom_keys_reset | editor | Shift+Z
+file.close | global | Ctrl+W
 file.import_audio | global | Ctrl+Shift+I
 file.new | global | Ctrl+N
 file.open | global | Ctrl+O
@@ -60,6 +61,36 @@ files.select_all | files | Ctrl+A
 files.stop | files | Esc
 files.toggle_preview | files | Space
 files.up | files | Up
+keys.note a | keys | H
+keys.note a_sharp | keys | U
+keys.note b | keys | J
+keys.note c | keys | A
+keys.note c_sharp | keys | W
+keys.note c_sharp_up | keys | O
+keys.note c_up | keys | K
+keys.note d | keys | S
+keys.note d_sharp | keys | E
+keys.note d_sharp_up | keys | P
+keys.note d_up | keys | L
+keys.note e | keys | D
+keys.note e_up | keys | ;, :
+keys.note f | keys | F
+keys.note f_sharp | keys | T
+keys.note f_up | keys | ', "
+keys.note g | keys | G
+keys.note g_sharp | keys | Y
+keys.octave_down | keys | Z
+keys.octave_up | keys | X
+keys.velocity 1 | keys | 1
+keys.velocity 10 | keys | 0
+keys.velocity 2 | keys | 2
+keys.velocity 3 | keys | 3
+keys.velocity 4 | keys | 4
+keys.velocity 5 | keys | 5
+keys.velocity 6 | keys | 6
+keys.velocity 7 | keys | 7
+keys.velocity 8 | keys | 8
+keys.velocity 9 | keys | 9
 mixer.route_to_new_bus | global | Ctrl+G
 mixer.scroll_end | mixer | End, Shift+End
 mixer.scroll_home | mixer | Home, Shift+Home
@@ -119,6 +150,7 @@ transport.metronome | global | C, Numpad9
 transport.next_marker | global | .
 transport.play | global | NumpadEnter
 transport.play_stop | global | Space
+transport.pre_count | global | Ctrl+P
 transport.prev_marker | global | ,
 transport.record | global | Ctrl+Enter, Ctrl+Space, NumpadMul
 transport.rewind_bar | global | Numpad4
@@ -135,8 +167,9 @@ view.sequencer_only | global | F7
 view.toggle_browser | global | F3, Ctrl+F, Ctrl+B
 view.toggle_console | global | F5
 view.toggle_editor | global | F8, Shift+Tab
-view.toggle_file_browser | global | F4
+view.toggle_file_browser | global | F9
 view.toggle_flip | global | Tab
+view.toggle_piano_keys | global | F4
 view.toggle_rack | global | F6
 view.zoom_in | global | Ctrl+=, Ctrl++, Ctrl+Shift+=, Ctrl+Shift++
 view.zoom_in | sequencer | H

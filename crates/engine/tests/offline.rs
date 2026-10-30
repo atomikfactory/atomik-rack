@@ -154,3 +154,56 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_rejected_scripted_edit_is_an_error_not_a_panic() {
+    use atomik_engine::{
+        EngineError, HotEdit, OfflineError, TimedEdit, new_engine, try_render_offline_scripted,
+    };
+    let c = cfg(0, 1);
+    let (mut engine, mut handle) = new_engine(c);
+    let job = OfflineJob {
+        frames: 1000,
+        host_block: 64,
+        notes: &[],
+        params: &[],
+        inputs: &[],
+    };
+    let edits = vec![TimedEdit {
+        frame: 100,
+        edit: HotEdit::Remove(atomik_engine::DeviceInstanceId(99)),
+    }];
+    let result = try_render_offline_scripted(&mut engine, &mut handle, &job, edits, |f| f());
+    assert_eq!(
+        result,
+        Err(OfflineError::Edit {
+            frame: 100,
+            source: EngineError::UnknownDevice
+        })
+    );
+}
+
+#[test]
+fn a_device_panic_in_an_offline_render_is_an_error_never_silence() {
+    use atomik_engine::{OfflineError, try_render_offline_with};
+    let c = cfg(0, 2);
+    let mut g = Graph::new(&c);
+    let steady = g.add_device(ConstantSource::boxed(0.5));
+    let bad = g.add_device(atomik_testkit::fakes::Panicker::boxed());
+    g.connect(ep(steady, ConstantSource::AUDIO_OUT), iface(&g, "out_1"))
+        .unwrap();
+    g.connect(
+        ep(bad, atomik_testkit::fakes::Panicker::AUDIO_OUT),
+        iface(&g, "out_2"),
+    )
+    .unwrap();
+    let job = OfflineJob {
+        frames: 1000,
+        host_block: 64,
+        notes: &[],
+        params: &[],
+        inputs: &[],
+    };
+    let result = try_render_offline_with(g.compile().unwrap(), c, &job, |f| f());
+    assert_eq!(result, Err(OfflineError::DeviceFaulted(bad)));
+}

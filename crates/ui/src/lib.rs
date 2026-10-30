@@ -67,8 +67,10 @@
 //!   button of a built-in effect's name strip toggles its `bypass` param and veils the panel
 //!   body while on ([`autolayout::has_strip_bypass`]; plugins have their own BYPASS in the
 //!   panel); on the back,
-//!   drag between jacks to patch (dragging a connected input detaches its cable first;
-//!   dropping on an occupied input replaces its cable); double-click empty rack space opens
+//!   drag between jacks to patch (dragging a connected input picks its cable up, and it is
+//!   cut only when released, so Esc leaves it; dropping on an occupied input replaces its
+//!   cable; an `_l` jack dropped on an `_l` jack cables the `_r` pair too, Alt makes it one
+//!   cable; right-click a jack for the menu of [`JackMenu`]); double-click empty rack space opens
 //!   the browser, where typing filters and double-click/Enter adds a device below the
 //!   selection.
 //! - **The document is the single source of truth.** The view never mutates it; after
@@ -331,6 +333,7 @@ pub mod modsrc_panel;
 pub mod notes_panel;
 pub mod paint;
 pub mod param_search_panel;
+pub mod piano_keys;
 pub mod piano_roll;
 pub mod plugin_banner;
 pub mod plugin_data;
@@ -342,6 +345,7 @@ pub mod rack;
 pub mod relink_panel;
 pub mod sample_editor;
 pub mod scene_canvas;
+pub mod segment_field;
 pub mod seq_edit;
 pub mod seq_editor;
 pub mod seq_paint;
@@ -370,8 +374,9 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, HEIGHT_LARGE, HEIGHT_SMALL, LaneButton, LaneMenu,
-    MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton, TrackLevel, TrackMeterInfo,
+    ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,
+    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, PointField,
+    PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
@@ -393,13 +398,15 @@ pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
-pub use piano_roll::PianoRollView;
+pub use piano_keys::{KeysButton, KeysMode, PIANO_KEYS_HEIGHT, PianoKeysView};
+pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;
 pub use quantize_panel::{GrooveEntry, QuantizeAction, QuantizeRow, QuantizeValues, QuantizeView};
 pub use rack::{
-    COLUMN_GAP, CableVisibility, Flip, LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
+    COLUMN_GAP, CableVisibility, Flip, JackChoice, JackGroup, JackMenu, JackOp, JackPeer,
+    LayoutProvider, NAVIGATOR_WIDTH, RackView, SocketHighlight,
 };
 pub use relink_panel::{RelinkAction, RelinkEntry, RelinkView};
 pub use sample_editor::SampleEditorView;

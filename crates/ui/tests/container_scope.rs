@@ -313,10 +313,10 @@ fn dragging_from_the_input_boundary_connects_with_path_keys() {
     let a = v.handle(&up(to), d.doc(), &reg);
     assert_eq!(
         commands(&a),
-        vec![Command::Connect(cable(
-            ("layer/boundary", "in_l"),
-            ("layer/reverb", "in_l")
-        ))]
+        vec![Command::Batch(vec![
+            Command::Connect(cable(("layer/boundary", "in_l"), ("layer/reverb", "in_l"))),
+            Command::Connect(cable(("layer/boundary", "in_r"), ("layer/reverb", "in_r"))),
+        ])]
     );
 }
 
@@ -334,7 +334,7 @@ fn replacing_a_cable_into_the_output_boundary_disconnects_then_connects() {
     let c = commands(&a);
     assert_eq!(
         c,
-        vec![
+        vec![Command::Batch(vec![
             Command::Disconnect {
                 to: sref("layer/boundary", "out_l")
             },
@@ -342,7 +342,7 @@ fn replacing_a_cable_into_the_output_boundary_disconnects_then_connects() {
                 ("layer/reverb", "out_l"),
                 ("layer/boundary", "out_l")
             )),
-        ]
+        ])]
     );
     for c in c {
         d.apply(c, &reg).unwrap();
@@ -358,7 +358,12 @@ fn a_cable_drag_from_a_connected_input_detaches_it_with_path_keys() {
     let mut v = scoped_view(d.doc(), &["layer"]);
     v.set_flip(Flip::Back);
     let p = v.socket_center(&sref("boundary", "out_r")).unwrap();
+    // The cable is picked up, and cut only when it is dropped on nothing.
     let a = v.handle(&down(p), d.doc(), &reg);
+    assert!(commands(&a).is_empty());
+    let nowhere = atomik_ui::kurbo::Point::new(2.0, 2.0);
+    let _ = v.handle(&mv(nowhere), d.doc(), &reg);
+    let a = v.handle(&up(nowhere), d.doc(), &reg);
     assert_eq!(
         commands(&a),
         vec![Command::Disconnect {

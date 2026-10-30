@@ -10,7 +10,7 @@
 //! { "rack_split": 0.5, "show_song": true, "input_quantize": "1/16",
 //!   "show_console": false, "console_maximised": false,
 //!   "show_console_devices": true, "show_console_links": false, "show_tempo_lane": false,
-//!   "show_marker_strip": true, "show_marker_list": false,
+//!   "show_marker_strip": true, "show_inspector": false, "show_marker_list": false,
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
@@ -59,6 +59,8 @@ pub struct UiState {
     /// The arrangement shows the marker strip under its ruler. An absent key in the file means
     /// shown.
     pub show_marker_strip: bool,
+    /// The arrangement shows the inspector strip under its lanes. An absent key means hidden.
+    pub show_inspector: bool,
     /// The arrangement shows the marker list at its right edge.
     pub show_marker_list: bool,
     /// The rack navigator (the overview strip at the right of the rack) shows. An absent key in
@@ -104,6 +106,7 @@ impl Default for UiState {
             show_console_links: false,
             show_tempo_lane: false,
             show_marker_strip: true,
+            show_inspector: false,
             show_marker_list: false,
             show_rack_navigator: true,
             track_zoom: 1.0,
@@ -122,13 +125,33 @@ impl Default for UiState {
 }
 
 impl UiState {
-    /// Reads `path`; the defaults when it is missing or invalid.
+    /// Reads `path`; the defaults when it is missing or invalid (see [`Self::load_checked`]).
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Self>(&t).ok())
-            .map(Self::sanitized)
-            .unwrap_or_default()
+        Self::load_checked(path).0
+    }
+
+    /// Reads `path`. A missing file gives the defaults. A file that cannot be parsed is renamed
+    /// `<name>.bad` and gives the defaults and a message to show once.
+    pub fn load_checked(path: &Path) -> (Self, Option<String>) {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return (Self::default(), None);
+        };
+        match serde_json::from_str::<Self>(&text) {
+            Ok(state) => (state.sanitized(), None),
+            Err(why) => {
+                let note = match crate::recovery::quarantine(path) {
+                    Some(bad) => format!(
+                        "window state could not be read ({why}); it was kept as {} and the                          defaults are used",
+                        bad.file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+                    ),
+                    None => {
+                        format!("window state could not be read ({why}); the defaults are used")
+                    }
+                };
+                (Self::default(), Some(note))
+            }
+        }
     }
 
     /// Writes `path` (creating its directory).
@@ -214,6 +237,7 @@ mod tests {
             show_console_links: true,
             show_tempo_lane: true,
             show_marker_strip: false,
+            show_inspector: true,
             show_marker_list: true,
             show_rack_navigator: false,
             console_notice_seen: true,

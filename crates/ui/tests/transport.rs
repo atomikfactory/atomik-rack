@@ -534,3 +534,31 @@ fn the_decimals_zone_is_as_wide_as_the_painted_decimals() {
     assert_eq!(step(&mut v, right - w - 0.5), 121.0);
     assert!((v.tempo_decimals_point().x - (right - w / 2.0)).abs() < 1e-9);
 }
+
+#[test]
+fn the_count_in_shows_its_beat_in_place_of_the_position() {
+    let (doc, reg) = (song_doc(), registry());
+    let mut v = transport_bar(&doc, &reg);
+    let shown = |v: &mut atomik_ui::TransportBar| -> Vec<String> {
+        let mut dl = DisplayList::new();
+        v.paint(&mut dl, &doc, &reg);
+        dl.texts().iter().map(ToString::to_string).collect()
+    };
+    let idle = shown(&mut v);
+    assert!(idle.contains(&"POS".to_string()), "{idle:?}");
+    assert!(!idle.iter().any(|t| t.starts_with("PRE")), "{idle:?}");
+    v.set_state(TransportState {
+        pre_count: 2,
+        ..TransportState::default()
+    });
+    assert!(shown(&mut v).contains(&"PRE 2".to_string()));
+    v.set_state(TransportState {
+        pre_count: 2,
+        count_in: 3,
+        ..TransportState::default()
+    });
+    let counting = shown(&mut v);
+    assert!(counting.contains(&"COUNT".to_string()), "{counting:?}");
+    assert!(counting.contains(&"3".to_string()), "{counting:?}");
+    assert!(!counting.contains(&"POS".to_string()), "{counting:?}");
+}

@@ -486,6 +486,12 @@ pub struct Song {
     pub grooves: Vec<Groove>,
     /// Folders of tracks, track colours and comments, folded lanes (see [`crate::organise`]).
     pub org: Organisation,
+    /// Note tails: a note plays to its own end even where its clip ends, a loop repeats or a
+    /// later clip takes over, and only the note *starts* are held to the audible span (see
+    /// [`flatten_notes_with`]). Off keeps the older rule that cuts a note at the end of its
+    /// piece, so a project written before the flag plays and bounces as it did.
+    /// [`empty_song`] has it off; a new project turns it on.
+    pub tails: bool,
 }
 
 /// A named point in the song. The id is only for telling markers apart while editing; files do
@@ -918,6 +924,35 @@ pub enum SongCommand {
         /// The takes, bottom to top (at least one).
         takes: Vec<Clip>,
     },
+    /// Make a take group on a notes or audio lane from clips that are already on it plus new
+    /// clips (a recording over existing clips): the `clips` leave the lane and become the first
+    /// takes (ordered by start, then id, which is the order they were layered in), the `extra`
+    /// clips (validated like `AddClip`, ids ignored and allocated) become the takes above
+    /// them, and the group's comp is the takes layered in order, compiled to plain lane clips
+    /// in the same undo step, so a later take plays over its extent and an earlier one plays
+    /// where nothing later covers it. A clip that is already a compiled clip of a take group, or
+    /// is not on the lane, is rejected; at least one take in all. Reports
+    /// [`crate::SyncOp::SongChanged`]; the new group is the last one with the highest id.
+    GroupAsTakes {
+        /// Device (track).
+        device: DeviceKey,
+        /// Lane index (a notes or audio lane).
+        lane: usize,
+        /// Existing plain clips of the lane that become takes.
+        clips: Vec<ClipId>,
+        /// New clips that become the top takes, bottom to top.
+        extra: Vec<Clip>,
+    },
+    /// Put a new clip on top of an existing take group as its newest take, playing over the
+    /// clip's extent (the comp is cut like `SetCompSegment` does it) and compiled in the same
+    /// undo step. The clip is validated like `AddClip` (id ignored and allocated) against the
+    /// group's lane; a group holds at most 256 takes. Reports [`crate::SyncOp::SongChanged`].
+    AddTake {
+        /// Group id.
+        group: u32,
+        /// The new take.
+        clip: Clip,
+    },
     /// Make one take play the whole range of its group (the others stay, silent). One undo step.
     PickTake {
         /// Group id.
@@ -1092,6 +1127,7 @@ pub fn empty_song(bpm: f64) -> Song {
         lane_write: BTreeMap::new(),
         grooves: Vec::new(),
         org: Organisation::default(),
+        tails: false,
     }
 }
 
@@ -1100,7 +1136,7 @@ mod flatten;
 pub use crate::automation_view::automation_value_at;
 pub use flatten::{
     AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
-    flatten_automation, flatten_controllers, flatten_notes,
+    flatten_automation, flatten_controllers, flatten_notes, flatten_notes_with,
 };
 
 /// Lowest accepted audio clip gain in dB.

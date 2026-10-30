@@ -65,15 +65,15 @@ pub struct Rendered {
 
 /// Renders a built patch offline with host blocks of `host_block` frames. The output does not
 /// depend on `host_block`.
-pub fn render_built(built: Built, host_block: NonZeroUsize) -> Vec<Vec<f32>> {
-    atomik_engine::render_offline(
+pub fn render_built(built: Built, host_block: NonZeroUsize) -> Result<Vec<Vec<f32>>, RenderError> {
+    Ok(atomik_engine::try_render_offline(
         built.plan,
         built.config,
         built.frames,
         host_block.get(),
         &built.notes,
         &[],
-    )
+    )?)
 }
 
 /// Parses, validates, builds and renders patch JSON.
@@ -86,7 +86,7 @@ pub fn render_json(
     let mut built = build::build(&patch, registry)?;
     let warnings = std::mem::take(&mut built.warnings);
     Ok(Rendered {
-        channels: render_built(built, host_block),
+        channels: render_built(built, host_block)?,
         sample_rate: patch.sample_rate,
         warnings,
         plugins: 0,
@@ -115,6 +115,10 @@ pub enum RenderError {
     /// starts with the JSON path for file problems.
     #[error("{0}")]
     Project(String),
+    /// The engine could not finish the render (a rejected edit, a full queue, or a device that
+    /// panicked). No audio file is written.
+    #[error("the render failed: {0}")]
+    Engine(#[from] atomik_engine::OfflineError),
     /// The WAV file could not be written.
     #[error("{}: cannot write the WAV file: {source}", path.display())]
     Write {

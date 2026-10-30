@@ -2,23 +2,24 @@
 
 use crate::clipboard::Clipboard;
 use crate::record::{InputQuantize, RecordedNote, Take};
+use crate::record_over::{KeepEvents, RecordMode, keep_events_follow_up, note_take_command};
 use crate::sink::EngineSink;
 use crate::target::{NoteTarget, Target};
 use atomik_core::{NoteKind, ParamId, SampleRate, Tempo, Ticks};
 use atomik_device_sdk::{DeviceDescriptor, Registry, SocketId};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, EngineConfig, EngineError, Graph, GraphError,
-    MAX_COMPENSATION_SECONDS, PdcReport, SongPosition, SongSnapshot, Topology, TransportCommand,
-    TransportState, compile_song,
+    MAX_COMPENSATION_SECONDS, PdcReport, PreRoll, SongPosition, SongSnapshot, Topology,
+    TransportCommand, TransportState, compile_song,
 };
 use atomik_model::console::{
     BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM,
     VCA_SOLO_PARAM, VcaFeed, is_console_type,
 };
 use atomik_model::{
-    ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY, ModelError,
-    RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, empty_doc, load_project, new_project_doc,
-    register_stand_ins, save_patch,
+    ClipContent, ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY,
+    ModelError, RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, WorkflowCommand, empty_doc,
+    load_project, new_project_doc, register_stand_ins, save_patch,
 };
 use atomik_render::project::song_input_with_warps;
 use atomik_ui::kurbo::Point;
@@ -88,6 +89,8 @@ pub enum Pane {
     PluginParams,
     /// The file browser, docked on the left of the window.
     FileBrowser,
+    /// The Piano Keys strip, docked above the status bar.
+    PianoKeys,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 32;
@@ -202,7 +205,17 @@ pub struct AppCore<S: EngineSink> {
     topology: Topology,
     sink: S,
     file: Option<PathBuf>,
+    /// The songs opened or saved lately (see `recent`).
+    recent: crate::recent::RecentFiles,
+    /// Where `recent` is kept (`None`: in memory only).
+    recent_path: Option<PathBuf>,
     saved: RackDoc,
+    /// Counts the baselines `saved` has had (see `set_saved`).
+    saved_gen: u64,
+    /// `is_dirty` for the (document revision, saved generation) it was last computed at.
+    dirty_memo: std::cell::Cell<Option<(u64, u64, bool)>>,
+    /// The document revision every view was last synced at by `after_view_change`.
+    views_synced_at: Option<u64>,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
     arrangement: ArrangementView,
@@ -237,7 +250,19 @@ pub struct AppCore<S: EngineSink> {
     playing: bool,
     metronome: bool,
     metronome_gain: f32,
+    /// Bars of click counted in before a recording starts (0 = off).
+    pre_count_bars: u8,
+    /// The length the pre-count toggle returns to (1 to 4).
+    pre_count_resume: u8,
     quantize: InputQuantize,
+    /// What a finished MIDI take does with the clips already on its lane.
+    record_mode: RecordMode,
+    /// What a note edit does with notes that start past their clip's end.
+    keep_events: KeepEvents,
+    /// The note clip an open drag edited, to complete under `keep_events` when the drag ends.
+    keep_pending: Option<ClipId>,
+    /// The next applied command is folded into the undo step before it (a follow-up).
+    join_next: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -273,6 +298,8 @@ pub struct AppCore<S: EngineSink> {
     engine_inputs: u16,
     /// A Play waiting for the streamer's read-ahead: UI frames waited so far.
     pending_play: Option<u32>,
+    /// The count-in the waiting Play starts with, if any.
+    pending_pre_roll: Option<PreRoll>,
     /// Effect meter feed: the last publish sequence applied per device.
     fx_meter_seq: BTreeMap<DeviceKey, u64>,
     /// Effect meter feed: the reused read buffer (never reallocated after construction).
@@ -281,6 +308,9 @@ pub struct AppCore<S: EngineSink> {
     plugin_params: PluginParamsView,
     plugin_params_open: bool,
     file_browser: atomik_ui::FileBrowserView,
+    /// The Piano Keys strip and the router that keeps its note offs with their note ons.
+    piano_keys: atomik_ui::PianoKeysView,
+    keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
@@ -376,6 +406,9 @@ impl<S: EngineSink> AppCore<S> {
             rack_focus_request: false,
             selection_changed: false,
             saved: doc.clone(),
+            saved_gen: 0,
+            dirty_memo: std::cell::Cell::new(None),
+            views_synced_at: None,
             document: Document::new(doc),
             view,
             ids: BTreeMap::new(),
@@ -383,6 +416,8 @@ impl<S: EngineSink> AppCore<S> {
             topology: Topology::new(&config),
             sink,
             file,
+            recent: crate::recent::RecentFiles::default(),
+            recent_path: None,
             target,
             rejection: None,
             arrangement: ArrangementView::new(theme.clone()),
@@ -414,10 +449,13 @@ impl<S: EngineSink> AppCore<S> {
             audio: AudioState::new(),
             engine_inputs: 0,
             pending_play: None,
+            pending_pre_roll: None,
             fx_meter_seq: BTreeMap::new(),
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
+            piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
@@ -427,7 +465,13 @@ impl<S: EngineSink> AppCore<S> {
             playing: false,
             metronome: false,
             metronome_gain: DEFAULT_METRONOME_GAIN,
+            pre_count_bars: 0,
+            pre_count_resume: 1,
             quantize: InputQuantize::Off,
+            record_mode: RecordMode::default(),
+            keep_events: KeepEvents::default(),
+            keep_pending: None,
+            join_next: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -492,9 +536,68 @@ impl<S: EngineSink> AppCore<S> {
         self.file.as_deref()
     }
 
+    /// The songs opened or saved lately, newest first.
+    pub fn recent(&self) -> &[PathBuf] {
+        self.recent.paths()
+    }
+
+    /// Keeps the recent list in `path` (read now; written whenever it changes).
+    pub fn set_recent_path(&mut self, path: PathBuf) {
+        self.recent = crate::recent::RecentFiles::load(&path);
+        self.recent_path = Some(path);
+    }
+
+    /// Forgets every recent song.
+    pub fn clear_recent(&mut self) {
+        if self.recent.clear() {
+            self.store_recent();
+        }
+    }
+
+    /// Drops `path` from the recent list (the song is gone).
+    pub fn forget_recent(&mut self, path: &Path) {
+        if self.recent.remove(path) {
+            self.store_recent();
+        }
+    }
+
+    /// Puts the current project file first in the recent list.
+    pub(super) fn note_recent(&mut self) {
+        let Some(file) = self.file.clone().filter(|p| is_project_path(p)) else {
+            return;
+        };
+        if self.recent.push(&file) {
+            self.store_recent();
+        }
+    }
+
+    /// Writes the recent list; a failure is not worth a message (the list is a convenience).
+    fn store_recent(&self) {
+        if let Some(path) = &self.recent_path {
+            let _ = self.recent.save(path);
+        }
+    }
+
     /// True when the rack differs from the last opened or saved state.
+    ///
+    /// The structural compare runs once per document change or new baseline, not once per
+    /// call; undoing back to the saved state is still clean because the compare is kept.
     pub fn is_dirty(&self) -> bool {
-        self.doc() != &self.saved
+        let at = (self.document.revision(), self.saved_gen);
+        if let Some((rev, generation, dirty)) = self.dirty_memo.get()
+            && (rev, generation) == at
+        {
+            return dirty;
+        }
+        let dirty = self.doc() != &self.saved;
+        self.dirty_memo.set(Some((at.0, at.1, dirty)));
+        dirty
+    }
+
+    /// Takes `doc` as the state the rack is compared with (open, save, the plugin layout syncs).
+    pub(super) fn set_saved(&mut self, doc: RackDoc) {
+        self.saved = doc;
+        self.saved_gen += 1;
     }
 
     /// The window title: `Atomik Rack — <file name>` (`Untitled` without a file), with ` *`
@@ -536,8 +639,25 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_flush_dirty();
         let merge = param_merge(&command);
         let hint = self.snapshot_hint_after(&command);
-        match self.document.apply(command, &self.registry) {
+        let joined = std::mem::take(&mut self.join_next);
+        let note_edit = if joined || self.keep_events == KeepEvents::Keep {
+            None
+        } else {
+            note_edit_of(&command)
+        };
+        let applied = if joined {
+            self.document.apply_joined(command, &self.registry)
+        } else {
+            self.document.apply(command, &self.registry)
+        };
+        match applied {
             Ok(ops) => {
+                match note_edit {
+                    // A drag: the clip is completed when it ends.
+                    Some((id, true)) => self.keep_pending = Some(id),
+                    Some((id, false)) => self.complete_note_edit(id),
+                    None => {}
+                }
                 if let Some(hint) = hint {
                     self.snapshot_hint = hint;
                     self.console.set_snapshot_hint(hint);
@@ -567,6 +687,9 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             UiAction::EndMerge => {
+                if let Some(id) = self.keep_pending.take() {
+                    self.complete_note_edit(id);
+                }
                 self.document.end_merge();
                 self.release_automation();
             }
@@ -637,6 +760,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             UiAction::Browse(b) => self.browse(b),
             UiAction::Audition { device, key, on } => self.audition(&device, key, on),
+            UiAction::KeysNote { key, velocity, on } => self.keys_note(key, velocity, on),
             a @ (UiAction::OpenPluginGui { .. }
             | UiAction::OpenPluginParams { .. }
             | UiAction::ClosePluginParams
@@ -698,18 +822,30 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.help_at(pos),
             Pane::PluginParams => self.plugin_params.help_at(pos),
             Pane::FileBrowser => self.file_browser.help_at(pos),
+            Pane::PianoKeys => self.piano_keys.help_at(pos),
         }
     }
 
     /// Forwards a UI event to one pane's view (in that view's coordinates: the rack view's
     /// own, the sequencer views' window-logical ones) and handles the actions.
     pub fn handle_pane_event(&mut self, pane: Pane, event: &UiEvent) -> Vec<UiAction> {
+        let revision = self.document.revision();
         let doc = self.document.doc();
         let actions = match pane {
             Pane::Rack => self.view.handle(event, doc, &self.registry),
             Pane::Transport => self.transport_bar.handle(event, doc, &self.registry),
-            Pane::Arrangement => self.arrangement.handle(event, doc, &self.registry),
-            Pane::PianoRoll => self.piano_roll.handle(event, doc, &self.registry),
+            Pane::Arrangement => {
+                self.arrangement.set_doc_revision(Some(revision));
+                let actions = self.arrangement.handle(event, doc, &self.registry);
+                self.arrangement.set_doc_revision(None);
+                actions
+            }
+            Pane::PianoRoll => {
+                self.piano_roll.set_doc_revision(Some(revision));
+                let actions = self.piano_roll.handle(event, doc, &self.registry);
+                self.piano_roll.set_doc_revision(None);
+                actions
+            }
             Pane::Console => self.console.handle(event, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
@@ -718,6 +854,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.handle(event, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.handle(event),
+            Pane::PianoKeys => self.piano_keys.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -737,7 +874,14 @@ impl<S: EngineSink> AppCore<S> {
                 plain && self.selection_changed && self.console.selected_strips().len() == 1;
             self.selection_changed = false;
         }
-        self.after_view_change();
+        let idle = actions.is_empty()
+            && matches!(
+                event,
+                UiEvent::PointerMove { .. }
+                    | UiEvent::PointerLeave
+                    | UiEvent::ModifiersChanged { .. }
+            );
+        self.after_pane_event(idle);
         actions
     }
 
@@ -774,15 +918,17 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Re-syncs the views and publishes the live-notes target. Call after changing a view
-    /// directly.
+    /// directly: this is the forced variant, it reads every view again whatever the revision.
+    /// [`Self::after_pane_event`] is the gated one.
     pub fn after_view_change(&mut self) {
+        let revision = self.document.revision();
         // The controls show the automation at the playhead (and the param an edit just moved
         // its new value): the views below sync with the values of this moment.
         self.update_shown_values();
         let doc = self.document.doc();
         self.view.sync(doc, &self.registry);
-        self.arrangement.sync(doc, &self.registry);
-        self.piano_roll.sync(doc, &self.registry);
+        self.arrangement.sync_at(doc, &self.registry, revision);
+        self.piano_roll.sync_at(doc, &self.registry, revision);
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
         self.sample_editor.sync(doc, &self.registry);
@@ -825,6 +971,27 @@ impl<S: EngineSink> AppCore<S> {
         self.sync_midi_marks();
         self.follow_selected_device();
         self.target.set(self.notes_target());
+        self.views_synced_at = Some(revision);
+    }
+
+    /// What follows an event of `pane`, `idle` when it was a pointer move or a modifier change
+    /// that sent no action. An idle event of a document that has not changed since the views
+    /// last synced has nothing to read: only the shown automation values are forwarded (the
+    /// three views that show them sync when one changed). Every other event takes
+    /// [`Self::after_view_change`], as does the first one after the document changed.
+    fn after_pane_event(&mut self, idle: bool) {
+        if idle && self.views_synced_at == Some(self.document.revision()) {
+            if self.update_shown_values() {
+                let doc = self.document.doc();
+                self.view.sync(doc, &self.registry);
+                self.console.sync(doc, &self.registry);
+                if self.plugin_params_open {
+                    self.plugin_params.sync(doc, &self.registry);
+                }
+            }
+            return;
+        }
+        self.after_view_change();
     }
 
     // ------------------------------------------------------------------ files
@@ -874,7 +1041,7 @@ impl<S: EngineSink> AppCore<S> {
         // A new document does not keep the old one's plugin instances.
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;
-        self.saved = doc.clone();
+        self.set_saved(doc.clone());
         self.document = Document::new(doc);
         self.file = file;
         self.rejection = None;
@@ -916,6 +1083,7 @@ impl<S: EngineSink> AppCore<S> {
         self.cancel_audio_recording();
         self.playing = false;
         self.pending_play = None;
+        self.pending_pre_roll = None;
         let config = engine_config(self.doc());
         self.engine_inputs = config.input_channels;
         self.audio.monitor_sent.clear();
@@ -1875,6 +2043,14 @@ impl<S: EngineSink> AppCore<S> {
         self.doc().resolve(&key)
     }
 
+    /// The name of the device the engine knows as instance `id` (a faulted device, for the
+    /// status line), if it is still in the rack.
+    pub fn device_name_of_instance(&self, id: u32) -> Option<String> {
+        let key = self.ids.iter().find(|(_, v)| v.0 == id)?.0;
+        let key = containers::container_of_split(key);
+        self.doc().resolve(&key).map(|d| d.name.clone())
+    }
+
     /// The shared live-notes target cell, read by the MIDI input thread.
     pub fn note_target_cell(&self) -> &Arc<NoteTarget> {
         &self.target
@@ -1889,12 +2065,21 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Paints one pane (physical pixels; the sequencer views draw inside their bounds).
     pub fn paint_pane(&mut self, pane: Pane, canvas: &mut dyn Canvas) {
+        let revision = self.document.revision();
         let doc = self.document.doc();
         match pane {
             Pane::Rack => self.view.paint(canvas, doc, &self.registry),
             Pane::Transport => self.transport_bar.paint(canvas, doc, &self.registry),
-            Pane::Arrangement => self.arrangement.paint(canvas, doc, &self.registry),
-            Pane::PianoRoll => self.piano_roll.paint(canvas, doc, &self.registry),
+            Pane::Arrangement => {
+                self.arrangement.set_doc_revision(Some(revision));
+                self.arrangement.paint(canvas, doc, &self.registry);
+                self.arrangement.set_doc_revision(None);
+            }
+            Pane::PianoRoll => {
+                self.piano_roll.set_doc_revision(Some(revision));
+                self.piano_roll.paint(canvas, doc, &self.registry);
+                self.piano_roll.set_doc_revision(None);
+            }
             Pane::Console => self.console.paint(canvas, doc, &self.registry),
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
@@ -1903,6 +2088,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.paint(canvas, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.paint(canvas),
+            Pane::PianoKeys => self.piano_keys.paint(canvas),
         }
     }
 
@@ -2065,6 +2251,30 @@ impl<S: EngineSink> AppCore<S> {
         self.send_metronome();
     }
 
+    /// Bars of pre-count a recording starts with (0 = off).
+    pub fn pre_count_bars(&self) -> u8 {
+        self.pre_count_bars
+    }
+
+    /// Sets the pre-count (clamped to 0..=4 bars); a non-zero length is the one the toggle
+    /// returns to.
+    pub fn set_pre_count_bars(&mut self, bars: u8) {
+        self.pre_count_bars = bars.min(crate::settings::MAX_PRE_COUNT_BARS);
+        if self.pre_count_bars > 0 {
+            self.pre_count_resume = self.pre_count_bars;
+        }
+        self.show_transport();
+    }
+
+    /// The length the pre-count toggle switches to: off when it is on, else the length it had.
+    pub fn pre_count_toggled(&self) -> u8 {
+        if self.pre_count_bars > 0 {
+            0
+        } else {
+            self.pre_count_resume
+        }
+    }
+
     /// The input quantize applied to recorded notes.
     pub fn input_quantize(&self) -> InputQuantize {
         self.quantize
@@ -2073,6 +2283,38 @@ impl<S: EngineSink> AppCore<S> {
     /// Sets the input quantize for the next takes.
     pub fn set_input_quantize(&mut self, quantize: InputQuantize) {
         self.quantize = quantize;
+    }
+
+    /// What a finished MIDI take does with the clips already on its lane.
+    pub fn record_mode(&self) -> RecordMode {
+        self.record_mode
+    }
+
+    /// Sets the record mode for the next takes.
+    pub fn set_record_mode(&mut self, mode: RecordMode) {
+        self.record_mode = mode;
+    }
+
+    /// What a note edit does with notes that start past their clip's end.
+    pub fn keep_events(&self) -> KeepEvents {
+        self.keep_events
+    }
+
+    /// Sets the keep-events policy (see [`crate::record_over`]).
+    pub fn set_keep_events(&mut self, policy: KeepEvents) {
+        self.keep_events = policy;
+    }
+
+    /// Completes the edit of note clip `id` under the keep-events policy: the follow-up commands
+    /// join the undo step of the edit.
+    fn complete_note_edit(&mut self, id: ClipId) {
+        let commands = keep_events_follow_up(self.doc(), id, self.keep_events);
+        for command in commands {
+            self.join_next = true;
+            // A rejection is already reported.
+            let _ = self.apply_command(command);
+            self.join_next = false;
+        }
     }
 
     /// The transport position shown (song ticks): the engine's when it runs, else the last
@@ -2125,18 +2367,39 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn play(&mut self) {
+        self.play_from(None);
+    }
+
+    /// Starts playback, after `count_in` when there is one (the transport holds its position
+    /// while the click counts).
+    fn play_from(&mut self, count_in: Option<PreRoll>) {
         // Streamed audio is prefetched only while the engine renders: wait for the read-ahead
         // (a few UI frames), so playback does not start with an underrun.
         if self.sink.stream_primed() {
-            self.send_transport(TransportCommand::Play);
+            self.send_transport(play_command(count_in));
         } else {
             self.pending_play = Some(0);
+            self.pending_pre_roll = count_in;
         }
         self.playing = true;
     }
 
+    /// The count-in a recording started now would have: the pre-count's bars at the position
+    /// the transport stands at. `None` when the pre-count is off, the transport already runs or
+    /// there is no song to count tempo and meter from.
+    fn recording_count_in(&self) -> Option<PreRoll> {
+        if self.playing || self.pre_count_bars == 0 {
+            return None;
+        }
+        let rate = f64::from(self.doc().sample_rate);
+        self.snapshot
+            .as_ref()?
+            .pre_roll(Ticks(self.position.max(0)), self.pre_count_bars, rate)
+    }
+
     fn stop(&mut self) {
         self.pending_play = None;
+        self.pending_pre_roll = None;
         let state = self.sink.transport_state();
         self.send_transport(TransportCommand::Stop);
         self.playing = false;
@@ -2181,11 +2444,12 @@ impl<S: EngineSink> AppCore<S> {
             // Nothing can record: the reason was reported.
             return;
         }
-        let take = Take::new(tracks, loop_range, meter);
+        let count_in = self.recording_count_in();
+        let take = Take::new(tracks, loop_range, meter).counting_in(count_in.is_some());
         self.sink.set_recording(&take.devices());
         self.take = Some(take);
         if !self.playing {
-            self.play();
+            self.play_from(count_in);
         }
     }
 
@@ -2208,7 +2472,8 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Ends the take at the transport position of `state` and writes its clips: per track one
-    /// `AddClip`, or one `NewTakeGroup` when the loop made several passes (one undo step each).
+    /// `AddClip`, or one `NewTakeGroup` when the loop made several passes, or in Layer mode one
+    /// merge into the clip under the take (one undo step each; see [`crate::record_over`]).
     fn finish_take(&mut self, state: &TransportState) {
         if self.take.is_none() {
             return;
@@ -2235,7 +2500,7 @@ impl<S: EngineSink> AppCore<S> {
                 None => by_device.push((device, vec![clip])),
             }
         }
-        for (device, mut clips) in by_device {
+        for (device, clips) in by_device {
             // The lane picked when the take began, unless it is gone by now (or no longer a
             // note lane): then the first one.
             let lane = lanes
@@ -2248,21 +2513,9 @@ impl<S: EngineSink> AppCore<S> {
                         .is_some_and(|t| t.is_note_lane(*l))
                 })
                 .unwrap_or(0);
-            let command = if clips.len() > 1 {
-                SongCommand::NewTakeGroup {
-                    device,
-                    lane,
-                    takes: clips,
-                }
-            } else {
-                SongCommand::AddClip {
-                    device,
-                    lane,
-                    clip: clips.remove(0),
-                }
-            };
+            let command = note_take_command(self.doc(), device, lane, clips, self.record_mode);
             // A rejection is already reported.
-            let _ = self.apply_command(Command::Song(command));
+            let _ = self.apply_command(command);
             self.document.end_merge();
         }
     }
@@ -2282,6 +2535,8 @@ impl<S: EngineSink> AppCore<S> {
             recording,
             metronome: self.metronome,
             position: self.position,
+            pre_count: self.pre_count_bars,
+            count_in: self.sink.transport_state().pre_roll_beat,
         });
     }
 
@@ -2311,12 +2566,33 @@ impl<S: EngineSink> AppCore<S> {
     }
 }
 
+/// The command that starts playback, with a count-in when there is one.
+fn play_command(count_in: Option<PreRoll>) -> TransportCommand {
+    count_in.map_or(TransportCommand::Play, TransportCommand::PlayWithPreRoll)
+}
+
 /// The drag-merge id of a parameter command (the first one inside a batch): `Some` means a
 /// control is being held.
 fn param_merge(command: &Command) -> Option<u64> {
     match command {
         Command::SetParam { merge, .. } => *merge,
         Command::Batch(commands) => commands.iter().find_map(param_merge),
+        _ => None,
+    }
+}
+
+/// The note clip a command edits and whether it is a drag step (`true`): the commands the
+/// keep-events policy follows up (a note list set by an editor, notes pasted or duplicated).
+fn note_edit_of(command: &Command) -> Option<(ClipId, bool)> {
+    match command {
+        Command::Song(SongCommand::SetClipContent {
+            id,
+            content: ClipContent::Notes(_),
+            merge,
+        }) => Some((*id, merge.is_some())),
+        Command::Workflow(
+            WorkflowCommand::PasteNotes { clip, .. } | WorkflowCommand::DuplicateNotes { clip, .. },
+        ) => Some((*clip, false)),
         _ => None,
     }
 }
@@ -2372,6 +2648,9 @@ pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
+#[path = "app_core_keys.rs"]
+mod keys;
+
 #[path = "app_core_containers.rs"]
 mod containers;
 
@@ -2392,6 +2671,9 @@ mod snapshots;
 
 #[path = "app_core_midimap.rs"]
 mod midimap;
+
+#[path = "app_core_jacks.rs"]
+mod jack_ops;
 
 #[path = "app_core_macros.rs"]
 mod macro_ops;
@@ -2447,6 +2729,10 @@ pub use plugins::{
 };
 
 #[cfg(test)]
+#[path = "app_core_autosave_tests.rs"]
+mod autosave_tests;
+
+#[cfg(test)]
 #[path = "app_core_rec_audio_tests.rs"]
 mod rec_audio_tests;
 
@@ -2465,6 +2751,10 @@ mod freeze_tests;
 #[cfg(test)]
 #[path = "app_core_plugins_tests.rs"]
 mod plugins_tests;
+
+#[cfg(test)]
+#[path = "app_core_revision_tests.rs"]
+mod revision_tests;
 
 #[cfg(test)]
 #[path = "app_core_plugins_gui_tests.rs"]
@@ -2551,6 +2841,10 @@ mod setups_tests;
 mod containers_tests;
 
 #[cfg(test)]
+#[path = "app_core_jacks_tests.rs"]
+mod jacks_tests;
+
+#[cfg(test)]
 #[path = "app_core_macros_tests.rs"]
 mod macros_tests;
 
@@ -2596,3 +2890,7 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "app_core_warp_tests.rs"]
 mod warp_tests;
+
+#[cfg(test)]
+#[path = "app_core_keys_tests.rs"]
+mod keys_tests;

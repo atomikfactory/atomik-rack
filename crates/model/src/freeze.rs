@@ -379,11 +379,16 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             SongCommand::AddClip { device, .. }
             | SongCommand::AddAudioClip { device, .. }
             | SongCommand::NewTakeGroup { device, .. }
+            | SongCommand::GroupAsTakes { device, .. }
             | SongCommand::AddAutomationLane { device, .. }
             | SongCommand::AddNoteLane { device, .. }
             | SongCommand::RemoveNoteLane { device, .. }
             | SongCommand::RenameLane { device, .. }
             | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
+            SongCommand::AddTake { group, .. } => doc
+                .song
+                .take_group(*group)
+                .and_then(|(t, _, _)| track_frozen(&t.device)),
             SongCommand::RemoveClip { id }
             | SongCommand::SetClipGeometry { id, .. }
             | SongCommand::SetClipContent { id, .. }
@@ -412,6 +417,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                 .iter()
                 .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
             WorkflowCommand::PasteClips { track, .. } => track.as_ref().and_then(track_frozen),
+            WorkflowCommand::LayerRecording { clip, .. } => clip_frozen(clip),
+            WorkflowCommand::EngulfRecording { device, .. } => track_frozen(device),
             WorkflowCommand::PasteNotes { clip, .. }
             | WorkflowCommand::DuplicateNotes { clip, .. }
             | WorkflowCommand::PasteAutomationPoints { clip, .. }

@@ -181,12 +181,13 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             "Mixer",
             "Create",
             "Track",
-            "Audio"
+            "Audio",
+            "Options"
         ]
     );
     let mixer: Vec<_> = model[4]
         .items()
-        .map(|i| (i.label, i.shortcut.as_deref()))
+        .map(|i| (i.label.as_ref(), i.shortcut.as_deref()))
         .collect();
     assert_eq!(
         mixer,
@@ -220,7 +221,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
         ]
     );
     assert!(model[4].entries.contains(&MenuEntry::Separator));
-    let view: Vec<_> = model[2].items().map(|i| i.label).collect();
+    let view: Vec<_> = model[2].items().map(|i| i.label.as_ref()).collect();
     assert!(view.contains(&"Show Console Devices in Rack"), "{view:?}");
     assert!(view.contains(&"Show Console Links"), "{view:?}");
     // Shown by default by default; the toggle hides them.
@@ -501,11 +502,12 @@ fn file_new_in_the_shell_makes_the_starter_project_and_is_confirmed_when_dirty()
     assert!(s.core().is_dirty());
     // Dirty: New asks first.
     let requests = s.execute(AppCommand::New);
-    assert!(
-        requests
-            .iter()
-            .any(|r| matches!(r, ShellRequest::ConfirmDiscard(AppCommand::New)))
-    );
+    assert!(requests.iter().any(|r| matches!(
+        r,
+        ShellRequest::ConfirmSave {
+            then: PendingAction::Command(AppCommand::New)
+        }
+    )));
     s.confirmed(AppCommand::New);
     assert_eq!(
         atomik_model::save_project(s.core().doc()),

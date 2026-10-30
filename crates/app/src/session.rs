@@ -40,8 +40,9 @@ pub trait LiveStream {
     fn telemetry(&self) -> Telemetry;
     /// What was opened.
     fn info(&self) -> &StreamInfo;
-    /// Stops the stream and hands the engine back (dropped on the caller's thread).
-    fn stop(self) -> Engine;
+    /// Stops the stream and hands the engine back (dropped on the caller's thread). An error
+    /// means the backend never released the engine; the stream is gone either way.
+    fn stop(self) -> Result<Engine, IoError>;
 }
 
 /// An open MIDI input.
@@ -54,6 +55,8 @@ pub trait MidiPort {
     fn close(self) -> MidiLink;
     /// Sends a note now on the link's live queue (audition; [`MidiLink::send_now`]).
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
+    /// Plays a note now as played input: [`MidiLink::play_now`].
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
 }
 
 /// The outside world: audio devices and MIDI ports.
@@ -95,7 +98,7 @@ impl LiveStream for RunningStream {
     fn info(&self) -> &StreamInfo {
         RunningStream::info(self)
     }
-    fn stop(self) -> Engine {
+    fn stop(self) -> Result<Engine, IoError> {
         RunningStream::stop(self)
     }
 }
@@ -112,6 +115,9 @@ impl MidiPort for MidiConnection {
     }
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
         MidiConnection::send_now(self, target, kind)
+    }
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        MidiConnection::play_now(self, target, kind)
     }
 }
 
@@ -326,6 +332,8 @@ impl<B: AudioBackend> LiveSession<B> {
             self.status.xruns = t.xruns;
             self.status.input_latency_frames = t.input_latency_frames;
             self.status.output_latency_frames = t.output_latency_frames;
+            self.status.faulted = t.faulted || r.handle.fault().is_some();
+            self.status.faulted_device = r.handle.fault().map(|id| id.0);
             self.status.stream_underruns = r.handle.stream_underruns();
             if t.buffer_frames > 0 {
                 self.status.buffer_frames = Some(t.buffer_frames);
@@ -351,9 +359,17 @@ impl<B: AudioBackend> LiveSession<B> {
             // so it is dropped here and not on the audio thread.
             drop(midi.map(MidiPort::close));
             drop(idle_link);
-            let engine = stream.stop();
-            drop(engine);
+            let stop_error = match stream.stop() {
+                Ok(engine) => {
+                    drop(engine);
+                    None
+                }
+                Err(e) => Some(e.to_string()),
+            };
             handle.collect_garbage();
+            if stop_error.is_some() {
+                self.status.error = stop_error;
+            }
         }
         self.status = AudioStatus {
             host: self.settings.host.label().to_string(),
@@ -587,6 +603,17 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         match (&mut r.midi, &mut r.idle_link) {
             (Some(midi), _) => midi.send_now(target, kind),
             (None, Some(link)) => link.send_now(target, kind),
+            (None, None) => Ok(()),
+        }
+    }
+
+    fn play_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        let Some(r) = &mut self.running else {
+            return Ok(());
+        };
+        match (&mut r.midi, &mut r.idle_link) {
+            (Some(midi), _) => midi.play_now(target, kind),
+            (None, Some(link)) => link.play_now(target, kind),
             (None, None) => Ok(()),
         }
     }

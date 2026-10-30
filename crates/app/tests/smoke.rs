@@ -71,7 +71,9 @@ fn the_app_runs_headless_without_audio() {
         // The click may have edited the demo: confirm discarding it.
         assert_eq!(
             request,
-            atomik_app::shell::ShellRequest::ConfirmDiscard(AppCommand::StressRack)
+            atomik_app::shell::ShellRequest::ConfirmSave {
+                then: atomik_app::shell::PendingAction::Command(AppCommand::StressRack)
+            }
         );
         assert!(shell.confirmed(AppCommand::StressRack).is_empty());
     }

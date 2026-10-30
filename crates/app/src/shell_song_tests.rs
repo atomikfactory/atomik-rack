@@ -368,10 +368,11 @@ fn transport_menu_lists_the_transport_and_quantize_choices() {
             "Mixer",
             "Create",
             "Track",
-            "Audio"
+            "Audio",
+            "Options"
         ]
     );
-    let labels: Vec<_> = model[3].items().map(|i| i.label).collect();
+    let labels: Vec<_> = model[3].items().map(|i| i.label.as_ref()).collect();
     for want in [
         "Play / Stop",
         "Record",
@@ -510,4 +511,30 @@ fn the_recording_input_of_an_armed_audio_track_is_set_from_the_transport_bar() {
     s.handle(&down(safe));
     s.handle(&up(safe));
     assert_eq!(param(&s, "rec_clip_safe"), Some(1.0));
+}
+
+#[test]
+fn the_options_menu_gathers_the_playback_settings_under_their_own_commands() {
+    let mut s = shell();
+    let model = s.menu_model();
+    let options = model.iter().find(|m| m.title == "Options").unwrap();
+    let labels: Vec<_> = options.items().map(|i| i.label.as_ref()).collect();
+    for want in [
+        "Click",
+        "Pre-count",
+        "Input Quantize: 1/16",
+        "Chase Notes",
+        "Delay Compensation",
+        "Settings\u{2026}",
+    ] {
+        assert!(labels.contains(&want), "{want} missing in {labels:?}");
+    }
+    // Its entries run the commands they already have elsewhere.
+    s.execute(AppCommand::Transport(TransportAction::ToggleMetronome));
+    assert!(s.menu_state().metronome);
+    s.execute(AppCommand::TogglePreCount);
+    assert!(s.menu_state().pre_count);
+    assert_eq!(s.core().pre_count_bars(), 1);
+    s.execute(AppCommand::TogglePreCount);
+    assert!(!s.menu_state().pre_count);
 }

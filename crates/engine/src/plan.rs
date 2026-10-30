@@ -11,6 +11,7 @@ use crate::console::{
     DelayLine, MAX_COMPENSATION_SECONDS, METER_CAPACITY, Meters, PdcReport, adopt_delay_lines,
     meter_key,
 };
+use crate::fault::FaultState;
 use crate::graph::rules::{self, CableMap, Lookup};
 use crate::graph::{DeviceInstanceId, Endpoint, Graph, GraphError};
 use atomik_core::{
@@ -21,6 +22,7 @@ use atomik_device_sdk::{
     SocketKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Mixes the patch seed with a device id into the device's `prepare` seed (splitmix64).
@@ -67,6 +69,8 @@ pub(crate) struct Node {
     pub(crate) playback_on: bool,
     /// `Device::has_meter_values()` read at construction.
     pub(crate) has_meter_values: bool,
+    /// Set when the device panicked in `process`: the node is silent and skipped from then on.
+    pub(crate) faulted: bool,
 }
 
 /// The cable routes of one stage of one device in one routing (a single-stage
@@ -190,6 +194,7 @@ impl Node {
             routed: false,
             playback: [[0.0; BATCH]; 2],
             playback_on: false,
+            faulted: false,
         }
     }
 }
@@ -272,7 +277,26 @@ impl Node {
     /// Calls `Device::process_stage(stage)` (which is `process` for single-stage devices),
     /// then, after the `last` stage, consumes the note inputs (the next batch starts empty).
     /// Touches only the node itself, so it may run on any thread that owns the node.
-    pub(crate) fn run(&mut self, time: TimeInfo, stage: u8, last: bool) {
+    ///
+    /// A panic in the device is caught here (`catch_unwind` costs nothing while nothing
+    /// panics): the node is marked faulted, its outputs are zeroed and it is skipped from then
+    /// on. Returns true for the call in which the device panicked, so the caller can record
+    /// the fault.
+    pub(crate) fn run(&mut self, time: TimeInfo, stage: u8, last: bool) -> bool {
+        if self.faulted {
+            self.silence();
+            return false;
+        }
+        let outcome = catch_unwind(AssertUnwindSafe(|| self.run_device(time, stage, last)));
+        if outcome.is_err() {
+            self.faulted = true;
+            self.silence();
+            return true;
+        }
+        false
+    }
+
+    fn run_device(&mut self, time: TimeInfo, stage: u8, last: bool) {
         let playback: &[Batch] = if self.playback_on {
             &self.playback
         } else {
@@ -290,6 +314,13 @@ impl Node {
                 }
             }
         }
+    }
+
+    /// Zeroes every output of a faulted node (a bounded fill; no allocation).
+    fn silence(&mut self) {
+        self.signals.iter_mut().for_each(|b| *b = [0.0; BATCH]);
+        self.notes.iter_mut().for_each(NoteBuffer::clear);
+        self.playback_on = false;
     }
 
     /// Copies cabled outputs to their slots and publishes metered outputs.
@@ -350,6 +381,7 @@ impl RoutingPlan {
 
     /// Processes one batch: host inputs -> slots, every routed device in order, slots -> host
     /// outputs. Single-threaded (`threads = 0`). Arena devices outside the routing are skipped.
+    #[allow(clippy::too_many_arguments)] // Justification: all are borrowed state.
     pub(crate) fn process(
         &mut self,
         time: TimeInfo,
@@ -358,13 +390,16 @@ impl RoutingPlan {
         dropped: &AtomicU64,
         arena: &mut Arena,
         meters: &Meters,
+        fault: &FaultState,
     ) {
         self.read_host_inputs(host_in, meters);
-        self.run_sequential(0, self.steps.len(), time, dropped, arena, meters);
+        self.run_sequential(0, self.steps.len(), time, dropped, arena, meters, fault);
         self.write_host_outputs(host_out);
     }
 
-    /// Gathers, runs and scatters steps `a..b` one after the other on this thread.
+    /// Gathers, runs and scatters steps `a..b` one after the other on this thread. A device
+    /// that panics is recorded in `fault` (its node is silent from then on).
+    #[allow(clippy::too_many_arguments)] // Justification: all are borrowed state.
     pub(crate) fn run_sequential(
         &mut self,
         a: usize,
@@ -373,6 +408,7 @@ impl RoutingPlan {
         dropped: &AtomicU64,
         arena: &mut Arena,
         meters: &Meters,
+        fault: &FaultState,
     ) {
         let Self {
             devices,
@@ -391,7 +427,9 @@ impl RoutingPlan {
             let r = &step.routes;
             let overflow = node.gather(r, step.stage, slots, note_slots, spare_notes, delays);
             count_overflow(dropped, overflow);
-            node.run(time, step.stage, step.last);
+            if node.run(time, step.stage, step.last) {
+                fault.record(devices[step.device].id);
+            }
             node.scatter(r, slots, note_slots, meters);
         }
     }
