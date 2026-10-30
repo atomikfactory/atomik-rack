@@ -928,6 +928,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
+    cmd("rack.browse_patch", "Browse Patches", G::Rack, C::Rack),
     cmd("rack.disconnect", "Disconnect", G::Rack, C::Rack),
     cmd(
         "rack.extend_next",
@@ -939,6 +940,9 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
+    cmd("rack.patch_next", "Next Patch", G::Rack, C::Rack).rep(),
+    cmd("rack.patch_pick", "Pick Patch", G::Rack, C::Rack),
+    cmd("rack.patch_prev", "Previous Patch", G::Rack, C::Rack).rep(),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
     cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
     cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),

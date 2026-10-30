@@ -110,6 +110,15 @@ enum Gesture {
     },
 }
 
+/// The device patch browsing applies to (see [`FileBrowserView::set_patch_target`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PatchTarget {
+    /// The device's name, shown in the band above the header.
+    label: String,
+    /// The device's type id: only patches for it are listed.
+    type_id: String,
+}
+
 /// What the inline entry creates.
 #[derive(Debug, Clone, PartialEq)]
 enum EntryKind {
@@ -173,6 +182,8 @@ pub struct FileBrowserView {
     requested_info: BTreeSet<PathBuf>,
     info_dirty: bool,
     library_folder: Option<PathBuf>,
+    /// The device the panel applies patches to (see [`FileBrowserView::set_patch_target`]).
+    target: Option<PatchTarget>,
     // Text fields and pointer state.
     search: TextField,
     search_focused: bool,
@@ -224,6 +235,7 @@ impl FileBrowserView {
             requested_info: BTreeSet::new(),
             info_dirty: false,
             library_folder: None,
+            target: None,
             search: TextField::default(),
             search_focused: false,
             entry: None,
@@ -418,10 +430,29 @@ impl FileBrowserView {
         for (row, k) in self.find_rows(wanted) {
             self.rows[row].item = Some(info[k].1.clone());
         }
-        if !self.query_empty {
+        if !self.query_empty || self.target.is_some() {
             self.refilter();
         }
         self.dirty = true;
+    }
+
+    /// Aims the panel at one device (`Some((device name, device type id))`) or back at nothing.
+    /// With a target the panel shows an orange band naming the device and lists only the
+    /// patches for its type (folders stay, to move around); selecting a patch (a click, the
+    /// arrow keys) emits [`BrowseAction::Audition`], Enter or a double-click emits
+    /// [`BrowseAction::Load`] (the app applies it to the device and accepts it), and Escape
+    /// emits [`BrowseAction::Cancel`].
+    pub fn set_patch_target(&mut self, target: Option<(String, String)>) {
+        let next = target.map(|(label, type_id)| PatchTarget { label, type_id });
+        if self.target != next {
+            self.target = next;
+            self.refilter();
+        }
+    }
+
+    /// The type id of the device the panel applies patches to.
+    pub fn patch_target(&self) -> Option<&str> {
+        self.target.as_ref().map(|t| t.type_id.as_str())
     }
 
     /// The library folder (`None` while unknown). Only items below it can be renamed; an
@@ -537,7 +568,7 @@ impl FileBrowserView {
     // ----- shared helpers ------------------------------------------------------------------
 
     fn lay(&self) -> layout::Layout {
-        layout::layout(self.bounds, self.tree_fraction)
+        layout::layout(self.bounds, self.tree_fraction, self.target.is_some())
     }
 
     fn rebuild_tree(&mut self) {
@@ -601,18 +632,36 @@ impl FileBrowserView {
         self.refilter();
     }
 
-    /// Rebuilds the filtered index list from the current query.
+    /// Whether the patch target lets `row` through: folders (to move around) and the patches
+    /// that are not known to be for another device type. Without a target every row passes.
+    fn target_allows(target: Option<&PatchTarget>, row: &FileRow) -> bool {
+        let Some(target) = target else {
+            return true;
+        };
+        match row.kind {
+            FileKind::Folder => true,
+            FileKind::Patch => row
+                .item
+                .as_ref()
+                .is_none_or(|i| i.device_type == target.type_id),
+            _ => false,
+        }
+    }
+
+    /// Rebuilds the filtered index list from the current query and patch target.
     fn refilter(&mut self) {
         self.view.clear();
-        if self.query_empty {
+        if self.query_empty && self.target.is_none() {
             self.view.extend(0..self.rows.len() as u32);
         } else {
             let q = &self.query;
+            let all = self.query_empty;
+            let target = self.target.as_ref();
             self.view.extend(
                 self.rows
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| q.matches(r))
+                    .filter(|(_, r)| (all || q.matches(r)) && Self::target_allows(target, r))
                     .map(|(i, _)| i as u32),
             );
         }

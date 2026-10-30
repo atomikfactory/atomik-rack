@@ -262,6 +262,8 @@ pub struct PanelInfo<'a> {
     pub folded: bool,
     /// Panel height.
     pub height: f64,
+    /// The patch browser applies patches to this device: the patch name is drawn in orange.
+    pub patch_browse: bool,
     /// Seed for small per-device variations (screw angles).
     pub seed: u64,
     /// Drum panel: the selected pad (1..=16).
@@ -439,6 +441,13 @@ fn patch_strip_paint<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelI
         c.stroke(&p.into(), &round_stroke(1.4), &solid(theme.text_muted));
     }
     c.fill_with(RoundedRect::from_rect(strip.name, 2.0), theme.lcd);
+    if info.patch_browse {
+        c.stroke_with(
+            RoundedRect::from_rect(strip.name, 2.0),
+            1.2,
+            crate::theme::PATCH_TARGET,
+        );
+    }
     let named = info.device.is_some_and(|d| !d.patch_name.is_empty());
     let label = info
         .device
@@ -449,7 +458,13 @@ fn patch_strip_paint<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelI
             fit_label(label, strip.name.width() - 4.0, 6.0),
             pt(strip.name.x0 + 3.0, strip.name.center().y + 2.2),
             6.0,
-            if named { info.accent } else { theme.text_muted },
+            if info.patch_browse {
+                crate::theme::PATCH_TARGET
+            } else if named {
+                info.accent
+            } else {
+                theme.text_muted
+            },
         )
         .weight(600),
     );

@@ -218,3 +218,54 @@ fn the_strip_is_not_pressable_on_the_back() {
         "{acts:?}"
     );
 }
+
+#[test]
+fn a_right_click_on_the_patch_name_asks_for_the_pop_up_of_the_folder() {
+    let d = one_device("atomik.stereo-delay").unwrap();
+    let reg = registry();
+    let mut v = view_of(&d);
+    let at = v.patch_strip_center(&key("d"), PatchOp::Browse).unwrap();
+    let acts = v.handle(
+        &atomik_ui::UiEvent::PointerDown {
+            pos: at,
+            button: atomik_ui::PointerButton::Secondary,
+            modifiers: atomik_ui::Modifiers::NONE,
+            clicks: 1,
+        },
+        d.doc(),
+        &reg,
+    );
+    assert!(
+        acts.contains(&UiAction::DevicePatch {
+            device: key("d"),
+            op: PatchOp::Siblings
+        }),
+        "{acts:?}"
+    );
+    assert_eq!(
+        v.patch_strip_center(&key("d"), PatchOp::Siblings),
+        Some(at),
+        "the pop-up opens under the name"
+    );
+}
+
+#[test]
+fn the_patch_name_of_the_browse_target_is_drawn_in_the_browse_colour() {
+    let d = one_device("atomik.stereo-delay").unwrap();
+    let reg = registry();
+    let mut v = view_of(&d);
+    let mut plain = atomik_ui::DisplayList::new();
+    v.paint(&mut plain, d.doc(), &reg);
+    v.set_patch_browse(Some(key("d")));
+    let mut aimed = atomik_ui::DisplayList::new();
+    v.paint(&mut aimed, d.doc(), &reg);
+    assert_ne!(
+        plain.to_json(),
+        aimed.to_json(),
+        "the plate is painted again"
+    );
+    v.set_patch_browse(None);
+    let mut back = atomik_ui::DisplayList::new();
+    v.paint(&mut back, d.doc(), &reg);
+    assert_eq!(plain.to_json(), back.to_json());
+}

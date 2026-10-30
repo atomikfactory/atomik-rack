@@ -355,9 +355,15 @@ impl FileBrowserView {
             return;
         };
         let row_idx = self.view[vp];
-        let (path, audio, file, item) = {
+        let (path, audio, file, item, patch) = {
             let r = &self.rows[row_idx as usize];
-            (r.path.clone(), is_audio(r), is_file(r), r.kind.is_item())
+            (
+                r.path.clone(),
+                is_audio(r),
+                is_file(r),
+                r.kind.is_item(),
+                r.kind == FileKind::Patch,
+            )
         };
         let cols = lay::columns(lay.list.x0, lay.list.x1, self.bounds.width());
         if file && pos.x >= cols.star.0 && pos.x < cols.star.1 {
@@ -393,7 +399,9 @@ impl FileBrowserView {
             self.selection.insert(path.clone());
             self.cursor = Some(row_idx);
             self.anchor = Some(row_idx);
-            if audio && clicks <= 1 && self.auto_preview {
+            if self.target.is_some() && patch && clicks <= 1 {
+                emit(out, BrowseAction::Audition(path));
+            } else if audio && clicks <= 1 && self.auto_preview {
                 emit(out, BrowseAction::Preview(path));
             }
         }
@@ -831,7 +839,7 @@ impl FileBrowserView {
                 self.select_range(0, n - 1);
                 self.dirty = true;
             }
-            Key::Escape => emit(out, BrowseAction::StopPreview),
+            Key::Escape => emit(out, self.escape_action()),
             Key::Backspace => emit(out, BrowseAction::Parent),
             Key::F(2) => {
                 let target = cur
@@ -869,7 +877,9 @@ impl FileBrowserView {
         self.cursor = Some(row_idx);
         self.ensure_row_visible(pos);
         let r = &self.rows[row_idx as usize];
-        if !extend && self.auto_preview && is_audio(r) {
+        if !extend && self.target.is_some() && r.kind == FileKind::Patch {
+            emit(out, BrowseAction::Audition(r.path.clone()));
+        } else if !extend && self.auto_preview && is_audio(r) {
             emit(out, BrowseAction::Preview(r.path.clone()));
         }
     }
@@ -935,7 +945,7 @@ impl FileBrowserView {
                     }
                 }
             }
-            Key::Escape => emit(out, BrowseAction::StopPreview),
+            Key::Escape => emit(out, self.escape_action()),
             _ => {}
         }
     }
@@ -968,6 +978,17 @@ impl FileBrowserView {
         if !want.is_empty() {
             self.requested_info.extend(want.iter().cloned());
             emit(out, BrowseAction::RequestInfo(want));
+        }
+    }
+}
+
+impl FileBrowserView {
+    /// What Escape does in the lists: end patch browsing, else stop the preview.
+    fn escape_action(&self) -> BrowseAction {
+        if self.target.is_some() {
+            BrowseAction::Cancel
+        } else {
+            BrowseAction::StopPreview
         }
     }
 }
