@@ -1837,7 +1837,8 @@ device is never dispatched.
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
-| `atomik-midi-out` | MIDI output: drains the taps of the MIDI Out devices, converts engine frames to wall-clock times, sends each message to its port when due (polls every millisecond, spins for the last 0.3 ms); releases the notes of a source that goes away | Yes, but never waits for the audio thread |
+| `atomik-midi-out` | MIDI output: drains the taps of the MIDI Out devices and the engine's clock tap, converts engine frames to wall-clock times, sends each message to its port when due (polls every millisecond, spins for the last 0.3 ms); releases the notes of a source that goes away | Yes, but never waits for the audio thread |
+| MIDI clock callback (midir) | measures the tempo of a followed clock and publishes it, with Start, Stop, Continue and the position, in a lock-free cell the audio thread reads at the batch boundary | Yes, a few atomic stores |
 | Control surface callback (midir) | queues the raw bytes of the surface (SysEx included); the UI thread polls, decodes and answers | Yes (a short mutex) |
 
 The engine is created as two halves by `new_engine(cfg)` or `new_engine_with_options(..)`:
@@ -1926,9 +1927,48 @@ channels. A port that will not open or that refuses a send drops its messages an
 once a second. `AppCore` tells the sink which port each device sends to (`set_midi_out_ports`,
 by engine device id) after every edit and rebuild. The scheduler and the thread are not specific
 to notes: a message is a source, a port, a due time and up to three bytes, which is all MIDI clock
-output needs. The jitter of the path is about a poll interval (1 ms) for a message produced less
-than that ahead and tens of microseconds otherwise, plus the port driver's own latency; a bounce
-never sends MIDI (nothing reads the taps offline, and the device has no audio output).
+output needs, and the clock is the second user (see below). The jitter of the path is about a poll
+interval (1 ms) for a message produced less than that ahead and tens of microseconds otherwise,
+plus the port driver's own latency; a bounce never sends MIDI (nothing reads the taps offline,
+and the device has no audio output).
+
+**MIDI clock out.** With Options > Sync > MIDI Clock Out the song player (`player.rs`) writes, in
+every playing batch, a MIDI clock for each 640 ticks (24 per quarter note) into a second `MidiTap`
+(`EngineHandle::sync_out`, `crates/engine/src/sync.rs`), each stamped with the engine host frame.
+A clock sits at `F(640 k)`, the song frame of tick `640 k` through the tempo map and the same
+rounding every note gets (`clocks_in`), so it is exact at a constant tempo and across ramps and
+cannot drift; ranges that tile the timeline give every clock once. Transport changes are noticed
+at the batch start and sent once: Start from tick 0, Continue from elsewhere, Stop, a Song Position
+Pointer (sixteenth notes, 14 bits) for a locate and for a loop wrap, and a locate while playing as
+Stop, position, Continue (or the position alone, by setting). Switching the clock on while playing
+tells the receiver the position and continues it; switching it off sends one Stop. The clock can
+run on while the transport is stopped, at the tempo of the position. Everything is a few atomic
+stores per message (`SyncOut::configure` flags are read once per batch), so a batch that sends
+nothing costs one atomic load, and a bounce is unchanged. The tap reaches the `atomik-midi-out`
+thread as a clock route (`Core::set_sync`, source id `SYNC_SOURCE`): each message is queued for
+every clock port at its time plus that port's offset in milliseconds. `LiveSession` starts the
+thread for the clock alone, even with no MIDI Out device, and takes the route away half a second
+after the clock is switched off, so the Stop is out and the thread idles again. The settings are
+`settings.json` `"sync"` (the Sync tab of Settings and Options > Sync), app settings, not part of
+the project.
+
+**MIDI clock in.** Options > Sync > Follow MIDI Clock opens the port named in the Sync tab with
+`atomik_midi_io::clock::open_clock_in`. Its midir callback feeds a `ClockFollower`, which keeps
+the arrival times of the last 24 clocks (one beat) and takes the tempo from their mean spacing (a
+gap of half a second starts the measurement afresh; the last tempo stays meanwhile), and counts
+Start, Continue, Stop and Song Position Pointer into an `ExternalClock`, a seqlock cell like the
+transport cell (one writer, no waiting). While the cell is followed (`ExternalClock::set_following`)
+the player reads it at every batch boundary: the clock's tempo replaces every tempo map with one
+constant segment (the position keeps its musical place when the tempo moves: the tick is kept and
+the frame recomputed), Start locates to 0 and plays, Continue plays, Stop stops and releases the
+held notes, a position locates (chase included). The transport commands and the count-in are
+ignored meanwhile (the app also refuses the buttons and says why), the audio clips are not
+played (they are placed on the song's own tempo), and a clock count that does not move for half a
+second stops the transport like a Stop, then continues it when the clocks return. Following
+changes nothing when it is off, and a bounce never follows a clock; live following is outside the
+determinism contract by nature. Not done: the phase of the clock is not tracked (the song runs on
+the measured tempo from the start the clock gave, so it can drift from a sender whose tempo is
+not steady), and the audio clips and warped clips do not play while following.
 
 **Master keyboard.** Workflow, **Master keyboard**
  (`MasterKeyboard`, in `workflow.json`): in
@@ -3241,7 +3281,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (326) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (329) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

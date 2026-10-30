@@ -1533,3 +1533,46 @@ Hand checks, not automated (they need a MIDI device and your ears):
   port at a fast rate.
 - Bounce the project: it contains no MIDI and renders as without the device
   (`crates/render/tests/midi_out_bounce.rs` checks the bits for several block sizes and workers).
+
+## MIDI clock
+
+`crates/engine/src/sync.rs` tests the generator (a clock every 1 000 frames at 120 BPM, ranges that
+tile the timeline give every clock once, the position message) and the cell.
+`crates/engine/tests/song_sync.rs` drives the player under the allocation guard: Start then a clock
+every twenty-fourth of a beat at exact frames, Stop, a locate stopped and playing (Stop, position,
+Continue; Stop and Start at the beginning; the position alone by setting), a loop wrap, the clock
+across a 100 to 140 BPM ramp (every clock on its tick), nothing sent while off, the clock while
+stopped, switching on and off while playing, and the follower side: a started clock plays at its
+tempo, a tempo change keeps the musical position, Stop releases every note, a position and
+Continue, a lost clock stops and returns, the transport commands are ignored, leaving follow, and
+the followed clock forwarded as clock out. `crates/midi-io/src/clock/tests.rs` tests the follower
+(100 BPM within 0.2 BPM after two seconds, jitter, a ramp, Start, Continue, Stop, the position, a
+lost clock, garbage bytes), `crates/midi-io/src/out/tests.rs` the clock route (ports and offsets,
+late messages, removal), and `crates/midi-io/tests/clock_loopback.rs` the loopback: the engine's
+clock through the scheduler and a fake cable into the follower, which reads 100 BPM within 0.5 BPM
+after one beat and within 0.2 after two seconds, and follows a 100 to 140 ramp. `session_tests.rs`
+checks the session (the thread runs for the clock alone, the options reach the engine, the route
+leaves after the Stop, the clock port opens once and closes, a port that will not open is retried
+by a rescan), `app_core_sync_tests.rs` the transport buttons while following, and
+`settings_tabs_tests.rs` the Sync tab.
+
+Hand checks, not automated (they need MIDI hardware):
+
+- Clock out to a hardware drum machine (or a second program on a loopback port): set its clock to
+  external, add its port in Settings > Sync, switch on Options > Sync > MIDI Clock Out and press
+  Play: it starts with the song, its tempo reads the song's, and after ten minutes it has not
+  drifted from the click. Stop: it stops. Locate to bar 5 while stopped and press Play: it starts
+  from bar 5. Locate while playing: it jumps and stays in time (try Position only if it does not).
+- Add a tempo ramp to the song: the machine follows it. Set an offset of a few milliseconds on the
+  port and check, recording both on audio tracks, that the beats move by that amount.
+- Send clock while stopped: the machine shows the tempo before Play, and Start still begins on the
+  beat.
+- Clock in from a hardware sequencer: choose its port in Settings > Sync, switch on Follow MIDI
+  Clock, press Start on it: the song starts with it and runs at its tempo; change its tempo while
+  it runs and the song follows within a beat. Stop it: the notes stop. Start it from another bar
+  (Song Position Pointer then Continue): the song plays from there. Unplug its cable while it
+  runs: the song stops within half a second and no note hangs; plug it back in and it continues.
+- The transport buttons and Space do nothing while following and say why; switch following off
+  and they work again. A bounce while following is unchanged.
+- Check the DSP load meter with clock out on and with following on, at a small buffer: it should
+  not move.
