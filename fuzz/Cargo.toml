@@ -1,0 +1,66 @@
+[package]
+name = "atomik-fuzz"
+description = "Fuzz targets for the readers of untrusted files: projects, patches, MIDI, audio and the plugin sandbox wire."
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/atomikfactory/atomik-rack"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# cargo-fuzz needs a nightly toolchain, so this crate is its own workspace: it is not a member of
+# the root workspace, and `cargo build/test --workspace` and the normal CI never see it.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.9"
+atomik-audio-file = { path = "../crates/audio-file" }
+atomik-device-sdk = { path = "../crates/device-sdk" }
+atomik-devices = { path = "../crates/devices" }
+atomik-library = { path = "../crates/library" }
+atomik-midi-io = { path = "../crates/midi-io" }
+atomik-model = { path = "../crates/model" }
+atomik-plugin-ipc = { path = "../crates/plugin-ipc" }
+
+[[bin]]
+name = "load_project"
+path = "fuzz_targets/load_project.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "load_patch"
+path = "fuzz_targets/load_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "smf_read"
+path = "fuzz_targets/smf_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audio_decode"
+path = "fuzz_targets/audio_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ipc_frame"
+path = "fuzz_targets/ipc_frame.rs"
+test = false
+doc = false
+bench = false
+
+# Overflow checks stay on in the optimised build: they are what finds the arithmetic panics.
+[profile.release]
+debug = 1
+overflow-checks = true
