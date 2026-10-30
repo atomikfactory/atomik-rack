@@ -12,6 +12,27 @@ use atomik_ui::{ArrangementView, CursorHint, Modifiers, TransportAction, UiActio
 use support::song::*;
 use support::*;
 
+/// The modifier that sets the left locator: Alt on macOS, Ctrl elsewhere.
+fn left_mods() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        alt()
+    } else {
+        Modifiers::CTRL
+    }
+}
+
+/// The modifier that sets the right locator: Cmd on macOS, Alt elsewhere.
+fn right_mods() -> Modifiers {
+    if cfg!(target_os = "macos") {
+        Modifiers {
+            meta: true,
+            ..Modifiers::NONE
+        }
+    } else {
+        alt()
+    }
+}
+
 /// Ctrl+Alt: the disable-snap role of the standard roles.
 const NO_SNAP: Modifiers = Modifiers {
     shift: false,
@@ -186,16 +207,16 @@ fn clicking_a_locator_without_moving_changes_nothing() {
 }
 
 #[test]
-fn alt_click_in_the_ruler_sets_the_left_locator_snapped() {
+fn the_left_locator_click_in_the_ruler_sets_the_left_locator_snapped() {
     let (doc, reg, mut v) = setup(Snap::Bar);
     for y in [v.ruler_label_y(), v.loop_band_y()] {
         let p = Point::new(v.tick_to_x(2 * BAR) + 4.0, y);
-        let a = send(&mut v, &doc, &reg, &[down_mods(p, alt(), 1), up(p)]);
+        let a = send(&mut v, &doc, &reg, &[down_mods(p, left_mods(), 1), up(p)]);
         assert_eq!(loops(&a), vec![((2 * BAR, 4 * BAR), true)]);
         assert!(locates(&a).is_empty());
     }
     let p = Point::new(v.tick_to_x(6 * BAR), v.ruler_label_y());
-    let a = send(&mut v, &doc, &reg, &[down_mods(p, alt(), 1), up(p)]);
+    let a = send(&mut v, &doc, &reg, &[down_mods(p, left_mods(), 1), up(p)]);
     assert_eq!(
         loops(&a),
         vec![((6 * BAR, 7 * BAR), true)],
@@ -204,24 +225,16 @@ fn alt_click_in_the_ruler_sets_the_left_locator_snapped() {
 }
 
 #[test]
-fn ctrl_and_cmd_click_in_the_ruler_set_the_right_locator() {
+fn the_right_locator_click_in_the_ruler_sets_the_right_locator() {
     let (doc, reg, mut v) = setup(Snap::Bar);
-    let cmd = Modifiers {
-        meta: true,
-        ..Modifiers::NONE
-    };
-    for m in [Modifiers::CTRL, cmd] {
+    {
+        let m = right_mods();
         let p = Point::new(v.tick_to_x(6 * BAR) - 3.0, v.ruler_label_y());
         let a = send(&mut v, &doc, &reg, &[down_mods(p, m, 1), up(p)]);
         assert_eq!(loops(&a), vec![((BAR, 6 * BAR), true)]);
     }
     let p = Point::new(v.tick_to_x(0), v.ruler_label_y());
-    let a = send(
-        &mut v,
-        &doc,
-        &reg,
-        &[down_mods(p, Modifiers::CTRL, 1), up(p)],
-    );
+    let a = send(&mut v, &doc, &reg, &[down_mods(p, right_mods(), 1), up(p)]);
     assert_eq!(loops(&a), vec![((0, BAR), true)]);
 }
 
@@ -230,12 +243,7 @@ fn the_locator_clicks_beat_the_razor_and_ctrl_alt_still_locates() {
     let (doc, reg, mut v) = setup(Snap::Bar);
     v.set_tool(Tool::Razor);
     let p = Point::new(v.tick_to_x(2 * BAR), v.ruler_label_y());
-    let a = send(
-        &mut v,
-        &doc,
-        &reg,
-        &[down_mods(p, Modifiers::CTRL, 1), up(p)],
-    );
+    let a = send(&mut v, &doc, &reg, &[down_mods(p, right_mods(), 1), up(p)]);
     assert_eq!(loops(&a), vec![((BAR, 2 * BAR), true)]);
     assert_eq!(song_commands(&a).len(), 1, "the razor does not split");
     v.set_tool(Tool::Select);
@@ -254,4 +262,25 @@ fn the_playhead_does_not_take_a_clip_edge_resize_under_it() {
     let a = send(&mut v, &doc, &reg, &[down(edge), mv(to), up(to)]);
     assert!(locates(&a).is_empty(), "{a:?}");
     assert!(!song_commands(&a).is_empty(), "the clip resizes");
+}
+
+#[test]
+fn shift_click_in_the_ruler_sets_the_end_marker_at_the_snapped_tick() {
+    let (doc, reg, mut v) = setup(Snap::Bar);
+    let p = Point::new(v.tick_to_x(7 * BAR) + 3.0, v.ruler_label_y());
+    let a = send(
+        &mut v,
+        &doc,
+        &reg,
+        &[down_mods(p, Modifiers::SHIFT, 1), up(p)],
+    );
+    let ends: Vec<i64> = song_commands(&a)
+        .iter()
+        .filter_map(|c| match c {
+            SongCommand::SetSongEnd(t) => Some(*t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends, vec![7 * BAR]);
+    assert!(locates(&a).is_empty() && loops(&a).is_empty());
 }

@@ -168,6 +168,8 @@ pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8"
 pub const CABLE_ARGS: &[&str] = &["show", "hover", "hide"];
 /// The values of `transport.input_quantize`.
 pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
+/// The values of `transport.loop_move`: the loop moves by bars or its length changes by bars.
+pub const LOOP_MOVE_ARGS: &[&str] = &["bar:-1", "bar:+1", "length:-1", "length:+1"];
 /// The values of `transport.go_locator`.
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `file.open_recent`: the place in the recent list, 0 the newest song.
@@ -266,8 +268,15 @@ pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit"];
 pub const LANE_FOLD_ARGS: &[&str] = &["fold", "unfold"];
 /// The values of `sequencer.audio_fade_shape`.
 pub const FADE_SHAPE_ARGS: &[&str] = &["linear", "equal_power", "exponential", "s_curve"];
-/// The values of `sequencer.audio_crossfade`.
-pub const CROSSFADE_ARGS: &[&str] = &["off", "linear", "equal_power", "exponential", "s_curve"];
+/// The values of `sequencer.audio_crossfade`: `toggle` turns the crossfade on (equal power) or off.
+pub const CROSSFADE_ARGS: &[&str] = &[
+    "toggle",
+    "off",
+    "linear",
+    "equal_power",
+    "exponential",
+    "s_curve",
+];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
 /// The values of `sequencer.audio_transpose`.
@@ -1056,6 +1065,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd(
+        "sequencer.close_clip",
+        "Close Clip",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.delete_automation_lane",
         "Delete Automation Lane",
         G::Sequencer,
@@ -1540,6 +1556,12 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "transport.all_notes_off",
+        "All Notes Off",
+        G::Transport,
+        C::Global,
+    ),
+    cmd(
         "transport.auto_create_lanes",
         "Auto-create Lanes",
         G::Transport,
@@ -1602,6 +1624,9 @@ const COMMANDS: &[CommandDef] = &[
         G::Transport,
         C::Sequencer,
     ),
+    cmd("transport.loop_move", "Move Loop", G::Transport, C::Global)
+        .arg(LOOP_MOVE_ARGS)
+        .rep(),
     cmd(
         "transport.loop_to_selection",
         "Loop to Selection",

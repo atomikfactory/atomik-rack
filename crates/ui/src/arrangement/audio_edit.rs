@@ -466,11 +466,17 @@ impl ArrangementView {
                 })
             }
             "sequencer.audio_crossfade" => {
-                let xfade = match arg? {
-                    "off" => None,
-                    other => Some(FadeCurve::from_id(other)?),
+                // `toggle`: each clip's crossfade goes off when on, to equal power when off.
+                let fixed = match arg? {
+                    "toggle" => None,
+                    "off" => Some(None),
+                    other => Some(Some(FadeCurve::from_id(other)?)),
                 };
                 Box::new(move |_, a, _| {
+                    let xfade = fixed.unwrap_or(match a.xfade {
+                        Some(_) => None,
+                        None => Some(FadeCurve::EqualPower),
+                    });
                     (a.xfade != xfade).then(|| AudioClipContent { xfade, ..a.clone() })
                 })
             }
