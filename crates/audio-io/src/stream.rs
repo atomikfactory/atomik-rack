@@ -90,12 +90,10 @@ impl RunningStream {
     /// Telemetry since the previous call (averages and peaks reset on read; counters are totals).
     ///
     /// The first call after a failed real-time promotion of the audio thread also prints a
-    /// one-time warning to stderr (from this, the control thread; the callback never prints).
+    /// one-time warning to the log (from this, the control thread; the callback never logs).
     pub fn telemetry(&self) -> Telemetry {
         if self.promotion.take_warning() {
-            eprintln!(
-                "atomik-audio-io: warning: could not raise the audio thread to real-time priority"
-            );
+            log::warn!("could not raise the audio thread to real-time priority");
         }
         self.telemetry.snapshot()
     }
