@@ -104,6 +104,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.set_roles(roles.clone());
         self.piano_roll.set_roles(roles.clone());
         self.view.set_roles(roles.clone());
+        self.console.set_roles(roles.clone());
     }
 
     /// Sets the start state of follow in the arrangement and the piano roll (the Workflow
