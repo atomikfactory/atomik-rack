@@ -32,6 +32,27 @@ struct Fake {
     host_inputs: Cell<Option<u16>>,
     /// Every start naming this output device fails (`"*"`: every start fails).
     broken_device: RefCell<Option<String>>,
+    /// What the MIDI output thread sent, as `(port, bytes)`.
+    out_wire: OutWire,
+}
+
+/// What a fake MIDI output was sent: `(port, bytes)` in order.
+type OutWire = Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+/// A MIDI output port that logs what it is sent.
+struct FakeOut {
+    name: String,
+    wire: OutWire,
+}
+
+impl atomik_midi_io::out::MidiOutPort for FakeOut {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), MidiError> {
+        self.wire
+            .lock()
+            .unwrap()
+            .push((self.name.clone(), bytes.to_vec()));
+        Ok(())
+    }
 }
 
 struct FakeStream {
@@ -176,6 +197,16 @@ impl AudioBackend for &Fake {
         })
     }
 
+    fn midi_out_opener(&self) -> atomik_midi_io::out::Opener {
+        let wire = Arc::clone(&self.out_wire);
+        Arc::new(move |name| {
+            Ok(Box::new(FakeOut {
+                name: name.to_owned(),
+                wire: Arc::clone(&wire),
+            }) as Box<dyn atomik_midi_io::out::MidiOutPort>)
+        })
+    }
+
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {
         let i = crate::midi::match_port(&self.visible(), name)?;
         let port = self.visible()[i].clone();
@@ -208,6 +239,7 @@ fn settings() -> AudioSettings {
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
         surface: crate::settings::SurfaceSettings::default(),
+        midi_out_port: None,
         device_loss: crate::settings::DeviceLossSettings::default(),
     }
 }
@@ -1081,4 +1113,126 @@ fn the_dialogs_copy_never_replaces_the_remembered_configuration() {
     assert!(remembered.is_some());
     s.set_settings(settings());
     assert_eq!(s.settings().device_loss.last_good, remembered);
+}
+
+// ---- MIDI Out devices -------------------------------------------------------------------
+
+/// A MIDI Out device in the session's engine, and the handle to feed its tap as its audio
+/// thread would.
+fn midi_out_device() -> (Box<dyn Device>, Arc<atomik_device_sdk::MidiTap>) {
+    let device = atomik_devices::midi_out::MidiOut::new();
+    let tap = device.midi_tap().unwrap();
+    (Box::new(device), tap)
+}
+
+fn tap_push(tap: &atomik_device_sdk::MidiTap, frame: u64, bytes: &[u8]) {
+    assert!(tap.push(atomik_device_sdk::MidiEvent::new(frame, bytes).unwrap()));
+}
+
+/// Waits (up to two seconds) until `fake` has sent at least `n` messages.
+fn wait_for_out(fake: &Fake, n: usize) -> Vec<(String, Vec<u8>)> {
+    for _ in 0..400 {
+        if fake.out_wire.lock().unwrap().len() >= n {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    fake.out_wire.lock().unwrap().clone()
+}
+
+#[test]
+fn no_output_thread_runs_without_a_midi_out_device() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    s.insert_device(DeviceInstanceId(1), synth(), &[]).unwrap();
+    s.set_midi_out_ports(&[]);
+    assert!(s.running.as_ref().unwrap().midi_out.is_none());
+}
+
+#[test]
+fn a_midi_out_devices_messages_go_to_its_port_and_the_fallback_port_serves_the_rest() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    let (a, tap_a) = midi_out_device();
+    let (b, tap_b) = midi_out_device();
+    s.insert_device(DeviceInstanceId(1), a, &[]).unwrap();
+    s.insert_device(DeviceInstanceId(2), b, &[]).unwrap();
+    assert!(s.running.as_ref().unwrap().midi_out.is_some());
+    // The first device chose a port; the second has none and the settings name none either.
+    s.set_midi_out_ports(&[
+        (DeviceInstanceId(1), Some("Synth A".into())),
+        (DeviceInstanceId(2), None),
+    ]);
+    tap_push(&tap_a, 0, &[0x90, 60, 100]);
+    tap_push(&tap_b, 0, &[0x90, 61, 100]);
+    let wire = wait_for_out(&fake, 1);
+    std::thread::sleep(Duration::from_millis(30));
+    assert_eq!(wire, vec![("Synth A".to_string(), vec![0x90, 60, 100])]);
+    assert_eq!(
+        fake.out_wire.lock().unwrap().len(),
+        1,
+        "no port, no message"
+    );
+    // The settings' fallback port takes the second device from now on, and a change of it moves
+    // the device: its sounding note is released where it was.
+    let mut next = settings();
+    next.midi_out_port = Some("Fallback".into());
+    assert_eq!(s.set_settings(next), SettingsChange::None);
+    tap_push(&tap_b, 0, &[0x90, 62, 100]);
+    let wire = wait_for_out(&fake, 2);
+    assert_eq!(wire[1], ("Fallback".to_string(), vec![0x90, 62, 100]));
+    let mut next = settings();
+    next.midi_out_port = Some("Other".into());
+    s.set_settings(next);
+    tap_push(&tap_b, 0, &[0x90, 63, 100]);
+    let wire = wait_for_out(&fake, 5);
+    let on_fallback: Vec<_> = wire.iter().filter(|(p, _)| p == "Fallback").collect();
+    assert_eq!(
+        on_fallback.last().unwrap().1,
+        vec![0xB0, 123, 0],
+        "released on the port it left: {wire:?}"
+    );
+    assert_eq!(
+        wire.last().unwrap(),
+        &("Other".to_string(), vec![0x90, 63, 100])
+    );
+}
+
+#[test]
+fn removing_the_device_or_stopping_the_session_releases_what_it_started() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    let (a, tap_a) = midi_out_device();
+    s.insert_device(DeviceInstanceId(1), a, &[]).unwrap();
+    s.set_midi_out_ports(&[(DeviceInstanceId(1), Some("Synth".into()))]);
+    tap_push(&tap_a, 0, &[0x92, 60, 100]);
+    wait_for_out(&fake, 1);
+    s.remove_device(DeviceInstanceId(1)).unwrap();
+    let wire = wait_for_out(&fake, 3);
+    assert_eq!(
+        wire[1..],
+        [
+            ("Synth".to_string(), vec![0x82, 60, 0]),
+            ("Synth".to_string(), vec![0xB2, 123, 0]),
+        ],
+        "a note off and All Notes Off on its channel"
+    );
+    // A second device, then the whole session goes away.
+    let (b, tap_b) = midi_out_device();
+    s.insert_device(DeviceInstanceId(3), b, &[]).unwrap();
+    s.set_midi_out_ports(&[(DeviceInstanceId(3), Some("Synth".into()))]);
+    tap_push(&tap_b, 0, &[0x90, 70, 100]);
+    wait_for_out(&fake, 4);
+    s.shutdown();
+    let wire = fake.out_wire.lock().unwrap().clone();
+    assert_eq!(
+        wire[4..],
+        [
+            ("Synth".to_string(), vec![0x80, 70, 0]),
+            ("Synth".to_string(), vec![0xB0, 123, 0]),
+        ]
+    );
 }

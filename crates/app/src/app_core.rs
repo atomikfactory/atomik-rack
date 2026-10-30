@@ -211,6 +211,8 @@ pub struct AppCore<S: EngineSink> {
     document: Document,
     view: RackView,
     ids: BTreeMap<DeviceKey, DeviceInstanceId>,
+    /// The MIDI Out ports last handed to the sink (see `app_core_midi_out.rs`).
+    midi_out_sent: Vec<(DeviceInstanceId, Option<String>)>,
     next_id: u32,
     topology: Topology,
     sink: S,
@@ -436,6 +438,7 @@ impl<S: EngineSink> AppCore<S> {
             document: Document::new(doc),
             view,
             ids: BTreeMap::new(),
+            midi_out_sent: Vec::new(),
             next_id: 1,
             topology: Topology::new(&config),
             sink,
@@ -1247,6 +1250,9 @@ impl<S: EngineSink> AppCore<S> {
             self.insert_flat(device);
         }
         self.plugins_after_rebuild();
+        // The new sink session knows no ports yet.
+        self.midi_out_sent.clear();
+        self.push_midi_out_ports();
         self.submit_routing_with(&expanded);
         self.push_solo_silence();
         self.push_vca_feeds();
@@ -1483,6 +1489,7 @@ impl<S: EngineSink> AppCore<S> {
             self.analysers.set_devices(analysers::analyser_keys(exp));
         }
         self.flush_song(&mut stale);
+        self.push_midi_out_ports();
         if restart || self.doc().input_channels != self.engine_inputs {
             // The host stream opens the document's input count, or a track was frozen or
             // unfrozen: restart the engine.
@@ -2921,6 +2928,9 @@ pub use library::LoadTarget;
 #[path = "app_core_patches.rs"]
 mod patches;
 
+#[path = "app_core_midi_out.rs"]
+mod midi_out;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
@@ -3077,6 +3087,10 @@ mod library_tests;
 #[cfg(test)]
 #[path = "app_core_patches_tests.rs"]
 mod patches_tests;
+
+#[cfg(test)]
+#[path = "app_core_midi_out_tests.rs"]
+mod midi_out_tests;
 
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]

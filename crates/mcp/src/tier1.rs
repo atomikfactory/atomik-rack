@@ -521,6 +521,9 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             if !d.patch_name.is_empty() {
                 v["patch"] = json!(d.patch_name);
             }
+            if let Some(port) = d.midi_out_port() {
+                v["midi_out_port"] = json!(port);
+            }
             if include_params {
                 let params: serde_json::Map<String, Value> = d
                     .params
