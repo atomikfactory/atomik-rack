@@ -309,24 +309,22 @@ pub(crate) fn is_noop(edit: &Edit) -> bool {
 }
 
 /// Puts the new device of a creation `edit` (its first `Insert`) at the resolved `slot`:
-/// sets the flat index and the column, and prepends the new column when the slot adds one.
-///
-/// # Panics
-/// If `edit` holds no insert, which a successful creation always does.
+/// sets the flat index and the column, and prepends the new column when the slot adds one. An
+/// edit that holds no insert (a successful creation always does) is returned as it is.
 pub(crate) fn place_new_device(doc: &RackDoc, slot: ResolvedSlot, edit: Edit) -> Edit {
     let mut edits = match edit {
         Edit::Compound(edits) => edits,
         single => vec![single],
     };
-    let first = edits
-        .iter_mut()
-        .find_map(|e| match e {
-            Edit::Insert { index, device, .. } => Some((index, device)),
-            _ => None,
-        })
-        .expect("a creation inserts its device");
-    *first.0 = slot.index;
-    first.1.column = slot.column;
+    let first = edits.iter_mut().find_map(|e| match e {
+        Edit::Insert { index, device, .. } => Some((index, device)),
+        _ => None,
+    });
+    let Some((index, device)) = first else {
+        return Edit::Compound(edits);
+    };
+    *index = slot.index;
+    device.column = slot.column;
     if slot.adds_column {
         edits.insert(
             0,
@@ -336,9 +334,8 @@ pub(crate) fn place_new_device(doc: &RackDoc, slot: ResolvedSlot, edit: Edit) ->
             },
         );
     }
-    if edits.len() == 1 {
-        edits.pop().expect("one edit")
-    } else {
-        Edit::Compound(edits)
+    match <[Edit; 1]>::try_from(edits) {
+        Ok([only]) => only,
+        Err(edits) => Edit::Compound(edits),
     }
 }

@@ -37,7 +37,7 @@ fn container_of<'d>(doc: &'d RackDoc, key: &DeviceKey) -> Result<&'d ContainerDo
 /// Performs `edit` on a scratch copy and checks the whole project; the edit when it passes.
 fn validated(doc: &RackDoc, registry: &Registry, edit: Edit) -> Result<Edit, ModelError> {
     let mut scratch = doc.clone();
-    edit.perform(&mut scratch);
+    edit.perform(&mut scratch)?;
     scratch.check_containers(registry)?;
     Ok(edit)
 }

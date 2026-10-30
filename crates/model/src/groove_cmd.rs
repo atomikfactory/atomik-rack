@@ -6,7 +6,7 @@ use crate::groove::{
 };
 use crate::history::Edit;
 use crate::song::{Clip, ClipContent, ClipId, Song, SongCommand};
-use crate::song_cmd::{bad, range};
+use crate::song_cmd::{bad, check_note, range};
 use crate::{DeviceKey, ModelError, RackDoc};
 use std::collections::BTreeSet;
 
@@ -58,6 +58,11 @@ fn clip_edit(
         return Ok(None);
     }
     let out = quantize_notes(notes, selected, c.start - c.offset, clip.0, params, groove);
+    // The same rules a SetClipContent of these notes would meet, so the step is always one the
+    // document accepts (and saves).
+    for n in &out.notes {
+        check_note(n.tick, n.length, n.key, n.velocity).map_err(range)?;
+    }
     if out.notes == *notes {
         return Ok(None);
     }

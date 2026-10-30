@@ -4,8 +4,11 @@
 mod common;
 
 use atomik_device_sdk::Registry;
-use atomik_model::{ClipContent, Document, SongCommand, load_project, save_project};
+use atomik_model::{
+    ClipContent, DeviceSnapshot, Document, SongCommand, WorkflowCommand, load_project, save_project,
+};
 use common::song::*;
+use common::workflow::wf;
 use common::*;
 
 /// The song with one track on `lead`; the End is at bar 5.
@@ -119,4 +122,66 @@ fn the_end_round_trips_through_the_project_file() {
     let loaded = load_project(&text, &reg).unwrap();
     assert_eq!(loaded.song.end_tick(), 6 * BAR);
     assert_eq!(save_project(&loaded), text);
+}
+
+/// A document with a clip of `len` bars at bar 2 on `lead`, the End pulled back inside it.
+fn doc_with_clip_past_the_end(reg: &Registry) -> Document {
+    let mut d = doc(reg);
+    add(&mut d, reg, BAR, 2 * BAR);
+    d.apply(sc(SongCommand::SetSongEnd(BAR)), reg).unwrap();
+    d
+}
+
+#[test]
+fn duplicating_a_track_whose_clips_pass_the_end_moves_the_end_out() {
+    let reg = registry();
+    let mut d = doc_with_clip_past_the_end(&reg);
+    let before = d.doc().clone();
+    d.apply(
+        wf(WorkflowCommand::DuplicateTrack {
+            device: key("lead"),
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().song.tracks.len(), 2);
+    assert_eq!(
+        d.doc().song.end_tick(),
+        3 * BAR,
+        "the copy's clip ends at bar 4"
+    );
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before, "one undo step takes the End back too");
+}
+
+#[test]
+fn pasting_devices_with_their_tracks_past_the_end_moves_the_end_out() {
+    let reg = registry();
+    let mut d = doc_with_clip_past_the_end(&reg);
+    let snapshot = DeviceSnapshot::capture(d.doc(), &[key("lead")], true).unwrap();
+    let before = d.doc().clone();
+    d.apply(
+        wf(WorkflowCommand::PasteDevices {
+            snapshot,
+            container: None,
+            at: usize::MAX,
+        }),
+        &reg,
+    )
+    .unwrap();
+    assert_eq!(d.doc().song.tracks.len(), 2);
+    assert_eq!(d.doc().song.end_tick(), 3 * BAR);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc(), &before);
+}
+
+#[test]
+fn a_clip_whose_bar_line_would_pass_the_last_tick_stops_the_end_at_the_clip() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    let last = atomik_model::MAX_TICK;
+    let c = clip(0, last, ClipContent::Notes(Vec::new()));
+    d.apply(add_clip("lead", 0, c), &reg).unwrap();
+    assert_eq!(d.doc().song.end_tick(), last, "the End covers the clip");
+    d.doc().validate().unwrap();
 }

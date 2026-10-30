@@ -54,6 +54,7 @@ mod steps_cmd;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
+mod validate;
 pub mod warp;
 mod workflow;
 mod workflow_cmd;
@@ -143,6 +144,7 @@ pub use console_snapshot::{
 };
 pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
+pub use history::InvariantError;
 use history::{Edit, song_end_growth};
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use organise::{
@@ -160,6 +162,7 @@ pub use song::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub use takes::{CompSegment, TakeGroup};
+pub use validate::Violation;
 pub use warp::{
     AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,
     WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
@@ -828,6 +831,14 @@ pub enum ModelError {
     /// Patch file could not be parsed.
     #[error("patch file: {0}")]
     Patch(String),
+    /// An edit did not fit the document it was applied to (an internal fault: the planner and
+    /// the history disagree). The document and its history are unchanged.
+    #[error(transparent)]
+    Invariant(#[from] InvariantError),
+    /// The document breaks one of its own rules (see [`RackDoc::validate`]), or an internal error
+    /// stopped the command: the text says which.
+    #[error("{0}")]
+    Invalid(String),
     /// A fixed part of the rack was asked to go away, move or be copied: `what`
     /// names it (`"master"`, the console master) and `message` says what is refused. The lock is
     /// command-level only: loaders never raise it.
@@ -902,6 +913,13 @@ enum MergeKey {
 impl Document {
     /// Wraps a document with empty history.
     pub fn new(doc: RackDoc) -> Self {
+        debug_assert!(
+            doc.validate().is_ok(),
+            "a document must be valid: {}",
+            doc.validate()
+                .err()
+                .map_or_else(String::new, |v| validate::describe(&v))
+        );
         Self {
             doc,
             undo: Vec::new(),
@@ -936,6 +954,16 @@ impl Document {
         registry: &Registry,
     ) -> Result<Vec<SyncOp>, ModelError> {
         let ops = self.apply_inner(command, registry)?;
+        // Debug builds check the whole document after every command: a planner that breaks an
+        // invariant is caught at the command that broke it.
+        debug_assert!(
+            self.doc.validate().is_ok(),
+            "a command left the document invalid: {}",
+            self.doc
+                .validate()
+                .err()
+                .map_or_else(String::new, |v| validate::describe(&v))
+        );
         self.revision = next_revision();
         Ok(ops)
     }
@@ -1044,10 +1072,17 @@ impl Document {
             _ => None,
         };
         let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
-        let mut ops = edit.perform(&mut self.doc);
+        let mut ops = edit.perform(&mut self.doc)?;
         let edit = match song_end_growth(&self.doc, &edit) {
             Some(grow) => {
-                ops.extend(grow.perform(&mut self.doc));
+                match grow.perform(&mut self.doc) {
+                    Ok(more) => ops.extend(more),
+                    Err(fault) => {
+                        // All or nothing: the command goes back out, history untouched.
+                        edit.inverse().perform(&mut self.doc)?;
+                        return Err(fault.into());
+                    }
+                }
                 Edit::Compound(vec![edit, grow])
             }
             None => edit,
@@ -1141,24 +1176,62 @@ impl Document {
         Ok(ops)
     }
 
-    /// Undoes the last step; `None` when there is nothing to undo.
-    pub fn undo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
-        self.merge = None;
-        let edit = self.undo.pop()?;
-        let ops = edit.inverse().perform(&mut self.doc);
-        self.redo.push(edit);
-        self.revision = next_revision();
-        Some(ops)
+    /// Undoes the last step; `None` when there is nothing to undo (or when the step cannot be
+    /// undone: it stays where it is and the document is unchanged; [`Document::try_undo`] says
+    /// why).
+    pub fn undo(&mut self, registry: &Registry) -> Option<Vec<SyncOp>> {
+        self.try_undo(registry).unwrap_or(None)
     }
 
-    /// Redoes the last undone step; `None` when there is nothing to redo.
-    pub fn redo(&mut self, _registry: &Registry) -> Option<Vec<SyncOp>> {
+    /// Redoes the last undone step; `None` when there is nothing to redo (or when the step cannot
+    /// be redone; see [`Document::undo`]).
+    pub fn redo(&mut self, registry: &Registry) -> Option<Vec<SyncOp>> {
+        self.try_redo(registry).unwrap_or(None)
+    }
+
+    /// Undoes the last step: `Ok(None)` when there is nothing to undo.
+    ///
+    /// # Errors
+    /// [`ModelError::Invariant`] when the step does not fit the document. Nothing changes: the
+    /// document is as it was and the step stays on the undo stack.
+    pub fn try_undo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
-        let edit = self.redo.pop()?;
-        let ops = edit.perform(&mut self.doc);
-        self.undo.push(edit);
-        self.revision = next_revision();
-        Some(ops)
+        let Some(edit) = self.undo.pop() else {
+            return Ok(None);
+        };
+        match edit.inverse().perform(&mut self.doc) {
+            Ok(ops) => {
+                self.redo.push(edit);
+                self.revision = next_revision();
+                Ok(Some(ops))
+            }
+            Err(fault) => {
+                self.undo.push(edit);
+                Err(fault.into())
+            }
+        }
+    }
+
+    /// Redoes the last undone step: `Ok(None)` when there is nothing to redo.
+    ///
+    /// # Errors
+    /// As [`Document::try_undo`]; the step stays on the redo stack.
+    pub fn try_redo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
+        self.merge = None;
+        let Some(edit) = self.redo.pop() else {
+            return Ok(None);
+        };
+        match edit.perform(&mut self.doc) {
+            Ok(ops) => {
+                self.undo.push(edit);
+                self.revision = next_revision();
+                Ok(Some(ops))
+            }
+            Err(fault) => {
+                self.redo.push(edit);
+                Err(fault.into())
+            }
+        }
     }
 
     /// The id allocated by the last successful `AddClip`, `DuplicateClip` or `SplitClip`.
@@ -1190,6 +1263,12 @@ impl Document {
         if self.doc.assets.len() != before {
             self.revision = next_revision();
         }
+    }
+
+    /// How many undo steps there are (a count for tests; merged commands share a step).
+    #[doc(hidden)]
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
     }
 
     /// Whether undo is possible.
@@ -1269,7 +1348,7 @@ impl Document {
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
-                    edit.perform(&mut scratch);
+                    edit.perform(&mut scratch)?;
                     edits.push(edit);
                     new_clip = clip.or(new_clip);
                 }
@@ -1729,4 +1808,20 @@ pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelErr
 /// and [`load_project`] reads it back bit-exactly.
 pub fn save_project(doc: &RackDoc) -> String {
     project::save(doc)
+}
+
+/// [`save_project`] after [`RackDoc::validate`]: a document that breaks its own rules (a NaN in
+/// a stored value, a clip past the last tick) is an error here, before anything is written,
+/// instead of a file that cannot be read back.
+///
+/// # Errors
+/// [`ModelError::Invalid`] listing the violations.
+pub fn save_project_checked(doc: &RackDoc) -> Result<String, ModelError> {
+    doc.validate().map_err(|v| {
+        ModelError::Invalid(format!(
+            "the document is not valid: {}",
+            validate::describe(&v)
+        ))
+    })?;
+    Ok(project::save(doc))
 }

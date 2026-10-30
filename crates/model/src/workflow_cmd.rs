@@ -872,8 +872,11 @@ fn paste_tracks(
         track.armed = false;
         // The entry follows a copied player; one that was not copied is left behind.
         track.notes_to = t.notes_to.as_ref().and_then(|k| map.get(k).cloned());
+        let mut next_group = p.doc().song.next_take_group_id();
         for lane in &mut track.lanes {
+            let mut renumbered: BTreeMap<ClipId, ClipId> = BTreeMap::new();
             for c in &mut lane.clips {
+                renumbered.insert(c.id, ClipId(next));
                 c.id = ClipId(next);
                 next = next
                     .checked_add(1)
@@ -881,6 +884,26 @@ fn paste_tracks(
                 if let ClipContent::Audio(a) = &c.content {
                     check_audio(p.doc(), a)?;
                 }
+            }
+            // A take group is copied whole: its own id, the ids of its takes (clips of the song
+            // like any other) and the lane clips it compiled all become the copy's.
+            for g in &mut lane.take_groups {
+                g.id = next_group;
+                next_group += 1;
+                for take in &mut g.takes {
+                    take.id = ClipId(next);
+                    next = next
+                        .checked_add(1)
+                        .ok_or_else(|| bad_song("clip ids are exhausted"))?;
+                    if let ClipContent::Audio(a) = &take.content {
+                        check_audio(p.doc(), a)?;
+                    }
+                }
+                g.clips = g
+                    .clips
+                    .iter()
+                    .filter_map(|id| renumbered.get(id).copied())
+                    .collect();
             }
         }
         let index = p.doc().song.tracks.len();
@@ -981,12 +1004,14 @@ fn move_devices(doc: &RackDoc, keys: &[DeviceKey], place: Placement) -> Result<E
         let from = current
             .iter()
             .position(|c| c == k)
-            .expect("the target is a permutation");
+            .ok_or_else(|| bad_song("the target order is not a permutation"))?;
         if from != i {
             let k = current.remove(from);
             current.insert(i, k);
             edits.push(Edit::InnerMove {
-                container: parent.clone().expect("a container scope"),
+                container: parent
+                    .clone()
+                    .ok_or_else(|| bad_song("a container scope is needed"))?,
                 from,
                 to: i,
             });
@@ -1029,6 +1054,19 @@ fn clip_of(doc: &RackDoc, id: ClipId) -> Result<(DeviceKey, usize, &Clip), Model
         .clip(id)
         .map(|(t, lane, c)| (t.device.clone(), lane, c))
         .ok_or_else(|| ModelError::UnknownKey(format!("clip {}", id.0)))
+}
+
+/// The kind of lane `lane` of the track of `device`.
+fn lane_kind<'d>(
+    doc: &'d RackDoc,
+    device: &DeviceKey,
+    lane: usize,
+) -> Result<&'d LaneKind, ModelError> {
+    doc.song
+        .track(device)
+        .and_then(|t| t.lanes.get(lane))
+        .map(|l| &l.kind)
+        .ok_or_else(|| bad_song(format!("{device} has no lane {lane}")))
 }
 
 fn lane_name(kind: &LaneKind) -> String {
@@ -1133,12 +1171,7 @@ fn move_clips(
             .song
             .track(&m.track)
             .ok_or_else(|| bad_song(format!("{} has no track", m.track)))?;
-        let kind = &doc
-            .song
-            .track(&device)
-            .expect("clip_of found its track")
-            .lanes[lane]
-            .kind;
+        let kind = lane_kind(doc, &device, lane)?;
         let to = match m.lane {
             Some(l) => {
                 let target = t
@@ -1290,7 +1323,7 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
     }
     clips.sort_by_key(|(_, _, c)| (c.start, c.id));
     let (device, lane, _) = clips[0].clone();
-    let kind = &doc.song.track(&device).expect("the clip has a track").lanes[lane].kind;
+    let kind = lane_kind(doc, &device, lane)?;
     if clips.iter().any(|(d, l, _)| *d != device || *l != lane) {
         return Err(bad_song("clips of different lanes cannot be joined"));
     }
@@ -1385,7 +1418,7 @@ fn content_edit(
 ) -> Result<Edit, ModelError> {
     let (device, lane, c) = clip_of(doc, id)?;
     let desc = rules::descriptor(registry, &rules::device(doc, &device)?.type_id)?;
-    let kind = &doc.song.track(&device).expect("the clip has a track").lanes[lane].kind;
+    let kind = lane_kind(doc, &device, lane)?;
     let content = check_content(doc, merge(c)?, kind, desc)?;
     Ok(Edit::Clip {
         device,

@@ -575,7 +575,7 @@ pub(crate) fn plan(
                         registry,
                     )?;
                     scratch = doc.clone();
-                    edit.perform(&mut scratch);
+                    edit.perform(&mut scratch)?;
                     before.push(edit);
                     &scratch
                 }

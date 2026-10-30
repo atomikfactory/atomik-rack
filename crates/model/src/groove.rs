@@ -403,6 +403,17 @@ pub fn quantize_notes(
     resolve(notes, selected, moved)
 }
 
+/// Claims the first free `(tick, key)` at or after `tick`, or, when everything up to the last tick
+/// is taken, the nearest free one before it: a note never leaves `0..=MAX_TICK`.
+fn free_tick(taken: &mut BTreeSet<(i64, u8)>, tick: i64, key: u8) -> i64 {
+    let at = (tick..=MAX_TICK)
+        .chain((0..tick).rev())
+        .find(|t| !taken.contains(&(*t, key)))
+        .unwrap_or(tick);
+    taken.insert((at, key));
+    at
+}
+
 /// Sorts the moved notes and gives collisions of `(tick, key)` the next free tick: the notes that
 /// did not move claim their places first, then the moved ones in their input order.
 fn resolve(old: &[Note], selected: Option<&BTreeSet<usize>>, moved: Vec<Note>) -> Quantized {
@@ -414,9 +425,7 @@ fn resolve(old: &[Note], selected: Option<&BTreeSet<usize>>, moved: Vec<Note>) -
             if is_moved(i) != pass {
                 continue;
             }
-            while !taken.insert((n.tick, n.key)) {
-                n.tick += 1;
-            }
+            n.tick = free_tick(&mut taken, n.tick, n.key);
             placed.push((n, i));
         }
     }
