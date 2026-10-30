@@ -182,6 +182,13 @@ impl Cli {
             || self.stress_plugins
     }
 
+    /// Whether the command line leaves the start to the app: no project or patch is named and
+    /// no `--stress*` load builds a document. Only then does the "Open last project at
+    /// start-up" preference apply.
+    pub fn starts_empty(&self) -> bool {
+        self.patch.is_none() && !self.stress && !self.stress_song_loads()
+    }
+
     /// The document the app starts with when no file is opened: the generated stress racks
     /// for the `--stress*` options, otherwise the starter project (Audio
     /// I/O, the locked master and the two `main` cables, the same as File, New).
@@ -287,6 +294,19 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(std::iter::once("atomik").chain(args.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn only_a_start_that_names_no_project_may_reopen_the_last_one() {
+        assert!(parse(&[]).starts_empty());
+        assert!(parse(&["--no-audio"]).starts_empty());
+        assert!(
+            !parse(&["song.atomik"]).starts_empty(),
+            "a named project wins"
+        );
+        assert!(!parse(&["--stress"]).starts_empty());
+        assert!(!parse(&["--stress-song"]).starts_empty());
+        assert!(!parse(&["--stress-fx"]).starts_empty());
     }
 
     #[test]

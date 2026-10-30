@@ -8,8 +8,9 @@
 use crate::record::InputQuantize;
 use atomik_model::{FadeCurve, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
-use atomik_ui::keymap::Keymap;
+use atomik_ui::keymap::{Keymap, RECENT_ARGS};
 use atomik_ui::{CableVisibility, Flip, TransportAction};
+use std::borrow::Cow;
 
 /// Something the user asked the app to do (menu item or shortcut).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +19,12 @@ pub enum AppCommand {
     New,
     /// File ▸ Open….
     Open,
+    /// File ▸ Open Recent ▸ a song: the song at this place of the recent list (0 is the newest).
+    OpenRecent(usize),
+    /// File ▸ Open Recent ▸ Clear Menu: forget the recent songs.
+    ClearRecent,
+    /// File ▸ Close: end the song and start a new empty one (asks about unsaved changes).
+    Close,
     /// File ▸ Save.
     Save,
     /// File ▸ Save As….
@@ -329,6 +336,9 @@ impl AppCommand {
         Some(match self {
             AppCommand::New => ("file.new", None),
             AppCommand::Open => ("file.open", None),
+            AppCommand::OpenRecent(i) => ("file.open_recent", Some(RECENT_ARGS.get(*i)?)),
+            AppCommand::ClearRecent => ("file.clear_recent", None),
+            AppCommand::Close => ("file.close", None),
             AppCommand::Save => ("file.save", None),
             AppCommand::SaveAs => ("file.save_as", None),
             AppCommand::ImportAudio => ("file.import_audio", None),
@@ -505,6 +515,11 @@ impl AppCommand {
         Some(match (id, arg) {
             ("file.new", None) => AppCommand::New,
             ("file.open", None) => AppCommand::Open,
+            ("file.open_recent", Some(n)) => {
+                AppCommand::OpenRecent(RECENT_ARGS.iter().position(|a| *a == n)?)
+            }
+            ("file.clear_recent", None) => AppCommand::ClearRecent,
+            ("file.close", None) => AppCommand::Close,
             ("file.save", None) => AppCommand::Save,
             ("file.save_as", None) => AppCommand::SaveAs,
             ("file.import_audio", None) => AppCommand::ImportAudio,
@@ -966,8 +981,9 @@ pub struct FreezeMenu {
 /// One menu item.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuItem {
-    /// Label (`…` marks items that open a dialog).
-    pub label: &'static str,
+    /// Label (`…` marks items that open a dialog). Most are fixed texts; the recent songs are
+    /// named after their files.
+    pub label: Cow<'static, str>,
     /// What it does.
     pub command: AppCommand,
     /// Shortcut text derived from the keymap and the OS, e.g. `Ctrl+S` (`Cmd+S` on macOS).
@@ -985,6 +1001,36 @@ pub enum MenuEntry {
     Item(MenuItem),
     /// A separator line.
     Separator,
+    /// An entry that opens a list of its own (File ▸ Open Recent).
+    Submenu(Submenu),
+}
+
+/// A submenu: a label and the entries it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Submenu {
+    /// Text of the entry in the menu.
+    pub label: &'static str,
+    /// The entries, top to bottom.
+    pub entries: Vec<MenuEntry>,
+}
+
+impl Submenu {
+    /// The items (separators skipped).
+    pub fn items(&self) -> impl Iterator<Item = &MenuItem> {
+        self.entries.iter().flat_map(MenuEntry::items)
+    }
+}
+
+impl MenuEntry {
+    /// The items this entry is or holds: none for a separator, the entry itself for an item,
+    /// the items of its entries for a submenu.
+    pub fn items(&self) -> Box<dyn Iterator<Item = &MenuItem> + '_> {
+        match self {
+            MenuEntry::Item(i) => Box::new(std::iter::once(i)),
+            MenuEntry::Separator => Box::new(std::iter::empty()),
+            MenuEntry::Submenu(s) => Box::new(s.items()),
+        }
+    }
 }
 
 /// A top-level menu.
@@ -997,21 +1043,24 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// The items (separators skipped).
+    /// The items (separators skipped, the items of submenus included).
     pub fn items(&self) -> impl Iterator<Item = &MenuItem> {
-        self.entries.iter().filter_map(|e| match e {
-            MenuEntry::Item(i) => Some(i),
-            MenuEntry::Separator => None,
-        })
+        self.entries.iter().flat_map(MenuEntry::items)
     }
 }
 
 /// The menu bar: File, Edit, View, Transport, Mixer, Audio. Shortcut texts come from `keymap`
 /// (its OS decides `Ctrl` or `Cmd`); no key is written in this function.
 pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
-    let make = |label, command: AppCommand, checked, enabled| {
+    menus_with_recent(state, keymap, &[])
+}
+
+/// [`menus`], with the File ▸ Open Recent submenu listing `recent` (the label of each song,
+/// newest first; at most [`RECENT_ARGS`]'s length are shown).
+pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) -> Vec<Menu> {
+    let make = |label: &'static str, command: AppCommand, checked, enabled| {
         MenuEntry::Item(MenuItem {
-            label,
+            label: Cow::Borrowed(label),
             command,
             shortcut: command.shortcut_text(keymap),
             checked,
@@ -1025,12 +1074,35 @@ pub fn menus(state: &MenuState, keymap: &Keymap) -> Vec<Menu> {
     let quantize =
         |label, q: InputQuantize| check(label, AppCommand::Quantize(q), state.quantize == q);
     let transport = AppCommand::Transport;
+    let open_recent = MenuEntry::Submenu(Submenu {
+        label: "Open Recent",
+        entries: recent
+            .iter()
+            .take(RECENT_ARGS.len())
+            .enumerate()
+            .map(|(i, name)| {
+                MenuEntry::Item(MenuItem {
+                    label: Cow::Owned(name.clone()),
+                    command: AppCommand::OpenRecent(i),
+                    shortcut: None,
+                    checked: None,
+                    enabled: true,
+                })
+            })
+            .chain([
+                MenuEntry::Separator,
+                enabled("Clear Menu", AppCommand::ClearRecent, !recent.is_empty()),
+            ])
+            .collect(),
+    });
     vec![
         Menu {
             title: "File",
             entries: vec![
                 item("New", AppCommand::New),
                 item("Open\u{2026}", AppCommand::Open),
+                open_recent,
+                item("Close", AppCommand::Close),
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
@@ -1719,6 +1791,10 @@ mod tests {
         let mut v = vec![
             AppCommand::New,
             AppCommand::Open,
+            AppCommand::OpenRecent(0),
+            AppCommand::OpenRecent(7),
+            AppCommand::ClearRecent,
+            AppCommand::Close,
             AppCommand::Save,
             AppCommand::SaveAs,
             AppCommand::ImportAudio,
@@ -1943,7 +2019,8 @@ mod tests {
     #[test]
     fn menu_commands_in_the_registry_all_have_a_menu_item() {
         let keymap = legacy(Os::Windows);
-        let model = menus(&state(), &keymap);
+        let recent: Vec<String> = (0..8).map(|i| format!("song {i}")).collect();
+        let model = menus_with_recent(&state(), &keymap, &recent);
         let in_menu: Vec<AppCommand> = model
             .iter()
             .flat_map(Menu::items)
@@ -2207,12 +2284,14 @@ mod tests {
                 "Audio"
             ]
         );
-        let labels = |i: usize| m[i].items().map(|it| it.label).collect::<Vec<_>>();
+        let labels = |i: usize| m[i].items().map(|it| it.label.as_ref()).collect::<Vec<_>>();
         assert_eq!(
             labels(0),
             [
                 "New",
                 "Open\u{2026}",
+                "Clear Menu",
+                "Close",
                 "Save",
                 "Save As\u{2026}",
                 "Import Audio\u{2026}",

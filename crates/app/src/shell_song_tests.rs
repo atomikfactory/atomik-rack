@@ -371,7 +371,7 @@ fn transport_menu_lists_the_transport_and_quantize_choices() {
             "Audio"
         ]
     );
-    let labels: Vec<_> = model[3].items().map(|i| i.label).collect();
+    let labels: Vec<_> = model[3].items().map(|i| i.label.as_ref()).collect();
     for want in [
         "Play / Stop",
         "Record",

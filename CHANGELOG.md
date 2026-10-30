@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- **Save, Don't Save or Cancel.** Closing, quitting, opening or creating a song with unsaved changes now asks **Yes** (save, then carry on), **No** (discard) or **Cancel**, instead of "Discard them?" with no way to save from the question. A song with no file yet asks where to save it first; a cancelled Save As or a save that fails stops the action and the song stays open.
+- **File > Close (`Ctrl+W`) and File > Open Recent.** Close ends the song and starts an empty one, after the same question. **Open Recent** lists the last eight songs you opened or saved, newest first, without duplicates; a song that is gone leaves the list with a message; **Clear Menu** empties it. The list is kept in `recent.json` next to `settings.json`. The commands are `file.close`, `file.open_recent` (the place in the list as the argument) and `file.clear_recent`.
+- **Open last project at start-up.** A Workflow switch (off by default): the app starts with the song that was open last time, unless a project is named on the command line.
 - **Autosave for every project.** A changed project is copied to the recovery folder every few minutes (Settings, Workflow, **Autosave**: off, 1, 2, 5 by default, 10, 15 or 30 minutes), with or without plugins, by a background thread, so a frame never waits for it. After Atomik ends unexpectedly the next start shows a banner with OPEN RECOVERY. Unfinished audio recordings left by the crashed run come back as a `Recovered take` track in the project; the recording file is deleted only after you save.
 
 ### Fixed
@@ -14,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`settings.json` and `ui-state.json` can no longer be left truncated.** They are written to a temporary file and renamed. A file that cannot be read is kept as `.bad` and Atomik starts with the defaults and says so.
 
 ### Changed
+- **`session_command` and `session_status` follow the new question.** The unsaved-changes request of `session_command` is now `confirm_save` (was `confirm_discard`; `confirm_save_open` for a project picked in the library); `confirm: true` answers Don't Save. `session_status` lists `recent_files`.
 - **Moving the pointer over the app costs next to nothing.** The document carries a revision number that changes with every edit, undo, redo and data sync; the unsaved-changes mark (` *` in the title) is compared once per change instead of once per input event, the sequencer and the piano roll read the document again only when it changed, and a pointer move that changes nothing no longer repaints any window. A hover that changes what is shown, or a drag, still repaints, and only the window it happens in. Large songs no longer slow the pointer down.
 
 ## [0.2.0-rc.2] - 2026-10-28

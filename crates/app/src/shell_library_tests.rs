@@ -324,7 +324,12 @@ fn file_event_a_project_dropped_anywhere_asks_before_discarding_changes() {
         pos: at,
         paths: vec![project.clone()],
     });
-    assert_eq!(requests, vec![ShellRequest::ConfirmDiscardOpen(project)]);
+    assert_eq!(
+        requests,
+        vec![ShellRequest::ConfirmSave {
+            then: PendingAction::OpenFile(project)
+        }]
+    );
     assert!(!s.core().is_busy(), "not imported as audio");
 }
 
@@ -360,7 +365,9 @@ fn library_open_request_from_the_browser_follows_the_dirty_rule() {
         .browse(atomik_ui::BrowseAction::OpenProject(patch.clone()));
     assert_eq!(
         s.handle(&UiEvent::FileHoverCancel),
-        vec![ShellRequest::ConfirmDiscardOpen(patch.clone())]
+        vec![ShellRequest::ConfirmSave {
+            then: PendingAction::OpenFile(patch.clone())
+        }]
     );
     // The same request on a clean document opens the item as a project.
     let mut clean = shell_with(&dir, Some(dir.join("Library")));

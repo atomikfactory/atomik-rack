@@ -63,6 +63,9 @@ pub struct WorkflowPrefs {
     pub library_folder: Option<PathBuf>,
     /// Minutes between autosave snapshots of a changed project (0: off, default 5).
     pub autosave_minutes: u32,
+    /// Start with the song that was open last time, when no project is named on the command
+    /// line (default off).
+    pub open_last_project: bool,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -79,6 +82,7 @@ impl Default for WorkflowPrefs {
             keys_notice_seen: false,
             library_folder: None,
             autosave_minutes: 5,
+            open_last_project: false,
             extra: BTreeMap::new(),
         }
     }
@@ -115,6 +119,7 @@ impl WorkflowPrefs {
                 .get("autosave_minutes")
                 .and_then(Value::as_u64)
                 .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
+            open_last_project: flag("open_last_project", defaults.open_last_project),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -129,6 +134,7 @@ impl WorkflowPrefs {
                             | "keys_notice_seen"
                             | "library_folder"
                             | "autosave_minutes"
+                            | "open_last_project"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -158,6 +164,10 @@ impl WorkflowPrefs {
         map.insert(
             "autosave_minutes".into(),
             Value::from(self.autosave_minutes),
+        );
+        map.insert(
+            "open_last_project".into(),
+            Value::Bool(self.open_last_project),
         );
         if let Some(folder) = &self.library_folder {
             map.insert(
@@ -525,5 +535,19 @@ mod tests {
         let big = WorkflowPrefs::from_json("{\"autosave_minutes\": 99999}").unwrap();
         assert_eq!(big.autosave_minutes, 240);
         assert!(!big.extra.contains_key("autosave_minutes"));
+    }
+
+    #[test]
+    fn open_last_project_round_trips_and_defaults_to_off() {
+        assert!(!WorkflowPrefs::default().open_last_project);
+        assert!(!WorkflowPrefs::from_json("{}").unwrap().open_last_project);
+        let on = WorkflowPrefs::from_json("{\"open_last_project\": true}").unwrap();
+        assert!(on.open_last_project);
+        assert!(on.to_json().contains("\"open_last_project\": true"));
+        assert_eq!(WorkflowPrefs::from_json(&on.to_json()).unwrap(), on);
+        assert!(!on.extra.contains_key("open_last_project"));
+        // A wrongly typed value is the default.
+        let bad = WorkflowPrefs::from_json("{\"open_last_project\": \"yes\"}").unwrap();
+        assert!(!bad.open_last_project);
     }
 }

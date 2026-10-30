@@ -202,6 +202,10 @@ pub struct AppCore<S: EngineSink> {
     topology: Topology,
     sink: S,
     file: Option<PathBuf>,
+    /// The songs opened or saved lately (see `recent`).
+    recent: crate::recent::RecentFiles,
+    /// Where `recent` is kept (`None`: in memory only).
+    recent_path: Option<PathBuf>,
     saved: RackDoc,
     /// Counts the baselines `saved` has had (see `set_saved`).
     saved_gen: u64,
@@ -392,6 +396,8 @@ impl<S: EngineSink> AppCore<S> {
             topology: Topology::new(&config),
             sink,
             file,
+            recent: crate::recent::RecentFiles::default(),
+            recent_path: None,
             target,
             rejection: None,
             arrangement: ArrangementView::new(theme.clone()),
@@ -499,6 +505,48 @@ impl<S: EngineSink> AppCore<S> {
     /// The file the rack was loaded from or last saved to.
     pub fn file(&self) -> Option<&Path> {
         self.file.as_deref()
+    }
+
+    /// The songs opened or saved lately, newest first.
+    pub fn recent(&self) -> &[PathBuf] {
+        self.recent.paths()
+    }
+
+    /// Keeps the recent list in `path` (read now; written whenever it changes).
+    pub fn set_recent_path(&mut self, path: PathBuf) {
+        self.recent = crate::recent::RecentFiles::load(&path);
+        self.recent_path = Some(path);
+    }
+
+    /// Forgets every recent song.
+    pub fn clear_recent(&mut self) {
+        if self.recent.clear() {
+            self.store_recent();
+        }
+    }
+
+    /// Drops `path` from the recent list (the song is gone).
+    pub fn forget_recent(&mut self, path: &Path) {
+        if self.recent.remove(path) {
+            self.store_recent();
+        }
+    }
+
+    /// Puts the current project file first in the recent list.
+    pub(super) fn note_recent(&mut self) {
+        let Some(file) = self.file.clone().filter(|p| is_project_path(p)) else {
+            return;
+        };
+        if self.recent.push(&file) {
+            self.store_recent();
+        }
+    }
+
+    /// Writes the recent list; a failure is not worth a message (the list is a convenience).
+    fn store_recent(&self) {
+        if let Some(path) = &self.recent_path {
+            let _ = self.recent.save(path);
+        }
     }
 
     /// True when the rack differs from the last opened or saved state.

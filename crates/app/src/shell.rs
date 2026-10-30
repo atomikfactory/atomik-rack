@@ -128,7 +128,7 @@
 //! [`ShellRequest`]s.
 
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
-use crate::commands::{AppCommand, Menu, MenuState, menus};
+use crate::commands::{AppCommand, Menu, MenuState, menus_with_recent};
 use crate::context_menus::{self, MenuEnable};
 use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
@@ -220,11 +220,19 @@ pub enum ShellRequest {
     /// panel's IMPORT), starting in [`Shell::midi_preset_dir`], then call
     /// [`Shell::import_midi_preset_from`] with the path.
     PickImportMidiPreset,
-    /// The rack has unsaved changes: ask, then call [`Shell::confirmed`] with the command.
-    ConfirmDiscard(AppCommand),
-    /// A project was picked in the library (or dropped on the window) and the rack has unsaved
-    /// changes: ask, then call [`Shell::open_file`] with the path.
-    ConfirmDiscardOpen(PathBuf),
+    /// The rack has unsaved changes and `then` would lose them: ask Save, Don't Save or Cancel.
+    /// Save: call [`Shell::save_then`]; Don't Save: call [`Shell::discard_then`]; Cancel: do
+    /// nothing.
+    ConfirmSave {
+        /// What waits for the answer.
+        then: PendingAction,
+    },
+    /// Show a save-file dialog for a project, then call [`Shell::save_to_then`] with the path
+    /// and `then`. A cancelled dialog ends the pending action.
+    PickSaveFileThen {
+        /// What continues once the project is saved.
+        then: PendingAction,
+    },
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
@@ -245,6 +253,16 @@ pub enum ShellRequest {
     ToggleMaximise(WindowKind),
     /// Close the window and exit.
     Quit,
+}
+
+/// What waits for the answer to the question about unsaved changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingAction {
+    /// A command that replaces or ends the song: New, Open, Close, Quit.
+    Command(AppCommand),
+    /// Open this project (picked in the library, dropped on the window or chosen from the
+    /// recent songs).
+    OpenFile(PathBuf),
 }
 
 /// How the shell is set up.
@@ -1578,7 +1596,13 @@ impl<B: AudioBackend> Shell<B> {
 
     /// The menus, with shortcut texts derived from the active keymap.
     pub fn menu_model(&self) -> Vec<Menu> {
-        menus(&self.menu_state(), self.router.keymap())
+        let recent: Vec<String> = self
+            .core
+            .recent()
+            .iter()
+            .map(|p| crate::recent::menu_label(p))
+            .collect();
+        menus_with_recent(&self.menu_state(), self.router.keymap(), &recent)
     }
 
     /// The modifiers last reported by the window.
@@ -3551,7 +3575,9 @@ impl<B: AudioBackend> Shell<B> {
     /// Opens the project `path` now, or asks first when the rack has unsaved changes.
     fn open_project_request(&mut self, path: PathBuf) {
         if self.core.is_dirty() {
-            self.pending.push(ShellRequest::ConfirmDiscardOpen(path));
+            self.pending.push(ShellRequest::ConfirmSave {
+                then: PendingAction::OpenFile(path),
+            });
         } else {
             self.open_file(&path);
         }
@@ -3657,14 +3683,26 @@ impl<B: AudioBackend> Shell<B> {
         let requests = match command {
             AppCommand::New
             | AppCommand::Open
+            | AppCommand::Close
             | AppCommand::Quit
             | AppCommand::StressRack
             | AppCommand::StressSong => {
                 if self.core.is_dirty() {
-                    vec![ShellRequest::ConfirmDiscard(command)]
+                    vec![ShellRequest::ConfirmSave {
+                        then: PendingAction::Command(command),
+                    }]
                 } else {
                     self.confirmed(command)
                 }
+            }
+            AppCommand::OpenRecent(index) => {
+                self.open_recent(index);
+                Vec::new()
+            }
+            AppCommand::ClearRecent => {
+                self.core.clear_recent();
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
             }
             AppCommand::Save => match self.core.save() {
                 Ok(()) => Vec::new(),
@@ -4243,7 +4281,7 @@ impl<B: AudioBackend> Shell<B> {
     pub fn confirmed(&mut self, command: AppCommand) -> Vec<ShellRequest> {
         self.repaint = true;
         match command {
-            AppCommand::New => {
+            AppCommand::New | AppCommand::Close => {
                 self.core.new_document();
                 Vec::new()
             }
@@ -4261,6 +4299,84 @@ impl<B: AudioBackend> Shell<B> {
             }
             other => self.execute_command(other),
         }
+    }
+
+    /// Carries out what waited for the answer about unsaved changes.
+    fn continue_pending(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        match then {
+            PendingAction::Command(command) => self.confirmed(command),
+            PendingAction::OpenFile(path) => {
+                self.open_file(&path);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Save, in the question about unsaved changes: saves the project, then carries on with
+    /// `then`. A project with no file yet asks for one ([`ShellRequest::PickSaveFileThen`]); a
+    /// save that fails is shown and `then` does not happen.
+    pub fn save_then(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        match self.core.save() {
+            Ok(()) => self.continue_pending(then),
+            Err(AppError::NoPath) => vec![ShellRequest::PickSaveFileThen { then }],
+            Err(e) => {
+                self.notify(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// The file picked for [`ShellRequest::PickSaveFileThen`]: saves the project there, then
+    /// carries on with `then`. A save that fails is shown and `then` does not happen.
+    pub fn save_to_then(&mut self, path: &Path, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        match self.core.save_as(path) {
+            Ok(()) => self.continue_pending(then),
+            Err(e) => {
+                self.notify(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// Don't Save, in the question about unsaved changes: carries on with `then`.
+    pub fn discard_then(&mut self, then: PendingAction) -> Vec<ShellRequest> {
+        self.repaint = true;
+        self.continue_pending(then)
+    }
+
+    /// File > Open Recent: the song at place `index` of the recent list. A song that is gone
+    /// leaves the list with a message.
+    fn open_recent(&mut self, index: usize) {
+        let Some(path) = self.core.recent().get(index).cloned() else {
+            return;
+        };
+        if path.exists() {
+            self.open_project_request(path);
+        } else {
+            self.core.forget_recent(&path);
+            self.notify(format!("{} no longer exists", path.display()));
+        }
+    }
+
+    /// Start-up with the "Open last project at start-up" preference on: opens the newest recent
+    /// song. Returns whether a song was opened. A song that is gone leaves the list with a
+    /// message. Call it only when the command line names no project.
+    pub fn restore_last_project(&mut self) -> bool {
+        if !self.workflow.open_last_project {
+            return false;
+        }
+        let Some(path) = self.core.recent().first().cloned() else {
+            return false;
+        };
+        if !path.exists() {
+            self.core.forget_recent(&path);
+            self.notify(format!("{} no longer exists", path.display()));
+            return false;
+        }
+        self.open_file(&path);
+        true
     }
 
     /// Opens a project or patch file (errors are shown in the view).
@@ -4943,3 +5059,7 @@ mod library_tests;
 #[cfg(test)]
 #[path = "shell_export_tests.rs"]
 mod export_tests;
+
+#[cfg(test)]
+#[path = "shell_save_tests.rs"]
+mod save_tests;
