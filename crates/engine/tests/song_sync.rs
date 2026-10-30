@@ -517,3 +517,22 @@ fn a_followed_clock_is_forwarded_as_clock_out() {
     // 150 BPM: a clock every 800 frames.
     assert!(clocks.windows(2).all(|w| w[1] - w[0] == 800), "{clocks:?}");
 }
+
+#[test]
+fn switching_clock_out_off_while_playing_stops_the_receiver_once() {
+    let (mut e, mut h, tap) = rig();
+    h.transport(TransportCommand::Play).unwrap();
+    run(&mut e, 2_000, 64);
+    drain(&tap);
+    h.sync_out().configure(SyncConfig::default());
+    run(&mut e, 2_000, 64);
+    let got = drain(&tap);
+    assert_eq!(
+        got.iter().filter(|(_, b)| b == &[STOP]).count(),
+        1,
+        "{got:?}"
+    );
+    assert!(clock_frames(&got).is_empty());
+    run(&mut e, 2_000, 64);
+    assert!(drain(&tap).is_empty());
+}

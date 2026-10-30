@@ -478,3 +478,111 @@ fn the_thread_sends_at_the_right_time_and_releases_on_drop() {
         "dropping the thread releases the sounding notes"
     );
 }
+
+fn sync_port(name: &str, offset_ms: i32) -> SyncPort {
+    SyncPort {
+        name: name.to_owned(),
+        offset_ms,
+    }
+}
+
+#[test]
+fn the_clock_goes_to_every_sync_port_with_its_own_offset() {
+    let (rig, opener) = Rig::new();
+    let (mut core, clock, _) = core(opener);
+    let t0 = base();
+    clock.publish(0, t0);
+    // Frame 4_800 is heard 100 ms after the anchor.
+    let tap = tap_with(&[(4_800, &[0xF8]), (9_600, &[0xFA])]);
+    core.set_sync(
+        Some(Arc::clone(&tap)),
+        vec![
+            sync_port("Early", -20),
+            sync_port("Late", 30),
+            sync_port("On time", 0),
+        ],
+        t0,
+    );
+    // Before anything is due nothing is sent; the clamp keeps a negative offset from going
+    // before now.
+    assert_eq!(core.step(t0), Some(ms(t0, 80)));
+    assert!(rig.sent().is_empty());
+    core.step(ms(t0, 80));
+    assert_eq!(rig.sent(), vec![("Early".into(), vec![0xF8])]);
+    core.step(ms(t0, 100));
+    assert_eq!(rig.sent(), vec![("On time".into(), vec![0xF8])]);
+    core.step(ms(t0, 130));
+    assert_eq!(rig.sent(), vec![("Late".into(), vec![0xF8])]);
+    core.step(ms(t0, 250));
+    let mut sent = rig.sent();
+    sent.sort();
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|(_, b)| b == &[0xFA]));
+    assert!(!core.has_backlog());
+}
+
+#[test]
+fn a_clock_message_that_is_late_is_not_pulled_further_forward() {
+    let (rig, opener) = Rig::new();
+    let (mut core, clock, _) = core(opener);
+    let t0 = base();
+    clock.publish(0, t0);
+    let tap = tap_with(&[(480, &[0xF8])]); // 10 ms after the anchor
+    core.set_sync(Some(tap), vec![sync_port("A", -50)], t0);
+    // The step comes 40 ms after the anchor: due long ago, sent at once.
+    core.step(ms(t0, 40));
+    assert_eq!(rig.sent().len(), 1);
+}
+
+#[test]
+fn removing_the_sync_route_drops_what_waits_and_changing_nothing_keeps_it() {
+    let (rig, opener) = Rig::new();
+    let (mut core, clock, _) = core(opener);
+    let t0 = base();
+    clock.publish(0, t0);
+    let tap = tap_with(&[(48_000, &[0xF8])]);
+    let ports = vec![sync_port("A", 0)];
+    core.set_sync(Some(Arc::clone(&tap)), ports.clone(), t0);
+    assert_eq!(core.step(t0), Some(ms(t0, 1000)));
+    // The same route again leaves the queue alone.
+    core.set_sync(Some(Arc::clone(&tap)), ports, t0);
+    assert_eq!(core.step(t0), Some(ms(t0, 1000)));
+    core.set_sync(None, Vec::new(), t0);
+    assert_eq!(core.step(ms(t0, 2000)), None);
+    assert!(rig.sent().is_empty());
+}
+
+#[test]
+fn a_sync_route_without_ports_drains_the_tap_and_sends_nothing() {
+    let (rig, opener) = Rig::new();
+    let (mut core, _clock, _) = core(opener);
+    let t0 = base();
+    let tap = tap_with(&[(0, &[0xF8]), (1, &[0xF8])]);
+    core.set_sync(Some(Arc::clone(&tap)), Vec::new(), t0);
+    core.step(t0);
+    assert!(tap.is_empty());
+    assert!(rig.sent().is_empty());
+}
+
+#[test]
+fn the_clock_does_not_disturb_the_notes_of_a_device() {
+    let (rig, opener) = Rig::new();
+    let (mut core, clock, _) = core(opener);
+    let t0 = base();
+    clock.publish(0, t0);
+    let notes = tap_with(&[(0, &[0x90, 60, 100])]);
+    core.set_taps(vec![(1, notes)], t0);
+    core.set_ports(&ports(&[(1, Some("Synth"))]), t0);
+    core.set_sync(
+        Some(tap_with(&[(0, &[0xF8])])),
+        vec![sync_port("Synth", 0)],
+        t0,
+    );
+    core.step(t0);
+    assert_eq!(rig.sent().len(), 2);
+    // Silencing the device sends its note off and All Notes Off, and nothing for the clock.
+    core.set_taps(Vec::new(), t0);
+    let sent: Vec<_> = rig.sent().into_iter().map(|(_, b)| b).collect();
+    assert_eq!(sent, vec![vec![0x80, 60, 0], vec![0xB0, 123, 0]]);
+    core.shutdown(t0);
+}

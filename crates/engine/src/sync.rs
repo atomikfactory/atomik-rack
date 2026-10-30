@@ -204,6 +204,10 @@ impl ClockOut {
         let config = self.shared.config();
         let located = self.located.take();
         if !config.enabled {
+            // Switched off while the receiver runs: it is told to stop, once.
+            if self.was_enabled && self.running {
+                self.send(frame, &[STOP]);
+            }
             self.running = playing;
             self.was_enabled = false;
             return config;
