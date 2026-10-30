@@ -1,20 +1,36 @@
 # Device reference
 
-Atomik Rack ships thirty-three original devices: the poly synth, the wavetable synth, the FM synth, the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ, distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key & chord, note repeater and note delay), the container and its internal note split, and the console devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code differ, the code wins.
+Atomik Rack ships thirty-three original devices: the poly synth, the wavetable synth, the FM synth,
+the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
+Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ,
+distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
+analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
+machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key &
+chord, note repeater and note delay), the container and its internal note split, and the console
+devices `atomik.channel`, `atomik.bus` and `atomik.master`. The tables below are taken from the
+static descriptors in [crates/devices/src](../crates/devices/src). Where this document and the code
+differ, the code wins.
 
 Conventions used throughout:
 
-- **Keys** are the stable names used in patch files (`"params": { "filter.cutoff": 1200 }`, `"from": "synth:out_l"`). Always refer to params and sockets by key. Ids follow the table order from 0, but that order is an implementation detail.
-- **Plain values** are what you write in a patch. Out-of-range values are clamped with a warning. **Discrete** params (choices, toggles, counts) are rounded to the nearest integer.
+- **Keys** are the stable names used in patch files (`"params": { "filter.cutoff": 1200 }`,
+  `"from": "synth:out_l"`). Always refer to params and sockets by key. Ids follow the table order
+  from 0, but that order is an implementation detail.
+- **Plain values** are what you write in a patch. Out-of-range values are clamped with a warning.
+  **Discrete** params (choices, toggles, counts) are rounded to the nearest integer.
 - **Choice** params take the index of the choice, starting at 0. **Toggle** params are 0 (off) or 1 (on).
-- **Taper** is the curve used to map a 0..1 control to the range (for a future user interface). *Exp* is exponential, and *dB* is linear in decibels with the minimum meaning silence.
+- **Taper** is the curve used to map a 0..1 control to the range (for a future user interface).
+  *Exp* is exponential, and *dB* is linear in decibels with the minimum meaning silence.
 - **Audio** is nominally ±1.0. **CV** is nominally −1..+1. Stereo is a pair of mono sockets `*_l` and `*_r`.
 
 ---
 
 ## Poly Synth: `atomik.poly-synth` (Instrument)
 
-A subtractive synthesizer with up to 16 voices. Each voice has two band-limited oscillators plus noise, a 12 dB/oct state-variable filter, an amp envelope and a filter envelope. One global LFO modulates pitch and cutoff. Source: [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs).
+A subtractive synthesizer with up to 16 voices. Each voice has two band-limited oscillators plus
+noise, a 12 dB/oct state-variable filter, an amp envelope and a filter envelope. One global LFO
+modulates pitch and cutoff. Source:
+[crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs).
 
 ### Sockets
 
@@ -73,33 +89,59 @@ A subtractive synthesizer with up to 16 voices. Each voice has two band-limited 
 
 ### Behaviour (as built)
 
-- **Voices.** A voice goes Idle → Attack → Decay → Sustain → Release → Idle. A note-on for a key that is already sounding retriggers the same voice from its current level.
-- **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen. It fades out linearly over 2 ms, and the new note starts after the fade. `AllOff` releases every voice.
+- **Voices.** A voice goes Idle → Attack → Decay → Sustain → Release → Idle. A note-on for a key
+  that is already sounding retriggers the same voice from its current level.
+- **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen. It fades
+  out linearly over 2 ms, and the new note starts after the fade. `AllOff` releases every voice.
 - **Velocity.** Amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)).
 - **Filter.**
-  - Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV). It is clamped to 20 Hz … 0.45 × sample rate.
+  - Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 +
+    `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV). It is clamped to 20 Hz … 0.45 × sample rate.
   - Cutoff and pitch are updated every 16 samples per voice, with the filter coefficient interpolated in between.
-  - Resonance maps to Q = 0.5·40^r (Q = 20 at r = 1). The filter stays stable at full resonance and does not self-oscillate into blow-up.
+  - Resonance maps to Q = 0.5·40^r (Q = 20 at r = 1). The filter stays stable at full resonance and
+    does not self-oscillate into blow-up.
 - **Output level.**
   - The output is the sum of voices × 0.5 × the master gain (smoothed over 5 ms).
-  - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
-- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo spread in this version.
-- **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target (a negative trim inverts the CV). All four act on the whole instrument, not per voice.
-  - *Pitch:* semitones (`pitch_cv_trim` × 24 × CV), added to every oscillator of every voice (key + offsets + LFO·`lfo.to_pitch` + CV term), read at the 16-sample control rate like the cutoff.
-  - *Resonance:* the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1); the filter damping ramps over each 16-sample control step.
-  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
-  - *Pan:* per sample, the mono sum is balanced by `pan_cv_trim`·CV after the limiter: unity on both sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
-- **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device instance, so renders are reproducible.
+  - **Soft limiter:** the signal then passes through a limiter that is linear up to ±2 and saturates
+    smoothly towards ±4. Output is always finite and |x| < 4, whatever the params.
+- **Mono output.** `out_l` **equals** `out_r` while `pan_cv_in` is not cabled. There is no stereo
+  spread in this version.
+- **CV inputs (pitch, resonance, level, pan).** Each is applied only while its socket is cabled;
+  with all of them open the output is bit for bit what it was before they existed. Every CV sample
+  is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its
+  target (a negative trim inverts the CV). All four act on the whole instrument, not per voice.
+  - *Pitch:* semitones (`pitch_cv_trim` × 24 × CV), added to every oscillator of every voice (key +
+    offsets + LFO·`lfo.to_pitch` + CV term), read at the 16-sample control rate like the cutoff.
+  - *Resonance:* the normalised resonance becomes clamp(`filter.resonance` +
+    `filter.resonance_cv_trim`·CV, 0, 1); the filter damping ramps over each 16-sample control step.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20),
+    before the soft limiter. There is no extra smoothing, so a stepped CV gives a stepped gain.
+  - *Pan:* per sample, the mono sum is balanced by `pan_cv_trim`·CV after the limiter: unity on both
+    sides at the centre, the far side falls as cos(|pan|·π/2), the near side stays at 1.
+- **Randomness.** The noise and the sample & hold LFO are seeded from the patch seed and the device
+  instance, so renders are reproducible.
 
 ---
 
 ## Wavetable Synth: `atomik.wavetable-synth` (Instrument)
 
-A wavetable synthesizer with up to 16 voices. Each voice has two wavetable oscillators (each reads one of twelve factory tables at a frame position you can morph), a sub sine and noise, up to seven unison copies of each oscillator spread across the stereo field, a stereo pair of 12 dB/oct state-variable filters, an amp envelope and a mod envelope. One global LFO and the mod envelope can move both frame positions, the cutoff and the pitch. Source: [crates/devices/src/wavetable_synth.rs](../crates/devices/src/wavetable_synth.rs); the tables are in [crates/dsp/src/wavetable.rs](../crates/dsp/src/wavetable.rs).
+A wavetable synthesizer with up to 16 voices. Each voice has two wavetable oscillators (each reads
+one of twelve factory tables at a frame position you can morph), a sub sine and noise, up to seven
+unison copies of each oscillator spread across the stereo field, a stereo pair of 12 dB/oct
+state-variable filters, an amp envelope and a mod envelope. One global LFO and the mod envelope can
+move both frame positions, the cutoff and the pitch. Source:
+[crates/devices/src/wavetable_synth.rs](../crates/devices/src/wavetable_synth.rs); the tables are in
+[crates/dsp/src/wavetable.rs](../crates/dsp/src/wavetable.rs).
 
 ### Tables
 
-Every table is a row of 16 frames; `position` 0 is the first frame and 1 the last, and between two frames the output is their linear blend, so a sweep of the position is continuous. The tables are generated in code (nothing is read from a file) and are band-limited: each frame is stored once per octave of bandwidth (1023, 512, 256, ... 1 harmonics), and the oscillator reads the richest level whose top harmonic stays below Nyquist for its highest frequency (the pitch with its modulation, plus the detune of the widest unison copy), so the output does not alias. Each frame is scaled to a peak of 1.
+Every table is a row of 16 frames; `position` 0 is the first frame and 1 the last, and between two
+frames the output is their linear blend, so a sweep of the position is continuous. The tables are
+generated in code (nothing is read from a file) and are band-limited: each frame is stored once per
+octave of bandwidth (1023, 512, 256, ... 1 harmonics), and the oscillator reads the richest level
+whose top harmonic stays below Nyquist for its highest frequency (the pitch with its modulation,
+plus the detune of the widest unison copy), so the output does not alias. Each frame is scaled to a
+peak of 1.
 
 | Index | Name | The 16 frames |
 |---|---|---|
@@ -187,24 +229,55 @@ Every table is a row of 16 frames; `position` 0 is the first frame and 1 the las
 
 ### Behaviour (as built)
 
-- **Voices, stealing, velocity and channel messages** are the poly synth's: Idle → Attack → Decay → Sustain → Release → Idle; a same-key note-on retriggers the voice from its current level; with every allowed voice busy the oldest started voice fades out over 2 ms and the new note starts after it; amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)); pitch bend moves every voice by up to `bend.range` semitones (default 2) and the mod wheel adds up to one semitone of LFO vibrato; both survive `AllOff` and `reset` clears them; the sustain pedal, volume, expression and pressure are the shared performance controllers described under "MIDI".
-- **Frame position** of oscillator *n* = `oscN.position` + `env.mod.to_posN` × mod envelope + `lfo.to_posN` × LFO + `cv.position_amount` × `position_cv_in`, clamped to 0..1. It is evaluated every 16 samples per voice and ramps linearly in between.
-- **Pitch** (semitones) = key + the oscillator's octave, semitone and cents + `env.mod.to_pitch` × mod envelope + LFO × (`lfo.to_pitch` + mod wheel) + bend + `pitch_cv_trim` × 24 × `pitch_cv_in`.
-- **Filter.** Cutoff = `filter.cutoff` × 2^(`env_amount`·6·mod envelope + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV), clamped to 20 Hz … 0.45 × sample rate. There is one filter per channel, so the unison spread survives it.
-- **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV does). Each copy has its own phase: the first starts at phase 0, the others at seeded random phases. The copies are scaled by 1/√n.
-- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly synth's soft limiter (linear up to ±2, saturating towards ±4): the output is always finite and |x| ≤ 4.
-- **Cost and start-up.** The 12 tables are built once per process, the first time a wavetable synth is created (a fraction of a second); every later instance shares them (about 8 MB). `process` allocates nothing. A table change is an ordinary param change; a click may be heard when it happens on a sounding note.
-- **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed and the device instance, so renders are reproducible.
+- **Voices, stealing, velocity and channel messages** are the poly synth's: Idle → Attack → Decay →
+  Sustain → Release → Idle; a same-key note-on retriggers the voice from its current level; with
+  every allowed voice busy the oldest started voice fades out over 2 ms and the new note starts
+  after it; amp gain = envelope × (1 − `velocity.amp` × (1 − velocity)); pitch bend moves every
+  voice by up to `bend.range` semitones (default 2) and the mod wheel adds up to one semitone of LFO
+  vibrato; both survive `AllOff` and `reset` clears them; the sustain pedal, volume, expression and
+  pressure are the shared performance controllers described under "MIDI".
+- **Frame position** of oscillator *n* = `oscN.position` + `env.mod.to_posN` × mod envelope +
+  `lfo.to_posN` × LFO + `cv.position_amount` × `position_cv_in`, clamped to 0..1. It is evaluated
+  every 16 samples per voice and ramps linearly in between.
+- **Pitch** (semitones) = key + the oscillator's octave, semitone and cents + `env.mod.to_pitch` ×
+  mod envelope + LFO × (`lfo.to_pitch` + mod wheel) + bend + `pitch_cv_trim` × 24 × `pitch_cv_in`.
+- **Filter.** Cutoff = `filter.cutoff` × 2^(`env_amount`·6·mod envelope + `key_track`·(key −
+  60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV), clamped to 20 Hz … 0.45 × sample rate.
+  There is one filter per channel, so the unison spread survives it.
+- **Unison.** With *n* copies, copy *i* sits at x = 2i/(n − 1) − 1 (0 for a lone copy): detuned by x
+  × `unison.detune` cents and balanced by x × `unison.spread` (unity at the centre, as the pan CV
+  does). Each copy has its own phase: the first starts at phase 0, the others at seeded random
+  phases. The copies are scaled by 1/√n.
+- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly
+  synth's soft limiter (linear up to ±2, saturating towards ±4): the output is always finite and |x|
+  ≤ 4.
+- **Cost and start-up.** The 12 tables are built once per process, the first time a wavetable synth
+  is created (a fraction of a second); every later instance shares them (about 8 MB). `process`
+  allocates nothing. A table change is an ordinary param change; a click may be heard when it
+  happens on a sounding note.
+- **Randomness.** The noise, the unison phases and the sample & hold LFO come from the patch seed
+  and the device instance, so renders are reproducible.
 
 ---
 
 ## FM Synth: `atomik.fm-synth` (Instrument)
 
-A four-operator FM synthesizer with up to 16 voices. Each voice has four sine operators that phase-modulate each other through one of twelve routings (algorithms), each with its own frequency ratio (or a fixed frequency), envelope with a delay, velocity sensitivity and key scaling; a damped feedback path on operator 4; a pitch envelope, an LFO, the mod wheel on the modulation index, poly (with voice stealing), mono and legato play with glide, and six factory sounds. There is no filter: an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation synthesis. The routings, the frequency rule and the bandwidth limiter are in [dsp/src/fm.rs](../crates/dsp/src/fm.rs).
+A four-operator FM synthesizer with up to 16 voices. Each voice has four sine operators that
+phase-modulate each other through one of twelve routings (algorithms), each with its own frequency
+ratio (or a fixed frequency), envelope with a delay, velocity sensitivity and key scaling; a damped
+feedback path on operator 4; a pitch envelope, an LFO, the mod wheel on the modulation index, poly
+(with voice stealing), mono and legato play with glide, and six factory sounds. There is no filter:
+an FM voice shapes its own spectrum. An original design from the public textbook of phase-modulation
+synthesis. The routings, the frequency rule and the bandwidth limiter are in
+[dsp/src/fm.rs](../crates/dsp/src/fm.rs).
 
 ### Operators and algorithms
 
-Operator *n* is a sine whose phase is moved by the outputs of the operators the algorithm routes into it, always from higher numbers to lower, so a voice computes operator 4 first. An operator that modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is the volume of a carrier and the modulation depth of a modulator (full level at index 1 is 8 radians). The carriers are summed with the gain 1/√(carriers).
+Operator *n* is a sine whose phase is moved by the outputs of the operators the algorithm routes
+into it, always from higher numbers to lower, so a voice computes operator 4 first. An operator that
+modulates another is a *modulator*, one that reaches the output a *carrier*; its `level` is the
+volume of a carrier and the modulation depth of a modulator (full level at index 1 is 8 radians).
+The carriers are summed with the gain 1/√(carriers).
 
 | Index | Name | Modulation (a→b: a modulates b) | Carriers |
 |---|---|---|---|
@@ -238,7 +311,8 @@ In every routing operator 4 is the feedback operator.
 
 ### Params
 
-Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve params each, ids 4 to 51), then the rest (ids 52 to 68). The ids are the indices.
+Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve params each, ids 4
+to 51), then the rest (ids 52 to 68). The ids are the indices.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -279,21 +353,54 @@ Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve 
 
 ### Behaviour (as built)
 
-- **Frequency.** Ratio mode: the played pitch × (`coarse` + `fine`), where coarse step 0 is the ratio 0.5 and step *n* is *n*; `detune` adds cents. Fixed mode (`fixed` on): 10^((`coarse` + `fine`) / 8) Hz whatever the key, 1 Hz at step 0 and a decade every eight steps (about 9.9 kHz at the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it. Operator frequencies are held under 0.45 of the sample rate. The phase accumulators are `f64`.
-- **Envelope.** Each operator has an ADSR and a `delay` in ms before its attack starts. A voice sounds until the envelopes of its carriers are idle; a note off during a carrier's delay cancels the note. A same-key retrigger restarts every envelope from its current level and ignores the delays.
-- **Velocity and key scaling.** The operator level is `level` × (1 − `velocity` × (1 − key velocity)) × the key scaling gain. Key scaling lowers the level on one side of middle C (key 60): `key_scale` > 0 above it, < 0 below it, by 0.4 dB per semitone × |`key_scale`|.
-- **Modulation index.** `index` + mod wheel × `wheel.to_index` + LFO × `lfo.to_index` + `cv.index_amount` × `index_cv_in`, clamped to 0..3, scales every modulator.
-- **Feedback.** The average of the last two outputs of operator 4 moves its own phase by up to 1.8 radians (`feedback` 1): a sine at 0, a saw-like tone as it rises. The average damps the loop; the range stops short of the point (about 2 radians) where a one-sample-late loop turns to noise. The output is a sine, so it is bounded whatever the setting.
-- **Aliasing.** A modulation index puts partials out to about the swing of the instantaneous frequency plus a few sidebands, and what passes Nyquist folds back. Every 16 samples the voice asks `atomik_dsp::fm::limits` for the scales that keep the highest partial of every operator under 0.4 of the sample rate (the estimate follows the swing through a stack of operators), and ramps the indices to them; the feedback is eased back by how many of its harmonics fit under the limit. A bright patch therefore plays duller on a high key instead of aliasing, continuously in the pitch. The bounce test measures the worst non-harmonic partial of a patch with everything open at keys 84 to 112: under −55 dB below the strongest partial.
-- **Pitch.** Semitones = key (gliding in the mono modes) + bend + `pitch.env_amount` × e^(−t/`pitch.env_decay`) (restarted at each note) + LFO × `lfo.to_pitch` + `pitch_cv_trim` × 24 × `pitch_cv_in`.
-- **Play.** `poly`: up to `voices` voices; a note with no free voice steals the oldest, which fades out over 2 ms. `mono`: one voice, the last key wins, every key retriggers the envelopes, and releasing a key returns to the key still held. `legato`: as mono, but a key played while another is held changes the pitch only. `play.glide` is the time constant in ms of the slide to the new pitch (0 is none). Switching to a mono mode releases the other voices.
-- **Stereo.** `spread` pans a voice by its key (middle C centre, 36 semitones away is the edge); the tremolo is `lfo.to_amp` × (1 − LFO)/2 of the amplitude.
-- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly synth's soft limiter: the output is always finite and |x| ≤ 4.
-- **Randomness.** Only the sample & hold LFO is random, seeded by the patch seed and the device instance, so renders are reproducible.
+- **Frequency.** Ratio mode: the played pitch × (`coarse` + `fine`), where coarse step 0 is the
+  ratio 0.5 and step *n* is *n*; `detune` adds cents. Fixed mode (`fixed` on): 10^((`coarse` +
+  `fine`) / 8) Hz whatever the key, 1 Hz at step 0 and a decade every eight steps (about 9.9 kHz at
+  the top); pitch bend, the pitch envelope, the LFO and the pitch CV do not move it. Operator
+  frequencies are held under 0.45 of the sample rate. The phase accumulators are `f64`.
+- **Envelope.** Each operator has an ADSR and a `delay` in ms before its attack starts. A voice
+  sounds until the envelopes of its carriers are idle; a note off during a carrier's delay cancels
+  the note. A same-key retrigger restarts every envelope from its current level and ignores the
+  delays.
+- **Velocity and key scaling.** The operator level is `level` × (1 − `velocity` × (1 − key
+  velocity)) × the key scaling gain. Key scaling lowers the level on one side of middle C (key 60):
+  `key_scale` > 0 above it, < 0 below it, by 0.4 dB per semitone × |`key_scale`|.
+- **Modulation index.** `index` + mod wheel × `wheel.to_index` + LFO × `lfo.to_index` +
+  `cv.index_amount` × `index_cv_in`, clamped to 0..3, scales every modulator.
+- **Feedback.** The average of the last two outputs of operator 4 moves its own phase by up to 1.8
+  radians (`feedback` 1): a sine at 0, a saw-like tone as it rises. The average damps the loop; the
+  range stops short of the point (about 2 radians) where a one-sample-late loop turns to noise. The
+  output is a sine, so it is bounded whatever the setting.
+- **Aliasing.** A modulation index puts partials out to about the swing of the instantaneous
+  frequency plus a few sidebands, and what passes Nyquist folds back. Every 16 samples the voice
+  asks `atomik_dsp::fm::limits` for the scales that keep the highest partial of every operator under
+  0.4 of the sample rate (the estimate follows the swing through a stack of operators), and ramps
+  the indices to them; the feedback is eased back by how many of its harmonics fit under the limit.
+  A bright patch therefore plays duller on a high key instead of aliasing, continuously in the
+  pitch. The bounce test measures the worst non-harmonic partial of a patch with everything open at
+  keys 84 to 112: under −55 dB below the strongest partial.
+- **Pitch.** Semitones = key (gliding in the mono modes) + bend + `pitch.env_amount` ×
+  e^(−t/`pitch.env_decay`) (restarted at each note) + LFO × `lfo.to_pitch` + `pitch_cv_trim` × 24 ×
+  `pitch_cv_in`.
+- **Play.** `poly`: up to `voices` voices; a note with no free voice steals the oldest, which fades
+  out over 2 ms. `mono`: one voice, the last key wins, every key retriggers the envelopes, and
+  releasing a key returns to the key still held. `legato`: as mono, but a key played while another
+  is held changes the pitch only. `play.glide` is the time constant in ms of the slide to the new
+  pitch (0 is none). Switching to a mono mode releases the other voices.
+- **Stereo.** `spread` pans a voice by its key (middle C centre, 36 semitones away is the edge); the
+  tremolo is `lfo.to_amp` × (1 − LFO)/2 of the amplitude.
+- **Output level.** The sum of voices × 0.5 × the master gain (smoothed over 5 ms), then the poly
+  synth's soft limiter: the output is always finite and |x| ≤ 4.
+- **Randomness.** Only the sample & hold LFO is random, seeded by the patch seed and the device
+  instance, so renders are reproducible.
 
 ### Sounds
 
-`sound` selects a factory sound. A sound is a value for every param but `sound` ([fm_synth/sounds.rs](../crates/devices/src/fm_synth/sounds.rs), listing what differs from the init sound). **The device ignores the param**: the app turns a `SetParam` of `sound` on an FM synth into one `Command::Batch` (the same mechanism as the guitar amp's setups), so one undo brings back everything it changed; the player tweaks from there and the project file holds plain param values.
+`sound` selects a factory sound. A sound is a value for every param but `sound`
+([fm_synth/sounds.rs](../crates/devices/src/fm_synth/sounds.rs), listing what differs from the init
+sound). **The device ignores the param**: the app turns a `SetParam` of `sound` on an FM synth into
+one `Command::Batch` (the same mechanism as the guitar amp's setups), so one undo brings back
+everything it changed; the player tweaks from there and the project file holds plain param values.
 
 | Sound | Idea |
 |---|---|
@@ -306,16 +413,40 @@ Global params (ids 0 to 3), then the four operators (`op1.*` to `op4.*`, twelve 
 
 ### Tests
 
-The synth's tests render each algorithm and compare it to a naive `f64` reference computation (phase accumulators, the routing as written out in the test); and cover the ratios, fixed frequencies and detune to a fraction of a hertz, the feedback (against the reference, bounded, tonal at its maximum on five registers), voice stealing and the voice limit, the envelopes and their delays, velocity and key scaling, the index from the wheel, the LFO and the CV, the mono modes and the glide, aliasing of a bright patch on high keys (with an unlimited reference that does alias), determinism and reset, every param at its extremes, and the factory sounds. A proptest (`qa_devices`) drives random params, CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in [crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch `examples/patches/fm-demo.json` bounces in [crates/render/tests/fm_demo.rs](../crates/render/tests/fm_demo.rs).
+The synth's tests render each algorithm and compare it to a naive `f64` reference computation (phase
+accumulators, the routing as written out in the test); and cover the ratios, fixed frequencies and
+detune to a fraction of a hertz, the feedback (against the reference, bounded, tonal at its maximum
+on five registers), voice stealing and the voice limit, the envelopes and their delays, velocity and
+key scaling, the index from the wheel, the LFO and the CV, the mono modes and the glide, aliasing of
+a bright patch on high keys (with an unlimited reference that does alias), determinism and reset,
+every param at its extremes, and the factory sounds. A proptest (`qa_devices`) drives random params,
+CVs and notes at 44.1, 48 and 96 kHz. The panel is tested in
+[crates/ui/tests/fm_panel.rs](../crates/ui/tests/fm_panel.rs) and the demo patch
+`examples/patches/fm-demo.json` bounces in
+[crates/render/tests/fm_demo.rs](../crates/render/tests/fm_demo.rs).
 
 
 ---
 
 ## Grain Sampler: `atomik.granular` (Instrument)
 
-A sample played as a cloud of short grains, with up to 16 voices. Each voice starts `grain.density` grains a second, each a windowed read of the sample at a position (a knob, a scan through the sample and a random spray), a pitch (the key, transpose, a random scatter per grain) and a direction, then runs through a filter and the amp envelope. With no sample loaded it plays a **built-in vowel pad** (three seconds at middle C that glide through "ah, oh, eh, ee" along the position, made in code), so a new device sounds at once. An original design from the textbook of granular synthesis; the blocks are in [dsp/src/grain.rs](../crates/dsp/src/grain.rs) and the voice in [granular.rs](../crates/devices/src/granular.rs).
+A sample played as a cloud of short grains, with up to 16 voices. Each voice starts `grain.density`
+grains a second, each a windowed read of the sample at a position (a knob, a scan through the sample
+and a random spray), a pitch (the key, transpose, a random scatter per grain) and a direction, then
+runs through a filter and the amp envelope. With no sample loaded it plays a **built-in vowel pad**
+(three seconds at middle C that glide through "ah, oh, eh, ee" along the position, made in code), so
+a new device sounds at once. An original design from the textbook of granular synthesis; the blocks
+are in [dsp/src/grain.rs](../crates/dsp/src/grain.rs) and the voice in
+[granular.rs](../crates/devices/src/granular.rs).
 
-**The sample.** Registered like the sampler (`takes_samples`): drop a file on the panel or load it from the browser, and the device holds **one** sample: a drop replaces the zone in one undo step (extra files are named in the status message and ignored). Project files keep the reference, relink works as for the sampler, and EDIT opens the sample editor on the zone. The first zone whose key and velocity range match a note plays; its start and end are the **window** the grains read (position 0 to 100 % is that window), and its root key, transpose, tune, gain and pan apply; its loop and trigger fields are ignored. With a map that has no zone for a note, that note is silent. A sample swap allocates nothing and fades a voice that loses its zone in 5 ms, as the sampler does.
+**The sample.** Registered like the sampler (`takes_samples`): drop a file on the panel or load it
+from the browser, and the device holds **one** sample: a drop replaces the zone in one undo step
+(extra files are named in the status message and ignored). Project files keep the reference, relink
+works as for the sampler, and EDIT opens the sample editor on the zone. The first zone whose key and
+velocity range match a note plays; its start and end are the **window** the grains read (position 0
+to 100 % is that window), and its root key, transpose, tune, gain and pan apply; its loop and
+trigger fields are ignored. With a map that has no zone for a note, that note is silent. A sample
+swap allocates nothing and fades a voice that loses its zone in 5 ms, as the sampler does.
 
 | Param | Range | Default | Meaning |
 |---|---|---|---|
@@ -345,15 +476,29 @@ A sample played as a cloud of short grains, with up to 16 voices. Each voice sta
 
 Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_cv_in`, `level_cv_in`, `out_l`, `out_r`.
 
-- **Grains.** A grain starts at `fold(position + scan + spray·u/2)` of the window, `u` uniform in -1 to 1, moved so that a grain that fits the window does not straddle its end (no splice inside a grain; a grain longer than the window wraps round it). It reads `2^(semitones/12)` source frames per output frame (limited to 1/32 to 8) with a four-point Hermite.
-- **Aliasing.** Above a step of 1 the read averages `2n+1` linear taps over ±step frames with triangular weights (response sinc², blended in over steps 1 to 1.25): a 9 kHz tone two octaves up comes out under 20 % of the level it would have aliased at, a 1 kHz tone keeps its level to 1.5 dB (both are tests).
-- **Level.** Grains are scaled by 1/√overlap (density × size scaled by the window's power, at most `grain.limit`, at least 1), then amp envelope, velocity, master (5 ms smoothing) and the poly synth's soft limiter: the output is finite and |x| ≤ 4.
-- **Randomness.** Each note seeds its own stream from the patch seed and the note's start number (reset by `reset`), so two renders of the same notes are identical, at any host block size.
-- **Panel.** The sample strip names the sample or the built-in source; the waveform of the window shows the position, the spray band and the live grains from the device's published values (31 meter values: source, position, spray, grain and voice counts, the last 13 grains as position and life).
+- **Grains.** A grain starts at `fold(position + scan + spray·u/2)` of the window, `u` uniform in -1
+  to 1, moved so that a grain that fits the window does not straddle its end (no splice inside a
+  grain; a grain longer than the window wraps round it). It reads `2^(semitones/12)` source frames
+  per output frame (limited to 1/32 to 8) with a four-point Hermite.
+- **Aliasing.** Above a step of 1 the read averages `2n+1` linear taps over ±step frames with
+  triangular weights (response sinc², blended in over steps 1 to 1.25): a 9 kHz tone two octaves up
+  comes out under 20 % of the level it would have aliased at, a 1 kHz tone keeps its level to 1.5 dB
+  (both are tests).
+- **Level.** Grains are scaled by 1/√overlap (density × size scaled by the window's power, at most
+  `grain.limit`, at least 1), then amp envelope, velocity, master (5 ms smoothing) and the poly
+  synth's soft limiter: the output is finite and |x| ≤ 4.
+- **Randomness.** Each note seeds its own stream from the patch seed and the note's start number
+  (reset by `reset`), so two renders of the same notes are identical, at any host block size.
+- **Panel.** The sample strip names the sample or the built-in source; the waveform of the window
+  shows the position, the spray band and the live grains from the device's published values (31
+  meter values: source, position, spray, grain and voice counts, the last 13 grains as position and
+  life).
 
 ### Sounds
 
-`sound` selects a factory sound; like the FM synth's, a change is one `Command::Batch` and the device ignores the param ([granular/sounds.rs](../crates/devices/src/granular/sounds.rs)). The sounds are made for the built-in source.
+`sound` selects a factory sound; like the FM synth's, a change is one `Command::Batch` and the
+device ignores the param ([granular/sounds.rs](../crates/devices/src/granular/sounds.rs)). The
+sounds are made for the built-in source.
 
 | Sound | Idea |
 |---|---|
@@ -367,7 +512,8 @@ Sockets: `notes_in`, `pitch_cv_in`, `position_cv_in`, `density_cv_in`, `cutoff_c
 
 ## Line Mixer: `atomik.line-mixer` (Mixer)
 
-Six stereo channels into a stereo master. Source: [crates/devices/src/line_mixer.rs](../crates/devices/src/line_mixer.rs).
+Six stereo channels into a stereo master. Source:
+[crates/devices/src/line_mixer.rs](../crates/devices/src/line_mixer.rs).
 
 ### Sockets
 
@@ -405,16 +551,21 @@ Then:
 
 ### Behaviour (as built)
 
-- **Pan law.** Pan is constant power with −3 dB at the centre: gain L = cos θ and gain R = sin θ, with θ = (pan + 1)·π/4. Stereo channels use the same law: left × cos θ, right × sin θ.
-- **Mono channels.** If only one input of a channel is connected, the channel is mono and that input feeds both sides before panning. This applies to `_l` only (as specified) and also to `_r` only (an as-built extension).
-- **Solo and mute.** If any channel is soloed, only soloed, un-muted channels are heard. Mute always silences the channel.
+- **Pan law.** Pan is constant power with −3 dB at the centre: gain L = cos θ and gain R = sin θ,
+  with θ = (pan + 1)·π/4. Stereo channels use the same law: left × cos θ, right × sin θ.
+- **Mono channels.** If only one input of a channel is connected, the channel is mono and that input
+  feeds both sides before panning. This applies to `_l` only (as specified) and also to `_r` only
+  (an as-built extension).
+- **Solo and mute.** If any channel is soloed, only soloed, un-muted channels are heard. Mute always
+  silences the channel.
 - **Smoothing.** Channel and master gain changes are smoothed over 5 ms.
 
 ---
 
 ## Stereo Delay: `atomik.stereo-delay` (Effect)
 
-A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-pong. Source: [crates/devices/src/stereo_delay.rs](../crates/devices/src/stereo_delay.rs).
+A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-pong. Source:
+[crates/devices/src/stereo_delay.rs](../crates/devices/src/stereo_delay.rs).
 
 ### Sockets
 
@@ -440,18 +591,27 @@ A stereo delay with free or tempo-synced time, feedback, dry/wet mix and ping-po
 
 ### Behaviour (as built)
 
-- **Delay time.** The time is `time.ms`, or the `time.sync` note value at the patch tempo (1/4 at 120 BPM = 0.5 s). It is then scaled by the time CV and clamped to 1–4000 ms.
-- **Time changes.** A change glides the read position with interpolated reads. Small changes take 50 ms. The glide speed is capped (the read head stays between standstill and 2× speed), so large jumps take longer, about 1 s per second of change. They are heard as a bounded pitch sweep and never click.
+- **Delay time.** The time is `time.ms`, or the `time.sync` note value at the patch tempo (1/4 at
+  120 BPM = 0.5 s). It is then scaled by the time CV and clamped to 1–4000 ms.
+- **Time changes.** A change glides the read position with interpolated reads. Small changes take 50
+  ms. The glide speed is capped (the read head stays between standstill and 2× speed), so large
+  jumps take longer, about 1 s per second of change. They are heard as a bounded pitch sweep and
+  never click.
 - **Feedback and mix.** Both are smoothed over 5 ms. Output = dry × (1 − mix) + wet × mix.
 - **First batch.** The first batch after `prepare` or `reset` starts at the target values with no glide.
-- **Ping-pong.** The input is summed to mono, **(L + R) / 2, into the left line**, and the feedback crosses L → R → L. The echoes therefore alternate sides and the stereo image of the input is not kept. When ping-pong is off, the two lines are independent.
+- **Ping-pong.** The input is summed to mono, **(L + R) / 2, into the left line**, and the feedback
+  crosses L → R → L. The echoes therefore alternate sides and the stereo image of the input is not
+  kept. When ping-pong is off, the two lines are independent.
 
 
 ---
 
 ## Reverb: `atomik.reverb` (Effect)
 
-A stereo algorithmic reverb with three algorithms. Source: [crates/devices/src/reverb.rs](../crates/devices/src/reverb.rs), building blocks in [crates/dsp/src](../crates/dsp/src) (`fdn`, `mod_delay`, `allpass`, `parabolic_lfo`, `block_smoother`, `det_math`).
+A stereo algorithmic reverb with three algorithms. Source:
+[crates/devices/src/reverb.rs](../crates/devices/src/reverb.rs), building blocks in
+[crates/dsp/src](../crates/dsp/src) (`fdn`, `mod_delay`, `allpass`, `parabolic_lfo`,
+`block_smoother`, `det_math`).
 
 ### Sockets
 
@@ -482,23 +642,53 @@ A stereo algorithmic reverb with three algorithms. Source: [crates/devices/src/r
 
 ### Behaviour (as built)
 
-- **Structure.** Pre-delay, a one-pole low cut, six early-reflection taps per side from a tapped delay, and a late tail from an 8-line feedback delay network (Hermite-interpolated delay lines, a damping lowpass, a feedback gain and an in-loop allpass per line, mixed by an orthonormal 8×8 Hadamard matrix). Two allpass diffusers per side feed the network. The left and right tails are taken with two orthogonal Hadamard sign rows, so they are uncorrelated at `width` 1; `width` 0 collapses the wet signal to mono.
-- **Algorithms.** *Room*: lines 17–44 ms, dense early taps (3–30 ms), brighter damping range (14 kHz at `damping` 0), little modulation. *Hall*: lines 33–94 ms, late and widely spaced early taps (7–62 ms), darker (10 kHz), full modulation. *Plate*: lines 11–44 ms, very dense, weak early taps (2–17 ms), brightest (16 kHz), most modulation. All delay times are multiplied by `0.25 + 1.5 × size`.
-- **Decay.** Line *i* has loop time T_i = d_i + a_i samples (its delay plus its allpass delay) and gain g_i = 10^(−3 · 0.93 · T_i / (sr · `decay`)). Every line therefore loses 60 dB in about `decay` seconds, and so does the whole tail; 0.93 is an empirical factor found by measuring the impulse response. The damping lowpass has unity gain at DC: `decay` is the low and mid frequency RT60, and `damping` shortens the high end. A level compensation of (2 / `decay`)^¼ on the late signal keeps the wet level within a few dB over the decay range.
+- **Structure.** Pre-delay, a one-pole low cut, six early-reflection taps per side from a tapped
+  delay, and a late tail from an 8-line feedback delay network (Hermite-interpolated delay lines, a
+  damping lowpass, a feedback gain and an in-loop allpass per line, mixed by an orthonormal 8×8
+  Hadamard matrix). Two allpass diffusers per side feed the network. The left and right tails are
+  taken with two orthogonal Hadamard sign rows, so they are uncorrelated at `width` 1; `width` 0
+  collapses the wet signal to mono.
+- **Algorithms.** *Room*: lines 17–44 ms, dense early taps (3–30 ms), brighter damping range (14 kHz
+  at `damping` 0), little modulation. *Hall*: lines 33–94 ms, late and widely spaced early taps
+  (7–62 ms), darker (10 kHz), full modulation. *Plate*: lines 11–44 ms, very dense, weak early taps
+  (2–17 ms), brightest (16 kHz), most modulation. All delay times are multiplied by
+  `0.25 + 1.5 × size`.
+- **Decay.** Line *i* has loop time T_i = d_i + a_i samples (its delay plus its allpass delay) and
+  gain g_i = 10^(−3 · 0.93 · T_i / (sr · `decay`)). Every line therefore loses 60 dB in about
+  `decay` seconds, and so does the whole tail; 0.93 is an empirical factor found by measuring the
+  impulse response. The damping lowpass has unity gain at DC: `decay` is the low and mid frequency
+  RT60, and `damping` shortens the high end. A level compensation of (2 / `decay`)^¼ on the late
+  signal keeps the wet level within a few dB over the decay range.
 - **Damping.** Cutoff = `fc_top` × 2^(−6 × `damping`); at `damping` 0 the filter is bypassed.
-- **Modulation.** Each line has its own parabolic LFO (0.2–1.3 Hz) with a start phase and rate taken from the device seed; the delay excursion is at most about 0.5 ms. It breaks up metallic ringing and is fully deterministic (no libm in the per-sample path).
-- **Smoothing and clicks.** All controls are smoothed per batch and ramped across it. Line lengths, early tap times and tap gains use 250 ms / 100 ms smoothing, so changing `size` or `algorithm` bends the delays slowly (a gentle pitch glide of the tail) and never clicks. Decay, damping, low cut, width, mix, output and balance use 20–60 ms. The first batch after `prepare` or `reset` starts at the target values.
-- **Freeze.** Fades over 25 ms: feedback gains go to 1, damping is bypassed and the input is muted, so the tail's energy circulates unchanged (about 3 dB lost over 8 s, from interpolation). Unfreezing lets it decay again.
-- **Mix and latency.** Output = dry × (1 − `mix`) + wet × `mix` × output gain. The dry signal is never delayed and `output` applies to the wet signal only; at `mix` 0 the input is copied bit for bit. Latency is 0. `predelay` delays only the wet signal.
-- **Safety.** Feedback state flushes values below 1e-20 to exactly 0 (no denormals; a decayed tail is exactly 0). Non-finite input samples are treated as 0 on the wet path. The wet signal is clamped to ±32.
+- **Modulation.** Each line has its own parabolic LFO (0.2–1.3 Hz) with a start phase and rate taken
+  from the device seed; the delay excursion is at most about 0.5 ms. It breaks up metallic ringing
+  and is fully deterministic (no libm in the per-sample path).
+- **Smoothing and clicks.** All controls are smoothed per batch and ramped across it. Line lengths,
+  early tap times and tap gains use 250 ms / 100 ms smoothing, so changing `size` or `algorithm`
+  bends the delays slowly (a gentle pitch glide of the tail) and never clicks. Decay, damping, low
+  cut, width, mix, output and balance use 20–60 ms. The first batch after `prepare` or `reset`
+  starts at the target values.
+- **Freeze.** Fades over 25 ms: feedback gains go to 1, damping is bypassed and the input is muted,
+  so the tail's energy circulates unchanged (about 3 dB lost over 8 s, from interpolation).
+  Unfreezing lets it decay again.
+- **Mix and latency.** Output = dry × (1 − `mix`) + wet × `mix` × output gain. The dry signal is
+  never delayed and `output` applies to the wet signal only; at `mix` 0 the input is copied bit for
+  bit. Latency is 0. `predelay` delays only the wet signal.
+- **Safety.** Feedback state flushes values below 1e-20 to exactly 0 (no denormals; a decayed tail
+  is exactly 0). Non-finite input samples are treated as 0 on the wet path. The wet signal is
+  clamped to ±32.
 - **Meter values.** `[output peak L, output peak R, tail RMS]`, linear, of the last batch.
-- **Buffers** are allocated in `prepare` for the largest size at the sample rate (about 0.17 s per FDN line, 0.25 s for the pre-delay).
+- **Buffers** are allocated in `prepare` for the largest size at the sample rate (about 0.17 s per
+  FDN line, 0.25 s for the pre-delay).
 
 ---
 
 ## Compressor: `atomik.compressor` (Effect)
 
-A stereo feed-forward compressor with a sidechain input. Source: [crates/devices/src/compressor.rs](../crates/devices/src/compressor.rs); the static curve is `atomik_dsp::static_gain_reduction_knee_db`, the level maths use `log2_det` / `exp2_det` (no libm per sample).
+A stereo feed-forward compressor with a sidechain input. Source:
+[crates/devices/src/compressor.rs](../crates/devices/src/compressor.rs); the static curve is
+`atomik_dsp::static_gain_reduction_knee_db`, the level maths use `log2_det` / `exp2_det` (no libm
+per sample).
 
 ### Sockets
 
@@ -533,22 +723,48 @@ A stereo feed-forward compressor with a sidechain input. Source: [crates/devices
 
 ### Behaviour (as built)
 
-- **Detector.** *Peak*: `|x|` per channel. *RMS*: one-pole mean square (10 ms), sine-calibrated so a sine of peak A reads A in both modes. The key is first filtered by a 2nd-order Butterworth high-pass (`sc_hp`) and low-pass (`sc_lp`), whatever the key source.
-- **Stereo link.** Channel level in dB `l_c`; the detector level is `l_c + link × (max(l_L, l_R) − l_c)`. With `stereo_link` 1 both channels get the same reduction; with 0 they are independent.
-- **Gain computer.** Soft knee of width `knee`: no reduction below `T − W/2`, a quadratic `(1 − 1/R)(x − T + W/2)² / (2W)` inside, `(1 − 1/R)(x − T)` above. `limit` makes the slope 1 (an infinite ratio). Measured against this analytic curve on 1 kHz sine steps (peak and RMS detector, 2 thresholds × 3 ratios incl. limit × 3 knees × 9 levels): worst error 0.03 dB.
-- **Ballistics, in dB.** Release with peak hold `y1 = max(c, a_r·y1 + (1 − a_r)·c)`, then attack `gr = a_a·gr + (1 − a_a)·y1` while `y1 > gr`, else `gr = y1`, with `a = exp(−1/(τ·sr))`. **The attack and release times are one-pole time constants**: attack is the time for the gain reduction to reach 63.2 % of a step, release the time to fall to 36.8 % of its starting value. Measured at 5/100, 20/300 and 50/800 ms: within 0.1 % of the setting (the RMS detector adds its own 10 ms window to the attack).
-- **Auto release.** `release` becomes the slow constant; the fast one is `max(release / 8, 2 ms)`. A fast peak-hold stage and a slow stage (fed by an integrated GR that follows the fast stage with a `release / 2` constant on the way up and at once on the way down) run in parallel and are combined with `max`: short peaks release fast, sustained compression slowly (measured with release 800 ms: the GR halves in 69 ms after a 30 ms burst, in 657 ms after 2 s of compression).
-- **Lookahead and latency.** The audio path and the dry path are delayed by `round(lookahead × sr / 1000)` samples (at most 5 ms; the buffer is allocated in `prepare`) while the detector sees the undelayed key. `latency_frames()` is that **current** value (dynamic latency): the engine publishes device latencies after every batch boundary's parameter changes and bumps `latency_epoch`, so a host that recompiles on the epoch re-aligns PDC after the knob moves. Moving `lookahead` changes the delay at once (a click on programme material, as with any delay time). The tests check the impulse delay at 44.1, 48 and 96 kHz.
-- **Makeup.** `makeup` plus, with `auto_makeup`, the reduction a 0 dBFS input would get with the current threshold, ratio and knee; the total is capped at 36 dB and smoothed per batch.
-- **Mix.** `out = dry × (1 − mix) + wet × mix` with the dry path delayed by the lookahead: `mix` 0 is the (delayed) input bit for bit.
-- **Meter values** (3): input peak (linear, L/R max), output peak (linear), gain reduction in dB (largest of either channel in the batch).
+- **Detector.** *Peak*: `|x|` per channel. *RMS*: one-pole mean square (10 ms), sine-calibrated so a
+  sine of peak A reads A in both modes. The key is first filtered by a 2nd-order Butterworth
+  high-pass (`sc_hp`) and low-pass (`sc_lp`), whatever the key source.
+- **Stereo link.** Channel level in dB `l_c`; the detector level is
+  `l_c + link × (max(l_L, l_R) − l_c)`. With `stereo_link` 1 both channels get the same reduction;
+  with 0 they are independent.
+- **Gain computer.** Soft knee of width `knee`: no reduction below `T − W/2`, a quadratic
+  `(1 − 1/R)(x − T + W/2)² / (2W)` inside, `(1 − 1/R)(x − T)` above. `limit` makes the slope 1 (an
+  infinite ratio). Measured against this analytic curve on 1 kHz sine steps (peak and RMS detector,
+  2 thresholds × 3 ratios incl. limit × 3 knees × 9 levels): worst error 0.03 dB.
+- **Ballistics, in dB.** Release with peak hold `y1 = max(c, a_r·y1 + (1 − a_r)·c)`, then attack
+  `gr = a_a·gr + (1 − a_a)·y1` while `y1 > gr`, else `gr = y1`, with `a = exp(−1/(τ·sr))`. **The
+  attack and release times are one-pole time constants**: attack is the time for the gain reduction
+  to reach 63.2 % of a step, release the time to fall to 36.8 % of its starting value. Measured at
+  5/100, 20/300 and 50/800 ms: within 0.1 % of the setting (the RMS detector adds its own 10 ms
+  window to the attack).
+- **Auto release.** `release` becomes the slow constant; the fast one is `max(release / 8, 2 ms)`. A
+  fast peak-hold stage and a slow stage (fed by an integrated GR that follows the fast stage with a
+  `release / 2` constant on the way up and at once on the way down) run in parallel and are combined
+  with `max`: short peaks release fast, sustained compression slowly (measured with release 800 ms:
+  the GR halves in 69 ms after a 30 ms burst, in 657 ms after 2 s of compression).
+- **Lookahead and latency.** The audio path and the dry path are delayed by
+  `round(lookahead × sr / 1000)` samples (at most 5 ms; the buffer is allocated in `prepare`) while
+  the detector sees the undelayed key. `latency_frames()` is that **current** value (dynamic
+  latency): the engine publishes device latencies after every batch boundary's parameter changes and
+  bumps `latency_epoch`, so a host that recompiles on the epoch re-aligns PDC after the knob moves.
+  Moving `lookahead` changes the delay at once (a click on programme material, as with any delay
+  time). The tests check the impulse delay at 44.1, 48 and 96 kHz.
+- **Makeup.** `makeup` plus, with `auto_makeup`, the reduction a 0 dBFS input would get with the
+  current threshold, ratio and knee; the total is capped at 36 dB and smoothed per batch.
+- **Mix.** `out = dry × (1 − mix) + wet × mix` with the dry path delayed by the lookahead: `mix` 0
+  is the (delayed) input bit for bit.
+- **Meter values** (3): input peak (linear, L/R max), output peak (linear), gain reduction in dB
+  (largest of either channel in the batch).
 - **Safety.** Non-finite input is treated as 0; `f64` state with denormal flushes.
 
 ---
 
 ## EQ: `atomik.eq` (Effect)
 
-A six-band stereo parametric EQ with an analyser feed. Source: [crates/devices/src/eq.rs](../crates/devices/src/eq.rs), filters from `atomik_dsp::SmoothedBiquad`.
+A six-band stereo parametric EQ with an analyser feed. Source:
+[crates/devices/src/eq.rs](../crates/devices/src/eq.rs), filters from `atomik_dsp::SmoothedBiquad`.
 
 ### Sockets
 
@@ -569,21 +785,43 @@ A six-band stereo parametric EQ with an analyser feed. Source: [crates/devices/s
 | `output` | −24 to 24 | 0 | dB | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
-Frequencies and Q use the exponential taper, gains and `output` the linear one. The bands run in the order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 24).
+Frequencies and Q use the exponential taper, gains and `output` the linear one. The bands run in the
+order 1 to 6; the param ids are in that order too (`band1.on` is 0, `output` is 24).
 
 ### Behaviour (as built)
 
-- **Filters.** RBJ cookbook sections with `f64` coefficients and state. Frequency (log₂ Hz), Q (ln Q) and gain (dB) are smoothed with a 10 ms one-pole and the coefficients are recomputed every 16 samples while a parameter moves (the parameters are interpolated, so sweeps do not zipper). Measured against the RBJ response (7 shelf and peak settings × 10 frequencies) the sine-sweep error is below 0.001 dB; the cut filters match the closed-form Butterworth response (bilinear-warped) to the same accuracy.
-- **Cut slopes.** 12 dB/oct is one 2nd-order section (Q = `q`), 24 dB/oct a 4th-order Butterworth (Q 0.5412 and 1.3066), 48 dB/oct an 8th-order one (Q 0.5098, 0.6013, 0.8999, 2.5629). `q` of a cut scales the highest-Q section by `q / 0.7071`, so the default is the exact Butterworth (−3.01 dB at the corner) and a larger `q` adds resonance (at 12 dB/oct the gain at the corner is `q`). Measured slopes 12.0 / 24.1 / 48.2 dB/oct (low cut). A slope change fades the band out (3 ms), rebuilds it and fades it in (10 ms) so it does not click.
-- **Off bands are bit-transparent.** Every band has a bypass weight (10 ms fade, snapping to exactly 0 after about 100 ms). A band that is off, and a shelf or peak with exactly 0 dB gain, is skipped, so with every band off and `output` 0 dB the output equals the input bit for bit (also the default state).
-- **Analyser.** The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak gain, Q 2.485) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915), designed in `prepare`. It runs at the full sample rate on the audio thread (16 `f64` biquads per sample; no FFT, no decimation) and the mean square of every band is taken per batch and smoothed with a 50 ms one-pole. `meter_values` (18): `[0..16)` band energies (linear power; a sine of peak A at a band centre reads about A²/2, use 10·log10 for dB), `[16]` output peak L, `[17]` output peak R. `atomik_devices::eq::analyser_centres(sr)` gives the centre frequencies.
+- **Filters.** RBJ cookbook sections with `f64` coefficients and state. Frequency (log₂ Hz), Q (ln
+  Q) and gain (dB) are smoothed with a 10 ms one-pole and the coefficients are recomputed every 16
+  samples while a parameter moves (the parameters are interpolated, so sweeps do not zipper).
+  Measured against the RBJ response (7 shelf and peak settings × 10 frequencies) the sine-sweep
+  error is below 0.001 dB; the cut filters match the closed-form Butterworth response
+  (bilinear-warped) to the same accuracy.
+- **Cut slopes.** 12 dB/oct is one 2nd-order section (Q = `q`), 24 dB/oct a 4th-order Butterworth (Q
+  0.5412 and 1.3066), 48 dB/oct an 8th-order one (Q 0.5098, 0.6013, 0.8999, 2.5629). `q` of a cut
+  scales the highest-Q section by `q / 0.7071`, so the default is the exact Butterworth (−3.01 dB at
+  the corner) and a larger `q` adds resonance (at 12 dB/oct the gain at the corner is `q`). Measured
+  slopes 12.0 / 24.1 / 48.2 dB/oct (low cut). A slope change fades the band out (3 ms), rebuilds it
+  and fades it in (10 ms) so it does not click.
+- **Off bands are bit-transparent.** Every band has a bypass weight (10 ms fade, snapping to exactly
+  0 after about 100 ms). A band that is off, and a shelf or peak with exactly 0 dB gain, is skipped,
+  so with every band off and `output` 0 dB the output equals the input bit for bit (also the default
+  state).
+- **Analyser.** The mono mix of the output feeds a fixed bank of 16 RBJ band-pass biquads (0 dB peak
+  gain, Q 2.485) with centres log-spaced from 40 Hz to 16 kHz (ratio 1.4915), designed in `prepare`.
+  It runs at the full sample rate on the audio thread (16 `f64` biquads per sample; no FFT, no
+  decimation) and the mean square of every band is taken per batch and smoothed with a 50 ms
+  one-pole. `meter_values` (18): `[0..16)` band energies (linear power; a sine of peak A at a band
+  centre reads about A²/2, use 10·log10 for dB), `[16]` output peak L, `[17]` output peak R.
+  `atomik_devices::eq::analyser_centres(sr)` gives the centre frequencies.
 - **Latency** 0. Non-finite input is treated as 0.
 
 ---
 
 ## Distortion: `atomik.distortion` (Effect)
 
-Oversampled saturation, waveshaping and bitcrushing. Source: [crates/devices/src/distortion.rs](../crates/devices/src/distortion.rs), oversampler in [crates/dsp/src/oversample.rs](../crates/dsp/src/oversample.rs).
+Oversampled saturation, waveshaping and bitcrushing. Source:
+[crates/devices/src/distortion.rs](../crates/devices/src/distortion.rs), oversampler in
+[crates/dsp/src/oversample.rs](../crates/dsp/src/oversample.rs).
 
 ### Sockets
 
@@ -606,22 +844,54 @@ Oversampled saturation, waveshaping and bitcrushing. Source: [crates/devices/src
 
 ### Behaviour (as built)
 
-- **Curves.** Soft clip `u/√(1+u²)`; hard clip `clamp(u, ±1)`; tube: `u/√(1+u²)` for `u ≥ 0` and `u/√(1+(1.25u)²)` below (the negative ceiling is −0.8, so it makes even harmonics: 2nd harmonic −30 dBc at +18 dB drive against −197 dBc for the soft clip); foldback `|((u+3) mod 4) − 2| − 1` (identity inside ±1, reflects at ±1); bitcrush `round(clamp(u) × 2^(bits−1)) / 2^(bits−1)` followed by a sample-and-hold at `crush.rate`. `u = x × drive + bias`; the curve value at zero input is subtracted so a bias is not a step, and a DC blocker (8 Hz one-pole high-pass) always follows.
-- **Oversampling.** The three nonlinear curves run between the halfband stages (see below). **Bitcrush and its sample-and-hold run at the base rate, without oversampling** (its aliasing is the effect); the signal still goes through the oversampler with an identity curve so the timing is identical for every curve.
-- **Alias reduction** (5 kHz sine at 48 kHz, +24 dB drive on a 0.5 amplitude, alias power measured from 20 Hz to 19.2 kHz excluding the tone's harmonics): hard clip −14.2 dBc off, −29.2 dBc at 2x (15.0 dB lower), **−39.0 dBc at 4x (24.7 dB lower)**; soft clip 38.7 dB lower and tube 35.3 dB lower at 4x; foldback 22.5 dB lower; at +12 dB drive soft clip is 74 dB lower and tube 67 dB lower. A hard clip keeps a 1/k² harmonic tail, which limits what oversampling can do.
-- **Tone** is a tilt: low shelf `−6 × tone` dB and high shelf `+6 × tone` dB at 1 kHz (RBJ, Q 0.707, smoothed); skipped at exactly 0.
-- **Mix and latency (dynamic).** `latency_frames()` is the oversampler's latency for the current `oversample`: 0 (off), 29 (2x) or 35 samples at every sample rate, independent of the curve; the engine republishes it after parameter changes and bumps `latency_epoch`. Switching the setting clears the oversampler filters (a short transient). The dry path is delayed by the same latency, so `mix` 0 is the **input delayed by the latency, bit for bit** (the input itself with oversampling off). Drive, bias, output and mix are smoothed per batch (20 ms).
-- **Meter values** (2): input peak, output peak (linear, last batch). Non-finite input is treated as 0; the curves are bounded by 1, so the output stays bounded at any drive.
+- **Curves.** Soft clip `u/√(1+u²)`; hard clip `clamp(u, ±1)`; tube: `u/√(1+u²)` for `u ≥ 0` and
+  `u/√(1+(1.25u)²)` below (the negative ceiling is −0.8, so it makes even harmonics: 2nd harmonic
+  −30 dBc at +18 dB drive against −197 dBc for the soft clip); foldback `|((u+3) mod 4) − 2| − 1`
+  (identity inside ±1, reflects at ±1); bitcrush `round(clamp(u) × 2^(bits−1)) / 2^(bits−1)`
+  followed by a sample-and-hold at `crush.rate`. `u = x × drive + bias`; the curve value at zero
+  input is subtracted so a bias is not a step, and a DC blocker (8 Hz one-pole high-pass) always
+  follows.
+- **Oversampling.** The three nonlinear curves run between the halfband stages (see below).
+  **Bitcrush and its sample-and-hold run at the base rate, without oversampling** (its aliasing is
+  the effect); the signal still goes through the oversampler with an identity curve so the timing is
+  identical for every curve.
+- **Alias reduction** (5 kHz sine at 48 kHz, +24 dB drive on a 0.5 amplitude, alias power measured
+  from 20 Hz to 19.2 kHz excluding the tone's harmonics): hard clip −14.2 dBc off, −29.2 dBc at 2x
+  (15.0 dB lower), **−39.0 dBc at 4x (24.7 dB lower)**; soft clip 38.7 dB lower and tube 35.3 dB
+  lower at 4x; foldback 22.5 dB lower; at +12 dB drive soft clip is 74 dB lower and tube 67 dB
+  lower. A hard clip keeps a 1/k² harmonic tail, which limits what oversampling can do.
+- **Tone** is a tilt: low shelf `−6 × tone` dB and high shelf `+6 × tone` dB at 1 kHz (RBJ, Q 0.707,
+  smoothed); skipped at exactly 0.
+- **Mix and latency (dynamic).** `latency_frames()` is the oversampler's latency for the current
+  `oversample`: 0 (off), 29 (2x) or 35 samples at every sample rate, independent of the curve; the
+  engine republishes it after parameter changes and bumps `latency_epoch`. Switching the setting
+  clears the oversampler filters (a short transient). The dry path is delayed by the same latency,
+  so `mix` 0 is the **input delayed by the latency, bit for bit** (the input itself with
+  oversampling off). Drive, bias, output and mix are smoothed per batch (20 ms).
+- **Meter values** (2): input peak, output peak (linear, last batch). Non-finite input is treated as
+  0; the curves are bounded by 1, so the output stays bounded at any drive.
 
 ### Oversampler (`atomik_dsp::oversample`)
 
-Mono 1x / 2x / 4x polyphase halfband oversampler, shared with the planned limiter. Linear-phase FIR halfband stages (centre tap 0.5, Kaiser-windowed sinc with the coefficients computed in `new` from IEEE `+ − × ÷ sqrt` only, so they are identical on every platform): stage 1 (base ⇄ 2x) 59 taps, stage 2 (2x ⇄ 4x) 23 taps padded to 25 so the delay is a whole number of base samples. Allocation-free after `Oversampler::new(max_block)`. Latency (up and down, base samples): 2x **29**, 4x **35**, 1x 0 (measured as the impulse delay; the response is symmetric). Measured: passband deviation below 0.0005 dB (2x) and 0.0011 dB up to 0.4 fs; image and alias rejection at least 90 dB for the 2x chain and **84.7 dB for the 4x chain** (the transition band is 0.4–0.6 fs).
+Mono 1x / 2x / 4x polyphase halfband oversampler, shared with the planned limiter. Linear-phase FIR
+halfband stages (centre tap 0.5, Kaiser-windowed sinc with the coefficients computed in `new` from
+IEEE `+ − × ÷ sqrt` only, so they are identical on every platform): stage 1 (base ⇄ 2x) 59 taps,
+stage 2 (2x ⇄ 4x) 23 taps padded to 25 so the delay is a whole number of base samples.
+Allocation-free after `Oversampler::new(max_block)`. Latency (up and down, base samples): 2x **29**,
+4x **35**, 1x 0 (measured as the impulse delay; the response is symmetric). Measured: passband
+deviation below 0.0005 dB (2x) and 0.0011 dB up to 0.4 fs; image and alias rejection at least 90 dB
+for the 2x chain and **84.7 dB for the 4x chain** (the transition band is 0.4–0.6 fs).
 
 ---
 
 ## Guitar Amp: `atomik.guitar-amp` (Effect)
 
-A guitar amplifier with a cabinet, chorus, delay and reverb, and five factory setups. An original design that follows the general topology of a valve amp (cascaded gain stages, a tone stack between them, a power stage, a speaker in a box with a microphone), not the circuit or the voicing of a product. Sources: [crates/devices/src/guitar_amp.rs](../crates/devices/src/guitar_amp.rs), the setups in [guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), the blocks in [crates/dsp/src/amp](../crates/dsp/src/amp).
+A guitar amplifier with a cabinet, chorus, delay and reverb, and five factory setups. An original
+design that follows the general topology of a valve amp (cascaded gain stages, a tone stack between
+them, a power stage, a speaker in a box with a microphone), not the circuit or the voicing of a
+product. Sources: [crates/devices/src/guitar_amp.rs](../crates/devices/src/guitar_amp.rs), the
+setups in [guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), the blocks in
+[crates/dsp/src/amp](../crates/dsp/src/amp).
 
 ```text
 in L/R -> mono -> x input -> gate -> tight high-pass, mid boost
@@ -631,7 +901,10 @@ in L/R -> mono -> x input -> gate -> tight high-pass, mid boost
 
 ### Sockets
 
-`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). The amp is mono: it plays the sum of the two inputs, or the one input that is cabled; the cabinet is mono and the chorus, delay and reverb make the stereo image (with every effect off the two outputs are the same signal). There are no CV inputs.
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out). The amp is mono: it plays the sum of the
+two inputs, or the one input that is cabled; the cabinet is mono and the chorus, delay and reverb
+make the stereo image (with every effect off the two outputs are the same signal). There are no CV
+inputs.
 
 ### Params
 
@@ -669,21 +942,73 @@ The defaults are the Clean setup's (a test pins that).
 
 ### Behaviour (as built)
 
-- **Gate.** `gate` is the threshold of a noise gate on the input (after `input`): 50 dB deep, 0.5 ms attack, 30 ms hold, 80 ms release. At −80 dB (up to −79.9) the gate is off and does not touch the signal.
-- **Input stage.** `tight` is the corner of a second-order high-pass in front of the gain (the tight, percussive low end of a palm-muted chug on a down-tuned guitar); `boost` a peaking boost at 780 Hz (Q 0.7), like a booster pedal.
-- **Preamp.** Three cascaded stages. A stage is `x · gain + bias`, an asymmetric algebraic soft clip (the positive half `u/√(1+u²)`, the negative half `u/√(1+(1.35u)²)`, saturating at −0.74 so it makes even harmonics), a coupling high-pass (20, 90, 140 Hz) and a second-order low-pass (7.5, 5.8, 5 kHz). `gain` 0..10 sets the three stage gains together (the first takes the most): 2 + 28k, 26k and 6 + 14k² dB for `k = gain / 10`, 8 dB at 0 and 76 dB at 10, each gliding over 10 ms. After the third stage two low-pass sections at 7.5 kHz take the fizz off.
-- **Tone stack.** `bass`, `mid`, `treble` (0..10) are a passive-style stack between the second and third stages: a low shelf at 110 Hz, a scoop at 480 Hz and a high shelf at 2.8 kHz, with the interaction of a passive network (a high `mid` loads the shelves and fills the scoop, raised shelves deepen it, and a loss of 9 dB at the middle position that the next stage makes up). It is built from three biquads, not from a circuit solution.
-- **Power amp.** `master` (0..10) is the drive into the power stage, −24 to +12 dB, so it sets how hard the stage works as well as how loud it is. The stage is a symmetric algebraic soft clip (odd harmonics, ceiling 1). `sag` (0..10) lowers the gain by up to `1/(1 + 0.9 env)` and the ceiling by `0.2 env`, with `env` a 30 ms attack, 250 ms release envelope of the signal. `presence` (0 to 10 dB, a high shelf at 3.4 kHz) and `depth` (0 to 9 dB, a low shelf at 95 Hz) follow the clip.
-- **Oversampling and aliasing.** Preamp and power amp run at four times the sample rate between the halfband stages of `atomik_dsp::oversample::Oversampler`, and every clip is first-order antiderivative anti-aliased (`(F(u) − F(u₁)) / (u − u₁)`, `F` the exact antiderivative of the curve, in `f64`). A 5.86 kHz sine at gain 10 through the device with the cabinet off has everything that is not one of its harmonics below −53 dB of the fundamental; the preamp and power amp alone measure −49.7 dB at 4x against −37.4 dB at 1x.
-- **Latency.** `latency_frames()` is the oversampler's round trip, 35 samples at every sample rate and for every param; the cabinet, the effects and the other filters add none. The engine's PDC delays the other paths by it and a bypassed amp delays its dry path by it (the bounce test pins both).
-- **Cabinet.** `cab` selects a designed filter cascade (no recorded response): 1x12 open (high-pass 92 Hz, resonance 130 Hz, upper mid 2.8 kHz, low-pass 6.0 and 7.2 kHz, 12 % box reflection), 2x12 (82 Hz, 115 Hz, 2.5 kHz, 5.6 and 6.7 kHz, 17 %), 4x12 closed (72 Hz, 105 Hz +5 dB, 2.3 kHz, 5.2 and 6.2 kHz, 22 %) or off (a wire). The box reflection is one echo 0.37 ms later. `mic` moves the microphone: a high shelf at 3.2 kHz from +4 dB (centre) to −5 dB (edge), a low shelf at 180 Hz from −1 dB to +2 dB and the second low-pass down by up to 30 %. The types have a trim so they are about equally loud; switching glides all the coefficients over 15 ms.
-- **Effects.** The chorus is a wet blend of `atomik_dsp::Chorus` (10 ms centre, 0.4 to 4 ms of sweep, the right side inverted). The delay is a ping-pong of two `DelayLine`s: the mono sum goes into the left line, the repeats cross, and a one-pole low-pass at `delay.tone` darkens each trip; the time is `delay.time` in ms or a note value of `delay.sync` at the project tempo (the note values of the stereo delay), up to 1.5 s, and it glides by at most 0.25 samples per sample so a change bends the repeats instead of clicking. The reverb is `atomik_dsp::Room` (large range, damping 0.35, seeded by the patch seed) with `reverb.size` and `reverb.decay`. The delay and the reverb add to the dry signal. Each section's `on` switch and mix glide over 15 ms; a section whose mix has reached zero is not run, so `mix = 0` or `on = 0` leaves the signal bit for bit as it was, and a section switched on again starts from an empty line.
-- **Level and bounds.** `level` is the last gain; the output is clamped to ±16 as a last bound. Non-finite input samples are treated as 0 and every param is clamped, so the output is finite for any params (a property test runs random params at 44.1, 48 and 96 kHz). Nothing allocates, locks or blocks in `process`, `reset` and `set_param`; the delay lines and the reverb are allocated in `prepare`.
+- **Gate.** `gate` is the threshold of a noise gate on the input (after `input`): 50 dB deep, 0.5 ms
+  attack, 30 ms hold, 80 ms release. At −80 dB (up to −79.9) the gate is off and does not touch the
+  signal.
+- **Input stage.** `tight` is the corner of a second-order high-pass in front of the gain (the
+  tight, percussive low end of a palm-muted chug on a down-tuned guitar); `boost` a peaking boost at
+  780 Hz (Q 0.7), like a booster pedal.
+- **Preamp.** Three cascaded stages. A stage is `x · gain + bias`, an asymmetric algebraic soft clip
+  (the positive half `u/√(1+u²)`, the negative half `u/√(1+(1.35u)²)`, saturating at −0.74 so it
+  makes even harmonics), a coupling high-pass (20, 90, 140 Hz) and a second-order low-pass (7.5,
+  5.8, 5 kHz). `gain` 0..10 sets the three stage gains together (the first takes the most): 2 + 28k,
+  26k and 6 + 14k² dB for `k = gain / 10`, 8 dB at 0 and 76 dB at 10, each gliding over 10 ms. After
+  the third stage two low-pass sections at 7.5 kHz take the fizz off.
+- **Tone stack.** `bass`, `mid`, `treble` (0..10) are a passive-style stack between the second and
+  third stages: a low shelf at 110 Hz, a scoop at 480 Hz and a high shelf at 2.8 kHz, with the
+  interaction of a passive network (a high `mid` loads the shelves and fills the scoop, raised
+  shelves deepen it, and a loss of 9 dB at the middle position that the next stage makes up). It is
+  built from three biquads, not from a circuit solution.
+- **Power amp.** `master` (0..10) is the drive into the power stage, −24 to +12 dB, so it sets how
+  hard the stage works as well as how loud it is. The stage is a symmetric algebraic soft clip (odd
+  harmonics, ceiling 1). `sag` (0..10) lowers the gain by up to `1/(1 + 0.9 env)` and the ceiling by
+  `0.2 env`, with `env` a 30 ms attack, 250 ms release envelope of the signal. `presence` (0 to 10
+  dB, a high shelf at 3.4 kHz) and `depth` (0 to 9 dB, a low shelf at 95 Hz) follow the clip.
+- **Oversampling and aliasing.** Preamp and power amp run at four times the sample rate between the
+  halfband stages of `atomik_dsp::oversample::Oversampler`, and every clip is first-order
+  antiderivative anti-aliased (`(F(u) − F(u₁)) / (u − u₁)`, `F` the exact antiderivative of the
+  curve, in `f64`). A 5.86 kHz sine at gain 10 through the device with the cabinet off has
+  everything that is not one of its harmonics below −53 dB of the fundamental; the preamp and power
+  amp alone measure −49.7 dB at 4x against −37.4 dB at 1x.
+- **Latency.** `latency_frames()` is the oversampler's round trip, 35 samples at every sample rate
+  and for every param; the cabinet, the effects and the other filters add none. The engine's PDC
+  delays the other paths by it and a bypassed amp delays its dry path by it (the bounce test pins
+  both).
+- **Cabinet.** `cab` selects a designed filter cascade (no recorded response): 1x12 open (high-pass
+  92 Hz, resonance 130 Hz, upper mid 2.8 kHz, low-pass 6.0 and 7.2 kHz, 12 % box reflection), 2x12
+  (82 Hz, 115 Hz, 2.5 kHz, 5.6 and 6.7 kHz, 17 %), 4x12 closed (72 Hz, 105 Hz +5 dB, 2.3 kHz, 5.2
+  and 6.2 kHz, 22 %) or off (a wire). The box reflection is one echo 0.37 ms later. `mic` moves the
+  microphone: a high shelf at 3.2 kHz from +4 dB (centre) to −5 dB (edge), a low shelf at 180 Hz
+  from −1 dB to +2 dB and the second low-pass down by up to 30 %. The types have a trim so they are
+  about equally loud; switching glides all the coefficients over 15 ms.
+- **Effects.** The chorus is a wet blend of `atomik_dsp::Chorus` (10 ms centre, 0.4 to 4 ms of
+  sweep, the right side inverted). The delay is a ping-pong of two `DelayLine`s: the mono sum goes
+  into the left line, the repeats cross, and a one-pole low-pass at `delay.tone` darkens each trip;
+  the time is `delay.time` in ms or a note value of `delay.sync` at the project tempo (the note
+  values of the stereo delay), up to 1.5 s, and it glides by at most 0.25 samples per sample so a
+  change bends the repeats instead of clicking. The reverb is `atomik_dsp::Room` (large range,
+  damping 0.35, seeded by the patch seed) with `reverb.size` and `reverb.decay`. The delay and the
+  reverb add to the dry signal. Each section's `on` switch and mix glide over 15 ms; a section whose
+  mix has reached zero is not run, so `mix = 0` or `on = 0` leaves the signal bit for bit as it was,
+  and a section switched on again starts from an empty line.
+- **Level and bounds.** `level` is the last gain; the output is clamped to ±16 as a last bound.
+  Non-finite input samples are treated as 0 and every param is clamped, so the output is finite for
+  any params (a property test runs random params at 44.1, 48 and 96 kHz). Nothing allocates, locks
+  or blocks in `process`, `reset` and `set_param`; the delay lines and the reverb are allocated in
+  `prepare`.
 - **Meter values** (3): input peak, output peak (linear, last batch) and the gate's reduction in dB.
 
 ### Setups
 
-`setup` selects a factory setup. A setup is a value for every param but `setup` and `bypass` ([guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), one row per setup). **The device ignores the param**: the app turns a `SetParam` of `setup` on a guitar amp into one `Command::Batch` that sets `setup` and every param of the setup (`AppCore::expand_setup`). Choosing a setup is therefore **one undo step** (one undo brings back every value), it works from the rack panel, from MIDI and from the MCP tools alike, and a project file only holds plain param values. The player tweaks freely afterwards and the selector keeps showing the last setup; choosing the same one again restores its values. A `bypass` is not part of a setup. A patch rendered by `atomik-render` that sets `setup` alone does not load the setup: write the params.
+`setup` selects a factory setup. A setup is a value for every param but `setup` and `bypass`
+([guitar_amp/setups.rs](../crates/devices/src/guitar_amp/setups.rs), one row per setup). **The
+device ignores the param**: the app turns a `SetParam` of `setup` on a guitar amp into one
+`Command::Batch` that sets `setup` and every param of the setup (`AppCore::expand_setup`). Choosing
+a setup is therefore **one undo step** (one undo brings back every value), it works from the rack
+panel, from MIDI and from the MCP tools alike, and a project file only holds plain param values. The
+player tweaks freely afterwards and the selector keeps showing the last setup; choosing the same one
+again restores its values. A `bypass` is not part of a setup. A patch rendered by `atomik-render`
+that sets `setup` alone does not load the setup: write the params.
 
 | Setup | gain | tone (bass, mid, treble) | tight, boost | gate | cab, mic | effects |
 |---|---|---|---|---|---|---|
@@ -693,15 +1018,26 @@ The defaults are the Clean setup's (a test pins that).
 | 80s Lead | 8 | 5.5, 7.5, 6 (sag 6) | 90 Hz, 6 dB | −56 dB | 4x12 closed, 0.35 | 380 ms ping-pong delay (feedback 0.38, tone 4.2 kHz, mix 0.28), plate-like reverb (1.8 s, mix 0.22) |
 | Synthwave | 3.5 | 4.5, 5, 7 (presence 6) | 40 Hz, 0 | off | 1x12 open, 0.1 | wide chorus (0.7 Hz, depth 0.7, mix 0.5), dotted-eighth delay at the project tempo (feedback 0.45, tone 6 kHz, mix 0.3), 4.5 s reverb (size 0.8, mix 0.35) |
 
-The levels (`level` −1.5, −8, −10, −4.5 and −2.5 dB) are matched on a played guitar: the bounce test of the synthesised guitar DI measures the five within half a decibel of each other.
+The levels (`level` −1.5, −8, −10, −4.5 and −2.5 dB) are matched on a played guitar: the bounce test
+of the synthesised guitar DI measures the five within half a decibel of each other.
 
 ### Tests
 
-`crates/dsp/src/amp` (the blocks: tone interaction, aliasing against 1x, even and odd harmonics, sag, presence and depth, the cabinets), `crates/devices/src/guitar_amp/tests.rs` (descriptor, setup table, gain staging, aliasing, gate, cabinet and mic, tone, effects and tempo sync, exact bypass of a zero mix, mono input, determinism, extreme and non-finite params), the `qa_guitar_amp_any_params_bounded_at_every_sample_rate` property test, `crates/app/src/app_core_setups_tests.rs` (a setup is one undo step), `crates/ui/tests/guitar_amp_panel.rs` with the goldens of `fx_panels.rs`, and in `atomik-render` the PDC case of `fx_pdc.rs` and `guitar_amp_demo.rs`: a synthesised Karplus-Strong guitar DI bounced through every setup (bit-identical at every host block, the gate, the delay tail, the width and a fingerprint golden within 0.5 dB).
+`crates/dsp/src/amp` (the blocks: tone interaction, aliasing against 1x, even and odd harmonics,
+sag, presence and depth, the cabinets), `crates/devices/src/guitar_amp/tests.rs` (descriptor, setup
+table, gain staging, aliasing, gate, cabinet and mic, tone, effects and tempo sync, exact bypass of
+a zero mix, mono input, determinism, extreme and non-finite params), the
+`qa_guitar_amp_any_params_bounded_at_every_sample_rate` property test,
+`crates/app/src/app_core_setups_tests.rs` (a setup is one undo step),
+`crates/ui/tests/guitar_amp_panel.rs` with the goldens of `fx_panels.rs`, and in `atomik-render` the
+PDC case of `fx_pdc.rs` and `guitar_amp_demo.rs`: a synthesised Karplus-Strong guitar DI bounced
+through every setup (bit-identical at every host block, the gate, the delay tail, the width and a
+fingerprint golden within 0.5 dB).
 
 ## Modulation: `atomik.modulation` (Effect)
 
-Chorus, flanger and phaser with tempo sync. Source: [crates/devices/src/modulation.rs](../crates/devices/src/modulation.rs).
+Chorus, flanger and phaser with tempo sync. Source:
+[crates/devices/src/modulation.rs](../crates/devices/src/modulation.rs).
 
 ### Sockets
 
@@ -725,18 +1061,42 @@ Chorus, flanger and phaser with tempo sync. Source: [crates/devices/src/modulati
 
 ### Behaviour (as built)
 
-- **Chorus.** Three Hermite-interpolated modulated delays per side (`atomik_dsp::ModDelay`), base delays `delay × [1.0, 1.27, 0.79]`, LFO phases offset by a third of a cycle, instantaneous delay `base × (1 + 0.5 × depth × lfo)`; the voices are averaged and `feedback` feeds the average back.
-- **Flanger.** One delay per side, `delay × (1 + 0.9 × depth × lfo)`, positive or negative feedback. The line reads before it writes, so the delay is exact (a 2 ms flanger at depth 0 returns an impulse at exactly 96 samples at 48 kHz).
-- **Phaser.** `stages` first-order allpasses `(a + z⁻¹)/(1 + a z⁻¹)` in `f64`; the corner sweeps `1 kHz × 2^(3 × depth × lfo)` (125 Hz to 8 kHz at full depth) with `tan` from a [5/4] Padé approximation (error below 1e-5 up to 0.7 rad, so no libm in the per-sample path). Feedback takes the last stage's previous output (one sample of delay in the loop). With depth 0 and no feedback the magnitude is flat within 0.01 dB at any frequency.
-- **LFO.** The parabolic sine-like wave of `atomik_dsp::ParabolicLfo` (`4u(1 − |u|)`), no libm. The right channel runs `spread/360` cycles ahead.
-- **Tempo sync (documented choice).** With `sync` not off and the transport **playing**, the LFO phase is `frac(frame / (beats × sr × 60 / bpm))` computed in `f64` from the absolute frame of each sample, so it depends only on the frame index and the tempo, never on the batch layout; the period is exact (the phase matches the closed form to 1e-9 for all seven divisions at 44.1, 48 and 96 kHz, and a device started at a later frame matches one that ran from 0 bit for bit). A tempo change moves the phase. With the transport **stopped** the LFO free-runs at the synced rate from its last phase (the frame is ignored). With `sync` off it free-runs at `rate`.
-- **Safety and latency.** Latency 0. `mix` 0 is the input bit for bit. `mix`, `output`, `depth`, `feedback` and the delay time are smoothed per batch (20 ms); a `mode` change clears the lines. The feedback signal is clamped to ±8 and state is flushed below 1e-20: at feedback ±0.95, depth 1, 12 stages and 30 s of full-scale noise the output stays finite and below 25 (all three modes), and the feedback tails decay to silence after the input stops. Delay times never leave the allocated line (at most 1.9 × `delay` for the flanger, 1.905 × `delay` for the chorus; the line holds 57.2 ms plus margin).
+- **Chorus.** Three Hermite-interpolated modulated delays per side (`atomik_dsp::ModDelay`), base
+  delays `delay × [1.0, 1.27, 0.79]`, LFO phases offset by a third of a cycle, instantaneous delay
+  `base × (1 + 0.5 × depth × lfo)`; the voices are averaged and `feedback` feeds the average back.
+- **Flanger.** One delay per side, `delay × (1 + 0.9 × depth × lfo)`, positive or negative feedback.
+  The line reads before it writes, so the delay is exact (a 2 ms flanger at depth 0 returns an
+  impulse at exactly 96 samples at 48 kHz).
+- **Phaser.** `stages` first-order allpasses `(a + z⁻¹)/(1 + a z⁻¹)` in `f64`; the corner sweeps
+  `1 kHz × 2^(3 × depth × lfo)` (125 Hz to 8 kHz at full depth) with `tan` from a [5/4] Padé
+  approximation (error below 1e-5 up to 0.7 rad, so no libm in the per-sample path). Feedback takes
+  the last stage's previous output (one sample of delay in the loop). With depth 0 and no feedback
+  the magnitude is flat within 0.01 dB at any frequency.
+- **LFO.** The parabolic sine-like wave of `atomik_dsp::ParabolicLfo` (`4u(1 − |u|)`), no libm. The
+  right channel runs `spread/360` cycles ahead.
+- **Tempo sync (documented choice).** With `sync` not off and the transport **playing**, the LFO
+  phase is `frac(frame / (beats × sr × 60 / bpm))` computed in `f64` from the absolute frame of each
+  sample, so it depends only on the frame index and the tempo, never on the batch layout; the period
+  is exact (the phase matches the closed form to 1e-9 for all seven divisions at 44.1, 48 and 96
+  kHz, and a device started at a later frame matches one that ran from 0 bit for bit). A tempo
+  change moves the phase. With the transport **stopped** the LFO free-runs at the synced rate from
+  its last phase (the frame is ignored). With `sync` off it free-runs at `rate`.
+- **Safety and latency.** Latency 0. `mix` 0 is the input bit for bit. `mix`, `output`, `depth`,
+  `feedback` and the delay time are smoothed per batch (20 ms); a `mode` change clears the lines.
+  The feedback signal is clamped to ±8 and state is flushed below 1e-20: at feedback ±0.95, depth 1,
+  12 stages and 30 s of full-scale noise the output stays finite and below 25 (all three modes), and
+  the feedback tails decay to silence after the input stops. Delay times never leave the allocated
+  line (at most 1.9 × `delay` for the flanger, 1.905 × `delay` for the chorus; the line holds 57.2
+  ms plus margin).
 
 ---
 
 ## Mod Source: `atomik.mod-source` (Utility)
 
-Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and has only CV sockets besides the notes input, so adding it to a rack creates no cables. Source: [crates/devices/src/mod_source.rs](../crates/devices/src/mod_source.rs), shapes and envelope in [crates/dsp/src/mod_source.rs](../crates/dsp/src/mod_source.rs).
+Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and has only CV sockets
+besides the notes input, so adding it to a rack creates no cables. Source:
+[crates/devices/src/mod_source.rs](../crates/devices/src/mod_source.rs), shapes and envelope in
+[crates/dsp/src/mod_source.rs](../crates/dsp/src/mod_source.rs).
 
 ### Sockets
 
@@ -749,7 +1109,9 @@ Two LFOs and an ADSR envelope as control-voltage sources. It makes no sound and 
 | `lfo1_cv_out`, `lfo2_cv_out` | CV | out | −1..+1 (0..1 unipolar) |
 | `env_cv_out` | CV | out | 0..1 |
 
-The CV convention of the project (`<target>_cv_in` with a bipolar `<target>_cv_trim`, default +1) applies to the rate CV. Two inputs are documented exceptions with no trim: the amount CV (a multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
+The CV convention of the project (`<target>_cv_in` with a bipolar `<target>_cv_trim`, default +1)
+applies to the rate CV. Two inputs are documented exceptions with no trim: the amount CV (a
+multiplier, clamped to 0..1) and `gate_cv_in` (a gate, high above 0.5).
 
 ### Params
 
@@ -776,21 +1138,50 @@ Each LFO has ten params with the prefix `lfo1_` or `lfo2_` (LFO 2 defaults to a 
 
 ### Behaviour (as built)
 
-- **Shapes and morph.** Sine and triangle start at 0 and rise; saw up runs −1 to +1, saw down +1 to −1; pulse starts high. `morph` is 0 at the neutral setting of every shape. Sine and triangle: *skew*, the positive half-cycle takes `0.5 + 0.48 × morph` of the cycle. Saws: *curve*, `q = p (1−k)/(1−k p)` with `k = 0.95 × morph` (positive is slow-start). Pulse: width `0.5 + 0.45 × morph`. Sample & hold: *glide*, the first `max(morph, 0)` of each cycle slides linearly from the previous value to the new one. Smooth random: the curve between this cycle's value and the next (negative towards linear, positive towards smootherstep).
-- **Output.** `shape × amount × amount CV` (unipolar maps the shape to `(v + 1)/2` first), so the output never leaves −1..+1 (envelope 0..1).
-- **Rate.** Free: `lfoN_rate × 2^(4 × rate CV × lfoN_rate_cv_trim)`, the CV sanitised (non-finite is 0) and clamped to ±1 (up to 4 octaves). Synced: one cycle lasts the division (bars follow the time signature), bent by the rate CV in the same way.
-- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its last phase. A free LFO ignores the transport.
-- **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset; random shapes draw new values after each restart.
-- **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible for a seed, across locates and bounces.
-- **Envelope.** Curves of the poly synth's ADSR, computed without libm. The gate is high while a note is held or `gate_cv_in` is above 0.5. **Retrigger** (default): every note-on and every rising gate edge restarts the attack from the current level (no click). **Legato**: a trigger while the gate is already high does nothing. The release starts when the last note is off and the gate CV is low. Notes and gate edges act at their sample.
-- **Meter values (32 floats, for the front panel scope).** `0..3` latest lfo1, lfo2, env; `3..5` LFO phases (0..1); `5` envelope stage (0 idle, 1 attack, 2 decay, 3 sustain, 4 release); `6` push counter modulo 4096; `7..15`, `15..23`, `23..31` the last 8 history points of lfo1, lfo2, env, oldest first, one point every 2.5 ms; `31` the spacing in ms.
-- **Determinism.** No libm call in the output path (deterministic sine, `exp2`, integer hashes): bit-identical on every platform. The example [mod-source-demo.json](../examples/patches/mod-source-demo.json) drives the poly synth's cutoff from a tempo-synced saw.
+- **Shapes and morph.** Sine and triangle start at 0 and rise; saw up runs −1 to +1, saw down +1 to
+  −1; pulse starts high. `morph` is 0 at the neutral setting of every shape. Sine and triangle:
+  *skew*, the positive half-cycle takes `0.5 + 0.48 × morph` of the cycle. Saws: *curve*,
+  `q = p (1−k)/(1−k p)` with `k = 0.95 × morph` (positive is slow-start). Pulse: width
+  `0.5 + 0.45 × morph`. Sample & hold: *glide*, the first `max(morph, 0)` of each cycle slides
+  linearly from the previous value to the new one. Smooth random: the curve between this cycle's
+  value and the next (negative towards linear, positive towards smootherstep).
+- **Output.** `shape × amount × amount CV` (unipolar maps the shape to `(v + 1)/2` first), so the
+  output never leaves −1..+1 (envelope 0..1).
+- **Rate.** Free: `lfoN_rate × 2^(4 × rate CV × lfoN_rate_cv_trim)`, the CV sanitised (non-finite
+  is 0) and clamped to ±1 (up to 4 octaves). Synced: one cycle lasts the division (bars follow the
+  time signature), bent by the rate CV in the same way.
+- **Sync.** While the transport plays, a synced LFO's phase is `tick / ticks_per_cycle`: it follows
+  locates, loops (also a wrap inside a batch) and tempo changes. With a rate CV connected (and a
+  non-zero `lfoN_rate_cv_trim`) the phase is integrated at the bent rate and re-aligned to the song
+  at every jump. While the transport is stopped a synced LFO free-runs at the synced rate from its
+  last phase. A free LFO ignores the transport.
+- **Key sync.** Each note-on restarts the LFO at phase 0 (plus `lfoN_phase`) at its sample offset;
+  random shapes draw new values after each restart.
+- **Random.** Sample & hold and smooth random values are `hash64(seed, lfo, cycle)`: reproducible
+  for a seed, across locates and bounces.
+- **Envelope.** Curves of the poly synth's ADSR, computed without libm. The gate is high while a
+  note is held or `gate_cv_in` is above 0.5. **Retrigger** (default): every note-on and every rising
+  gate edge restarts the attack from the current level (no click). **Legato**: a trigger while the
+  gate is already high does nothing. The release starts when the last note is off and the gate CV is
+  low. Notes and gate edges act at their sample.
+- **Meter values (32 floats, for the front panel scope).** `0..3` latest lfo1, lfo2, env; `3..5` LFO
+  phases (0..1); `5` envelope stage (0 idle, 1 attack, 2 decay, 3 sustain, 4 release); `6` push
+  counter modulo 4096; `7..15`, `15..23`, `23..31` the last 8 history points of lfo1, lfo2, env,
+  oldest first, one point every 2.5 ms; `31` the spacing in ms.
+- **Determinism.** No libm call in the output path (deterministic sine, `exp2`, integer hashes):
+  bit-identical on every platform. The example
+  [mod-source-demo.json](../examples/patches/mod-source-demo.json) drives the poly synth's cutoff
+  from a tempo-synced saw.
 
 ---
 
 ## Macro Bank: `atomik.macro-bank` (Utility)
 
-Eight macro knobs that drive params of other devices. It makes no sound and the engine does nothing with its params: the model turns each assignment into a plain value of the target before the engine sees the project (see "Macro banks" in [ARCHITECTURE.md](ARCHITECTURE.md)). It is in the device browser with the utilities, or comes into being when a param is assigned to a macro with no bank to take it. Source: [crates/devices/src/macro_bank.rs](../crates/devices/src/macro_bank.rs).
+Eight macro knobs that drive params of other devices. It makes no sound and the engine does nothing
+with its params: the model turns each assignment into a plain value of the target before the engine
+sees the project (see "Macro banks" in [ARCHITECTURE.md](ARCHITECTURE.md)). It is in the device
+browser with the utilities, or comes into being when a param is assigned to a macro with no bank to
+take it. Source: [crates/devices/src/macro_bank.rs](../crates/devices/src/macro_bank.rs).
 
 ### Sockets
 
@@ -806,16 +1197,22 @@ Eight macro knobs that drive params of other devices. It makes no sound and the 
 
 ### Behaviour (as built)
 
-- **No processing.** `process`, `reset` and `set_param` do nothing; there is no latency and no output. A project with a bank that drives nothing renders bit for bit like the project without it.
-- **Names and assignments** are project data (`"macros"`), not params: a macro has an optional name of up to 24 characters, and each assignment carries a range in plain values of its target and an invert flag.
+- **No processing.** `process`, `reset` and `set_param` do nothing; there is no latency and no
+  output. A project with a bank that drives nothing renders bit for bit like the project without it.
+- **Names and assignments** are project data (`"macros"`), not params: a macro has an optional name
+  of up to 24 characters, and each assignment carries a range in plain values of its target and an
+  invert flag.
 
 ## Mastering: `atomik.mastering` (Effect)
 
-Multiband compressor, stereo width, true-peak limiter and a BS.1770 loudness meter in one device. Source: [crates/devices/src/mastering.rs](../crates/devices/src/mastering.rs), with `mastering/limiter.rs` and `mastering/loudness.rs`.
+Multiband compressor, stereo width, true-peak limiter and a BS.1770 loudness meter in one device.
+Source: [crates/devices/src/mastering.rs](../crates/devices/src/mastering.rs), with
+`mastering/limiter.rs` and `mastering/loudness.rs`.
 
 ### Sockets
 
-`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `gr_cv_out` (CV out: `1 − g`, `g` the limiter gain times the smallest band compression gain).
+`in_l`, `in_r` (Audio in), `out_l`, `out_r` (Audio out), `gr_cv_out` (CV out: `1 − g`, `g` the
+limiter gain times the smallest band compression gain).
 
 ### Params
 
@@ -839,32 +1236,101 @@ Multiband compressor, stereo width, true-peak limiter and a BS.1770 loudness met
 | `meter.reset` | momentary toggle: a rising edge clears the loudness and true-peak meters | 0 | toggle | Linear | yes |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
-The param ids run in this order (`input` 0 … `meter.reset` 27); the band params are grouped per band (threshold, ratio, attack, release, gain, on).
+The param ids run in this order (`input` 0 … `meter.reset` 27); the band params are grouped per band
+(threshold, ratio, attack, release, gain, on).
 
 ### Behaviour (as built)
 
-- **Chain.** input gain → multiband → width → limiter → output gain; the loudness and true-peak meter read the output. The limiter lookahead is a fixed 1.5 ms (no parameter; the latency is therefore constant).
-- **Crossovers.** Two Linkwitz-Riley 4th-order crossovers (two cascaded Butterworth 2nd-order sections per branch). The low crossover splits the input into `L1`/`H1`, the high crossover splits `H1` into mid and high, and `L1` is passed through the high crossover's own low-pass plus high-pass (an allpass), so the bands sum to `AP_high(AP_low(x))`: **flat magnitude** (the measured deviation of the sum, ratio 1, over 16 frequencies from 30 Hz to 17 kHz and four crossover settings, including a swapped high < low setting, is below 1e-6 dB) with the **phase of two cascaded LR4 allpasses** (an impulse is smeared). The low crossover has priority: the effective high frequency is `max(xover.high, 1.25 × xover.low)`, capped at 0.45 sr. Crossover changes are not smoothed (the biquad state is continuous, but a sweep during playback can click).
-- **Band compressors.** Per band the peak `max(|L|, |R|)` of the band signal (stereo-linked) drives the gain computer `atomik_dsp::static_gain_reduction_knee_db` (6 dB soft knee) and the same ballistics as `atomik.compressor` (release with peak hold, then attack; one-pole time constants of the GR in dB; the formulas are repeated in the device, the compressor itself is unchanged). `bandN.gain` is smoothed per batch.
-- **Width.** `m = (l + r)/2`, `s = (l − r)/2 × width`, `l = m + s`, `r = m − s`. Width 0 gives bit-identical channels; **width 100 % with `mono_below` off skips the matrix, so the signal is bit-exact** (with the multiband off, the whole device is then a bit-exact delay as long as the limiter does not act). `mono_below` above 0 puts an LR4 high-pass (−6 dB at the corner, −24 dB one octave below, −48 dB two octaves below) on the side signal only: mono content is untouched, side content below the frequency disappears.
-- **Limiter.** 4x oversampled true-peak detection per channel (`atomik_dsp::oversample` halfband stages, up path only, plus a parabolic refinement of local maxima capped at +10 %), channels linked. Required gain `min(1, ceiling / peak)`; a sliding minimum over `LA + 2` samples (`LA` = 1.5 ms) averaged over `LA` samples gives a linear attack ramp that reaches the required gain when the peak leaves the delay line; the release is an exponential with the `release` time constant (`env ≤ g`, so the guarantee holds), instant when the required gain falls. The output is finally clamped to ±ceiling (a last resort that only acts if the detector missed a peak). At rest the gain is exactly 1 and the audio is untouched. `output` is applied **after** the limiter, so the final ceiling is `ceiling + output`; keep it at 0 dB to guarantee the ceiling.
-- **Loudness meter** (BS.1770-4 / EBU R128): K-weighting (high-shelf pre-filter and RLB high-pass) with coefficients computed for the actual sample rate (at 48 kHz they equal the published values to 1e-9); 100 ms sub-blocks; **momentary** = last 400 ms, **short-term** = last 3 s, both updated every 100 ms and starting from a zero-filled window; **integrated** with the −70 LUFS absolute gate and the −10 LU relative gate over 400 ms blocks at 75 % overlap. Gating storage is a fixed **histogram of 801 bins of 0.1 LU (−70 to +10 LUFS, the last bin catches louder blocks)** holding per bin a block count (`u64`) and the exact sum of mean squares (`f64`), so any programme length runs without allocation; the relative-gate membership is quantised to half a bin (0.05 LU), which moves a result on programme material by well under 0.01 LU. Silence and "no data" read −120. **True peak** is the 4x oversampled maximum (unrefined, as in BS.1770 Annex 2) of the output, held until reset. **`meter.reset`** (a rising edge from 0 to 1) clears the integrated loudness, both windows and the true-peak maximum, and `reset()` does too; the transport does not. Note that the output still carries the last `latency` samples of the audio from before the reset.
-- **Latency** (constant per sample rate, set in `prepare`): `17 + round(1.5 ms × sr)` samples = **89 at 48 kHz, 83 at 44.1 kHz, 161 at 96 kHz**: 17 is the group delay of the oversampler's up path (a sample `n` lands in detector group `n + 17`), the rest is the lookahead; the audio never passes through the oversampler. The tests measure the impulse delay (multiband off).
-- **Meter values** (8): `[momentary LUFS, short-term LUFS, integrated LUFS, true peak dBTP, GR band 1, GR band 2, GR band 3 (dB, largest in the batch), limiter GR (dB)]`.
+- **Chain.** input gain → multiband → width → limiter → output gain; the loudness and true-peak
+  meter read the output. The limiter lookahead is a fixed 1.5 ms (no parameter; the latency is
+  therefore constant).
+- **Crossovers.** Two Linkwitz-Riley 4th-order crossovers (two cascaded Butterworth 2nd-order
+  sections per branch). The low crossover splits the input into `L1`/`H1`, the high crossover splits
+  `H1` into mid and high, and `L1` is passed through the high crossover's own low-pass plus
+  high-pass (an allpass), so the bands sum to `AP_high(AP_low(x))`: **flat magnitude** (the measured
+  deviation of the sum, ratio 1, over 16 frequencies from 30 Hz to 17 kHz and four crossover
+  settings, including a swapped high < low setting, is below 1e-6 dB) with the **phase of two
+  cascaded LR4 allpasses** (an impulse is smeared). The low crossover has priority: the effective
+  high frequency is `max(xover.high, 1.25 × xover.low)`, capped at 0.45 sr. Crossover changes are
+  not smoothed (the biquad state is continuous, but a sweep during playback can click).
+- **Band compressors.** Per band the peak `max(|L|, |R|)` of the band signal (stereo-linked) drives
+  the gain computer `atomik_dsp::static_gain_reduction_knee_db` (6 dB soft knee) and the same
+  ballistics as `atomik.compressor` (release with peak hold, then attack; one-pole time constants of
+  the GR in dB; the formulas are repeated in the device, the compressor itself is unchanged).
+  `bandN.gain` is smoothed per batch.
+- **Width.** `m = (l + r)/2`, `s = (l − r)/2 × width`, `l = m + s`, `r = m − s`. Width 0 gives
+  bit-identical channels; **width 100 % with `mono_below` off skips the matrix, so the signal is
+  bit-exact** (with the multiband off, the whole device is then a bit-exact delay as long as the
+  limiter does not act). `mono_below` above 0 puts an LR4 high-pass (−6 dB at the corner, −24 dB one
+  octave below, −48 dB two octaves below) on the side signal only: mono content is untouched, side
+  content below the frequency disappears.
+- **Limiter.** 4x oversampled true-peak detection per channel (`atomik_dsp::oversample` halfband
+  stages, up path only, plus a parabolic refinement of local maxima capped at +10 %), channels
+  linked. Required gain `min(1, ceiling / peak)`; a sliding minimum over `LA + 2` samples (`LA` =
+  1.5 ms) averaged over `LA` samples gives a linear attack ramp that reaches the required gain when
+  the peak leaves the delay line; the release is an exponential with the `release` time constant
+  (`env ≤ g`, so the guarantee holds), instant when the required gain falls. The output is finally
+  clamped to ±ceiling (a last resort that only acts if the detector missed a peak). At rest the gain
+  is exactly 1 and the audio is untouched. `output` is applied **after** the limiter, so the final
+  ceiling is `ceiling + output`; keep it at 0 dB to guarantee the ceiling.
+- **Loudness meter** (BS.1770-4 / EBU R128): K-weighting (high-shelf pre-filter and RLB high-pass)
+  with coefficients computed for the actual sample rate (at 48 kHz they equal the published values
+  to 1e-9); 100 ms sub-blocks; **momentary** = last 400 ms, **short-term** = last 3 s, both updated
+  every 100 ms and starting from a zero-filled window; **integrated** with the −70 LUFS absolute
+  gate and the −10 LU relative gate over 400 ms blocks at 75 % overlap. Gating storage is a fixed
+  **histogram of 801 bins of 0.1 LU (−70 to +10 LUFS, the last bin catches louder blocks)** holding
+  per bin a block count (`u64`) and the exact sum of mean squares (`f64`), so any programme length
+  runs without allocation; the relative-gate membership is quantised to half a bin (0.05 LU), which
+  moves a result on programme material by well under 0.01 LU. Silence and "no data" read −120.
+  **True peak** is the 4x oversampled maximum (unrefined, as in BS.1770 Annex 2) of the output, held
+  until reset. **`meter.reset`** (a rising edge from 0 to 1) clears the integrated loudness, both
+  windows and the true-peak maximum, and `reset()` does too; the transport does not. Note that the
+  output still carries the last `latency` samples of the audio from before the reset.
+- **Latency** (constant per sample rate, set in `prepare`): `17 + round(1.5 ms × sr)` samples = **89
+  at 48 kHz, 83 at 44.1 kHz, 161 at 96 kHz**: 17 is the group delay of the oversampler's up path (a
+  sample `n` lands in detector group `n + 17`), the rest is the lookahead; the audio never passes
+  through the oversampler. The tests measure the impulse delay (multiband off).
+- **Meter values** (8):
+  `[momentary LUFS, short-term LUFS, integrated LUFS, true peak dBTP, GR band 1, GR band 2, GR band 3 (dB, largest in the batch), limiter GR (dB)]`.
 - **Measured** (48 kHz unless stated; all in `crates/devices/src/mastering/tests.rs`):
-  - Integrated loudness of stereo 1 kHz sines: −23 dBFS reads −22.993 LUFS, −33 dBFS −32.993, −20 dBFS −19.993 (a stereo sine reads its peak level in LUFS: both channels at −20 dBFS give −20 LUFS, not −23); 44.1 kHz −22.991, 96 kHz −23.011. One channel only, 997 Hz at 0 dBFS: −3.010 LUFS (−3.01 expected). EBU Tech 3341 cases 1 and 2 (stereo −23 and −33 LUFS, 20 s), case 3 (10 s at −36, 60 s at −23, 10 s at −36: −23.014) and case 4 (the same with 10 s of −72 LUFS at both ends: −23.014) are synthesised with a 1 kHz sine.
-  - Gating: 20 s of tone followed by 20 s of silence reads −23.026 against −22.993 for the tone alone (difference 0.033 LU, the transition blocks); alternating 5 s tone / 10 s silence reads 0.19 LU lower (every edge adds three partly filled blocks, which the standard keeps).
-  - Momentary/short-term on a 1 s burst at −23 dBFS: window half full (0.2 s in) −26 ± 0.4, full −23.0 ± 0.1, back to −120 0.4 s (momentary) and 3 s (short-term) after the end; a long tone reads −26 at 1.5 s and −23 at 3.1 s in the short-term window.
+  - Integrated loudness of stereo 1 kHz sines: −23 dBFS reads −22.993 LUFS, −33 dBFS −32.993, −20
+    dBFS −19.993 (a stereo sine reads its peak level in LUFS: both channels at −20 dBFS give −20
+    LUFS, not −23); 44.1 kHz −22.991, 96 kHz −23.011. One channel only, 997 Hz at 0 dBFS: −3.010
+    LUFS (−3.01 expected). EBU Tech 3341 cases 1 and 2 (stereo −23 and −33 LUFS, 20 s), case 3 (10 s
+    at −36, 60 s at −23, 10 s at −36: −23.014) and case 4 (the same with 10 s of −72 LUFS at both
+    ends: −23.014) are synthesised with a 1 kHz sine.
+  - Gating: 20 s of tone followed by 20 s of silence reads −23.026 against −22.993 for the tone
+    alone (difference 0.033 LU, the transition blocks); alternating 5 s tone / 10 s silence reads
+    0.19 LU lower (every edge adds three partly filled blocks, which the standard keeps).
+  - Momentary/short-term on a 1 s burst at −23 dBFS: window half full (0.2 s in) −26 ± 0.4, full
+    −23.0 ± 0.1, back to −120 0.4 s (momentary) and 3 s (short-term) after the end; a long tone
+    reads −26 at 1.5 s and −23 at 3.1 s in the short-term window.
   - True peak meter on the fs/4, 45° sine with a −6 dBFS sample peak: −2.91 dBTP (−3.01 expected, error 0.10 dB).
-  - Limiter (ceiling −1 dBTP unless stated), true peak measured on the output with an independent 16x windowed-sinc reference (steady state, the first 3000 samples and the last 64 excluded; the device's own BS.1770 meter, which includes the onset, agrees to 0.01 dB): the fs/4, 45° sine pushed +3 dBTP reads −1.003 / −3.004 / −6.003 dBTP for ceilings −1 / −3 / −6; 997 Hz −1.000; 11.5 kHz −1.003; 19 kHz −1.004; band-limited (0.35 fs) noise at 0 dBFS and +12 dB gain −0.996 and −0.989 (the largest overshoot, **+0.011 dB**), and through the whole default chain with width 150 % −0.991. **Limitation:** white noise has energy between 0.4 and 0.5 fs, which the 4x halfband stage attenuates, so the 16x reference of full-band white noise overshoots the ceiling by **0.90 to 1.03 dB** (the 4x BS.1770 reading stays at −0.976 / −0.980 dBTP, within 0.03 dB of the ceiling); programme material with little above 18 kHz is unaffected.
-  - Sustained tones: with ceiling −1 and +6 dB over, the residual after removing the fitted tone is −52.7 dB at 100 Hz (the gain follows the peaks; 150 ms release) and −146.6 dB at 1 kHz and 5 kHz. Release: the gain reaches 63.2 % of its way back after 101.3 ms for a 100 ms setting.
-  - Band compressors: a 100 Hz tone only reduces band 1, 6 kHz only band 3; a −10 dBFS 1 kHz tone with threshold −30 dB and ratio 4 gets 15 ± 0.3 dB GR in band 2.
+  - Limiter (ceiling −1 dBTP unless stated), true peak measured on the output with an independent
+    16x windowed-sinc reference (steady state, the first 3000 samples and the last 64 excluded; the
+    device's own BS.1770 meter, which includes the onset, agrees to 0.01 dB): the fs/4, 45° sine
+    pushed +3 dBTP reads −1.003 / −3.004 / −6.003 dBTP for ceilings −1 / −3 / −6; 997 Hz −1.000;
+    11.5 kHz −1.003; 19 kHz −1.004; band-limited (0.35 fs) noise at 0 dBFS and +12 dB gain −0.996
+    and −0.989 (the largest overshoot, **+0.011 dB**), and through the whole default chain with
+    width 150 % −0.991. **Limitation:** white noise has energy between 0.4 and 0.5 fs, which the 4x
+    halfband stage attenuates, so the 16x reference of full-band white noise overshoots the ceiling
+    by **0.90 to 1.03 dB** (the 4x BS.1770 reading stays at −0.976 / −0.980 dBTP, within 0.03 dB of
+    the ceiling); programme material with little above 18 kHz is unaffected.
+  - Sustained tones: with ceiling −1 and +6 dB over, the residual after removing the fitted tone is
+    −52.7 dB at 100 Hz (the gain follows the peaks; 150 ms release) and −146.6 dB at 1 kHz and 5
+    kHz. Release: the gain reaches 63.2 % of its way back after 101.3 ms for a 100 ms setting.
+  - Band compressors: a 100 Hz tone only reduces band 1, 6 kHz only band 3; a −10 dBFS 1 kHz tone
+    with threshold −30 dB and ratio 4 gets 15 ± 0.3 dB GR in band 2.
 
 ---
 
 ## Spectrum: `atomik.spectrum` (Effect)
 
-A spectrum analyser that passes the audio through untouched. Source: [crates/devices/src/spectrum.rs](../crates/devices/src/spectrum.rs); the analysis is [crates/dsp/src/spectrum.rs](../crates/dsp/src/spectrum.rs), run by the app on the UI side ([crates/app/src/app_core_analysers.rs](../crates/app/src/app_core_analysers.rs)). It appears in the device browser with the effects.
+A spectrum analyser that passes the audio through untouched. Source:
+[crates/devices/src/spectrum.rs](../crates/devices/src/spectrum.rs); the analysis is
+[crates/dsp/src/spectrum.rs](../crates/dsp/src/spectrum.rs), run by the app on the UI side
+([crates/app/src/app_core_analysers.rs](../crates/app/src/app_core_analysers.rs)). It appears in the
+device browser with the effects.
 
 ### Sockets
 
@@ -872,7 +1338,9 @@ A spectrum analyser that passes the audio through untouched. Source: [crates/dev
 
 ### Params
 
-All of them are display settings: the device stores them (they are saved with the project and can be automated or preset like any param) and the UI reads them from the document; none of them reaches the audio.
+All of them are display settings: the device stores them (they are saved with the project and can be
+automated or preset like any param) and the UI reads them from the document; none of them reaches
+the audio.
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -889,17 +1357,45 @@ All of them are display settings: the device stores them (they are saved with th
 
 ### Behaviour (as built)
 
-- **Audio path.** Each batch the device copies `in_l`/`in_r` to `out_l`/`out_r` **bit for bit** (non-finite samples included), with **no latency**, and pushes the same 64 frames into its `ScopeTap` (`atomik_device_sdk::ScopeTap`): a lock-free ring of the last 32 768 stereo frames made of `AtomicU32`s, 128 relaxed stores and one release store per batch. It never allocates (the ring is made when the device is built), locks or computes a transform, and nothing in the output depends on a param, so a bounce with the device is bit-identical to a bounce without it. See [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
-- **Analysis (UI side).** Every UI frame the app reads the newest `size` frames from the tap and `atomik_dsp::spectrum` does the rest: a Hann or Blackman-Harris window, an FFT with the in-house radix-2 transform (deterministic twiddles), the power of `channel` (left, right, mid `(L+R)/2`, side `(L-R)/2`, or the mean of the two power spectra), a one-pole average of the bin power with the `averaging` time constant measured in frames of audio (not frames of the display), and the trace: 240 columns evenly spaced in log frequency from 20 Hz to 20 kHz (a column narrower than a bin interpolates in dB between bins, one wider shows its loudest bin), or the 31 one-third-octave bands 20 Hz to 20 kHz (exact centres `1 kHz * 10^((n - 30) / 10)`; each band is the bin power inside its edges, a straddling bin in proportion, divided by the window's noise bandwidth). Peaks keep each column's highest value for `hold` and then fall `decay` dB per second; `tilt` adds `tilt * log2(f / 1 kHz)` dB to the display.
-- **Calibration.** 0 dB is a full-scale sine; a sine on a bin reads its own level, a sine between bins reads up to 1.4 dB (Hann) or 0.8 dB (Blackman-Harris) low (scalloping), white noise reads 3 dB above its RMS (the sine convention). The loudest-bin readout (`PEAK 1.00 kHz  -20.1 dB`) is the maximum bin from 20 Hz to 20 kHz refined by a parabola through its neighbours in dB, so a tone is found within a small fraction of a bin. The lowest bands at 1024 points are narrower than a bin: they read the power density times their width, which under-reads a pure tone; use 4096 or 8192 for the bass.
-- **Bypass.** The `bypass` wrapper keeps the device's audio path (the dry path is the same signal). The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
-- **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear; the panel draws them as the two bars next to the plot.
+- **Audio path.** Each batch the device copies `in_l`/`in_r` to `out_l`/`out_r` **bit for bit**
+  (non-finite samples included), with **no latency**, and pushes the same 64 frames into its
+  `ScopeTap` (`atomik_device_sdk::ScopeTap`): a lock-free ring of the last 32 768 stereo frames made
+  of `AtomicU32`s, 128 relaxed stores and one release store per batch. It never allocates (the ring
+  is made when the device is built), locks or computes a transform, and nothing in the output
+  depends on a param, so a bounce with the device is bit-identical to a bounce without it. See
+  [ARCHITECTURE.md](ARCHITECTURE.md#6k-analysers-the-scope-tap-spectrum-and-phase-meter).
+- **Analysis (UI side).** Every UI frame the app reads the newest `size` frames from the tap and
+  `atomik_dsp::spectrum` does the rest: a Hann or Blackman-Harris window, an FFT with the in-house
+  radix-2 transform (deterministic twiddles), the power of `channel` (left, right, mid `(L+R)/2`,
+  side `(L-R)/2`, or the mean of the two power spectra), a one-pole average of the bin power with
+  the `averaging` time constant measured in frames of audio (not frames of the display), and the
+  trace: 240 columns evenly spaced in log frequency from 20 Hz to 20 kHz (a column narrower than a
+  bin interpolates in dB between bins, one wider shows its loudest bin), or the 31 one-third-octave
+  bands 20 Hz to 20 kHz (exact centres `1 kHz * 10^((n - 30) / 10)`; each band is the bin power
+  inside its edges, a straddling bin in proportion, divided by the window's noise bandwidth). Peaks
+  keep each column's highest value for `hold` and then fall `decay` dB per second; `tilt` adds
+  `tilt * log2(f / 1 kHz)` dB to the display.
+- **Calibration.** 0 dB is a full-scale sine; a sine on a bin reads its own level, a sine between
+  bins reads up to 1.4 dB (Hann) or 0.8 dB (Blackman-Harris) low (scalloping), white noise reads 3
+  dB above its RMS (the sine convention). The loudest-bin readout (`PEAK 1.00 kHz  -20.1 dB`) is the
+  maximum bin from 20 Hz to 20 kHz refined by a parabola through its neighbours in dB, so a tone is
+  found within a small fraction of a bin. The lowest bands at 1024 points are narrower than a bin:
+  they read the power density times their width, which under-reads a pure tone; use 4096 or 8192 for
+  the bass.
+- **Bypass.** The `bypass` wrapper keeps the device's audio path (the dry path is the same signal).
+  The panel shows `BYPASSED` and the app stops updating it, so it keeps the last picture.
+- **Meter values** (2): the peak of the last 16 batches (about 21 ms) of `in_l` and `in_r`, linear;
+  the panel draws them as the two bars next to the plot.
 
 ---
 
 ## Phase Meter: `atomik.phase-meter` (Effect)
 
-A stereo and level meter that passes the audio through untouched: goniometer, correlation, balance, width, peak and RMS bars with hold, and BS.1770 loudness. Source: [crates/devices/src/phase_meter.rs](../crates/devices/src/phase_meter.rs), with [crates/dsp/src/stereo_meter.rs](../crates/dsp/src/stereo_meter.rs) and the loudness meter of `atomik.mastering` (`mastering/loudness.rs`).
+A stereo and level meter that passes the audio through untouched: goniometer, correlation, balance,
+width, peak and RMS bars with hold, and BS.1770 loudness. Source:
+[crates/devices/src/phase_meter.rs](../crates/devices/src/phase_meter.rs), with
+[crates/dsp/src/stereo_meter.rs](../crates/dsp/src/stereo_meter.rs) and the loudness meter of
+`atomik.mastering` (`mastering/loudness.rs`).
 
 ### Sockets
 
@@ -919,19 +1415,45 @@ A stereo and level meter that passes the audio through untouched: goniometer, co
 
 ### Behaviour (as built)
 
-- **Audio path.** The outputs are the inputs, bit for bit, with no latency, and every batch also goes into the device's `ScopeTap` (as for the spectrum). The meters only read; everything is allocation-free after `prepare` and a bounce with the device equals a bounce without it (the render tests compare the bits).
-- **Levels.** The peak of the last 16 batches; a held peak that stays for `hold` and then drops to what is playing; RMS of each channel over 300 ms; the sample peak since the last reset in dBFS.
-- **Stereo image** (`atomik_dsp::stereo_meter`, one-pole averages of `L^2`, `R^2` and `L*R`): correlation `lr / sqrt(ll * rr)` over `corr_time` (+1 identical, -1 inverted, about 0 for unrelated noise or a quarter-cycle shift; 0 for silence or one silent channel); balance `(R_rms - L_rms) / (R_rms + L_rms)`; mid `(L+R)/2` and side `(L-R)/2` RMS; width `S_rms / (M_rms + S_rms)` (0 mono, 0.5 unrelated channels of equal level, 1 opposite polarity). Non-finite samples count as 0.
-- **Loudness** (`loudness` on): the BS.1770-4 / R128 meter of the mastering device (K-weighting designed for the actual sample rate, 100 ms sub-blocks, momentary 400 ms, short-term 3 s, integrated with the -70 LUFS and -10 LU gates over a fixed histogram), and the true peak (4x oversampled, unrefined, as in Annex 2) since the last reset in dBTP. A stereo 1 kHz sine at -23 dBFS peak reads -22.99 LUFS (tested to 0.15 dB, and through the headless meter probe). Off, they read -120 and cost nothing.
-- **Scope.** The panel draws the goniometer from the newest 2048 frames of the tap, every second one: mid up and side across (`M/S`: mono is a vertical line, the left channel alone a line up and to the left), or the plain Lissajous figure (`L/R`: left across, right up), `scope_gain` dB larger and clamped to the frame.
+- **Audio path.** The outputs are the inputs, bit for bit, with no latency, and every batch also
+  goes into the device's `ScopeTap` (as for the spectrum). The meters only read; everything is
+  allocation-free after `prepare` and a bounce with the device equals a bounce without it (the
+  render tests compare the bits).
+- **Levels.** The peak of the last 16 batches; a held peak that stays for `hold` and then drops to
+  what is playing; RMS of each channel over 300 ms; the sample peak since the last reset in dBFS.
+- **Stereo image** (`atomik_dsp::stereo_meter`, one-pole averages of `L^2`, `R^2` and `L*R`):
+  correlation `lr / sqrt(ll * rr)` over `corr_time` (+1 identical, -1 inverted, about 0 for
+  unrelated noise or a quarter-cycle shift; 0 for silence or one silent channel); balance
+  `(R_rms - L_rms) / (R_rms + L_rms)`; mid `(L+R)/2` and side `(L-R)/2` RMS; width
+  `S_rms / (M_rms + S_rms)` (0 mono, 0.5 unrelated channels of equal level, 1 opposite polarity).
+  Non-finite samples count as 0.
+- **Loudness** (`loudness` on): the BS.1770-4 / R128 meter of the mastering device (K-weighting
+  designed for the actual sample rate, 100 ms sub-blocks, momentary 400 ms, short-term 3 s,
+  integrated with the -70 LUFS and -10 LU gates over a fixed histogram), and the true peak (4x
+  oversampled, unrefined, as in Annex 2) since the last reset in dBTP. A stereo 1 kHz sine at -23
+  dBFS peak reads -22.99 LUFS (tested to 0.15 dB, and through the headless meter probe). Off, they
+  read -120 and cost nothing.
+- **Scope.** The panel draws the goniometer from the newest 2048 frames of the tap, every second
+  one: mid up and side across (`M/S`: mono is a vertical line, the left channel alone a line up and
+  to the left), or the plain Lissajous figure (`L/R`: left across, right up), `scope_gain` dB larger
+  and clamped to the frame.
 - **Bypass.** As for the spectrum: the audio path stays, the panel freezes with `BYPASSED`.
-- **Meter values** (16, `atomik_devices::phase_meter::value`): `[recent peak L, recent peak R, held peak L, held peak R, RMS L, RMS R]` (linear), `[sample peak dBFS, true peak dBTP]`, `[correlation, balance, width]`, `[mid RMS, side RMS]` (linear), `[momentary, short-term, integrated LUFS]`; -120 for silence or loudness off.
+- **Meter values** (16, `atomik_devices::phase_meter::value`):
+  `[recent peak L, recent peak R, held peak L, held peak R, RMS L, RMS R]` (linear),
+  `[sample peak dBFS, true peak dBTP]`, `[correlation, balance, width]`, `[mid RMS, side RMS]`
+  (linear), `[momentary, short-term, integrated LUFS]`; -120 for silence or loudness off.
 
 ---
 
 ## Character: `atomik.character` (Effect)
 
-A stereo insert with 16 character presets in a 4 x 4 matrix, an input gain, a macro **Transform** morph, dry/wet and volume, and CV inputs with trims for Transform and Dry/Wet. An original design with its own preset names. Source: [crates/devices/src/character.rs](../crates/devices/src/character.rs) and its folder (`chain`, `rack`, `stages`, `voicing`, `row1` to `row4`); tables in [crates/devices/data](../crates/devices/data). All 16 presets are voiced; the voicing was set by ear and checked with analytic tests.
+A stereo insert with 16 character presets in a 4 x 4 matrix, an input gain, a macro **Transform**
+morph, dry/wet and volume, and CV inputs with trims for Transform and Dry/Wet. An original design
+with its own preset names. Source:
+[crates/devices/src/character.rs](../crates/devices/src/character.rs) and its folder (`chain`,
+`rack`, `stages`, `voicing`, `row1` to `row4`); tables in
+[crates/devices/data](../crates/devices/data). All 16 presets are voiced; the voicing was set by ear
+and checked with analytic tests.
 
 ### Sockets
 
@@ -956,32 +1478,126 @@ A stereo insert with 16 character presets in a 4 x 4 matrix, an input gain, a ma
 | `mix_cv_trim` | 0 to 1 | 1 | percent | Linear | no |
 | `bypass` | 0 or 1 (see [Effect bypass](#effect-bypass)) | 0 | toggle | Linear | yes |
 
-`gain` and `volume` are linear knob positions; the dB display is the UI's job (`atomik_devices::character::knob_gain_db`), because the shared param model has no square taper.
+`gain` and `volume` are linear knob positions; the dB display is the UI's job
+(`atomik_devices::character::knob_gain_db`), because the shared param model has no square taper.
 
-**Panel** ([crates/ui/src/character_panel.rs](../crates/ui/src/character_panel.rs), [character_screen.rs](../crates/ui/src/character_screen.rs)): a 3 U panel with the 4 x 4 preset matrix (one glyph per preset, the active button lit, one `SetParam` per click, arrow keys, Home and End when the matrix is focused), a screen with the active preset's animated scene and a latency class badge (`LAT SHORT`, `LAT LONG` for `lossy`), a meter strip (input peak, output peak, activity from `meter_values`), the knobs Input Gain, Transform, Dry/Wet and Volume with their values (gain and volume in dB through the `4 x^2` law, `-inf dB` at the bottom) and, while a CV input is cabled, a ring on the Transform and Dry/Wet knobs showing the range the CV sweeps (knob plus or minus its trim). The back has the six sockets and the two CV trim knobs under their jacks.
+**Panel** ([crates/ui/src/character_panel.rs](../crates/ui/src/character_panel.rs),
+[character_screen.rs](../crates/ui/src/character_screen.rs)): a 3 U panel with the 4 x 4 preset
+matrix (one glyph per preset, the active button lit, one `SetParam` per click, arrow keys, Home and
+End when the matrix is focused), a screen with the active preset's animated scene and a latency
+class badge (`LAT SHORT`, `LAT LONG` for `lossy`), a meter strip (input peak, output peak, activity
+from `meter_values`), the knobs Input Gain, Transform, Dry/Wet and Volume with their values (gain
+and volume in dB through the `4 x^2` law, `-inf dB` at the bottom) and, while a CV input is cabled,
+a ring on the Transform and Dry/Wet knobs showing the range the CV sweeps (knob plus or minus its
+trim). The back has the six sockets and the two CV trim knobs under their jacks.
 
 ### Behaviour (as built)
 
-- **Signal path.** `in` is tapped for the **dry path before the input gain** and delayed by the active preset's latency; the wet path is input gain (second-order smoother, 5 ms) → chain → linear dry/wet crossfade → volume (50 ms smoother) → a transparent safety that acts beyond ±4.0 only and bounds the output at 8. Input gain therefore drives the wet path only: `mix` 0 at volume 0 dB is the **input delayed by the latency, bit for bit**, for any input gain. Non-finite input is treated as 0.
-- **Control rate.** The engine batch of 64 frames runs as four blocks of 16: per block the device smooths the CV values (8 ms 90 % rise, second order), resolves the **Transform morph** of the active preset (up to 8 values; `lin`, `log`, `square`, `exp` or `step` between the table points at Transform 0, 0.5 and 1) and runs the chain. `T = clamp(transform + trim × cv, 0, 1)` and `mix = clamp(mix + trim × cv, 0, 1)`.
-- **Presets** are original chains built from `atomik-dsp` blocks: a generic **rack** (stages with sends, gains per send morphable, lazy evaluation of stages that no active route reaches, load-time acyclic and reachability checks, automatic alignment of parallel paths) for every preset except `wide`, which is hand-wired (mid/side with a decorrelator); rows 3 and 4 use the stage kinds `Spectral`, `Phaser`, `AutoPan`, `Echo`, `RingMod`, `Comb`, `BandPass`, `Crush`, `Tremolo`, `SweepLp`, `Hum`, `Bursts`, `Rattle`, `Modal` and `Room` (see the table below). Every number is data: `data/character-voicing.csv` (one row per stage parameter, with the three Transform points and the interpolation), `data/character-routes.csv` (the sends). Each preset has a `target_gain_db` row that level-matches it (about 0 dB at Transform 0.5 on −20 dBFS pink noise, within ±1.5 dB; at the ends within ±6 dB).
-- **Generated noise** (hiss, rumble, crackle, pops, head-switch clicks) is synthesised and deterministic from the device seed (output depends on the seed and the sample index only), lives in the wet path, does **not** follow the input gain unless the table row `noise_follows_gain` says so, and is gated by a **programme-presence detector on the dry input**: an idle device is silent, the noise fades out after the programme stops (hold and fade are table rows, default 3 s and 2 s).
-- **Oversampling and latency (tiered).** The saturating stages run 2x oversampled (the 29-frame halfband round trip; bypassed at 88.2 kHz and above behind a 29-frame pad). Every preset without the spectral stage reports the **short class latency** `29 + wobble centre` frames (the wobble centre is `ceil(0.3 ms × fs) + 2`: **45, 46 and 60 frames** at 44.1, 48 and 96 kHz); chains without an oversampled region or a wobble are padded up to it, parallel branches are aligned, so all short presets report the same value and a switch between them never changes it. `lossy`, the one preset with the spectral stage, is in the **long class**: the short class latency plus the spectral frame (1024 frames at 44.1 and 48 kHz, 2048 at 96 kHz, so the frame spans the same time), that is **1069, 1070 and 2108 frames** at 44.1, 48 and 96 kHz; its parallel and dry paths are aligned to it. `latency_frames` changes **only when a preset change across the two classes finishes its fade** (one bump of the engine's latency epoch, one PDC re-alignment).
-- **Preset switch.** A change of `preset` starts a 30 ms crossfade (smoothstep weight, rounded up to whole 16-frame blocks) from the outgoing chain to the incoming one, which starts from reset state; the outgoing chain is reset when the fade ends. A request during a fade is queued and the last wins (at most 60 ms to the final preset). When the two chains have different latencies the dry path crossfades between the two delays with the same weight.
-- **Meter values** (4): `in_peak` (after the input gain, larger of the two channels, last batch), `out_peak`, `transform_eff` (0..1) and `activity` (0..1, a 150 ms peak follower of the wet signal).
-- **Aliasing.** The saturation curves (soft, asymmetric, hard, hard asymmetric) run at 2x with **first-order antiderivative anti-aliasing** (`Shaper::set_adaa`) and a band-limit ahead of every saturator that sees wideband input (a low-pass at 7 kHz ahead of `sparkle`'s exciter and one at 12 kHz after it, a low-pass at 12 kHz ahead of `pocket-radio`'s saturation). With Transform 1, input gain +12 dB and a −3 dBFS sine at 5 kHz and 18 kHz, all non-harmonic components of `reel`, `sparkle`, `low-end`, `pocket-radio` and `torn-cone` are below **−71 dBFS** at 44.1 and 48 kHz (worst: `torn-cone` at 18 kHz and 44.1 kHz, −71.0; `reel` −73.4; the others −78 to −130) and below −87 dBFS at 96 kHz, where the oversampler is bypassed. (Without the ADAA, with the same band-limits, the worst cases were −51.9 dBFS for `torn-cone` and −54.3 for `reel` at 18 kHz and 44.1 kHz and −59.0 at 96 kHz.) The test sets Volume to −24 dB: the output **safety beyond ±4.0 is itself a nonlinearity**, and at the default Volume the chain's +12 dB of gain with `sparkle`'s +9 dB shelf drives the output past that knee, where the safety aliases (a test measures it: more than 25 dB above the chain's own level); Volume is the user's compensation for a high input gain by design. **Cost of the ADAA:** it acts as a two-tap average at the 2x rate, so the small-signal response of the five saturating presets droops by `cos(pi f / (2 fs))`: 0.3 dB at 8 kHz, 0.7 dB at 12 kHz and 1.6 dB at 18 kHz at 48 kHz (the analytic tests include the term), and it adds a quarter of a frame to the latency of the saturating stages (not counted in the declared latency; the dry path is off by that fraction of a sample).
+- **Signal path.** `in` is tapped for the **dry path before the input gain** and delayed by the
+  active preset's latency; the wet path is input gain (second-order smoother, 5 ms) → chain → linear
+  dry/wet crossfade → volume (50 ms smoother) → a transparent safety that acts beyond ±4.0 only and
+  bounds the output at 8. Input gain therefore drives the wet path only: `mix` 0 at volume 0 dB is
+  the **input delayed by the latency, bit for bit**, for any input gain. Non-finite input is treated
+  as 0.
+- **Control rate.** The engine batch of 64 frames runs as four blocks of 16: per block the device
+  smooths the CV values (8 ms 90 % rise, second order), resolves the **Transform morph** of the
+  active preset (up to 8 values; `lin`, `log`, `square`, `exp` or `step` between the table points at
+  Transform 0, 0.5 and 1) and runs the chain. `T = clamp(transform + trim × cv, 0, 1)` and
+  `mix = clamp(mix + trim × cv, 0, 1)`.
+- **Presets** are original chains built from `atomik-dsp` blocks: a generic **rack** (stages with
+  sends, gains per send morphable, lazy evaluation of stages that no active route reaches, load-time
+  acyclic and reachability checks, automatic alignment of parallel paths) for every preset except
+  `wide`, which is hand-wired (mid/side with a decorrelator); rows 3 and 4 use the stage kinds
+  `Spectral`, `Phaser`, `AutoPan`, `Echo`, `RingMod`, `Comb`, `BandPass`, `Crush`, `Tremolo`,
+  `SweepLp`, `Hum`, `Bursts`, `Rattle`, `Modal` and `Room` (see the table below). Every number is
+  data: `data/character-voicing.csv` (one row per stage parameter, with the three Transform points
+  and the interpolation), `data/character-routes.csv` (the sends). Each preset has a
+  `target_gain_db` row that level-matches it (about 0 dB at Transform 0.5 on −20 dBFS pink noise,
+  within ±1.5 dB; at the ends within ±6 dB).
+- **Generated noise** (hiss, rumble, crackle, pops, head-switch clicks) is synthesised and
+  deterministic from the device seed (output depends on the seed and the sample index only), lives
+  in the wet path, does **not** follow the input gain unless the table row `noise_follows_gain` says
+  so, and is gated by a **programme-presence detector on the dry input**: an idle device is silent,
+  the noise fades out after the programme stops (hold and fade are table rows, default 3 s and 2 s).
+- **Oversampling and latency (tiered).** The saturating stages run 2x oversampled (the 29-frame
+  halfband round trip; bypassed at 88.2 kHz and above behind a 29-frame pad). Every preset without
+  the spectral stage reports the **short class latency** `29 + wobble centre` frames (the wobble
+  centre is `ceil(0.3 ms × fs) + 2`: **45, 46 and 60 frames** at 44.1, 48 and 96 kHz); chains
+  without an oversampled region or a wobble are padded up to it, parallel branches are aligned, so
+  all short presets report the same value and a switch between them never changes it. `lossy`, the
+  one preset with the spectral stage, is in the **long class**: the short class latency plus the
+  spectral frame (1024 frames at 44.1 and 48 kHz, 2048 at 96 kHz, so the frame spans the same time),
+  that is **1069, 1070 and 2108 frames** at 44.1, 48 and 96 kHz; its parallel and dry paths are
+  aligned to it. `latency_frames` changes **only when a preset change across the two classes
+  finishes its fade** (one bump of the engine's latency epoch, one PDC re-alignment).
+- **Preset switch.** A change of `preset` starts a 30 ms crossfade (smoothstep weight, rounded up to
+  whole 16-frame blocks) from the outgoing chain to the incoming one, which starts from reset state;
+  the outgoing chain is reset when the fade ends. A request during a fade is queued and the last
+  wins (at most 60 ms to the final preset). When the two chains have different latencies the dry
+  path crossfades between the two delays with the same weight.
+- **Meter values** (4): `in_peak` (after the input gain, larger of the two channels, last batch),
+  `out_peak`, `transform_eff` (0..1) and `activity` (0..1, a 150 ms peak follower of the wet
+  signal).
+- **Aliasing.** The saturation curves (soft, asymmetric, hard, hard asymmetric) run at 2x with
+  **first-order antiderivative anti-aliasing** (`Shaper::set_adaa`) and a band-limit ahead of every
+  saturator that sees wideband input (a low-pass at 7 kHz ahead of `sparkle`'s exciter and one at 12
+  kHz after it, a low-pass at 12 kHz ahead of `pocket-radio`'s saturation). With Transform 1, input
+  gain +12 dB and a −3 dBFS sine at 5 kHz and 18 kHz, all non-harmonic components of `reel`,
+  `sparkle`, `low-end`, `pocket-radio` and `torn-cone` are below **−71 dBFS** at 44.1 and 48 kHz
+  (worst: `torn-cone` at 18 kHz and 44.1 kHz, −71.0; `reel` −73.4; the others −78 to −130) and below
+  −87 dBFS at 96 kHz, where the oversampler is bypassed. (Without the ADAA, with the same
+  band-limits, the worst cases were −51.9 dBFS for `torn-cone` and −54.3 for `reel` at 18 kHz and
+  44.1 kHz and −59.0 at 96 kHz.) The test sets Volume to −24 dB: the output **safety beyond ±4.0 is
+  itself a nonlinearity**, and at the default Volume the chain's +12 dB of gain with `sparkle`'s +9
+  dB shelf drives the output past that knee, where the safety aliases (a test measures it: more than
+  25 dB above the chain's own level); Volume is the user's compensation for a high input gain by
+  design. **Cost of the ADAA:** it acts as a two-tap average at the 2x rate, so the small-signal
+  response of the five saturating presets droops by `cos(pi f / (2 fs))`: 0.3 dB at 8 kHz, 0.7 dB at
+  12 kHz and 1.6 dB at 18 kHz at 48 kHz (the analytic tests include the term), and it adds a quarter
+  of a frame to the latency of the saturating stages (not counted in the declared latency; the dry
+  path is off by that fraction of a sample).
 
 ### In the app, the bounce and the examples
 
-- **Meter feed.** The app feeds the Character panel like the other six effects: the four `meter_values` (input peak, output peak, `transform_eff`, `activity`) are read once per frame by `AppCore::feed_device_meters` for every device whose `FxKind` has meters, inside containers by path key; a recording-sink test covers all seven `FxKind`s and a real offline engine feeds the four values while music plays.
-- **Latency live and in a bounce.** The engine publishes the class latency (45, 46 or 60 frames short, 1069, 1070 or 2108 long, at 44.1, 48 and 96 kHz) and bumps its latency epoch only when a preset change across the classes finishes its fade; the app recompiles the routing on the next frame (`AppCore::frame`), and the bounce does the same after every 64-frame batch (`atomik_render::plugin_pass::render_song_following_latency`). With compensation on, a click through Character at `mix` 0 starts with the dry click in both classes, and with compensation off it starts later by exactly the latency (`render/tests/character_pdc.rs`). A song lane reaches an effect only through a container macro, so a preset or Transform lane is a container with the Character inside and a macro on `preset` (min 0, max 15; a discrete target rounds each lane point) or `transform`.
-- **Live equals bounce.** For `examples/projects/character-demo` (below) the live path, played at host blocks 64, 480 and 512, equals the bounce bit for bit (after the engine's one-batch output delay), also after a preset change across the classes made through the app, after undo and redo, and after an engine restart (`app_core_character_tests.rs`). A live session that has already run a while is not a cold start: the devices' free-running state has advanced (measured: a live engine that rendered only 256 idle frames before Play already differs from the bounce of the demo from frame 311), so only a cold engine matches a bounce bit for bit; the tests therefore edit before the first render and step the engine one batch per frame like the bounce loop does.
-- **Example.** `examples/projects/character-demo/character-demo.atomik` (README beside it): a synth through a Character inside a container with preset and Transform lanes, a bass line with a Character on `ion-sweep` whose Transform is moved by the sequencer's note CV, and a pad with a Character on `lossy`; generated by `render/tests/character_demo.rs`, bit-identical across host blocks 64, 333, 480 and 512 and workers 0, 2 and 3.
-- **Stress.** `--stress-character` adds 8 containers, each a poly synth into a Character whose preset steps every bar through all 16 presets (container `n` starts on preset `2 n`, so eight different presets sound at any time and `lossy` is crossed all the time) with a Transform lane, on top of the busy stress song; it combines with the other stress flags (`stress::add_stress_character`).
+- **Meter feed.** The app feeds the Character panel like the other six effects: the four
+  `meter_values` (input peak, output peak, `transform_eff`, `activity`) are read once per frame by
+  `AppCore::feed_device_meters` for every device whose `FxKind` has meters, inside containers by
+  path key; a recording-sink test covers all seven `FxKind`s and a real offline engine feeds the
+  four values while music plays.
+- **Latency live and in a bounce.** The engine publishes the class latency (45, 46 or 60 frames
+  short, 1069, 1070 or 2108 long, at 44.1, 48 and 96 kHz) and bumps its latency epoch only when a
+  preset change across the classes finishes its fade; the app recompiles the routing on the next
+  frame (`AppCore::frame`), and the bounce does the same after every 64-frame batch
+  (`atomik_render::plugin_pass::render_song_following_latency`). With compensation on, a click
+  through Character at `mix` 0 starts with the dry click in both classes, and with compensation off
+  it starts later by exactly the latency (`render/tests/character_pdc.rs`). A song lane reaches an
+  effect only through a container macro, so a preset or Transform lane is a container with the
+  Character inside and a macro on `preset` (min 0, max 15; a discrete target rounds each lane point)
+  or `transform`.
+- **Live equals bounce.** For `examples/projects/character-demo` (below) the live path, played at
+  host blocks 64, 480 and 512, equals the bounce bit for bit (after the engine's one-batch output
+  delay), also after a preset change across the classes made through the app, after undo and redo,
+  and after an engine restart (`app_core_character_tests.rs`). A live session that has already run a
+  while is not a cold start: the devices' free-running state has advanced (measured: a live engine
+  that rendered only 256 idle frames before Play already differs from the bounce of the demo from
+  frame 311), so only a cold engine matches a bounce bit for bit; the tests therefore edit before
+  the first render and step the engine one batch per frame like the bounce loop does.
+- **Example.** `examples/projects/character-demo/character-demo.atomik` (README beside it): a synth
+  through a Character inside a container with preset and Transform lanes, a bass line with a
+  Character on `ion-sweep` whose Transform is moved by the sequencer's note CV, and a pad with a
+  Character on `lossy`; generated by `render/tests/character_demo.rs`, bit-identical across host
+  blocks 64, 333, 480 and 512 and workers 0, 2 and 3.
+- **Stress.** `--stress-character` adds 8 containers, each a poly synth into a Character whose
+  preset steps every bar through all 16 presets (container `n` starts on preset `2 n`, so eight
+  different presets sound at any time and `lossy` is crossed all the time) with a Transform lane, on
+  top of the busy stress song; it combines with the other stress flags
+  (`stress::add_stress_character`).
 
 ### Rows 3 and 4 (original voicings)
 
-Stage kinds in signal order; the Transform column lists the morph values (at most 8 per preset); `chain` rows (level trim, presence gate times) are not listed. All numbers are in `data/character-voicing.csv`.
+Stage kinds in signal order; the Transform column lists the morph values (at most 8 per preset);
+`chain` rows (level trim, presence gate times) are not listed. All numbers are in
+`data/character-voicing.csv`.
 
 | Idx | Preset | Stages | Transform morph | Latency class |
 |---|---|---|---|---|
@@ -994,16 +1610,28 @@ Stage kinds in signal order; the Transform column lists the morph values (at mos
 | 14 | `ion-sweep` | comb flanger (9 to 0.3 ms, 7 % channel offset) and resonant band-pass (400 Hz to 8 kHz), faint ring tone | **Transform is the sweep position**: comb delay and band-pass centre | short |
 | 15 | `ghost-pipes` | high-pass on the excitation, twelve-mode inharmonic resonator bank (mono-sum excitation, even modes left and odd modes right, seeded detune, per-mode decay, level limiter after the bank) | root pitch (110 to 880 Hz), decay (0.2 to 4 s), detune spread, active mode count (4 to 12), level | short |
 
-- **Level.** Each preset is level-matched with its `target_gain_db` row: within ±1.5 dB at Transform 0.5 and ±6 dB at the ends on −20 dBFS pink noise (`ghost-pipes`' resonators capture little of a broadband signal, so its bank gain is high and a limiter after the bank keeps loud tones bounded).
-- **Reset.** A `reset` restores the start state of every preset, the wobble presets included (`Wobble::restart` re-seeds the modulation); a render after a reset equals the first render.
-- **Determinism.** Every random stage (dropouts, wander, stepped random, bursts, rattle noise, mode detune) draws from the device seed and the sample index only.
-- **Phaser sign (fixed).** The phaser block's all-pass coefficient had the wrong sign, which mirrored its sweep around fs/2 (the notches sat near 23 kHz instead of the centre frequency); the coefficient and its test (a two-pole sum notches at its centre) were corrected, and `swirl` is voiced on the corrected block.
+- **Level.** Each preset is level-matched with its `target_gain_db` row: within ±1.5 dB at Transform
+  0.5 and ±6 dB at the ends on −20 dBFS pink noise (`ghost-pipes`' resonators capture little of a
+  broadband signal, so its bank gain is high and a limiter after the bank keeps loud tones bounded).
+- **Reset.** A `reset` restores the start state of every preset, the wobble presets included
+  (`Wobble::restart` re-seeds the modulation); a render after a reset equals the first render.
+- **Determinism.** Every random stage (dropouts, wander, stepped random, bursts, rattle noise, mode
+  detune) draws from the device seed and the sample index only.
+- **Phaser sign (fixed).** The phaser block's all-pass coefficient had the wrong sign, which
+  mirrored its sweep around fs/2 (the notches sat near 23 kHz instead of the centre frequency); the
+  coefficient and its test (a two-pole sum notches at its centre) were corrected, and `swirl` is
+  voiced on the corrected block.
 
 ---
 
 ## Audio Track: `atomik.audio-track` (Instrument)
 
-The player device of an audio track. It has no sound of its own: the engine renders the track's audio clips (start, offset, trim, gain and fades) and hands the result to the device, which adds the monitored input and writes the outputs. Because it is an Instrument, it gets a console channel like any other source. You do not add it by hand: the arrangement's add-track row, File ▸ Import Audio and dropping files create it with its track and its input cables. Source: [crates/devices/src/audio_track.rs](../crates/devices/src/audio_track.rs).
+The player device of an audio track. It has no sound of its own: the engine renders the track's
+audio clips (start, offset, trim, gain and fades) and hands the result to the device, which adds the
+monitored input and writes the outputs. Because it is an Instrument, it gets a console channel like
+any other source. You do not add it by hand: the arrangement's add-track row, File ▸ Import Audio
+and dropping files create it with its track and its input cables. Source:
+[crates/devices/src/audio_track.rs](../crates/devices/src/audio_track.rs).
 
 ### Sockets
 
@@ -1026,38 +1654,85 @@ The player device of an audio track. It has no sound of its own: the engine rend
 | `tuner_mute` | 0 or 1 | 1 | toggle | Linear | yes |
 | `tuner_ref` | 415..466 Hz | 440 | Hz | Linear | yes |
 
-`internal.monitor_live` is set by the app (1 while the track is armed). The UI hides it and it is neither saved nor undoable, like `internal.solo_silence`.
+`internal.monitor_live` is set by the app (1 while the track is armed). The UI hides it and it is
+neither saved nor undoable, like `internal.solo_silence`.
 
-`internal.tuner_live` is set by the app (1 while the track's tuner shows), like `internal.monitor_live`: hidden, neither saved nor undoable. `tuner_mute` and `tuner_ref` are the **tuner** settings: ordinary stored, undoable params, additive like the input settings, so a project written before them loads with the reference at 440 Hz and mute on (which does nothing while no tuner shows).
+`internal.tuner_live` is set by the app (1 while the track's tuner shows), like
+`internal.monitor_live`: hidden, neither saved nor undoable. `tuner_mute` and `tuner_ref` are the
+**tuner** settings: ordinary stored, undoable params, additive like the input settings, so a project
+written before them loads with the reference at 440 Hz and mute on (which does nothing while no
+tuner shows).
 
-`rec_gain` and `rec_clip_safe` are the track's **recording input** settings: ordinary stored, undoable params, set from the transport bar while the track is armed (see below). A project written before they existed has neither stored and loads at 0 dB with clip-safe off, which records and monitors exactly as it did.
+`rec_gain` and `rec_clip_safe` are the track's **recording input** settings: ordinary stored,
+undoable params, set from the transport bar while the track is armed (see below). A project written
+before they existed has neither stored and loads at 0 dB with clip-safe off, which records and
+monitors exactly as it did.
 
 ### Behaviour (as built)
 
-- **Output.** `out = playback + input × monitor_gain`, per channel. Without playback (transport stopped, or no song) only the monitored input is heard.
-- **Monitoring.** `monitor_gain` is 1 when `monitor` is on, or when it is auto and `internal.monitor_live` is 1; otherwise 0. With off the input never passes, even while armed.
-- **Input gain.** `rec_gain` scales the monitored input (`monitor_gain` is the linear gain when the monitor is on, 0 when it is off), so the performer hears the level that is recorded. The app applies the same gain to the signal written to the take (the engine's record tap, see ARCHITECTURE.md 2.6), before it is written. 0 dB is bit-exact: a track at the default plays and records as before.
-- **Clip-safe.** `rec_clip_safe` does nothing in the device: it switches the limiter of the *take* (ARCHITECTURE.md 2.6). The monitor is never limited.
-- **Smoothing.** A change of the monitor gain, including a turn of `rec_gain`, is a 5 ms linear crossfade. The first batch after the device is prepared or reset snaps without a ramp.
-- **Tuner.** The device pushes its input after `rec_gain` into a scope tap every batch (two 64-frame copies: the same lock-free ring the analysers use), armed or not, monitored or not, so the tuner works whenever the input is cabled. With `internal.tuner_live` and `tuner_mute` both on, the whole output (playback and monitor) is faded out over 5 ms and back in when the tuner is hidden; the tap is not muted. The first batch snaps like the other gains, and at the defaults the output is bit-exact as before.
-- **Clips.** Clip audio is not stretched when the tempo changes unless the clip is warped (Audio > Warp, see ARCHITECTURE.md 2.18); a clip's start follows the tempo map and an unwarped clip's audio plays in real time. Fades are linear or equal power; mono assets play on both channels, and for more than two channels the first two are played.
-- **Latency.** None (a single stage). The 64-frame engine FIFO and the interface latencies are accounted for by recording, not by the device.
+- **Output.** `out = playback + input × monitor_gain`, per channel. Without playback (transport
+  stopped, or no song) only the monitored input is heard.
+- **Monitoring.** `monitor_gain` is 1 when `monitor` is on, or when it is auto and
+  `internal.monitor_live` is 1; otherwise 0. With off the input never passes, even while armed.
+- **Input gain.** `rec_gain` scales the monitored input (`monitor_gain` is the linear gain when the
+  monitor is on, 0 when it is off), so the performer hears the level that is recorded. The app
+  applies the same gain to the signal written to the take (the engine's record tap, see
+  ARCHITECTURE.md 2.6), before it is written. 0 dB is bit-exact: a track at the default plays and
+  records as before.
+- **Clip-safe.** `rec_clip_safe` does nothing in the device: it switches the limiter of the *take*
+  (ARCHITECTURE.md 2.6). The monitor is never limited.
+- **Smoothing.** A change of the monitor gain, including a turn of `rec_gain`, is a 5 ms linear
+  crossfade. The first batch after the device is prepared or reset snaps without a ramp.
+- **Tuner.** The device pushes its input after `rec_gain` into a scope tap every batch (two 64-frame
+  copies: the same lock-free ring the analysers use), armed or not, monitored or not, so the tuner
+  works whenever the input is cabled. With `internal.tuner_live` and `tuner_mute` both on, the whole
+  output (playback and monitor) is faded out over 5 ms and back in when the tuner is hidden; the tap
+  is not muted. The first batch snaps like the other gains, and at the defaults the output is
+  bit-exact as before.
+- **Clips.** Clip audio is not stretched when the tempo changes unless the clip is warped (Audio >
+  Warp, see ARCHITECTURE.md 2.18); a clip's start follows the tempo map and an unwarped clip's audio
+  plays in real time. Fades are linear or equal power; mono assets play on both channels, and for
+  more than two channels the first two are played.
+- **Latency.** None (a single stage). The 64-frame engine FIFO and the interface latencies are
+  accounted for by recording, not by the device.
 
 ### The tuner panel
 
-The audio track's rack panel (an effect-style layout, `FxKind::AudioTrack`) has a **TUNER** switch on its name plate, on the left under the name, and holds the input settings (monitor, gain, clip safe). The switch shows or hides the tuner of that track: the display and the tuner's own settings (mute and A4 reference) appear only while it is on, and the panel is one rack unit shorter without them. The shown state is view state (not saved, not an undo step), so a project always opens with the tuner hidden. The switch does not move when the panel opens or closes, and like the other plate buttons it is not in the Tab order. The app reads the track's tap at the display rate and analyses it off the audio thread ([ARCHITECTURE.md](ARCHITECTURE.md), section 2.6):
+The audio track's rack panel (an effect-style layout, `FxKind::AudioTrack`) has a **TUNER** switch
+on its name plate, on the left under the name, and holds the input settings (monitor, gain, clip
+safe). The switch shows or hides the tuner of that track: the display and the tuner's own settings
+(mute and A4 reference) appear only while it is on, and the panel is one rack unit shorter without
+them. The shown state is view state (not saved, not an undo step), so a project always opens with
+the tuner hidden. The switch does not move when the panel opens or closes, and like the other plate
+buttons it is not in the Tab order. The app reads the track's tap at the display rate and analyses
+it off the audio thread ([ARCHITECTURE.md](ARCHITECTURE.md), section 2.6):
 
-- **Display.** The note and its octave (`E2`), a needle strip from -50 to +50 cents with a tick every 10 cents, the frequency in Hz, the deviation in cents (`+3.2 ct`), the reference (`A4 = 440 Hz`) and a state word: `IN TUNE` (within 3 cents, the lamp lights and the needle is green), `FLAT` or `SHARP` (amber within 15 cents, red beyond), `PLAY A NOTE` while the signal is too quiet or has no clear pitch, `HOLD` when the last note stays on screen for 0.8 s after the signal is gone (drawn dim).
-- **Pitch.** 28 Hz to 1.6 kHz (the low B of a five-string bass to above the 24th fret of a guitar's top string), within a cent for a steady tone and within a few cents for a plucked string. A frame below about -56 dBFS (after the input gain) is silent; raise `rec_gain` for a weak pickup. The louder of the two input channels is analysed.
-- **Needle.** The pitch is smoothed with a 70 ms time constant; a jump of more than half a semitone (a new string) replaces it at once.
-- **Mute while tuning.** On by default (`tuner_mute`): the track is silent while its tuner shows, so you can tune on stage or against a click. Turn it off to hear the track.
+- **Display.** The note and its octave (`E2`), a needle strip from -50 to +50 cents with a tick
+  every 10 cents, the frequency in Hz, the deviation in cents (`+3.2 ct`), the reference
+  (`A4 = 440 Hz`) and a state word: `IN TUNE` (within 3 cents, the lamp lights and the needle is
+  green), `FLAT` or `SHARP` (amber within 15 cents, red beyond), `PLAY A NOTE` while the signal is
+  too quiet or has no clear pitch, `HOLD` when the last note stays on screen for 0.8 s after the
+  signal is gone (drawn dim).
+- **Pitch.** 28 Hz to 1.6 kHz (the low B of a five-string bass to above the 24th fret of a guitar's
+  top string), within a cent for a steady tone and within a few cents for a plucked string. A frame
+  below about -56 dBFS (after the input gain) is silent; raise `rec_gain` for a weak pickup. The
+  louder of the two input channels is analysed.
+- **Needle.** The pitch is smoothed with a 70 ms time constant; a jump of more than half a semitone
+  (a new string) replaces it at once.
+- **Mute while tuning.** On by default (`tuner_mute`): the track is silent while its tuner shows, so
+  you can tune on stage or against a click. Turn it off to hear the track.
 - **Reference.** `tuner_ref` is A4 in whole hertz, 415 to 466 (Baroque 415, 432, 440, 442, 466...).
 
 ---
 
 ## Sampler: `atomik.sampler` (Instrument)
 
-A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zones) that the app installs from the song's asset pool; the map is not a param and is not part of the descriptor. Every zone that matches a note sounds, so zones layer. Each voice has a cubic Hermite sample reader, an amp envelope, an optional 12 dB state-variable filter with its own envelope, and a shared LFO. Source: [crates/devices/src/sampler.rs](../crates/devices/src/sampler.rs), playback maths in [crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs).
+A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zones) that the app
+installs from the song's asset pool; the map is not a param and is not part of the descriptor. Every
+zone that matches a note sounds, so zones layer. Each voice has a cubic Hermite sample reader, an
+amp envelope, an optional 12 dB state-variable filter with its own envelope, and a shared LFO.
+Source: [crates/devices/src/sampler.rs](../crates/devices/src/sampler.rs), playback maths in
+[crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs).
 
 ### Sockets
 
@@ -1110,35 +1785,90 @@ A multi-zone sampler. It plays a **sample map** (shared sample buffers plus zone
 
 ### Zones (the sample map)
 
-A zone has a key range, a velocity range (1–127; a note velocity `v` maps to round(`v`·127), at least 1), a root key, transpose (−48 to 48 semitones), fine tune (±100 cents), gain (−60 to 12 dB), pan (−1 to 1), sample start and end, a loop (off, forward or ping-pong, with start and end), a crossfade length, a trigger mode (gate or one-shot) and a **reverse** flag. The map is validated when it is built, off the audio thread. A reversed zone plays from `end − 1` down to `start` through the same playhead, with the end fade at `start`; its loop and crossfade fields are ignored and not validated (the loop rules apply only when the loop is on and the zone is not reversed).
+A zone has a key range, a velocity range (1–127; a note velocity `v` maps to round(`v`·127), at
+least 1), a root key, transpose (−48 to 48 semitones), fine tune (±100 cents), gain (−60 to 12 dB),
+pan (−1 to 1), sample start and end, a loop (off, forward or ping-pong, with start and end), a
+crossfade length, a trigger mode (gate or one-shot) and a **reverse** flag. The map is validated
+when it is built, off the audio thread. A reversed zone plays from `end − 1` down to `start` through
+the same playhead, with the end fade at `start`; its loop and crossfade fields are ignored and not
+validated (the loop rules apply only when the loop is on and the zone is not reversed).
 
 ### Behaviour (as built)
 
-- **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi` + pitch bend)/12 + (zone cents + `tune.fine`)/1200 + (LFO·`lfo.to_pitch` + CV·`cv.pitch_amount`)/12). The ratio is updated every 16 samples. A root-key note without modulation reads every frame of the asset bit for bit; an octave up reads every second frame. Assets are already at the session rate, so there is no rate conversion.
+- **Pitch.** The playback ratio is 2^((key − root + transpose + `tune.semi` + pitch bend)/12 + (zone
+  cents + `tune.fine`)/1200 + (LFO·`lfo.to_pitch` + CV·`cv.pitch_amount`)/12). The ratio is updated
+  every 16 samples. A root-key note without modulation reads every frame of the asset bit for bit;
+  an octave up reads every second frame. Assets are already at the session rate, so there is no rate
+  conversion.
 - **Interpolation.** 4-point, third-order Hermite. The four frames are clamped to the buffer, so a read never leaves it.
-- **Position.** The playhead is a whole frame plus an `f64` fraction. It advances by the ratio with integer carries, so a loop wraps on the exact frame and nothing drifts.
-- **Loops.** A forward loop plays `loop_start`..`loop_end` and wraps. A ping-pong loop plays `loop_start`..`loop_end − 1` forwards and backwards, each end frame once per turn. A loop only starts once the playhead reaches `loop_start`, so a run-in before it plays once. A loop of one frame holds that frame.
-- **Crossfade.** For a forward loop with a crossfade of N frames, the last N frames before `loop_end` blend the tail with the audio one loop length earlier (just before `loop_start`) with equal-power gains, so the wrap has no step. Ping-pong loops ignore the crossfade.
-- **Voices.** A note-on starts one voice per matching zone. Gate zones release on note-off. One-shot zones ignore note-off and play to `end` (with a loop they play until stolen or `AllOff`). `AllOff` releases every voice. With the loop off, the last frames before `end` fade out linearly to zero (the fade is the smaller of 64 source frames and 1.5 ms at the session rate, and never longer than the zone), so the voice is silent at `end` and then goes idle; this avoids a click when the sample does not end at zero. Looped zones have no end fade. Notes start at the sample offset of their event.
-- **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen (a start counter, one count per zone started, orders the voices, so stealing is deterministic). It fades out linearly over 2 ms, then the new note starts. A note-off for a note still waiting for its voice cancels it (gate zones).
-- **Level.** Voice gain = zone gain × amp envelope × (1 − `velocity.amp` × (1 − velocity)) × tremolo, where tremolo is 1 − `lfo.to_amp` × (1 − LFO)/2. A mono sample goes through a constant-power pan (−3 dB at the centre). A stereo sample is balanced by the pan: unity at the centre, the far side falls as cos(|pan|·π/2). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth (linear to ±2, below ±4 always).
-- **Filter.** With `filter.enabled` at 0 (the default) the signal is not filtered at all. When on, each voice filters its left and right channels with 12 dB state-variable filters. Cutoff = `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO + `cv.cutoff_amount`·CV + 4·`filter.velocity`·(velocity − 1)), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient interpolated in between.
-- **CV inputs (resonance, level, pan).** Each is applied only while its socket is cabled; with all of them open the output is bit for bit what it was before they existed. Every CV sample is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
-  - *Resonance:* per voice, the normalised resonance becomes clamp(`filter.resonance` + `filter.resonance_cv_trim`·CV, 0, 1) at the 16-sample control rate, the damping ramped in between. Only audible with `filter.enabled` on.
-  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter, for all voices. No extra smoothing.
-  - *Pan:* per voice and per sample, the pan is the zone pan + `pan_cv_trim`·CV (clamped to ±1 by the pan law), through the usual law (constant power for a mono sample, balance for a stereo one).
+- **Position.** The playhead is a whole frame plus an `f64` fraction. It advances by the ratio with
+  integer carries, so a loop wraps on the exact frame and nothing drifts.
+- **Loops.** A forward loop plays `loop_start`..`loop_end` and wraps. A ping-pong loop plays
+  `loop_start`..`loop_end − 1` forwards and backwards, each end frame once per turn. A loop only
+  starts once the playhead reaches `loop_start`, so a run-in before it plays once. A loop of one
+  frame holds that frame.
+- **Crossfade.** For a forward loop with a crossfade of N frames, the last N frames before
+  `loop_end` blend the tail with the audio one loop length earlier (just before `loop_start`) with
+  equal-power gains, so the wrap has no step. Ping-pong loops ignore the crossfade.
+- **Voices.** A note-on starts one voice per matching zone. Gate zones release on note-off. One-shot
+  zones ignore note-off and play to `end` (with a loop they play until stolen or `AllOff`). `AllOff`
+  releases every voice. With the loop off, the last frames before `end` fade out linearly to zero
+  (the fade is the smaller of 64 source frames and 1.5 ms at the session rate, and never longer than
+  the zone), so the voice is silent at `end` and then goes idle; this avoids a click when the sample
+  does not end at zero. Looped zones have no end fade. Notes start at the sample offset of their
+  event.
+- **Voice stealing.** When every allowed voice is busy, the oldest started voice is stolen (a start
+  counter, one count per zone started, orders the voices, so stealing is deterministic). It fades
+  out linearly over 2 ms, then the new note starts. A note-off for a note still waiting for its
+  voice cancels it (gate zones).
+- **Level.** Voice gain = zone gain × amp envelope × (1 − `velocity.amp` × (1 − velocity)) ×
+  tremolo, where tremolo is 1 − `lfo.to_amp` × (1 − LFO)/2. A mono sample goes through a
+  constant-power pan (−3 dB at the centre). A stereo sample is balanced by the pan: unity at the
+  centre, the far side falls as cos(|pan|·π/2). The sum times `master.level` (5 ms smoothing) passes
+  through the soft limiter of the poly-synth (linear to ±2, below ±4 always).
+- **Filter.** With `filter.enabled` at 0 (the default) the signal is not filtered at all. When on,
+  each voice filters its left and right channels with 12 dB state-variable filters. Cutoff =
+  `filter.cutoff` × 2^(`env_amount`·6·filter env + `key_track`·(key − 60)/12 + `lfo.to_cutoff`·LFO +
+  `cv.cutoff_amount`·CV + 4·`filter.velocity`·(velocity − 1)), clamped to 20 Hz … 0.45 × sample
+  rate, updated every 16 samples with the coefficient interpolated in between.
+- **CV inputs (resonance, level, pan).** Each is applied only while its socket is cabled; with all
+  of them open the output is bit for bit what it was before they existed. Every CV sample is
+  sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
+  - *Resonance:* per voice, the normalised resonance becomes clamp(`filter.resonance` +
+    `filter.resonance_cv_trim`·CV, 0, 1) at the 16-sample control rate, the damping ramped in
+    between. Only audible with `filter.enabled` on.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20),
+    before the soft limiter, for all voices. No extra smoothing.
+  - *Pan:* per voice and per sample, the pan is the zone pan + `pan_cv_trim`·CV (clamped to ±1 by
+    the pan law), through the usual law (constant power for a mono sample, balance for a stereo
+    one).
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps. There is no latency.
-- **Map swaps.** The device holds the current map and at most one *draining* map, and never frees a map itself: `swap_samples` hands one back to the caller, which drops it off the audio thread.
-  - A voice whose zone index exists in the new map, with a buffer that is the same `Arc`, moves to the new zone (it takes the zone's parameters and keeps its position). Every other voice keeps playing from the old map with a 5 ms fade-out; the old map becomes the draining map.
-  - A second swap while voices still drain cuts those voices (no fade) and hands the draining map back. When no voice needs the old map and nothing is held as draining, the old map itself is handed back. When no voice needs it but a stale draining map is still held (all its voices ended), the stale one is handed back and the replaced map is kept as the draining map until the next swap. At most one map is returned per swap.
-  - A note that waits for a steal fade survives a swap only if the new map has a zone at the same index that still matches it.
-- **Voice count.** `voices` is the polyphony limit, changeable at any time; voices above a lowered limit fade out over 2 ms. All 64 voices are allocated when the device is created and prepared.
+- **Map swaps.** The device holds the current map and at most one *draining* map, and never frees a
+  map itself: `swap_samples` hands one back to the caller, which drops it off the audio thread.
+  - A voice whose zone index exists in the new map, with a buffer that is the same `Arc`, moves to
+    the new zone (it takes the zone's parameters and keeps its position). Every other voice keeps
+    playing from the old map with a 5 ms fade-out; the old map becomes the draining map.
+  - A second swap while voices still drain cuts those voices (no fade) and hands the draining map
+    back. When no voice needs the old map and nothing is held as draining, the old map itself is
+    handed back. When no voice needs it but a stale draining map is still held (all its voices
+    ended), the stale one is handed back and the replaced map is kept as the draining map until the
+    next swap. At most one map is returned per swap.
+  - A note that waits for a steal fade survives a swap only if the new map has a zone at the same
+    index that still matches it.
+- **Voice count.** `voices` is the polyphony limit, changeable at any time; voices above a lowered
+  limit fade out over 2 ms. All 64 voices are allocated when the device is created and prepared.
 
 ---
 
 ## Drum machine: `atomik.drum-machine` (Instrument)
 
-A 16-pad sample player. Like the sampler it plays a **sample map** installed by the app (not a param). Pad *n* (1 to 16) sits on key 35 + *n* (36 to 51, GM). A pad's sound is the zones whose key range is exactly its key (`key_lo == key_hi == pad key`); their velocity ranges make velocity layers (overlapping ranges layer). Zones on other keys and notes on other keys are ignored. A hit with no zone for its velocity does nothing (no choke, no retrigger). Source: [crates/devices/src/drum_machine.rs](../crates/devices/src/drum_machine.rs), playback maths in [crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs).
+A 16-pad sample player. Like the sampler it plays a **sample map** installed by the app (not a
+param). Pad *n* (1 to 16) sits on key 35 + *n* (36 to 51, GM). A pad's sound is the zones whose key
+range is exactly its key (`key_lo == key_hi == pad key`); their velocity ranges make velocity layers
+(overlapping ranges layer). Zones on other keys and notes on other keys are ignored. A hit with no
+zone for its velocity does nothing (no choke, no retrigger). Source:
+[crates/devices/src/drum_machine.rs](../crates/devices/src/drum_machine.rs), playback maths in
+[crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs).
 
 ### Sockets
 
@@ -1153,7 +1883,8 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 
 ### Params
 
-`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then `master.level_cv_trim` and `pitch_cv_trim` (131 params; ids follow the order):
+`master.level` first, then eight params per pad *N* = 1 to 16 in this order, then
+`master.level_cv_trim` and `pitch_cv_trim` (131 params; ids follow the order):
 
 | Key | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|
@@ -1171,27 +1902,93 @@ A 16-pad sample player. Like the sampler it plays a **sample map** installed by 
 
 ### Behaviour (as built)
 
-- **Pad zones.** `swap_samples` scans the map once and keeps, per pad, the indices of its first 8 zones in map order in fixed arrays (no allocation). Zones past the eighth of a pad are never played.
-- **Voices.** 32 voices, all preallocated, not a param. A hit starts one voice per matching zone. When none is free, the oldest started voice is stolen (a voice that is already fading out for a choke or retrigger goes first): it fades out linearly over 2 ms, then the new hit starts. A start counter orders the voices, so stealing is deterministic.
-- **Envelope.** Every voice has a 0.5 ms linear attack (click protection). *Gate* mode holds at 1 while the key is down; note-off starts the decay. *One-shot* mode starts the decay right after the attack and ignores note-off. The decay is exponential, 10^(−3·t/`decay`), so it is −60 dB after `padN.decay` ms; the voice goes idle at −80 dB. `padN.mode` decides: the zone's own trigger mode is ignored. A looped zone loops while held (gate) or until the decay ends. Without a loop the sample plays to `end` with the sampler's end fade (64 frames or 1.5 ms) and the voice goes idle. The mode is read at the hit; level, pan, tune, fine, decay and choke are read live (no smoothing, they change at the next event or batch boundary).
-- **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end fade is at `start`), exactly as in the sampler.
-- **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared playhead (zone start/end and loops as in the sampler).
-- **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity` × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample (−3 dB at the centre), balance for a stereo sample (unity at the centre).
-- **CV input (level, global).** Applied only while `level_cv_in` is cabled; with every new CV socket open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and multiplied by `master.level_cv_trim` and 24 dB: the gain of every voice is multiplied per sample by 10^(24·trim·CV/20). It acts on all pads and on their individual outputs, before the main mix's `master.level` and soft limiter. No extra smoothing; a negative trim inverts.
-- **CV input (pitch, global).** Applied only while `pitch_cv_in` is cabled. The batch mean of the CV (sanitised, clamped to −1..+1) times `pitch_cv_trim` and 24 semitones is the target offset; the playback ratio of every voice is multiplied by 2^(offset/12), and the offset glides linearly from the previous batch's target over the 64 samples of the batch (no zipper noise; the first batch after a (re)connect starts at its target). It acts on **voices that are already sounding** as well as on new hits (so a pitch envelope or LFO bends a ringing drum), on all pads, on top of `padN.tune` and `padN.fine`. A negative trim inverts.
-- **Gate in (per pad).** `padN_gate_cv_in` is read sample by sample. A rise through 0.5 (above 0.5 is high) triggers the pad exactly like a note-on on its key at that sample, with velocity `(gate − 0.5) × 2` clamped to 0..1 (so a plain 1.0 gate is full velocity, 0.75 is half velocity). The fall to 0.5 or below is the note-off: it only matters for a pad in *gate* mode (it starts the decay); a one-shot pad ignores it as it ignores a note-off. Each rise is a new hit (retriggering the pad). A gate that is high when the cable is pulled counts as the fall. Gate in and notes can be used together.
-- **Gate out (per pad).** `padN_gate_cv_out` is 0 while the pad is released and `0.5 + velocity/2` (0.504 at least, 1.0 at velocity 1) from every trigger of the pad, whether it came from a note, from the step sequencer or from its own gate in, until the matching note-off or the falling gate-in edge, sample accurate. The encoding is the inverse of gate in, so a gate out can be cabled straight to another pad's (or any device's) gate in and keeps the velocity, and the level is above 0.5 so every gate consumer sees it as high. The length is the note's length, also for a one-shot pad that ignores the note-off for its sound; the gate does not follow how long the sample rings. A hit with no zone for its velocity, or without a map, still raises the gate. All-notes-off and `reset` lower every gate; a source that never sends a note-off keeps the gate high until then. The step sequencer's own `gate_cv_out` is 1.0/0.0 with the velocity on a separate CV; the drum machine has no separate velocity CV, hence the combined encoding.
-- **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out R, gate in, gate out).
-- **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group 0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
-- **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level` and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither scaled nor limited (non-finite values become 0).
-- **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one draining map and hands one back per swap. A voice whose zone index exists in the new map with a pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A pending hit survives only if the new map has a zone of its pad at the same index that still matches its velocity.
+- **Pad zones.** `swap_samples` scans the map once and keeps, per pad, the indices of its first 8
+  zones in map order in fixed arrays (no allocation). Zones past the eighth of a pad are never
+  played.
+- **Voices.** 32 voices, all preallocated, not a param. A hit starts one voice per matching zone.
+  When none is free, the oldest started voice is stolen (a voice that is already fading out for a
+  choke or retrigger goes first): it fades out linearly over 2 ms, then the new hit starts. A start
+  counter orders the voices, so stealing is deterministic.
+- **Envelope.** Every voice has a 0.5 ms linear attack (click protection). *Gate* mode holds at 1
+  while the key is down; note-off starts the decay. *One-shot* mode starts the decay right after the
+  attack and ignores note-off. The decay is exponential, 10^(−3·t/`decay`), so it is −60 dB after
+  `padN.decay` ms; the voice goes idle at −80 dB. `padN.mode` decides: the zone's own trigger mode
+  is ignored. A looped zone loops while held (gate) or until the decay ends. Without a loop the
+  sample plays to `end` with the sampler's end fade (64 frames or 1.5 ms) and the voice goes idle.
+  The mode is read at the hit; level, pan, tune, fine, decay and choke are read live (no smoothing,
+  they change at the next event or batch boundary).
+- **Reverse.** A zone with `reverse` plays backwards (`end − 1` down to `start`, no loop, the end
+  fade is at `start`), exactly as in the sampler.
+- **Pitch.** Ratio 2^((pad key − root + zone transpose + `padN.tune` + (`padN.fine` + zone
+  cents)/100)/12): unity when the zone root is the pad key. Cubic Hermite read with the shared
+  playhead (zone start/end and loops as in the sampler).
+- **Level and pan.** Voice gain = envelope × 10^(`padN.level`/20) × zone gain × (1 − `padN.velocity`
+  × (1 − velocity)). Pan is `padN.pan` plus the zone pan, clamped: constant power for a mono sample
+  (−3 dB at the centre), balance for a stereo sample (unity at the centre).
+- **CV input (level, global).** Applied only while `level_cv_in` is cabled; with every new CV socket
+  open the output is bit for bit what it was before. The CV is sanitised, clamped to −1..+1 and
+  multiplied by `master.level_cv_trim` and 24 dB: the gain of every voice is multiplied per sample
+  by 10^(24·trim·CV/20). It acts on all pads and on their individual outputs, before the main mix's
+  `master.level` and soft limiter. No extra smoothing; a negative trim inverts.
+- **CV input (pitch, global).** Applied only while `pitch_cv_in` is cabled. The batch mean of the CV
+  (sanitised, clamped to −1..+1) times `pitch_cv_trim` and 24 semitones is the target offset; the
+  playback ratio of every voice is multiplied by 2^(offset/12), and the offset glides linearly from
+  the previous batch's target over the 64 samples of the batch (no zipper noise; the first batch
+  after a (re)connect starts at its target). It acts on **voices that are already sounding** as well
+  as on new hits (so a pitch envelope or LFO bends a ringing drum), on all pads, on top of
+  `padN.tune` and `padN.fine`. A negative trim inverts.
+- **Gate in (per pad).** `padN_gate_cv_in` is read sample by sample. A rise through 0.5 (above 0.5
+  is high) triggers the pad exactly like a note-on on its key at that sample, with velocity
+  `(gate − 0.5) × 2` clamped to 0..1 (so a plain 1.0 gate is full velocity, 0.75 is half velocity).
+  The fall to 0.5 or below is the note-off: it only matters for a pad in *gate* mode (it starts the
+  decay); a one-shot pad ignores it as it ignores a note-off. Each rise is a new hit (retriggering
+  the pad). A gate that is high when the cable is pulled counts as the fall. Gate in and notes can
+  be used together.
+- **Gate out (per pad).** `padN_gate_cv_out` is 0 while the pad is released and `0.5 + velocity/2`
+  (0.504 at least, 1.0 at velocity 1) from every trigger of the pad, whether it came from a note,
+  from the step sequencer or from its own gate in, until the matching note-off or the falling
+  gate-in edge, sample accurate. The encoding is the inverse of gate in, so a gate out can be cabled
+  straight to another pad's (or any device's) gate in and keeps the velocity, and the level is above
+  0.5 so every gate consumer sees it as high. The length is the note's length, also for a one-shot
+  pad that ignores the note-off for its sound; the gate does not follow how long the sample rings. A
+  hit with no zone for its velocity, or without a map, still raises the gate. All-notes-off and
+  `reset` lower every gate; a source that never sends a note-off keeps the gate high until then. The
+  step sequencer's own `gate_cv_out` is 1.0/0.0 with the velocity on a separate CV; the drum machine
+  has no separate velocity CV, hence the combined encoding.
+- **Back panel.** Seven rack units: the notes input and main outputs, a CV section with the two
+  global jacks each next to its trim knob, and one section per pad with its four jacks (out L, out
+  R, gate in, gate out).
+- **Choke and retrigger.** A hit on a pad in choke group *g* (1 to 4) fades every sounding voice of
+  the other pads in group *g* to zero over 2 ms and cancels their pending hits. A hit also
+  retriggers its own pad: its previous voices fade over 2 ms while the new ones start at once. Group
+  0 chokes nothing and is never choked. All-notes-off fades every voice over 2 ms.
+- **Outputs.** A pad whose `padN_out_l` or `padN_out_r` is connected writes both channels only to
+  its individual pair and leaves the main mix; the other pads are in `out_l`/`out_r`. `master.level`
+  and the soft limiter of the poly-synth apply to the main mix only. Individual outputs are neither
+  scaled nor limited (non-finite values become 0).
+- **Map swaps.** Exactly as the sampler (see above): the device holds the current and at most one
+  draining map and hands one back per swap. A voice whose zone index exists in the new map with a
+  pointer-equal buffer moves to that zone (it keeps its pad and position and adopts the zone's
+  start/end/loop/gain/root, so it keeps playing the same buffer even if the pad's zone list
+  changed); other voices drain with a 5 ms fade; a second swap cuts voices that still drain. A
+  pending hit survives only if the new map has a zone of its pad at the same index that still
+  matches its velocity.
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps.
 
 ---
 
 ## Loop slicer: `atomik.loop-slicer` (Instrument)
 
-Plays the slices of one loop from keys. Like the sampler it plays a **sample map** installed by the app (not a param). Slice *n* (1 to 64) sits on key 23 + *n* (C1 = 24 up to 87). A slice is a zone with `key_lo == key_hi == its key`; its `start..end` is the slice, and its gain, pan, transpose, tune and **reverse** are the per-slice settings. Zones on other keys and notes on other keys are ignored; with several zones on one key the first in map order is the slice. A note on a key without a slice does nothing. Source: [crates/devices/src/loop_slicer.rs](../crates/devices/src/loop_slicer.rs), playback maths in [crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs). The transient detector that proposes slice points is [crates/dsp/src/onset.rs](../crates/dsp/src/onset.rs) (`atomik_dsp::onset::detect_onsets`).
+Plays the slices of one loop from keys. Like the sampler it plays a **sample map** installed by the
+app (not a param). Slice *n* (1 to 64) sits on key 23 + *n* (C1 = 24 up to 87). A slice is a zone
+with `key_lo == key_hi == its key`; its `start..end` is the slice, and its gain, pan, transpose,
+tune and **reverse** are the per-slice settings. Zones on other keys and notes on other keys are
+ignored; with several zones on one key the first in map order is the slice. A note on a key without
+a slice does nothing. Source:
+[crates/devices/src/loop_slicer.rs](../crates/devices/src/loop_slicer.rs), playback maths in
+[crates/dsp/src/sample_read.rs](../crates/dsp/src/sample_read.rs). The transient detector that
+proposes slice points is [crates/dsp/src/onset.rs](../crates/dsp/src/onset.rs)
+(`atomik_dsp::onset::detect_onsets`).
 
 ### Sockets
 
@@ -1223,25 +2020,56 @@ Plays the slices of one loop from keys. Like the sampler it plays a **sample map
 
 ### Behaviour (as built)
 
-- **Voices.** 16 voices, all preallocated; `voices` limits how many may sound (voices above a lowered limit fade over 2 ms). One hit starts one voice. When none is free, the oldest started voice is stolen (one already fading out goes first): it fades out linearly over 2 ms, then the new hit starts. A start counter orders the voices, so stealing is deterministic.
-- **Retrigger.** A new hit of a slice fades its previous voices over 2 ms (and cancels their pending hits) while the new voice starts at once. Different slices overlap. All-notes-off fades every voice over 2 ms.
-- **Envelope.** A linear attack of `env.attack` ms, then in *gate* mode the amp holds at 1 while the key is down and note-off starts the exponential decay; in *one-shot* mode (the default) the decay starts right after the attack and note-off is ignored. The decay is 10^(−3·t/`env.decay`), −60 dB after `env.decay` ms; the voice goes idle at −80 dB. The zone's trigger and loop fields are ignored: a slice plays once. The mode is read at the hit; `env.decay` is read live.
-- **End of slice.** The sampler's end fade (64 frames or 1.5 ms) is at `end`, or at `start` for a reversed slice, then the voice goes idle.
+- **Voices.** 16 voices, all preallocated; `voices` limits how many may sound (voices above a
+  lowered limit fade over 2 ms). One hit starts one voice. When none is free, the oldest started
+  voice is stolen (one already fading out goes first): it fades out linearly over 2 ms, then the new
+  hit starts. A start counter orders the voices, so stealing is deterministic.
+- **Retrigger.** A new hit of a slice fades its previous voices over 2 ms (and cancels their pending
+  hits) while the new voice starts at once. Different slices overlap. All-notes-off fades every
+  voice over 2 ms.
+- **Envelope.** A linear attack of `env.attack` ms, then in *gate* mode the amp holds at 1 while the
+  key is down and note-off starts the exponential decay; in *one-shot* mode (the default) the decay
+  starts right after the attack and note-off is ignored. The decay is 10^(−3·t/`env.decay`), −60 dB
+  after `env.decay` ms; the voice goes idle at −80 dB. The zone's trigger and loop fields are
+  ignored: a slice plays once. The mode is read at the hit; `env.decay` is read live.
+- **End of slice.** The sampler's end fade (64 frames or 1.5 ms) is at `end`, or at `start` for a
+  reversed slice, then the voice goes idle.
 - **Reverse.** A reversed slice plays from `end − 1` down to `start` (see the sampler's Zones section).
-- **Pitch.** Ratio 2^((key − root + transpose + `tune.semi`)/12 + zone cents/1200 + CV·`cv.pitch_amount`/12), CV clamped to ±1 and updated every 16 samples. Slices normally have their key as root: unity ratio, so a slice is reproduced bit for bit once the attack is over.
-- **Level and pan.** Voice gain = envelope × zone gain × (1 − `velocity.amp` × (1 − velocity)). A mono loop goes through a constant-power pan by the zone pan (−3 dB at the centre), a stereo loop is balanced (unity at the centre). The sum times `master.level` (5 ms smoothing) passes through the soft limiter of the poly-synth.
-- **Filter and CV inputs (cutoff, level).** The slicer had no filter; it now has one global 12 dB low-pass (Butterworth, Q = 1/√2) over the summed voices, placed before `master.level`. It is engaged only while `cutoff_cv_in` is cabled or `filter.cutoff` is below its maximum of 20 kHz; otherwise the signal is not touched, so a patch that does not use either is bit for bit what it was before. Each CV is sanitised, clamped to −1..+1 and multiplied by the signed trim and the fixed range of its target.
-  - *Cutoff:* `filter.cutoff` × 2^(4·`filter.cutoff_cv_trim`·CV), clamped to 20 Hz … 0.45 × sample rate, updated every 16 samples with the coefficient ramped in between. It acts on all voices together, not per voice.
-  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20), before the soft limiter. No extra smoothing.
-- **`loop.beats`** is stored but unused by the audio; the app and the editor use it for grid slicing and for writing the loop as a note clip.
-- **Map swaps.** Exactly as the sampler and the drum machine; a pending hit survives only if the new map has a slice zone of its key at the same index that still matches its velocity.
+- **Pitch.** Ratio 2^((key − root + transpose + `tune.semi`)/12 + zone cents/1200 +
+  CV·`cv.pitch_amount`/12), CV clamped to ±1 and updated every 16 samples. Slices normally have
+  their key as root: unity ratio, so a slice is reproduced bit for bit once the attack is over.
+- **Level and pan.** Voice gain = envelope × zone gain × (1 − `velocity.amp` × (1 − velocity)). A
+  mono loop goes through a constant-power pan by the zone pan (−3 dB at the centre), a stereo loop
+  is balanced (unity at the centre). The sum times `master.level` (5 ms smoothing) passes through
+  the soft limiter of the poly-synth.
+- **Filter and CV inputs (cutoff, level).** The slicer had no filter; it now has one global 12 dB
+  low-pass (Butterworth, Q = 1/√2) over the summed voices, placed before `master.level`. It is
+  engaged only while `cutoff_cv_in` is cabled or `filter.cutoff` is below its maximum of 20 kHz;
+  otherwise the signal is not touched, so a patch that does not use either is bit for bit what it
+  was before. Each CV is sanitised, clamped to −1..+1 and multiplied by the signed trim and the
+  fixed range of its target.
+  - *Cutoff:* `filter.cutoff` × 2^(4·`filter.cutoff_cv_trim`·CV), clamped to 20 Hz … 0.45 × sample
+    rate, updated every 16 samples with the coefficient ramped in between. It acts on all voices
+    together, not per voice.
+  - *Level:* the master gain is multiplied per sample by 10^(24·`master.level_cv_trim`·CV/20),
+    before the soft limiter. No extra smoothing.
+- **`loop.beats`** is stored but unused by the audio; the app and the editor use it for grid slicing
+  and for writing the loop as a note clip.
+- **Map swaps.** Exactly as the sampler and the drum machine; a pending hit survives only if the new
+  map has a slice zone of its key at the same index that still matches its velocity.
 - **No map or no matching zone:** silence. `reset` silences the voices and keeps the maps.
 
 ---
 
 ## Step sequencer: `atomik.step-sequencer` (Utility, "Players")
 
-A transport-synced, monophonic pattern player. Like the sampler it plays data installed by the app (not params): the **pattern data** (`StepSeqData`, up to 8 patterns of 1 to 64 steps, each with a resolution 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 or 1/32T, a swing of 0 to 75 % and, per step, on/off, key, velocity 1 to 127, gate 1 to 100 % of the step, probability 0 to 100 % and tie). It is registered with `register_with_player_data`. Sources: [crates/devices/src/step_sequencer.rs](../crates/devices/src/step_sequencer.rs), shared clock in [crates/devices/src/note_clock.rs](../crates/devices/src/note_clock.rs).
+A transport-synced, monophonic pattern player. Like the sampler it plays data installed by the app
+(not params): the **pattern data** (`StepSeqData`, up to 8 patterns of 1 to 64 steps, each with a
+resolution 1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32 or 1/32T, a swing of 0 to 75 % and, per step, on/off,
+key, velocity 1 to 127, gate 1 to 100 % of the step, probability 0 to 100 % and tie). It is
+registered with `register_with_player_data`. Sources:
+[crates/devices/src/step_sequencer.rs](../crates/devices/src/step_sequencer.rs), shared clock in
+[crates/devices/src/note_clock.rs](../crates/devices/src/note_clock.rs).
 
 ### Sockets
 
@@ -1271,24 +2099,53 @@ A transport-synced, monophonic pattern player. Like the sampler it plays data in
 
 ### Behaviour (as built)
 
-- **Position.** The device reads the musical position from the engine (`TimeInfo.tick`, `ticks_per_frame`, `loop_wrap`) and derives the step every batch: step *k* = floor(tick / *s*) with *s* the step length in ticks (1/4 = 15 360, 1/8 = 7 680, 1/8T = 5 120, 1/16 = 3 840, 1/16T = 2 560, 1/32 = 1 920, 1/32T = 1 280). Step *k* starts at *k*·*s* plus, for odd *k*, the swing shift (swing·*s* + 100) / 200 ticks (integer division). The pattern step is *k* mod length, so a loop whose length is a multiple of the pattern repeats it in phase and a locate lands on the step a continuous run would have reached. Without a song the transport always plays.
-- **Frames.** A step is due at the first frame ceil((start − batch tick) / ticks per frame); a value within 1e-6 frame above an integer counts as that integer (the f64 tick accumulates noise). Arithmetic is f64 `+ − × ÷`, `floor`, `ceil` only: bit-identical on every platform and independent of the host block size.
-- **Notes.** One note per step: On at the step start, Off at start + max(1, floor(*s* × gate% / 100)), never past the next step's start; 100 % ends exactly at the next step (legato, the Off goes before the next On at the same frame). `gate.scale` scales the step's gate (result clamped to the step); `velocity.scale` scales the velocity (rounded, clamped to 1…127); `transpose` and the `follow` offset (held key on `notes_in` − 60, the most recent key wins, none = 0) shift the key (clamped to 0…127).
-- **Tie.** A tied step holds its note into the next step: the same key continues without On or Off (the trig still fires), a different key emits the new On before the old Off at the same frame (legato), and a next step that does not play (off, probability, mute, no data) ends the note at that step's start. A tied step ignores `gate.scale`.
-- **Probability.** A step plays when hash64(seed ⊕ `random.seed`, global step number, slot 0) maps below prob × `probability.amount`: 0 % never, 100 % × 1 always. No running RNG, so a bounce, a live run, a locate and a second loop pass agree.
-- **Patterns.** `pattern` selects the playing pattern. `at-end` adopts a change at the start of the next pass (global step a multiple of the playing pattern's length) and, when stopped or after a jump, at once; `now` adopts it at the next batch. A pattern with another resolution or swing re-grids the clock at that point.
-- **Note safety.** The sounding note is closed (Off at the first frame, or at the wrap offset) on stop, locate, loop wrap, `mute` and `AllOff`; a `reset` makes the next batch start with an `AllOff` if a note was sounding. A pattern-data swap never touches a sounding note (its end is already scheduled). A tempo change inside a batch is not a jump: the jump test accepts a tick that differs from the prediction by up to 64 × |ticks-per-frame change|.
-- **No data:** nothing plays (the clock still runs). **Meter values:** pattern index (0-based), step index of the last started step, 1 while the transport runs.
+- **Position.** The device reads the musical position from the engine (`TimeInfo.tick`,
+  `ticks_per_frame`, `loop_wrap`) and derives the step every batch: step *k* = floor(tick / *s*)
+  with *s* the step length in ticks (1/4 = 15 360, 1/8 = 7 680, 1/8T = 5 120, 1/16 = 3 840, 1/16T =
+  2 560, 1/32 = 1 920, 1/32T = 1 280). Step *k* starts at *k*·*s* plus, for odd *k*, the swing shift
+  (swing·*s* + 100) / 200 ticks (integer division). The pattern step is *k* mod length, so a loop
+  whose length is a multiple of the pattern repeats it in phase and a locate lands on the step a
+  continuous run would have reached. Without a song the transport always plays.
+- **Frames.** A step is due at the first frame ceil((start − batch tick) / ticks per frame); a value
+  within 1e-6 frame above an integer counts as that integer (the f64 tick accumulates noise).
+  Arithmetic is f64 `+ − × ÷`, `floor`, `ceil` only: bit-identical on every platform and independent
+  of the host block size.
+- **Notes.** One note per step: On at the step start, Off at start + max(1, floor(*s* × gate% /
+  100)), never past the next step's start; 100 % ends exactly at the next step (legato, the Off goes
+  before the next On at the same frame). `gate.scale` scales the step's gate (result clamped to the
+  step); `velocity.scale` scales the velocity (rounded, clamped to 1…127); `transpose` and the
+  `follow` offset (held key on `notes_in` − 60, the most recent key wins, none = 0) shift the key
+  (clamped to 0…127).
+- **Tie.** A tied step holds its note into the next step: the same key continues without On or Off
+  (the trig still fires), a different key emits the new On before the old Off at the same frame
+  (legato), and a next step that does not play (off, probability, mute, no data) ends the note at
+  that step's start. A tied step ignores `gate.scale`.
+- **Probability.** A step plays when hash64(seed ⊕ `random.seed`, global step number, slot 0) maps
+  below prob × `probability.amount`: 0 % never, 100 % × 1 always. No running RNG, so a bounce, a
+  live run, a locate and a second loop pass agree.
+- **Patterns.** `pattern` selects the playing pattern. `at-end` adopts a change at the start of the
+  next pass (global step a multiple of the playing pattern's length) and, when stopped or after a
+  jump, at once; `now` adopts it at the next batch. A pattern with another resolution or swing
+  re-grids the clock at that point.
+- **Note safety.** The sounding note is closed (Off at the first frame, or at the wrap offset) on
+  stop, locate, loop wrap, `mute` and `AllOff`; a `reset` makes the next batch start with an
+  `AllOff` if a note was sounding. A pattern-data swap never touches a sounding note (its end is
+  already scheduled). A tempo change inside a batch is not a jump: the jump test accepts a tick that
+  differs from the prediction by up to 64 × |ticks-per-frame change|.
+- **No data:** nothing plays (the clock still runs). **Meter values:** pattern index (0-based), step
+  index of the last started step, 1 while the transport runs.
 
 ---
 
 ## Arpeggiator: `atomik.arpeggiator` (Utility, "Players")
 
-Turns the held keys on `notes_in` into a tempo-synced figure on `notes_out`. No pattern data. Source: [crates/devices/src/arpeggiator.rs](../crates/devices/src/arpeggiator.rs).
+Turns the held keys on `notes_in` into a tempo-synced figure on `notes_out`. No pattern data.
+Source: [crates/devices/src/arpeggiator.rs](../crates/devices/src/arpeggiator.rs).
 
 ### Sockets
 
-The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, `gate_cv_out`, `pitch_cv_out`, `velocity_cv_out`, `trig_cv_out`.
+The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, `gate_cv_out`,
+`pitch_cv_out`, `velocity_cv_out`, `trig_cv_out`.
 
 ### Params
 
@@ -1308,18 +2165,36 @@ The same six as the step sequencer, in the same order: `notes_in`, `notes_out`, 
 
 ### Behaviour (as built)
 
-- **Order.** The held set is sorted by key for up, down, up-down and random and kept in press order for as-played. `octaves` stacks transposed copies (key + 12 × octave; a key above 127 is folded down by octaves). Up-down does not repeat its end points (set of 3 keys: 60 64 67 64 60 64 …). Random draws a uniform index of the pooled notes with hash64(seed ⊕ `random.seed`, global step number, slot 1). Chord plays the whole held set at every step, shifted by one octave per step cycling through `octaves`.
-- **Time.** Same grid, integer tick rule and swing as the step sequencer. A key pressed mid-step waits for the next step boundary (a key at the boundary frame counts). The cycle restarts from its first note when the set goes from empty to non-empty (or is replaced by a fresh hold set).
-- **Gate.** Off at start + max(1, floor(*s* × `gate`% / 100)), never past the next step; 100 % ends exactly at the next step. Releasing a key does not cut a sounding note: its scheduled end closes it.
-- **Hold.** Released keys stay in the set; the next press after every physical key is up starts a fresh set; turning `hold` off drops the latched keys that are not held.
-- **Run.** With `always` and the transport stopped the arpeggiator uses an internal clock that advances at the current tempo from the last playhead tick; `transport` is silent while stopped (sounding notes are closed). Starting or stopping the transport changes the clock source, which counts as a jump (notes closed, no hang).
-- **Velocity.** The key's input velocity, or `velocity.fixed` / 127. **CV outs** as the sequencer (pitch CV of the last note of a step).
-- **Note safety.** Notes are closed on a jump (locate, loop wrap, start or stop), `AllOff` (which also clears the set); the pending-off table (64 notes) closes the oldest note if a chord overflows it; a `reset` leaves an `AllOff` for the next batch.
-- **Meter values:** the held key count, then the next 8 keys it will play (0 = none; in chord mode the lowest key of the chord).
+- **Order.** The held set is sorted by key for up, down, up-down and random and kept in press order
+  for as-played. `octaves` stacks transposed copies (key + 12 × octave; a key above 127 is folded
+  down by octaves). Up-down does not repeat its end points (set of 3 keys: 60 64 67 64 60 64 …).
+  Random draws a uniform index of the pooled notes with hash64(seed ⊕ `random.seed`, global step
+  number, slot 1). Chord plays the whole held set at every step, shifted by one octave per step
+  cycling through `octaves`.
+- **Time.** Same grid, integer tick rule and swing as the step sequencer. A key pressed mid-step
+  waits for the next step boundary (a key at the boundary frame counts). The cycle restarts from its
+  first note when the set goes from empty to non-empty (or is replaced by a fresh hold set).
+- **Gate.** Off at start + max(1, floor(*s* × `gate`% / 100)), never past the next step; 100 % ends
+  exactly at the next step. Releasing a key does not cut a sounding note: its scheduled end closes
+  it.
+- **Hold.** Released keys stay in the set; the next press after every physical key is up starts a
+  fresh set; turning `hold` off drops the latched keys that are not held.
+- **Run.** With `always` and the transport stopped the arpeggiator uses an internal clock that
+  advances at the current tempo from the last playhead tick; `transport` is silent while stopped
+  (sounding notes are closed). Starting or stopping the transport changes the clock source, which
+  counts as a jump (notes closed, no hang).
+- **Velocity.** The key's input velocity, or `velocity.fixed` / 127. **CV outs** as the sequencer
+  (pitch CV of the last note of a step).
+- **Note safety.** Notes are closed on a jump (locate, loop wrap, start or stop), `AllOff` (which
+  also clears the set); the pending-off table (64 notes) closes the oldest note if a chord overflows
+  it; a `reset` leaves an `AllOff` for the next batch.
+- **Meter values:** the held key count, then the next 8 keys it will play (0 = none; in chord mode
+  the lowest key of the chord).
 
 ## Note Filter: `atomik.note-filter` (Utility, "Players")
 
-Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless per-event map. Source: [crates/devices/src/note_filter.rs](../crates/devices/src/note_filter.rs).
+Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless per-event map.
+Source: [crates/devices/src/note_filter.rs](../crates/devices/src/note_filter.rs).
 
 ### Sockets
 
@@ -1350,21 +2225,40 @@ Transposes and filters the notes of `notes_in` onto `notes_out`: one stateless p
 ### Behaviour
 
 - **Order of the stages.** Event filter, key range, velocity range, transpose, velocity shaping, output range.
-- **Key range** tests the *input* key. `inside` passes `key.low..=key.high`, `outside` passes every other key, `fold` passes every key and folds the *output* key by octaves into the range (a range narrower than an octave drops the keys that no octave lands in).
-- **Transpose** adds `transpose + 12 * octave` semitones to the key. A result outside 0..=127 is **dropped**, not clamped, because clamping would merge keys. The Off of a dropped note is dropped with it.
+- **Key range** tests the *input* key. `inside` passes `key.low..=key.high`, `outside` passes every
+  other key, `fold` passes every key and folds the *output* key by octaves into the range (a range
+  narrower than an octave drops the keys that no octave lands in).
+- **Transpose** adds `transpose + 12 * octave` semitones to the key. A result outside 0..=127 is
+  **dropped**, not clamped, because clamping would merge keys. The Off of a dropped note is dropped
+  with it.
 - **Velocity range** tests the input velocity on the 1..=127 scale; notes outside it, and their Offs, vanish.
-- **Velocity shaping.** With `curve`, `scale`, `offset` and `fixed` at their defaults the velocity passes unchanged (no rounding to a MIDI step). Otherwise `v` in 0..1 goes through `f = v / (v + (1 - v) * e)` with `e = 2^(-2 * curve)` (a positive curve lifts soft notes), then `round(127 * f * scale + offset)` clamped to 1..=127; `velocity.fixed` above 0 replaces the result.
-- **Other events.** Pitch bend, controllers and channel pressure pass unless `pass.bend`, `pass.cc` or `pass.pressure` is off (which also covers polyphonic pressure). Polyphonic pressure and per-note expressions follow the *output* key of their input key and are dropped when that key is not sounding. Offsets are kept.
-- **Param changes while keys are held** never leave a stuck or doubled note: the device remembers which key each input key sent, so the Off releases the pitch the On used, whatever `transpose` is now. Two input keys that land on one output key retrigger it and only the last Off closes it. The new values apply to the next On.
-- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On is dropped before an Off ever is.
+- **Velocity shaping.** With `curve`, `scale`, `offset` and `fixed` at their defaults the velocity
+  passes unchanged (no rounding to a MIDI step). Otherwise `v` in 0..1 goes through
+  `f = v / (v + (1 - v) * e)` with `e = 2^(-2 * curve)` (a positive curve lifts soft notes), then
+  `round(127 * f * scale + offset)` clamped to 1..=127; `velocity.fixed` above 0 replaces the
+  result.
+- **Other events.** Pitch bend, controllers and channel pressure pass unless `pass.bend`, `pass.cc`
+  or `pass.pressure` is off (which also covers polyphonic pressure). Polyphonic pressure and
+  per-note expressions follow the *output* key of their input key and are dropped when that key is
+  not sounding. Offsets are kept.
+- **Param changes while keys are held** never leave a stuck or doubled note: the device remembers
+  which key each input key sent, so the Off releases the pitch the On used, whatever `transpose` is
+  now. Two input keys that land on one output key retrigger it and only the last Off closes it. The
+  new values apply to the next On.
+- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding
+  leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On
+  is dropped before an Off ever is.
 - **Bypass.** The common [player bypass](#player-bypass).
-- **Starting points.** *Octave up* (`octave` 1), *Kick only* (`key.low` and `key.high` 36), *Soft layer* (`velocity.high` 80), *Velocity flatten* (`velocity.fixed` 100).
+- **Starting points.** *Octave up* (`octave` 1), *Kick only* (`key.low` and `key.high` 36), *Soft
+  layer* (`velocity.high` 80), *Velocity flatten* (`velocity.fixed` 100).
 
 ---
 
 ## Key & Chord: `atomik.key-chord` (Utility, "Players")
 
-Locks the notes of `notes_in` to a scale and plays chords from single notes onto `notes_out`: one stateless per-event map. Source: [crates/devices/src/key_chord.rs](../crates/devices/src/key_chord.rs).
+Locks the notes of `notes_in` to a scale and plays chords from single notes onto `notes_out`: one
+stateless per-event map. Source:
+[crates/devices/src/key_chord.rs](../crates/devices/src/key_chord.rs).
 
 ### Sockets
 
@@ -1385,28 +2279,61 @@ Locks the notes of `notes_in` to a scale and plays chords from single notes onto
 | `chord.velocity` | 0 to 1 (shown 0 to 100 %) | 1 | percent | Linear | no |
 | `bypass` | 0 or 1 | 0 | toggle | Linear | yes |
 
-The choice labels are the labels of `atomik_core::theory` (`ScaleKind::label`, `DiatonicSize::label`, `ChordKind::label`); a test pins them equal, so the device, the piano roll and the panel read the same scales and chords.
+The choice labels are the labels of `atomik_core::theory` (`ScaleKind::label`,
+`DiatonicSize::label`, `ChordKind::label`); a test pins them equal, so the device, the piano roll
+and the panel read the same scales and chords.
 
 ### Behaviour
 
 - **Order of the stages.** Scale, chord, voicing, octave shift.
-- **Scale.** `off` leaves the key alone. `snap` moves it into the scale: `nearest` takes the nearest in-scale key and ties go **down** (the piano roll's rule), `up` and `down` take the first in-scale key at or above or below it, and fall back to the other side when the range ends first (a note is never lost to the range). `filter` drops an out-of-scale note, and its Off with it. The chromatic scale never restricts anything.
-- **Chord.** `Triad`, `7th` and `9th` stack scale degrees 1, 3, 5 (, 7, 9) on the (snapped) key, so the chord follows the key of the scale. A chromatic scale has no degrees: the three choices then stack the major, major seventh and major ninth shapes on the key. The 21 fixed kinds stack their semitone intervals on the key. `chord.inversion` moves the lowest note up an octave per step, at most `notes - 1` steps, and only for chords of three or more notes (a power chord or an octave keeps its position).
-- **Voicing**, on the sorted keys: `open` raises the second, fourth, ... note an octave; `drop-2` lowers the second highest note an octave (chords of three or more notes); `bass` adds the chord root an octave below. With `chord` off, `bass` doubles the note an octave below and the others do nothing.
-- **Octave.** `chord.octave` shifts the whole chord by octaves. Any note outside 0..=127 is **dropped**, not clamped; keys that land on one pitch are one note; at most eight notes sound per key.
-- **Velocity.** Every note on the root's pitch class keeps the played velocity exactly (the played note, an inverted root, the `bass` note). The other notes get `chord.velocity` times that, at least 1/127; at 0 they are not played at all.
-- **Other events.** Pitch bend, controllers and channel pressure pass. Polyphonic pressure and per-note expressions follow the lowest note the input key sounded and are dropped when it sounds nothing. Offsets are kept: every note of a chord starts and ends at the offset of the input event.
-- **Param changes while keys are held** release the old chord exactly: the device remembers the notes each input key sent, so the Off releases those, whatever the scale, chord or voicing are now. Chords of different keys that share a pitch keep it sounding until the last of them is released (a key struck again while it sounds is closed and started again). The new values apply to the next On.
-- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On is dropped before an Off ever is.
+- **Scale.** `off` leaves the key alone. `snap` moves it into the scale: `nearest` takes the nearest
+  in-scale key and ties go **down** (the piano roll's rule), `up` and `down` take the first in-scale
+  key at or above or below it, and fall back to the other side when the range ends first (a note is
+  never lost to the range). `filter` drops an out-of-scale note, and its Off with it. The chromatic
+  scale never restricts anything.
+- **Chord.** `Triad`, `7th` and `9th` stack scale degrees 1, 3, 5 (, 7, 9) on the (snapped) key, so
+  the chord follows the key of the scale. A chromatic scale has no degrees: the three choices then
+  stack the major, major seventh and major ninth shapes on the key. The 21 fixed kinds stack their
+  semitone intervals on the key. `chord.inversion` moves the lowest note up an octave per step, at
+  most `notes - 1` steps, and only for chords of three or more notes (a power chord or an octave
+  keeps its position).
+- **Voicing**, on the sorted keys: `open` raises the second, fourth, ... note an octave; `drop-2`
+  lowers the second highest note an octave (chords of three or more notes); `bass` adds the chord
+  root an octave below. With `chord` off, `bass` doubles the note an octave below and the others do
+  nothing.
+- **Octave.** `chord.octave` shifts the whole chord by octaves. Any note outside 0..=127 is
+  **dropped**, not clamped; keys that land on one pitch are one note; at most eight notes sound per
+  key.
+- **Velocity.** Every note on the root's pitch class keeps the played velocity exactly (the played
+  note, an inverted root, the `bass` note). The other notes get `chord.velocity` times that, at
+  least 1/127; at 0 they are not played at all.
+- **Other events.** Pitch bend, controllers and channel pressure pass. Polyphonic pressure and
+  per-note expressions follow the lowest note the input key sounded and are dropped when it sounds
+  nothing. Offsets are kept: every note of a chord starts and ends at the offset of the input event.
+- **Param changes while keys are held** release the old chord exactly: the device remembers the
+  notes each input key sent, so the Off releases those, whatever the scale, chord or voicing are
+  now. Chords of different keys that share a pitch keep it sounding until the last of them is
+  released (a key struck again while it sounds is closed and started again). The new values apply to
+  the next On.
+- **Note safety.** `AllOff` closes everything and passes on. A `reset` that finds a note sounding
+  leaves an `AllOff` for the next batch. When more events arrive than the output buffer holds, an On
+  is dropped before an Off ever is.
 - **Bypass.** The common [player bypass](#player-bypass).
-- **FROM CLIP.** The panel has a FROM CLIP button: it sets `scale.root` and `scale.kind` to the scale of the clip open in the piano roll, as one undo step. It is dim, and does nothing, while no clip is open or the clip has no scale. The scale is the clip's own (`Clip.scale`), so a scale edited in the piano roll reaches the device with one click.
-- **Starting points.** *Lock to minor* (`scale.kind` Natural Minor, `scale.mode` filter), *Triads in key* (`chord` Triad), *Stabs (7th, open)* (`chord` 7th, `chord.voicing` open, `chord.velocity` 0.7).
+- **FROM CLIP.** The panel has a FROM CLIP button: it sets `scale.root` and `scale.kind` to the
+  scale of the clip open in the piano roll, as one undo step. It is dim, and does nothing, while no
+  clip is open or the clip has no scale. The scale is the clip's own (`Clip.scale`), so a scale
+  edited in the piano roll reaches the device with one click.
+- **Starting points.** *Lock to minor* (`scale.kind` Natural Minor, `scale.mode` filter), *Triads in
+  key* (`chord` Triad), *Stabs (7th, open)* (`chord` 7th, `chord.voicing` open, `chord.velocity`
+  0.7).
 
 ---
 
 ## Note Repeater: `atomik.note-repeater` (Utility, "Players")
 
-An echo for notes: every note passes as played and adds repeats. Source: [crates/devices/src/note_repeater.rs](../crates/devices/src/note_repeater.rs); the queue it shares with the Note Delay is [crates/devices/src/note_queue.rs](../crates/devices/src/note_queue.rs).
+An echo for notes: every note passes as played and adds repeats. Source:
+[crates/devices/src/note_repeater.rs](../crates/devices/src/note_repeater.rs); the queue it shares
+with the Note Delay is [crates/devices/src/note_queue.rs](../crates/devices/src/note_queue.rs).
 
 ### Sockets
 
@@ -1433,21 +2360,40 @@ The scale choices are the tables of Key & Chord (one place, pinned to the core t
 
 ### Behaviour
 
-- **Time.** The distance *D* between repeats is a note value (`time.sync`, converted to frames when the note arrives: `ticks / ticks per frame`, rounded half up) or free (`time.ms`: `ms * sample rate / 1000`, rounded half up). A tempo change later does **not** move repeats that are already scheduled.
-- **Repeats.** Repeat *n* of a note on at frame *f* starts at *f + n D* with the key `key + n * pitch.step`, or with `pitch.scale` in key, `n * pitch.step` scale degrees from the key (the rule of the core theory's `Scale::step`). A key outside 0..=127 is dropped. The velocity is the previous repeat's times `1 - velocity.decay`, iterated; repeats stop below 1/127. A repeat lasts `max(1, D * gate)` frames.
-- **Dry.** The original note passes as played; with `dry` off only the repeats sound. Turning it off while a key is held still ends that key's note.
-- **Independent echoes.** A repeat is its own note: the input Off does not touch it. Repeats ring out after the key is released, across a loop wrap (the Offs the engine sends there are ordinary Offs) and while the transport is stopped. Notes chased at play are echoed like played notes.
-- **Frame clock and queue.** The device counts frames itself (64 per batch), so it behaves the same playing or stopped. Repeats wait in a fixed queue of 512 entries ordered by frame, then insertion order. A note is scheduled only when there is room for its end; when the queue is full, notes (and their repeats) are dropped, never an Off. A dry note keeps a slot for its Off.
-- **Same key twice.** A repeat on a key that already sounds (for instance the dry note, with `pitch.step` 0) closes it and starts it again; the key is closed when the last of them ends.
-- **Other events.** Pitch bend, controllers and pressure pass at their offsets (expressions of keys that do not sound are dropped). `AllOff` (stop, locate) clears the queue, closes what sounds and passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch.
+- **Time.** The distance *D* between repeats is a note value (`time.sync`, converted to frames when
+  the note arrives: `ticks / ticks per frame`, rounded half up) or free (`time.ms`:
+  `ms * sample rate / 1000`, rounded half up). A tempo change later does **not** move repeats that
+  are already scheduled.
+- **Repeats.** Repeat *n* of a note on at frame *f* starts at *f + n D* with the key
+  `key + n * pitch.step`, or with `pitch.scale` in key, `n * pitch.step` scale degrees from the key
+  (the rule of the core theory's `Scale::step`). A key outside 0..=127 is dropped. The velocity is
+  the previous repeat's times `1 - velocity.decay`, iterated; repeats stop below 1/127. A repeat
+  lasts `max(1, D * gate)` frames.
+- **Dry.** The original note passes as played; with `dry` off only the repeats sound. Turning it off
+  while a key is held still ends that key's note.
+- **Independent echoes.** A repeat is its own note: the input Off does not touch it. Repeats ring
+  out after the key is released, across a loop wrap (the Offs the engine sends there are ordinary
+  Offs) and while the transport is stopped. Notes chased at play are echoed like played notes.
+- **Frame clock and queue.** The device counts frames itself (64 per batch), so it behaves the same
+  playing or stopped. Repeats wait in a fixed queue of 512 entries ordered by frame, then insertion
+  order. A note is scheduled only when there is room for its end; when the queue is full, notes (and
+  their repeats) are dropped, never an Off. A dry note keeps a slot for its Off.
+- **Same key twice.** A repeat on a key that already sounds (for instance the dry note, with
+  `pitch.step` 0) closes it and starts it again; the key is closed when the last of them ends.
+- **Other events.** Pitch bend, controllers and pressure pass at their offsets (expressions of keys
+  that do not sound are dropped). `AllOff` (stop, locate) clears the queue, closes what sounds and
+  passes on. A `reset` that finds a note sounding leaves an `AllOff` for the next batch.
 - **Bypass.** The common [player bypass](#player-bypass); it also clears the queue.
-- **Starting points.** *Dotted eighth* (the defaults), *Rising fifths* (`pitch.step` 7, `repeats` 4), *Short tail* (`time.sync` 1/16, `repeats` 2, `gate` 0.3), *Out of key* (`pitch.scale` in key, `pitch.step` 2).
+- **Starting points.** *Dotted eighth* (the defaults), *Rising fifths* (`pitch.step` 7, `repeats`
+  4), *Short tail* (`time.sync` 1/16, `repeats` 2, `gate` 0.3), *Out of key* (`pitch.scale` in key,
+  `pitch.step` 2).
 
 ---
 
 ## Note Delay: `atomik.note-delay` (Utility, "Players")
 
-Moves every note event later in time and never adds a note. Source: [crates/devices/src/note_delay.rs](../crates/devices/src/note_delay.rs).
+Moves every note event later in time and never adds a note. Source:
+[crates/devices/src/note_delay.rs](../crates/devices/src/note_delay.rs).
 
 ### Sockets
 
@@ -1469,22 +2415,47 @@ Moves every note event later in time and never adds a note. Source: [crates/devi
 
 ### Behaviour
 
-- **Delay.** Every event is delayed by `delay.sync` (rounded to frames when the event arrives, as the Note Repeater; the first choice is no delay) or, in free mode, `delay.ms`. A later tempo change does not move events already scheduled.
-- **Swing** (only while the transport plays): a note whose position lies in the first half of an **odd** step of `swing.grid` is delayed by the swing shift of that grid, `(swing * step + 100) / 200` ticks (the rule of the step players). Notes on even steps or in the second half of a step do not move. While stopped nothing swings.
-- **Humanize.** `humanize.time` delays a note by up to that many milliseconds (late only: there is no look-ahead for early notes). `humanize.velocity` moves the velocity by up to that many steps of 127, either way (1..=127). Both are drawn from a hash of the device seed, `random.seed`, the note's transport tick (the device frame while stopped) and its key: a bounce is the same every time, at any block size.
-- **Lengths kept.** An Off gets the delay its On got (remembered per key), so a note keeps its length even when a param moves while it is held. Bend, controllers and pressure get the base delay.
-- **Queue and frame clock, note safety and bypass** as the Note Repeater: 512 entries, an On scheduled only when its Off fits, `AllOff` clears the queue and closes what sounds, bypass clears the queue.
-- **Starting points.** *Late swing 16ths* (`delay.sync` 0, `swing` 60, `swing.grid` 1/16), *Flam* (`delay.sync` 1/64), *Loose hands* (`delay.sync` 0, `humanize.time` 12, `humanize.velocity` 10), *Behind the beat* (`delay.sync` 1/32).
+- **Delay.** Every event is delayed by `delay.sync` (rounded to frames when the event arrives, as
+  the Note Repeater; the first choice is no delay) or, in free mode, `delay.ms`. A later tempo
+  change does not move events already scheduled.
+- **Swing** (only while the transport plays): a note whose position lies in the first half of an
+  **odd** step of `swing.grid` is delayed by the swing shift of that grid,
+  `(swing * step + 100) / 200` ticks (the rule of the step players). Notes on even steps or in the
+  second half of a step do not move. While stopped nothing swings.
+- **Humanize.** `humanize.time` delays a note by up to that many milliseconds (late only: there is
+  no look-ahead for early notes). `humanize.velocity` moves the velocity by up to that many steps of
+  127, either way (1..=127). Both are drawn from a hash of the device seed, `random.seed`, the
+  note's transport tick (the device frame while stopped) and its key: a bounce is the same every
+  time, at any block size.
+- **Lengths kept.** An Off gets the delay its On got (remembered per key), so a note keeps its
+  length even when a param moves while it is held. Bend, controllers and pressure get the base
+  delay.
+- **Queue and frame clock, note safety and bypass** as the Note Repeater: 512 entries, an On
+  scheduled only when its Off fits, `AllOff` clears the queue and closes what sounds, bypass clears
+  the queue.
+- **Starting points.** *Late swing 16ths* (`delay.sync` 0, `swing` 60, `swing.grid` 1/16), *Flam*
+  (`delay.sync` 1/64), *Loose hands* (`delay.sync` 0, `humanize.time` 12, `humanize.velocity` 10),
+  *Behind the beat* (`delay.sync` 1/32).
 
 ---
 
 ## CV Sequencer: `atomik.cv-sequencer` (Utility, "Players")
 
-The step sequencer's note row plus two rows of control voltage, with patterns that can be chained. It takes the **same pattern data** as the step sequencer (the rack panel, the grid editor, the pattern clipboard and the pattern commands work unchanged) and, per pattern, two **curve rows** A and B of 64 steps: a value from -100 to 100 % and a slide flag (`CvSeqData`, registered with `register_with_curves`; the document side is `RackDevice.curves`, `"curves"` in the project file, project format 32). Sources: [crates/devices/src/cv_sequencer.rs](../crates/devices/src/cv_sequencer.rs), [crates/devices/src/chain_clock.rs](../crates/devices/src/chain_clock.rs), the shared note rules in [crates/devices/src/note_clock.rs](../crates/devices/src/note_clock.rs).
+The step sequencer's note row plus two rows of control voltage, with patterns that can be chained.
+It takes the **same pattern data** as the step sequencer (the rack panel, the grid editor, the
+pattern clipboard and the pattern commands work unchanged) and, per pattern, two **curve rows** A
+and B of 64 steps: a value from -100 to 100 % and a slide flag (`CvSeqData`, registered with
+`register_with_curves`; the document side is `RackDevice.curves`, `"curves"` in the project file,
+project format 32). Sources:
+[crates/devices/src/cv_sequencer.rs](../crates/devices/src/cv_sequencer.rs),
+[crates/devices/src/chain_clock.rs](../crates/devices/src/chain_clock.rs), the shared note rules in
+[crates/devices/src/note_clock.rs](../crates/devices/src/note_clock.rs).
 
 ### Sockets
 
-The six of the step sequencer (`notes_in`, `notes_out`, `gate_cv_out`, `pitch_cv_out`, `velocity_cv_out`, `trig_cv_out`) and `curve_a_cv_out` (id 6) and `curve_b_cv_out` (id 7): CV outputs of the two rows (-1 to 1 bipolar, 0 to 1 unipolar, times the amount).
+The six of the step sequencer (`notes_in`, `notes_out`, `gate_cv_out`, `pitch_cv_out`,
+`velocity_cv_out`, `trig_cv_out`) and `curve_a_cv_out` (id 6) and `curve_b_cv_out` (id 7): CV
+outputs of the two rows (-1 to 1 bipolar, 0 to 1 unipolar, times the amount).
 
 ### Params
 
@@ -1508,32 +2479,66 @@ The six of the step sequencer (`notes_in`, `notes_out`, `gate_cv_out`, `pitch_cv
 
 ### Behaviour (as built)
 
-- **Notes.** Played by the step sequencer's rules (one shared function): gate, tie, probability, `transpose`, `follow`, `velocity.scale`, `gate.scale`, the same CV outputs. For a chain of one pattern with an even length the note row is the step sequencer's, event for event.
-- **Chain.** `chain` patterns play in order from `pattern`, wrapping at the pattern count (3 patterns, `pattern` 3, `chain` 3: 3, 1, 2), each in its own resolution and swing, then the chain repeats. The position is a pure function of the tick: the chain repeats every *P* ticks (the sum of each pattern's length times its step size), step *k* of a pass starts at its pattern's origin plus the swing rule counted from the pattern's first step. A locate or a loop wrap therefore lands on the step a continuous run would have reached, in any block size. A pattern of odd length restarts its swing at each pass (the step sequencer continues it). A change of `pattern` or `chain` with `at-end` is adopted at the start of the next pass of the running chain (at once when stopped or after a jump); `now` at the next batch.
-- **Curves.** A row holds its step's value for the whole step; a step with *slide* ramps linearly to the next step's value (the first step of the next pattern at the end of a pattern, of the chain pass at its end) over its own length. Each sample's value is computed from that sample's tick, nothing accumulates. -100..100 % is output as -1..1 (`bipolar`) or (v + 1) / 2 (`unipolar`), times `curve_x.amount`. A pattern without stored curves, or data without curves, outputs the flat zero row (0 bipolar, 0.5 unipolar).
-- **Stop, mute, bypass.** On stop the gate drops (notes close) and the curves **hold their last value**; the held value follows `polarity` and `amount` changes. `mute` silences the notes only; the curves keep running. **Bypassed**, notes pass through as in the other players and the curves hold their last value; before anything has played they output 0.
-- **Note safety, RT.** As the step sequencer: notes close on stop, jump, mute, `AllOff`, bypass and `reset`; nothing allocates in `process`.
+- **Notes.** Played by the step sequencer's rules (one shared function): gate, tie, probability,
+  `transpose`, `follow`, `velocity.scale`, `gate.scale`, the same CV outputs. For a chain of one
+  pattern with an even length the note row is the step sequencer's, event for event.
+- **Chain.** `chain` patterns play in order from `pattern`, wrapping at the pattern count (3
+  patterns, `pattern` 3, `chain` 3: 3, 1, 2), each in its own resolution and swing, then the chain
+  repeats. The position is a pure function of the tick: the chain repeats every *P* ticks (the sum
+  of each pattern's length times its step size), step *k* of a pass starts at its pattern's origin
+  plus the swing rule counted from the pattern's first step. A locate or a loop wrap therefore lands
+  on the step a continuous run would have reached, in any block size. A pattern of odd length
+  restarts its swing at each pass (the step sequencer continues it). A change of `pattern` or
+  `chain` with `at-end` is adopted at the start of the next pass of the running chain (at once when
+  stopped or after a jump); `now` at the next batch.
+- **Curves.** A row holds its step's value for the whole step; a step with *slide* ramps linearly to
+  the next step's value (the first step of the next pattern at the end of a pattern, of the chain
+  pass at its end) over its own length. Each sample's value is computed from that sample's tick,
+  nothing accumulates. -100..100 % is output as -1..1 (`bipolar`) or (v + 1) / 2 (`unipolar`), times
+  `curve_x.amount`. A pattern without stored curves, or data without curves, outputs the flat zero
+  row (0 bipolar, 0.5 unipolar).
+- **Stop, mute, bypass.** On stop the gate drops (notes close) and the curves **hold their last
+  value**; the held value follows `polarity` and `amount` changes. `mute` silences the notes only;
+  the curves keep running. **Bypassed**, notes pass through as in the other players and the curves
+  hold their last value; before anything has played they output 0.
+- **Note safety, RT.** As the step sequencer: notes close on stop, jump, mute, `AllOff`, bypass and
+  `reset`; nothing allocates in `process`.
 - **Meter values:** the pattern of the last started step (0-based), its step index, 1 while the transport runs.
 
 ### Panel and editor
 
-The panel is the step sequencer's, three rack units high, with a strip of each curve row under the preview. The grid editor shows two more lanes, CURVE A and CURVE B: press sets the step's value (centre line = 0), drag paints columns, **Alt-click** toggles the step's slide.
+The panel is the step sequencer's, three rack units high, with a strip of each curve row under the
+preview. The grid editor shows two more lanes, CURVE A and CURVE B: press sets the step's value
+(centre line = 0), drag paints columns, **Alt-click** toggles the step's slide.
 
 ### Starting points
 
-- **Filter sweep.** Curve A a ramp from -100 to 100 over 16 steps with slides, `curve_a_cv_out` cabled to a synth's `cutoff_cv_in` (the `player-demo` project does this).
-- **Acid line.** Slides on every other step of curve B and `curve_b_cv_out` to `pitch_cv_in` at 24 semitones, with `gate` 100 % on the note row.
+- **Filter sweep.** Curve A a ramp from -100 to 100 over 16 steps with slides, `curve_a_cv_out`
+  cabled to a synth's `cutoff_cv_in` (the `player-demo` project does this).
+- **Acid line.** Slides on every other step of curve B and `curve_b_cv_out` to `pitch_cv_in` at 24
+  semitones, with `gate` 100 % on the note row.
 - **Gate pump.** Curve B a 4-step square (60 / -60), unipolar, to a synth's `level_cv_in`.
 
 ---
 
 ## Drum Generator: `atomik.drum-generator` (Utility, "Players")
 
-A drum pattern player that varies what is written. It plays up to 8 patterns of 16 lanes (one key each, by default the 16 pads of the [drum machine](#drum-machine-atomikdrum-machine-instrument), keys 36 to 51) and 1 to 64 steps, on the step sequencer's clock, and adds density, variation, fills and accents on top of the written hits. The data is `DrumData` (`PlayerData::Drums`, registered with `register_with_drums`); the document side is `RackDevice.drums` (`"drums"` in the project file, project format 33). A drum generator has no step patterns (`steps`). Sources: [crates/devices/src/drum_generator.rs](../crates/devices/src/drum_generator.rs), the rules in [crates/devices/src/drum_generator/algo.rs](../crates/devices/src/drum_generator/algo.rs), the pattern writer in [crates/devices/src/drum_generator/generate.rs](../crates/devices/src/drum_generator/generate.rs).
+A drum pattern player that varies what is written. It plays up to 8 patterns of 16 lanes (one key
+each, by default the 16 pads of the [drum machine](#drum-machine-atomikdrum-machine-instrument),
+keys 36 to 51) and 1 to 64 steps, on the step sequencer's clock, and adds density, variation, fills
+and accents on top of the written hits. The data is `DrumData` (`PlayerData::Drums`, registered with
+`register_with_drums`); the document side is `RackDevice.drums` (`"drums"` in the project file,
+project format 33). A drum generator has no step patterns (`steps`). Sources:
+[crates/devices/src/drum_generator.rs](../crates/devices/src/drum_generator.rs), the rules in
+[crates/devices/src/drum_generator/algo.rs](../crates/devices/src/drum_generator/algo.rs), the
+pattern writer in
+[crates/devices/src/drum_generator/generate.rs](../crates/devices/src/drum_generator/generate.rs).
 
 ### Sockets
 
-The six of the step sequencer: `notes_in` (id 0), `notes_out` (1), `gate_cv_out` (2), `pitch_cv_out` (3), `velocity_cv_out` (4), `trig_cv_out` (5). The gate is high while a hit sounds, the trig pulses at every step that hits, pitch and velocity follow the loudest hit of that step.
+The six of the step sequencer: `notes_in` (id 0), `notes_out` (1), `gate_cv_out` (2), `pitch_cv_out`
+(3), `velocity_cv_out` (4), `trig_cv_out` (5). The gate is high while a hit sounds, the trig pulses
+at every step that hits, pitch and velocity follow the loudest hit of that step.
 
 ### Params
 
@@ -1555,28 +2560,68 @@ The six of the step sequencer: `notes_in` (id 0), `notes_out` (1), `gate_cv_out`
 
 ### Behaviour (as built)
 
-- **Clock.** As the step sequencer: the step number comes from the transport tick, so a locate lands on the right step and a loop whose length is a multiple of the pattern repeats it in phase. A pattern has its own length, resolution (1/4 to 1/32T) and swing. `pattern.switch` at-end adopts a changed `pattern` when the global step is a multiple of the playing pattern's length (at once when stopped or after a jump), `now` at the next batch.
-- **Hits.** A lane hits at a step when its written velocity is above 0 and its probability passes, at that velocity (`velocity.scale` multiplies it, 1 to 127), for `gate` of a step (never past the next step). Every lane plays its own key; a muted lane plays nothing. Two lanes on one key close each other's hit first, so a receiver never sees two Ons of one key.
-- **A pure function of the position.** What a lane plays at a step depends only on the step, the pattern, the params, the seed and the time signature, never on what played before, so a bounce is bit-identical at any block size and worker count. Every chance is `hash64(seed, step, slot)`; `random.seed` mixes into it.
-- **Role weights.** Each lane has a role (kick, snare, clap, closed hat, open hat, tom low / mid / high, cymbal, percussion; by default the role of the lane's key in the usual kit layout). A weight from 0 to 1 says how much a role belongs at a bar position: the kick on the beat starts, snare and clap on the backbeats (beats 2 and 4 of 4/4), the hats on every eighth and sixteenth, the toms late in the bar, a cymbal on the downbeat. The table is in `algo.rs`.
-- **Density.** Above 0, an empty step gains a hit with chance `density x weight`; below 0, a hit is removed with chance `|density| x (1 - weight)`. Density never changes the velocity of a written hit, never adds a hit when negative and never removes one when positive.
-- **Variation.** A bar is varied with chance `variation` (drawn per bar). In a varied bar a hit of any lane but the kick may move one step later (when that step is empty) and an empty snare or hat step may gain a ghost note at 30 to 50 % velocity.
-- **Fill.** Bars are counted from tick 0 with the time signature of the batch (3/4 bars are 3 beats long); a meter change mid-song shifts the count. The last bar of each `fill.every` group has a fill in its last `fill.amount` part: snare, clap and toms gain hits of rising velocity, hats and cymbals are thinned, and the kick hits on the bar's last beat.
+- **Clock.** As the step sequencer: the step number comes from the transport tick, so a locate lands
+  on the right step and a loop whose length is a multiple of the pattern repeats it in phase. A
+  pattern has its own length, resolution (1/4 to 1/32T) and swing. `pattern.switch` at-end adopts a
+  changed `pattern` when the global step is a multiple of the playing pattern's length (at once when
+  stopped or after a jump), `now` at the next batch.
+- **Hits.** A lane hits at a step when its written velocity is above 0 and its probability passes,
+  at that velocity (`velocity.scale` multiplies it, 1 to 127), for `gate` of a step (never past the
+  next step). Every lane plays its own key; a muted lane plays nothing. Two lanes on one key close
+  each other's hit first, so a receiver never sees two Ons of one key.
+- **A pure function of the position.** What a lane plays at a step depends only on the step, the
+  pattern, the params, the seed and the time signature, never on what played before, so a bounce is
+  bit-identical at any block size and worker count. Every chance is `hash64(seed, step, slot)`;
+  `random.seed` mixes into it.
+- **Role weights.** Each lane has a role (kick, snare, clap, closed hat, open hat, tom low / mid /
+  high, cymbal, percussion; by default the role of the lane's key in the usual kit layout). A weight
+  from 0 to 1 says how much a role belongs at a bar position: the kick on the beat starts, snare and
+  clap on the backbeats (beats 2 and 4 of 4/4), the hats on every eighth and sixteenth, the toms
+  late in the bar, a cymbal on the downbeat. The table is in `algo.rs`.
+- **Density.** Above 0, an empty step gains a hit with chance `density x weight`; below 0, a hit is
+  removed with chance `|density| x (1 - weight)`. Density never changes the velocity of a written
+  hit, never adds a hit when negative and never removes one when positive.
+- **Variation.** A bar is varied with chance `variation` (drawn per bar). In a varied bar a hit of
+  any lane but the kick may move one step later (when that step is empty) and an empty snare or hat
+  step may gain a ghost note at 30 to 50 % velocity.
+- **Fill.** Bars are counted from tick 0 with the time signature of the batch (3/4 bars are 3 beats
+  long); a meter change mid-song shifts the count. The last bar of each `fill.every` group has a
+  fill in its last `fill.amount` part: snare, clap and toms gain hits of rising velocity, hats and
+  cymbals are thinned, and the kick hits on the bar's last beat.
 - **Accent.** A hit on a position where its role's weight is 0.8 or more is boosted by up to 50 % (`accent`).
-- **Mute, bypass, note safety.** `mute` closes everything and plays nothing while the clock runs; bypassed, `notes_in` passes through as in the other players. Hits close on stop, jump, mute, bypass, `AllOff` and `reset`; a swap of the pattern data never cuts a sounding hit. Nothing allocates in `process`.
+- **Mute, bypass, note safety.** `mute` closes everything and plays nothing while the clock runs;
+  bypassed, `notes_in` passes through as in the other players. Hits close on stop, jump, mute,
+  bypass, `AllOff` and `reset`; a swap of the pattern data never cuts a sounding hit. Nothing
+  allocates in `process`.
 - **Meter values:** the playing pattern (0-based), the step index of the last started step, 1 while the transport runs.
 
 ### Generate and Randomise
 
-`style` is only used by the panel's **GENERATE** button (the device itself ignores it): it writes the steps of the edited pattern from the role templates of the style (kick, snare or clap, hats and open hats on a bar of sixteenths; only the first lane of each role gets the template), thinned or thickened by `density` and jittered by `random.seed` (`atomik_devices::drum_generator::generate_pattern`, a pure function, so a seed always writes the same pattern). **RANDOMISE** is GENERATE with `random.seed` moved up by one (999 wraps to 0). Both are one undo step, and the lanes, length, resolution, swing and name of the pattern stay. The live `density` also applies on top of what is written.
+`style` is only used by the panel's **GENERATE** button (the device itself ignores it): it writes
+the steps of the edited pattern from the role templates of the style (kick, snare or clap, hats and
+open hats on a bar of sixteenths; only the first lane of each role gets the template), thinned or
+thickened by `density` and jittered by `random.seed`
+(`atomik_devices::drum_generator::generate_pattern`, a pure function, so a seed always writes the
+same pattern). **RANDOMISE** is GENERATE with `random.seed` moved up by one (999 wraps to 0). Both
+are one undo step, and the lanes, length, resolution, swing and name of the pattern stay. The live
+`density` also applies on top of what is written.
 
 ### Panel
 
-Four rack units: eight pattern slots (click edits, Ctrl/Cmd-click also plays it, double-click renames), the name line, ADD / DUP / DEL / COPY / PASTE / CLEAR, GENERATE and RANDOMISE, the twelve knobs, and the grid of 16 lanes by 16 steps with a page selector (1-16, 17-32, 33-48 and 49-64, the pages beyond the length are dim) and a length stepper (Shift steps by four). A click on a cell toggles the step, a vertical drag sets its velocity (one undo step), the small square at the left of a lane mutes it, and the column of the playing step is lit from the meter values. The lane labels are the pad names of the drum machine the generator is cabled to (directly or through other players) for the keys 36 to 51, else the note names. Resolution and swing of a pattern are stored but have no control yet.
+Four rack units: eight pattern slots (click edits, Ctrl/Cmd-click also plays it, double-click
+renames), the name line, ADD / DUP / DEL / COPY / PASTE / CLEAR, GENERATE and RANDOMISE, the twelve
+knobs, and the grid of 16 lanes by 16 steps with a page selector (1-16, 17-32, 33-48 and 49-64, the
+pages beyond the length are dim) and a length stepper (Shift steps by four). A click on a cell
+toggles the step, a vertical drag sets its velocity (one undo step), the small square at the left of
+a lane mutes it, and the column of the playing step is lit from the meter values. The lane labels
+are the pad names of the drum machine the generator is cabled to (directly or through other players)
+for the keys 36 to 51, else the note names. Resolution and swing of a pattern are stored but have no
+control yet.
 
 ### Starting points
 
-Press GENERATE after choosing them (a pattern is written from the style, so the same settings always give the same pattern):
+Press GENERATE after choosing them (a pattern is written from the style, so the same settings always
+give the same pattern):
 
 - **Four on the floor.** `style` four on the floor (the default).
 - **Broken beat.** `style` broken beat, `density` 0.2, `variation` 0.4.
@@ -1586,7 +2631,12 @@ Press GENERATE after choosing them (a pattern is written from the style, so the 
 
 ## Container: `atomik.container` (Container, "Containers")
 
-A device whose inside is another rack. Source: [crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model flattens it into its inner devices before the engine sees it, so the engine never instantiates one. The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored) only for descriptor-only users such as patch files and registry tests; the render patch builder rejects the type with a message.
+A device whose inside is another rack. Source:
+[crates/devices/src/container.rs](../crates/devices/src/container.rs). It has **no DSP**: the model
+flattens it into its inner devices before the engine sees it, so the engine never instantiates one.
+The registered factory builds a pass-through (`in_l` to `out_l`, `in_r` to `out_r`, notes ignored)
+only for descriptor-only users such as patch files and registry tests; the render patch builder
+rejects the type with a message.
 
 ### Sockets
 
@@ -1596,7 +2646,9 @@ A device whose inside is another rack. Source: [crates/devices/src/container.rs]
 | `notes_in` | Notes | In |
 | `out_l`, `out_r` | Audio | Out |
 
-Inside, the pseudo-device `boundary` mirrors them: its outputs `in_l`, `in_r` carry what arrives at the container, its inputs `out_l`, `out_r` leave through it (it has no notes socket: notes enter through the note splits).
+Inside, the pseudo-device `boundary` mirrors them: its outputs `in_l`, `in_r` carry what arrives at
+the container, its inputs `out_l`, `out_r` leave through it (it has no notes socket: notes enter
+through the note splits).
 
 ### Params
 
@@ -1604,16 +2656,28 @@ Inside, the pseudo-device `boundary` mirrors them: its outputs `in_l`, `in_r` ca
 |---|---|---|---|---|---|---|
 | `macro1` to `macro8` | 0 to 7 | 0 to 1 | 0 | none | Linear | no |
 
-The macro values are applied to inner params outside the engine (one `set_param` per mapped target; linear `min + (max - min) * m`, then clamp and rounding of discrete and choice params).
+The macro values are applied to inner params outside the engine (one `set_param` per mapped target;
+linear `min + (max - min) * m`, then clamp and rounding of discrete and choice params).
 
 ### Behaviour (as built, device half)
 
-- The container can be an instrument or an effect; it has no console channel at creation (TO CH adds one). The latency of the flattened inside is the sum along the paths of the inner devices, compensated at summing inputs by the ordinary delay compensation (tested with a hand-built flat graph in `crates/engine/tests/flat_container.rs`).
-- **Latency limit (as at the rack level):** only cables into **summing** inputs are delay compensated. Two inner paths with different latencies that meet in a plain input (for example the inputs of a line mixer inside) stay apart by the difference; align them yourself or end them in a console channel. The engine latency itself is the fixed batch FIFO; device latency is not trimmed from the output.
+- The container can be an instrument or an effect; it has no console channel at creation (TO CH adds
+  one). The latency of the flattened inside is the sum along the paths of the inner devices,
+  compensated at summing inputs by the ordinary delay compensation (tested with a hand-built flat
+  graph in `crates/engine/tests/flat_container.rs`).
+- **Latency limit (as at the rack level):** only cables into **summing** inputs are delay
+  compensated. Two inner paths with different latencies that meet in a plain input (for example the
+  inputs of a line mixer inside) stay apart by the difference; align them yourself or end them in a
+  console channel. The engine latency itself is the fixed batch FIFO; device latency is not trimmed
+  from the output.
 
 ## Note split: `atomik.note-split` (Utility, internal)
 
-Routes one notes input to up to eight outputs by key and velocity range. **Internal**: listed in `atomik_devices::INTERNAL_TYPE_IDS`, never shown in the browser or offered by an add menu, and created only by the model's container expansion (one per container, keyed `<container path>/~split`, its params set from the container's splits). Source: [crates/devices/src/note_split.rs](../crates/devices/src/note_split.rs).
+Routes one notes input to up to eight outputs by key and velocity range. **Internal**: listed in
+`atomik_devices::INTERNAL_TYPE_IDS`, never shown in the browser or offered by an add menu, and
+created only by the model's container expansion (one per container, keyed `<container path>/~split`,
+its params set from the container's splits). Source:
+[crates/devices/src/note_split.rs](../crates/devices/src/note_split.rs).
 
 ### Sockets
 
@@ -1634,17 +2698,31 @@ Six per slot *k* = 1 to 8, ids `6(k-1)` to `6(k-1)+5`, all discrete, in this ord
 
 ### Behaviour (as built)
 
-- A Note-On goes to **every** slot that is on and whose key range and velocity range (velocity as `round(v * 127)`, at least 1) contain it, both ends inclusive. Overlapping slots layer. The On is sent with the key transposed and clamped to 0..=127 and the velocity unchanged.
-- **Route table.** Each slot keeps, per input key, the output key it sent, and which input key owns the open note on each output key. The matching Off (and any later Off of that key) goes to the same output with the same output key, whatever the zone params are by then (the same rule as the sampler's voices); an Off without an open On is dropped. Zone params affect new Ons only.
-- **Balance.** Every output stays balanced: a repeated On of a key still open on that slot is preceded by an Off of the old output key, and when two input keys land on one output key (transpose clamping) the newer one takes the note over, closing the old one first. A proptest over random event and param-change scripts leaves no hung note.
-- `AllOff` is forwarded to every output and clears the tables. `reset` clears them and, if any note was open, leaves an `AllOff` on every output for the next batch.
-- Offsets are preserved and non-decreasing per output. An output that is not connected simply drops its events. Latency 0. `process`, `set_param` and `reset` never allocate (fixed 8 x 128 tables).
+- A Note-On goes to **every** slot that is on and whose key range and velocity range (velocity as
+  `round(v * 127)`, at least 1) contain it, both ends inclusive. Overlapping slots layer. The On is
+  sent with the key transposed and clamped to 0..=127 and the velocity unchanged.
+- **Route table.** Each slot keeps, per input key, the output key it sent, and which input key owns
+  the open note on each output key. The matching Off (and any later Off of that key) goes to the
+  same output with the same output key, whatever the zone params are by then (the same rule as the
+  sampler's voices); an Off without an open On is dropped. Zone params affect new Ons only.
+- **Balance.** Every output stays balanced: a repeated On of a key still open on that slot is
+  preceded by an Off of the old output key, and when two input keys land on one output key
+  (transpose clamping) the newer one takes the note over, closing the old one first. A proptest over
+  random event and param-change scripts leaves no hung note.
+- `AllOff` is forwarded to every output and clears the tables. `reset` clears them and, if any note
+  was open, leaves an `AllOff` on every output for the next batch.
+- Offsets are preserved and non-decreasing per output. An output that is not connected simply drops
+  its events. Latency 0. `process`, `set_param` and `reset` never allocate (fixed 8 x 128 tables).
 
 ---
 
 ## MIDI
 
-Note events carry more than notes: pitch bend, controllers (CC), channel pressure and polyphonic pressure reach an instrument from a keyboard, a recorded or drawn controller lane, a note player above it, or a patch. The chart lists what each instrument does with them. A `yes` is checked by rendering: the test sends the message to a fresh device and compares the output with a render without it (`cargo test -p atomik-devices midi_chart`), so this table cannot drift from the code.
+Note events carry more than notes: pitch bend, controllers (CC), channel pressure and polyphonic
+pressure reach an instrument from a keyboard, a recorded or drawn controller lane, a note player
+above it, or a patch. The chart lists what each instrument does with them. A `yes` is checked by
+rendering: the test sends the message to a fresh device and compares the output with a render
+without it (`cargo test -p atomik-devices midi_chart`), so this table cannot drift from the code.
 
 | Device | Pitch bend | Bend range (RPN 0) | Mod wheel (CC 1) | Sustain (CC 64) | Volume (CC 7) | Expression (CC 11) | Pressure source |
 |---|---|---|---|---|---|---|---|
@@ -1657,83 +2735,277 @@ Note events carry more than notes: pitch bend, controllers (CC), channel pressur
 | `atomik.drum-machine` | no | no | no | no | no | no | no |
 | `atomik.loop-slicer` | no | no | no | no | no | no | no |
 
-The five melodic instruments (poly synth, wavetable synth, FM synth, grain sampler and sampler) share one helper, `ControllerState` ([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does, identically in each:
+The five melodic instruments (poly synth, wavetable synth, FM synth, grain sampler and sampler)
+share one helper, `ControllerState`
+([crates/devices/src/controller_state.rs](../crates/devices/src/controller_state.rs)). What it does,
+identically in each:
 
-- **Sustain (CC 64).** A value of 64 or more is the pedal down. While it is down a note-off is held back and the voice keeps sounding; when the pedal goes up every held-back key is released at the frame of the pedal event. A note-on of a held-back key forgets the hold (the key is down again), a same-key retrigger works as usual, and `AllOff` (stop, a locate) releases everything and forgets the holds. In the FM synth's mono modes the held keys stay in the key stack until the pedal goes up. A one-shot zone of the sampler ignores note-offs, so the pedal changes nothing for it. A device that has never received the controller behaves exactly as before.
-- **Volume (CC 7) and expression (CC 11).** Both start at full. The output is scaled by (volume × expression)², smoothed over 5 ms and applied per sample after the soft limiter and the level CV, so a change lands at its event frame and ramps without a click. At full the gain is exactly 1 and the output is bit for bit the old one. The controllers are device state: `reset` (and so a stop of the engine) returns them to full.
-- **Pitch bend and its range.** The bend moves every voice by up to the bend range each way, `bend.range` semitones (0 to 24, default 2). The registered parameter 0 changes the range from the keyboard or a lane: CC 101 = 0 and CC 100 = 0 select it, CC 6 sets the semitones and CC 38 the cents (a data entry with no selection, or after another parameter or the null parameter 127/127, does nothing). Setting the param also sets the range; `reset` returns to the param's value. The sampler plays the bend as a change of the playback ratio of every voice.
-- **Pressure.** Channel pressure and the polyphonic pressure of each key are kept per instrument as one modulation source (`0..=1`, the larger of the channel value and the key's value). No parameter reads it yet: it is the input a modulation matrix will route, and the MIDI chart marks only that the source exists. `reset` clears it.
-- **Real-time safety and determinism.** The hold list is two words, the pressure table is a fixed array of 128 values and nothing is allocated on the audio thread. Every change takes effect at the frame of its event, so a render does not depend on how the engine cuts the blocks.
+- **Sustain (CC 64).** A value of 64 or more is the pedal down. While it is down a note-off is held
+  back and the voice keeps sounding; when the pedal goes up every held-back key is released at the
+  frame of the pedal event. A note-on of a held-back key forgets the hold (the key is down again), a
+  same-key retrigger works as usual, and `AllOff` (stop, a locate) releases everything and forgets
+  the holds. In the FM synth's mono modes the held keys stay in the key stack until the pedal goes
+  up. A one-shot zone of the sampler ignores note-offs, so the pedal changes nothing for it. A
+  device that has never received the controller behaves exactly as before.
+- **Volume (CC 7) and expression (CC 11).** Both start at full. The output is scaled by (volume ×
+  expression)², smoothed over 5 ms and applied per sample after the soft limiter and the level CV,
+  so a change lands at its event frame and ramps without a click. At full the gain is exactly 1 and
+  the output is bit for bit the old one. The controllers are device state: `reset` (and so a stop of
+  the engine) returns them to full.
+- **Pitch bend and its range.** The bend moves every voice by up to the bend range each way,
+  `bend.range` semitones (0 to 24, default 2). The registered parameter 0 changes the range from the
+  keyboard or a lane: CC 101 = 0 and CC 100 = 0 select it, CC 6 sets the semitones and CC 38 the
+  cents (a data entry with no selection, or after another parameter or the null parameter 127/127,
+  does nothing). Setting the param also sets the range; `reset` returns to the param's value. The
+  sampler plays the bend as a change of the playback ratio of every voice.
+- **Pressure.** Channel pressure and the polyphonic pressure of each key are kept per instrument as
+  one modulation source (`0..=1`, the larger of the channel value and the key's value). No parameter
+  reads it yet: it is the input a modulation matrix will route, and the MIDI chart marks only that
+  the source exists. `reset` clears it.
+- **Real-time safety and determinism.** The hold list is two words, the pressure table is a fixed
+  array of 128 values and nothing is allocated on the audio thread. Every change takes effect at the
+  frame of its event, so a render does not depend on how the engine cuts the blocks.
 
-The mod wheel (CC 1) and the other controllers keep the per-instrument meaning in each device's table. Controllers an instrument does not list are ignored.
+The mod wheel (CC 1) and the other controllers keep the per-instrument meaning in each device's
+table. Controllers an instrument does not list are ignored.
 
 ## Third-party plugin devices: `clap.<id>` and `vst3.<id>`
 
-A CLAP or VST3 plugin the scanner found is a device type of its own: `clap.<the plugin's CLAP id>` (for example `clap.atomik.test.synth`) or `vst3.<the 32 hex digits of its class id>`. The two formats work the same way in the rack (cables, console, containers, automation, state, bounce) and each device shows its format badge, CLAP or VST3; the browser filter also matches the format name. The prefixes `clap.` and `vst3.` are reserved; the device is added from the browser's **Plugins** group (`PluginCommand::Add`), never by the generic add command. Plugins are **off until you enable them** in Audio > Plugins (a warning explains that a plugin is native code with the same access as the app); a project never stores a path, it finds its plugins by id in your scan cache (`plugins.json` in the config folder, filled by the out-of-process scanner `atomik-plugin-scan`).
+A CLAP or VST3 plugin the scanner found is a device type of its own: `clap.<the plugin's CLAP id>`
+(for example `clap.atomik.test.synth`) or `vst3.<the 32 hex digits of its class id>`. The two
+formats work the same way in the rack (cables, console, containers, automation, state, bounce) and
+each device shows its format badge, CLAP or VST3; the browser filter also matches the format name.
+The prefixes `clap.` and `vst3.` are reserved; the device is added from the browser's **Plugins**
+group (`PluginCommand::Add`), never by the generic add command. Plugins are **off until you enable
+them** in Audio > Plugins (a warning explains that a plugin is native code with the same access as
+the app); a project never stores a path, it finds its plugins by id in your scan cache
+(`plugins.json` in the config folder, filled by the out-of-process scanner `atomik-plugin-scan`).
 
 ### Sockets
 
-Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main input), `sc_in_l`, `sc_in_r` (a sidechain input), `notes_in`, `out_l`, `out_r` (a main output), `notes_out`. The kind is Instrument (notes in and audio out, and the plugin says so), Utility (a note effect: notes out, no audio) or Effect. A mono main bus is mapped (input = (L + R) / 2, the output copied to both sides). Further buses are disabled.
+Built from the plugin's ports, in this order: `in_l`, `in_r` (when it has a main input), `sc_in_l`,
+`sc_in_r` (a sidechain input), `notes_in`, `out_l`, `out_r` (a main output), `notes_out`. The kind
+is Instrument (notes in and audio out, and the plugin says so), Utility (a note effect: notes out,
+no audio) or Effect. A mono main bus is mapped (input = (L + R) / 2, the output copied to both
+sides). Further buses are disabled.
 
 ### Params
 
-`bypass` (index 0, discrete 0 or 1, host-owned) and `p<id>` for every visible, writable plugin param (the plugin's own 32-bit id in decimal, stable across sessions), in the plugin's order, at most 2 048. A value is the plugin's own plain value (CLAP: the plugin's value; VST3: the normalised value 0 to 1, or the step index of a stepped param); a stepped param is rounded. Params are saved sparsely (only the ones you set) next to the plugin's opaque **state** blob, and edits reach the plugin as events at the start of each 64-frame batch. The panel pins up to 16 params as knobs; PARAMS opens the searchable list with every param (also the editor for a plugin without a window).
+`bypass` (index 0, discrete 0 or 1, host-owned) and `p<id>` for every visible, writable plugin param
+(the plugin's own 32-bit id in decimal, stable across sessions), in the plugin's order, at most
+2 048. A value is the plugin's own plain value (CLAP: the plugin's value; VST3: the normalised value
+0 to 1, or the step index of a stepped param); a stepped param is rounded. Params are saved sparsely
+(only the ones you set) next to the plugin's opaque **state** blob, and edits reach the plugin as
+events at the start of each 64-frame batch. The panel pins up to 16 params as knobs; PARAMS opens
+the searchable list with every param (also the editor for a plugin without a window).
 
 ### Behaviour (as built)
 
-- **64 frames.** The plugin is always called with exactly 64 frames, so the live path, a bounce and every host block size feed it the same blocks.
-- **Instances.** Opening a project (or adding a device) inserts a silent stand-in at once and creates the real instance one per frame, with "Loading plugins 3/8" in the status bar. An audio restart keeps the instances (they are only re-activated at the new rate). A removed device's plugin is destroyed on the UI thread after the engine let go of it.
-- **State.** The plugin's state is captured before every save, when its editor closes, a quiet second after the plugin says it changed, before an engine restart or the removal of its device, and stored in the project (never an undo step). A state that failed to restore is kept as it was and shown as FAILED until RELOAD.
-- **Missing plugins.** A plugin that is not installed, disabled, or on a machine without plugins enabled opens as a stand-in (an instrument is silent, an effect passes its dry input) with MISSING and the reason; cables, console channel, track, automation, macro targets, pins and state are kept and the project saves unchanged. After a rescan finds the plugin, or with RELOAD, it is created with its saved state.
-- **Editor.** OPEN GUI opens the plugin's own window (a separate native window per plugin, never inside the rack window). Parameter changes made there are one undo step per gesture; a patch change inside the plugin is not undoable. VST3 editors are hosted the same way (`HWND`, `NSView`, an X11 window id) and follow the window's size both ways. On a Wayland session a sandboxed plugin's editor runs through XWayland (needs `DISPLAY`); an in-process plugin, or a session without `DISPLAY`, has no embedding: use PARAMS there (or run Atomik under XWayland). On Linux a VST3 editor that needs file-descriptor handlers from the host's run loop stays dead (timers work); use PARAMS for it.
-- **Latency and PDC.** The latency the plugin reports is compensated like any device latency. A plugin announces a latency change (CLAP `latency.changed` and a restart request, VST3 `restartComponent(kLatencyChanged)`); the host restarts it, reads the latency again after the re-activation (VST3 also after every `setActive` and every state restore) and the other channels are re-aligned, with the one-click discontinuity of the new delay lines. A latency that comes from a saved param (or from a container macro the song automates) is therefore followed live once the plugin has applied the value, and by a bounce from its first frame (see below).
-- **Crashes.** A plugin runs inside the app, so a native crash takes the app with it. The app lists the loaded plugins in a journal (`plugins-in-use.json`) and, while a plugin is loaded, writes a recovery snapshot of the project every 60 s to `recovery/` (the last three are kept, never over your file). After an unclean exit it offers to disable those plugins and to open the newest snapshot.
-- **Bounce and determinism.** `atomik-render` refuses a project with plugins unless `--allow-plugins` is given, reads the same `plugins.json` (or `--plugin-cache`), builds the plugins through the same code as the app (state, then params, then 64-frame blocks) and prints `plugins: N (determinism not guaranteed)`. The host gives a plugin the same inputs for every `--block` and `--workers`, so the output is bit-identical across blocks, workers and runs **only for plugins that are deterministic functions of those inputs** (the in-repo test plugins are). Many real synths, choruses and analog-modelled reverbs use time, random seeds or threads and are not; a bounce is also not bit-identical to live playback. Compare real plugins with a null test. `--plugin-mode realtime` runs the plugins in their live mode (the default is offline mode), `--missing-plugins stand-in` bounces with stand-ins instead of failing.
-- **How a bounce treats restarts and latency.** A plugin can ask the host to restart it, and a restart is how a changed latency reaches delay compensation, so a bounce that only rendered would lose the compensation a project has live. A bounce of a project with plugins therefore does what the app does once per frame, once per **64-frame batch** instead of once per frame: before the song starts it renders silent batches with the transport stopped until no plugin has restarted or changed its latency for 8 batches in a row (at most 256), polling the plugin manager and recompiling the routing with the published latencies after every batch; then it renders the song in 64-frame batches with the same poll and recompile after each one. The cadence is counted in batches, never in wall-clock time, so the output does not depend on the worker count and a restart lands on the same batch in every run; because the engine is driven in batches, `--block` has no effect on a plugin project. A latency that changes mid-song (a container macro automated by the song moving a plugin's latency param) is followed the way live follows it. A change of a plugin's param table during a bounce is not followed (the bounce keeps its devices) and a plugin that fails or cannot restart is reported as a warning. Projects without real plugins use the plain offline loop, unchanged.
+- **64 frames.** The plugin is always called with exactly 64 frames, so the live path, a bounce and
+  every host block size feed it the same blocks.
+- **Instances.** Opening a project (or adding a device) inserts a silent stand-in at once and
+  creates the real instance one per frame, with "Loading plugins 3/8" in the status bar. An audio
+  restart keeps the instances (they are only re-activated at the new rate). A removed device's
+  plugin is destroyed on the UI thread after the engine let go of it.
+- **State.** The plugin's state is captured before every save, when its editor closes, a quiet
+  second after the plugin says it changed, before an engine restart or the removal of its device,
+  and stored in the project (never an undo step). A state that failed to restore is kept as it was
+  and shown as FAILED until RELOAD.
+- **Missing plugins.** A plugin that is not installed, disabled, or on a machine without plugins
+  enabled opens as a stand-in (an instrument is silent, an effect passes its dry input) with MISSING
+  and the reason; cables, console channel, track, automation, macro targets, pins and state are kept
+  and the project saves unchanged. After a rescan finds the plugin, or with RELOAD, it is created
+  with its saved state.
+- **Editor.** OPEN GUI opens the plugin's own window (a separate native window per plugin, never
+  inside the rack window). Parameter changes made there are one undo step per gesture; a patch
+  change inside the plugin is not undoable. VST3 editors are hosted the same way (`HWND`, `NSView`,
+  an X11 window id) and follow the window's size both ways. On a Wayland session a sandboxed
+  plugin's editor runs through XWayland (needs `DISPLAY`); an in-process plugin, or a session
+  without `DISPLAY`, has no embedding: use PARAMS there (or run Atomik under XWayland). On Linux a
+  VST3 editor that needs file-descriptor handlers from the host's run loop stays dead (timers work);
+  use PARAMS for it.
+- **Latency and PDC.** The latency the plugin reports is compensated like any device latency. A
+  plugin announces a latency change (CLAP `latency.changed` and a restart request, VST3
+  `restartComponent(kLatencyChanged)`); the host restarts it, reads the latency again after the
+  re-activation (VST3 also after every `setActive` and every state restore) and the other channels
+  are re-aligned, with the one-click discontinuity of the new delay lines. A latency that comes from
+  a saved param (or from a container macro the song automates) is therefore followed live once the
+  plugin has applied the value, and by a bounce from its first frame (see below).
+- **Crashes.** A plugin runs inside the app, so a native crash takes the app with it. The app lists
+  the loaded plugins in a journal (`plugins-in-use.json`) and, while a plugin is loaded, writes a
+  recovery snapshot of the project every 60 s to `recovery/` (the last three are kept, never over
+  your file). After an unclean exit it offers to disable those plugins and to open the newest
+  snapshot.
+- **Bounce and determinism.** `atomik-render` refuses a project with plugins unless
+  `--allow-plugins` is given, reads the same `plugins.json` (or `--plugin-cache`), builds the
+  plugins through the same code as the app (state, then params, then 64-frame blocks) and prints
+  `plugins: N (determinism not guaranteed)`. The host gives a plugin the same inputs for every
+  `--block` and `--workers`, so the output is bit-identical across blocks, workers and runs **only
+  for plugins that are deterministic functions of those inputs** (the in-repo test plugins are).
+  Many real synths, choruses and analog-modelled reverbs use time, random seeds or threads and are
+  not; a bounce is also not bit-identical to live playback. Compare real plugins with a null test.
+  `--plugin-mode realtime` runs the plugins in their live mode (the default is offline mode),
+  `--missing-plugins stand-in` bounces with stand-ins instead of failing.
+- **How a bounce treats restarts and latency.** A plugin can ask the host to restart it, and a
+  restart is how a changed latency reaches delay compensation, so a bounce that only rendered would
+  lose the compensation a project has live. A bounce of a project with plugins therefore does what
+  the app does once per frame, once per **64-frame batch** instead of once per frame: before the
+  song starts it renders silent batches with the transport stopped until no plugin has restarted or
+  changed its latency for 8 batches in a row (at most 256), polling the plugin manager and
+  recompiling the routing with the published latencies after every batch; then it renders the song
+  in 64-frame batches with the same poll and recompile after each one. The cadence is counted in
+  batches, never in wall-clock time, so the output does not depend on the worker count and a restart
+  lands on the same batch in every run; because the engine is driven in batches, `--block` has no
+  effect on a plugin project. A latency that changes mid-song (a container macro automated by the
+  song moving a plugin's latency param) is followed the way live follows it. A change of a plugin's
+  param table during a bounce is not followed (the bounce keeps its devices) and a plugin that fails
+  or cannot restart is reported as a warning. Projects without real plugins use the plain offline
+  loop, unchanged.
 - **Patches.** A patch file cannot hold a plugin: exporting a rack with plugin devices is refused.
 
-Try it with the test plugins: [../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and [../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both formats in one project).
+Try it with the test plugins:
+[../examples/projects/plugin-demo](../examples/projects/plugin-demo/README.md) (CLAP) and
+[../examples/projects/plugin-demo-vst3](../examples/projects/plugin-demo-vst3/README.md) (both
+formats in one project).
 
-VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries. Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
+VST is a trademark of Steinberg Media Technologies GmbH, registered in Europe and other countries.
+Atomik Rack uses no VST logo; the name VST3 only says which plugin format is hosted.
 
 ## Stacking players
 
-A note player can sit **above an instrument** and play through it for the instrument's own track: the clips, the recorded takes and the live keyboard enter the top of the stack, each player hands its notes to the next, and the last one plays the instrument. The track stays the instrument's (its mixer channel, its automation, its freeze).
+A note player can sit **above an instrument** and play through it for the instrument's own track:
+the clips, the recorded takes and the live keyboard enter the top of the stack, each player hands
+its notes to the next, and the last one plays the instrument. The track stays the instrument's (its
+mixer channel, its automation, its freeze).
 
-- **Make a stack.** Select an instrument (or a player of its stack) and choose a player in the device browser: Enter or a double click on its row, in the normal browser or the Create Effect browser (the library's device rows too). The new player goes **above the head of the stack** in the same rack column, its `notes_out` is cabled to the head's `notes_in`, a cable that fed the head is taken over (`source -> new player -> head`), and the track's entry moves to the new player. All of it is one undo step, and the new player is selected. A second player goes above the first, a third above the second, and the order is the rack's order from the top. **Shift** adds the player unrouted, as a plain add after the selection (the Workflow setting `auto_route` inverts this, as for instruments and effects); a player dropped at a rack slot, or created inside a container, is a plain add too.
-- **What the stack is.** Ordinary note cables, `notes_out -> notes_in`, one per input: you can build or change a stack by hand. The track's `notes_to` (project format 31, below) names where its notes enter; without it they enter the instrument itself, which is every project made before stacks.
-- **Delete a player.** Deleting a player (with auto-route on) cables its note source to what its notes went to, so the rest of the stack keeps playing, and the entry of a track that entered at it moves to the next device down (the instrument itself when it was the last player). Removing it without bridging moves the entry the same way and leaves the cables gone.
-- **Hand cabling and new tracks.** A track always enters at the top of the player chain that feeds its instrument. Cabling a player's Notes output into the device a track enters at (the instrument, or the top player of its stack) moves the entry up to the top of the chain now feeding the instrument, and cutting a note cable so that the entry no longer reaches the instrument moves the entry back to the top of what still feeds it (the instrument itself when nothing does), each in the same undo step as the cable. Creating a track for an instrument that already has players cabled into it (a new track, a lane of automation that makes the track, the auto-route) enters at the top too. A player dropped on a rack slot is still a plain add; the entry moves when you cable it. A project saved before this keeps its entries as they are: an old hand-cabled stack with no `notes_to` plays the instrument directly until you cable or cut a note cable again.
-- **Audition and the keyboard.** The live keyboard on an armed track, and the audition of the instrument, play through the stack.
-- **Recording.** A take records what is played into the entry, the **input** notes before the players, and lands on the instrument's track; on playback the stack plays them back. (Recording the output of a stack into a clip is not part of this.)
-- **Bounce and freeze.** The notes of a track enter at its entry and its automation lanes stay with the instrument (they are an engine track of the instrument's own, as a macro lane is). A freeze renders the instrument through the stack, so the frozen audio is what the stack plays. A bounce is bit for bit the same at any block size and any number of workers. A player that has a track of its own and is also the entry of another track plays both lists (the engine takes one track per device; a controller lane or an automation lane of the second track that the first has already is dropped, and the first track's chase flag applies).
+- **Make a stack.** Select an instrument (or a player of its stack) and choose a player in the
+  device browser: Enter or a double click on its row, in the normal browser or the Create Effect
+  browser (the library's device rows too). The new player goes **above the head of the stack** in
+  the same rack column, its `notes_out` is cabled to the head's `notes_in`, a cable that fed the
+  head is taken over (`source -> new player -> head`), and the track's entry moves to the new
+  player. All of it is one undo step, and the new player is selected. A second player goes above the
+  first, a third above the second, and the order is the rack's order from the top. **Shift** adds
+  the player unrouted, as a plain add after the selection (the Workflow setting `auto_route` inverts
+  this, as for instruments and effects); a player dropped at a rack slot, or created inside a
+  container, is a plain add too.
+- **What the stack is.** Ordinary note cables, `notes_out -> notes_in`, one per input: you can build
+  or change a stack by hand. The track's `notes_to` (project format 31, below) names where its notes
+  enter; without it they enter the instrument itself, which is every project made before stacks.
+- **Delete a player.** Deleting a player (with auto-route on) cables its note source to what its
+  notes went to, so the rest of the stack keeps playing, and the entry of a track that entered at it
+  moves to the next device down (the instrument itself when it was the last player). Removing it
+  without bridging moves the entry the same way and leaves the cables gone.
+- **Hand cabling and new tracks.** A track always enters at the top of the player chain that feeds
+  its instrument. Cabling a player's Notes output into the device a track enters at (the instrument,
+  or the top player of its stack) moves the entry up to the top of the chain now feeding the
+  instrument, and cutting a note cable so that the entry no longer reaches the instrument moves the
+  entry back to the top of what still feeds it (the instrument itself when nothing does), each in
+  the same undo step as the cable. Creating a track for an instrument that already has players
+  cabled into it (a new track, a lane of automation that makes the track, the auto-route) enters at
+  the top too. A player dropped on a rack slot is still a plain add; the entry moves when you cable
+  it. A project saved before this keeps its entries as they are: an old hand-cabled stack with no
+  `notes_to` plays the instrument directly until you cable or cut a note cable again.
+- **Audition and the keyboard.** The live keyboard on an armed track, and the audition of the
+  instrument, play through the stack.
+- **Recording.** A take records what is played into the entry, the **input** notes before the
+  players, and lands on the instrument's track; on playback the stack plays them back. (Recording
+  the output of a stack into a clip is not part of this.)
+- **Bounce and freeze.** The notes of a track enter at its entry and its automation lanes stay with
+  the instrument (they are an engine track of the instrument's own, as a macro lane is). A freeze
+  renders the instrument through the stack, so the frozen audio is what the stack plays. A bounce is
+  bit for bit the same at any block size and any number of workers. A player that has a track of its
+  own and is also the entry of another track plays both lists (the engine takes one track per
+  device; a controller lane or an automation lane of the second track that the first has already is
+  dropped, and the first track's chase flag applies).
 - **A frozen instrument** refuses a new player (it would cable into the frozen device); unfreeze first.
-- **A stale entry.** A `notes_to` that names a device that is not in the project (a hand-edited file) or one that takes no notes plays the track's own device: nothing goes silent, and nothing panics.
-- **File.** Project format 31: a track may carry `"notes_to": "<device key>"` after its `"no_chase"`, omitted when its notes enter its own device (the module docs of [project.rs](../crates/model/src/project.rs)). The loader checks the shape, not the reference. Copying a track with its devices keeps the entry only when the player is copied along with it.
-- **Tests.** `crates/model/tests/player_stack.rs` (create, second player, delete, undo, the file), `crates/render/tests/player_stack.rs` (track notes to the entry and automation to the instrument, bounce, freeze, stale entry, two tracks at one player), the app tests in `app_core_players_tests.rs` (live keyboard, audition, the song the engine gets, recording, status text) and `crates/ui/tests/workflow_create.rs` (the browser).
+- **A stale entry.** A `notes_to` that names a device that is not in the project (a hand-edited
+  file) or one that takes no notes plays the track's own device: nothing goes silent, and nothing
+  panics.
+- **File.** Project format 31: a track may carry `"notes_to": "<device key>"` after its
+  `"no_chase"`, omitted when its notes enter its own device (the module docs of
+  [project.rs](../crates/model/src/project.rs)). The loader checks the shape, not the reference.
+  Copying a track with its devices keeps the entry only when the player is copied along with it.
+- **Tests.** `crates/model/tests/player_stack.rs` (create, second player, delete, undo, the file),
+  `crates/render/tests/player_stack.rs` (track notes to the entry and automation to the instrument,
+  bounce, freeze, stale entry, two tracks at one player), the app tests in
+  `app_core_players_tests.rs` (live keyboard, audition, the song the engine gets, recording, status
+  text) and `crates/ui/tests/workflow_create.rs` (the browser).
 
 ## Player bypass
 
-The step sequencer, the arpeggiator, the note filter, Key & Chord, the Note Repeater and the Note Delay end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the same key as the effects'; older projects load with it off. Every note player added later does the same. The code is `PlayerBypass` in [crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
+The step sequencer, the arpeggiator, the note filter, Key & Chord, the Note Repeater and the Note
+Delay end their param table with `bypass` (key `bypass`, 0 or 1, default 0, toggle, discrete), the
+same key as the effects'; older projects load with it off. Every note player added later does the
+same. The code is `PlayerBypass` in
+[crates/devices/src/note_fx.rs](../crates/devices/src/note_fx.rs).
 
-- **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0 and it holds no state.
-- **The switch.** A change of the param is adopted at the start of the next batch: the notes the player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the player's own state (the held set, the pattern position) is cleared, and a key that is held at the switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing doubles on either side.
-- **The strip switch.** A player panel has the same small **BYPASS** LED button in the name strip as an effect, and the panel body is veiled while it is on.
+- **Bypassed (>= 0.5).** `notes_in` is copied to `notes_out` at the same offsets, every event kind
+  (notes, bend, controllers, pressure, `AllOff`). The player plays nothing, its CV outs stay at 0
+  and it holds no state.
+- **The switch.** A change of the param is adopted at the start of the next batch: the notes the
+  player sent are closed at frame 0 (leaving the bypass also closes the keys that went through), the
+  player's own state (the held set, the pattern position) is cleared, and a key that is held at the
+  switch is **not retriggered**: it is ignored until its own Off, so nothing hangs and nothing
+  doubles on either side.
+- **The strip switch.** A player panel has the same small **BYPASS** LED button in the name strip as
+  an effect, and the panel body is veiled while it is on.
 
 ## Effect bypass
 
-Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion, the guitar amp, modulation, mastering, Character, the spectrum and the phase meter) ends its param table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels treat it like any other param. It is appended last, so no existing param id moves, and a project or patch saved before it existed loads with bypass off (params are stored sparsely and a missing one takes its default); the descriptor `version` is unchanged. It is one wrapper, [`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP modules know nothing about it.
+Every built-in effect (`DeviceKind::Effect`: the stereo delay, reverb, compressor, EQ, distortion,
+the guitar amp, modulation, mastering, Character, the spectrum and the phase meter) ends its param
+table with `bypass` (key `bypass`, name "Bypass", 0 or 1, default 0, toggle, discrete), the same key
+and shape a plugin device uses, so the model, automation, undo, projects, patches and the panels
+treat it like any other param. It is appended last, so no existing param id moves, and a project or
+patch saved before it existed loads with bypass off (params are stored sparsely and a missing one
+takes its default); the descriptor `version` is unchanged. It is one wrapper,
+[`Bypassable`](../crates/devices/src/bypass.rs), that every effect factory registers; the DSP
+modules know nothing about it.
 
-- **Bypassed (>= 0.5).** `out_l` / `out_r` carry the main inputs `in_l` / `in_r` **delayed by the device's current `latency_frames()`**, bit for bit, so plugin delay compensation stays right and a bypassed latent effect (compressor lookahead, oversampled distortion and modulation, mastering, Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in `prepare`; a latency that changes at run time (Character across its two latency classes) moves the dry tap at the next batch boundary.
-- **The effect keeps running.** Its state and tail continue and every other output (the compressor's `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged; un-bypassing is seamless, and the CPU cost does not drop.
-- **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample, `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed input. The first batch after `prepare` or `reset` starts at the param's value without a fade, so a project saved bypassed opens bypassed.
-- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left name strip, under the name and the type label and above the fold chevron, in the same place on all eleven effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the LED is lit while the effect is bypassed. While it is, the panel body (everything right of the strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their own BYPASS button inside their panel.
-- **Plugins.** A plugin effect's bypass is the same switch with the same fade, and its dry signal is also the input delayed by the plugin's reported latency (a 100 ms ring), so bypassing a latent plugin does not move the channel against the others.
-- **Console inserts.** The console's BYP ALL button and the B of an insert slot set this `bypass` on the effects of the chain, so the delay compensation holds (see Channel strip upgrades in [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is not delay compensated.
+- **Bypassed (>= 0.5).** `out_l` / `out_r` carry the main inputs `in_l` / `in_r` **delayed by the
+  device's current `latency_frames()`**, bit for bit, so plugin delay compensation stays right and a
+  bypassed latent effect (compressor lookahead, oversampled distortion and modulation, mastering,
+  Character) stays time-aligned. The dry ring holds 100 ms at the prepared rate and is allocated in
+  `prepare`; a latency that changes at run time (Character across its two latency classes) moves the
+  dry tap at the next batch boundary.
+- **The effect keeps running.** Its state and tail continue and every other output (the compressor's
+  `gr_cv_out`, the CV outs of other effects) and the meters keep coming from it unchanged;
+  un-bypassing is seamless, and the CPU cost does not drop.
+- **Crossfade.** Switching fades per sample over 5 ms (`1 / round(sr * 0.005)` per sample,
+  `wet * (1 - m) + dry * m`, as for plugins). Fully un-bypassed the output is exactly the effect's
+  own output (bit-identical to a device without the param); fully bypassed it is exactly the delayed
+  input. The first batch after `prepare` or `reset` starts at the param's value without a fade, so a
+  project saved bypassed opens bypassed.
+- **The strip switch.** Each built-in effect panel has a small **BYPASS** LED button in its left
+  name strip, under the name and the type label and above the fold chevron, in the same place on all
+  eleven effects (a one-unit panel such as the stereo delay sets its name smaller to make room). One
+  click sets `bypass` to 1, another sets it back to 0, each one an ordinary undoable `SetParam`; the
+  LED is lit while the effect is bypassed. While it is, the panel body (everything right of the
+  strip) is veiled, so a bypassed effect is easy to spot in a long rack; the controls stay usable
+  underneath. The `bypass` param is never a knob of the panel (the switch is its control), and, like
+  a plugin's, it has no per-control macro or automation menu there. A folded panel keeps the switch
+  at the end of its strip, and the veil is not drawn since the body is hidden. Plugins keep their
+  own BYPASS button inside their panel.
+- **Plugins.** A plugin effect's bypass is the same switch with the same fade, and its dry signal is
+  also the input delayed by the plugin's reported latency (a 100 ms ring), so bypassing a latent
+  plugin does not move the channel against the others.
+- **Console inserts.** The console's BYP ALL button and the B of an insert slot set this `bypass` on
+  the effects of the chain, so the delay compensation holds (see Channel strip upgrades in
+  [ARCHITECTURE.md](ARCHITECTURE.md)). A channel's own `insert.bypass` is a separate switch that is
+  not delay compensated.
 
 ## CV inputs: the trim convention
 
-Added with the Mod Source work, one convention for every device (instruments, effects and console channels). Every input is a CV socket `<target>_cv_in` with a bipolar amount param `<target>_cv_trim` (−1..+1, default +1, shown as "CV trim" on the front panel next to its knob). The CV is clamped to −1..+1, scaled by the trim and added to the target as listed below, then the sum is clamped to the target's range. With the socket unconnected nothing changes: the output is bit-identical to a device without the input, and old patches and projects load unchanged (new params take their defaults). Where the device smooths per batch (reverb, modulation, distortion, EQ, console channel) the CV is its mean over the 64-sample batch and goes through the target's existing smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sources: [cv_in.rs](../crates/devices/src/cv_in.rs) and each device module.
+Added with the Mod Source work, one convention for every device (instruments, effects and console
+channels). Every input is a CV socket `<target>_cv_in` with a bipolar amount param
+`<target>_cv_trim` (−1..+1, default +1, shown as "CV trim" on the front panel next to its knob). The
+CV is clamped to −1..+1, scaled by the trim and added to the target as listed below, then the sum is
+clamped to the target's range. With the socket unconnected nothing changes: the output is
+bit-identical to a device without the input, and old patches and projects load unchanged (new params
+take their defaults). Where the device smooths per batch (reverb, modulation, distortion, EQ,
+console channel) the CV is its mean over the 64-sample batch and goes through the target's existing
+smoother; the stereo delay reads it per sample through its 5 ms smoothers. Sources:
+[cv_in.rs](../crates/devices/src/cv_in.rs) and each device module.
 
 | Device | Socket | Trim param | Mapping |
 |---|---|---|---|
@@ -1759,50 +3031,133 @@ Added with the Mod Source work, one convention for every device (instruments, ef
 | Loop slicer | `cutoff_cv_in` | `filter.cutoff_cv_trim` | `filter.cutoff` × 2^(trim·cv·4), global low-pass |
 | Loop slicer | `level_cv_in` | `master.level_cv_trim` | output gain × 10^(trim·cv·24/20) |
 
-The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear on the back of the channel's rack device like any other socket. The trims show in the console strip's MORE section. The console and auto-routing code only creates the audio cables of a channel, so the extra CV sockets do not affect it.
+The console channel's CV sockets are stage 1 sockets (they feed the fader, pan and sends) and appear
+on the back of the channel's rack device like any other socket. The trims show in the console
+strip's MORE section. The console and auto-routing code only creates the audio cables of a channel,
+so the extra CV sockets do not affect it.
 
 ## CV activity indicators
 
-On the back of the rack, every CV cable shows whether it carries signal and roughly how much. The cable glows and a lit disc appears behind both of its jacks (also when the cables are hidden), brighter for a stronger signal; a silent cable shows nothing extra.
+On the back of the rack, every CV cable shows whether it carries signal and roughly how much. The
+cable glows and a lit disc appears behind both of its jacks (also when the cables are hidden),
+brighter for a stronger signal; a silent cable shows nothing extra.
 
-- **Engine.** Nothing new runs on the audio thread. The app registers the source endpoint of each CV cable as a read-only meter (`Topology::add_meter`, the same lock-free bank that serves the console and Audio I/O meters: an atomic peak per 64-frame batch, no locks, no allocation, no change to a sample). The output is bit-identical with and without the meters (`crates/engine/tests/cv_activity.rs`).
-- **View.** `AppCore::feed_cv_activity` reads the peaks once per frame while the back shows and hands them to `RackView::set_cv_activity`, which keeps a displayed level per cable: it rises at once, falls with a 180 ms time constant (so a pulse stays visible and a steady modulation does not flicker), and uses a square-root scale so a small modulation (peak 0.05) is still visible. The level is drawn in 8 brightness steps and the view repaints only when a step changes.
-- **Containers.** Inside a container the back shows the container's own cables, and they glow too. The expansion names an inner device by its path (`layer/lead`), the view by its local key (`lead`); `atomik_model::scoped_cable` maps a flat cable back to the view's scope and form, and the feed hands the view only the cables of the scope it shows. A CV cable never crosses a container boundary (the boundary carries audio only).
-- **Shared readings.** A meter read resets the peak, so an endpoint two consumers want is read once per frame, in `AppCore::frame`, into a small cache. The console strips (including a compressor's `gr_cv_out` on a channel or the master) and the Audio I/O panel take their values from it, and so does the CV feed; the console meters read exactly what they read without the indicators. Two cables from one output share one meter.
-- **Capacity.** The engine publishes at most 512 meters (`METER_CAPACITY`). The console and Audio I/O meters are registered first and keep their slots; the CV indicators use only the free ones, in cable order. Past that the remaining cables show no activity (no error, no panic).
+- **Engine.** Nothing new runs on the audio thread. The app registers the source endpoint of each CV
+  cable as a read-only meter (`Topology::add_meter`, the same lock-free bank that serves the console
+  and Audio I/O meters: an atomic peak per 64-frame batch, no locks, no allocation, no change to a
+  sample). The output is bit-identical with and without the meters
+  (`crates/engine/tests/cv_activity.rs`).
+- **View.** `AppCore::feed_cv_activity` reads the peaks once per frame while the back shows and
+  hands them to `RackView::set_cv_activity`, which keeps a displayed level per cable: it rises at
+  once, falls with a 180 ms time constant (so a pulse stays visible and a steady modulation does not
+  flicker), and uses a square-root scale so a small modulation (peak 0.05) is still visible. The
+  level is drawn in 8 brightness steps and the view repaints only when a step changes.
+- **Containers.** Inside a container the back shows the container's own cables, and they glow too.
+  The expansion names an inner device by its path (`layer/lead`), the view by its local key
+  (`lead`); `atomik_model::scoped_cable` maps a flat cable back to the view's scope and form, and
+  the feed hands the view only the cables of the scope it shows. A CV cable never crosses a
+  container boundary (the boundary carries audio only).
+- **Shared readings.** A meter read resets the peak, so an endpoint two consumers want is read once
+  per frame, in `AppCore::frame`, into a small cache. The console strips (including a compressor's
+  `gr_cv_out` on a channel or the master) and the Audio I/O panel take their values from it, and so
+  does the CV feed; the console meters read exactly what they read without the indicators. Two
+  cables from one output share one meter.
+- **Capacity.** The engine publishes at most 512 meters (`METER_CAPACITY`). The console and Audio
+  I/O meters are registered first and keep their slots; the CV indicators use only the free ones, in
+  cable order. Past that the remaining cables show no activity (no error, no panic).
 
 ---
 
 ## Console master: `atomik.master` (Mixer)
 
-The master section of the console. Source: [crates/devices/src/master.rs](../crates/devices/src/master.rs). The console creates it; you do not add it from the browser. Eight send buses and eight FX returns, a bus compressor with a key input, an insert loop, the fader, the main output and the control-room (`monitor_*`) output.
+The master section of the console. Source:
+[crates/devices/src/master.rs](../crates/devices/src/master.rs). The console creates it; you do not
+add it from the browser. Eight send buses and eight FX returns, a bus compressor with a key input,
+an insert loop, the fader, the main output and the control-room (`monitor_*`) output.
 
-- **Send level.** `send1.level` to `send8.level` (ids appended after `monitor.source`, so every older id and key is unchanged): -60 to 6 dB (-60 = off), default 0 dB, decibel taper, the same as `return{k}.level`; automatable. `fx_send{k}_*` = `send_bus{k}_*` times the level, at stage 0. At 0 dB the signal is copied untouched (bit-exact, the same bits as before the param existed). A level at its default is not written to the project file, so a project that never touched it saves the same bytes and an older project opens at 0 dB.
-- **Control-room source.** `monitor.source` is a pick list of 18 entries: `Main` (0, the post-fader main mix), `FX returns` (1, the returns sum alone), then appended `Send 1` to `Send 8` (2 to 9, the `fx_send{k}` signal after the send level) and `Return 1` to `Return 8` (10 to 17, the return after its fader and pan, before it joins the main sum). Stored values keep their meaning; an out-of-range value clamps to the last entry. Changing from one tap to another crossfades over 5 ms and settles bit-exactly on the new tap. Dim (-20 dB) and the control-room level apply to every source and never touch `main_*`.
-- **Taps.** The send and return taps are copies the master keeps per block in its own state (written in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change, and the audio thread still does not allocate.
-- **Key.** `comp.key` selects the `key_in` side-chain; adding a cable into `key_in` through a command also switches it on in the same undo step . Removing the cable leaves the switch on; loading a project never changes a param; a channel's `key_in` is unchanged.
-- **In a new project.** File, New starts with Audio I/O on top and this device, named "Master", right under it, locked: it cannot be deleted, cut, copied or moved, and nothing can be dragged above it (older projects open as they are). `main_l/r` are cabled to Audio I/O outputs 1 and 2. The channels' links to it are shown as "Output: Master" on the channel instead of as cables ("Show Console Links" in the View menu draws them).
-- **Panel.** Per send bus a level fader and the name of the effect on the slot; per return the effect's name (or `free`) and an EDIT button that selects the effect and scrolls the rack to it; the source is a pick list of the 18 entries; the key switch has a lamp that is lit while a cable ends at `key_in`.
-- **Use as Send Effect.** Creating an effect with the master selected (Ctrl+E) patches it into the first free send and return in one undo step (`fx_send{k}` to the effect to `return{k}`); the right-click entry "Use as Send Effect" does the same for an existing, unrouted stereo effect and is disabled for one that is already routed. With all eight slots used the effect is added unrouted and the status line says "All 8 send and return slots are in use".
-- **Automation.** Every param of the master, of a channel strip and of a bus (not the internal ones) can have an automation lane: right-click the control in the console or the rack and choose **Edit Automation**. The lane lives on an automation track of the strip's device (see ARCHITECTURE.md, 2.6b); the strip and the master draw the automation mark on the control and follow the lane while the song plays, and a bounce plays it like an instrument's lane.
+- **Send level.** `send1.level` to `send8.level` (ids appended after `monitor.source`, so every
+  older id and key is unchanged): -60 to 6 dB (-60 = off), default 0 dB, decibel taper, the same as
+  `return{k}.level`; automatable. `fx_send{k}_*` = `send_bus{k}_*` times the level, at stage 0. At 0
+  dB the signal is copied untouched (bit-exact, the same bits as before the param existed). A level
+  at its default is not written to the project file, so a project that never touched it saves the
+  same bytes and an older project opens at 0 dB.
+- **Control-room source.** `monitor.source` is a pick list of 18 entries: `Main` (0, the post-fader
+  main mix), `FX returns` (1, the returns sum alone), then appended `Send 1` to `Send 8` (2 to 9,
+  the `fx_send{k}` signal after the send level) and `Return 1` to `Return 8` (10 to 17, the return
+  after its fader and pan, before it joins the main sum). Stored values keep their meaning; an
+  out-of-range value clamps to the last entry. Changing from one tap to another crossfades over 5 ms
+  and settles bit-exactly on the new tap. Dim (-20 dB) and the control-room level apply to every
+  source and never touch `main_*`.
+- **Taps.** The send and return taps are copies the master keeps per block in its own state (written
+  in stages 0 and 1, read in stage 2); the stages, sockets and cables of the device did not change,
+  and the audio thread still does not allocate.
+- **Key.** `comp.key` selects the `key_in` side-chain; adding a cable into `key_in` through a
+  command also switches it on in the same undo step . Removing the cable leaves the switch on;
+  loading a project never changes a param; a channel's `key_in` is unchanged.
+- **In a new project.** File, New starts with Audio I/O on top and this device, named "Master",
+  right under it, locked: it cannot be deleted, cut, copied or moved, and nothing can be dragged
+  above it (older projects open as they are). `main_l/r` are cabled to Audio I/O outputs 1 and 2.
+  The channels' links to it are shown as "Output: Master" on the channel instead of as cables ("Show
+  Console Links" in the View menu draws them).
+- **Panel.** Per send bus a level fader and the name of the effect on the slot; per return the
+  effect's name (or `free`) and an EDIT button that selects the effect and scrolls the rack to it;
+  the source is a pick list of the 18 entries; the key switch has a lamp that is lit while a cable
+  ends at `key_in`.
+- **Use as Send Effect.** Creating an effect with the master selected (Ctrl+E) patches it into the
+  first free send and return in one undo step (`fx_send{k}` to the effect to `return{k}`); the
+  right-click entry "Use as Send Effect" does the same for an existing, unrouted stereo effect and
+  is disabled for one that is already routed. With all eight slots used the effect is added unrouted
+  and the status line says "All 8 send and return slots are in use".
+- **Automation.** Every param of the master, of a channel strip and of a bus (not the internal ones)
+  can have an automation lane: right-click the control in the console or the rack and choose **Edit
+  Automation**. The lane lives on an automation track of the strip's device (see ARCHITECTURE.md,
+  2.6b); the strip and the master draw the automation mark on the control and follow the lane while
+  the song plays, and a bounce plays it like an instrument's lane.
 
 ## Console output bus: `atomik.bus` (Mixer)
 
-A console strip that mixes other strips: the same strip as `atomik.channel`, fed by a stereo summing input. Source: [crates/devices/src/bus.rs](../crates/devices/src/bus.rs) (descriptor and factory) and [crates/devices/src/channel.rs](../crates/devices/src/channel.rs) (the one strip implementation both device types run). The console creates buses; you do not add one from the browser.
+A console strip that mixes other strips: the same strip as `atomik.channel`, fed by a stereo summing
+input. Source: [crates/devices/src/bus.rs](../crates/devices/src/bus.rs) (descriptor and factory)
+and [crates/devices/src/channel.rs](../crates/devices/src/channel.rs) (the one strip implementation
+both device types run). The console creates buses; you do not add one from the browser.
 
-- **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`) and the parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`, `pcomp.release`, `pcomp.makeup`, `pcomp.mix`; off by default) are the channel's too. Params, ids, defaults, internal params (`internal.solo_silence`, the VCA feed `internal.vca_db`, `internal.vca_mute` and `internal.vca_solo`, the CV trims), the 8 sends (`send{k}.on/level/pre`), insert loop, key input, `gr_cv_out`, CV inputs, stages and latency adjust are exactly the channel's, so settings copy across both types. The channel's tables are in the module docs of `channel.rs`.
-- **Input.** `in_l`/`in_r` are replaced by `bus_l`/`bus_r`, `Direction::SummingInput` like the master's: any number of strip outputs can be cabled in, and they are summed by the engine. A single connected side feeds both, as on a channel. With default params a bus fed a signal on `bus_l`/`bus_r` is bit-identical to a channel fed the same signal on `in_l`/`in_r` (tested).
-- **Outputs.** `out_l/r` (to the master's or another bus's `bus_l/r`), `send{k}_l/r` (to the master's `send_bus{k}_l/r`), `insert_send_l/r`, `gr_cv_out`. Sends are independent of the bus fader unless set pre/post as on a channel.
-- **Stages and latency.** The same two stages as the channel (`bus_l`, `bus_r`, `key_in` and `insert_send_*` in stage 0, everything else in stage 1). A negative `latency.adjust` is reported as latency exactly as on a channel, so delay compensation treats buses like channels.
+- **Same strip, same keys.** The input trim and polarity (`input.gain`, `input.phase`) and the
+  parallel compressor (`pcomp.on`, `pcomp.threshold`, `pcomp.ratio`, `pcomp.attack`,
+  `pcomp.release`, `pcomp.makeup`, `pcomp.mix`; off by default) are the channel's too. Params, ids,
+  defaults, internal params (`internal.solo_silence`, the VCA feed `internal.vca_db`,
+  `internal.vca_mute` and `internal.vca_solo`, the CV trims), the 8 sends (`send{k}.on/level/pre`),
+  insert loop, key input, `gr_cv_out`, CV inputs, stages and latency adjust are exactly the
+  channel's, so settings copy across both types. The channel's tables are in the module docs of
+  `channel.rs`.
+- **Input.** `in_l`/`in_r` are replaced by `bus_l`/`bus_r`, `Direction::SummingInput` like the
+  master's: any number of strip outputs can be cabled in, and they are summed by the engine. A
+  single connected side feeds both, as on a channel. With default params a bus fed a signal on
+  `bus_l`/`bus_r` is bit-identical to a channel fed the same signal on `in_l`/`in_r` (tested).
+- **Outputs.** `out_l/r` (to the master's or another bus's `bus_l/r`), `send{k}_l/r` (to the
+  master's `send_bus{k}_l/r`), `insert_send_l/r`, `gr_cv_out`. Sends are independent of the bus
+  fader unless set pre/post as on a channel.
+- **Stages and latency.** The same two stages as the channel (`bus_l`, `bus_r`, `key_in` and
+  `insert_send_*` in stage 0, everything else in stage 1). A negative `latency.adjust` is reported
+  as latency exactly as on a channel, so delay compensation treats buses like channels.
 - **Browser.** Not listed in the device browser.
 
 ## Audio I/O: the `interface` pseudo-device
 
-Called **Audio I/O** everywhere you read it (panel title, rack caption, menus, tooltips, status text); the reserved device key `interface` and the type id are unchanged. Its sockets are the host inputs `in_1..in_N` (outputs of the device, N = `input_channels`) and the host outputs `out_1..out_M` (inputs, M = `output_channels`), up to 32 each.
+Called **Audio I/O** everywhere you read it (panel title, rack caption, menus, tooltips, status
+text); the reserved device key `interface` and the type id are unchanged. Its sockets are the host
+inputs `in_1..in_N` (outputs of the device, N = `input_channels`) and the host outputs
+`out_1..out_M` (inputs, M = `output_channels`), up to 32 each.
 
-- **Lamp per socket.** Green: a cable ends or starts there and the host audio device has that channel. Yellow: no cable. Red: a cable exists but the selected audio device has fewer channels than the socket number (the audio still routes and is silent on the device). With no stream (audio off, the offline sink) every channel counts as present.
-- **Meter and clip lamp per socket.** A peak meter on every socket and a clip lamp that lights when the peak went above 0 dBFS since the last reset; a click on the lamp resets it, a click on the panel's plate resets all. Inputs show the host signal; an output shows the peak of whatever is cabled to it (the master's `main`, a channel).
-- **Audio tracks.** The input choice in an audio track's header makes real `interface:in_k -> track in_l/in_r` cables (visible on the back of the rack), as before.
+- **Lamp per socket.** Green: a cable ends or starts there and the host audio device has that
+  channel. Yellow: no cable. Red: a cable exists but the selected audio device has fewer channels
+  than the socket number (the audio still routes and is silent on the device). With no stream (audio
+  off, the offline sink) every channel counts as present.
+- **Meter and clip lamp per socket.** A peak meter on every socket and a clip lamp that lights when
+  the peak went above 0 dBFS since the last reset; a click on the lamp resets it, a click on the
+  panel's plate resets all. Inputs show the host signal; an output shows the peak of whatever is
+  cabled to it (the master's `main`, a channel).
+- **Audio tracks.** The input choice in an audio track's header makes real
+  `interface:in_k -> track in_l/in_r` cables (visible on the back of the rack), as before.
 
 ---
 

@@ -1,10 +1,12 @@
 # Testing
 
-Atomik Rack is built test-first (see [CONTRIBUTING.md](../CONTRIBUTING.md)). This page explains how to run the checks and what the special tests prove.
+Atomik Rack is built test-first (see [CONTRIBUTING.md](../CONTRIBUTING.md)). This page explains how
+to run the checks and what the special tests prove.
 
 ## Quality gates
 
-Run these from the repository root. CI runs the same commands; the workflow is in [.github/workflows/ci.yml](../.github/workflows/ci.yml).
+Run these from the repository root. CI runs the same commands; the workflow is in
+[.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 ```sh
 cargo fmt --all --check
@@ -15,8 +17,12 @@ sh scripts/check-public.sh                 # repository hygiene (no local paths,
 ```
 
 - `rust-toolchain.toml` pins Rust 1.99, and `rustup` installs it on first use.
-- Lints are set in the root `Cargo.toml` (`unsafe_code = "deny"`, clippy `all = deny`, `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`, `Instant::now` and `SystemTime::now`).
-- CI also runs `cargo test --workspace --release` once on Linux, because optimisation can change floating-point behaviour. It also runs `cargo llvm-cov` and fails below 90 % of lines (binary entry points and GPU or audio-device glue are excluded; the exact filter is in the workflow).
+- Lints are set in the root `Cargo.toml` (`unsafe_code = "deny"`, clippy `all = deny`,
+  `float_cmp = deny`) and in [clippy.toml](../clippy.toml) (bans `HashMap`, `HashSet`,
+  `Instant::now` and `SystemTime::now`).
+- CI also runs `cargo test --workspace --release` once on Linux, because optimisation can change
+  floating-point behaviour. It also runs `cargo llvm-cov` and fails below 90 % of lines (binary
+  entry points and GPU or audio-device glue are excluded; the exact filter is in the workflow).
 
 Optional coverage report (needs `cargo install cargo-llvm-cov`):
 
@@ -33,23 +39,47 @@ cargo test -p atomik-devices                # the built-in devices
 cargo test -p atomik-render --test e2e      # end-to-end CLI tests and goldens
 ```
 
-Tests follow the naming pattern `method_scenario_expectation`. Unit tests live in a `#[cfg(test)] mod tests` in the same file. Cross-crate tests live in `crates/<crate>/tests/*.rs`. Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`, `Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
+Tests follow the naming pattern `method_scenario_expectation`. Unit tests live in a
+`#[cfg(test)] mod tests` in the same file. Cross-crate tests live in `crates/<crate>/tests/*.rs`.
+Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`,
+`Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
 
 ## Allocation guard (HI-1)
 
-[crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) provides a counting global allocator. It forwards to the system allocator and counts heap operations per thread while a guarded section is active.
+[crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) provides a counting global
+allocator. It forwards to the system allocator and counts heap operations per thread while a guarded
+section is active.
 
-- **Install it once per test binary** with `atomik_testkit::install_alloc_guard!();`. Every integration-test file that renders in-process starts with it, after any `//!` docs. The exception is `crates/render/tests/e2e.rs`, which only runs the CLI as a child process. The unit-test binaries of `atomik-engine`, `atomik-devices` and `atomik-testkit` install it in their `lib.rs`.
-- **Guard a section** with `atomik_testkit::no_alloc::assert_no_alloc(|| ...)`. The call panics with `HI-1 violated: N heap operation(s) inside a no-alloc section` if the closure allocated, reallocated or freed memory on this thread. It panics with a different message if the guard was not installed, so a missing guard cannot pass silently.
-- The guard panics in test code rather than aborting, so a `#[should_panic]` test can prove that it bites. See `allocating_device_is_caught_by_guard` in [crates/engine/tests/alloc.rs](../crates/engine/tests/alloc.rs) and `assert_no_alloc_catches_allocation` in [crates/testkit/src/lib.rs](../crates/testkit/src/lib.rs).
+- **Install it once per test binary** with `atomik_testkit::install_alloc_guard!();`. Every
+  integration-test file that renders in-process starts with it, after any `//!` docs. The exception
+  is `crates/render/tests/e2e.rs`, which only runs the CLI as a child process. The unit-test
+  binaries of `atomik-engine`, `atomik-devices` and `atomik-testkit` install it in their `lib.rs`.
+- **Guard a section** with `atomik_testkit::no_alloc::assert_no_alloc(|| ...)`. The call panics with
+  `HI-1 violated: N heap operation(s) inside a no-alloc section` if the closure allocated,
+  reallocated or freed memory on this thread. It panics with a different message if the guard was
+  not installed, so a missing guard cannot pass silently.
+- The guard panics in test code rather than aborting, so a `#[should_panic]` test can prove that it
+  bites. See `allocating_device_is_caught_by_guard` in
+  [crates/engine/tests/alloc.rs](../crates/engine/tests/alloc.rs) and
+  `assert_no_alloc_catches_allocation` in [crates/testkit/src/lib.rs](../crates/testkit/src/lib.rs).
 
 Where the guard is used:
 
-- **Engine tests.** These render through `render_block` in [crates/engine/tests/common/mod.rs](../crates/engine/tests/common/mod.rs), which wraps every `Engine::render` call.
-- **Offline renders.** Use `render_offline_with(.., |f| assert_no_alloc(f))` to guard every inner `render` of a whole offline run. Examples are in [crates/engine/tests/determinism.rs](../crates/engine/tests/determinism.rs) and [crates/render/tests/alloc.rs](../crates/render/tests/alloc.rs).
-- **Device tests.** These use `DeviceHarness` ([crates/testkit/src/harness.rs](../crates/testkit/src/harness.rs)), which guards every `process` call. Wrap `set_param` and `reset` yourself (see [EXTENDING.md](EXTENDING.md#5-testing-the-device)).
+- **Engine tests.** These render through `render_block` in
+  [crates/engine/tests/common/mod.rs](../crates/engine/tests/common/mod.rs), which wraps every
+  `Engine::render` call.
+- **Offline renders.** Use `render_offline_with(.., |f| assert_no_alloc(f))` to guard every inner
+  `render` of a whole offline run. Examples are in
+  [crates/engine/tests/determinism.rs](../crates/engine/tests/determinism.rs) and
+  [crates/render/tests/alloc.rs](../crates/render/tests/alloc.rs).
+- **Device tests.** These use `DeviceHarness`
+  ([crates/testkit/src/harness.rs](../crates/testkit/src/harness.rs)), which guards every `process`
+  call. Wrap `set_param` and `reset` yourself (see
+  [EXTENDING.md](EXTENDING.md#5-testing-the-device)).
 
-The guard only sees the current thread, and only code that runs inside the closure. The end-to-end tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
+The guard only sees the current thread, and only code that runs inside the closure. The end-to-end
+tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard
+installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
 
 ## Determinism tests (HI-2)
 
@@ -64,32 +94,55 @@ The guard only sees the current thread, and only code that runs inside the closu
 | `cli_block_size_does_not_change_output` | [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) | `--block 1` and `--block 4096` produce byte-identical WAV files (f32), and `--block 100` and `--block 63` do too (24-bit) |
 | `process_is_deterministic_for_a_seed` | [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs) | The synth's noise and sample & hold are reproducible for a seed |
 
-`crates/model/tests/doc_sequences.rs` is the whole-document property test: random runs of the song, console, audio and workflow commands (copy, paste, duplicate, join, quantize) over a document with a rack, a console, a container, a plugin, tracks and audio. After every step the document passes `RackDoc::validate`; an accepted command is one undo step whose undo and redo give back the document before and after (track heights left out); a rejected one changes neither the document nor the history and is never an `Invariant` error. It runs 256 sequences by default; `PROPTEST_CASES=10000 cargo test --release -p atomik-model --test doc_sequences` is the long run. `crates/model/tests/validate.rs` covers `validate` and `save_project_checked`, and the unit tests in `crates/model/src/history.rs` cover an edit that does not fit (an error, the document and history unchanged, a compound rolled back).
+`crates/model/tests/doc_sequences.rs` is the whole-document property test: random runs of the song,
+console, audio and workflow commands (copy, paste, duplicate, join, quantize) over a document with a
+rack, a console, a container, a plugin, tracks and audio. After every step the document passes
+`RackDoc::validate`; an accepted command is one undo step whose undo and redo give back the document
+before and after (track heights left out); a rejected one changes neither the document nor the
+history and is never an `Invariant` error. It runs 256 sequences by default;
+`PROPTEST_CASES=10000 cargo test --release -p atomik-model --test doc_sequences` is the long run.
+`crates/model/tests/validate.rs` covers `validate` and `save_project_checked`, and the unit tests in
+`crates/model/src/history.rs` cover an edit that does not fit (an error, the document and history
+unchanged, a compound rolled back).
 
-Property-test regressions are saved in `proptest-regressions/` folders and `*.proptest-regressions` files next to the tests. Commit them.
+Property-test regressions are saved in `proptest-regressions/` folders and `*.proptest-regressions`
+files next to the tests. Commit them.
 
 ## Golden files
 
-[crates/render/tests/golden/](../crates/render/tests/golden) holds two goldens of [examples/patches/slice-demo.json](../examples/patches/slice-demo.json), rendered as 32-bit float with the default block size (512):
+[crates/render/tests/golden/](../crates/render/tests/golden) holds two goldens of
+[examples/patches/slice-demo.json](../examples/patches/slice-demo.json), rendered as 32-bit float
+with the default block size (512):
 
 | File | Checked by | Platforms | Tolerance |
 |---|---|---|---|
 | `slice-demo.f32.sha256` | `golden_hash_matches` | **Windows x86-64 only** (the test is `#[cfg]`-gated) | exact bytes |
 | `slice-demo.fingerprint.json` | `golden_fingerprint_matches` | all | ±0.5 dB per window |
 
-**Why there is a fingerprint.** The devices use transcendental functions (`sin`, `tan`, `tanh`, `powf`, …) from the platform's math library. Those can differ in the last bit between operating systems, so an exact hash is only meaningful on the platform that produced it. The fingerprint is a coarse check that every platform still produces the same music. It stores the RMS level in dB (floored at −120 dB) of every half-beat window (12 000 frames) of each channel. It catches real regressions, such as a silent device, a wrong note or a broken cable, without depending on last-bit equality.
+**Why there is a fingerprint.** The devices use transcendental functions (`sin`, `tan`, `tanh`,
+`powf`, …) from the platform's math library. Those can differ in the last bit between operating
+systems, so an exact hash is only meaningful on the platform that produced it. The fingerprint is a
+coarse check that every platform still produces the same music. It stores the RMS level in dB
+(floored at −120 dB) of every half-beat window (12 000 frames) of each channel. It catches real
+regressions, such as a silent device, a wrong note or a broken cable, without depending on last-bit
+equality.
 
-**Regenerating the goldens.** Do this only after an intentional change to the sound, and listen to the new render first. Then run, on Windows x86-64:
+**Regenerating the goldens.** Do this only after an intentional change to the sound, and listen to
+the new render first. Then run, on Windows x86-64:
 
 ```sh
 ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test e2e golden
 ```
 
-This rewrites both files. Use Windows x86-64 because that is the only platform that checks the hash. Review the diff of the fingerprint: large changes in level should be explainable by your change.
+This rewrites both files. Use Windows x86-64 because that is the only platform that checks the hash.
+Review the diff of the fingerprint: large changes in level should be explainable by your change.
 
 ## Real-time factor test (ignored by default)
 
-`realtime_factor_release` in [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) checks the render speed. It renders `slice-demo.json` with `--stats` and asserts a real-time factor of at least 50×. Wall-clock timing depends on the machine and the build profile, so the test is `#[ignore]` and must run in release:
+`realtime_factor_release` in [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) checks the
+render speed. It renders `slice-demo.json` with `--stats` and asserts a real-time factor of at least
+50×. Wall-clock timing depends on the machine and the build profile, so the test is `#[ignore]` and
+must run in release:
 
 ```sh
 cargo test --release -p atomik-render -- --ignored
@@ -109,301 +162,1201 @@ cargo test -p atomik-ui --release --test file_browser -- --ignored
 cargo test -p atomik-audio-file --release -- --ignored stream
 ```
 
-They check a two-word query over 50 000 rows, filtering and sorting 100 000 rows in the panel, and the latency of the first decoded chunk of a file. The preview voice's allocation test is not ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_alloc.rs) runs with the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the real-time factor test and the `ignore` code example in the `no_alloc` module docs.
+They check a two-word query over 50 000 rows, filtering and sorting 100 000 rows in the panel, and
+the latency of the first decoded chunk of a file. The preview voice's allocation test is not
+ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_alloc.rs) runs with
+the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the
+real-time factor test and the `ignore` code example in the `no_alloc` module docs.
 
 ## Listening check
 
-This is a manual check. A person listens to the slice-demo render and confirms there are no objectionable clicks, zipper noise or aliasing. No automated test replaces it. The same goes for the guitar amp: the five setups of `atomik.guitar-amp` (a plucked or recorded guitar through each, played live with the cabinet and the effects) are only measured by the tests, not judged.
+This is a manual check. A person listens to the slice-demo render and confirms there are no
+objectionable clicks, zipper noise or aliasing. No automated test replaces it. The same goes for the
+guitar amp: the five setups of `atomik.guitar-amp` (a plucked or recorded guitar through each,
+played live with the cabinet and the effects) are only measured by the tests, not judged.
 
 ## Plugin tests (CLAP and VST3)
 
-Third-party plugin hosting is tested against plugins built in this repository, never against plugins installed on the machine. `crates/testplugins/core` holds the DSP of the test plugins (a gain effect with latency, sidechain and tail, a deterministic synth, a note effect, a 2 000-param bank that grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin (so the host is tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails), `clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an environment variable asks for it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only synth, a mono effect, plugins that fail at activation or return errors or NaN) are the libraries.
+Third-party plugin hosting is tested against plugins built in this repository, never against plugins
+installed on the machine. `crates/testplugins/core` holds the DSP of the test plugins (a gain effect
+with latency, sidechain and tail, a deterministic synth, a note effect, a 2 000-param bank that
+grows a param at run time), `clap-shell` is a minimal raw `clap-sys` CLAP plugin (so the host is
+tested against a plugin not written with its own CLAP library), and `clap`, `clap-bad` (init fails),
+`clap-hang` (init never returns), `clap-crash` (segfaults in `create` or `process` when an
+environment variable asks for it), `clap-leak` (instance counters) and `clap-variants` (a MIDI-only
+synth, a mono effect, plugins that fail at activation or return errors or NaN) are the libraries.
 
-- **Building.** The tests build the libraries themselves: `atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap")` runs `cargo build -p ...` (the `CARGO` environment variable, the current `CARGO_TARGET_DIR`) under a lock file in the target directory, so several test binaries running at once do not race, and copies the library to `<target>/<profile>/clap-plugins/*.clap`. A missing or unbuildable plugin fails the test loudly with the package named. The scanner tests also need `atomik-plugin-scan` built (`cargo test -p atomik-plugin-scan` does it).
-- **Reference oracle.** The effect and synth tests compare the output of the plugin through the real CLAP backend and the `PluginDevice` with the DSP core run directly, bit for bit, at host blocks 1, 64, 333, 480 and 512 and workers 0, 1, 2, 4, under the allocation guard.
-- **Processes.** `plugin-scan/tests/scanner.rs` and `plugin-clap/tests/crash.rs` start real child processes (a scanner that is killed at a timeout, a plugin that segfaults); `hang.rs` proves the in-process loader would block, which is why scanning is out of process.
-- **Unsafe policy.** `plugin-host/tests/unsafe_policy.rs` fails if `unsafe` appears outside `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, or if a block lacks a `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go through the manager and the slot's message ring.
-- **VST3.** The same DSP core sits behind `vst3-shell` (a plugin shell over the `vst3` crate's plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`, `IUnitInfo`, note expressions, a headless `IPlugView`, a split component/controller variant) and the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a split gain, a mono effect, a 5.1-only effect the host refuses, plugins that fail to initialise, set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`, `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a restart, so a test must not announce it by hand.
-- **One suite, two formats.** `plugin-vst3/tests/{process,lifecycle,state,engine,leak}.rs` loop over `[Clap, Vst3]` with one `Kit` that maps the CLAP plain values the tests think in to each format's host values, so the host contract is checked against both backends through the same traits; `cross_format.rs` requires the CLAP and the VST3 effect to give the same bits (and a rack mixing both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits made in it). `render/tests/plugin_demo_vst3.rs` does the same for a whole project (`examples/projects/plugin-demo-vst3` against its all-CLAP twin).
-- **Live equals bounce.** A bounce with plugins runs the plugin loop of `render/src/plugin_pass.rs` (a pre-roll, then a manager poll and a PDC recompile after every 64-frame batch); the twin tests in `app/src/app_core_plugins*_tests.rs` therefore settle the live side first (`plugin_test_support::settle_steps`) and, where a restart is part of the test, step the live engine one batch per frame (`stepped`), the cadence of the bounce. `app_core_plugins_latency_tests.rs` has the twins of a saved latency and of a latency a container macro moves mid-song, in both formats.
-- **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs` and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against plugins installed on your machine); no golden hash is ever taken over a real plugin.
-- **Quick runs.** `cargo test -p atomik-plugin-host`, `-p atomik-plugin-clap`, `-p atomik-plugin-scan`, `-p atomik-plugin-vst3`, `cargo test -p atomik-render --test plugin_demo --test plugin_demo_vst3`, `cargo test -p atomik-app --lib -- plugin stress`.
+- **Building.** The tests build the libraries themselves:
+  `atomik_plugin_host::testing::clap_test_plugin("atomik-test-clap")` runs `cargo build -p ...` (the
+  `CARGO` environment variable, the current `CARGO_TARGET_DIR`) under a lock file in the target
+  directory, so several test binaries running at once do not race, and copies the library to
+  `<target>/<profile>/clap-plugins/*.clap`. A missing or unbuildable plugin fails the test loudly
+  with the package named. The scanner tests also need `atomik-plugin-scan` built
+  (`cargo test -p atomik-plugin-scan` does it).
+- **Reference oracle.** The effect and synth tests compare the output of the plugin through the real
+  CLAP backend and the `PluginDevice` with the DSP core run directly, bit for bit, at host blocks 1,
+  64, 333, 480 and 512 and workers 0, 1, 2, 4, under the allocation guard.
+- **Processes.** `plugin-scan/tests/scanner.rs` and `plugin-clap/tests/crash.rs` start real child
+  processes (a scanner that is killed at a timeout, a plugin that segfaults); `hang.rs` proves the
+  in-process loader would block, which is why scanning is out of process.
+- **Unsafe policy.** `plugin-host/tests/unsafe_policy.rs` fails if `unsafe` appears outside
+  `plugin-clap`, `plugin-vst3`, the test plugins and the audited `fpenv.rs`, or if a block lacks a
+  `SAFETY:` comment. The app, render and UI tests therefore cannot probe plugin libraries; they go
+  through the manager and the slot's message ring.
+- **VST3.** The same DSP core sits behind `vst3-shell` (a plugin shell over the `vst3` crate's
+  plugin-side helpers: factory, `IComponent`, `IAudioProcessor`, `IEditController`, `IMidiMapping`,
+  `IUnitInfo`, note expressions, a headless `IPlugView`, a split component/controller variant) and
+  the libraries `vst3` (the four test plugins, same names as the CLAP ones), `vst3-variants` (a
+  split gain, a mono effect, a 5.1-only effect the host refuses, plugins that fail to initialise,
+  set up, start or process, one that returns NaN), `vst3-bad`, `vst3-hang`, `vst3-crash`,
+  `vst3-leak`. `atomik_plugin_host::testing::vst3_test_plugin("atomik-test-vst3")` builds a library
+  and installs it as a `.vst3` **bundle** with the layout of the running OS. The shell announces a
+  latency change itself (`restartComponent(kLatencyChanged)`), like the CLAP effect asks for a
+  restart, so a test must not announce it by hand.
+- **One suite, two formats.** `plugin-vst3/tests/{process,lifecycle,state,engine,leak}.rs` loop over
+  `[Clap, Vst3]` with one `Kit` that maps the CLAP plain values the tests think in to each format's
+  host values, so the host contract is checked against both backends through the same traits;
+  `cross_format.rs` requires the CLAP and the VST3 effect to give the same bits (and a rack mixing
+  both to bounce identically across blocks and workers), `vst3_host.rs` holds the VST3 specifics
+  (proxies, buses, parameter queues, `IMidiMapping`, the state sections, restarts, the editor, edits
+  made in it). `render/tests/plugin_demo_vst3.rs` does the same for a whole project
+  (`examples/projects/plugin-demo-vst3` against its all-CLAP twin).
+- **Live equals bounce.** A bounce with plugins runs the plugin loop of `render/src/plugin_pass.rs`
+  (a pre-roll, then a manager poll and a PDC recompile after every 64-frame batch); the twin tests
+  in `app/src/app_core_plugins*_tests.rs` therefore settle the live side first
+  (`plugin_test_support::settle_steps`) and, where a restart is part of the test, step the live
+  engine one batch per frame (`stepped`), the cadence of the bounce.
+  `app_core_plugins_latency_tests.rs` has the twins of a saved latency and of a latency a container
+  macro moves mid-song, in both formats.
+- **Real plugins** are only for manual checks (the ignored tests in `app_core_plugins_real_tests.rs`
+  and `plugin-vst3/tests/real_plugin.rs`, driven by the `ATOMIK_REAL_*` environment variables, and
+  `plugin_scan_fallback.rs`, which scans the folders named by `ATOMIK_SCAN_SMOKE`, run against
+  plugins installed on your machine); no golden hash is ever taken over a real plugin.
+- **Quick runs.** `cargo test -p atomik-plugin-host`, `-p atomik-plugin-clap`,
+  `-p atomik-plugin-scan`, `-p atomik-plugin-vst3`,
+  `cargo test -p atomik-render --test plugin_demo --test plugin_demo_vst3`,
+  `cargo test -p atomik-app --lib -- plugin stress`.
 
 ## Key scripts and the workflow tests
 
-Keys are tested through the registry, never through a window. The OS is a parameter (`Os::Windows`, `Os::Mac`, `Os::Linux`), not `cfg`, so the macOS and Linux key paths run on any host.
+Keys are tested through the registry, never through a window. The OS is a parameter (`Os::Windows`,
+`Os::Mac`, `Os::Linux`), not `cfg`, so the macOS and Linux key paths run on any host.
 
-- **Router level.** `atomik_ui::keymap::script::KeyScript` (behind the `testkit` feature) drives `Keymap::resolve` with chord text (`down Cmd+D`, `ctx rack`, `expect command edit.duplicate`); the golden listings `crates/ui/tests/keymaps/{win,mac,linux}-{standard,legacy}.txt` pin every bundled binding.
-- **View level.** The views take a registry command (`ArrangementView::command`, `PianoRollView::command`, `RackView::command`) and answer `CommandOutcome::{Handled, Declined, NotApplicable}`; `crates/ui/tests/workflow_{arrangement,piano_roll,rack}.rs` assert the actions, the tool state, snap, zoom and follow of each command, and the gestures of every tool with the modifier roles held. `workflow_snapshot.rs` holds the display-list goldens of the toolbars and the create-mode browser (`ATOMIK_UPDATE_GOLDEN=1` regenerates them).
-- **Shell level.** `crates/app/src/shell_workflow_tests.rs` builds a headless `Shell` (a `NullBackend` session), presses chords with `event_for(os, "Ctrl+Return")` and asserts documents, transport position, layout, focus and the status line: the transport and numpad keys, the tools, zoom and follow, the pane keys and the Mac secondaries, the create keys, remaps that shadow or unbind a chord, the legacy profile, the one-time notice. Tests that touch `workflow.json` use their own temporary settings folder, never the real configuration directory.
+- **Router level.** `atomik_ui::keymap::script::KeyScript` (behind the `testkit` feature) drives
+  `Keymap::resolve` with chord text (`down Cmd+D`, `ctx rack`, `expect command edit.duplicate`); the
+  golden listings `crates/ui/tests/keymaps/{win,mac,linux}-{standard,legacy}.txt` pin every bundled
+  binding.
+- **View level.** The views take a registry command (`ArrangementView::command`,
+  `PianoRollView::command`, `RackView::command`) and answer
+  `CommandOutcome::{Handled, Declined, NotApplicable}`;
+  `crates/ui/tests/workflow_{arrangement,piano_roll,rack}.rs` assert the actions, the tool state,
+  snap, zoom and follow of each command, and the gestures of every tool with the modifier roles
+  held. `workflow_snapshot.rs` holds the display-list goldens of the toolbars and the create-mode
+  browser (`ATOMIK_UPDATE_GOLDEN=1` regenerates them).
+- **Shell level.** `crates/app/src/shell_workflow_tests.rs` builds a headless `Shell` (a
+  `NullBackend` session), presses chords with `event_for(os, "Ctrl+Return")` and asserts documents,
+  transport position, layout, focus and the status line: the transport and numpad keys, the tools,
+  zoom and follow, the pane keys and the Mac secondaries, the create keys, remaps that shadow or
+  unbind a chord, the legacy profile, the one-time notice. Tests that touch `workflow.json` use
+  their own temporary settings folder, never the real configuration directory.
 
-The keymap table test `every_legacy_key_is_unchanged_in_standard_or_a_listed_move` checks every legacy binding against the standard profile (a reviewed constant lists the moved keys), and a shell test binds the commands that are not handled and asserts they change nothing (`auto_route_does_nothing_without_a_selected_device_or_in_a_time_view`).
+The keymap table test `every_legacy_key_is_unchanged_in_standard_or_a_listed_move` checks every
+legacy binding against the standard profile (a reviewed constant lists the moved keys), and a shell
+test binds the commands that are not handled and asserts they change nothing
+(`auto_route_does_nothing_without_a_selected_device_or_in_a_time_view`).
 
-The clipboard, rack selection and context menus add three layers on the same pattern. `crates/ui/tests/clip_multiselect.rs` (Shift and Ctrl clicks across tracks, the rubber band, a lane drag, a Ctrl copy drag and a group drag applied to a real `Document` so the undo steps are counted), `crates/model/tests/move_clips.rs` (`MoveClips`: lane rule, copy ids, rejections, one merged step for a group drag), `crates/ui/tests/workflow_selection.rs`, `workflow_arrangement_selection.rs` and the selection tests in `workflow_piano_roll.rs` drive the views with pointer events and commands (toggle and range roles per OS, select all, the neighbour keys, delete, duplicate, join, the group drag, the context-menu requests). `crates/app/src/app_core_clipboard_tests.rs` runs the clipboard in the app core with the recording sink (every paste is one undo step and compared as saved text; the clipboard survives New and Open; a cross-song paste registers its assets). `crates/app/src/shell_clipboard_tests.rs` presses the clipboard chords and right-clicks in a headless `Shell` on Windows and macOS, checks the menu items, their enabling and the derived shortcut text, runs a seeded random gesture script (no refused command, undo returns the empty rack) and holds the display-list goldens of the menus (`rack_context_menu_*`, `arrangement_context_menu_*` in `crates/app/tests/golden`, `rack_selection_*` and `rack_group_drag` in `crates/ui/tests/golden`).
+The clipboard, rack selection and context menus add three layers on the same pattern.
+`crates/ui/tests/clip_multiselect.rs` (Shift and Ctrl clicks across tracks, the rubber band, a lane
+drag, a Ctrl copy drag and a group drag applied to a real `Document` so the undo steps are counted),
+`crates/model/tests/move_clips.rs` (`MoveClips`: lane rule, copy ids, rejections, one merged step
+for a group drag), `crates/ui/tests/workflow_selection.rs`, `workflow_arrangement_selection.rs` and
+the selection tests in `workflow_piano_roll.rs` drive the views with pointer events and commands
+(toggle and range roles per OS, select all, the neighbour keys, delete, duplicate, join, the group
+drag, the context-menu requests). `crates/app/src/app_core_clipboard_tests.rs` runs the clipboard in
+the app core with the recording sink (every paste is one undo step and compared as saved text; the
+clipboard survives New and Open; a cross-song paste registers its assets).
+`crates/app/src/shell_clipboard_tests.rs` presses the clipboard chords and right-clicks in a
+headless `Shell` on Windows and macOS, checks the menu items, their enabling and the derived
+shortcut text, runs a seeded random gesture script (no refused command, undo returns the empty rack)
+and holds the display-list goldens of the menus (`rack_context_menu_*`, `arrangement_context_menu_*`
+in `crates/app/tests/golden`, `rack_selection_*` and `rack_group_drag` in `crates/ui/tests/golden`).
 
-The creation chain has `crates/model/tests/workflow_create.rs` (the rules table: instrument with channel, track and arming, no track for an audio-only device, no channel for a silent one, the options, effects onto a channel, a return, a device or nothing, the master seam, auto-route, disconnect, delete bridging; one undo step and byte-identical redo each), `workflow_create_props.rs` (random create, auto-route, disconnect, delete, undo and redo sequences compared as saved text), `crates/ui/tests/workflow_create.rs` (the commands the browser and the rack emit, Shift and Alt), `crates/app/src/app_core_create_tests.rs` (arming and selection in the core, the auto-armed list, live equals bounce for a created project) and `shell_create_tests.rs` (key scripts on three operating systems, the Workflow setting, the menu item).
+The creation chain has `crates/model/tests/workflow_create.rs` (the rules table: instrument with
+channel, track and arming, no track for an audio-only device, no channel for a silent one, the
+options, effects onto a channel, a return, a device or nothing, the master seam, auto-route,
+disconnect, delete bridging; one undo step and byte-identical redo each), `workflow_create_props.rs`
+(random create, auto-route, disconnect, delete, undo and redo sequences compared as saved text),
+`crates/ui/tests/workflow_create.rs` (the commands the browser and the rack emit, Shift and Alt),
+`crates/app/src/app_core_create_tests.rs` (arming and selection in the core, the auto-armed list,
+live equals bounce for a created project) and `shell_create_tests.rs` (key scripts on three
+operating systems, the Workflow setting, the menu item).
 
-The master section and Audio I/O are covered in the app by `crates/app/src/app_core_starter_tests.rs` (File, New is the starter and Open never creates a master; the status text after a create with the master selected; the host channel counts reaching the lamps; the Audio I/O meter feed on a recording sink and on a real offline engine, including the clip latch and the console not losing the peaks the feed read; the track input cables; live equals bounce for the starter with an instrument and a send effect, and with the meter feed running every block; the example project opens as it is), `shell_console_tests.rs` (the one-time notice, File, New through the shell), `shell_create_tests.rs` (a new project as key scripts on three operating systems, the ninth effect), `cli.rs` (the start document) and `crates/app/tests/smoke.rs` (the app starts with the starter project and paints it); in `atomik-render`, `crates/render/tests/master_demo.rs` generates and checks `examples/projects/master-demo` (regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test master_demo regenerate`).
+The master section and Audio I/O are covered in the app by
+`crates/app/src/app_core_starter_tests.rs` (File, New is the starter and Open never creates a
+master; the status text after a create with the master selected; the host channel counts reaching
+the lamps; the Audio I/O meter feed on a recording sink and on a real offline engine, including the
+clip latch and the console not losing the peaks the feed read; the track input cables; live equals
+bounce for the starter with an instrument and a send effect, and with the meter feed running every
+block; the example project opens as it is), `shell_console_tests.rs` (the one-time notice, File, New
+through the shell), `shell_create_tests.rs` (a new project as key scripts on three operating
+systems, the ninth effect), `cli.rs` (the start document) and `crates/app/tests/smoke.rs` (the app
+starts with the starter project and paints it); in `atomik-render`,
+`crates/render/tests/master_demo.rs` generates and checks `examples/projects/master-demo`
+(regenerate with
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test master_demo regenerate`).
 
 ## Markers and ranges
 
-`crates/model/tests/markers.rs` covers the commands (sorting, validation, undo, drag merging), project format 14 (canonical save, version 13 files, JSON-path errors) and the previous and next marker helpers. `crates/ui/tests/markers.rs` drives the arrangement with pointer events and commands (adding, dragging, renaming in place, ranges, the loop from a range, the context-menu commands, the list) and holds the pure edits; `cargo test -p atomik-ui --test markers -- --ignored` writes a preview PNG to `target/preview`. `crates/app/src/shell_marker_tests.rs` presses the keys in a headless `Shell` (the `Text` context while a name is typed, the View toggles and the saved view state, the menus), and `app_core_marker_tests.rs` checks that a marker edit is one undo step and that the recording sink hears nothing of it.
+`crates/model/tests/markers.rs` covers the commands (sorting, validation, undo, drag merging),
+project format 14 (canonical save, version 13 files, JSON-path errors) and the previous and next
+marker helpers. `crates/ui/tests/markers.rs` drives the arrangement with pointer events and commands
+(adding, dragging, renaming in place, ranges, the loop from a range, the context-menu commands, the
+list) and holds the pure edits; `cargo test -p atomik-ui --test markers -- --ignored` writes a
+preview PNG to `target/preview`. `crates/app/src/shell_marker_tests.rs` presses the keys in a
+headless `Shell` (the `Text` context while a name is typed, the View toggles and the saved view
+state, the menus), and `app_core_marker_tests.rs` checks that a marker edit is one undo step and
+that the recording sink hears nothing of it.
 
 ## Deep zoom and vertical zoom
 
-`crates/audio-file` tests `raw_min_max` against the peak buckets over the same frames (and the edges: before 0, past the end, NaN). In `atomik-ui`, `timeline.rs` holds the grid tests at extreme zooms (a readable step at every zoom from the deepest to far out, no zero step or runaway line count for zero, negative, NaN and infinite zooms, thinned lines for a range far too long, the divisor chain of the steps) and the snap tests (the exact tick steps of the triplets, triplet rounding that restarts at bar lines and follows a meter change, Grid following the visible grid); `wave_paint.rs` tests which source a zoom picks, that sample columns equal pyramid buckets where both are exact, the line mode threshold and `line_frames`; `crates/ui/tests/deep_zoom.rs` paints the arrangement, the sample editor and the slice editor at deep zoom (the line and the dots, no line without samples, the paint cost bounded across zooms, samples placed at their real time); `crates/ui/tests/vertical_zoom.rs` covers row heights and the zoom limits, the header edge drag (one merged undo step, the zoom, the limits, Escape, double-click), Alt+wheel anchoring, the commands, clips and buttons hit at heights from 24 to 400 px, painting at both extremes and the piano roll's key zoom (anchoring, notes, keys and the pencil at every key height). `crates/model/tests/track_heights.rs` covers the commands, undo, drag merging, validation and project format 15; the app tests (`shell_workflow_tests.rs`, `ui_state.rs`, `app_core_audio_tests.rs`) check the keys, the saved zooms and that RAM assets, and only those, hand their samples to the views.
+`crates/audio-file` tests `raw_min_max` against the peak buckets over the same frames (and the
+edges: before 0, past the end, NaN). In `atomik-ui`, `timeline.rs` holds the grid tests at extreme
+zooms (a readable step at every zoom from the deepest to far out, no zero step or runaway line count
+for zero, negative, NaN and infinite zooms, thinned lines for a range far too long, the divisor
+chain of the steps) and the snap tests (the exact tick steps of the triplets, triplet rounding that
+restarts at bar lines and follows a meter change, Grid following the visible grid); `wave_paint.rs`
+tests which source a zoom picks, that sample columns equal pyramid buckets where both are exact, the
+line mode threshold and `line_frames`; `crates/ui/tests/deep_zoom.rs` paints the arrangement, the
+sample editor and the slice editor at deep zoom (the line and the dots, no line without samples, the
+paint cost bounded across zooms, samples placed at their real time);
+`crates/ui/tests/vertical_zoom.rs` covers row heights and the zoom limits, the header edge drag (one
+merged undo step, the zoom, the limits, Escape, double-click), Alt+wheel anchoring, the commands,
+clips and buttons hit at heights from 24 to 400 px, painting at both extremes and the piano roll's
+key zoom (anchoring, notes, keys and the pencil at every key height).
+`crates/model/tests/track_heights.rs` covers the commands, undo, drag merging, validation and
+project format 15; the app tests (`shell_workflow_tests.rs`, `ui_state.rs`,
+`app_core_audio_tests.rs`) check the keys, the saved zooms and that RAM assets, and only those, hand
+their samples to the views.
 
 ## Scales, chords and fold
 
-`crates/core/src/theory.rs` tests every scale's intervals, the modes as rotations of Major, nearest-key rounding with its ties at both ends of the keyboard, degree stepping across octaves and at keys 0 and 127, `degrees_between` as the inverse of `step`, every chord and inversion, the diatonic chords of C major and A minor, and detection, and `crates/model/src/theory.rs` pins the moved implementation against a plain reference for every scale, root and key (`theory_core_matches_model_for_every_scale_and_key`) and the allocation-free chord helpers against the `Vec` ones for every kind and inversion. `crates/devices/src/note_fx/tests.rs` covers the note router (an Off releases what its On emitted after a param change, reference counts, ascending `close_all`, stop, locate and loop-wrap sequences, a random-script property test that nothing hangs or doubles), the player bypass and the capacity-safe emitter. `crates/model/tests/clip_scale.rs` covers `SetClipScale` (undo, chromatic as none, note clips only, split, duplicate, join) and project format 16 (canonical round trip, every kind, version 15 files, JSON-path errors). In `atomik-ui`, `key_rows.rs` and `chord_edit.rs` hold the row mapping and the pure edits with exact ticks (chordify, every arpeggio pattern with octaves, gates and triplet steps, the pinned random sequence, strum up and down), `context_menu.rs` tests submenus (hover, click, nesting, the side they open on, the release of the opening press), and `crates/ui/tests/piano_roll_scales.rs` drives the roll through a real `Document`: the scale commands, the scale bar, hit testing, drawing, dragging, band select, audition and the key zoom in both folds, snap to scale for the pencil, drags and transposes, conform, the chord stamp (audition, drag to length, Escape, merging with existing notes), and chordify, arpeggiate and strum with undo as one step; `seq_snapshot.rs` holds the display-list goldens of a scale and the two folds (`cargo test -p atomik-ui --test seq_preview -- --ignored` writes PNGs). In `atomik-app`, `context_menus.rs` checks that every item of the scale and chord menus is a registry command with an argument it takes, and `shell_scale_tests.rs` clicks through the menus and the scale bar in a headless `Shell`, presses `Shift+S`, `Shift+F` and `Shift+C`, checks the saved window state and holds the golden of the notes menu with its submenus open.
+`crates/core/src/theory.rs` tests every scale's intervals, the modes as rotations of Major,
+nearest-key rounding with its ties at both ends of the keyboard, degree stepping across octaves and
+at keys 0 and 127, `degrees_between` as the inverse of `step`, every chord and inversion, the
+diatonic chords of C major and A minor, and detection, and `crates/model/src/theory.rs` pins the
+moved implementation against a plain reference for every scale, root and key
+(`theory_core_matches_model_for_every_scale_and_key`) and the allocation-free chord helpers against
+the `Vec` ones for every kind and inversion. `crates/devices/src/note_fx/tests.rs` covers the note
+router (an Off releases what its On emitted after a param change, reference counts, ascending
+`close_all`, stop, locate and loop-wrap sequences, a random-script property test that nothing hangs
+or doubles), the player bypass and the capacity-safe emitter. `crates/model/tests/clip_scale.rs`
+covers `SetClipScale` (undo, chromatic as none, note clips only, split, duplicate, join) and project
+format 16 (canonical round trip, every kind, version 15 files, JSON-path errors). In `atomik-ui`,
+`key_rows.rs` and `chord_edit.rs` hold the row mapping and the pure edits with exact ticks
+(chordify, every arpeggio pattern with octaves, gates and triplet steps, the pinned random sequence,
+strum up and down), `context_menu.rs` tests submenus (hover, click, nesting, the side they open on,
+the release of the opening press), and `crates/ui/tests/piano_roll_scales.rs` drives the roll
+through a real `Document`: the scale commands, the scale bar, hit testing, drawing, dragging, band
+select, audition and the key zoom in both folds, snap to scale for the pencil, drags and transposes,
+conform, the chord stamp (audition, drag to length, Escape, merging with existing notes), and
+chordify, arpeggiate and strum with undo as one step; `seq_snapshot.rs` holds the display-list
+goldens of a scale and the two folds (`cargo test -p atomik-ui --test seq_preview -- --ignored`
+writes PNGs). In `atomik-app`, `context_menus.rs` checks that every item of the scale and chord
+menus is a registry command with an argument it takes, and `shell_scale_tests.rs` clicks through the
+menus and the scale bar in a headless `Shell`, presses `Shift+S`, `Shift+F` and `Shift+C`, checks
+the saved window state and holds the golden of the notes menu with its submenus open.
 
 ## The Character effect in the app and the bounce
 
-`crates/app/src/app_core_character_tests.rs` holds the app half of the Character tests: the four meter values reaching the view (recording sink and a real offline engine, the inner Character of a container by path key), the tiered latency published by the real engine (no epoch bump inside a class, one at the end of a fade across the classes), the routing recompile on a class change, and the live twins of the `character-demo` bounce (host blocks 64, 480 and 512; a preset change across the classes made through the app; undo, redo and an engine restart; a class change driven by a song lane, stepped one batch per frame like the bounce loop). A live twin must start from a cold engine: devices keep free-running state, so an engine that rendered idle frames before Play no longer equals a bounce bit for bit. In `atomik-render`, `tests/character_demo.rs` generates and checks the example project (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test character_demo regenerate`; determinism across host blocks 64, 333, 480, 512 and workers 0, 2, 3) and `tests/character_pdc.rs` aligns identical clicks through a Character in both latency classes and across a class change in the middle of the song (the regression test of the bounce that did not follow the engine's latency epoch). `--stress-character` is tested in `stress.rs` (structure, preset cycle, class changes under load, determinism, combination with the other loads) and `cli.rs`.
+`crates/app/src/app_core_character_tests.rs` holds the app half of the Character tests: the four
+meter values reaching the view (recording sink and a real offline engine, the inner Character of a
+container by path key), the tiered latency published by the real engine (no epoch bump inside a
+class, one at the end of a fade across the classes), the routing recompile on a class change, and
+the live twins of the `character-demo` bounce (host blocks 64, 480 and 512; a preset change across
+the classes made through the app; undo, redo and an engine restart; a class change driven by a song
+lane, stepped one batch per frame like the bounce loop). A live twin must start from a cold engine:
+devices keep free-running state, so an engine that rendered idle frames before Play no longer equals
+a bounce bit for bit. In `atomik-render`, `tests/character_demo.rs` generates and checks the example
+project (`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test character_demo regenerate`;
+determinism across host blocks 64, 333, 480, 512 and workers 0, 2, 3) and `tests/character_pdc.rs`
+aligns identical clicks through a Character in both latency classes and across a class change in the
+middle of the song (the regression test of the bounce that did not follow the engine's latency
+epoch). `--stress-character` is tested in `stress.rs` (structure, preset cycle, class changes under
+load, determinism, combination with the other loads) and `cli.rs`.
 
 ## The guitar amp
 
-`crates/dsp/src/amp/tests.rs` tests the blocks one by one (the preamp is linear at gain 0 and saturates at gain 10, the clips make even and odd harmonics as designed, the tone knobs move their bands and load each other, sag squashes a loud burst and recovers, presence and depth shape the ends, the three cabinets roll off the top and are about equally loud, `Off` is a wire, a switch of cabinet glides without a click) and measures aliasing: a 5859.375 Hz sine (bin 1000 of 8192 at 48 kHz, so its harmonics fall on bins and whatever sits between them folded back) through the preamp and power amp is at least 10 dB cleaner at 4x than at 1x and below −45 dB. `crates/devices/src/guitar_amp/tests.rs` repeats the measurement through the whole device (below −40 dB with the cabinet off) and tests the descriptor, the setup table against the descriptor (every param once, in range, the first setup equal to the defaults), the gate, the cabinets and mic, the effects and the tempo sync, the exact dry signal of a zero mix, the mono input rule, determinism at 44.1, 48 and 96 kHz and extreme and non-finite params; the generic tests of `lib.rs` run the device under the allocation guard, and `qa_devices.rs` runs random params. The app half is `crates/app/src/app_core_setups_tests.rs` (choosing a setup is one batch and one undo step, from the UI path too) and the UI half `crates/ui/tests/guitar_amp_panel.rs` plus the panel goldens in `fx_panels.rs`.
+`crates/dsp/src/amp/tests.rs` tests the blocks one by one (the preamp is linear at gain 0 and
+saturates at gain 10, the clips make even and odd harmonics as designed, the tone knobs move their
+bands and load each other, sag squashes a loud burst and recovers, presence and depth shape the
+ends, the three cabinets roll off the top and are about equally loud, `Off` is a wire, a switch of
+cabinet glides without a click) and measures aliasing: a 5859.375 Hz sine (bin 1000 of 8192 at 48
+kHz, so its harmonics fall on bins and whatever sits between them folded back) through the preamp
+and power amp is at least 10 dB cleaner at 4x than at 1x and below −45 dB.
+`crates/devices/src/guitar_amp/tests.rs` repeats the measurement through the whole device (below −40
+dB with the cabinet off) and tests the descriptor, the setup table against the descriptor (every
+param once, in range, the first setup equal to the defaults), the gate, the cabinets and mic, the
+effects and the tempo sync, the exact dry signal of a zero mix, the mono input rule, determinism at
+44.1, 48 and 96 kHz and extreme and non-finite params; the generic tests of `lib.rs` run the device
+under the allocation guard, and `qa_devices.rs` runs random params. The app half is
+`crates/app/src/app_core_setups_tests.rs` (choosing a setup is one batch and one undo step, from the
+UI path too) and the UI half `crates/ui/tests/guitar_amp_panel.rs` plus the panel goldens in
+`fx_panels.rs`.
 
-`crates/render/tests/guitar_amp_demo.rs` bounces a synthesised guitar (Karplus-Strong plucks and a faint hum, generated by the test with IEEE arithmetic only, so no audio file is committed) through each setup with the engine's host input: it checks the level match, bit-identical output at every host block size under the allocation guard, that the setups differ, the gate, the delay and reverb tail and the stereo width, and a fingerprint (`golden/guitar-amp.fingerprint.json`, the RMS per half second, ±0.5 dB on every platform). After an intentional change to the sound, listen to the five renders and regenerate with `ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test guitar_amp_demo fingerprint`. `fx_pdc.rs` checks that the amp's 35 frames of latency are compensated.
+`crates/render/tests/guitar_amp_demo.rs` bounces a synthesised guitar (Karplus-Strong plucks and a
+faint hum, generated by the test with IEEE arithmetic only, so no audio file is committed) through
+each setup with the engine's host input: it checks the level match, bit-identical output at every
+host block size under the allocation guard, that the setups differ, the gate, the delay and reverb
+tail and the stereo width, and a fingerprint (`golden/guitar-amp.fingerprint.json`, the RMS per half
+second, ±0.5 dB on every platform). After an intentional change to the sound, listen to the five
+renders and regenerate with
+`ATOMIK_UPDATE_GOLDEN=1 cargo test -p atomik-render --test guitar_amp_demo fingerprint`. `fx_pdc.rs`
+checks that the amp's 35 frames of latency are compensated.
 
 ## QA with the MCP server
 
-[MCP.md](MCP.md) describes `atomik-mcp`, a development server that gives an MCP client the checks a person does by hand: bounce a project or patch and compare it with an earlier render, measure a WAV (levels, silence, loudness windows, spectrum), and drive a headless `Shell` (menu commands, pointer, keys, the texts the UI draws, PNG screenshots, undo, save, a bounce of the open document, and `session_meters`, which reads the spectrum and phase meter devices at a position of the song). Use it for the QA of a change before review, and to keep the evidence; it does not replace the tests of this page, and a behaviour it shows is worth a headless test.
+[MCP.md](MCP.md) describes `atomik-mcp`, a development server that gives an MCP client the checks a
+person does by hand: bounce a project or patch and compare it with an earlier render, measure a WAV
+(levels, silence, loudness windows, spectrum), and drive a headless `Shell` (menu commands, pointer,
+keys, the texts the UI draws, PNG screenshots, undo, save, a bounce of the open document, and
+`session_meters`, which reads the spectrum and phase meter devices at a position of the song). Use
+it for the QA of a change before review, and to keep the evidence; it does not replace the tests of
+this page, and a behaviour it shows is worth a headless test.
 
-`crates/mcp/tests` tests the server itself: `protocol.rs` (the handshake, the tool list, the JSON-RPC errors, the real binary over stdio), `stateless.rs` (every stateless tool against the example projects: bounces bit-identical across host blocks 64, 333 and 512 and worker counts 0 and 2, a changed patch caught against its reference, the plugin refusal, the path policy for reads, writes and `..` through a folder that does not exist yet) and `session.rs` (every session tool against a real headless shell: commands and their toggles, undo by command and by chord, the discard confirmation, the dialog requests, pointer and key input, texts at two scales, screenshots, save and read back, and a session bounce that equals the bounce of the same file and hears an edit). The analysis maths (levels, silence, windows, spectrum, comparison) has unit tests in `crates/mcp/src/analysis.rs`.
+`crates/mcp/tests` tests the server itself: `protocol.rs` (the handshake, the tool list, the
+JSON-RPC errors, the real binary over stdio), `stateless.rs` (every stateless tool against the
+example projects: bounces bit-identical across host blocks 64, 333 and 512 and worker counts 0 and
+2, a changed patch caught against its reference, the plugin refusal, the path policy for reads,
+writes and `..` through a folder that does not exist yet) and `session.rs` (every session tool
+against a real headless shell: commands and their toggles, undo by command and by chord, the discard
+confirmation, the dialog requests, pointer and key input, texts at two scales, screenshots, save and
+read back, and a session bounce that equals the bounce of the same file and hears an edit). The
+analysis maths (levels, silence, windows, spectrum, comparison) has unit tests in
+`crates/mcp/src/analysis.rs`.
 
 ## Relinking missing audio
 
-`crates/model/tests/relink.rs` covers `Command::RelinkAsset` (every reference kind swapped, a container's inner sampler included, one undo step with undo and redo restoring the document byte for byte, the sync ops, every refusal, a replacement too short for zones or a clip offset, a saved and reloaded project) with a property test over random relink, undo and redo runs. The app side is `crates/app/src/app_core_relink_tests.rs` (a different file replaces the asset with the clips loading, a non-silent bounce that is the same on every run, save and reopen without missing files, undo bringing the missing list back and redo clearing it, the same audio restoring the file with no document change and no undo step, a folder search matching by name in any case through nested folders and leaving the rest, a file that does not decode reported by name, the sampler editor's missing flag following relink, undo and redo), `audio_relink.rs` (the bounded, deterministic scan) and `shell_relink_tests.rs` (the menu item enabled only while audio is missing, the panel, LOCATE... and SEARCH FOLDER... as platform requests, Esc). `crates/ui/tests/relink_panel.rs` covers the panel's paint, its buttons, scrolling and a small window, and `crates/mcp/tests/session.rs` drives `session_relink` (argument validation, path policy, the end-to-end flow with a bounce, asset choice by name, a folder search).
+`crates/model/tests/relink.rs` covers `Command::RelinkAsset` (every reference kind swapped, a
+container's inner sampler included, one undo step with undo and redo restoring the document byte for
+byte, the sync ops, every refusal, a replacement too short for zones or a clip offset, a saved and
+reloaded project) with a property test over random relink, undo and redo runs. The app side is
+`crates/app/src/app_core_relink_tests.rs` (a different file replaces the asset with the clips
+loading, a non-silent bounce that is the same on every run, save and reopen without missing files,
+undo bringing the missing list back and redo clearing it, the same audio restoring the file with no
+document change and no undo step, a folder search matching by name in any case through nested
+folders and leaving the rest, a file that does not decode reported by name, the sampler editor's
+missing flag following relink, undo and redo), `audio_relink.rs` (the bounded, deterministic scan)
+and `shell_relink_tests.rs` (the menu item enabled only while audio is missing, the panel, LOCATE...
+and SEARCH FOLDER... as platform requests, Esc). `crates/ui/tests/relink_panel.rs` covers the
+panel's paint, its buttons, scrolling and a small window, and `crates/mcp/tests/session.rs` drives
+`session_relink` (argument validation, path policy, the end-to-end flow with a bounce, asset choice
+by name, a folder search).
 
 ## MIDI files
 
-Each layer has its tests. `crates/midi-io/src/smf_tests.rs` reads hand-made files (running status, velocity 0, every channel message, meta events, SysEx and unknown meta skipped, RIFF-wrapped files, truncated chunks), refuses the malformed ones with the right error (type 2, SMPTE, no header, no track, a data byte with no status, a five-byte delta) and runs property tests that feed random bytes, random track bodies and mutated or truncated valid files to the reader (it must never panic) and write-then-read random files. `crates/app/src/midi_file_tests.rs` holds the conversion: a clip and a whole song (tempo steps, meter, markers, controllers of every kind, off-grid ticks, a clip length that is not a bar) exported and imported back equal, loops and muted notes in the export, overlapping notes of one key, a ramp as a staircase, a linear controller sampled, the type 0 split by channel with a different division, the note repairs (retrigger, zero length, hanging note, stray note-off), controller clean-up, tempo, meter and marker mapping, files with no notes, SMPTE and clamped huge ticks. `crates/model/tests/midi_import.rs` covers `ImportMidi` (one undo step, unarmed tracks and names, tempo, meter and markers, the song end, every rejection leaving the document alone). `crates/app/src/app_core_midi_tests.rs` and `shell_midi_tests.rs` run the commands on a headless core and `Shell`: what an export picks, a song written to a file and imported into a new project, one clip on a selected track, new tracks at the playhead, bad, truncated and corrupted files (the document stays valid), the menu entries and their enabled flags, the dialog requests and a file dropped on the window. The QA server's `session_midi` has a test in `crates/mcp/tests/session.rs`.
+Each layer has its tests. `crates/midi-io/src/smf_tests.rs` reads hand-made files (running status,
+velocity 0, every channel message, meta events, SysEx and unknown meta skipped, RIFF-wrapped files,
+truncated chunks), refuses the malformed ones with the right error (type 2, SMPTE, no header, no
+track, a data byte with no status, a five-byte delta) and runs property tests that feed random
+bytes, random track bodies and mutated or truncated valid files to the reader (it must never panic)
+and write-then-read random files. `crates/app/src/midi_file_tests.rs` holds the conversion: a clip
+and a whole song (tempo steps, meter, markers, controllers of every kind, off-grid ticks, a clip
+length that is not a bar) exported and imported back equal, loops and muted notes in the export,
+overlapping notes of one key, a ramp as a staircase, a linear controller sampled, the type 0 split
+by channel with a different division, the note repairs (retrigger, zero length, hanging note, stray
+note-off), controller clean-up, tempo, meter and marker mapping, files with no notes, SMPTE and
+clamped huge ticks. `crates/model/tests/midi_import.rs` covers `ImportMidi` (one undo step, unarmed
+tracks and names, tempo, meter and markers, the song end, every rejection leaving the document
+alone). `crates/app/src/app_core_midi_tests.rs` and `shell_midi_tests.rs` run the commands on a
+headless core and `Shell`: what an export picks, a song written to a file and imported into a new
+project, one clip on a selected track, new tracks at the playhead, bad, truncated and corrupted
+files (the document stays valid), the menu entries and their enabled flags, the dialog requests and
+a file dropped on the window. The QA server's `session_midi` has a test in
+`crates/mcp/tests/session.rs`.
 
 Hand checks, not automated (they need another program or a real window):
 
-- Export a song from the app, open the `.mid` in another DAW or a notation program and check the tempo changes, time signatures, markers, track names and the notes; then import a file made there (and a type 0 file with drums on channel 10) and listen to it.
-- Drag a `.mid` from the operating system's file manager onto the arrangement and onto the rack, and check the hover and the new tracks.
-- Import a long, dense file (a few hundred thousand events) and check that the window stays responsive and that undo removes it in one step.
-- Try File > Import MIDI with a note track selected and with nothing selected, and the three Export MIDI entries with and without a selection, in the in-window menu and, on macOS, the native one.
+- Export a song from the app, open the `.mid` in another DAW or a notation program and check the
+  tempo changes, time signatures, markers, track names and the notes; then import a file made there
+  (and a type 0 file with drums on channel 10) and listen to it.
+- Drag a `.mid` from the operating system's file manager onto the arrangement and onto the rack, and
+  check the hover and the new tracks.
+- Import a long, dense file (a few hundred thousand events) and check that the window stays
+  responsive and that undo removes it in one step.
+- Try File > Import MIDI with a note track selected and with nothing selected, and the three Export
+  MIDI entries with and without a selection, in the in-window menu and, on macOS, the native one.
 
 ## Player stacks
 
-`crates/model/tests/player_stack.rs` covers `CreatePlayer` (cables, the entry, the rack column, one undo step, the plain add), the second player, deleting players with and without bridging, pasting a track, the stale entry and format 31 (round trip, version 30 files, refusals). `crates/render/tests/player_stack.rs` checks the engine input (notes to the entry, automation with the instrument, two tracks at one player), that a bounce and a freeze through a stack equal the edited clip bit for bit at blocks 64, 333, 512 and 1000 and workers 0 to 3, and that a stale entry plays the track's own device. The app tests cover the live keyboard, the audition, the song the engine receives and recording; the UI tests the browser (Shift, the setting, rack drops).
+`crates/model/tests/player_stack.rs` covers `CreatePlayer` (cables, the entry, the rack column, one
+undo step, the plain add), the second player, deleting players with and without bridging, pasting a
+track, the stale entry and format 31 (round trip, version 30 files, refusals).
+`crates/render/tests/player_stack.rs` checks the engine input (notes to the entry, automation with
+the instrument, two tracks at one player), that a bounce and a freeze through a stack equal the
+edited clip bit for bit at blocks 64, 333, 512 and 1000 and workers 0 to 3, and that a stale entry
+plays the track's own device. The app tests cover the live keyboard, the audition, the song the
+engine receives and recording; the UI tests the browser (Shift, the setting, rack drops).
 
 Hand checks, not automated:
 
-- Select a synth, add an arpeggiator and a note filter from the browser, hold a chord on a MIDI keyboard with the track armed and listen to the stack; delete the middle player and hear the rest keep playing; undo the creation and check that the rack, the cables and the entry are back.
-- Record a few bars through an arpeggiator on an armed track: the clip holds the notes you played, not the arpeggio. Freeze the track and compare with the live sound.
+- Select a synth, add an arpeggiator and a note filter from the browser, hold a chord on a MIDI
+  keyboard with the track armed and listen to the stack; delete the middle player and hear the rest
+  keep playing; undo the creation and check that the rack, the cables and the entry are back.
+- Record a few bars through an arpeggiator on an armed track: the clip holds the notes you played,
+  not the arpeggio. Freeze the track and compare with the live sound.
 
 ## Note lanes
 
-Each layer has its tests. `crates/model/tests/note_lanes.rs` covers the four commands (one undo step each, every refusal changing nothing, a proptest that random adds, removes and moves keep the lanes contiguous and undo restores them), `ClipMove.lane` and `PasteClips.lane`, and the flattening (a proptest that splitting a lane's clips across lanes flattens identically, mute, the tie rule). The project tests round-trip format 30 byte for byte and refuse each bad shape. `crates/render` bounces two lanes bit for bit like one lane, silences a muted lane, renders a muted lane's clips in Bounce in Place and leaves it out of a freeze, and `crates/engine` checks chase from a second lane. `crates/ui/tests/note_lanes.rs` drives the rows, headers, mute button, chip, selected lane, clip creation on a lane, drags between lanes, rename and the lane commands; the app tests record to the selected lane (and fall back when it is deleted), import and paste on it, open a third-lane clip in the piano roll and export MIDI with lanes merged; the MCP tests read the lane fields and add, rename and mute a lane in a session.
+Each layer has its tests. `crates/model/tests/note_lanes.rs` covers the four commands (one undo step
+each, every refusal changing nothing, a proptest that random adds, removes and moves keep the lanes
+contiguous and undo restores them), `ClipMove.lane` and `PasteClips.lane`, and the flattening (a
+proptest that splitting a lane's clips across lanes flattens identically, mute, the tie rule). The
+project tests round-trip format 30 byte for byte and refuse each bad shape. `crates/render` bounces
+two lanes bit for bit like one lane, silences a muted lane, renders a muted lane's clips in Bounce
+in Place and leaves it out of a freeze, and `crates/engine` checks chase from a second lane.
+`crates/ui/tests/note_lanes.rs` drives the rows, headers, mute button, chip, selected lane, clip
+creation on a lane, drags between lanes, rename and the lane commands; the app tests record to the
+selected lane (and fall back when it is deleted), import and paste on it, open a third-lane clip in
+the piano roll and export MIDI with lanes merged; the MCP tests read the lane fields and add, rename
+and mute a lane in a session.
 
 Hand checks, not automated:
 
-- Add three lanes to a track, record a different part on each (pick the lane by clicking its header), mute and unmute lanes during playback and listen to the merge.
-- Drag clips between lanes and tracks with different lane counts and check the drop highlight, in the dark and light themes and at the smallest and largest track heights (the chip on lane 0 must hide when the row is short).
+- Add three lanes to a track, record a different part on each (pick the lane by clicking its
+  header), mute and unmute lanes during playback and listen to the merge.
+- Drag clips between lanes and tracks with different lane counts and check the drop highlight, in
+  the dark and light themes and at the smallest and largest track heights (the chip on lane 0 must
+  hide when the row is short).
 
 ## Track organisation
 
-Each layer has its tests. `crates/model/tests/organise.rs` runs the eleven commands through a `Document`: grouping gathers the tracks at the first one and is one undo step, nesting and its depth limit, ungrouping into the parent, every refusal changing nothing, `MoveTrack` and `MoveGroup` (a track passing its neighbour, leaving a folder at its edge and entering one, a folder jumping a track or a whole folder, a single track leaving its folder taking the folder with it, the quiet ends of the list, `can_move_track` and `can_move_group` agreeing with the commands), colours and comments (limits, clearing, undo), folded lanes and open take rows, a removed track keeping its entries for undo but not in the file, a document that breaks the one-block invariant read defensively, batching colours and folds into one step, and project format 22 (canonical round trip, a committed golden `tests/golden/organised_project.json`, a version 21 file loading unchanged, every new field unknown before 22, bad folders, parents, loops, empty folders, split blocks and comments refused with their JSON path, and save and load after each step of a command sequence). `crates/render/tests/organise.rs` bounces a song before and after folders, colours, comments, folds and moves, at any block size and worker count and through a saved project, and checks that muting a folder's tracks in one batch is muting each track. `crates/ui/tests/organise.rs` drives the arrangement (shift-click selection and Group Tracks from headers or clips, the folder row's place, collapsing and the rows that leave the layout, double-clicks, the buttons as one batch, typing a name and a comment in place, the tooltip, colours, the lane chevron and the strip, fold lanes, take rows kept in the song and following undo, the move keys, Ungroup and Delete on a folder, the context menu request, the menu state, every height preset including Fit at three zooms) with a display-list golden (`arrangement_folders_1x.json`) and an ignored PNG preview (`cargo test -p atomik-ui --test organise preview_png -- --ignored`, written to `target/preview/`). `crates/app/src/shell_organise_tests.rs` covers the Track menu and its state, the keys, the typed edits through the `Text` context, the header and folder row context menus (choosing a colour and a height), the presets and a saved and reopened project; `context_menus.rs` and `commands.rs` check the menu specs. The MCP tests cover the inspection and a folder driven by the pointer, commands and keys.
+Each layer has its tests. `crates/model/tests/organise.rs` runs the eleven commands through a
+`Document`: grouping gathers the tracks at the first one and is one undo step, nesting and its depth
+limit, ungrouping into the parent, every refusal changing nothing, `MoveTrack` and `MoveGroup` (a
+track passing its neighbour, leaving a folder at its edge and entering one, a folder jumping a track
+or a whole folder, a single track leaving its folder taking the folder with it, the quiet ends of
+the list, `can_move_track` and `can_move_group` agreeing with the commands), colours and comments
+(limits, clearing, undo), folded lanes and open take rows, a removed track keeping its entries for
+undo but not in the file, a document that breaks the one-block invariant read defensively, batching
+colours and folds into one step, and project format 22 (canonical round trip, a committed golden
+`tests/golden/organised_project.json`, a version 21 file loading unchanged, every new field unknown
+before 22, bad folders, parents, loops, empty folders, split blocks and comments refused with their
+JSON path, and save and load after each step of a command sequence).
+`crates/render/tests/organise.rs` bounces a song before and after folders, colours, comments, folds
+and moves, at any block size and worker count and through a saved project, and checks that muting a
+folder's tracks in one batch is muting each track. `crates/ui/tests/organise.rs` drives the
+arrangement (shift-click selection and Group Tracks from headers or clips, the folder row's place,
+collapsing and the rows that leave the layout, double-clicks, the buttons as one batch, typing a
+name and a comment in place, the tooltip, colours, the lane chevron and the strip, fold lanes, take
+rows kept in the song and following undo, the move keys, Ungroup and Delete on a folder, the context
+menu request, the menu state, every height preset including Fit at three zooms) with a display-list
+golden (`arrangement_folders_1x.json`) and an ignored PNG preview
+(`cargo test -p atomik-ui --test organise preview_png -- --ignored`, written to `target/preview/`).
+`crates/app/src/shell_organise_tests.rs` covers the Track menu and its state, the keys, the typed
+edits through the `Text` context, the header and folder row context menus (choosing a colour and a
+height), the presets and a saved and reopened project; `context_menus.rs` and `commands.rs` check
+the menu specs. The MCP tests cover the inspection and a folder driven by the pointer, commands and
+keys.
 
 Hand checks, not automated (they need a real window):
 
-- Group a few tracks, collapse and expand the folder, rename it (and a track, by double-clicking its name in the header), nest a folder in another and check that the headers of the tracks inside are indented one step per level while the clips stay put, drag the window narrower and check the folder row and the headers at the default, the smallest and the largest track heights, in the dark and light themes.
-- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Ctrl+Alt+Up and Ctrl+Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu and, on macOS, the native one.
-- Type a long folder name and a long comment, press Escape and Enter, click away while typing, and hover the note mark of a comment near the right edge of the window.
-- Fold and unfold automation lanes, record automation into a folded lane, and open and close take rows, saving and reopening the project in between.
+- Group a few tracks, collapse and expand the folder, rename it (and a track, by double-clicking its
+  name in the header), nest a folder in another and check that the headers of the tracks inside are
+  indented one step per level while the clips stay put, drag the window narrower and check the
+  folder row and the headers at the default, the smallest and the largest track heights, in the dark
+  and light themes.
+- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Ctrl+Alt+Up and
+  Ctrl+Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu
+  and, on macOS, the native one.
+- Type a long folder name and a long comment, press Escape and Enter, click away while typing, and
+  hover the note mark of a comment near the right edge of the window.
+- Fold and unfold automation lanes, record automation into a folded lane, and open and close take
+  rows, saving and reopening the project in between.
 - Open a large project with many tracks and a few folders and check that scrolling and the Fit preset stay responsive.
 
 ## Audio editing
 
-Each layer has its tests. `crates/model/tests/audio_editing.rs` covers the crossfade rule (the tail region and the two gains, constant power for equal power and flat sums for linear, a clip inside another or with the crossfade off staying a hard cut, a zone ending where a later clip covers the later clip, `crossfades()` agreeing with the regions, the fades and gains on top), reversed regions (the start of the span, a cut head and tail), the envelope (amplitude ramps, held outside, validation by the commands, the two halves of a split sounding as the whole, a reversed split), `StripSilence` (pieces, ids, source offsets, fades, one undo step with redo, a reversed clip, every bad piece list refused), the detector and normalise maths, batching audio edits as one undo step, and project format 23 (round trip, defaults omitted, version 22 files hard-cut and refusing the new fields, bad fields with their JSON path). `crates/engine/src/audio.rs` and `crates/engine/tests/audio_editing.rs` (under the counting allocator) check the polynomial fade shapes, the gain block against the model's reference, reverse (including a region that starts past the asset end), envelopes, equal-power and linear crossfades by closed form, and that a streamed asset plays reverse, envelope and crossfade bit for bit like the memory asset at two block sizes with the asset streamed, in memory, and mixed. `crates/render/tests/audio_editing.rs` bounces every fade shape against the model's regions, an equal-power crossfade (and that it is click-free where a hard cut jumps), reverse through the console, clip gain with an envelope (no steps), strip silence keeping the sound in place, and one song with every edit at any host block and worker count and after a save and load. **Old projects are bit-identical:** `crates/render/tests/fixtures/audio_v22.atomik` is a version 22 project (gain, fades and overlapping clips) written before audio editing; it loads as hard cuts and its bounce has the same bytes as the code before this change (a SHA-256 checked on Windows x86-64, like the demo golden; everywhere, the same file with only the version bumped changes the overlap alone). `crates/ui/tests/audio_editing.rs` drives the arrangement (the pencil, dragging, removing and cancelling envelope points, reversed trims, the left trim shifting the envelope, the crossfade zone, every command and its menu state, the registry entries) and the strip silence panel; `crates/app/src/app_core_audio_edit_tests.rs` runs normalise and strip silence through the core with real files (the span a clip plays, one undo step for several clips, the pads and fades in milliseconds, a reversed clip, every refusal saying why), and `shell_audio_edit_tests.rs` the menu items, the panel and its settings. The keyboard cheat sheet, the keyboard settings goldens and the clip context menu golden are regenerated (`ATOMIK_UPDATE_GOLDEN=1`).
+Each layer has its tests. `crates/model/tests/audio_editing.rs` covers the crossfade rule (the tail
+region and the two gains, constant power for equal power and flat sums for linear, a clip inside
+another or with the crossfade off staying a hard cut, a zone ending where a later clip covers the
+later clip, `crossfades()` agreeing with the regions, the fades and gains on top), reversed regions
+(the start of the span, a cut head and tail), the envelope (amplitude ramps, held outside,
+validation by the commands, the two halves of a split sounding as the whole, a reversed split),
+`StripSilence` (pieces, ids, source offsets, fades, one undo step with redo, a reversed clip, every
+bad piece list refused), the detector and normalise maths, batching audio edits as one undo step,
+and project format 23 (round trip, defaults omitted, version 22 files hard-cut and refusing the new
+fields, bad fields with their JSON path). `crates/engine/src/audio.rs` and
+`crates/engine/tests/audio_editing.rs` (under the counting allocator) check the polynomial fade
+shapes, the gain block against the model's reference, reverse (including a region that starts past
+the asset end), envelopes, equal-power and linear crossfades by closed form, and that a streamed
+asset plays reverse, envelope and crossfade bit for bit like the memory asset at two block sizes
+with the asset streamed, in memory, and mixed. `crates/render/tests/audio_editing.rs` bounces every
+fade shape against the model's regions, an equal-power crossfade (and that it is click-free where a
+hard cut jumps), reverse through the console, clip gain with an envelope (no steps), strip silence
+keeping the sound in place, and one song with every edit at any host block and worker count and
+after a save and load. **Old projects are bit-identical:**
+`crates/render/tests/fixtures/audio_v22.atomik` is a version 22 project (gain, fades and overlapping
+clips) written before audio editing; it loads as hard cuts and its bounce has the same bytes as the
+code before this change (a SHA-256 checked on Windows x86-64, like the demo golden; everywhere, the
+same file with only the version bumped changes the overlap alone).
+`crates/ui/tests/audio_editing.rs` drives the arrangement (the pencil, dragging, removing and
+cancelling envelope points, reversed trims, the left trim shifting the envelope, the crossfade zone,
+every command and its menu state, the registry entries) and the strip silence panel;
+`crates/app/src/app_core_audio_edit_tests.rs` runs normalise and strip silence through the core with
+real files (the span a clip plays, one undo step for several clips, the pads and fades in
+milliseconds, a reversed clip, every refusal saying why), and `shell_audio_edit_tests.rs` the menu
+items, the panel and its settings. The keyboard cheat sheet, the keyboard settings goldens and the
+clip context menu golden are regenerated (`ATOMIK_UPDATE_GOLDEN=1`).
 
 Hand checks, not automated (they need a real window and your ears):
 
-- Drag the fade handles of a clip, change the shape from the Audio menu and listen for clicks at each end; overlap two clips of different material and listen to the crossfade with equal power, linear and off, then move and trim the overlap.
-- Draw a gain envelope with the pencil on a clip, play it, zoom deep into a point, trim the left edge and move the clip, and check that the envelope stays on the sound.
-- Reverse a clip with fades and an envelope, trim both edges, split it and play it; reverse a streamed (large) file and a short one.
-- Normalise a quiet clip and a clip that already peaks at 0 dBFS; strip silence from a spoken recording at a few thresholds and listen for chopped word starts and clicks at the cuts, with the pads and the fade at several values, and undo it in one step.
+- Drag the fade handles of a clip, change the shape from the Audio menu and listen for clicks at
+  each end; overlap two clips of different material and listen to the crossfade with equal power,
+  linear and off, then move and trim the overlap.
+- Draw a gain envelope with the pencil on a clip, play it, zoom deep into a point, trim the left
+  edge and move the clip, and check that the envelope stays on the sound.
+- Reverse a clip with fades and an envelope, trim both edges, split it and play it; reverse a
+  streamed (large) file and a short one.
+- Normalise a quiet clip and a clip that already peaks at 0 dBFS; strip silence from a spoken
+  recording at a few thresholds and listen for chopped word starts and clicks at the cuts, with the
+  pads and the fade at several values, and undo it in one step.
 - Open an old project with overlapping clips and check that it still plays the same hard cuts.
 
 ## Time-stretch and warp
 
-Each layer has its tests. `crates/dsp/src/stretch/tests.rs` covers the engines on signals with a known answer: a 440 Hz sine stretched to 0.5x and 2x keeps its pitch and level in Beats and Tonal (the dominant bin of an FFT, within 1%), Repitch moves it with the speed, a pitch shift of +12, -12 and +7 semitones moves the dominant frequency and keeps the length, ratio 1 is the identity (exact for Repitch, 1e-3 for Beats, 0.02 for Tonal on a chord with noise), an impulse train of noise bursts in Beats mode keeps every hit within 3 ms of where the map puts it with no pre-echo at 0.5x, 2x and 0.8x, stereo channels of different pitches stay apart, a tempo-ramp map keeps the pitch, noise through odd maps (starting before the source, standing still, running past the end) stays finite and bounded in every mode, silence and empty input give silence, and the result is repeatable and a cancel returns `None`. `crates/model/tests/warp.rs` covers the settings and their checks, undo of `SetAudioClip` with warp, reverse and warp excluding each other, the format (round trip, canonical, default omitted, bad fields with their JSON path, version 23 refusing the field and loading without it), the time map through a constant tempo, a tempo step and a ramp (every knot on the beat map, monotone), markers (straight between, source tempo outside, the inverse), a split keeping the sound where it was (right half and markers), the render jobs on regions (the real-time fallback fields, a cut region's `clip_pos`), audible jobs only, transposition without warp, `bpm_for_beats`, `estimate_bpm`, and `quantize_audio` (hits land on the grid at strength 1, half way at 0.5, unmoved at 0, the ends pinned, tempo-map aware, every refusal). `crates/render/tests/warp.rs` bounces: a loop squeezed to the song tempo keeping its pitch (Beats and Tonal) with silence after the clip, Repitch changing pitch by the tempo ratio, a +12 transposition keeping the length, clicks staying on the beats across a tempo change, a bounce bit-identical across runs, host blocks and workers, warp settings that are present but off changing no bit, the dry fallback and the buffer in the song input, and a saved project. **Projects without warp are bit-identical:** the version 22 fixture of audio editing (`crates/render/tests/fixtures/audio_v22.atomik`) keeps its SHA-256, and every example project and golden moves only by the version line. `crates/ui/tests/warp.rs` drives the commands (toggle, mode, transpose clamps, reversed clips left alone, registry and menu items), the left trim of a warped clip through the map, the `W` mark and marker lines in the display list, and the warp panel (stepping and clamping, /2 and x2, the two-octave limit, APPLY, DETECT and CLOSE, the picture). `crates/app/src/app_core_warp_tests.rs` runs the cache and the commands with real files: APPLY as one undo step, a reversed clip left out, Warp Loop as N Bars (tempo, clip length, the 999 BPM limit), Warp to Song Tempo and DETECT finding 100 BPM in a click track (and the song tempo, with a message, in a flat file), Quantize Audio putting late hits on the grid, the song going out dry at once and again with the buffer when the worker is done, a tempo edit replacing the buffer, warp off emptying the cache, and an undo cancelling the render; `shell_warp_tests.rs` the menu items and ids, the commands from the menu with undo, and the panel through the shell. The keyboard cheat sheet and the goldens are regenerated (`ATOMIK_UPDATE_GOLDEN=1`). `crates/mcp/tests` check the warp field of the inspection and the menu commands.
+Each layer has its tests. `crates/dsp/src/stretch/tests.rs` covers the engines on signals with a
+known answer: a 440 Hz sine stretched to 0.5x and 2x keeps its pitch and level in Beats and Tonal
+(the dominant bin of an FFT, within 1%), Repitch moves it with the speed, a pitch shift of +12, -12
+and +7 semitones moves the dominant frequency and keeps the length, ratio 1 is the identity (exact
+for Repitch, 1e-3 for Beats, 0.02 for Tonal on a chord with noise), an impulse train of noise bursts
+in Beats mode keeps every hit within 3 ms of where the map puts it with no pre-echo at 0.5x, 2x and
+0.8x, stereo channels of different pitches stay apart, a tempo-ramp map keeps the pitch, noise
+through odd maps (starting before the source, standing still, running past the end) stays finite and
+bounded in every mode, silence and empty input give silence, and the result is repeatable and a
+cancel returns `None`. `crates/model/tests/warp.rs` covers the settings and their checks, undo of
+`SetAudioClip` with warp, reverse and warp excluding each other, the format (round trip, canonical,
+default omitted, bad fields with their JSON path, version 23 refusing the field and loading without
+it), the time map through a constant tempo, a tempo step and a ramp (every knot on the beat map,
+monotone), markers (straight between, source tempo outside, the inverse), a split keeping the sound
+where it was (right half and markers), the render jobs on regions (the real-time fallback fields, a
+cut region's `clip_pos`), audible jobs only, transposition without warp, `bpm_for_beats`,
+`estimate_bpm`, and `quantize_audio` (hits land on the grid at strength 1, half way at 0.5, unmoved
+at 0, the ends pinned, tempo-map aware, every refusal). `crates/render/tests/warp.rs` bounces: a
+loop squeezed to the song tempo keeping its pitch (Beats and Tonal) with silence after the clip,
+Repitch changing pitch by the tempo ratio, a +12 transposition keeping the length, clicks staying on
+the beats across a tempo change, a bounce bit-identical across runs, host blocks and workers, warp
+settings that are present but off changing no bit, the dry fallback and the buffer in the song
+input, and a saved project. **Projects without warp are bit-identical:** the version 22 fixture of
+audio editing (`crates/render/tests/fixtures/audio_v22.atomik`) keeps its SHA-256, and every example
+project and golden moves only by the version line. `crates/ui/tests/warp.rs` drives the commands
+(toggle, mode, transpose clamps, reversed clips left alone, registry and menu items), the left trim
+of a warped clip through the map, the `W` mark and marker lines in the display list, and the warp
+panel (stepping and clamping, /2 and x2, the two-octave limit, APPLY, DETECT and CLOSE, the
+picture). `crates/app/src/app_core_warp_tests.rs` runs the cache and the commands with real files:
+APPLY as one undo step, a reversed clip left out, Warp Loop as N Bars (tempo, clip length, the 999
+BPM limit), Warp to Song Tempo and DETECT finding 100 BPM in a click track (and the song tempo, with
+a message, in a flat file), Quantize Audio putting late hits on the grid, the song going out dry at
+once and again with the buffer when the worker is done, a tempo edit replacing the buffer, warp off
+emptying the cache, and an undo cancelling the render; `shell_warp_tests.rs` the menu items and ids,
+the commands from the menu with undo, and the panel through the shell. The keyboard cheat sheet and
+the goldens are regenerated (`ATOMIK_UPDATE_GOLDEN=1`). `crates/mcp/tests` check the warp field of
+the inspection and the menu commands.
 
 Hand checks, not automated (they need your ears):
 
-- Import a drum loop recorded at another tempo, Warp Loop as 2 Bars, and play it against a click at several song tempos, up and down by 30%: the hits stay on the click and keep their snap in Beats mode; compare Tonal and Repitch. Draw a tempo ramp under it and listen for flams, smeared hits and clicks at the seams between hits.
-- Warp a sustained pad, a chord progression and a vocal in Tonal mode at 0.5x, 0.75x and 1.5x and listen for phasiness, warble and the loss of the low end; transpose them by a semitone, a fifth and an octave and listen for the missing formants (a vocal does sound like a chipmunk or a giant: the formants move, as the follow-ups note).
+- Import a drum loop recorded at another tempo, Warp Loop as 2 Bars, and play it against a click at
+  several song tempos, up and down by 30%: the hits stay on the click and keep their snap in Beats
+  mode; compare Tonal and Repitch. Draw a tempo ramp under it and listen for flams, smeared hits and
+  clicks at the seams between hits.
+- Warp a sustained pad, a chord progression and a vocal in Tonal mode at 0.5x, 0.75x and 1.5x and
+  listen for phasiness, warble and the loss of the low end; transpose them by a semitone, a fifth
+  and an octave and listen for the missing formants (a vocal does sound like a chipmunk or a giant:
+  the formants move, as the follow-ups note).
 - Transpose a bass line down an octave in Beats and Tonal and listen to its attacks. Transpose a drum loop up and down.
-- Quantize Audio on a loosely played drum recording at 1/8 and 1/16 at 100% and 50%, listen for flams and double hits, and undo it in one step; trim and split a quantized clip and check that the hits stay where they were.
-- Change the tempo while playing with a warped clip: the clip plays unwarped for a moment, then the warped buffer takes over (watch for a click at the switch); open a big project with many warped clips and watch the memory the cache uses.
+- Quantize Audio on a loosely played drum recording at 1/8 and 1/16 at 100% and 50%, listen for
+  flams and double hits, and undo it in one step; trim and split a quantized clip and check that the
+  hits stay where they were.
+- Change the tempo while playing with a warped clip: the clip plays unwarped for a moment, then the
+  warped buffer takes over (watch for a click at the switch); open a big project with many warped
+  clips and watch the memory the cache uses.
 - Open an old project and check that it sounds the same.
 
 ## Exporting audio files
 
-`crates/dsp/src/dither.rs` has the maths of the requantiser (plain rounding is exact on every code, half to even and clipping; TPDF noise has a triangular distribution with zero mean, one LSB at most and a power of one quarter LSB squared; a constant below one LSB comes out unbiased where rounding loses it; the same seed gives the same bits and each channel has its own stream; shaped dither has a negative lag-1 correlation of its error where plain TPDF has none; a clipped sample does not run away). `crates/render/src/wav.rs` covers the 16-bit writer (header, round trip within the dither, no dither when asked, seeded bytes, 24-bit not dithered and equal to `pcm24_from_f32`, float untouched, and the files read back by `atomik-audio-file`). `crates/render/tests/export.rs` is the proof of the range and the format on the demo project: the song export without a tail is the first End frames of the bounce **bit for bit**, with a tail it never ends before the End and ends where the output falls under the floor or at the cap, a muted song gets no tail, a loop is exactly the frames between the locators (and equals that slice of the bounce) with no tail, an empty loop or a tail out of range is refused, 16, 24 and 32-bit files have the right header and match the bounce within 1.5 LSB, 0.5 LSB and exactly, the same project exports the same bytes, other sample rates give `round(frames * rate / project rate)` frames, a stopped export leaves no file and keeps the one that was there, and progress is reported. `crates/app/src/app_core_export_tests.rs` runs the worker (a song and a loop export at another rate, the engine and the document untouched, one export at a time, a cancel that leaves no file, the mapping of the panel values to the render) and `crates/app/src/shell_export_tests.rs` the flow (the menu items and commands, the file request and the proposed name, the options and progress panels, the choices saved in `export.json` and restored, CANCEL and Esc, the items disabled while an export runs); `crates/ui/tests/export_panel.rs` the panel itself. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the loop, argument validation and the path policy).
+`crates/dsp/src/dither.rs` has the maths of the requantiser (plain rounding is exact on every code,
+half to even and clipping; TPDF noise has a triangular distribution with zero mean, one LSB at most
+and a power of one quarter LSB squared; a constant below one LSB comes out unbiased where rounding
+loses it; the same seed gives the same bits and each channel has its own stream; shaped dither has a
+negative lag-1 correlation of its error where plain TPDF has none; a clipped sample does not run
+away). `crates/render/src/wav.rs` covers the 16-bit writer (header, round trip within the dither, no
+dither when asked, seeded bytes, 24-bit not dithered and equal to `pcm24_from_f32`, float untouched,
+and the files read back by `atomik-audio-file`). `crates/render/tests/export.rs` is the proof of the
+range and the format on the demo project: the song export without a tail is the first End frames of
+the bounce **bit for bit**, with a tail it never ends before the End and ends where the output falls
+under the floor or at the cap, a muted song gets no tail, a loop is exactly the frames between the
+locators (and equals that slice of the bounce) with no tail, an empty loop or a tail out of range is
+refused, 16, 24 and 32-bit files have the right header and match the bounce within 1.5 LSB, 0.5 LSB
+and exactly, the same project exports the same bytes, other sample rates give
+`round(frames * rate / project rate)` frames, a stopped export leaves no file and keeps the one that
+was there, and progress is reported. `crates/app/src/app_core_export_tests.rs` runs the worker (a
+song and a loop export at another rate, the engine and the document untouched, one export at a time,
+a cancel that leaves no file, the mapping of the panel values to the render) and
+`crates/app/src/shell_export_tests.rs` the flow (the menu items and commands, the file request and
+the proposed name, the options and progress panels, the choices saved in `export.json` and restored,
+CANCEL and Esc, the items disabled while an export runs); `crates/ui/tests/export_panel.rs` the
+panel itself. `crates/mcp/tests/session.rs` has `session_export` (the file against the bounce, the
+loop, argument validation and the path policy).
 
-Hand checks, not automated: the native save dialog (WAV filter, proposed name and folder), the look of the options and progress panels in a real window, the cancel of a long export, and an export of a project with plugins (sandbox on).
+Hand checks, not automated: the native save dialog (WAV filter, proposed name and folder), the look
+of the options and progress panels in a real window, the cancel of a long export, and an export of a
+project with plugins (sandbox on).
 
 ## Freeze and bounce in place
 
-Each layer has its tests. `crates/model/tests/freeze.rs` covers the chain of a track (its channel's insert effects), the span of its clips, freeze and unfreeze as one undo step each with the document restored exactly, every refusal changing nothing (not the first effects of the chain, a missing asset, a bad range, reverse or warp, no channel, already frozen), the guard (clip, parameter, cable, effect and tempo edits refused with a message that says to unfreeze, while mute, rename and the effects after the freeze point still work), removing the frozen instrument and undoing it, the channel and the frozen effects that cannot be taken away (a file that could not reload is never reachable), the expansion (devices flagged and unplugged, the player last, the channel or the next effect fed by it, every other device in its place), the referenced asset while frozen and in the history, Unfreeze and Keep Audio and the rendered track as one step, a relink of the render, and project format 25 (a byte-exact round trip, a version 24 file loading and saving with only the version line changed and refusing `frozen`, bad objects with their JSON path). `crates/render/tests/freeze.rs` renders real devices: the project bounced with a track frozen equals the unfrozen bounce bit for bit (instrument alone), the freeze render is the same for any block size and worker count, a tail is kept while it is audible and a dry track has none, a freeze through one and two effects bounces within 2e-4 of the unfrozen project, the frozen devices are not in the engine graph and every other device keeps its id, bounced clips render alone through the chain, a muted track renders as if it played, a render can be stopped and reports increasing progress, every way a freeze can fail says why, an audio track freezes through its inserts, and the plugin demo (the CLAP test plugins, one with 128 frames of latency and a sidechain) renders in a freeze, bounces with two plugins fewer built and lines up with the unfrozen mix 128 frames earlier. `crates/ui/tests/freeze.rs` covers the header mark and the labelled render, nothing to grab where a frozen track's clips are, the tracks a command works on and the registry. `crates/app/src/app_core_freeze_tests.rs` runs the worker end to end on a recording sink (the progress and the queue, the engine restart without the frozen devices and with the player, the song the engine plays, bit-identical bounce of the frozen document, unfreeze, undo and redo, keep audio, freezing up to the selected device, a render of a track that changed meanwhile thrown away, cancel, what cannot be frozen, edits refused with the message, the tail option, bounce in place with and without muting, several tracks, the menu state, a new project dropping the render) and `shell_freeze_tests.rs` the Track menu, the ids, the context menus, the status line and a frozen track in the window. `crates/mcp/tests/session.rs` freezes a track of the master demo by menu command (waiting for the render), checks that the session bounce stays bit-identical, that a saved frozen project reads back and that a freeze that is not waited for can be cancelled.
+Each layer has its tests. `crates/model/tests/freeze.rs` covers the chain of a track (its channel's
+insert effects), the span of its clips, freeze and unfreeze as one undo step each with the document
+restored exactly, every refusal changing nothing (not the first effects of the chain, a missing
+asset, a bad range, reverse or warp, no channel, already frozen), the guard (clip, parameter, cable,
+effect and tempo edits refused with a message that says to unfreeze, while mute, rename and the
+effects after the freeze point still work), removing the frozen instrument and undoing it, the
+channel and the frozen effects that cannot be taken away (a file that could not reload is never
+reachable), the expansion (devices flagged and unplugged, the player last, the channel or the next
+effect fed by it, every other device in its place), the referenced asset while frozen and in the
+history, Unfreeze and Keep Audio and the rendered track as one step, a relink of the render, and
+project format 25 (a byte-exact round trip, a version 24 file loading and saving with only the
+version line changed and refusing `frozen`, bad objects with their JSON path).
+`crates/render/tests/freeze.rs` renders real devices: the project bounced with a track frozen equals
+the unfrozen bounce bit for bit (instrument alone), the freeze render is the same for any block size
+and worker count, a tail is kept while it is audible and a dry track has none, a freeze through one
+and two effects bounces within 2e-4 of the unfrozen project, the frozen devices are not in the
+engine graph and every other device keeps its id, bounced clips render alone through the chain, a
+muted track renders as if it played, a render can be stopped and reports increasing progress, every
+way a freeze can fail says why, an audio track freezes through its inserts, and the plugin demo (the
+CLAP test plugins, one with 128 frames of latency and a sidechain) renders in a freeze, bounces with
+two plugins fewer built and lines up with the unfrozen mix 128 frames earlier.
+`crates/ui/tests/freeze.rs` covers the header mark and the labelled render, nothing to grab where a
+frozen track's clips are, the tracks a command works on and the registry.
+`crates/app/src/app_core_freeze_tests.rs` runs the worker end to end on a recording sink (the
+progress and the queue, the engine restart without the frozen devices and with the player, the song
+the engine plays, bit-identical bounce of the frozen document, unfreeze, undo and redo, keep audio,
+freezing up to the selected device, a render of a track that changed meanwhile thrown away, cancel,
+what cannot be frozen, edits refused with the message, the tail option, bounce in place with and
+without muting, several tracks, the menu state, a new project dropping the render) and
+`shell_freeze_tests.rs` the Track menu, the ids, the context menus, the status line and a frozen
+track in the window. `crates/mcp/tests/session.rs` freezes a track of the master demo by menu
+command (waiting for the render), checks that the session bounce stays bit-identical, that a saved
+frozen project reads back and that a freeze that is not waited for can be cancelled.
 
 Hand checks, not automated (they need a real window and your ears):
 
-- Freeze a synth with a reverb and a delay on its channel: Freeze Track, then play the song against the unfrozen version (Unfreeze, or undo twice) and listen for any difference, in particular the tail of the reverb at the end of the clips; watch the CPU meter drop while it is frozen.
-- Freeze Track up to Selected Device with the first effect selected in the rack, then change the second effect's parameters while playing: they still work, the first ones refuse with the status text.
-- Start a freeze of a long song and keep editing another track; cancel one, and check the progress text and that the window stays responsive. Edit the track being frozen before it finishes and read the message.
-- Freeze a track with a sandboxed plugin instrument and plugin effects, with the sandbox on and off (off: the message), and check that unfreezing brings the plugins back with their state.
-- Bounce in Place a few note clips and an audio clip, with and without Mute Originals, and listen to the new track against the originals; undo it in one step. With Mute Originals on, play the song: the new track must be heard on its own, with a signal on its channel meter and the master meter, sit right after the source track (in its folder, in its colour) and have a channel strip like any audio track. Do the same with Unfreeze and Keep Audio.
-- Freeze a track, save, close and reopen the project, and check that the render is still there and that undo after opening does not break; move the project folder and relink.
-- Look at the snowflake and the ice-blue clip at the smallest and largest track heights, in the dark and light themes, and try to drag, split and draw on a frozen track.
+- Freeze a synth with a reverb and a delay on its channel: Freeze Track, then play the song against
+  the unfrozen version (Unfreeze, or undo twice) and listen for any difference, in particular the
+  tail of the reverb at the end of the clips; watch the CPU meter drop while it is frozen.
+- Freeze Track up to Selected Device with the first effect selected in the rack, then change the
+  second effect's parameters while playing: they still work, the first ones refuse with the status
+  text.
+- Start a freeze of a long song and keep editing another track; cancel one, and check the progress
+  text and that the window stays responsive. Edit the track being frozen before it finishes and read
+  the message.
+- Freeze a track with a sandboxed plugin instrument and plugin effects, with the sandbox on and off
+  (off: the message), and check that unfreezing brings the plugins back with their state.
+- Bounce in Place a few note clips and an audio clip, with and without Mute Originals, and listen to
+  the new track against the originals; undo it in one step. With Mute Originals on, play the song:
+  the new track must be heard on its own, with a signal on its channel meter and the master meter,
+  sit right after the source track (in its folder, in its colour) and have a channel strip like any
+  audio track. Do the same with Unfreeze and Keep Audio.
+- Freeze a track, save, close and reopen the project, and check that the render is still there and
+  that undo after opening does not break; move the project folder and relink.
+- Look at the snowflake and the ice-blue clip at the smallest and largest track heights, in the dark
+  and light themes, and try to drag, split and draw on a frozen track.
 
 ## Audio to notes
 
-Each layer has its tests. `crates/dsp/src/notes/tests.rs` runs the analysis on synthetic signals with known notes and hits: a sine melody comes back with its keys exactly and its starts within 30 ms and ends within 40 ms (also at 44.1 kHz and as a stereo file, identical), a vibrato of 40 cents and a glide of 0.6 semitone stay one note, notes with a 20 ms gap or a re-attack are two, a harmonic tone gets its fundamental (no octave error), a plucked note ends where its level has fallen, the velocity follows the level in dB, the range and minimum length drop notes, silence, a very quiet file, `NaN` and infinite samples, an empty input and odd parameters give no notes and never `NaN`, white noise gives no pitched notes at three sensitivities, the same input gives the same notes; and a drum pattern of kicks, snares, closed and open hats and a kick with a hat is classified key by key with positions within 6 ms, with open hats off every hat is closed, and a steady tone is not a pattern. `crates/model/tests/audio_notes.rs` checks the frames to ticks mapping (constant tempo, an offset into the asset, a tempo change under the clip, a warped clip with and without a marker), Beats timing and its overlap rule, transposition and clamps, the clip bounds, nothing found, and the clip going in as one undo step through `ImportMidi` and `AddClip` with a save and load round trip (no format change). `app_core_notes_tests.rs` (procedural WAV files through the real import and the worker) covers a melody on a new track (aligned with the clip, one undo step, redo, the clip selected, the message), the selected note track, a drum loop, Beats timing, a clip that was trimmed and moved, a reversed clip, a transposed clip, a Repitch clip (refused), a beats-warped clip, silence and the refusals, a clip that changed meanwhile, and the ten-minute cap (with a smaller cap). `shell_notes_tests.rs` drives the panel (menu item and id, settings kept between openings, Esc, CLOSE, EXTRACT closing the panel, a refusal keeping it open). `crates/ui/tests/notes_panel.rs` covers the rows and their clamps. `crates/mcp/tests/session.rs` runs `session_audio_notes` on a project built from a generated melody and undoes it.
+Each layer has its tests. `crates/dsp/src/notes/tests.rs` runs the analysis on synthetic signals
+with known notes and hits: a sine melody comes back with its keys exactly and its starts within 30
+ms and ends within 40 ms (also at 44.1 kHz and as a stereo file, identical), a vibrato of 40 cents
+and a glide of 0.6 semitone stay one note, notes with a 20 ms gap or a re-attack are two, a harmonic
+tone gets its fundamental (no octave error), a plucked note ends where its level has fallen, the
+velocity follows the level in dB, the range and minimum length drop notes, silence, a very quiet
+file, `NaN` and infinite samples, an empty input and odd parameters give no notes and never `NaN`,
+white noise gives no pitched notes at three sensitivities, the same input gives the same notes; and
+a drum pattern of kicks, snares, closed and open hats and a kick with a hat is classified key by key
+with positions within 6 ms, with open hats off every hat is closed, and a steady tone is not a
+pattern. `crates/model/tests/audio_notes.rs` checks the frames to ticks mapping (constant tempo, an
+offset into the asset, a tempo change under the clip, a warped clip with and without a marker),
+Beats timing and its overlap rule, transposition and clamps, the clip bounds, nothing found, and the
+clip going in as one undo step through `ImportMidi` and `AddClip` with a save and load round trip
+(no format change). `app_core_notes_tests.rs` (procedural WAV files through the real import and the
+worker) covers a melody on a new track (aligned with the clip, one undo step, redo, the clip
+selected, the message), the selected note track, a drum loop, Beats timing, a clip that was trimmed
+and moved, a reversed clip, a transposed clip, a Repitch clip (refused), a beats-warped clip,
+silence and the refusals, a clip that changed meanwhile, and the ten-minute cap (with a smaller
+cap). `shell_notes_tests.rs` drives the panel (menu item and id, settings kept between openings,
+Esc, CLOSE, EXTRACT closing the panel, a refusal keeping it open). `crates/ui/tests/notes_panel.rs`
+covers the rows and their clamps. `crates/mcp/tests/session.rs` runs `session_audio_notes` on a
+project built from a generated melody and undoes it.
 
 Hand checks, not automated (they need your ears and real recordings):
 
-- A real vocal line (dry, close-miked), a bass guitar line and a flute or a whistled tune: extract with the defaults, play the new track with a synth next to the audio and compare the notes and their timing; then try a lower sensitivity (fewer ghost notes) and a higher one, and a narrower range (the octave errors that go away). Check a sung vowel with strong vibrato (one note) and a fast run (every note found).
-- A breathy or noisy take, a take with background noise and a take with reverb: see how many wrong notes appear and whether the sensitivity and the minimum length take them out.
-- A real drum loop (an acoustic break, a drum machine pattern with open hats, a 4-on-the-floor loop with hats on every beat): extract in Drums mode, point the new track at a drum machine with a kick, a snare and a closed and an open hat on the pads 36, 38, 42 and 46 and compare with the loop; look at snares with a hat on top, ghost notes and rim shots.
-- A clip warped to the song tempo, one that follows a tempo ramp, a trimmed clip and a reversed one: the notes line up with the waveform and with what you hear. A multi-minute clip: the window stays responsive while the status line says it is extracting, and the message says when only the first ten minutes were read. A streamed (big) file.
+- A real vocal line (dry, close-miked), a bass guitar line and a flute or a whistled tune: extract
+  with the defaults, play the new track with a synth next to the audio and compare the notes and
+  their timing; then try a lower sensitivity (fewer ghost notes) and a higher one, and a narrower
+  range (the octave errors that go away). Check a sung vowel with strong vibrato (one note) and a
+  fast run (every note found).
+- A breathy or noisy take, a take with background noise and a take with reverb: see how many wrong
+  notes appear and whether the sensitivity and the minimum length take them out.
+- A real drum loop (an acoustic break, a drum machine pattern with open hats, a 4-on-the-floor loop
+  with hats on every beat): extract in Drums mode, point the new track at a drum machine with a
+  kick, a snare and a closed and an open hat on the pads 36, 38, 42 and 46 and compare with the
+  loop; look at snares with a hat on top, ghost notes and rim shots.
+- A clip warped to the song tempo, one that follows a tempo ramp, a trimmed clip and a reversed one:
+  the notes line up with the waveform and with what you hear. A multi-minute clip: the window stays
+  responsive while the status line says it is extracting, and the message says when only the first
+  ten minutes were read. A streamed (big) file.
 - Beats timing at 1/8 and 1/16 on a loosely played line, then undo: one step, the track and the clip gone.
 
 ## Spectrum and metering
 
-Each layer has its tests. `crates/device-sdk/src/scope.rs` tests the tap ring (order, wrap over several laps, the half-ring read limit, a reader on another thread never seeing a torn frame) and `crates/engine/tests/scope_tap.rs` that insert, plan submit and removal register and forget it, under the allocation guard. `crates/dsp/src/spectrum/tests.rs` checks the analyser against a library FFT (a sine on a bin reads its own power for both windows, noise bands add up to the noise power, the window bandwidths), that the peak bin of a sine lands within a bin (and within half a bin by the interpolation) at 44.1, 48 and 96 kHz, sizes 1024 to 8192 and both windows, the channel modes (mid, side, sum), averaging independent of the update rate, the peak hold and its decay rate, the tilt and the bands; `crates/dsp/src/stereo_meter.rs` that identical channels give +1, inverted -1, unrelated noise about 0 and a quarter-cycle shift 0, the mid/side matrix, balance and width. The devices (`crates/devices/src/spectrum/tests.rs`, `phase_meter/tests.rs`) are checked to pass every sample through bit for bit (noise, every param at its extremes, non-finite input), with no latency and no allocation, to push the input into the tap, and the phase meter for the reference tone (a stereo 1 kHz sine at -23 dBFS reads -23 LUFS within 0.15 dB, momentary, short-term and integrated), the true peak of a quarter-rate sine, the holds, the reset edge and loudness off. `crates/render/tests/meter_probe.rs` probes a rendered project (values, scope frames, block and worker independence) and checks that a project with the meters bounces bit for bit like the project without them. `crates/ui/tests/analyser_maths.rs` and `analyser_panels.rs` cover the axes, the goniometer mapping, the texts, the feed and its repaint rule, bypass and the goldens of both panels; `crates/app/src/app_core_analyser_tests.rs` the feed from a fake tap (settings, skip rules) and from a real offline engine (a 440 Hz synth reads 440 Hz), and the probe; `crates/mcp/tests/session.rs` runs `session_meters` on a generated -23 dBFS 1 kHz stereo tone (LUFS, correlation, the 1 kHz band, the texts on screen).
+Each layer has its tests. `crates/device-sdk/src/scope.rs` tests the tap ring (order, wrap over
+several laps, the half-ring read limit, a reader on another thread never seeing a torn frame) and
+`crates/engine/tests/scope_tap.rs` that insert, plan submit and removal register and forget it,
+under the allocation guard. `crates/dsp/src/spectrum/tests.rs` checks the analyser against a library
+FFT (a sine on a bin reads its own power for both windows, noise bands add up to the noise power,
+the window bandwidths), that the peak bin of a sine lands within a bin (and within half a bin by the
+interpolation) at 44.1, 48 and 96 kHz, sizes 1024 to 8192 and both windows, the channel modes (mid,
+side, sum), averaging independent of the update rate, the peak hold and its decay rate, the tilt and
+the bands; `crates/dsp/src/stereo_meter.rs` that identical channels give +1, inverted -1, unrelated
+noise about 0 and a quarter-cycle shift 0, the mid/side matrix, balance and width. The devices
+(`crates/devices/src/spectrum/tests.rs`, `phase_meter/tests.rs`) are checked to pass every sample
+through bit for bit (noise, every param at its extremes, non-finite input), with no latency and no
+allocation, to push the input into the tap, and the phase meter for the reference tone (a stereo 1
+kHz sine at -23 dBFS reads -23 LUFS within 0.15 dB, momentary, short-term and integrated), the true
+peak of a quarter-rate sine, the holds, the reset edge and loudness off.
+`crates/render/tests/meter_probe.rs` probes a rendered project (values, scope frames, block and
+worker independence) and checks that a project with the meters bounces bit for bit like the project
+without them. `crates/ui/tests/analyser_maths.rs` and `analyser_panels.rs` cover the axes, the
+goniometer mapping, the texts, the feed and its repaint rule, bypass and the goldens of both panels;
+`crates/app/src/app_core_analyser_tests.rs` the feed from a fake tap (settings, skip rules) and from
+a real offline engine (a 440 Hz synth reads 440 Hz), and the probe; `crates/mcp/tests/session.rs`
+runs `session_meters` on a generated -23 dBFS 1 kHz stereo tone (LUFS, correlation, the 1 kHz band,
+the texts on screen).
 
 Hand checks, not automated (they need your ears and real music):
 
-- Put the spectrum on a mastered track and on the master output while a full song plays: the 1/3-octave and the fine views should agree with what you hear (bass, the hat region, a high-pass at 30 Hz), the peaks should hold and fall smoothly, and nothing should flicker when the transport stops (the display should settle, not freeze mid-fall). Try every size and both windows on a sustained note and on drums.
-- Pink noise through the spectrum with the tilt at 4.5 dB per octave: the trace should be flat within a few dB. A sine sweep from 20 Hz to 20 kHz should draw a single moving line without jumps.
-- Put the phase meter on a wide stereo pad, a mono vocal, a mono-summed mix and a track with one channel inverted: the goniometer should go from a wide cloud to a vertical line to a horizontal line, and the correlation from near 0 to +1 to -1. Check the balance with a pan, the width bar with a stereo widener, and the M/S and L/R scope modes.
-- Play a song the first time through with loudness on and compare the momentary, short-term and integrated readings with a trusted meter on the same bounce (they should agree within a few tenths of a LU); check that the integrated value stops moving while playback is stopped and returns to nothing on Reset.
-- Bypass both while playing: the audio does not change, the panels freeze with BYPASSED and wake up again; fold and unfold the panels, resize the window, switch between the dark and light themes and read the plots and the numbers.
+- Put the spectrum on a mastered track and on the master output while a full song plays: the
+  1/3-octave and the fine views should agree with what you hear (bass, the hat region, a high-pass
+  at 30 Hz), the peaks should hold and fall smoothly, and nothing should flicker when the transport
+  stops (the display should settle, not freeze mid-fall). Try every size and both windows on a
+  sustained note and on drums.
+- Pink noise through the spectrum with the tilt at 4.5 dB per octave: the trace should be flat
+  within a few dB. A sine sweep from 20 Hz to 20 kHz should draw a single moving line without jumps.
+- Put the phase meter on a wide stereo pad, a mono vocal, a mono-summed mix and a track with one
+  channel inverted: the goniometer should go from a wide cloud to a vertical line to a horizontal
+  line, and the correlation from near 0 to +1 to -1. Check the balance with a pan, the width bar
+  with a stereo widener, and the M/S and L/R scope modes.
+- Play a song the first time through with loudness on and compare the momentary, short-term and
+  integrated readings with a trusted meter on the same bounce (they should agree within a few tenths
+  of a LU); check that the integrated value stops moving while playback is stopped and returns to
+  nothing on Reset.
+- Bypass both while playing: the audio does not change, the panels freeze with BYPASSED and wake up
+  again; fold and unfold the panels, resize the window, switch between the dark and light themes and
+  read the plots and the numbers.
 - Open a project saved before the devices existed and bounce it: the bytes of the bounce are the same as before.
 
 ## A new track from a render
 
-`crates/model/tests/freeze.rs` holds the model half: a rendered track (Bounce in Place, Unfreeze and Keep Audio) is wired exactly like an added audio track, its `SyncOp`s put every `DeviceAdded` before the one `RoutingChanged` (a compound inside a compound used to put the routing first), and it sits right after its source with the folder and colour of the source and one undo step takes everything away. `crates/app/src/app_core_freeze_tests.rs` checks what the engine receives (the devices, then a routing that names them, as for a normally added track) and that the project bounce contains the new track alone with the original muted.
+`crates/model/tests/freeze.rs` holds the model half: a rendered track (Bounce in Place, Unfreeze and
+Keep Audio) is wired exactly like an added audio track, its `SyncOp`s put every `DeviceAdded` before
+the one `RoutingChanged` (a compound inside a compound used to put the routing first), and it sits
+right after its source with the folder and colour of the source and one undo step takes everything
+away. `crates/app/src/app_core_freeze_tests.rs` checks what the engine receives (the devices, then a
+routing that names them, as for a normally added track) and that the project bounce contains the new
+track alone with the original muted.
 
 ## Piano roll tools and cursor
 
-`crates/ui/tests/piano_roll_tools.rs` checks the tool gating (a click and a drag on the empty grid draw nothing with Select and clear the selection, the pencil still draws; a double click with Select draws a note, a drag after it ends the note at the pointer, one undo step, and a double click on a note draws nothing), the rubber band (a plain band replaces the selection, Shift and Ctrl add), a selected group moving together in one merge group, an unselected note being selected alone by a drag, both edges resizing every selected note by the same delta, and the cursor hint over an edge, a body and the grid with each tool and during a drag; `seq_edit.rs` tests `hit_span_edges` and `resize_notes_start`. In `atomik-app`, `shell_scale_tests.rs` checks that `Shell::cursor` follows the roll and falls back to the arrow over another pane, and `translate.rs` the hint-to-icon mapping. The window cursor itself is a hand check: in the piano roll with Select, hover the left and right end of a note (a horizontal resize cursor), its middle (a move cursor) and the empty grid (the arrow); with the pencil the grid shows a crosshair; drag an edge of one of several selected notes and all of them change length; drag the selection by one note and all move in time and pitch, then undo once.
+`crates/ui/tests/piano_roll_tools.rs` checks the tool gating (a click and a drag on the empty grid
+draw nothing with Select and clear the selection, the pencil still draws; a double click with Select
+draws a note, a drag after it ends the note at the pointer, one undo step, and a double click on a
+note draws nothing), the rubber band (a plain band replaces the selection, Shift and Ctrl add), a
+selected group moving together in one merge group, an unselected note being selected alone by a
+drag, both edges resizing every selected note by the same delta, and the cursor hint over an edge, a
+body and the grid with each tool and during a drag; `seq_edit.rs` tests `hit_span_edges` and
+`resize_notes_start`. In `atomik-app`, `shell_scale_tests.rs` checks that `Shell::cursor` follows
+the roll and falls back to the arrow over another pane, and `translate.rs` the hint-to-icon mapping.
+The window cursor itself is a hand check: in the piano roll with Select, hover the left and right
+end of a note (a horizontal resize cursor), its middle (a move cursor) and the empty grid (the
+arrow); with the pencil the grid shows a crosshair; drag an edge of one of several selected notes
+and all of them change length; drag the selection by one note and all move in time and pitch, then
+undo once.
 
 ## Mixer groups
 
-Each layer has its tests. `crates/dsp/src/fader.rs` covers the offset math (0 dB is bit for bit the plain fader, offsets add in dB, the bottom is off, the top clamps, NaN reads as 0 dB) and `crates/devices/src/channel/tests.rs` the strip: the offset scales the fader and the fader CV rides on top of it, a ramp has no step, a group mute is a mute, a group solo beats the mute of the group and of the strip. `crates/model/tests/vca.rs` covers the commands (one undo step each, a drag with one merge id is one step, every refusal changes nothing and records no step), one group per strip with moves on assign, names (trimmed, unique, bounded), the limit, a removed channel or bus leaving its group and coming back by undo, Clear Solos and Clear Mutes, the solo and mute matrix (all sixteen combinations of own and group flags, for a member and a bystander, against the strip's rule), the effective level, and format 26 (round trip in a stable text, every refusal with its JSON path, members in any order, and the version 25 file that loads and saves unchanged). `crates/render/tests/vca.rs` bounces: a group at -6 dB equals its members' faders at -6 dB, a group at 0 dB, no group, and a version 25 file are bit for bit the plain project, a group's mute and solo equal the members' own bit for bit, solo beats the mutes, and the result is the same at every block size and worker count. `crates/app/src/app_core_console_tests.rs` checks what reaches the engine (members only, one param per drag move, undo, a restored strip, the rebuild) and the commands; `crates/ui/tests/console_vca.rs` the strips, their hits and drags, the menus, assigning by menu and by dragging a plate, the member chips and readouts, and the arrangement bar; `crates/mcp/tests/session.rs` the commands and the inspection.
+Each layer has its tests. `crates/dsp/src/fader.rs` covers the offset math (0 dB is bit for bit the
+plain fader, offsets add in dB, the bottom is off, the top clamps, NaN reads as 0 dB) and
+`crates/devices/src/channel/tests.rs` the strip: the offset scales the fader and the fader CV rides
+on top of it, a ramp has no step, a group mute is a mute, a group solo beats the mute of the group
+and of the strip. `crates/model/tests/vca.rs` covers the commands (one undo step each, a drag with
+one merge id is one step, every refusal changes nothing and records no step), one group per strip
+with moves on assign, names (trimmed, unique, bounded), the limit, a removed channel or bus leaving
+its group and coming back by undo, Clear Solos and Clear Mutes, the solo and mute matrix (all
+sixteen combinations of own and group flags, for a member and a bystander, against the strip's
+rule), the effective level, and format 26 (round trip in a stable text, every refusal with its JSON
+path, members in any order, and the version 25 file that loads and saves unchanged).
+`crates/render/tests/vca.rs` bounces: a group at -6 dB equals its members' faders at -6 dB, a group
+at 0 dB, no group, and a version 25 file are bit for bit the plain project, a group's mute and solo
+equal the members' own bit for bit, solo beats the mutes, and the result is the same at every block
+size and worker count. `crates/app/src/app_core_console_tests.rs` checks what reaches the engine
+(members only, one param per drag move, undo, a restored strip, the rebuild) and the commands;
+`crates/ui/tests/console_vca.rs` the strips, their hits and drags, the menus, assigning by menu and
+by dragging a plate, the member chips and readouts, and the arrangement bar;
+`crates/mcp/tests/session.rs` the commands and the inspection.
 
 Hand checks, not automated (they need a real window and your ears):
 
-- Make a group of a few channels (select them, Mixer > Create VCA from Selection), pull its fader down while playing and listen for zipper noise or clicks; compare with moving the members' faders by the same amount. Push it up past 0 dB and back to the bottom (off) and up again.
-- Mute and solo the group, then a member inside and outside it, and check the buttons, the dimmed strips and what you hear against the rule in the architecture notes (solo beats mute; a bystander is silenced by a group solo).
-- Drag a name plate onto a VCA strip, use the right-click menus on channels and buses, rename and recolour a group, delete it, and undo each step; check the chip colours on the plates and the bar on the arrangement headers at every track height, in the dark and light themes.
-- Delete a channel that is in a group and undo it; save, close and reopen the project and check the groups, their colours and levels; open an older project and check that it sounds the same and shows no groups.
+- Make a group of a few channels (select them, Mixer > Create VCA from Selection), pull its fader
+  down while playing and listen for zipper noise or clicks; compare with moving the members' faders
+  by the same amount. Push it up past 0 dB and back to the bottom (off) and up again.
+- Mute and solo the group, then a member inside and outside it, and check the buttons, the dimmed
+  strips and what you hear against the rule in the architecture notes (solo beats mute; a bystander
+  is silenced by a group solo).
+- Drag a name plate onto a VCA strip, use the right-click menus on channels and buses, rename and
+  recolour a group, delete it, and undo each step; check the chip colours on the plates and the bar
+  on the arrangement headers at every track height, in the dark and light themes.
+- Delete a channel that is in a group and undo it; save, close and reopen the project and check the
+  groups, their colours and levels; open an older project and check that it sounds the same and
+  shows no groups.
 
 ## Channel strip upgrades
 
-Each layer has its tests. `crates/plugin-host/tests/device_state.rs` proves that a bypassed latent effect plays its input delayed by exactly its reported latency on both channels (0, 1, 63, 64, 300 and 1000 frames) and that the wet and the delayed dry signal cross fade without a step. `crates/app/src/app_core_plugins_latency_tests.rs` is the alignment proof with the latent test plugin, in CLAP and VST3: a bounce with the effect bypassed is sample for sample the bounce with it active (the test effect is an exact delay at unity gain, so after the 5 ms fade the two are bit identical), it is the zero-latency mix shifted by exactly the latency and by no other shift, and the live path equals the bounce bit for bit. Without the delayed dry signal the first two fail (checked by hand once). `crates/devices/src/channel/tests.rs` covers the strip: polarity inverted is an exact sign flip that nulls against the normal strip and flips through a ramp, the input trim is the dB gain over the whole range, the parallel compressor is bit identical off, at mix 0 and with its params set while off, mix 1 equals a standalone `atomik_dsp::Compressor` render with the makeup, the blend is linear in the mix, it adds no latency and keeps an impulse at its frame, it ramps on and off without a click and is a no-op again when settled off, and it taps the signal after the insert return. `crates/model/tests/console_insert.rs` covers the chain helpers (state, only what changes, one undo step, undo and redo, the legacy strip bypass). `crates/ui/tests/console_strip_upgrades.rs` and `console_inserts.rs` cover the PARALLEL section against the real descriptor (its place, its four controls, the detail params left to the rack), the B of a slot, the BYP ALL button and its fallback; the display-list goldens were regenerated. `crates/app/src/app_core_console_tests.rs` and `shell_console_tests.rs` cover the commands and menu items, and `crates/mcp/tests/session.rs` the inspection and `session_set_param`.
+Each layer has its tests. `crates/plugin-host/tests/device_state.rs` proves that a bypassed latent
+effect plays its input delayed by exactly its reported latency on both channels (0, 1, 63, 64, 300
+and 1000 frames) and that the wet and the delayed dry signal cross fade without a step.
+`crates/app/src/app_core_plugins_latency_tests.rs` is the alignment proof with the latent test
+plugin, in CLAP and VST3: a bounce with the effect bypassed is sample for sample the bounce with it
+active (the test effect is an exact delay at unity gain, so after the 5 ms fade the two are bit
+identical), it is the zero-latency mix shifted by exactly the latency and by no other shift, and the
+live path equals the bounce bit for bit. Without the delayed dry signal the first two fail (checked
+by hand once). `crates/devices/src/channel/tests.rs` covers the strip: polarity inverted is an exact
+sign flip that nulls against the normal strip and flips through a ramp, the input trim is the dB
+gain over the whole range, the parallel compressor is bit identical off, at mix 0 and with its
+params set while off, mix 1 equals a standalone `atomik_dsp::Compressor` render with the makeup, the
+blend is linear in the mix, it adds no latency and keeps an impulse at its frame, it ramps on and
+off without a click and is a no-op again when settled off, and it taps the signal after the insert
+return. `crates/model/tests/console_insert.rs` covers the chain helpers (state, only what changes,
+one undo step, undo and redo, the legacy strip bypass). `crates/ui/tests/console_strip_upgrades.rs`
+and `console_inserts.rs` cover the PARALLEL section against the real descriptor (its place, its four
+controls, the detail params left to the rack), the B of a slot, the BYP ALL button and its fallback;
+the display-list goldens were regenerated. `crates/app/src/app_core_console_tests.rs` and
+`shell_console_tests.rs` cover the commands and menu items, and `crates/mcp/tests/session.rs` the
+inspection and `session_set_param`.
 
 Hand checks, not automated (they need your ears and a real plugin):
 
-- Put a latent plugin (a linear-phase EQ or a look-ahead limiter) on a channel next to a dry channel playing the same material. Toggle its B and BYP ALL while playing: the two channels must stay in phase (a comb filter or a flam when the sum is monitored in mono means the compensation is wrong), with no click.
-- Switch the parallel compressor on and off and move its mix and threshold while playing a drum loop; listen for clicks, check the blend at mix 0 against the compressor off, and compare mix 1 with a compressor device on the insert.
-- Flip the polarity and sweep the trim during playback; check the INPUT section shows the value in dB while dragging and the rack panel shows the same.
-- Save and reopen a project with the controls set, and open an older project: it must sound and look as before, with the parallel compressor off.
+- Put a latent plugin (a linear-phase EQ or a look-ahead limiter) on a channel next to a dry channel
+  playing the same material. Toggle its B and BYP ALL while playing: the two channels must stay in
+  phase (a comb filter or a flam when the sum is monitored in mono means the compensation is wrong),
+  with no click.
+- Switch the parallel compressor on and off and move its mix and threshold while playing a drum
+  loop; listen for clicks, check the blend at mix 0 against the compressor off, and compare mix 1
+  with a compressor device on the insert.
+- Flip the polarity and sweep the trim during playback; check the INPUT section shows the value in
+  dB while dragging and the rack panel shows the same.
+- Save and reopen a project with the controls set, and open an older project: it must sound and look
+  as before, with the parallel compressor off.
 
 ## Mixer snapshots
 
-Each layer has its tests. `crates/model/tests/snapshots.rs` covers capture and recall (a stored mix comes back exactly, every strip param but the internal ones is held and the effect devices' params are not, recall sends only ordinary param changes, the song and the rack are untouched), one undo step for each of store, update, recall, rename, move, compare begin, flip and end and delete, the rules (names trimmed, unique and bounded, at most 16, ids not reused, commands that change nothing refused), every scope, structural drift (a deleted channel, effect and group skipped with notes, a new channel left alone, membership recalled for the strips the snapshot knew), compare (flipping is lossless, an edit stays with the side it was made on, END and recall keep the live side, another snapshot taking the place of the compared one, undo restoring the slot) and project format 27 (round trip, stable text, the compare slot not saved, a version 26 file loading unchanged, a snapshot naming what does not exist, bad snapshots refused with their JSON path). `crates/render/tests/snapshots.rs` bounces: a recalled snapshot is bit for bit the bounce of the mix set by hand (also after undo and after a save and load), a compare flip bounces as either side, a scoped recall as those controls by hand, and a project without snapshots, with snapshots it does not recall or saved as version 26 is bit for bit the plain project. `crates/ui/tests/console_mixer_snapshots.rs` drives the bar (its place under the toolbar, + and the default names, chips, a click recalling and a click on the matching chip doing nothing, the A/B button choosing its target, END, the chip menu with every item and the disabled ones, renaming in place through the text owner, the status text, the dot, a narrow console dropping chips) with three display-list goldens and an ignored PNG preview (`cargo test -p atomik-ui --test console_mixer_snapshots -- --ignored`); the other console goldens moved by the height of the bar and were regenerated. `crates/app/src/app_core_snapshots_tests.rs` covers the core (default names, the engine seeing a recall as param changes with no routing, one undo step each, the current snapshot and the hint, next and previous wrapping, compare and the menu state, the messages, the limit of 16) and `shell_console_tests.rs` the menu items and the bar through the shell. `crates/mcp/tests/session.rs` stores, recalls by name and id with a scope, compares and deletes through `session_command` and checks every step with a bounce. The keyboard cheat sheet and goldens are regenerated.
+Each layer has its tests. `crates/model/tests/snapshots.rs` covers capture and recall (a stored mix
+comes back exactly, every strip param but the internal ones is held and the effect devices' params
+are not, recall sends only ordinary param changes, the song and the rack are untouched), one undo
+step for each of store, update, recall, rename, move, compare begin, flip and end and delete, the
+rules (names trimmed, unique and bounded, at most 16, ids not reused, commands that change nothing
+refused), every scope, structural drift (a deleted channel, effect and group skipped with notes, a
+new channel left alone, membership recalled for the strips the snapshot knew), compare (flipping is
+lossless, an edit stays with the side it was made on, END and recall keep the live side, another
+snapshot taking the place of the compared one, undo restoring the slot) and project format 27 (round
+trip, stable text, the compare slot not saved, a version 26 file loading unchanged, a snapshot
+naming what does not exist, bad snapshots refused with their JSON path).
+`crates/render/tests/snapshots.rs` bounces: a recalled snapshot is bit for bit the bounce of the mix
+set by hand (also after undo and after a save and load), a compare flip bounces as either side, a
+scoped recall as those controls by hand, and a project without snapshots, with snapshots it does not
+recall or saved as version 26 is bit for bit the plain project.
+`crates/ui/tests/console_mixer_snapshots.rs` drives the bar (its place under the toolbar, + and the
+default names, chips, a click recalling and a click on the matching chip doing nothing, the A/B
+button choosing its target, END, the chip menu with every item and the disabled ones, renaming in
+place through the text owner, the status text, the dot, a narrow console dropping chips) with three
+display-list goldens and an ignored PNG preview
+(`cargo test -p atomik-ui --test console_mixer_snapshots -- --ignored`); the other console goldens
+moved by the height of the bar and were regenerated. `crates/app/src/app_core_snapshots_tests.rs`
+covers the core (default names, the engine seeing a recall as param changes with no routing, one
+undo step each, the current snapshot and the hint, next and previous wrapping, compare and the menu
+state, the messages, the limit of 16) and `shell_console_tests.rs` the menu items and the bar
+through the shell. `crates/mcp/tests/session.rs` stores, recalls by name and id with a scope,
+compares and deletes through `session_command` and checks every step with a bounce. The keyboard
+cheat sheet and goldens are regenerated.
 
 Hand checks, not automated (they need your ears and a real window):
 
-- Store a snapshot, move several faders, a send and a mute while playing, and click the chip: the strips glide to the stored values with no zipper noise or click; do the same with a scoped recall from the right-click menu.
-- Use A/B while playing: flip, edit on each side, flip again, END, and undo each step; check the status text and the lit button on both sides.
-- Rename a chip by double-click, type with the keyboard shortcuts active (they must not fire), and check Escape and clicking elsewhere.
-- Delete a channel, an effect and a group after storing, recall, and read the note in the bar; save, reopen and recall; open an older project and check it sounds the same and shows no chips.
+- Store a snapshot, move several faders, a send and a mute while playing, and click the chip: the
+  strips glide to the stored values with no zipper noise or click; do the same with a scoped recall
+  from the right-click menu.
+- Use A/B while playing: flip, edit on each side, flip again, END, and undo each step; check the
+  status text and the lit button on both sides.
+- Rename a chip by double-click, type with the keyboard shortcuts active (they must not fire), and
+  check Escape and clicking elsewhere.
+- Delete a channel, an effect and a group after storing, recall, and read the note in the bar; save,
+  reopen and recall; open an older project and check it sounds the same and shows no chips.
 - Check the bar at narrow widths and with sixteen chips, in the dark and light themes.
 
 ## Macro banks, the parameter search and automation that follows the selection
 
-Each layer has its tests, none of which needs hardware. `crates/model/tests/macros.rs` has the maths (the value is linear between `min` and `max`, inverts, reverses and clamps; a discrete param rounds half up; `assign_position` is the inverse), the commands and their undo (a new bank is one step; the first assignment keeps the target's value; several targets for one macro and one macro for a param, a second assignment moving the first; a direct edit refused naming the macro; a range edit and what it refuses; a removal leaving the param at the value the macro gave it; clearing a macro; names; every refusal: a bank that is not one, a macro 9, a container or a bank as a target, a param with automation of its own, a lane or clip for a driven param, `solo`), assignments that outlive their devices and come back with the undo, the expansion (the driven params and the targets listed, nothing changed without assignments), the lane expansion with every point mapped, a bank as an automatable track (and an effect that has none), and project format 29 (a stable text, version 28 files loading unchanged, every refusal with its JSON path). `crates/model/tests/param_search.rs` covers the index (every param, the track of an instrument, its strip, a container's inside, a loose device, the VCA), the queries by device, track, param, key and unit, the path form with `>`, the rule that every word must match, the fuzzy match, a prefix beating a substring, stable ordering, the bounded results and a signature that follows renames and structure and not values. `crates/render/tests/macros.rs` is the audio proof: a lane on a macro renders **bit for bit** like the hand-made lane on the target (plain, narrowed, inverted and reversed ranges), a static macro value like the param set to the mapped value, a bank without assignments, an assignment that is removed or undone and a version 28 file like the project without them, and the render is the same for host blocks 64, 128, 333 and 1024 and 0 to 3 workers and after a save and a load. `crates/app/src/app_core_macros_tests.rs` checks the engine side with a recording sink (one `set_param` per target, undo, redo, a range edit and a removal; a driven param refusing an edit; the current bank), plays a project with a macro lane and with a static macro **live at three block sizes and compares it with the bounce bit for bit**, and covers following (a touched control adds an empty lane and writes no data, nothing happens with the switch off, a driven param shows the macro's lane, an effect shows none and says why, a selection shows the last touched lane and never adds one, a collapsed folder is opened, a folded lane is shown open and stays folded in the project) and the search (rows with value and marks, renames, reveal, adjust, assign, learn, a VCA row, a project of 30 synths). `crates/ui/tests/macros_ui.rs` covers the locked controls in the rack, console and parameter pane (value, tag, tooltip, refused press, drag and double click, the right-click menu kept, `ParamTouched`), the Macros panel (its layout, every hit, renaming, scrolling) and the search panel (typing, keys, chords, the mouse, the footer buttons, a small window); `follow_lane.rs` covers the followed lane (open though folded, outlined, scrolled into view, a collapsed track shown). `crates/app/src/shell_macros_tests.rs` drives the menus, the keys (`Ctrl+Shift+P`), the control menu (Assign to Macro and Remove from Macro), both panels (keys inside a name and the search do not run commands) and the follow switch; `crates/mcp/tests/macros.rs` the tools. The keyboard goldens and `docs/KEYBOARD.md` are regenerated with `ATOMIK_UPDATE_GOLDEN=1`.
+Each layer has its tests, none of which needs hardware. `crates/model/tests/macros.rs` has the maths
+(the value is linear between `min` and `max`, inverts, reverses and clamps; a discrete param rounds
+half up; `assign_position` is the inverse), the commands and their undo (a new bank is one step; the
+first assignment keeps the target's value; several targets for one macro and one macro for a param,
+a second assignment moving the first; a direct edit refused naming the macro; a range edit and what
+it refuses; a removal leaving the param at the value the macro gave it; clearing a macro; names;
+every refusal: a bank that is not one, a macro 9, a container or a bank as a target, a param with
+automation of its own, a lane or clip for a driven param, `solo`), assignments that outlive their
+devices and come back with the undo, the expansion (the driven params and the targets listed,
+nothing changed without assignments), the lane expansion with every point mapped, a bank as an
+automatable track (and an effect that has none), and project format 29 (a stable text, version 28
+files loading unchanged, every refusal with its JSON path). `crates/model/tests/param_search.rs`
+covers the index (every param, the track of an instrument, its strip, a container's inside, a loose
+device, the VCA), the queries by device, track, param, key and unit, the path form with `>`, the
+rule that every word must match, the fuzzy match, a prefix beating a substring, stable ordering, the
+bounded results and a signature that follows renames and structure and not values.
+`crates/render/tests/macros.rs` is the audio proof: a lane on a macro renders **bit for bit** like
+the hand-made lane on the target (plain, narrowed, inverted and reversed ranges), a static macro
+value like the param set to the mapped value, a bank without assignments, an assignment that is
+removed or undone and a version 28 file like the project without them, and the render is the same
+for host blocks 64, 128, 333 and 1024 and 0 to 3 workers and after a save and a load.
+`crates/app/src/app_core_macros_tests.rs` checks the engine side with a recording sink (one
+`set_param` per target, undo, redo, a range edit and a removal; a driven param refusing an edit; the
+current bank), plays a project with a macro lane and with a static macro **live at three block sizes
+and compares it with the bounce bit for bit**, and covers following (a touched control adds an empty
+lane and writes no data, nothing happens with the switch off, a driven param shows the macro's lane,
+an effect shows none and says why, a selection shows the last touched lane and never adds one, a
+collapsed folder is opened, a folded lane is shown open and stays folded in the project) and the
+search (rows with value and marks, renames, reveal, adjust, assign, learn, a VCA row, a project of
+30 synths). `crates/ui/tests/macros_ui.rs` covers the locked controls in the rack, console and
+parameter pane (value, tag, tooltip, refused press, drag and double click, the right-click menu
+kept, `ParamTouched`), the Macros panel (its layout, every hit, renaming, scrolling) and the search
+panel (typing, keys, chords, the mouse, the footer buttons, a small window); `follow_lane.rs` covers
+the followed lane (open though folded, outlined, scrolled into view, a collapsed track shown).
+`crates/app/src/shell_macros_tests.rs` drives the menus, the keys (`Ctrl+Shift+P`), the control menu
+(Assign to Macro and Remove from Macro), both panels (keys inside a name and the search do not run
+commands) and the follow switch; `crates/mcp/tests/macros.rs` the tools. The keyboard goldens and
+`docs/KEYBOARD.md` are regenerated with `ATOMIK_UPDATE_GOLDEN=1`.
 
 Hand checks, not automated (they need a real window and your ears):
 
-- **Locks and tags.** In a project with a synth, right-click its cutoff knob and choose Assign to Macro > Macro 1: a macro bank appears at the end of the rack, the knob takes an M1 tag and a dim veil, a drag and a double click only show a message, and hovering it says it is driven by macro 1. Turn the bank's Macro 1 knob: the cutoff knob follows on screen and the sound follows without zipper noise, also while a note is held. Open Mixer > Macros..., narrow MIN and MAX, press INV, name the macro, click on the bar, and watch the knob follow. Right-click the locked knob and choose Remove from Macro: it keeps its value and a drag works again. Undo each step.
-- **Automate an effect through a macro.** Assign a delay's mix and a channel fader to macros, draw a lane on each macro in the arrangement (the bank has its own track), play, and listen to both move; bounce and compare with the live sound.
-- **Automate a fader and an effect directly.** Right-click a channel fader in the mixer (and a knob of an effect in the rack) and choose Edit Automation: an automation track appears in the arrangement with the device's name, its first lane in the header row with its OVR/TCH/LTC and W buttons, and the lane is outlined. Draw a few points, play: the fader and the knob follow on screen and the sound follows; mute the automation track (its M) and the fader stops moving and keeps its own value; solo a synth track and the fader still moves. Arm the lane (W), record a take while moving the fader, stop, and check the clip is on the lane in one undo step. Bounce and compare with the live sound.
-- **Plugin params.** Assign a parameter of a plugin from its parameter pane (right-click a row) and move the macro; check the pane's row shows the value and refuses a drag.
-- **Follow the selection.** Turn on View > Automation Follows Selection, press a knob in the rack, a console fader and a row of the parameter pane: the arrangement shows the lane (a lane is added for a track that has none, fold it first to see it stay open and fold back, collapse its folder to see the folder open), it scrolls into view and is outlined. Touch the cutoff of an instrument, then select the instrument's track: the same lane shows again. Start an automation take, touch a new control: no lane is added during the take. Turn the switch off and check nothing moves.
-- **Find Parameter.** Press `Ctrl/Cmd+Shift+P` in a large project (a few thousand plugin params), type `lead > cut`, check the list answers as you type, move with the arrows, press Enter and see the device selected in the rack, Ctrl/Cmd+Right to adjust it in place, Ctrl/Cmd+M to put it on a macro, Ctrl/Cmd+L to see its lane and Ctrl/Cmd+E to learn it with a controller.
+- **Locks and tags.** In a project with a synth, right-click its cutoff knob and choose Assign to
+  Macro > Macro 1: a macro bank appears at the end of the rack, the knob takes an M1 tag and a dim
+  veil, a drag and a double click only show a message, and hovering it says it is driven by macro 1.
+  Turn the bank's Macro 1 knob: the cutoff knob follows on screen and the sound follows without
+  zipper noise, also while a note is held. Open Mixer > Macros..., narrow MIN and MAX, press INV,
+  name the macro, click on the bar, and watch the knob follow. Right-click the locked knob and
+  choose Remove from Macro: it keeps its value and a drag works again. Undo each step.
+- **Automate an effect through a macro.** Assign a delay's mix and a channel fader to macros, draw a
+  lane on each macro in the arrangement (the bank has its own track), play, and listen to both move;
+  bounce and compare with the live sound.
+- **Automate a fader and an effect directly.** Right-click a channel fader in the mixer (and a knob
+  of an effect in the rack) and choose Edit Automation: an automation track appears in the
+  arrangement with the device's name, its first lane in the header row with its OVR/TCH/LTC and W
+  buttons, and the lane is outlined. Draw a few points, play: the fader and the knob follow on
+  screen and the sound follows; mute the automation track (its M) and the fader stops moving and
+  keeps its own value; solo a synth track and the fader still moves. Arm the lane (W), record a take
+  while moving the fader, stop, and check the clip is on the lane in one undo step. Bounce and
+  compare with the live sound.
+- **Plugin params.** Assign a parameter of a plugin from its parameter pane (right-click a row) and
+  move the macro; check the pane's row shows the value and refuses a drag.
+- **Follow the selection.** Turn on View > Automation Follows Selection, press a knob in the rack, a
+  console fader and a row of the parameter pane: the arrangement shows the lane (a lane is added for
+  a track that has none, fold it first to see it stay open and fold back, collapse its folder to see
+  the folder open), it scrolls into view and is outlined. Touch the cutoff of an instrument, then
+  select the instrument's track: the same lane shows again. Start an automation take, touch a new
+  control: no lane is added during the take. Turn the switch off and check nothing moves.
+- **Find Parameter.** Press `Ctrl/Cmd+Shift+P` in a large project (a few thousand plugin params),
+  type `lead > cut`, check the list answers as you type, move with the arrows, press Enter and see
+  the device selected in the rack, Ctrl/Cmd+Right to adjust it in place, Ctrl/Cmd+M to put it on a
+  macro, Ctrl/Cmd+L to see its lane and Ctrl/Cmd+E to learn it with a controller.
 
 ## MIDI mappings and control surfaces
 
-Each layer has its tests, none of which needs hardware. `crates/model/src/midi_map.rs` has the pure maths: ranges, inversion, a reversed range, 14 bit pairs (MSB then LSB, an MSB-only controller), pitch bend, the three relative encodings (every value of each) and their clamping, **soft takeover** (waiting for the target, catching a control that jumped over it, dropping out again when the target is moved elsewhere), toggle (a press flips against what the target really is, releases and repeats are not presses), momentary, a transport trigger, and the **learner** (notes, bends, controllers above 63 at once, a lone low controller decided after the pair window, a pair in either order, another channel or a note ending the wait). `crates/model/tests/midi_maps.rs` covers the commands and their undo (one step each, ids, the Learn rules, Forget, AddMany, Clear, every refusal with its reason, a mapping outliving its device), the **preset by role** (device type and position, the port dropped, applied to a second project through its own devices, missing instances named, a container device left out, the file text stable and bad files refused with their JSON path) and project format 28 (round trip, the text, defaults omitted, a version 27 file loading and saving back unchanged, a mapping naming a deleted device, bad mappings refused with their JSON path). `crates/midi-io/src/tests.rs` covers `parse_message` (channel, raw values, running status, the channel-mode controllers) and `crates/midi-io/src/surface/mcu_tests.rs` the eight-fader driver with exact bytes: the fader pitch bend round trip in both directions (every wire value), no echo of the surface's own move, a touched fader left alone, V-pot decoding, the LED ring values, the buttons and their LEDs, bank and channel moves and their limits, the transport keys, the jog wheel, the scribble strip SysEx byte for byte (cut names, non-ASCII), the time display digit by digit in beats and timecode, the handshake response of a worked example, and that a second feedback pass with the same state sends nothing. `crates/app/src/midi_control.rs` and `crates/app/src/midi.rs` test the hub and that a consumed message plays no note (running status intact, everything consumed while learning). `crates/app/src/app_core_midimap_tests.rs` is the learn flow in the core (an armed target, learn mode swallowing the first change, a 14 bit pair, a note as a toggle, learning a target again), the maths through real params, soft takeover against the mouse, buttons, a VCA level, the tempo, transport and the selected-strip target, a vanished target, **one undo step per gesture** and a pause starting the next, **automation recording from a controller** (a Touch lane writes from the first move until the control has been still, one undo step for the take), the consume list following the mappings and ports, persistence through save and load, and presets between two cores. `crates/app/src/app_core_surface_tests.rs` runs the driver through a loopback surface: the strips in console order (channels, buses, VCA groups), a fader move and the motor following the project, a touched fader as one undo step, V-pots and rings, the keys and LEDs, banking, the transport lamps, rewind and the jog wheel, the time display, the master, the throttle (30 passes a second) and the handshake. `crates/app/src/shell_midimap_tests.rs` clicks through the Mixer menu, the right-click menu of a control, the MIDI Mappings panel, the preset requests and the surface settings. `crates/ui/tests/midi_marks.rs` and the unit tests of `midi_maps_panel.rs` cover the marks (a dot per mapped control, outlines while learning, nothing extra without marks), the right click and the panel's edits, and `crates/app/src/settings_tabs_tests.rs` the Surfaces tab. `crates/mcp/tests/midi.rs` drives learn, mappings, presets and the surface through the server and checks with bounces that a mapping never changes a render. **Determinism:** `crates/render/tests/midi_maps.rs` bounces a project with mappings of every kind bit for bit like the same project without them (any block size and worker count, after save and load, after clear and undo), and a version 27 file as before.
+Each layer has its tests, none of which needs hardware. `crates/model/src/midi_map.rs` has the pure
+maths: ranges, inversion, a reversed range, 14 bit pairs (MSB then LSB, an MSB-only controller),
+pitch bend, the three relative encodings (every value of each) and their clamping, **soft takeover**
+(waiting for the target, catching a control that jumped over it, dropping out again when the target
+is moved elsewhere), toggle (a press flips against what the target really is, releases and repeats
+are not presses), momentary, a transport trigger, and the **learner** (notes, bends, controllers
+above 63 at once, a lone low controller decided after the pair window, a pair in either order,
+another channel or a note ending the wait). `crates/model/tests/midi_maps.rs` covers the commands
+and their undo (one step each, ids, the Learn rules, Forget, AddMany, Clear, every refusal with its
+reason, a mapping outliving its device), the **preset by role** (device type and position, the port
+dropped, applied to a second project through its own devices, missing instances named, a container
+device left out, the file text stable and bad files refused with their JSON path) and project format
+28 (round trip, the text, defaults omitted, a version 27 file loading and saving back unchanged, a
+mapping naming a deleted device, bad mappings refused with their JSON path).
+`crates/midi-io/src/tests.rs` covers `parse_message` (channel, raw values, running status, the
+channel-mode controllers) and `crates/midi-io/src/surface/mcu_tests.rs` the eight-fader driver with
+exact bytes: the fader pitch bend round trip in both directions (every wire value), no echo of the
+surface's own move, a touched fader left alone, V-pot decoding, the LED ring values, the buttons and
+their LEDs, bank and channel moves and their limits, the transport keys, the jog wheel, the scribble
+strip SysEx byte for byte (cut names, non-ASCII), the time display digit by digit in beats and
+timecode, the handshake response of a worked example, and that a second feedback pass with the same
+state sends nothing. `crates/app/src/midi_control.rs` and `crates/app/src/midi.rs` test the hub and
+that a consumed message plays no note (running status intact, everything consumed while learning).
+`crates/app/src/app_core_midimap_tests.rs` is the learn flow in the core (an armed target, learn
+mode swallowing the first change, a 14 bit pair, a note as a toggle, learning a target again), the
+maths through real params, soft takeover against the mouse, buttons, a VCA level, the tempo,
+transport and the selected-strip target, a vanished target, **one undo step per gesture** and a
+pause starting the next, **automation recording from a controller** (a Touch lane writes from the
+first move until the control has been still, one undo step for the take), the consume list following
+the mappings and ports, persistence through save and load, and presets between two cores.
+`crates/app/src/app_core_surface_tests.rs` runs the driver through a loopback surface: the strips in
+console order (channels, buses, VCA groups), a fader move and the motor following the project, a
+touched fader as one undo step, V-pots and rings, the keys and LEDs, banking, the transport lamps,
+rewind and the jog wheel, the time display, the master, the throttle (30 passes a second) and the
+handshake. `crates/app/src/shell_midimap_tests.rs` clicks through the Mixer menu, the right-click
+menu of a control, the MIDI Mappings panel, the preset requests and the surface settings.
+`crates/ui/tests/midi_marks.rs` and the unit tests of `midi_maps_panel.rs` cover the marks (a dot
+per mapped control, outlines while learning, nothing extra without marks), the right click and the
+panel's edits, and `crates/app/src/settings_tabs_tests.rs` the Surfaces tab.
+`crates/mcp/tests/midi.rs` drives learn, mappings, presets and the surface through the server and
+checks with bounces that a mapping never changes a render. **Determinism:**
+`crates/render/tests/midi_maps.rs` bounces a project with mappings of every kind bit for bit like
+the same project without them (any block size and worker count, after save and load, after clear and
+undo), and a version 27 file as before.
 
 Hand checks, not automated (they need hardware):
 
-- **A real controller.** Open a project, turn on Mixer > MIDI Learn, change a knob on a rack panel (it must not move), then move a knob on the controller: the mapping appears in the MIDI Mappings panel and the control carries a dot. Do it for a console fader, a pan, a mute button (with a pad: it should toggle), a VCA fader and the tempo. Check the soft takeover (start with the controller far from the value: nothing jumps, and it takes over as it passes), an endless encoder in each of the three encodings, a controller that sends a 14 bit pair, and that a mapped keyboard key plays no note while an unmapped one does. Move a mapped control during playback with a lane armed in Touch and Latch: the lane must write while you move and let go half a second after you stop. Check that a sweep is one Undo step, save and reopen the project, and export a preset, import it into another project.
-- **A surface that speaks the eight-fader protocol (MCU-compatible).** Choose it in Settings > Surfaces with the surface's own ports. Check on connect (the device query, then the faders jump to the console, the scribble strips show the names, the display shows the position), the faders both ways (move one: the console follows; move a fader in the console or play automation: the motor follows without fighting the finger), the touch sensors with a Touch lane, the V-pots and their rings, mute, solo, record-ready and select and their LEDs, bank and channel keys (the last page, the strip numbers in the assignment display), the transport keys and lamps, the jog wheel, the timecode and beats display with its key, and the master fader. Unplug and replug the surface and reopen Settings: the surface is shown again. Surfaces differ in how strictly they follow the protocol (the handshake, the display layout): note which one you used and what it did.
+- **A real controller.** Open a project, turn on Mixer > MIDI Learn, change a knob on a rack panel
+  (it must not move), then move a knob on the controller: the mapping appears in the MIDI Mappings
+  panel and the control carries a dot. Do it for a console fader, a pan, a mute button (with a pad:
+  it should toggle), a VCA fader and the tempo. Check the soft takeover (start with the controller
+  far from the value: nothing jumps, and it takes over as it passes), an endless encoder in each of
+  the three encodings, a controller that sends a 14 bit pair, and that a mapped keyboard key plays
+  no note while an unmapped one does. Move a mapped control during playback with a lane armed in
+  Touch and Latch: the lane must write while you move and let go half a second after you stop. Check
+  that a sweep is one Undo step, save and reopen the project, and export a preset, import it into
+  another project.
+- **A surface that speaks the eight-fader protocol (MCU-compatible).** Choose it in Settings >
+  Surfaces with the surface's own ports. Check on connect (the device query, then the faders jump to
+  the console, the scribble strips show the names, the display shows the position), the faders both
+  ways (move one: the console follows; move a fader in the console or play automation: the motor
+  follows without fighting the finger), the touch sensors with a Touch lane, the V-pots and their
+  rings, mute, solo, record-ready and select and their LEDs, bank and channel keys (the last page,
+  the strip numbers in the assignment display), the transport keys and lamps, the jog wheel, the
+  timecode and beats display with its key, and the master fader. Unplug and replug the surface and
+  reopen Settings: the surface is shown again. Surfaces differ in how strictly they follow the
+  protocol (the handshake, the display layout): note which one you used and what it did.
 ## Detached windows
 
-The window code in `platform/` is not unit-tested (it needs a window and a GPU); what it decides is in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`. These are the hand checks, on every OS (`atomik --detach rack,console` opens both panes at start):
+The window code in `platform/` is not unit-tested (it needs a window and a GPU); what it decides is
+in `platform/window_logic.rs` and `windows.rs`, and the shell side is in `shell_windows_tests.rs`.
+These are the hand checks, on every OS (`atomik --detach rack,console` opens both panes at start):
 
-- Detach and attach both panes from the View menu, with their shortcuts, and by closing the window. The pane returns to the main window; the main window never ends up empty.
-- Quit with a pane detached and start again: the windows reopen where they were, with their sizes and maximised state, and so does the main window. Maximise a window, quit, start: still maximised, and restoring it gives the size from before.
-- First detach with no saved geometry (delete the `windows` key of `ui-state.json`): with three monitors the rack opens maximised on the next monitor to the right of the main window (wrapping to the left), and the mixer on the one after; with two, the mixer opens cascaded 32 units down and right from the main window, not maximised; with one monitor, both cascade. Closing the window and detaching again brings it back where it was.
+- Detach and attach both panes from the View menu, with their shortcuts, and by closing the window.
+  The pane returns to the main window; the main window never ends up empty.
+- Quit with a pane detached and start again: the windows reopen where they were, with their sizes
+  and maximised state, and so does the main window. Maximise a window, quit, start: still maximised,
+  and restoring it gives the size from before.
+- First detach with no saved geometry (delete the `windows` key of `ui-state.json`): with three
+  monitors the rack opens maximised on the next monitor to the right of the main window (wrapping to
+  the left), and the mixer on the one after; with two, the mixer opens cascaded 32 units down and
+  right from the main window, not maximised; with one monitor, both cascade. Closing the window and
+  detaching again brings it back where it was.
 - Unplug (or switch off) the monitor a window was on and start: the window comes back on a visible monitor.
-- Transport, undo and save keys work from the main, the rack and the mixer windows. F5, F6 and F7 raise the windows while the panes are detached; Shift+F5 and the mixer's MAX maximise the mixer window.
-- Drag a file from the file browser into the detached rack, and onto a sampler panel in it; drag a library item into the detached rack; drag out of the main window and back (the hover cancels where it leaves). Drop an OS file onto each window.
-- In the detached rack: cables, moving devices, the device browser. In the mixer window: rename a channel, drag a fader, the right-click menu.
-- Open Settings from a detached window: the dialog shows in the main window, which comes forward. File dialogs open over the window you used last.
-- Open a plugin editor (in process and sandboxed) from the detached rack and check it stays usable and in front of the right window.
-- With all three windows open and audio running: the meters move smoothly (60 Hz) in the mixer window, and the CPU does not rise by much while the rack and the main window are idle.
-- Two monitors with different scales (100 % and 150 %): text is sharp in each window, a window dragged from one to the other rescales, and a file drag crossing from one monitor's window to the other lands on the right pane.
-- Windows: the menu bar is in the main window only. macOS: the global menu works with each window focused, Cmd+` cycles the windows, and the frame time with three windows stays near 16 ms (if a frame takes more than 20 ms, try a present mode without vsync for the detached windows). Linux X11: positions are restored. Wayland: detaching works, positions are not restored, and a drag leaving its window cancels with the status note.
+- Transport, undo and save keys work from the main, the rack and the mixer windows. F5, F6 and F7
+  raise the windows while the panes are detached; Shift+F5 and the mixer's MAX maximise the mixer
+  window.
+- Drag a file from the file browser into the detached rack, and onto a sampler panel in it; drag a
+  library item into the detached rack; drag out of the main window and back (the hover cancels where
+  it leaves). Drop an OS file onto each window.
+- In the detached rack: cables, moving devices, the device browser. In the mixer window: rename a
+  channel, drag a fader, the right-click menu.
+- Open Settings from a detached window: the dialog shows in the main window, which comes forward.
+  File dialogs open over the window you used last.
+- Open a plugin editor (in process and sandboxed) from the detached rack and check it stays usable
+  and in front of the right window.
+- With all three windows open and audio running: the meters move smoothly (60 Hz) in the mixer
+  window, and the CPU does not rise by much while the rack and the main window are idle.
+- Two monitors with different scales (100 % and 150 %): text is sharp in each window, a window
+  dragged from one to the other rescales, and a file drag crossing from one monitor's window to the
+  other lands on the right pane.
+- Windows: the menu bar is in the main window only. macOS: the global menu works with each window
+  focused,
+  Cmd+` cycles the windows, and the frame time with three windows stays near 16 ms (if a frame takes more than 20 ms, try a present mode without vsync for the detached windows). Linux X11: positions are restored. Wayland: detaching works, positions are not restored, and a drag leaving its window cancels with the status note.
 
-Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11 and Wayland) and monitors of mixed scale have not been tried.
+Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
+and Wayland) and monitors of mixed scale have not been tried.
 
 ## Hardware and manual tests
 
-Tests that need real hardware or a plugin installed on your machine are `#[ignore]`d and never run in CI. Run them by hand, one binary at a time, on a machine where playing sound is acceptable:
+Tests that need real hardware or a plugin installed on your machine are `#[ignore]`d and never run
+in CI. Run them by hand, one binary at a time, on a machine where playing sound is acceptable:
 
-- `crates/audio-io/tests/hw_loopback.rs`, `crates/play/tests/hw_cable.rs` and `crates/app/tests/hw_e5.rs` play and record through a virtual audio cable (a loopback device whose endpoints are named `CABLE Input` and `CABLE Output`); they refuse to open any other device. Run them with `cargo test -p <crate> --test <name> -- --ignored --nocapture`.
-- `crates/app/src/app_core_plugins_real_tests.rs` and `crates/plugin-vst3/tests/real_plugin.rs` load a real third-party plugin named by `ATOMIK_REAL_VST3` (and the other `ATOMIK_REAL_*` variables documented at the top of each file).
+- `crates/audio-io/tests/hw_loopback.rs`, `crates/play/tests/hw_cable.rs` and
+  `crates/app/tests/hw_e5.rs` play and record through a virtual audio cable (a loopback device whose
+  endpoints are named `CABLE Input` and `CABLE Output`); they refuse to open any other device. Run
+  them with `cargo test -p <crate> --test <name> -- --ignored --nocapture`.
+- `crates/app/src/app_core_plugins_real_tests.rs` and `crates/plugin-vst3/tests/real_plugin.rs` load
+  a real third-party plugin named by `ATOMIK_REAL_VST3` (and the other `ATOMIK_REAL_*` variables
+  documented at the top of each file).
 - Listening to a render for clicks, zipper noise and aliasing is a manual check; no automated test replaces it.
 
 A normal `cargo test --workspace` reports these as ignored.
 
-The audio tests use the same guard as the engine tests: every engine render in `audio_stream.rs`, `record_tap.rs` and `audio_bounce_alloc.rs` runs under `assert_no_alloc`, and the tests with workers also install `forbid_on_this_thread` so that an allocation on a worker thread is counted. The worker counter is process-global, so tests that use it live in their own test binary (`audio_bounce_alloc.rs`, `audio_stream_workers.rs`).
+The audio tests use the same guard as the engine tests: every engine render in `audio_stream.rs`,
+`record_tap.rs` and `audio_bounce_alloc.rs` runs under `assert_no_alloc`, and the tests with workers
+also install `forbid_on_this_thread` so that an allocation on a worker thread is counted. The worker
+counter is process-global, so tests that use it live in their own test binary
+(`audio_bounce_alloc.rs`, `audio_stream_workers.rs`).
 
-The recording input (gain, clip-safe, meter) has a test at each layer. `crates/devices/src/audio_track.rs` covers the two params (range, defaults, the gain on the monitor to the bit, the bottom as off, the 5 ms ramp, a 0 dB track bit-exact, clip-safe leaving the monitor alone). `crates/engine/tests/record_tap.rs` (under the counting allocator) records through `record_tap_gained` at several block sizes: the gain on every sample to the bit, two strips on one host channel, a gain change gliding with no step and starting at the next batch, clip-safe never writing a sample above full scale for a hot stereo input (the pair limited together) while the plain take keeps its overs, a take below full scale untouched to the bit, the release back to the original level, not-a-number samples written as silence, and the controls' clamping. `crates/app/src/audio_record_tests.rs` has the settings and the post-gain peak (the params save, load and undo as one step for a drag; a project without them loads at unity) and `app_core_rec_audio_tests.rs` records real takes on an offline engine (the exact gain in the file, a gain turned during the take, clip-safe against a plain take of the same input, two tracks on one input with their own gains) and checks which track the bar shows and the level and latch it is fed. `crates/ui/tests/rec_input.rs` drives the section (drag, Shift, wheel, double-click, SAFE, the meter's hold and latch per track, the room it takes from the clip inspector, the tooltips) and `seq_snapshot.rs` holds its display-list golden (`transport_rec_input_1x.json`).
+The recording input (gain, clip-safe, meter) has a test at each layer.
+`crates/devices/src/audio_track.rs` covers the two params (range, defaults, the gain on the monitor
+to the bit, the bottom as off, the 5 ms ramp, a 0 dB track bit-exact, clip-safe leaving the monitor
+alone). `crates/engine/tests/record_tap.rs` (under the counting allocator) records through
+`record_tap_gained` at several block sizes: the gain on every sample to the bit, two strips on one
+host channel, a gain change gliding with no step and starting at the next batch, clip-safe never
+writing a sample above full scale for a hot stereo input (the pair limited together) while the plain
+take keeps its overs, a take below full scale untouched to the bit, the release back to the original
+level, not-a-number samples written as silence, and the controls' clamping.
+`crates/app/src/audio_record_tests.rs` has the settings and the post-gain peak (the params save,
+load and undo as one step for a drag; a project without them loads at unity) and
+`app_core_rec_audio_tests.rs` records real takes on an offline engine (the exact gain in the file, a
+gain turned during the take, clip-safe against a plain take of the same input, two tracks on one
+input with their own gains) and checks which track the bar shows and the level and latch it is fed.
+`crates/ui/tests/rec_input.rs` drives the section (drag, Shift, wheel, double-click, SAFE, the
+meter's hold and latch per track, the room it takes from the clip inspector, the tooltips) and
+`seq_snapshot.rs` holds its display-list golden (`transport_rec_input_1x.json`).
 
-MIDI controller data has a test at each layer. `crates/model/tests/controllers.rs` covers `SetClipControllers` (sorting, empty lanes, validation, undo, a drag as one merge group, note clips only), split, duplicate and join, `flatten_controllers` (offsets, loops, hiding, a cut ramp) and project format 19 (byte-exact round trip, version 18 files without lanes, `controllers` before 19, bad lanes with their JSON path). `crates/engine/tests/song_controllers.rs` (under the counting allocator) plays lanes against a note log: frames, ramps, the order against notes at one tick, the chase on a seek and a loop wrap, the reset on stop, compile-time refusals and independence of the host block size. `crates/devices/src/poly_synth.rs` checks the bend range and the mod wheel by frequency. `crates/app/src/record_tests.rs` and `app_core_song_tests.rs` record bends and CCs through a scripted transport (laps, bursts, only-controller takes, the engine's song input). `crates/ui/tests/piano_roll_controllers.rs` drives the area with the pointer through a real `Document` (chips, draw, drag, delete, curve, cancel, snap, painted text) and `seq_snapshot.rs` keeps a golden of it. `crates/mcp/tests/stateless.rs` checks the inspection.
+MIDI controller data has a test at each layer. `crates/model/tests/controllers.rs` covers
+`SetClipControllers` (sorting, empty lanes, validation, undo, a drag as one merge group, note clips
+only), split, duplicate and join, `flatten_controllers` (offsets, loops, hiding, a cut ramp) and
+project format 19 (byte-exact round trip, version 18 files without lanes, `controllers` before 19,
+bad lanes with their JSON path). `crates/engine/tests/song_controllers.rs` (under the counting
+allocator) plays lanes against a note log: frames, ramps, the order against notes at one tick, the
+chase on a seek and a loop wrap, the reset on stop, compile-time refusals and independence of the
+host block size. `crates/devices/src/poly_synth.rs` checks the bend range and the mod wheel by
+frequency. `crates/app/src/record_tests.rs` and `app_core_song_tests.rs` record bends and CCs
+through a scripted transport (laps, bursts, only-controller takes, the engine's song input).
+`crates/ui/tests/piano_roll_controllers.rs` drives the area with the pointer through a real
+`Document` (chips, draw, drag, delete, curve, cancel, snap, painted text) and `seq_snapshot.rs`
+keeps a golden of it. `crates/mcp/tests/stateless.rs` checks the inspection.
 
-Automation recording has a test at each layer. `crates/model/tests/automation_rec.rs` covers the write modes, the pure `PassRecorder` and `thin_points` (a ramp, a trapezoid, a sine within the tolerance, step points), the `SetLaneWriteMode` command (undo, rejections), a take as one batch step, and project format 18 (byte-exact round trip, version 17 files on Touch, `write` before 18, bad names, a note lane). `crates/engine/tests/song_automation_hold.rs` (under the counting allocator) holds and releases lanes while playing. `crates/app/src/app_core_autorec_tests.rs` runs takes through the core with the recording sink and a scripted transport (the three modes, the hold calls, loop passes, thinning, one undo step for several lanes, cancel on an engine restart) and once on a real offline engine. `crates/ui/tests/automation_write.rs` drives the lane header buttons, and `crates/mcp/tests/session.rs` clicks them through the MCP session.
+Automation recording has a test at each layer. `crates/model/tests/automation_rec.rs` covers the
+write modes, the pure `PassRecorder` and `thin_points` (a ramp, a trapezoid, a sine within the
+tolerance, step points), the `SetLaneWriteMode` command (undo, rejections), a take as one batch
+step, and project format 18 (byte-exact round trip, version 17 files on Touch, `write` before 18,
+bad names, a note lane). `crates/engine/tests/song_automation_hold.rs` (under the counting
+allocator) holds and releases lanes while playing. `crates/app/src/app_core_autorec_tests.rs` runs
+takes through the core with the recording sink and a scripted transport (the three modes, the hold
+calls, loop passes, thinning, one undo step for several lanes, cancel on an engine restart) and once
+on a real offline engine. `crates/ui/tests/automation_write.rs` drives the lane header buttons, and
+`crates/mcp/tests/session.rs` clicks them through the MCP session.
 
-Automation tracks (a channel, the master or an effect automated on a track of its own) have a test at each layer. `crates/model/tests/automation_only.rs` covers `AddAutomationLane` on a channel and an effect (the track, a second lane, undo, redo), the refusals (internal and unknown params, note lanes, solo, arm, `AddTrack`), automation clips and flattening, removal of the track and of the device, moving and colouring, mute and solo through `effective_tracks`, `DuplicateTrack`, and project format 34 (the round trip byte for byte, a version 33 file, a track on a device without notes before 34, and the malformed shapes). `crates/render/tests/automation_only.rs` bounces a fader lane and an effect lane (the sound changes, bit-identical across block sizes and workers), a flat lane against the param set to its value, a mute and a solo elsewhere. `crates/ui/tests/automation_track.rs` covers the header row (mute only, the first lane's mode and arm buttons, the clip and the points in it, collapsing, a folded first lane, folder buttons, drawing) with the golden `arrangement_automation_track_1x.json` and an ignored preview PNG; `crates/ui/tests/automation_shown.rs` covers the strips and the master following a lane and showing the mark. The app tests are in `shell_macros_tests.rs` (Edit Automation from a mixer strip knob and from an effect, selecting an automation track), `app_core_autoview_tests.rs` (strips and master following the song) and `app_core_autorec_tests.rs` (a take on a fader lane); `crates/mcp/tests/stateless.rs` checks `automation_only` in `project_inspect`.
+Automation tracks (a channel, the master or an effect automated on a track of its own) have a test
+at each layer. `crates/model/tests/automation_only.rs` covers `AddAutomationLane` on a channel and
+an effect (the track, a second lane, undo, redo), the refusals (internal and unknown params, note
+lanes, solo, arm, `AddTrack`), automation clips and flattening, removal of the track and of the
+device, moving and colouring, mute and solo through `effective_tracks`, `DuplicateTrack`, and
+project format 34 (the round trip byte for byte, a version 33 file, a track on a device without
+notes before 34, and the malformed shapes). `crates/render/tests/automation_only.rs` bounces a fader
+lane and an effect lane (the sound changes, bit-identical across block sizes and workers), a flat
+lane against the param set to its value, a mute and a solo elsewhere.
+`crates/ui/tests/automation_track.rs` covers the header row (mute only, the first lane's mode and
+arm buttons, the clip and the points in it, collapsing, a folded first lane, folder buttons,
+drawing) with the golden `arrangement_automation_track_1x.json` and an ignored preview PNG;
+`crates/ui/tests/automation_shown.rs` covers the strips and the master following a lane and showing
+the mark. The app tests are in `shell_macros_tests.rs` (Edit Automation from a mixer strip knob and
+from an effect, selecting an automation track), `app_core_autoview_tests.rs` (strips and master
+following the song) and `app_core_autorec_tests.rs` (a take on a fader lane);
+`crates/mcp/tests/stateless.rs` checks `automation_only` in `project_inspect`.
 
-Takes and comping have a test at each layer. `crates/model/src/takes_tests.rs` holds the pure comp rules (cutting a range out of a comp, joining touching segments, the layered comp of a fresh group, what deleting a take hands on, the comp check, the compiled note and audio clips with their source offsets and fades). `crates/model/tests/takes.rs` runs the five commands through a `Document` (each one undo step with byte-exact redo, every refusal changing nothing, what the engine's flatten sees, the audio regions of a comp, referenced assets and relink, project format 20 with a loader test for a version 19 file and every bad group named by its JSON path) with a property test over random take edits (undo, redo and a save round trip of every state). `crates/app/src/app_core_song_tests.rs` and `app_core_rec_audio_tests.rs` record loop passes through the core (MIDI and audio) into one group and one undo step. `crates/ui/tests/takes.rs` drives the strip and the take rows with the pointer through a real document (open and close, pick, comp drag, Escape, delete, flatten, painted names) and keeps a display-list golden (`arrangement_takes_1x.json`; `cargo test -p atomik-ui --test takes -- --ignored` writes a preview PNG). `crates/render/tests/takes.rs` bounces an audio comp (the tone of each segment, sample-exact inside a segment, no click at the splices where the comp fades while the same cuts as plain clips jump) and a note comp (the pitch of each bar), and checks that a comp bounces like its flattened group, after undo, after a save and load, and at any host block and worker count. `crates/mcp/tests/stateless.rs` checks the inspection.
+Takes and comping have a test at each layer. `crates/model/src/takes_tests.rs` holds the pure comp
+rules (cutting a range out of a comp, joining touching segments, the layered comp of a fresh group,
+what deleting a take hands on, the comp check, the compiled note and audio clips with their source
+offsets and fades). `crates/model/tests/takes.rs` runs the five commands through a `Document` (each
+one undo step with byte-exact redo, every refusal changing nothing, what the engine's flatten sees,
+the audio regions of a comp, referenced assets and relink, project format 20 with a loader test for
+a version 19 file and every bad group named by its JSON path) with a property test over random take
+edits (undo, redo and a save round trip of every state). `crates/app/src/app_core_song_tests.rs` and
+`app_core_rec_audio_tests.rs` record loop passes through the core (MIDI and audio) into one group
+and one undo step. `crates/ui/tests/takes.rs` drives the strip and the take rows with the pointer
+through a real document (open and close, pick, comp drag, Escape, delete, flatten, painted names)
+and keeps a display-list golden (`arrangement_takes_1x.json`;
+`cargo test -p atomik-ui --test takes -- --ignored` writes a preview PNG).
+`crates/render/tests/takes.rs` bounces an audio comp (the tone of each segment, sample-exact inside
+a segment, no click at the splices where the comp fades while the same cuts as plain clips jump) and
+a note comp (the pitch of each bar), and checks that a comp bounces like its flattened group, after
+undo, after a save and load, and at any host block and worker count. `crates/mcp/tests/stateless.rs`
+checks the inspection.
 
-Quantize and grooves have a test at each layer. The unit tests in `crates/model/src/groove.rs` pin the arithmetic: snapping to the nearest target, strength 0 and 0.5, idempotence, the 50 to 75 % swing scale, a note captured by the nearest *swung* position, the song's grid under a clip that starts off the grid, groove offsets and velocity, a groove setting the grid, selected notes only, snapped ends, `(tick, key)` collisions that keep both notes, humanize that is bounded, deterministic, independent of the other notes and inside the tick range, extracting a groove, the built-in grooves, validation messages, and the splitmix hash against the DSP crate's pinned value. `crates/model/tests/groove.rs` runs the commands through a `Document` (one undo step over several clips with byte-exact redo, what the engine's flatten plays, `QuantizeNotes`, every refusal changing nothing, humanize across a save and load, the library undo and re-apply by name, the 64-groove limit, `ExtractGroove` and applying the extracted groove to another track, the clips a take group compiled left alone) and project format 21 (round trip, canonical text, a version 20 file loads without grooves and refuses the field, bad grooves refused with their JSON path). `crates/ui/tests/quantize_panel.rs` drives the panel (steps and ranges, the wheel, the groove picker, the dimmed grid, APPLY and EXTRACT needing a target, the library list scrolling and deleting, the settings becoming valid parameters) with a display-list golden (`quantize_panel_1x.json`) and an ignored PNG preview (`cargo test -p atomik-ui --test quantize_panel preview_png -- --ignored`, written to `target/preview/`). `crates/app/src/shell_quantize_tests.rs` covers the menu item, `Ctrl+K` in the arrangement and in the roll and the roll's QUANT and `...` buttons (the panel's last settings applied without opening it, one undo step, a collision keeping both notes), the panel opening and closing, settings kept between openings, APPLY on selected clips and on selected notes of the roll as one undo step, EXTRACT choosing the new groove and DELETE; the MCP tests cover the inspection and the panel through `session_command`; `crates/render/tests/groove.rs` bounces swung, grooved and humanized songs (closed-form onset frames, the same bytes as hand-placed notes, any block and any worker count).
+Quantize and grooves have a test at each layer. The unit tests in `crates/model/src/groove.rs` pin
+the arithmetic: snapping to the nearest target, strength 0 and 0.5, idempotence, the 50 to 75 %
+swing scale, a note captured by the nearest *swung* position, the song's grid under a clip that
+starts off the grid, groove offsets and velocity, a groove setting the grid, selected notes only,
+snapped ends, `(tick, key)` collisions that keep both notes, humanize that is bounded,
+deterministic, independent of the other notes and inside the tick range, extracting a groove, the
+built-in grooves, validation messages, and the splitmix hash against the DSP crate's pinned value.
+`crates/model/tests/groove.rs` runs the commands through a `Document` (one undo step over several
+clips with byte-exact redo, what the engine's flatten plays, `QuantizeNotes`, every refusal changing
+nothing, humanize across a save and load, the library undo and re-apply by name, the 64-groove
+limit, `ExtractGroove` and applying the extracted groove to another track, the clips a take group
+compiled left alone) and project format 21 (round trip, canonical text, a version 20 file loads
+without grooves and refuses the field, bad grooves refused with their JSON path).
+`crates/ui/tests/quantize_panel.rs` drives the panel (steps and ranges, the wheel, the groove
+picker, the dimmed grid, APPLY and EXTRACT needing a target, the library list scrolling and
+deleting, the settings becoming valid parameters) with a display-list golden
+(`quantize_panel_1x.json`) and an ignored PNG preview
+(`cargo test -p atomik-ui --test quantize_panel preview_png -- --ignored`, written to
+`target/preview/`). `crates/app/src/shell_quantize_tests.rs` covers the menu item, `Ctrl+K` in the
+arrangement and in the roll and the roll's QUANT and `...` buttons (the panel's last settings
+applied without opening it, one undo step, a collision keeping both notes), the panel opening and
+closing, settings kept between openings, APPLY on selected clips and on selected notes of the roll
+as one undo step, EXTRACT choosing the new groove and DELETE; the MCP tests cover the inspection and
+the panel through `session_command`; `crates/render/tests/groove.rs` bounces swung, grooved and
+humanized songs (closed-form onset frames, the same bytes as hand-placed notes, any block and any
+worker count).
 
 ## Autosave and crash recovery
 
-`crates/app/src/recovery_tests.rs` covers the plumbing: a torn write leaves the original file (and the next write replaces the leftover), a corrupt `settings.json` or `ui-state.json` is renamed `.bad` with a message, 20 back-to-back snapshots keep the newest three, the session marker lifecycle, the orphan scan (dead and live pids, young files) and a truncated-header sweep of the recording reader. `crates/app/src/app_core_autosave_tests.rs` covers the app core: a dirty project with no plugin gets a snapshot after the period and a clean one none, autosave off, the unclean-exit banner after a run that did not quit cleanly, and a recovered recording (a track, undo, redo, the file deleted on save). Hand checks: kill the app (Task Manager, End task) during a recording and again after an edit, start it, and use OPEN RECOVERY and the `Recovered take` track; the MCP recipe is `session_open`, edit, kill the server process, `session_open` again.
+`crates/app/src/recovery_tests.rs` covers the plumbing: a torn write leaves the original file (and
+the next write replaces the leftover), a corrupt `settings.json` or `ui-state.json` is renamed
+`.bad` with a message, 20 back-to-back snapshots keep the newest three, the session marker
+lifecycle, the orphan scan (dead and live pids, young files) and a truncated-header sweep of the
+recording reader. `crates/app/src/app_core_autosave_tests.rs` covers the app core: a dirty project
+with no plugin gets a snapshot after the period and a clean one none, autosave off, the unclean-exit
+banner after a run that did not quit cleanly, and a recovered recording (a track, undo, redo, the
+file deleted on save). Hand checks: kill the app (Task Manager, End task) during a recording and
+again after an edit, start it, and use OPEN RECOVERY and the `Recovered take` track; the MCP recipe
+is `session_open`, edit, kill the server process, `session_open` again.
 
 ## Logs, crash reports and diagnostics
 
-`crates/app/src/logging.rs` has the rotation tests (writing past the limit keeps three files, a reopened log appends, a folder that cannot be made is an error and the logger still works), `crash.rs` the hook tests (a panic on a thread writes a report with the message, the thread, a backtrace, the version and the devices, the guard puts the previous hook back, a panic on a render thread writes nothing and the UI thread's flush does), `diagnostics.rs` the report tests (home folders hidden in every spelling, the log, the crash report and the counters present, a report with no files) and `status.rs` the status-bar string with every counter. `crates/app/tests/no_eprintln.rs` fails when production code of any crate but the command-line programs calls `eprintln!`. `crates/app/src/shell_diagnostics_tests.rs` drives Help > Export Diagnostics and the logging of growing counters; `crates/mcp/tests/session.rs` checks `overload` in `session_status`.
+`crates/app/src/logging.rs` has the rotation tests (writing past the limit keeps three files, a
+reopened log appends, a folder that cannot be made is an error and the logger still works),
+`crash.rs` the hook tests (a panic on a thread writes a report with the message, the thread, a
+backtrace, the version and the devices, the guard puts the previous hook back, a panic on a render
+thread writes nothing and the UI thread's flush does), `diagnostics.rs` the report tests (home
+folders hidden in every spelling, the log, the crash report and the counters present, a report with
+no files) and `status.rs` the status-bar string with every counter.
+`crates/app/tests/no_eprintln.rs` fails when production code of any crate but the command-line
+programs calls `eprintln!`. `crates/app/src/shell_diagnostics_tests.rs` drives Help > Export
+Diagnostics and the logging of growing counters; `crates/mcp/tests/session.rs` checks `overload` in
+`session_status`.
 
 Hand checks (a person at the machine):
 
-- Start the app and look in `<config folder>/logs`: `atomik.log` has the version line and the startup status. Run the stress song (File > Stress Song) for ten minutes: the log stays small unless a counter grew, and the audio path writes nothing into it.
-- Make a crash: a debug build with a `panic!` in a command, or kill a worker thread by hand. `crash-<timestamp>.txt` appears next to the log with the message and backtrace; Help > Export Diagnostics then includes it and the log, and the file names no home folder.
-- Unset `APPDATA` (Windows) or `HOME` and `XDG_CONFIG_HOME` (Linux, macOS) and start: a toast says there is no config folder, and plugin scanning, the journal and recovery still work for the run, in the temp folder.
+- Start the app and look in `<config folder>/logs`: `atomik.log` has the version line and the
+  startup status. Run the stress song (File > Stress Song) for ten minutes: the log stays small
+  unless a counter grew, and the audio path writes nothing into it.
+- Make a crash: a debug build with a `panic!` in a command, or kill a worker thread by hand.
+  `crash-<timestamp>.txt` appears next to the log with the message and backtrace; Help > Export
+  Diagnostics then includes it and the log, and the file names no home folder.
+- Unset `APPDATA` (Windows) or `HOME` and `XDG_CONFIG_HOME` (Linux, macOS) and start: a toast says
+  there is no config folder, and plugin scanning, the journal and recovery still work for the run,
+  in the temp folder.
