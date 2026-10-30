@@ -397,6 +397,37 @@ pub enum WorkflowCommand {
         /// The devices.
         keys: Vec<DeviceKey>,
     },
+    /// Makes one device take the sound of a device patch (`snapshot` holds exactly that one
+    /// device, as a `.atomikpatch` of one device does; see [`crate::DeviceSnapshot::single_device`]):
+    /// every param (the ones the patch does not store go back to their default), zones, step
+    /// patterns, curves, drum patterns, a plugin's state, a container's inside and the patch name.
+    /// The device keeps its key, name, column, colour, cables, track and console channel. The
+    /// patch's device type must be the device's; every asset the patch needs must be in the
+    /// document's pool; params driven by a macro are left alone; a patch that changes nothing is
+    /// rejected. One undo step. Reports `ParamChanged` per changed param, `ZonesChanged`,
+    /// `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the name) and, for a container,
+    /// the removal and re-adding of the whole inside.
+    ApplyPatch {
+        /// The device that takes the patch (path key).
+        device: DeviceKey,
+        /// The patch.
+        snapshot: DeviceSnapshot,
+    },
+    /// Puts one device back to the sound of a new device of its type: default params, no zones,
+    /// default patterns, no plugin state, an empty container, no patch name. A device that is
+    /// already there is rejected. One undo step; reports like [`WorkflowCommand::ApplyPatch`].
+    ResetDevice {
+        /// The device (path key).
+        device: DeviceKey,
+    },
+    /// Sets the patch name the device shows (empty clears it). Reports `ViewChanged`.
+    SetPatchName {
+        /// The device (path key).
+        device: DeviceKey,
+        /// The name: trimmed, at most [`crate::MAX_PATCH_NAME_CHARS`] characters, no control
+        /// characters; empty for none.
+        name: String,
+    },
     /// Adds the tracks of a MIDI file, and optionally its tempo map, meter map and markers, as
     /// one undo step (see [`crate::MidiImport`]): per track a new instrument with its console
     /// channel, an unarmed song track and a note clip. Reports the compound sync ops of the
@@ -527,6 +558,15 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveDevices { keys, to } => {
             plain(move_devices(doc, &keys, Placement::Flat(to)))
+        }
+        WorkflowCommand::ApplyPatch { device, snapshot } => plain(crate::device_patch::plan_apply(
+            doc, registry, &device, &snapshot,
+        )),
+        WorkflowCommand::ResetDevice { device } => {
+            plain(crate::device_patch::plan_reset(doc, registry, &device))
+        }
+        WorkflowCommand::SetPatchName { device, name } => {
+            plain(crate::device_patch::plan_set_name(doc, &device, &name))
         }
         WorkflowCommand::ImportMidi(import) => {
             plain(crate::midi_import::plan(doc, registry, import))

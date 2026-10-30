@@ -23,6 +23,7 @@ mod container_io;
 pub mod controller;
 mod curves;
 mod curves_cmd;
+mod device_patch;
 mod drums;
 mod drums_cmd;
 mod expand;
@@ -77,6 +78,7 @@ pub use container::{
     boundary_sockets, scoped_cable, split_path,
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
+pub use device_patch::MAX_PATCH_NAME_CHARS;
 pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
 pub use freeze::{
@@ -267,6 +269,10 @@ pub struct RackDevice {
     /// The rack column the device is shown in (top level only; always 0 for a device inside a
     /// container). See [`RackDoc::columns`] for the ordering invariant.
     pub column: u16,
+    /// The name of the patch the device last took its sound from (the patch strip shows it);
+    /// empty when it has none. Display only: it plays nothing, and it is stored only when
+    /// non-empty (project format 36).
+    pub patch_name: String,
 }
 
 /// The rack document.
@@ -685,6 +691,8 @@ pub enum Command {
 /// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
+/// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
+/// | `SetPatchName` (also undo/redo) | `ViewChanged` |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
 ///
 /// A step with several parts (e.g. `AddDevice` of an instrument with its channel and
@@ -761,6 +769,13 @@ pub enum SyncOp {
     /// power reach the live device; after a `Relink` the device's type id may have changed, so
     /// the app swaps the instance for the new plugin or its stand-in).
     PluginChanged {
+        /// The plugin device (path key).
+        device: DeviceKey,
+    },
+    /// A plugin device's state blob changed (a patch applied to it, its undo and redo; not
+    /// the captures the app stores itself). The app restores [`RackDevice::plugin`]'s state into
+    /// the live instance.
+    PluginStateChanged {
         /// The plugin device (path key).
         device: DeviceKey,
     },

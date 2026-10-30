@@ -36,6 +36,9 @@ enum WfOp {
     Disconnect(usize),
     DuplicateTrack(usize),
     PasteDevices(Vec<usize>, usize, bool),
+    /// A device takes the patch of another one of its type (the second index; the same device
+    /// when none else is of its type), or, for `true`, goes back to a new device's sound.
+    ApplyPatch(usize, usize, bool),
     PasteClips(Vec<usize>, i64, Option<usize>),
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
@@ -167,6 +170,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12).prop_map(WfOp::Disconnect),
         (0usize..12).prop_map(WfOp::DuplicateTrack),
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
+        (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
             b * BAR / 2,
@@ -262,6 +266,21 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 container: (*inner).then(|| key("c")),
                 at: *at,
             })
+        }
+        WfOp::ApplyPatch(target, source, reset) => {
+            let device = pick(&top, *target)?;
+            if *reset {
+                return Some(wf(WorkflowCommand::ResetDevice { device }));
+            }
+            let type_id = &doc.device(&device)?.type_id;
+            let same: Vec<DeviceKey> = top
+                .iter()
+                .filter(|k| doc.device(k).is_some_and(|d| &d.type_id == type_id))
+                .cloned()
+                .collect();
+            let from = pick(&same, *source)?;
+            let snapshot = DeviceSnapshot::capture(doc, &[from], false).ok()?;
+            wf(WorkflowCommand::ApplyPatch { device, snapshot })
         }
         WfOp::PasteClips(s, at, track) => {
             let picked: Vec<ClipId> = s.iter().filter_map(|i| pick(&ids, *i)).collect();

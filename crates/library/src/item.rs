@@ -113,6 +113,9 @@ pub struct ItemInfo {
     pub detail: String,
     /// The group the item belongs to (a device kind label), possibly empty.
     pub category: String,
+    /// For a patch of exactly one device, the type id of that device; empty for any other row.
+    /// A device patch applies to devices of this type, and the patch browser filters by it.
+    pub device_type: String,
 }
 
 #[cfg(test)]

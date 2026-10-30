@@ -224,6 +224,7 @@ mod tests {
             inner: None,
             plugin: None,
             column: 0,
+            patch_name: String::new(),
         }
     }
 

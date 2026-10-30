@@ -342,6 +342,7 @@ mod tests {
                 inner: None,
                 plugin: None,
                 column: i % columns,
+                patch_name: String::new(),
             })
             .collect::<Vec<_>>();
         let mut devices = devices;

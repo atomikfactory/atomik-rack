@@ -386,6 +386,7 @@ pub(crate) fn add_audio_track(
             inner: None,
             plugin: None,
             column: 0,
+            patch_name: String::new(),
         },
         cables: Vec::new(),
     };

@@ -71,6 +71,7 @@ impl Mirror {
                 | SyncOp::PatternsChanged { .. }
                 | SyncOp::MacrosChanged { .. }
                 | SyncOp::PluginChanged { .. }
+                | SyncOp::PluginStateChanged { .. }
                 | SyncOp::SplitsChanged { .. }
                 | SyncOp::FrozenChanged => {}
             }

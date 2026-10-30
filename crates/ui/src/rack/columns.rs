@@ -272,6 +272,7 @@ mod tests {
             inner: None,
             plugin: None,
             column,
+            patch_name: String::new(),
         }
     }
 

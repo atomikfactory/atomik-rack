@@ -51,6 +51,9 @@ impl ItemKind {
 pub struct ItemSummary {
     /// Such as "3 devices: Poly Synth, Delay, Reverb" or "4 bars, 32 notes".
     pub detail: String,
+    /// For a patch of exactly one device, its device type id (what a device patch is matched
+    /// to a device by); `None` for any other item.
+    pub device_type: Option<String>,
 }
 
 /// Writes the library item text of `snapshot`: an `atomik-project` with the snapshot's devices
@@ -92,18 +95,33 @@ pub fn load_device_item(text: &str, registry: &Registry) -> Result<DeviceSnapsho
 /// ", ..."), container "Container, 5 inside", clip "4 bars, 32 notes", project "120 BPM, 8
 /// tracks". Reads the JSON only: no registry, no validation beyond the shape it needs.
 pub fn summarize_item(kind: ItemKind, text: &str) -> Option<ItemSummary> {
+    let mut device_type = None;
     let detail = match kind {
         ItemKind::Clip => clip_detail(text)?,
         _ => {
             let v: Value = serde_json::from_str(text).ok()?;
             match kind {
-                ItemKind::Patch => patch_detail(&v)?,
+                ItemKind::Patch => {
+                    device_type = single_device_type(&v);
+                    patch_detail(&v)?
+                }
                 ItemKind::Container => container_detail(&v)?,
                 _ => project_detail(&v)?,
             }
         }
     };
-    Some(ItemSummary { detail })
+    Some(ItemSummary {
+        detail,
+        device_type,
+    })
+}
+
+/// The type id of the only device of an item, or `None` when it has none or several.
+fn single_device_type(v: &Value) -> Option<String> {
+    match v.get("devices")?.as_array()?.as_slice() {
+        [only] => Some(only.get("type")?.as_str()?.to_owned()),
+        _ => None,
+    }
 }
 
 fn plural(n: usize, one: &str, many: &str) -> String {

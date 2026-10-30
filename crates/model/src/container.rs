@@ -870,6 +870,7 @@ pub(crate) fn new_device(
         inner: (desc.kind == DeviceKind::Container).then(Box::default),
         plugin: None,
         column: 0,
+        patch_name: String::new(),
     }
 }
 
