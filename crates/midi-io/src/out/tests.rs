@@ -456,8 +456,8 @@ fn shutdown_releases_everything_and_closes_the_ports() {
 /// tests below only bound the lateness generously. Exact timing is checked in the `Core::step`
 /// tests with an injected clock.
 fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
-    let end = Instant::now() + limit;
-    while Instant::now() < end {
+    let end = now() + limit;
+    while now() < end {
         if done() {
             return true;
         }
@@ -486,9 +486,15 @@ fn the_thread_sends_in_order_and_releases_on_drop() {
     let elapsed = t0.elapsed();
     assert!(arrived, "both notes arrive within seconds, got {sent:?}");
     // Never early: the first is due 50 ms after the anchor (a little slack for the clock read).
-    assert!(elapsed >= Duration::from_millis(40), "sent early: {elapsed:?}");
+    assert!(
+        elapsed >= Duration::from_millis(40),
+        "sent early: {elapsed:?}"
+    );
     // Generously late at worst, even on a loaded runner.
-    assert!(elapsed < Duration::from_secs(2), "sent far too late: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "sent far too late: {elapsed:?}"
+    );
     let order: Vec<_> = sent.iter().map(|(_, b)| b.clone()).collect();
     assert_eq!(order, vec![vec![0x90, 60, 100], vec![0x90, 62, 100]]);
     assert!(wait_for(Duration::from_secs(5), || thread.stats().sent >= 2));
