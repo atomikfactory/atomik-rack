@@ -131,6 +131,10 @@ pub(super) struct AudioState {
     pub(super) export: super::export::ExportState,
     /// The Audio to Notes extraction that is running ([`super::notes`]).
     pub(super) notes: super::notes::NotesState,
+    /// The transients of the audio clip editor ([`super::clip_editor`]).
+    pub(super) onsets: super::clip_editor::OnsetState,
+    /// The speaker tool's audition ([`super::audition`]).
+    pub(super) audition: super::audition::AuditionState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// Whole-asset RAM buffers for samplers: shared with the memory assets of
     /// audio tracks where those exist, loaded by a worker for streamed ones. Keeping the
@@ -183,6 +187,8 @@ impl AudioState {
             freeze: super::freeze::FreezeState::default(),
             export: super::export::ExportState::default(),
             notes: super::notes::NotesState::default(),
+            onsets: super::clip_editor::OnsetState::default(),
+            audition: super::audition::AuditionState::default(),
             peaks: BTreeMap::new(),
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
@@ -474,6 +480,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_noted(job, result),
+                Msg::Onsets {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_onsets(job, result),
                 Msg::Scanned {
                     generation,
                     root,
@@ -512,6 +523,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Frozen { .. }
                 | Msg::Exported { .. }
                 | Msg::Noted { .. }
+                | Msg::Onsets { .. }
                 | Msg::Scanned { .. } => {}
             }
         }

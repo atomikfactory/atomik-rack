@@ -761,6 +761,17 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenAudioEditor(id) => self.open_audio_editor(id),
             UiAction::CloseAudioEditor => self.close_audio_editor(),
             UiAction::ClipToSlicer(id) => self.clip_to_slicer(id),
+            UiAction::DetectTransients { clip, sensitivity } => {
+                self.detect_transients(clip, sensitivity)
+            }
+            UiAction::AuditionSpan {
+                asset,
+                start_frame,
+                end_frame,
+                reverse,
+                gain_db,
+            } => self.audition_span(&asset, (start_frame, end_frame), reverse, gain_db),
+            UiAction::StopAudition => self.stop_audition(),
             UiAction::SliceLoop { device, mode } => self.slice_loop(device, mode),
             UiAction::SlicesToTrack { device } => self.slices_to_track(device),
             UiAction::ImportSamples {
@@ -2753,6 +2764,9 @@ mod slicer;
 #[path = "app_core_audio_editor.rs"]
 mod clip_editor;
 
+#[path = "app_core_audition.rs"]
+mod audition;
+
 #[path = "app_core_players.rs"]
 mod players;
 
@@ -3009,6 +3023,10 @@ mod warp_tests;
 #[cfg(test)]
 #[path = "app_core_audio_editor_tests.rs"]
 mod audio_editor_tests;
+
+#[cfg(test)]
+#[path = "app_core_audition_tests.rs"]
+mod audition_tests;
 
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]

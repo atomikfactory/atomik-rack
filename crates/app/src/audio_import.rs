@@ -121,6 +121,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Result<NotesFound, String>,
     },
+    /// The transients of the clip open in the audio clip editor were detected (or it failed):
+    /// see the transients section of [`crate::AppCore`]'s audio clip editor.
+    Onsets {
+        generation: u64,
+        job: u64,
+        result: Result<Vec<u64>, String>,
+    },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
         generation: u64,
@@ -192,6 +199,53 @@ pub(crate) fn spawn_onsets(
                 job,
                 result,
             });
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that runs `work` (the transient detection of one clip) and sends
+/// [`Msg::Onsets`]; a panic sends a failure instead, so the request can never stay open.
+pub(crate) fn spawn_clip_onsets(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    work: Box<dyn FnOnce() -> Result<Vec<u64>, String> + Send>,
+) -> std::io::Result<()> {
+    struct Sent {
+        tx: Sender<Msg>,
+        generation: u64,
+        job: u64,
+        sent: bool,
+    }
+    impl Sent {
+        fn send(&mut self, result: Result<Vec<u64>, String>) {
+            self.sent = true;
+            let _ = self.tx.send(Msg::Onsets {
+                generation: self.generation,
+                job: self.job,
+                result,
+            });
+        }
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            if !self.sent {
+                self.send(Err("the detection stopped unexpectedly".to_owned()));
+            }
+        }
+    }
+    std::thread::Builder::new()
+        .name("atomik-clip-onsets".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let mut sent = Sent {
+                tx,
+                generation,
+                job,
+                sent: false,
+            };
+            let result = work();
+            sent.send(result);
         })
         .map(|_| ())
 }
