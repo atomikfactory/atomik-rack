@@ -1562,3 +1562,67 @@ fn a_move_that_keeps_every_note_inside_the_clip_changes_nothing_under_any_policy
         assert_eq!(tick_len(&c), [(0, BAR)], "{policy:?}");
     }
 }
+
+#[test]
+fn moving_the_loop_by_bars_keeps_its_length_in_one_undo_step() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (BAR, 3 * BAR),
+            enabled: true,
+        }),
+    );
+    c.move_loop(2, false);
+    assert_eq!(c.doc().song.loop_range, (3 * BAR, 5 * BAR));
+    assert!(c.doc().song.loop_enabled, "the flag stays");
+    c.move_loop(-1, false);
+    assert_eq!(c.doc().song.loop_range, (2 * BAR, 4 * BAR));
+    // Undo takes back one move.
+    assert!(c.undo());
+    assert_eq!(c.doc().song.loop_range, (3 * BAR, 5 * BAR));
+    // It does not go before the first bar: the move is not made.
+    c.move_loop(-5, false);
+    assert_eq!(c.doc().song.loop_range, (3 * BAR, 5 * BAR));
+}
+
+#[test]
+fn changing_the_loop_length_moves_the_right_end_and_keeps_one_bar() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (BAR, 3 * BAR),
+            enabled: false,
+        }),
+    );
+    c.move_loop(1, true);
+    assert_eq!(c.doc().song.loop_range, (BAR, 4 * BAR));
+    c.move_loop(-1, true);
+    c.move_loop(-1, true);
+    assert_eq!(c.doc().song.loop_range, (BAR, 2 * BAR));
+    c.move_loop(-1, true);
+    assert_eq!(c.doc().song.loop_range, (BAR, 2 * BAR), "one bar stays");
+    assert!(!c.doc().song.loop_enabled);
+}
+
+#[test]
+fn all_notes_off_reaches_every_device_that_takes_notes() {
+    let mut c = with_track();
+    apply(&mut c, add(SYNTH, "b"));
+    c.sink_mut().take();
+    c.all_notes_off();
+    let calls = c.sink_mut().take();
+    let offs: Vec<_> = calls
+        .iter()
+        .filter_map(|call| match call {
+            SinkCall::LiveNote {
+                target,
+                kind: NoteKind::AllOff,
+            } => Some(*target),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(offs.len(), 2, "{calls:?}");
+    assert_ne!(offs[0], offs[1]);
+}

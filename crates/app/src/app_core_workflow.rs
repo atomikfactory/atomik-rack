@@ -73,6 +73,60 @@ impl<S: EngineSink> AppCore<S> {
         self.transport_action(TransportAction::Locate(if right { end } else { start }));
     }
 
+    /// Moves the loop by `bars` bar lines (its length stays), or changes its length by `bars`
+    /// bars (the right end moves, the loop keeps at least one bar), as one undo step. The loop
+    /// does not go before the first bar; a change that would is not made. The enabled flag
+    /// stays.
+    pub fn move_loop(&mut self, bars: i64, resize: bool) {
+        let table = self.doc().song.meter_table();
+        let meter = table.map();
+        let (start, end) = self.doc().song.loop_range;
+        let enabled = self.doc().song.loop_enabled;
+        let shift = |tick: i64| -> Option<i64> {
+            let bar = i64::from(meter.bar_at(tick)) + bars;
+            let bar = u32::try_from(bar).ok().filter(|b| *b >= 1)?;
+            Some(meter.bar_start(bar))
+        };
+        let range = if resize {
+            let end = shift(end).filter(|e| *e >= meter.next_bar_line(start));
+            end.map(|e| (start, e))
+        } else {
+            shift(start).map(|s| (s, end + (s - start)))
+        };
+        let Some(range) = range.filter(|r| *r != (start, end)) else {
+            return;
+        };
+        // A rejection is already reported.
+        let _ = self.apply_command(Command::Song(SongCommand::SetLoop { range, enabled }));
+    }
+
+    /// Releases every sounding note: all-notes-off to the Piano Keys' held targets and to every
+    /// device that takes notes (a stuck note from a MIDI keyboard, an audition or a plugin).
+    pub fn all_notes_off(&mut self) {
+        let current = self.notes_target();
+        let mut sends = Vec::new();
+        self.keys_router
+            .route(NoteKind::AllOff, current, |target, kind| {
+                sends.push((target, kind));
+            });
+        for (target, kind) in sends {
+            let result = self.sink.play_note(target, kind);
+            self.engine_result(result);
+        }
+        let mut targets: Vec<Target> = Vec::new();
+        for d in &self.doc().devices {
+            if let Some(t) = self.target_of(&d.key)
+                && !targets.contains(&t)
+            {
+                targets.push(t);
+            }
+        }
+        for target in targets {
+            let result = self.sink.live_note(target, NoteKind::AllOff);
+            self.engine_result(result);
+        }
+    }
+
     /// Stop with a second press: stops while playing or recording, returns to the start when
     /// already stopped (Numpad 0, Shift+Return).
     pub fn stop_or_rewind(&mut self) {

@@ -458,7 +458,7 @@ fn shift_h_g_z_zoom_the_track_heights_in_the_sequencer_and_the_keys_in_the_roll(
             "{os:?}"
         );
         keys_on(&mut s, os).tap("Shift+H");
-        keys_on(&mut s, os).tap("Shift+Z");
+        keys_on(&mut s, os).tap("Alt+Z");
         assert_eq!(s.core().arrangement().track_zoom(), 1.0, "reset");
         assert_eq!(
             s.core().arrangement().px_per_tick(),
@@ -1251,5 +1251,54 @@ fn f6_shows_the_song_area_when_it_was_switched_off() {
     assert!(
         s.layout().song.is_some_and(|r| r.height() > 300.0),
         "the song area took the space"
+    );
+}
+
+#[test]
+fn the_loop_keys_move_the_loop_and_change_its_length() {
+    let mut s = shell();
+    demo(&mut s);
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::SetLoop {
+            range: (2 * BAR, 6 * BAR),
+            enabled: true,
+        }))
+        .unwrap();
+    keys(&mut s).tap("Alt+Shift+Right");
+    assert_eq!(s.core().doc().song.loop_range, (3 * BAR, 7 * BAR));
+    keys(&mut s).tap("Alt+Shift+Left");
+    keys(&mut s).tap("Alt+Shift+Left");
+    assert_eq!(s.core().doc().song.loop_range, (BAR, 5 * BAR));
+    keys(&mut s).tap("Alt+Shift+Up");
+    assert_eq!(s.core().doc().song.loop_range, (BAR, 6 * BAR));
+    keys(&mut s).tap("Alt+Shift+Down");
+    keys(&mut s).tap("Alt+Shift+Down");
+    assert_eq!(s.core().doc().song.loop_range, (BAR, 4 * BAR));
+    // One undo step per key.
+    assert!(s.core_mut().undo());
+    assert_eq!(s.core().doc().song.loop_range, (BAR, 5 * BAR));
+}
+
+#[test]
+fn escape_closes_the_open_clip_from_the_arrangement_and_then_clears_the_selection() {
+    let mut s = shell();
+    demo(&mut s);
+    s.core_mut()
+        .arrangement_mut()
+        .set_selected_clips(&[atomik_model::ClipId(3)]);
+    s.set_focus(Pane::Arrangement);
+    s.execute(AppCommand::TogglePianoRoll);
+    assert!(s.core().piano_roll_clip().is_some());
+    s.set_focus(Pane::Arrangement);
+    keys(&mut s).tap("Escape");
+    assert!(s.core().piano_roll_clip().is_none(), "the clip closed");
+    assert!(
+        !s.core().arrangement().selected_clips().is_empty(),
+        "the selection stays for this Escape"
+    );
+    keys(&mut s).tap("Escape");
+    assert!(
+        s.core().arrangement().selected_clips().is_empty(),
+        "the next one is the view's"
     );
 }

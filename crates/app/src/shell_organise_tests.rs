@@ -209,9 +209,12 @@ fn group_tracks_in_the_menu_and_by_key_makes_a_folder_in_one_undo_step() {
     };
     assert_eq!(
         shortcut(&s, "Group Tracks").as_deref(),
-        Some("Ctrl+Shift+G")
+        Some("Ctrl+Shift+T")
     );
-    assert_eq!(shortcut(&s, "Move Track Up").as_deref(), Some("Alt+Up"));
+    assert_eq!(
+        shortcut(&s, "Move Track Up").as_deref(),
+        Some("Ctrl+Alt+Up")
+    );
     assert_eq!(shortcut(&s, "Ungroup"), None, "no default key");
     let undo_depth = |s: &Shell<NullBackend>| s.core().document().can_undo();
     assert!(undo_depth(&s));
@@ -222,12 +225,12 @@ fn group_tracks_in_the_menu_and_by_key_makes_a_folder_in_one_undo_step() {
     assert!(s.core().doc().song.org.groups.is_empty());
     // The key does the same with the arrangement focused.
     select_ab(&mut s);
-    tap(&mut s, "Ctrl+Shift+G");
+    tap(&mut s, "Ctrl+Shift+T");
     assert_eq!(s.core().doc().song.org.groups.len(), 1);
     // Without a selection the key says what is missing.
     s.core_mut().arrangement_mut().set_selected_track(None);
     s.core_mut().arrangement_mut().set_selected_group(None);
-    tap(&mut s, "Ctrl+Shift+G");
+    tap(&mut s, "Ctrl+Shift+T");
     assert_eq!(s.core().doc().song.org.groups.len(), 1, "nothing new");
 }
 
@@ -237,7 +240,7 @@ fn the_move_keys_and_menu_items_move_the_track_and_the_folder() {
     s.core_mut()
         .arrangement_mut()
         .set_selected_track(Some(key("c")));
-    tap(&mut s, "Alt+Up");
+    tap(&mut s, "Ctrl+Alt+Up");
     assert_eq!(order(&s), ["a", "c", "b", "d"]);
     s.execute(AppCommand::MoveTrackDown);
     assert_eq!(order(&s), ["a", "b", "c", "d"]);
@@ -245,7 +248,7 @@ fn the_move_keys_and_menu_items_move_the_track_and_the_folder() {
     select_ab(&mut s);
     s.execute(AppCommand::GroupTracks);
     s.core_mut().arrangement_mut().set_selected_group(Some(1));
-    tap(&mut s, "Alt+Down");
+    tap(&mut s, "Ctrl+Alt+Down");
     assert_eq!(order(&s), ["c", "a", "b", "d"]);
 }
 

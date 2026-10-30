@@ -1581,7 +1581,7 @@ impl<B: AudioBackend> Shell<B> {
         };
         format!(
             "Keys moved: Record {}, Quantize {}, Split {}, Create {} / {}, Import {}, File Browser {}, \
-             Piano Keys {}; R is the razor. Settings > Keyboard > Atomik legacy restores the old keys.",
+             Piano Keys {}, Group Tracks {}; R is the razor. Settings > Keyboard > Atomik legacy restores the old keys.",
             key("transport.record"),
             key("editor.quantize"),
             key("sequencer.split_at_playhead"),
@@ -1590,6 +1590,7 @@ impl<B: AudioBackend> Shell<B> {
             key("file.import_audio"),
             key("view.toggle_file_browser"),
             key("view.toggle_piano_keys"),
+            key("sequencer.group_tracks"),
         )
     }
 
@@ -3055,6 +3056,24 @@ impl<B: AudioBackend> Shell<B> {
             ("transport.forward_bar" | "transport.bar_forward", None) => self.core.locate_bars(1),
             ("transport.go_locator", Some("left")) => self.core.go_locator(false),
             ("transport.go_locator", Some("right")) => self.core.go_locator(true),
+            ("transport.loop_move", Some(arg)) => {
+                let (kind, step) = arg.split_once(':')?;
+                let bars: i64 = step.parse().ok()?;
+                match kind {
+                    "bar" => self.core.move_loop(bars, false),
+                    "length" => self.core.move_loop(bars, true),
+                    _ => return None,
+                }
+            }
+            ("transport.all_notes_off", None) => self.core.all_notes_off(),
+            // Escape closes the open clip or editor, unless a menu or a drag would take it.
+            ("sequencer.close_clip", None) => {
+                if self.core.arrangement().escape_pending() || !self.core.close_open_editor() {
+                    return None;
+                }
+                self.set_focus(self.live_pane(Pane::Arrangement));
+                self.layout_view();
+            }
             ("transport.tempo_up", None) => self.core.nudge_tempo(1.0),
             ("transport.tempo_down", None) => self.core.nudge_tempo(-1.0),
             ("rack.go_to_track", None) => {
