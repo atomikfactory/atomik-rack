@@ -22,13 +22,16 @@ pub enum Context {
     /// The file browser panel while it has the focus (the shell forwards its commands to it
     /// as the keys the panel reads).
     Files,
+    /// The Piano Keys strip while it has the focus in Keys mode: letters play notes (the shell
+    /// resolves them as the `keys.*` commands) instead of running commands.
+    Keys,
     /// Any text owner: tempo field, rename, browser filter, file search, settings text.
     Text,
 }
 
 impl Context {
     /// Every context, `Global` first, in listing order.
-    pub const ALL: [Context; 8] = [
+    pub const ALL: [Context; 9] = [
         Context::Global,
         Context::Rack,
         Context::Sequencer,
@@ -36,6 +39,7 @@ impl Context {
         Context::Mixer,
         Context::Browser,
         Context::Files,
+        Context::Keys,
         Context::Text,
     ];
 
@@ -49,6 +53,7 @@ impl Context {
             Context::Mixer => "mixer",
             Context::Browser => "browser",
             Context::Files => "files",
+            Context::Keys => "keys",
             Context::Text => "text",
         }
     }

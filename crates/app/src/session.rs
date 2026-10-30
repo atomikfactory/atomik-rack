@@ -55,6 +55,8 @@ pub trait MidiPort {
     fn close(self) -> MidiLink;
     /// Sends a note now on the link's live queue (audition; [`MidiLink::send_now`]).
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
+    /// Plays a note now as played input: [`MidiLink::play_now`].
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError>;
 }
 
 /// The outside world: audio devices and MIDI ports.
@@ -113,6 +115,9 @@ impl MidiPort for MidiConnection {
     }
     fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
         MidiConnection::send_now(self, target, kind)
+    }
+    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        MidiConnection::play_now(self, target, kind)
     }
 }
 
@@ -598,6 +603,17 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         match (&mut r.midi, &mut r.idle_link) {
             (Some(midi), _) => midi.send_now(target, kind),
             (None, Some(link)) => link.send_now(target, kind),
+            (None, None) => Ok(()),
+        }
+    }
+
+    fn play_note(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        let Some(r) = &mut self.running else {
+            return Ok(());
+        };
+        match (&mut r.midi, &mut r.idle_link) {
+            (Some(midi), _) => midi.play_now(target, kind),
+            (None, Some(link)) => link.play_now(target, kind),
             (None, None) => Ok(()),
         }
     }

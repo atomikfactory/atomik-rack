@@ -203,6 +203,7 @@ fn every_command_is_listed_by_area_with_its_chords_for_this_os() {
             "Mixer",
             "Browser",
             "Files",
+            "Piano Keys",
             "Create",
             "Tools"
         ]

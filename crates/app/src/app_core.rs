@@ -89,6 +89,8 @@ pub enum Pane {
     PluginParams,
     /// The file browser, docked on the left of the window.
     FileBrowser,
+    /// The Piano Keys strip, docked above the status bar.
+    PianoKeys,
 }
 /// The values an effect can publish at most (the EQ's 18 is the largest) with headroom.
 pub const FX_METER_CAPACITY: usize = 32;
@@ -306,6 +308,9 @@ pub struct AppCore<S: EngineSink> {
     plugin_params: PluginParamsView,
     plugin_params_open: bool,
     file_browser: atomik_ui::FileBrowserView,
+    /// The Piano Keys strip and the router that keeps its note offs with their note ons.
+    piano_keys: atomik_ui::PianoKeysView,
+    keys_router: crate::target::NoteRouter,
     browser: browser::BrowserState,
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
@@ -449,6 +454,8 @@ impl<S: EngineSink> AppCore<S> {
             fx_meter_buf: vec![0.0; FX_METER_CAPACITY],
             plugin_params: PluginParamsView::new(theme),
             file_browser: atomik_ui::FileBrowserView::new(Theme::dark()),
+            piano_keys: atomik_ui::PianoKeysView::new(Theme::dark()),
+            keys_router: crate::target::NoteRouter::new(),
             browser: browser::BrowserState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
@@ -753,6 +760,7 @@ impl<S: EngineSink> AppCore<S> {
             }
             UiAction::Browse(b) => self.browse(b),
             UiAction::Audition { device, key, on } => self.audition(&device, key, on),
+            UiAction::KeysNote { key, velocity, on } => self.keys_note(key, velocity, on),
             a @ (UiAction::OpenPluginGui { .. }
             | UiAction::OpenPluginParams { .. }
             | UiAction::ClosePluginParams
@@ -814,6 +822,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.help_at(pos),
             Pane::PluginParams => self.plugin_params.help_at(pos),
             Pane::FileBrowser => self.file_browser.help_at(pos),
+            Pane::PianoKeys => self.piano_keys.help_at(pos),
         }
     }
 
@@ -845,6 +854,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.handle(event, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.handle(event),
+            Pane::PianoKeys => self.piano_keys.handle(event),
         };
         for action in &actions {
             self.handle_action(action.clone());
@@ -2078,6 +2088,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::ContainerEditor => self.container_editor.paint(canvas, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
             Pane::FileBrowser => self.file_browser.paint(canvas),
+            Pane::PianoKeys => self.piano_keys.paint(canvas),
         }
     }
 
@@ -2637,6 +2648,9 @@ pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
+#[path = "app_core_keys.rs"]
+mod keys;
+
 #[path = "app_core_containers.rs"]
 mod containers;
 
@@ -2869,3 +2883,7 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "app_core_warp_tests.rs"]
 mod warp_tests;
+
+#[cfg(test)]
+#[path = "app_core_keys_tests.rs"]
+mod keys_tests;

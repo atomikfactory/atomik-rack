@@ -291,6 +291,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 self.core.transport_bar_mut().set_scale(scale);
                 self.core.file_browser_mut().set_scale(scale);
+                self.core.piano_keys_mut().set_scale(scale);
                 // The panes that sit in the main window while attached.
                 if !self.rack_detached() {
                     self.core.handle_event(&UiEvent::ScaleChanged(scale));

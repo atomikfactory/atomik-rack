@@ -146,17 +146,18 @@ use atomik_ui::CursorHint;
 use atomik_ui::browser::CreateKind;
 use atomik_ui::context_menu::{ContextMenu, MenuOutcome};
 use atomik_ui::keymap::{
-    Context, ContextStack, Keymap, KeymapEditor, Os, Profile, Roles, Route, Router, UserKeymap,
+    Context, ContextStack, KEYS_NOTE_ARGS, Keymap, KeymapEditor, Os, Profile, Resolution, Roles,
+    Route, Router, UserKeymap,
 };
 use atomik_ui::kurbo::{Affine, Point, Rect, RoundedRect, Size};
 use atomik_ui::transport::TRANSPORT_HEIGHT;
 use atomik_ui::{
     BrowseAction, Canvas, CanvasExt, ConsoleButton, ExportScope, ExportView, FileBrowserView, Flip,
     Key, MacrosAction, MacrosView, MidiMapsAction, MidiMapsView, Modifiers, NotesAction,
-    NotesValues, NotesView, NumpadKey, ParamSearchAction, ParamSearchView, Place, PluginBannerView,
-    PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues, QuantizeView, RelinkAction,
-    RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView, TextRun, UiAction, UiEvent,
-    WarpAction, WarpValues, WarpView,
+    NotesValues, NotesView, NumpadKey, PIANO_KEYS_HEIGHT, ParamSearchAction, ParamSearchView,
+    Place, PluginBannerView, PluginSettingsView, PointerButton, QuantizeAction, QuantizeValues,
+    QuantizeView, RelinkAction, RelinkEntry, RelinkView, SilenceAction, SilenceValues, SilenceView,
+    TextRun, UiAction, UiEvent, WarpAction, WarpValues, WarpView,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -300,6 +301,9 @@ pub struct Layout {
     /// The file browser column (only while it shows): the full height below the menu bar, to
     /// the left of everything else.
     pub file_browser: Option<Rect>,
+    /// The Piano Keys strip (only while it shows): the full width right of the file browser,
+    /// above the status bar.
+    pub piano_keys: Option<Rect>,
 }
 
 /// A drag of files that left the file browser: the shell owns it until the release.
@@ -434,6 +438,8 @@ pub struct Shell<B: AudioBackend> {
     /// The right edge of the file browser column as last laid out (0 while hidden), to notice a
     /// resize drag of the panel.
     browser_edge: f64,
+    /// The Piano Keys strip is shown (View > Piano Keys).
+    piano_keys_visible: bool,
     /// The file drag in progress (see [`Capture::FileDrag`]).
     file_drag: Option<FileDrag>,
     /// The help tooltip: what the pointer rests on and whether it shows yet.
@@ -573,6 +579,7 @@ impl<B: AudioBackend> Shell<B> {
             keymap_stamp,
             seq_only_prev: None,
             browser_edge: 0.0,
+            piano_keys_visible: false,
             file_drag: None,
             tips: Tips::default(),
         };
@@ -1519,14 +1526,16 @@ impl<B: AudioBackend> Shell<B> {
                 .unwrap_or_else(|| "(unbound)".to_string())
         };
         format!(
-            "Keys moved: Record {}, Quantize {}, Split {}, Create {} / {}, Import {}; R is the \
-             razor. Settings > Keyboard > Atomik legacy restores the old keys.",
+            "Keys moved: Record {}, Quantize {}, Split {}, Create {} / {}, Import {}, File Browser {}, \
+             Piano Keys {}; R is the razor. Settings > Keyboard > Atomik legacy restores the old keys.",
             key("transport.record"),
             key("editor.quantize"),
             key("sequencer.split_at_playhead"),
             key("create.instrument"),
             key("create.effect"),
             key("file.import_audio"),
+            key("view.toggle_file_browser"),
+            key("view.toggle_piano_keys"),
         )
     }
 
@@ -1623,6 +1632,10 @@ impl<B: AudioBackend> Shell<B> {
     /// the modifier state (a hold-style role must not stay on).
     pub fn focus_lost(&mut self) {
         self.router.clear_held();
+        let released = self.core.piano_keys_mut().release_all();
+        for action in released {
+            self.core.handle_action(action);
+        }
         self.clear_tooltip();
         self.modifiers = Modifiers::NONE;
         self.forward_modifiers();
@@ -1685,6 +1698,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Files])
             }
             Pane::FileBrowser => ContextStack::new(&[Context::Files]),
+            Pane::PianoKeys if self.core.piano_keys().is_typing() => {
+                ContextStack::new(&[Context::Keys])
+            }
+            Pane::PianoKeys => ContextStack::global(),
             Pane::Transport | Pane::PluginParams => ContextStack::global(),
         }
     }
@@ -1698,6 +1715,7 @@ impl<B: AudioBackend> Shell<B> {
             cables: view.cable_visibility(),
             browser: view.browser_visible(),
             file_browser: self.ui.file_browser_visible,
+            piano_keys: self.piano_keys_visible,
             can_undo: self.core.document().can_undo(),
             can_redo: self.core.document().can_redo(),
             can_edit: self.core.has_selection(self.live_pane(self.focus)),
@@ -1779,6 +1797,30 @@ impl<B: AudioBackend> Shell<B> {
         )
     }
 
+    /// The height the Piano Keys strip takes above the status bar (0 while hidden).
+    fn keys_height(&self) -> f64 {
+        if self.piano_keys_visible {
+            PIANO_KEYS_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The Piano Keys strip, when it shows.
+    fn piano_keys_rect(&self) -> Option<Rect> {
+        if !self.piano_keys_visible {
+            return None;
+        }
+        let x0 = self.file_browser_rect().map_or(0.0, |r| r.x1);
+        let y1 = (self.size().height - STATUS_BAR_HEIGHT).max(self.top() + 1.0);
+        Some(Rect::new(
+            x0,
+            (y1 - PIANO_KEYS_HEIGHT).max(self.top()),
+            self.size().width.max(x0 + 1.0),
+            y1,
+        ))
+    }
+
     /// The file browser column, when it shows: the full height below the menu bar. Its width is
     /// the panel's own (it resizes by drag), kept so the rest of the window keeps
     /// [`MIN_REST_WIDTH`].
@@ -1801,7 +1843,8 @@ impl<B: AudioBackend> Shell<B> {
         let w = (self.size().width - x0).max(1.0);
         let x1 = x0 + w;
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let keys = self.piano_keys_rect();
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
         if self.maximised() {
             let transport_top = (bottom - TRANSPORT_HEIGHT).max(top + 1.0);
             return Layout {
@@ -1810,6 +1853,7 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: Some(Rect::new(x0, top, x1, transport_top)),
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         if !self.ui.show_song {
@@ -1820,6 +1864,7 @@ impl<B: AudioBackend> Shell<B> {
                 transport: Rect::new(x0, transport_top, x1, bottom),
                 song: None,
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         if !self.rack_in_main() {
@@ -1835,6 +1880,7 @@ impl<B: AudioBackend> Shell<B> {
                     bottom.max(transport.y1 + 1.0),
                 )),
                 file_browser: fb,
+                piano_keys: keys,
             };
         }
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
@@ -1853,6 +1899,7 @@ impl<B: AudioBackend> Shell<B> {
                 bottom.max(transport.y1 + 1.0),
             )),
             file_browser: fb,
+            piano_keys: keys,
         }
     }
 
@@ -1880,6 +1927,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core.transport_bar_mut().set_bounds(l.transport);
         if let Some(fb) = l.file_browser {
             self.core.file_browser_mut().set_bounds(fb);
+        }
+        if let Some(keys) = l.piano_keys {
+            self.core.piano_keys_mut().set_bounds(keys);
         }
         self.browser_edge = l.file_browser.map_or(0.0, |r| r.x1);
         if let Some(song) = l.song {
@@ -2033,6 +2083,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
             Pane::FileBrowser if !self.ui.file_browser_visible => self.live_pane(Pane::Rack),
+            Pane::PianoKeys if !self.piano_keys_visible => self.live_pane(Pane::Rack),
             Pane::Rack if self.maximised() => Pane::Console,
             Pane::Rack if !self.rack_in_main() => self.song_pane(),
             other => other,
@@ -2073,6 +2124,13 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .file_browser_mut()
             .set_focused(pane == Pane::FileBrowser);
+        let released = self
+            .core
+            .piano_keys_mut()
+            .set_focused(pane == Pane::PianoKeys);
+        for action in released {
+            self.core.handle_action(action);
+        }
     }
 
     /// The pane under a window point, if any (the divider and the bars are not panes).
@@ -2092,7 +2150,9 @@ impl<B: AudioBackend> Shell<B> {
             return rect.contains(pos).then_some(Ok(pane));
         }
         let l = self.layout();
-        if l.file_browser.is_some_and(|r| r.contains(pos)) {
+        if l.piano_keys.is_some_and(|r| r.contains(pos)) {
+            Some(Ok(Pane::PianoKeys))
+        } else if l.file_browser.is_some_and(|r| r.contains(pos)) {
             Some(Ok(Pane::FileBrowser))
         } else if l.rack.contains(pos) {
             Some(Ok(Pane::Rack))
@@ -2389,6 +2449,12 @@ impl<B: AudioBackend> Shell<B> {
             // Held-modifier state only; nothing repaints until a role depends on it. The
             // settings dialog learns a role from the modifiers held.
             self.modifiers = *modifiers;
+            if self.live_pane(self.focus) == Pane::PianoKeys {
+                let actions = self.core.piano_keys_mut().set_shift(modifiers.shift);
+                for action in actions {
+                    self.core.handle_action(action);
+                }
+            }
             let size = self.size();
             if let Some(dialog) = &mut self.dialog
                 && dialog.capturing_keys()
@@ -2678,11 +2744,19 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
+            self.piano_keys_modifiers(key, *modifiers, *pressed);
             let stack = self.context_stack();
-            match self.router.route(key, *modifiers, *pressed, &stack) {
+            let mods = self.keys_routing_modifiers(key, *modifiers);
+            match self.router.route(key, mods, *pressed, &stack) {
                 Route::RepeatIgnored => {}
                 Route::Commands(list) => {
                     for resolved in &list {
+                        if resolved.command.starts_with("keys.") {
+                            if self.keys_command(key, &resolved.command, resolved.arg.as_deref()) {
+                                return Vec::new();
+                            }
+                            continue;
+                        }
                         if let Some(requests) =
                             self.run_command(&resolved.command, resolved.arg.as_deref())
                         {
@@ -3063,6 +3137,116 @@ impl<B: AudioBackend> Shell<B> {
 
     /// Sends a key no command took to the focused view (numpad keys as the characters they
     /// type).
+    /// Opens or closes the Piano Keys strip. Opening gives it the keyboard focus; closing
+    /// releases its notes.
+    fn set_piano_keys_visible(&mut self, visible: bool) {
+        if visible == self.piano_keys_visible {
+            return;
+        }
+        self.piano_keys_visible = visible;
+        if visible {
+            self.layout_view();
+            self.set_focus(Pane::PianoKeys);
+        } else {
+            if self.focus == Pane::PianoKeys {
+                self.set_focus(Pane::Rack);
+            }
+            let released = self.core.piano_keys_mut().release_all();
+            for action in released {
+                self.core.handle_action(action);
+            }
+            self.layout_view();
+        }
+        self.repaint = true;
+    }
+
+    /// Shift is the sustain pedal while the strip types: tell it what the key event says.
+    fn piano_keys_modifiers(&mut self, key: &Key, modifiers: Modifiers, pressed: bool) {
+        if self.live_pane(self.focus) != Pane::PianoKeys {
+            return;
+        }
+        let mut actions = self.core.piano_keys_mut().set_shift(modifiers.shift);
+        // A computer key came up: its note ends (the router sees the release as well).
+        if !pressed {
+            actions.extend(self.core.piano_keys_mut().type_release(key));
+        }
+        for action in actions {
+            self.core.handle_action(action);
+        }
+    }
+
+    /// The modifiers a key is resolved with: while the strip types, Shift is the sustain pedal
+    /// and does not change which key a letter is, so it is left out when the key plays
+    /// something without it.
+    fn keys_routing_modifiers(&self, key: &Key, modifiers: Modifiers) -> Modifiers {
+        if !modifiers.shift
+            || !self.core.piano_keys().is_typing()
+            || self.live_pane(self.focus) != Pane::PianoKeys
+        {
+            return modifiers;
+        }
+        let plain = Modifiers {
+            shift: false,
+            ..modifiers
+        };
+        let keys = ContextStack::new(&[Context::Keys]);
+        match self.router.keymap().resolve_event(key, plain, &keys) {
+            Resolution::Bound(list) if list.iter().any(|r| r.context == Context::Keys) => plain,
+            _ => modifiers,
+        }
+    }
+
+    /// Runs a `keys.*` command for the key that triggered it; false when it is not one.
+    fn keys_command(&mut self, key: &Key, command: &str, arg: Option<&str>) -> bool {
+        let keys = self.core.piano_keys_mut();
+        let actions = match command {
+            "keys.note" => {
+                let offset = arg.and_then(|a| KEYS_NOTE_ARGS.iter().position(|n| *n == a));
+                match offset {
+                    Some(o) => keys.type_note(key, o as u8),
+                    None => return false,
+                }
+            }
+            "keys.octave_up" => {
+                keys.shift_octave(1);
+                Vec::new()
+            }
+            "keys.octave_down" => {
+                keys.shift_octave(-1);
+                Vec::new()
+            }
+            "keys.velocity" => {
+                match arg.and_then(|a| a.parse::<usize>().ok()) {
+                    Some(step) => keys.set_velocity_step(step),
+                    None => return false,
+                }
+                Vec::new()
+            }
+            _ => return false,
+        };
+        for action in actions {
+            self.core.handle_action(action);
+        }
+        true
+    }
+
+    /// The characters the keymap gives the typed keys, drawn on the strip.
+    fn refresh_key_labels(&mut self) {
+        let keymap = self.router.keymap();
+        let labels: Vec<String> = KEYS_NOTE_ARGS
+            .iter()
+            .map(|arg| {
+                keymap
+                    .chords_of("keys.note", Some(arg))
+                    .into_iter()
+                    .find(|(ctx, _)| *ctx == Context::Keys)
+                    .map(|(_, c)| c.menu_text(keymap.os()))
+                    .unwrap_or_default()
+            })
+            .collect();
+        self.core.piano_keys_mut().set_labels(labels);
+    }
+
     fn route_key(&mut self, event: &UiEvent) {
         let focus = self.live_pane(self.focus);
         self.forward(focus, &text_form(event));
@@ -3070,7 +3254,7 @@ impl<B: AudioBackend> Shell<B> {
 
     fn drag_divider(&mut self, pos: Point, grab: f64, released: bool) {
         let top = self.top();
-        let bottom = (self.size().height - STATUS_BAR_HEIGHT).max(top + 1.0);
+        let bottom = (self.size().height - STATUS_BAR_HEIGHT - self.keys_height()).max(top + 1.0);
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
@@ -3895,6 +4079,10 @@ impl<B: AudioBackend> Shell<B> {
                 let view = self.core.view_mut();
                 let visible = !view.browser_visible();
                 view.set_browser_visible(visible);
+                Vec::new()
+            }
+            AppCommand::TogglePianoKeys => {
+                self.set_piano_keys_visible(!self.piano_keys_visible);
                 Vec::new()
             }
             AppCommand::ToggleFileBrowser => {
@@ -4724,6 +4912,9 @@ impl<B: AudioBackend> Shell<B> {
     }
 
     fn paint_main(&mut self, canvas: &mut dyn Canvas) {
+        if self.piano_keys_visible {
+            self.refresh_key_labels();
+        }
         let scale = self.scale();
         let l = self.layout();
         let (w, h) = (self.size().width, self.size().height);
@@ -4745,6 +4936,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core.paint_pane(Pane::Transport, canvas);
         if l.file_browser.is_some() {
             self.core.paint_pane(Pane::FileBrowser, canvas);
+        }
+        if l.piano_keys.is_some() {
+            self.core.paint_pane(Pane::PianoKeys, canvas);
         }
         if l.song.is_some() {
             let pane = self.song_pane();
@@ -5097,3 +5291,7 @@ mod export_tests;
 #[cfg(test)]
 #[path = "shell_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "shell_piano_keys_tests.rs"]
+mod piano_keys_tests;

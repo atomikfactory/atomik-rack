@@ -25,6 +25,8 @@ pub enum Group {
     Browser,
     /// The file browser panel.
     Files,
+    /// The Piano Keys strip.
+    Keys,
     /// Creating devices, tracks and channels.
     Create,
     /// The tool palette.
@@ -33,7 +35,7 @@ pub enum Group {
 
 impl Group {
     /// Every group, in listing order.
-    pub const ALL: [Group; 12] = [
+    pub const ALL: [Group; 13] = [
         Group::Global,
         Group::Transport,
         Group::View,
@@ -44,6 +46,7 @@ impl Group {
         Group::Mixer,
         Group::Browser,
         Group::Files,
+        Group::Keys,
         Group::Create,
         Group::Tools,
     ];
@@ -61,6 +64,7 @@ impl Group {
             Group::Mixer => "Mixer",
             Group::Browser => "Browser",
             Group::Files => "Files",
+            Group::Keys => "Piano Keys",
             Group::Create => "Create",
             Group::Tools => "Tools",
         }
@@ -136,6 +140,30 @@ impl CommandDef {
     }
 }
 
+/// The values of `keys.note`: the key of the Piano Keys strip a computer key plays, from the
+/// strip's lowest C (`c`) up to the F above the next C (`f_up`).
+pub const KEYS_NOTE_ARGS: &[&str] = &[
+    "c",
+    "c_sharp",
+    "d",
+    "d_sharp",
+    "e",
+    "f",
+    "f_sharp",
+    "g",
+    "g_sharp",
+    "a",
+    "a_sharp",
+    "b",
+    "c_up",
+    "c_sharp_up",
+    "d_up",
+    "d_sharp_up",
+    "e_up",
+    "f_up",
+];
+/// The values of `keys.velocity`: the number keys `1` to `0` (10 is the `0` key).
+pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 /// The values of `view.cables`.
 pub const CABLE_ARGS: &[&str] = &["show", "hover", "hide"];
 /// The values of `transport.input_quantize`.
@@ -593,6 +621,10 @@ const COMMANDS: &[CommandDef] = &[
         C::Files,
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
+    cmd("keys.note", "Play Note", G::Keys, C::Keys).arg(KEYS_NOTE_ARGS),
+    cmd("keys.octave_down", "Octave Down", G::Keys, C::Keys).rep(),
+    cmd("keys.octave_up", "Octave Up", G::Keys, C::Keys).rep(),
+    cmd("keys.velocity", "Set Velocity", G::Keys, C::Keys).arg(KEYS_VELOCITY_ARGS),
     cmd(
         "macro.assign_control",
         "Assign to Macro",
@@ -1596,6 +1628,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("view.toggle_piano_keys", "Piano Keys", G::View, C::Global).menu(),
     cmd("view.toggle_piano_roll", "Piano Roll", G::View, C::Global).menu(),
     cmd("view.toggle_rack", "Rack", G::View, C::Global).menu(),
     cmd(
@@ -1708,6 +1741,7 @@ mod tests {
                 Group::Mixer => &["mixer", "midi", "macro", "automation"],
                 Group::Browser => &["browser"],
                 Group::Files => &["files"],
+                Group::Keys => &["keys"],
                 Group::Create => &["create"],
                 Group::Tools => &["tool"],
             };
@@ -1759,7 +1793,7 @@ mod tests {
 
     #[test]
     fn group_titles_cover_every_group() {
-        assert_eq!(Group::ALL.len(), 12);
+        assert_eq!(Group::ALL.len(), 13);
         for g in Group::ALL {
             assert!(!g.title().is_empty());
         }

@@ -45,16 +45,33 @@ impl MidiLink {
     /// # Errors
     /// [`EngineError::QueueFull`] when the live queue is full.
     pub fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        let note = self.note_now(target, kind);
+        self.sender.push(note)
+    }
+
+    /// [`Self::send_now`] for played input (the Piano Keys): the note is also offered to the
+    /// recording tap, as a note from the MIDI input is, so a take captures it.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`] when the live queue is full.
+    pub fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        let note = self.note_now(target, kind);
+        self.sender.push(note)?;
+        self.tap.offer(&note);
+        Ok(())
+    }
+
+    fn note_now(&self, target: Target, kind: NoteKind) -> ScheduledNote {
         let latency = self.latency.load(Ordering::Relaxed);
         let frame = self.clock.read().map_or(0, |(frame, at)| {
             event_frame(frame, at, timing::now(), self.sample_rate, latency)
         });
-        self.sender.push(ScheduledNote {
+        ScheduledNote {
             frame,
             device: target.0,
             socket: target.1,
             kind,
-        })
+        }
     }
 }
 
@@ -292,6 +309,16 @@ impl MidiConnection {
         let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
         slot.as_mut()
             .map_or(Ok(()), |link| link.send_now(target, kind))
+    }
+
+    /// [`MidiLink::play_now`] through the connection's link.
+    ///
+    /// # Errors
+    /// [`EngineError::QueueFull`] when the live queue is full.
+    pub fn play_now(&self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
+        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
+        slot.as_mut()
+            .map_or(Ok(()), |link| link.play_now(target, kind))
     }
 
     /// Closes the port and hands the link back.
@@ -582,6 +609,41 @@ mod tests {
             link.send_now((DeviceInstanceId(3), SocketId(9)), NoteKind::Off { key: 1 })
                 .is_ok()
         );
+    }
+
+    /// Played input (the Piano Keys) is offered to the recording tap as a MIDI note is: the same
+    /// armed-device filter, the same events.
+    #[test]
+    fn played_notes_reach_the_recording_tap_like_midi_notes() {
+        let (slot, tap, _target) = link_with_tap();
+        tap.set_armed(&[DeviceInstanceId(3)]);
+        let mut guard = slot.lock().unwrap();
+        let link = guard.as_mut().unwrap();
+        let on = NoteKind::On {
+            key: 64,
+            velocity: 0.5,
+        };
+        link.play_now((DeviceInstanceId(3), SocketId(0)), on)
+            .unwrap();
+        link.play_now(
+            (DeviceInstanceId(3), SocketId(0)),
+            NoteKind::Off { key: 64 },
+        )
+        .unwrap();
+        link.play_now((DeviceInstanceId(4), SocketId(0)), on)
+            .unwrap();
+        link.send_now((DeviceInstanceId(3), SocketId(0)), on)
+            .unwrap();
+        let mut out = Vec::new();
+        tap.drain(&mut out);
+        assert_eq!(
+            out.len(),
+            2,
+            "armed device only, audition not recorded: {out:?}"
+        );
+        assert_eq!(out[0].kind, on);
+        assert!(matches!(out[1].kind, NoteKind::Off { key: 64 }));
+        assert!(out[0].frame <= out[1].frame);
     }
 
     /// A message a mapping listens to is consumed (it plays no note, but the mappings still see

@@ -262,13 +262,19 @@ pub fn markdown(profiles: &[Profile], oses: &[Os], user: Option<&UserKeymap>) ->
          `settings.json`, only your changes). While a text field has focus only chords with the \
          primary modifier, function keys and Esc run commands. Where a binding in a pane overlaps \
          a global one, the pane wins inside that pane. The file browser panel (View, File \
-         Browser, `F4`) is the `files` context: while it has the focus, its keys (arrows, Page \
+         Browser, `F9`) is the `files` context: while it has the focus, its keys (arrows, Page \
          Up and Down, Home and End, Enter, Space, Esc, Backspace, `F`, the search and select-all \
          chords) are the `files.*` commands, which the shell hands to the panel as those keys, \
          so they win over the global bindings of the same chords (Space previews instead of \
-         playing, Backspace goes up a folder instead of deleting); every other chord, `F4` and \
+         playing, Backspace goes up a folder instead of deleting); every other chord, `F9` and \
          `F5` included, still runs as usual. While the panel's search or tag field has focus, \
-         only Esc, function keys and the chords with the primary modifier run commands. An open \
+         only Esc, function keys and the chords with the primary modifier run commands. The \
+         Piano Keys strip (View, Piano Keys, `F4`) plays the computer keyboard while it has the \
+         focus in Keys mode: it is the `keys` context, where letters are notes (two rows from \
+         `A`, `W`, `S`, `E`... to the F above the next C) and `Z` and `X` change the octave, `1` \
+         to `0` set the velocity, and Shift is the sustain pedal (it does not change which key a \
+         letter is); a chord the context does not bind, `Space` or any chord with the primary \
+         modifier included, still runs as usual. An open \
          menu (a context menu, or a menu of the in-window menu bar) takes every key: Up and Down \
          move the highlight (it wraps, and skips separators and disabled items), Home and End \
          jump to the first and last item, Right or Enter opens a submenu on its first item, Left \

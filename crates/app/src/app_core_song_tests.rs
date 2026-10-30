@@ -111,6 +111,7 @@ fn kinds(calls: &[SinkCall]) -> Vec<&'static str> {
             SinkCall::Song(_) => "song",
             SinkCall::Transport(_) => "transport",
             SinkCall::LiveNote { .. } => "live",
+            SinkCall::PlayNote { .. } => "play",
             SinkCall::Recording(_) => "recording",
             SinkCall::Hold(_) => "hold",
             SinkCall::PreviewStart { .. } => "preview-start",
