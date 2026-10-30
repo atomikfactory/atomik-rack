@@ -2017,6 +2017,14 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Asks for a recovery snapshot of the document at the next frame (after an internal error:
+    /// the periodic one may be minutes away). The writer thread does the work.
+    pub(super) fn request_recovery_snapshot(&mut self) {
+        if let Some(r) = &mut self.plugins.recovery {
+            r.wanted = true;
+        }
+    }
+
     /// Waits for the queued snapshots to reach the disk (tests, and the exit path).
     pub fn wait_recovery_writes(&mut self) {
         if let Some(writer) = self
