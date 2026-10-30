@@ -219,6 +219,8 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Status.** Decided (already applied). Decided by: maintainer, 2026-10-30.
 
+*Note, 2026-10-30.* The reader side is built. Every field is one row of the table in `crates/model/src/project/schema.rs`, and a row marked `ignorable` is the mechanism for "new optional fields are ignorable": a file newer than the reader opens when its root carries `"compat"` (the oldest version that can read it) and an `"ignorable"` list of the fields to skip, and the reader drops those with a warning each. The writer adds the two root fields when the newest changes are all ignorable; no format change has used it yet, so no file carries them. The first batched bump to use it should mark its new optional fields `ignorable` in the table. See [ARCHITECTURE.md](ARCHITECTURE.md#22-project-open-edit-and-live-sync).
+
 ## M. Warp on import default
 
 **Question.** Are audio files warped to the song tempo when imported?

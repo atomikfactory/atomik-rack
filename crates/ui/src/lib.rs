@@ -56,10 +56,13 @@
 //!   for pointer gestures; keyboard chords are matched strictly by the [`keymap`] router
 //!   (command registry, keymap profiles, contexts), which the app runs before it
 //!   forwards a key to a view.
-//! - **Shortcuts handled by the view:** Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y redo,
-//!   Esc cancels a drag (a knob drag restores its start value), Tab/Shift+Tab move focus
-//!   between controls, arrows/PageUp/PageDown step the focused control, Space/Enter press a
-//!   focused button or selector, Delete/Backspace remove the selected device, Home/End scroll.
+//! - **Shortcuts handled by the view:** Esc cancels a drag (a knob drag restores its start value),
+//!   arrows/PageUp/PageDown step the focused control, Space/Enter press a focused button or
+//!   selector, Home/End scroll, Backspace with nothing selected leaves a container. Undo, redo and
+//!   Delete are commands of the [`keymap`] registry (`edit.undo`, `edit.redo`, `edit.delete`), and
+//!   Tab is bound to `view.toggle_flip`: the router runs before the view sees a key, so the view's
+//!   own Tab/Shift+Tab focus movement between controls is reached only by a host that does not
+//!   route keys.
 //! - **Rack interactions:** drag a knob or fader vertically ([`widget`] documents the
 //!   numbers); double-click resets; wheel steps; Ctrl/Cmd+wheel zooms (0.5×–2×) around the
 //!   pointer; wheel elsewhere scrolls (Shift = horizontal); middle-drag pans; click a name plate

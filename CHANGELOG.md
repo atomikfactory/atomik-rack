@@ -264,6 +264,15 @@ may break APIs and the patch and project formats.
   (`transport.all_notes_off`): it releases every note on every device and on the Piano Keys. The
   legacy key set is unchanged.
 - **Shift+click in the arrangement ruler sets the End marker** at the snapped position.
+- **A newer project can open in an older build when it only adds optional fields.** A project file
+  whose root says `"compat"` (the oldest version that can read it) and lists its `"ignorable"`
+  fields opens with those fields skipped and a warning each; any other unknown field is still
+  refused. The writer adds the two fields only when every change since `compat` is skippable, so
+  files of format 36 are unchanged byte for byte.
+- **"N items ignored while opening".** Opening a project reports what the file had that the
+  document does not, in a toast and the log: the height of a device that has no track, a comp clip
+  that is not on its lane, an instrument of a version 1 file that could not get a mixer channel and
+  the skipped fields of a newer file.
 
 ### Fixed
 - **A command that does not fit the document is refused, not fatal.** Every edit now checks what it
@@ -334,6 +343,19 @@ may break APIs and the patch and project formats.
   Track Up and Down are `Ctrl+Alt+Up` and `Ctrl+Alt+Down` (were `Alt+Up` and `Alt+Down`, which the
   file browser's parent folder keeps), and Reset Track Heights is `Alt+Z` (was `Shift+Z`). The
   one-time notice of moved keys names Group Tracks too. The legacy key set keeps its keys.
+- **The project reader is driven by one field table**, and the module is split by area
+  (`crates/model/src/project`): adding a field is one table row. A saved project of every released
+  format version from 13 on is kept in `crates/model/tests/fixtures` and checked to load and resave
+  canonically. Load, batch and missing-asset failures have their own error kinds (`Load`,
+  `BadBatch`, `MissingAsset`), so a toast no longer calls a project error a patch file error. Saved
+  files are byte for byte what they were.
+- **Documents match the code again.** The architecture, testing, devices and extending guides and
+  the security policy are corrected (the format version, the crate table with a new `unsafe`
+  column, the VST3 editor and sandbox statements, the golden files, the allocation guard coverage,
+  the plugin scope of the security policy). Tests check the crate table against the `Cargo.toml`
+  files, that every function the guides cite exists, and the command count the architecture guide
+  quotes. The long documents are hard-wrapped at 100 columns, and the continuous integration job
+  checks the wrapping and the links of the Markdown files.
 
 ## [0.2.0-rc.2] - 2026-10-28
 

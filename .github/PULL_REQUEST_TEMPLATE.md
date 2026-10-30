@@ -21,5 +21,5 @@
   - [ ] `cargo deny check`
 - [ ] **Real-time safety (HI-1):** no allocation, freeing, locking, blocking or I/O on the render path; new render-path code is exercised under `atomik_testkit::no_alloc::assert_no_alloc` or `DeviceHarness`. (Tick if not applicable.)
 - [ ] **Determinism (HI-2):** no `HashMap`/`HashSet`, no time sources, only seeded RNGs; output does not depend on host block size. (Tick if not applicable.)
-- [ ] **Architecture:** the crate dependency rules in `docs/ARCHITECTURE.md` are respected.
+- [ ] **Architecture:** the crate dependency rules in `docs/ARCHITECTURE.md` are respected, and the document (the crate table of section 1 and any statement your change makes stale) and a `CHANGELOG.md` line are updated; `cargo test -p atomik-testkit --test docs_match_code` checks the table and the function names the documents cite.
 - [ ] **Docs:** public APIs are documented and user-facing docs (and the changelog, if user-visible) are updated.

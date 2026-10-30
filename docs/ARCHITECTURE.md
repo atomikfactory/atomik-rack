@@ -31,30 +31,31 @@ the screen is kept off the audio thread.
 
 The picture shows the main arrows only; the table below is exact.
 
-| Crate | Path | Workspace dependencies | What it is |
-|---|---|---|---|
-| `atomik-core` | [crates/core](../crates/core) | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
-| `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
-| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables, mip levels by FFT truncation), filters, envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
-| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | `poly-synth`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
-| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
-| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
-| `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v31), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
-| `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | cpal streams driving the engine, duplex input, telemetry |
-| `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | MIDI input and exact event timing, the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
-| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins. No `unsafe` except `fpenv.rs` |
-| `atomik-plugin-clap` | [crates/plugin-clap](../crates/plugin-clap) | core, device-sdk, plugin-host (clack-host, clack-extensions) | The CLAP backend; the only crate with plugin `unsafe` (every block has a `SAFETY:` comment) |
-| `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | core, plugin-host, plugin-clap | The out-of-process scanner (bin `atomik-plugin-scan`) |
-| `atomik-plugin-ipc` | [crates/plugin-ipc](../crates/plugin-ipc) | core, device-sdk, plugin-host (memmap2, windows-sys, libc) | The sandbox wire: the shared audio block, the doorbell, the control-channel frames and messages; the only sandbox crate with `unsafe` |
-| `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | The sandbox, app side: `SandboxBackend`, one child process per plugin instance |
-| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance |
-| `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, audio-file, plugin-host, plugin-clap (dev: testkit, dsp) | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
-| `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | `atomik-play`, a live player for patches |
-| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display), model | Platform-independent views, widgets, display lists, theme |
-| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-clap | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
-| `atomik-mcp` | [crates/mcp](../crates/mcp) | core, device-sdk, model, render, app, ui (feature `cpu-canvas`), plugin-host | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
-| `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | Test-only: fakes, signal analysis, the allocation guard |
+| Crate | Path | Workspace dependencies | `unsafe` allowed in | What it is |
+|---|---|---|---|---|
+| `atomik-core` | [crates/core](../crates/core) | none | none | Batch constants, time (`SampleRate`, `Tempo`, ticks, `PPQ` = 15 360, `TimeInfo` with the transport position `tick`, `ticks_per_frame`, `loop_wrap`, `time_signature`), the tempo map (steps and linear ramps) and the meter map (`tempo_map.rs`, `meter_map.rs`), params, note events, the scales and chords of `theory.rs` (allocation-free, shared by the note editors and the note players) |
+| `atomik-device-sdk` | [crates/device-sdk](../crates/device-sdk) | core | none | `DeviceDescriptor`, the `Device` trait (with stages and `swap_samples`), `ProcessContext`, `Registry` (with `register_with_samples`), `SampleMap` and `Zone` with `reverse` (`samples.rs`), `PlayerData` (step sequencer patterns, `player.rs`), `Device::swap_player_data`, `Registry::register_with_player_data`, `ScopeTap` and `Device::scope_tap` (the ring of recent frames a metering device hands to the UI, `scope.rs`) |
+| `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables, mip levels by FFT truncation), filters, envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
+| `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth`, `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
+| `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
+| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
+| `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v36), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
+| `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
+| `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
+| `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
+| `atomik-plugin-clap` | [crates/plugin-clap](../crates/plugin-clap) | core, device-sdk, plugin-host (clack-host, clack-extensions) | `crate` | The CLAP backend (every `unsafe` block has a `SAFETY:` comment) |
+| `atomik-plugin-vst3` | [crates/plugin-vst3](../crates/plugin-vst3) | core, device-sdk, plugin-host (vst3, libloading) | `crate` | The VST3 backend, hosting `.vst3` modules through the `vst3` bindings (every `unsafe` block has a `SAFETY:` comment) |
+| `atomik-plugin-scan` | [crates/plugin-scan](../crates/plugin-scan) | device-sdk, plugin-host, plugin-clap, plugin-vst3 | none | The out-of-process scanner (bin `atomik-plugin-scan`) |
+| `atomik-plugin-ipc` | [crates/plugin-ipc](../crates/plugin-ipc) | core, device-sdk, plugin-host (memmap2, windows-sys, libc) | `crate` | The sandbox wire: the shared audio block, the doorbell, the control-channel frames and messages; the only sandbox crate with `unsafe` |
+| `atomik-plugin-sandbox` | [crates/plugin-sandbox](../crates/plugin-sandbox) | core, device-sdk, plugin-host, plugin-ipc | none | The sandbox, app side: `SandboxBackend`, one child process per plugin instance |
+| `atomik-plugin-hostd` | [crates/plugin-hostd](../crates/plugin-hostd) | core, device-sdk, plugin-host, plugin-ipc, plugin-clap, plugin-vst3 (winit) | `tests/support/owner_window.rs` (a test helper) | The sandbox child (bin `atomik-plugin-host`): hosts one plugin instance |
+| `atomik-render` | [crates/render](../crates/render) | core, device-sdk, engine, devices, model, dsp, audio-file, plugin-host, plugin-clap, plugin-vst3, plugin-sandbox (dev: testkit) | none | Patch and project bounces, the audio export of the song or the loop (`export`), bundle rules, the shared sample-map builder, `probe_devices` (a bounce that stops early and reads the metering devices), the `atomik-render` CLI |
+| `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
+| `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display), model | none | Platform-independent views, widgets, display lists, theme |
+| `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
+| `atomik-mcp` | [crates/mcp](../crates/mcp) | core, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
+| `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard |
 
 Rules (all hold in the `Cargo.toml` files today):
 
@@ -236,7 +237,7 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (see 2.22); version 30 adds a notes lane's `"name"` and `"muted": true` after its `"kind"`, and
   lets a track have several note lanes before its automation lanes, each written only when used (see
   2.21); versions 23 to 29 add audio editing, warp, frozen tracks, VCA groups, mixer snapshots, MIDI
-  mappings and macro banks (the module docs of `project.rs` list each); version 22 adds the song's
+  mappings and macro banks (the module docs of `project/mod.rs` list each); version 22 adds the song's
   `"groups"` (folders: `"id"`, `"name"`, `"parent"?`, `"collapsed"?`, `"color"?`) after its
   `"grooves"`, a track's `"group"`, `"color"` and `"comment"` after its `"no_chase"`, an automation
   lane's `"folded": true` after its `"write"` and a take group's `"open": true` after its `"clips"`,
@@ -267,6 +268,40 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   console, below, omitted when there are none, so a project without buses differs from its v11 file
   only in the version line). Patches carry no columns and no buses. Saving is canonical: save, load,
   save gives identical bytes.
+- **One table drives the reader.** Every kind of object a project file holds (the root, a device,
+  a track, a lane, a clip, the console and so on) is an `Obj`, and every field it may carry is one
+  row of `SPECS` in [project/schema.rs](../crates/model/src/project/schema.rs): its name, the
+  version that added it (`since`), the version that dropped it (`until`), whether a file must have
+  it and whether an older reader may skip it (`ignorable`). The reader asks the table for the
+  fields of an object at the file's version, so a new field is one row plus the code that reads and
+  writes its value. The module is split by area under
+  [crates/model/src/project](../crates/model/src/project) (`read_*.rs`, `write*.rs`, `schema.rs`);
+  its `mod.rs` holds the format description.
+- **Newer files.** A file whose version is above the reader's is refused unless its root says an
+  older reader may open it: `"compat"` is the oldest version that can, and `"ignorable"` lists the
+  fields to skip, each by its path (`song.tracks[].lanes[].clips[].tail`, arrays written `[]`) with
+  the version that added it. The reader drops those it does not know, with one warning each, and
+  reads the rest as its own version; any other unknown field is still an error. The writer adds the
+  two root fields only when every change since `compat` is ignorable (a row marked `ignorable`, and
+  no required or removed field and no entry of `BREAKING_VERSIONS`), so a file of today's format
+  carries neither. New optional fields should be ignorable; see
+  [DECISIONS.md](DECISIONS.md#l-format-version-cadence).
+- **Nothing is dropped silently.** `load_project_with_warnings` returns one line for everything the
+  file had that the document does not (see its docs): the `boundary` rename, a version 1
+  instrument that got no console channel, the height of a device without a track, a comp clip id
+  that is not on its lane, and the fields skipped from a newer file. The app logs each line and
+  shows "N items ignored while opening".
+- **One saved file per version.** `crates/model/tests/fixtures` holds a project written by each
+  released format version (`demo-v13` onwards come from the demo project at the commit that
+  introduced the version, see `scripts/extract-format-fixtures.sh`; versions 2 to 5 have none).
+  `format_corpus.rs` loads every file, checks that its resave is canonical, and that a file of the
+  current version resaves byte for byte. A new version adds its file.
+- **Errors.** A file that cannot be read is `ModelError::Load { path, message }` (the JSON path
+  and what is wrong there), a batch that is empty or holds a command that cannot be batched is
+  `BadBatch`, and a command that names an asset the pool lacks is `MissingAsset`.
+- **The undo history has no cap.** Every undo step is kept for the life of the document, and a
+  new, opened or replaced document starts with none. A budget is an open decision
+  ([DECISIONS.md](DECISIONS.md#k-undo-history-budget)).
 
 ### 2.3 Audio import
 
@@ -1690,7 +1725,7 @@ or paste matches). `Track::lane_label` is what the headers show: the name, else 
   lane's clips (it unmutes the lanes that hold them, in the render only).
 - **Chase.** Chase works on the merged notes, so a note that spans the play position in any unmuted
   lane starts on Play, a locate and a loop wrap. The engine needed no change.
-- **File.** Project format 30 (the module docs of `project.rs`).
+- **File.** Project format 30 (the module docs of `project/mod.rs`).
 - **View** ([arrangement/lanes.rs](../crates/ui/src/arrangement/lanes.rs)). Lane 0 is the track's
   header row; each further note lane has a row of the track's height (with its take rows) that stays
   when the track collapses; the automation rows come last. A lane from 1 on has a header with its
@@ -2817,7 +2852,7 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   lane expands (`expand_macro_lane`) into one lane per target with the points mapped by the same
   function, so it equals hand-made lanes on the targets bit for bit.
 - **Format v8** ([model/src/container_io.rs](../crates/model/src/container_io.rs),
-  [project.rs](../crates/model/src/project.rs)). `inner` is written after `steps` only when present,
+  [project/mod.rs](../crates/model/src/project/mod.rs)). `inner` is written after `steps` only when present,
   in the canonical form of the top level; v1 to v7 load; every violation is a load error naming its
   JSON path; a v1 to v7 device keyed `boundary` is renamed `boundary-N` with a warning.
 - **App and render** ([app/src/app_core_containers.rs](../crates/app/src/app_core_containers.rs),
@@ -2830,7 +2865,7 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   `split_sent`). `target_of` resolves a container to its split, so the keyboard, audition, the
   editor's preview and a song track reach the inner instruments through the splits. The bounce
   builds the patch from the expansion (inner devices get generated patch ids; the engine id is the
-  position), so live equals bounce; `expanded_ids` replaces `rack_ids`. A lint test pins the few raw
+  position), so live equals bounce; `expanded_ids` maps every device of the expansion to its id. A lint test pins the few raw
   `doc.devices` uses.
 - **UI** ([ui/src/container_panel.rs](../crates/ui/src/container_panel.rs),
   [breadcrumb.rs](../crates/ui/src/breadcrumb.rs),
@@ -2864,12 +2899,14 @@ instance runs **in its own process** (the sandbox, below), so a plugin that cras
 take the app down; Settings > Plugins can switch back to running plugins inside the app process
 (applied at the next start). Scanning is always out of process.
 
-- **Crates and the unsafe policy.** `atomik-plugin-host` (no `unsafe` except the audited `fpenv.rs`:
-  the generic `PluginDevice`, the `PluginManager`, the slot and hand-shake, scan, cache, catalog,
-  journal, settings), `atomik-plugin-clap` (the CLAP backend over `clack-host` and
-  `clack-extensions` 0.2.0, pinned), `atomik-plugin-vst3` (the VST3 backend over the `vst3` crate
-  0.3.0, pinned, bindings generated from VST 3.8; the host layer is ours), the only two crates with
-  plugin `unsafe` (every block with a `SAFETY:` comment), `atomik-plugin-scan` (the scanner child
+- **Crates and the unsafe policy.** `atomik-plugin-host` (the generic `PluginDevice`, the
+  `PluginManager`, the slot and hand-shake, scan, cache, catalog, journal, settings; `unsafe` only
+  in `fpenv.rs`, the floating-point control register, and `ole.rs`, `OleInitialize` on Windows),
+  `atomik-plugin-clap` (the CLAP backend over `clack-host` and `clack-extensions` 0.2.0, pinned),
+  `atomik-plugin-vst3` (the VST3 backend over the `vst3` crate 0.3.0, pinned, bindings generated
+  from VST 3.8; the host layer is ours) and `atomik-plugin-ipc` (the sandbox wire: the mapped block
+  and the OS wake-up calls), the three crates that allow `unsafe` as a whole (every block with a
+  `SAFETY:` comment), `atomik-plugin-scan` (the scanner child
   binary, both formats), and the in-repo test plugins under `crates/testplugins` (`core` holds the
   DSP shared by every test plugin, so a CLAP and a VST3 effect can be required to give the same
   bits; `clap-shell` is a raw `clap-sys` plugin shell and `vst3-shell` a plugin shell over the
@@ -3043,9 +3080,10 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   on the main thread, so an open editor and the saved controller state follow the rack. The state
   blob is `AVS1` + the component section + the controller section (each a little-endian `u32` length
   and its bytes); restore is `setState`, `setComponentState`, then the controller's own `setState`.
-  The editor is hosted in the same separate window as a CLAP one; on Linux only the `IRunLoop`
-  timers are pumped (file-descriptor handlers are not: such an editor stays dead and PARAMS is the
-  fallback).
+  The editor is hosted in the same separate window as a CLAP one; on Linux the host's `IRunLoop`
+  pumps both the timers and the file-descriptor handlers (`registerEventHandler`; each tick a
+  non-blocking `poll(2)` on the main thread calls the ones that are ready), so an editor that needs
+  either one works.
 - **Render.** `atomik-render` builds plugin devices through the same manager
   (`render/src/plugins.rs`; both backends, a file routed to its backend by its format,
   `format_of_file`) after registering the installed plugins before the project loads.
@@ -3078,13 +3116,12 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
   snapshots, `LayoutChanged` and relink rebuilds), `--stress-plugins` and the 200-add-and-remove and
   500-instance loops. Examples: `examples/projects/plugin-demo` (CLAP) and `plugin-demo-vst3` (both
   formats in one project).
-- **Known limits.** Linux VST3 editors that need file-descriptor handlers are dead (timers work); no
-  about box (the VST trademark line is in `--help`, the README and DEVICES.md); editor window
-  positions are not remembered across sessions; no Wayland embedding for in-process editors or
-  without `DISPLAY` (sandboxed editors use XWayland); macOS and Linux paths are compile-checked
-  (type-checked and linted) but have not been run against real plugins; the sandbox's Linux and
-  macOS wake-up and stdout redirection are compile-checked only; one process per instance costs
-  memory with many instances; a sandboxed editor is a separate window, not embedded.
+- **Known limits.** No about box (the VST trademark line is in `--help`, the README and DEVICES.md);
+  editor window positions are not remembered across sessions; no Wayland embedding for in-process
+  editors or without `DISPLAY` (sandboxed editors use XWayland); macOS and Linux paths are
+  compile-checked (type-checked and linted) but have not been run against real plugins; the
+  sandbox's Linux and macOS wake-up and stdout redirection are compile-checked only; one process per
+  instance costs memory with many instances; a sandboxed editor is a separate window, not embedded.
 
 ## 6g. Input, commands and the keymap
 
@@ -3095,7 +3132,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (134) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (320) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4041,7 +4078,7 @@ The spectrum and the phase meter (section 6k) have panels of the same kind (`FxK
 | Device meter values go from `Device::meter_values` into a preallocated atomic bank in `Meters` (stack scratch, atomics only; only opted-in devices are called) | `Arena::publish_device_values`, `Meters::publish_device_values`; [meter_values.rs](../crates/engine/tests/meter_values.rs) |
 | The automation hold (the lanes a take is writing) is a fixed array of atomics the player loads once per batch; setting it is a few stores from the UI thread | `AutomationHold` in [player.rs](../crates/engine/src/player.rs); [song_automation_hold.rs](../crates/engine/tests/song_automation_hold.rs) runs it under the counting allocator |
 | Disk, decoding, hashing and WAV writing exist only in non-RT crates and threads | `atomik-audio-file`, the app workers, the streamer |
-| `unsafe` is denied workspace-wide; only the test allocator is exempt | root `Cargo.toml`; [crates/testkit/src/no_alloc.rs](../crates/testkit/src/no_alloc.rs) |
+| `unsafe` is denied workspace-wide; only the plugin backends and the sandbox wire (whole crates), two host modules, the test allocator and the test plugins allow it, each block with a `SAFETY:` comment | root `Cargo.toml`; the `unsafe` column of the crate table in section 1; [unsafe_policy.rs](../crates/plugin-host/tests/unsafe_policy.rs) |
 | The plugin sandbox's engine side copies into the mapped block and spins on its own child for at most one batch period live (a bounce waits up to the watchdog): the one bounded wait on the render path, with no lock, no allocation and no blocking system call | `RemoteProcessor` in [plugin-sandbox/src/processor.rs](../crates/plugin-sandbox/src/processor.rs), `ParentPort` in [plugin-ipc/src/parent.rs](../crates/plugin-ipc/src/parent.rs); the no-alloc tests there and in [plugin-hostd/tests](../crates/plugin-hostd/tests) |
 
 Tests (the counting allocator is described in [TESTING.md](TESTING.md#allocation-guard-hi-1)):
@@ -4103,6 +4140,13 @@ Tests: `render_any_host_block_is_bit_identical`
 per-device start counter, and the sample reader uses only IEEE arithmetic and `sin_quarter`.
 
 ### Fault containment (needs `panic = "unwind"`)
+
+**Panic policy.** A panic is for a violated internal invariant only. None may be reachable from a
+document, a file, a device or plugin, or an operating-system device event: those are errors or
+contained faults. Every thread boundary turns a panic into a reported fault rather than a crash or
+a silent stop: the audio callback and the engine workers (below), the app's command, undo and redo
+(an "Internal error" toast that leaves the document intact, section 2.2), decoders and the plugin
+boundaries. An `expect` in production code names the invariant it relies on.
 
 A bug in a device must cost that device, not the session. The rules:
 
@@ -4224,9 +4268,10 @@ repository.
   reads full-band white noise up to about 1 dB over the ceiling. Changing the compressor look-ahead
   or the distortion oversampling changes the reported latency and makes one audible discontinuity at
   the change. No linear-phase EQ, no FFT analyser.
-- **Players.** The sequencer is monophonic (one note per step, no chords, ratchets or flams), has no
-  pattern chains or song mode and plays only with the transport; the arpeggiator has no free (Hz)
-  rate and no note filters; neither records its output to a clip.
+- **Players.** The step sequencer is monophonic (one note per step, no chords, ratchets or flams),
+  has no pattern chains or song mode (the CV sequencer chains patterns) and plays only with the
+  transport; the arpeggiator has no free (Hz) rate and no note filters; neither records its output
+  to a clip.
 - **Containers.** No standalone container presets, no group or ungroup, no cut and paste across
   scopes, no container bypass, level or CPU meter, linear macros only, one split per target
   instrument, no CV or sidechain sockets on the boundary, and `export_patch` writes a container

@@ -39,7 +39,7 @@ cargo test -p atomik-devices                # the built-in devices
 cargo test -p atomik-render --test e2e      # end-to-end CLI tests and goldens
 ```
 
-Tests follow the naming pattern `method_scenario_expectation`. Unit tests live in a
+Tests are named for what they check, in snake case (`a_panicking_device_is_contained`). Unit tests live in a
 `#[cfg(test)] mod tests` in the same file. Cross-crate tests live in `crates/<crate>/tests/*.rs`.
 Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, `DropProbe`,
 `Allocator`, `RecordingSink`) are in [crates/testkit/src/fakes.rs](../crates/testkit/src/fakes.rs).
@@ -50,10 +50,14 @@ Fakes (`ConstantSource`, `ImpulseOnNote`, `Passthrough`, `NoteThru`, `CallLog`, 
 allocator. It forwards to the system allocator and counts heap operations per thread while a guarded
 section is active.
 
-- **Install it once per test binary** with `atomik_testkit::install_alloc_guard!();`. Every
-  integration-test file that renders in-process starts with it, after any `//!` docs. The exception
-  is `crates/render/tests/e2e.rs`, which only runs the CLI as a child process. The unit-test
-  binaries of `atomik-engine`, `atomik-devices` and `atomik-testkit` install it in their `lib.rs`.
+- **Install it once per test binary** with `atomik_testkit::install_alloc_guard!();`, after any
+  `//!` docs. The unit-test binaries of `atomik-engine`, `atomik-devices`, `atomik-audio-io`,
+  `atomik-midi-io`, `atomik-plugin-sandbox` and `atomik-testkit` install it in their `lib.rs`, and
+  almost every integration-test file of the engine does. Most render and QA-server integration
+  tests render in-process **without** it, so a regression that allocates in a render path is not
+  caught there. `crates/testkit/tests/guard_inventory.rs` lists the files of `atomik-render` and
+  `atomik-mcp` that have no guard and fails when a file gains or loses its guard without the list
+  changing; guarding them is open work.
 - **Guard a section** with `atomik_testkit::no_alloc::assert_no_alloc(|| ...)`. The call panics with
   `HI-1 violated: N heap operation(s) inside a no-alloc section` if the closure allocated,
   reallocated or freed memory on this thread. It panics with a different message if the guard was
@@ -80,6 +84,27 @@ Where the guard is used:
 The guard only sees the current thread, and only code that runs inside the closure. The end-to-end
 tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard
 installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
+
+## Documentation checks
+
+A few tests keep the documents honest; each one names what to update when it fails.
+
+- [docs_match_code.rs](../crates/testkit/tests/docs_match_code.rs):
+  `architecture_crate_table_matches_cargo_toml` compares the crate table of
+  [ARCHITECTURE.md](ARCHITECTURE.md) section 1 (the crates, their workspace dependencies and the
+  `unsafe` column) with the `Cargo.toml` files and the files that allow `unsafe`;
+  `cited_functions_exist` requires every snake_case name the architecture, testing and devices
+  guides put in a code span to appear in the sources under `crates/` (or the name of a file
+  there); a table row also quotes the project format version, which a test compares with
+  `PROJECT_VERSION`.
+- [docs_command_count.rs](../crates/ui/tests/docs_command_count.rs) compares the number of commands
+  the architecture guide quotes with the registry's.
+- [docs_hygiene.rs](../crates/testkit/tests/docs_hygiene.rs) fails on a line of the changelog or
+  the architecture, devices or testing guide past 120 columns (a table row or one long code span
+  excepted) and on a relative link or `#anchor` of any tracked Markdown file that does not
+  resolve. The `hygiene` job of the continuous integration runs these three files too.
+- [guard_inventory.rs](../crates/testkit/tests/guard_inventory.rs) lists the render and QA-server
+  test files without the allocation guard (see above).
 
 ## Determinism tests (HI-2)
 
@@ -110,14 +135,18 @@ files next to the tests. Commit them.
 
 ## Golden files
 
-[crates/render/tests/golden/](../crates/render/tests/golden) holds two goldens of
-[examples/patches/slice-demo.json](../examples/patches/slice-demo.json), rendered as 32-bit float
-with the default block size (512):
+[crates/render/tests/golden/](../crates/render/tests/golden) holds five golden files: two of
+[examples/patches/slice-demo.json](../examples/patches/slice-demo.json) (rendered as 32-bit float
+with the default block size, 512), two of the demo project
+([examples/projects/demo.atomik](../examples/projects/demo.atomik)) and one of the guitar amp demo:
 
 | File | Checked by | Platforms | Tolerance |
 |---|---|---|---|
-| `slice-demo.f32.sha256` | `golden_hash_matches` | **Windows x86-64 only** (the test is `#[cfg]`-gated) | exact bytes |
-| `slice-demo.fingerprint.json` | `golden_fingerprint_matches` | all | ±0.5 dB per window |
+| `slice-demo.f32.sha256` | `golden_hash_matches` ([e2e.rs](../crates/render/tests/e2e.rs)) | **Windows x86-64 only** (the test is `#[cfg]`-gated) | exact bytes |
+| `slice-demo.fingerprint.json` | `golden_fingerprint_matches` ([e2e.rs](../crates/render/tests/e2e.rs)) | all | ±0.5 dB per window |
+| `demo-project.f32.sha256` | `golden_hash_matches` ([project.rs](../crates/render/tests/project.rs)) | **Windows x86-64 only** | exact bytes |
+| `demo-project.fingerprint.json` | `golden_fingerprint_matches` ([project.rs](../crates/render/tests/project.rs)) | all | ±0.5 dB per window |
+| `guitar-amp.fingerprint.json` | `fingerprint_matches_the_golden_within_half_a_decibel` ([guitar_amp_demo.rs](../crates/render/tests/guitar_amp_demo.rs)) | all | ±0.5 dB per window |
 
 **Why there is a fingerprint.** The devices use transcendental functions (`sin`, `tan`, `tanh`,
 `powf`, …) from the platform's math library. Those can differ in the last bit between operating
@@ -279,7 +308,7 @@ clipboard survives New and Open; a cross-song paste registers its assets).
 headless `Shell` on Windows and macOS, checks the menu items, their enabling and the derived
 shortcut text, runs a seeded random gesture script (no refused command, undo returns the empty rack)
 and holds the display-list goldens of the menus (`rack_context_menu_*`, `arrangement_context_menu_*`
-in `crates/app/tests/golden`, `rack_selection_*` and `rack_group_drag` in `crates/ui/tests/golden`).
+in `crates/app/tests/golden`, `rack_selection_*` and `rack_group_drag_1x.json` in `crates/ui/tests/golden`).
 
 The creation chain has `crates/model/tests/workflow_create.rs` (the rules table: instrument with
 channel, track and arming, no track for an audio-only device, no channel for a silent one, the

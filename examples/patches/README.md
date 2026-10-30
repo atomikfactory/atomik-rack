@@ -71,7 +71,7 @@ error: devices[0].params."filter.cutof": atomik.poly-synth has no param "filter.
 The param and socket keys of each device are listed in [docs/DEVICES.md](../../docs/DEVICES.md).
 
 ## Golden files
-
+`crates/render/tests/golden/` holds two goldens of `slice-demo.json` rendered as 32-bit float with the default block size (the demo project and the guitar amp demo have goldens of their own, see [docs/TESTING.md](../../docs/TESTING.md#golden-files)):
 `crates/render/tests/golden/` holds two goldens of `slice-demo.json` rendered as 32-bit float with the default block size:
 
 - `slice-demo.f32.sha256` is the SHA-256 of the WAV bytes. Only Windows x86-64 checks it, because math libraries differ in the last bit between platforms.

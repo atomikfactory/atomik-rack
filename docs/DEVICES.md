@@ -2821,9 +2821,9 @@ the searchable list with every param (also the editor for a plugin without a win
   change inside the plugin is not undoable. VST3 editors are hosted the same way (`HWND`, `NSView`,
   an X11 window id) and follow the window's size both ways. On a Wayland session a sandboxed
   plugin's editor runs through XWayland (needs `DISPLAY`); an in-process plugin, or a session
-  without `DISPLAY`, has no embedding: use PARAMS there (or run Atomik under XWayland). On Linux a
-  VST3 editor that needs file-descriptor handlers from the host's run loop stays dead (timers work);
-  use PARAMS for it.
+  without `DISPLAY`, has no embedding: use PARAMS there (or run Atomik under XWayland). On Linux the
+  host's run loop pumps both timers and file-descriptor handlers, so a VST3 editor that needs either
+  works.
 - **Latency and PDC.** The latency the plugin reports is compensated like any device latency. A
   plugin announces a latency change (CLAP `latency.changed` and a restart request, VST3
   `restartComponent(kLatencyChanged)`); the host restarts it, reads the latency again after the
@@ -2831,11 +2831,14 @@ the searchable list with every param (also the editor for a plugin without a win
   are re-aligned, with the one-click discontinuity of the new delay lines. A latency that comes from
   a saved param (or from a container macro the song automates) is therefore followed live once the
   plugin has applied the value, and by a bounce from its first frame (see below).
-- **Crashes.** A plugin runs inside the app, so a native crash takes the app with it. The app lists
-  the loaded plugins in a journal (`plugins-in-use.json`) and, while a plugin is loaded, writes a
-  recovery snapshot of the project every 60 s to `recovery/` (the last three are kept, never over
-  your file). After an unclean exit it offers to disable those plugins and to open the newest
-  snapshot.
+- **Crashes.** By default (Settings > Plugins, the sandbox option, on) each plugin instance runs in
+  its own `atomik-plugin-host` process, so a native crash or hang takes only that instance down:
+  its device shows CRASHED and RELOAD starts it again from its last saved state. With the option
+  off the plugin runs inside the app and a native crash takes the app with it. Either way the app
+  lists the loaded plugins in a journal (`plugins-in-use.json`) and, while a plugin is loaded,
+  writes a recovery snapshot of the project every 60 s to `recovery/` (the last three are kept,
+  never over your file). After an unclean exit it offers to disable those plugins and to open the
+  newest snapshot.
 - **Bounce and determinism.** `atomik-render` refuses a project with plugins unless
   `--allow-plugins` is given, reads the same `plugins.json` (or `--plugin-cache`), builds the
   plugins through the same code as the app (state, then params, then 64-frame blocks) and prints
@@ -2923,7 +2926,7 @@ mixer channel, its automation, its freeze).
   panics.
 - **File.** Project format 31: a track may carry `"notes_to": "<device key>"` after its
   `"no_chase"`, omitted when its notes enter its own device (the module docs of
-  [project.rs](../crates/model/src/project.rs)). The loader checks the shape, not the reference.
+  [project/mod.rs](../crates/model/src/project/mod.rs)). The loader checks the shape, not the reference.
   Copying a track with its devices keeps the entry only when the player is copied along with it.
 - **Tests.** `crates/model/tests/player_stack.rs` (create, second player, delete, undo, the file),
   `crates/render/tests/player_stack.rs` (track notes to the entry and automation to the instrument,
