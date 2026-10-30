@@ -41,7 +41,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: option 1. Revisit only if a measured sandbox CPU problem makes a case for it.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## B. ASIO SDK licensing for official builds
 
@@ -62,7 +62,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Open. The maintainer deferred it. Nothing changes for now: ASIO stays an opt-in feature and official builds are made without it. If the SDK terms are confirmed as GPL-compatible, the natural next step is a separate, signed ASIO artifact; otherwise document FlexASIO and WASAPI exclusive mode. Needs a maintainer legal judgement and a read of the current SDK terms, which should be attached here as evidence when it is reopened.
 
-**Status.** Open (deferred). Decided by: maintainer, 2026-10-30.
+**Status.** Open (deferred by the maintainer, 2026-10-30).
 
 ## C. Delay compensation for FX returns and sidechain keys
 
@@ -109,7 +109,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: option 2, with the operators `+ - * /` only. Not yet reviewed.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## F. Block-based arrangement
 
@@ -124,7 +124,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: defer. Decide after the next phase of work ships.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## G. Middle C naming
 
@@ -156,7 +156,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: option 2 now, option 3 when the undo and model work that needs it starts.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## I. Cross-platform bit identity of the older DSP primitives
 
@@ -171,7 +171,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: option 1, in one regeneration batch.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## J. Bypass tail policy
 
@@ -186,7 +186,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: option 2; skip the effect after its reported tail, with a flush threshold of 1e-30 in energy.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## K. Undo history budget
 
@@ -202,7 +202,7 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Decision.** Working assumption: a byte budget (for example 256 MiB) with a "history trimmed" note.
 
-**Status.** Default (not yet confirmed). Decided by: maintainer, 2026-10-30.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
 
 ## L. Format version cadence
 
