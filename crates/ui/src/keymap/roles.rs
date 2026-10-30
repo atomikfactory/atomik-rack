@@ -47,13 +47,14 @@ impl Role {
     /// that each module named here does read the role.
     pub const fn consumers(self) -> &'static [&'static str] {
         match self {
-            Role::AlternateTool | Role::DisableSnap => &["viewport"],
+            Role::AlternateTool => &["viewport", "audio_editor"],
+            Role::DisableSnap => &["viewport"],
             Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
             Role::CopyDrag => &["arrangement", "piano_roll"],
             Role::FineAdjust => &["rack/selection", "console"],
             Role::ResetParam => &["rack/selection", "console"],
             Role::EditAutomation => &["rack/selection", "console"],
-            Role::Constrain => &["arrangement", "piano_roll"],
+            Role::Constrain => &["arrangement", "piano_roll", "audio_editor"],
         }
     }
 
@@ -441,6 +442,7 @@ mod tests {
             "arrangement" => include_str!("../arrangement.rs"),
             "console" => include_str!("../console.rs"),
             "piano_roll" => include_str!("../piano_roll.rs"),
+            "audio_editor" => include_str!("../audio_editor.rs"),
             other => panic!("no source registered for {other}"),
         }
     }

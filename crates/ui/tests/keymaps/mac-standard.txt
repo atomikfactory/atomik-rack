@@ -15,6 +15,9 @@ edit.paste | global | Cmd+V
 edit.redo | global | Cmd+Y, Cmd+Shift+Z
 edit.select_all | global | Cmd+A
 edit.undo | global | Cmd+Z
+editor.audio_add_marker | editor | I
+editor.audio_mode_overview | editor | 1
+editor.audio_mode_slice | editor | 2
 editor.chordify | editor | Shift+C
 editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left

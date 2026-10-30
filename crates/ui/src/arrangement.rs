@@ -3223,6 +3223,11 @@ impl ArrangementView {
                     out.push(UiAction::OpenPianoRoll(id));
                     return;
                 }
+                if clicks >= 2 && matches!(clip.content, ClipContent::Audio(_)) {
+                    self.selection.select_only(id);
+                    out.push(UiAction::OpenAudioEditor(id));
+                    return;
+                }
                 let was_selected = self.selection.contains(&id);
                 // The copy-drag role adds the clip to the selection, and a drag from it copies
                 // the selection; a click without a drag takes a selected clip out again (on the
@@ -4299,13 +4304,17 @@ impl ArrangementView {
                 }
             }
             "sequencer.open_clip" => {
+                // The first selected clip that has an editor: notes open the piano roll, audio
+                // the audio clip editor.
                 let first = self
                     .selected_in_order()
                     .into_iter()
-                    .find(|c| matches!(c.content, ClipContent::Notes(_)))
-                    .map(|c| c.id);
+                    .find(|c| matches!(c.content, ClipContent::Notes(_) | ClipContent::Audio(_)));
                 match first {
-                    Some(id) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(id)]),
+                    Some(c) if matches!(c.content, ClipContent::Audio(_)) => {
+                        CommandOutcome::Handled(vec![UiAction::OpenAudioEditor(c.id)])
+                    }
+                    Some(c) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(c.id)]),
                     None => CommandOutcome::Declined,
                 }
             }
