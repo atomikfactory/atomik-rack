@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **The Atomik Rack logo is the application icon.** The main window and the detached Rack and Mixer windows show it in the title bar, the taskbar and Alt-Tab (Windows and X11; macOS shows the Dock icon of the bundle), `atomik.exe` carries it so Explorer, the Start menu and a pinned taskbar button show it, the Windows installer and uninstaller use it, `Atomik Rack.app` has an `.icns` icon, and the `.deb` installs it in the hicolor theme and names it in the desktop entry. The README shows the logo. The master and the derived `.png`, `.ico` and `.icns` files are in `assets/icon/`; the `make_icons` example (`cargo run --release -p atomik-app --example make_icons`) regenerates them. A Windows-only build dependency, `embed-resource`, embeds the icon in the executable. See [docs/RELEASING.md](docs/RELEASING.md#the-application-icon).
+
 ## [0.2.0-rc.2] - 2026-10-28
 
 ### Added
