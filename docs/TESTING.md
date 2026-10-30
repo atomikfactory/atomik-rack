@@ -1531,4 +1531,5 @@ Hand checks, not automated (they need a MIDI device and your ears):
   back in and the notes resume within a second.
 - Wire CV 1 from a Mod Source LFO: the synth's mod wheel (CC 1) follows it without flooding the
   port at a fast rate.
-- Bounce the project: it contains no MIDI and renders as without the device.
+- Bounce the project: it contains no MIDI and renders as without the device
+  (`crates/render/tests/midi_out_bounce.rs` checks the bits for several block sizes and workers).

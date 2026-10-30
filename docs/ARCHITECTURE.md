@@ -1928,7 +1928,7 @@ by engine device id) after every edit and rebuild. The scheduler and the thread 
 to notes: a message is a source, a port, a due time and up to three bytes, which is all MIDI clock
 output needs. The jitter of the path is about a poll interval (1 ms) for a message produced less
 than that ahead and tens of microseconds otherwise, plus the port driver's own latency; a bounce
-never sends MIDI (the device is silent in an offline run and has no audio output).
+never sends MIDI (nothing reads the taps offline, and the device has no audio output).
 
 **Master keyboard.** Workflow, **Master keyboard**
  (`MasterKeyboard`, in `workflow.json`): in

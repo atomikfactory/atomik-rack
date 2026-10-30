@@ -27,8 +27,9 @@
 //! * **Releasing.** An `AllOff` (the engine sends one on stop, on a locate and at a loop wrap)
 //!   releases every note this device started, one note off each, then sends All Notes Off on the
 //!   channels it used. A `reset` does the same at the start of the next batch.
-//! * **Offline.** A bounce never sends MIDI: in [`RunMode::Offline`] the device is silent, so a
-//!   project with and without it renders the same bits (it has no audio output either way).
+//! * **Offline.** A bounce never sends MIDI: nothing reads the tap offline (the queue just fills
+//!   and drops), and in [`RunMode::Offline`] the device stops queueing at all. It has no audio
+//!   output either way, so a project with and without it renders the same bits.
 //!
 //! The device reports no processing latency: it has no audio path, so there is nothing for the
 //! rest of the rack to compensate.

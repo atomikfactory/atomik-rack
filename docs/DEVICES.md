@@ -1263,8 +1263,10 @@ the port is back (the app tries again once a second).
   thread releases what it sent itself. The queue between the device and the thread holds 4 096
   messages and keeps its last 256 slots for messages that release a note; if one is lost anyway,
   the thread silences the port.
-- **Bounces.** A bounce never sends MIDI. In an offline run the device sends nothing, and it has no
-  audio output, so a project with and without it renders the same bits. The device is live only.
+- **Bounces.** A bounce never sends MIDI: nothing reads the queue offline (a device told it runs
+  offline, `RunMode::Offline`, also stops queueing), and the device has no audio output, so a
+  project with and without it renders the same bits (`crates/render/tests/midi_out_bounce.rs`). The
+  device is live only.
 - **No latency.** It has no audio path and reports no processing latency to the rest of the rack.
 
 ## Mastering: `atomik.mastering` (Effect)
