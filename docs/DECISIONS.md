@@ -234,3 +234,5 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 **Decision.** Loops only: a file detected as a loop (tempo metadata, or a clean bar length) is warped on import; one-shots and long recordings are not.
 
 **Status.** Decided. Decided by: maintainer, 2026-10-30.
+
+Applied: Settings, Workflow, **Warp on import** (Off, Loops only by default, All files); see [ARCHITECTURE.md](ARCHITECTURE.md) section 2.18.
