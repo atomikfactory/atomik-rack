@@ -19,8 +19,7 @@ pub(super) fn load_meter(v: &Value, path: &JsonPath) -> Result<Vec<MeterEvent>, 
     let mut meter: Vec<MeterEvent> = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
-        let fields = &["bar", "num", "den"];
-        let e = object(item, &p, fields, fields)?;
+        let e = schema::current(item, &p, Obj::MeterEvent)?;
         let bar = uint(&e["bar"], &p.field("bar"), u64::from(u32::MAX))? as u32;
         let num = uint(&e["num"], &p.field("num"), 255)? as u8;
         let den = uint(&e["den"], &p.field("den"), 255)? as u8;
@@ -58,7 +57,7 @@ pub(super) fn load_markers(v: Option<&Value>, path: &JsonPath) -> Result<Vec<Mar
     let mut markers = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
-        let e = object(item, &p, &["tick", "name", "color"], &["tick", "name"])?;
+        let e = schema::current(item, &p, Obj::Marker)?;
         markers.push(Marker {
             id: 0,
             tick: tick(&e["tick"], &p.field("tick"))?,
@@ -118,7 +117,7 @@ pub(super) fn load_grooves(v: Option<&Value>, path: &JsonPath) -> Result<Vec<Gro
     let mut grooves: Vec<Groove> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let p = path.index(i);
-        let e = object(item, &p, GROOVE_FIELDS, GROOVE_FIELDS)?;
+        let e = schema::current(item, &p, Obj::Groove)?;
         let sp = p.field("step");
         let step = match string(&e["step"], &sp)? {
             "eighth" => StepResolution::Eighth,
@@ -185,7 +184,7 @@ pub(super) fn load_groups(
     let mut groups: Vec<TrackGroup> = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let p = path.index(i);
-        let e = object(item, &p, GROUP_FIELDS, &["id", "name"])?;
+        let e = schema::current(item, &p, Obj::Group)?;
         let id_path = p.field("id");
         let id = uint(&e["id"], &id_path, u64::from(u32::MAX))? as u32;
         if id == 0 {
@@ -277,12 +276,7 @@ pub(super) fn load_ranges(
     let mut ranges = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
-        let e = object(
-            item,
-            &p,
-            &["start", "end", "name", "color"],
-            &["start", "end", "name"],
-        )?;
+        let e = schema::current(item, &p, Obj::Range)?;
         let start = tick(&e["start"], &p.field("start"))?;
         let end = tick(&e["end"], &p.field("end"))?;
         if end <= start {
@@ -329,31 +323,13 @@ pub(super) fn load_song(
     (doc, registry): (&RackDoc, &Registry),
     version: u64,
 ) -> Result<Song, ModelError> {
-    let allowed = if version >= 35 {
-        SONG_FIELDS_V35
-    } else if version >= 22 {
-        SONG_FIELDS_V22
-    } else if version >= 21 {
-        SONG_FIELDS_V21
-    } else if version >= 15 {
-        SONG_FIELDS_V15
-    } else if version >= 14 {
-        SONG_FIELDS_V14
-    } else {
-        SONG_FIELDS
-    };
-    let obj = object(v, path, allowed, SONG_FIELDS)?;
+    let obj = schema::object(v, path, Obj::Song, version)?;
 
     let tempo_path = path.field("tempo");
     let mut tempo = Vec::new();
     for (i, item) in array(&obj["tempo"], &tempo_path)?.iter().enumerate() {
         let p = tempo_path.index(i);
-        let (allowed, required): (&[&str], &[&str]) = if version >= 13 {
-            (&["tick", "bpm", "ramp"], &["tick", "bpm"])
-        } else {
-            (&["tick", "bpm"], &["tick", "bpm"])
-        };
-        let e = object(item, &p, allowed, required)?;
+        let e = schema::object(item, &p, Obj::TempoEvent, version)?;
         let tick_path = p.field("tick");
         let t = tick(&e["tick"], &tick_path)?;
         if i == 0 && t != 0 {
@@ -393,12 +369,7 @@ pub(super) fn load_song(
     let meter = load_meter(&obj["meter"], &path.field("meter"))?;
 
     let loop_path = path.field("loop");
-    let lp = object(
-        &obj["loop"],
-        &loop_path,
-        &["start", "end", "enabled"],
-        &["start", "end", "enabled"],
-    )?;
+    let lp = schema::current(&obj["loop"], &loop_path, Obj::Loop)?;
     let loop_range = (
         int(&lp["start"], &loop_path.field("start"))?,
         int(&lp["end"], &loop_path.field("end"))?,

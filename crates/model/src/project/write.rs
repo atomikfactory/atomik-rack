@@ -11,6 +11,18 @@ pub(crate) fn save(doc: &RackDoc) -> String {
     let _ = writeln!(w, "{{");
     let _ = writeln!(w, "  \"format\": {},", json_str(PROJECT_FORMAT));
     let _ = writeln!(w, "  \"version\": {PROJECT_VERSION},");
+    // A format whose newest change an older reader can skip says so (see `schema`); today none
+    // is, so no file carries these.
+    let compat = schema::compat_version(schema::SPECS, PROJECT_VERSION);
+    if compat < PROJECT_VERSION {
+        let _ = writeln!(w, "  \"compat\": {compat},");
+        let ignorable = schema::ignorable_paths(schema::SPECS, compat, PROJECT_VERSION);
+        let rows: Vec<String> = ignorable
+            .iter()
+            .map(|(name, since)| format!("    {}: {since}", json_str(name)))
+            .collect();
+        let _ = writeln!(w, "  \"ignorable\": {{\n{}\n  }},", rows.join(",\n"));
+    }
     let _ = writeln!(w, "  \"sample_rate\": {},", doc.sample_rate);
     let _ = writeln!(w, "  \"tempo_bpm\": {},", f64_text(doc.tempo_bpm));
     let _ = writeln!(w, "  \"seed\": {},", doc.seed);

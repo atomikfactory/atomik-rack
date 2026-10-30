@@ -6,7 +6,7 @@ use super::*;
 pub(super) fn load_take_groups(
     v: &Value,
     path: &JsonPath,
-    (clip_fields, version): (&[&str], u64),
+    (clip_obj, version): (Obj, u64),
     kind: &LaneKind,
     (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
     song: &Song,
@@ -16,12 +16,7 @@ pub(super) fn load_take_groups(
     let mut groups = Vec::new();
     for (g, item) in array(v, path)?.iter().enumerate() {
         let gp = path.index(g);
-        let (fields, required) = if version >= 22 {
-            (TAKE_GROUP_FIELDS_V22, TAKE_GROUP_FIELDS)
-        } else {
-            (TAKE_GROUP_FIELDS, TAKE_GROUP_FIELDS)
-        };
-        let obj = object(item, &gp, fields, required)?;
+        let obj = schema::object(item, &gp, Obj::TakeGroup, version)?;
         open.push(flag(obj, &gp, "open")?);
         let takes_path = gp.field("takes");
         let mut takes = Vec::new();
@@ -30,7 +25,7 @@ pub(super) fn load_take_groups(
             let clip = load_clip(
                 t,
                 &tp,
-                (clip_fields, version),
+                (clip_obj, version),
                 kind,
                 (doc, desc),
                 song,
@@ -83,14 +78,18 @@ pub(super) fn load_take_groups(
 pub(super) fn load_clip(
     v: &Value,
     path: &JsonPath,
-    (fields, version): (&[&str], u64),
+    (clip_obj, version): (Obj, u64),
     kind: &LaneKind,
     (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
     song: &Song,
     clip_first: &BTreeMap<u64, JsonPath>,
 ) -> Result<Clip, ModelError> {
-    let content_field = fields[fields.len() - 1];
-    let obj = object(v, path, fields, &["id", "start", "length", content_field])?;
+    let content_field = match kind {
+        LaneKind::Notes => "notes",
+        LaneKind::Audio => "audio",
+        LaneKind::Automation(_) => "points",
+    };
+    let obj = schema::object(v, path, clip_obj, version)?;
     let id_path = path.field("id");
     let id = uint(&obj["id"], &id_path, u64::MAX)?;
     if let Some(first) = clip_first.get(&id) {
@@ -260,7 +259,7 @@ pub(crate) fn load_notes(
 
 /// Reads and validates a note clip's `"grid"` object.
 pub(crate) fn load_grid(v: &Value, path: &JsonPath) -> Result<StepGrid, ModelError> {
-    let g = object(v, path, GRID_FIELDS, GRID_FIELDS)?;
+    let g = schema::current(v, path, Obj::Grid)?;
     let rp = path.field("resolution");
     let resolution = match string(&g["resolution"], &rp)? {
         "eighth" => StepResolution::Eighth,
@@ -289,7 +288,7 @@ pub(crate) fn load_controllers(
     let mut lanes: Vec<ControllerLane> = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
-        let obj = object(item, &p, CONTROLLER_LANE_FIELDS, &["kind", "points"])?;
+        let obj = schema::current(item, &p, Obj::ControllerLane)?;
         let kind_path = p.field("kind");
         let name = string(&obj["kind"], &kind_path)?;
         let ccnum = match obj.get("number") {
@@ -342,7 +341,7 @@ pub(crate) fn load_controllers(
 /// Reads a note clip's `"scale"` object: a root `0..=11` and a kind name. A chromatic scale is
 /// not stored, so it is refused.
 pub(crate) fn load_scale(v: &Value, path: &JsonPath) -> Result<Scale, ModelError> {
-    let s = object(v, path, SCALE_FIELDS, SCALE_FIELDS)?;
+    let s = schema::current(v, path, Obj::Scale)?;
     let root = uint(&s["root"], &path.field("root"), 11)? as u8;
     let kp = path.field("kind");
     let name = string(&s["kind"], &kp)?;
@@ -362,14 +361,7 @@ pub(super) fn load_audio(
     doc: &RackDoc,
     version: u64,
 ) -> Result<AudioClipContent, ModelError> {
-    let fields = if version >= 24 {
-        AUDIO_FIELDS_V24
-    } else if version >= 23 {
-        AUDIO_FIELDS_V23
-    } else {
-        AUDIO_FIELDS
-    };
-    let a = object(v, path, fields, &["asset", "offset"])?;
+    let a = schema::object(v, path, Obj::Audio, version)?;
     let asset_path = path.field("asset");
     let asset = string(&a["asset"], &asset_path)?;
     let meta = doc
@@ -495,7 +487,7 @@ pub(super) fn load_audio(
 
 /// Reads and validates a clip's `"warp"` object.
 pub(super) fn load_warp(v: &Value, path: &JsonPath) -> Result<WarpSettings, ModelError> {
-    let w = object(v, path, WARP_FIELDS, &["mode", "bpm"])?;
+    let w = schema::current(v, path, Obj::Warp)?;
     let mode_path = path.field("mode");
     let id = string(&w["mode"], &mode_path)?;
     let mode = WarpMode::from_id(id).ok_or_else(|| {

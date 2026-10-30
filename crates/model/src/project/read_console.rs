@@ -21,7 +21,7 @@ pub(super) fn load_vcas(
     let mut taken: BTreeSet<DeviceKey> = BTreeSet::new();
     for (i, item) in items.iter().enumerate() {
         let p = path.index(i);
-        let g = object(item, &p, VCA_FIELDS, VCA_REQUIRED)?;
+        let g = schema::current(item, &p, Obj::Vca)?;
         let id_path = p.field("id");
         let id = uint(&g["id"], &id_path, u64::from(u32::MAX))? as u32;
         if id == 0 {
@@ -106,7 +106,7 @@ pub(super) fn load_snapshots(
     }
     for (i, item) in items.iter().enumerate() {
         let p = path.index(i);
-        let s = object(item, &p, SNAPSHOT_FIELDS, SNAPSHOT_REQUIRED)?;
+        let s = schema::current(item, &p, Obj::Snapshot)?;
         let id_path = p.field("id");
         let id = uint(&s["id"], &id_path, u64::from(u32::MAX))? as u32;
         if id == 0 {
@@ -156,7 +156,7 @@ pub(super) fn load_snapshots(
             let mut seen = BTreeSet::new();
             for (j, item) in array(vcas, &vcas_path)?.iter().enumerate() {
                 let gp = vcas_path.index(j);
-                let g = object(item, &gp, SNAPSHOT_VCA_FIELDS, VCA_REQUIRED)?;
+                let g = schema::current(item, &gp, Obj::SnapshotVca)?;
                 let gid_path = gp.field("id");
                 let gid = uint(&g["id"], &gid_path, u64::from(u32::MAX))? as u32;
                 if gid == 0 || !seen.insert(gid) {
@@ -207,16 +207,7 @@ pub(super) fn load_console(
     doc: &RackDoc,
     version: u64,
 ) -> Result<Console, ModelError> {
-    let fields = if version >= 27 {
-        CONSOLE_FIELDS_V27
-    } else if version >= 26 {
-        CONSOLE_FIELDS_V26
-    } else if version >= 12 {
-        CONSOLE_FIELDS_V12
-    } else {
-        CONSOLE_FIELDS
-    };
-    let obj = object(v, path, fields, CONSOLE_FIELDS)?;
+    let obj = schema::object(v, path, Obj::Console, version)?;
     // `null`, or the key of an existing device.
     let device_ref = |v: &Value, p: &JsonPath| -> Result<Option<DeviceKey>, ModelError> {
         if v.is_null() {
@@ -234,7 +225,7 @@ pub(super) fn load_console(
     let channels_path = path.field("channels");
     for (i, item) in array(&obj["channels"], &channels_path)?.iter().enumerate() {
         let p = channels_path.index(i);
-        let ch = object(item, &p, CHANNEL_FIELDS, CHANNEL_FIELDS)?;
+        let ch = schema::current(item, &p, Obj::Channel)?;
         let ch_path = p.field("channel");
         let channel = device_ref(&ch["channel"], &ch_path)?
             .ok_or_else(|| ch_path.error("expected a device id, found null"))?;
@@ -277,7 +268,7 @@ pub(super) fn load_console(
         let buses_path = path.field("buses");
         for (i, item) in array(buses, &buses_path)?.iter().enumerate() {
             let p = buses_path.index(i);
-            let b = object(item, &p, BUS_FIELDS, BUS_FIELDS)?;
+            let b = schema::current(item, &p, Obj::Bus)?;
             let bus_path = p.field("bus");
             let bus = device_ref(&b["bus"], &bus_path)?
                 .ok_or_else(|| bus_path.error("expected a device id, found null"))?;

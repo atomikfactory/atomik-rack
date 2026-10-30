@@ -37,18 +37,7 @@ pub(super) fn load_track(
     song: &Song,
     (clip_first, loose): (&mut ClipFirst, &mut Loose),
 ) -> Result<Track, ModelError> {
-    let fields = if version >= 31 {
-        TRACK_FIELDS_V31
-    } else if version >= 25 {
-        TRACK_FIELDS_V25
-    } else if version >= 22 {
-        TRACK_FIELDS_V22
-    } else if version >= 17 {
-        TRACK_FIELDS_V17
-    } else {
-        TRACK_FIELDS
-    };
-    let obj = object(v, path, fields, &["device", "lanes"])?;
+    let obj = schema::object(v, path, Obj::Track, version)?;
     let device_path = path.field("device");
     let device = DeviceKey(string(&obj["device"], &device_path)?.to_owned());
     let dev = doc
@@ -116,57 +105,14 @@ pub(super) fn load_track(
                 format!("lanes after the first must be \"automation\", found {k:?}")
             }));
         }
-        let (fields, clip_fields) = if audio_track {
-            (
-                if version >= 20 {
-                    AUDIO_LANE_FIELDS_V20
-                } else {
-                    AUDIO_LANE_FIELDS
-                },
-                AUDIO_CLIP_FIELDS,
-            )
+        let (lane_obj, clip_obj) = if audio_track {
+            (Obj::AudioLane, Obj::AudioClip)
         } else if notes_lane {
-            (
-                if version >= 30 {
-                    NOTES_LANE_FIELDS_V30
-                } else if version >= 20 {
-                    NOTES_LANE_FIELDS_V20
-                } else {
-                    NOTES_LANE_FIELDS
-                },
-                if version >= 19 {
-                    NOTE_CLIP_FIELDS_V19
-                } else if version >= 16 {
-                    NOTE_CLIP_FIELDS_V16
-                } else if version >= 5 {
-                    NOTE_CLIP_FIELDS_V5
-                } else {
-                    NOTE_CLIP_FIELDS
-                },
-            )
-        } else if version >= 36 {
-            (AUTOMATION_LANE_FIELDS_V36, AUTOMATION_CLIP_FIELDS)
-        } else if version >= 22 {
-            (AUTOMATION_LANE_FIELDS_V22, AUTOMATION_CLIP_FIELDS)
-        } else if version >= 18 {
-            (AUTOMATION_LANE_FIELDS_V18, AUTOMATION_CLIP_FIELDS)
+            (Obj::NotesLane, Obj::NoteClip)
         } else {
-            (AUTOMATION_LANE_FIELDS, AUTOMATION_CLIP_FIELDS)
+            (Obj::AutomationLane, Obj::AutomationClip)
         };
-        let required = if fields == AUTOMATION_LANE_FIELDS_V18
-            || fields == AUTOMATION_LANE_FIELDS_V22
-            || fields == AUTOMATION_LANE_FIELDS_V36
-        {
-            AUTOMATION_LANE_FIELDS
-        } else if fields == AUDIO_LANE_FIELDS_V20
-            || fields == NOTES_LANE_FIELDS_V20
-            || fields == NOTES_LANE_FIELDS_V30
-        {
-            AUDIO_LANE_FIELDS
-        } else {
-            fields
-        };
-        let lane = object(item, &p, fields, required)?;
+        let lane = schema::object(item, &p, lane_obj, version)?;
         let mut static_value = None;
         let kind = if audio_track {
             LaneKind::Audio
@@ -221,7 +167,7 @@ pub(super) fn load_track(
             let clip = load_clip(
                 item,
                 &cp,
-                (clip_fields, version),
+                (clip_obj, version),
                 &kind,
                 (doc, desc),
                 song,
@@ -235,7 +181,7 @@ pub(super) fn load_track(
             Some(v) => load_take_groups(
                 v,
                 &p.field("take_groups"),
-                (clip_fields, version),
+                (clip_obj, version),
                 &kind,
                 (doc, desc),
                 song,
@@ -346,7 +292,7 @@ pub(super) fn load_frozen(
     doc: &RackDoc,
     version: u64,
 ) -> Result<Frozen, ModelError> {
-    let obj = object(v, path, FROZEN_FIELDS, &["start", "length", "audio"])?;
+    let obj = schema::current(v, path, Obj::Frozen)?;
     let start_path = path.field("start");
     let start = int(&obj["start"], &start_path)?;
     if !tick_ok(start) {

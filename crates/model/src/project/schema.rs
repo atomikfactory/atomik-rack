@@ -31,8 +31,6 @@
 //! ([`Obj::paths`]), and only for a field whose absence leaves the document playing and bouncing
 //! as it did; anything else is not ignorable, and the bump raises `compat`.
 
-#![allow(dead_code)] // the readers switch to the table in the next commit
-
 use super::PROJECT_VERSION;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -59,6 +57,11 @@ pub(crate) enum Obj {
     Snapshot,
     SnapshotVca,
     Song,
+    TempoEvent,
+    MeterEvent,
+    Loop,
+    Marker,
+    Range,
     Groove,
     Group,
     Track,
@@ -91,6 +94,11 @@ impl Obj {
             Obj::Snapshot => &["console.snapshots[]"],
             Obj::SnapshotVca => &["console.snapshots[].vcas[]"],
             Obj::Song => &["song"],
+            Obj::TempoEvent => &["song.tempo[]"],
+            Obj::MeterEvent => &["song.meter[]"],
+            Obj::Loop => &["song.loop"],
+            Obj::Marker => &["song.markers[]"],
+            Obj::Range => &["song.ranges[]"],
             Obj::Groove => &["song.grooves[]"],
             Obj::Group => &["song.groups[]"],
             Obj::Track => &["song.tracks[]"],
@@ -317,6 +325,22 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Song, "grooves", 21),
     field(Song, "groups", 22),
     field(Song, "tracks", 1).req(),
+    field(TempoEvent, "tick", 1).req(),
+    field(TempoEvent, "bpm", 1).req(),
+    field(TempoEvent, "ramp", 13),
+    field(MeterEvent, "bar", 1).req(),
+    field(MeterEvent, "num", 1).req(),
+    field(MeterEvent, "den", 1).req(),
+    field(Loop, "start", 1).req(),
+    field(Loop, "end", 1).req(),
+    field(Loop, "enabled", 1).req(),
+    field(Marker, "tick", 1).req(),
+    field(Marker, "name", 1).req(),
+    field(Marker, "color", 1),
+    field(Range, "start", 1).req(),
+    field(Range, "end", 1).req(),
+    field(Range, "name", 1).req(),
+    field(Range, "color", 1),
     field(Groove, "name", 1).req(),
     field(Groove, "step", 1).req(),
     field(Groove, "slots", 1).req(),
@@ -457,11 +481,6 @@ pub(crate) fn required(object: Obj, version: u64) -> &'static [&'static str] {
     &lists_of(object, version).1
 }
 
-/// The fields an object has in the current version (for the objects that never changed).
-pub(crate) fn current_fields(object: Obj) -> &'static [&'static str] {
-    fields(object, u64::from(PROJECT_VERSION))
-}
-
 /// [`crate::patch::object`] with the lists of the table: reads an object of a file of `version`,
 /// refusing an unknown field and a missing required one.
 pub(crate) fn object<'v>(
@@ -473,6 +492,19 @@ pub(crate) fn object<'v>(
     crate::patch::object(v, path, fields(object, version), required(object, version))
 }
 
+/// The fields an object has in the current version, in table order.
+pub(crate) fn current_fields(kind: Obj) -> &'static [&'static str] {
+    fields(kind, u64::from(PROJECT_VERSION))
+}
+
+/// [`object`] for an object that has the same fields in every version.
+pub(crate) fn current<'v>(
+    v: &'v Value,
+    path: &crate::patch::JsonPath,
+    kind: Obj,
+) -> Result<&'v serde_json::Map<String, Value>, crate::ModelError> {
+    object(v, path, kind, u64::from(PROJECT_VERSION))
+}
 /// The oldest version of a reader that can open a file of `version` by ignoring fields (see the
 /// module docs): `version` itself when the newest change is not ignorable.
 pub(crate) fn compat_version(specs: &[FieldSpec], version: u32) -> u32 {
@@ -613,181 +645,163 @@ fn strip_ignorable(
 
 #[cfg(test)]
 mod tests {
-    use super::super::legacy::*;
     use super::*;
-    use crate::patch::{
-        DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
-        DEVICE_FIELDS_V11, DEVICE_FIELDS_V32, DEVICE_FIELDS_V33, DEVICE_FIELDS_V36,
-    };
+    use std::collections::BTreeSet;
 
-    /// The fields and required fields the hand-written lists gave `object` at `version`.
-    fn legacy(object: Obj, v: u64) -> (Vec<&'static str>, Vec<&'static str>) {
-        let same = |f: &'static [&'static str]| (f.to_vec(), f.to_vec());
-        let pick =
-            |f: &'static [&'static str], r: &'static [&'static str]| (f.to_vec(), r.to_vec());
-        let clip_required =
-            |f: &'static [&'static str]| vec!["id", "start", "length", f[f.len() - 1]];
-        match object {
-            Obj::Root => {
-                let (f, r) = match v {
-                    1 => (ROOT_FIELDS_V1, ROOT_REQUIRED_V1),
-                    2 => (ROOT_FIELDS_V2, ROOT_REQUIRED_V2),
-                    3..=10 => (ROOT_FIELDS_V3, ROOT_REQUIRED_V2),
-                    11..=27 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
-                    28 => (ROOT_FIELDS_V28, ROOT_REQUIRED_V2),
-                    _ => (ROOT_FIELDS_V29, ROOT_REQUIRED_V2),
-                };
-                pick(f, r)
-            }
-            Obj::Device => {
-                let f = match v {
-                    36.. => DEVICE_FIELDS_V36,
-                    33..=35 => DEVICE_FIELDS_V33,
-                    32 => DEVICE_FIELDS_V32,
-                    11..=31 => DEVICE_FIELDS_V11,
-                    9..=10 => DEVICE_FIELDS_V9,
-                    8 => DEVICE_FIELDS_V8,
-                    7 => DEVICE_FIELDS_V7,
-                    4..=6 => DEVICE_FIELDS_V4,
-                    _ => DEVICE_FIELDS_V2,
-                };
-                (f.to_vec(), Vec::new())
-            }
-            Obj::Zone => same(if v >= 6 { ZONE_FIELDS_V6 } else { ZONE_FIELDS }),
-            Obj::Patterns => same(PATTERNS_FIELDS),
-            Obj::Pattern => same(PATTERN_FIELDS),
-            Obj::Step => same(STEP_FIELDS),
-            Obj::CurvePattern => same(CURVE_PATTERN_FIELDS),
-            Obj::CurveStep => same(CURVE_STEP_FIELDS),
-            Obj::DrumPattern => same(DRUM_PATTERN_FIELDS),
-            Obj::DrumLane => same(DRUM_LANE_FIELDS),
-            Obj::Asset => pick(ASSET_FIELDS, &["channels", "sample_rate", "frames"]),
-            Obj::Console => pick(
-                match v {
-                    27.. => CONSOLE_FIELDS_V27,
-                    26 => CONSOLE_FIELDS_V26,
-                    12..=25 => CONSOLE_FIELDS_V12,
-                    _ => CONSOLE_FIELDS,
-                },
-                CONSOLE_FIELDS,
-            ),
-            Obj::Channel => same(CHANNEL_FIELDS),
-            Obj::Bus => same(BUS_FIELDS),
-            Obj::Vca => pick(VCA_FIELDS, VCA_REQUIRED),
-            Obj::Snapshot => pick(SNAPSHOT_FIELDS, SNAPSHOT_REQUIRED),
-            Obj::SnapshotVca => pick(SNAPSHOT_VCA_FIELDS, VCA_REQUIRED),
-            Obj::Song => pick(
-                match v {
-                    35.. => SONG_FIELDS_V35,
-                    22..=34 => SONG_FIELDS_V22,
-                    21 => SONG_FIELDS_V21,
-                    15..=20 => SONG_FIELDS_V15,
-                    14 => SONG_FIELDS_V14,
-                    _ => SONG_FIELDS,
-                },
-                SONG_FIELDS,
-            ),
-            Obj::Groove => same(GROOVE_FIELDS),
-            Obj::Group => pick(GROUP_FIELDS, &["id", "name"]),
-            Obj::Track => pick(
-                match v {
-                    31.. => TRACK_FIELDS_V31,
-                    25..=30 => TRACK_FIELDS_V25,
-                    22..=24 => TRACK_FIELDS_V22,
-                    17..=21 => TRACK_FIELDS_V17,
-                    _ => TRACK_FIELDS,
-                },
-                &["device", "lanes"],
-            ),
-            Obj::Frozen => pick(FROZEN_FIELDS, &["start", "length", "audio"]),
-            Obj::NotesLane => pick(
-                match v {
-                    30.. => NOTES_LANE_FIELDS_V30,
-                    20..=29 => NOTES_LANE_FIELDS_V20,
-                    _ => NOTES_LANE_FIELDS,
-                },
-                NOTES_LANE_FIELDS,
-            ),
-            Obj::AudioLane => pick(
-                if v >= 20 {
-                    AUDIO_LANE_FIELDS_V20
-                } else {
-                    AUDIO_LANE_FIELDS
-                },
-                AUDIO_LANE_FIELDS,
-            ),
-            Obj::AutomationLane => pick(
-                match v {
-                    36.. => AUTOMATION_LANE_FIELDS_V36,
-                    22..=35 => AUTOMATION_LANE_FIELDS_V22,
-                    18..=21 => AUTOMATION_LANE_FIELDS_V18,
-                    _ => AUTOMATION_LANE_FIELDS,
-                },
-                AUTOMATION_LANE_FIELDS,
-            ),
-            Obj::TakeGroup => pick(
-                if v >= 22 {
-                    TAKE_GROUP_FIELDS_V22
-                } else {
-                    TAKE_GROUP_FIELDS
-                },
-                TAKE_GROUP_FIELDS,
-            ),
-            Obj::NoteClip => {
-                let f = match v {
-                    19.. => NOTE_CLIP_FIELDS_V19,
-                    16..=18 => NOTE_CLIP_FIELDS_V16,
-                    5..=15 => NOTE_CLIP_FIELDS_V5,
-                    _ => NOTE_CLIP_FIELDS,
-                };
-                (f.to_vec(), clip_required(f))
-            }
-            Obj::AudioClip => (AUDIO_CLIP_FIELDS.to_vec(), clip_required(AUDIO_CLIP_FIELDS)),
-            Obj::AutomationClip => (
-                AUTOMATION_CLIP_FIELDS.to_vec(),
-                clip_required(AUTOMATION_CLIP_FIELDS),
-            ),
-            Obj::ControllerLane => pick(CONTROLLER_LANE_FIELDS, &["kind", "points"]),
-            Obj::Grid => same(GRID_FIELDS),
-            Obj::Scale => same(SCALE_FIELDS),
-            Obj::Audio => pick(
-                match v {
-                    24.. => AUDIO_FIELDS_V24,
-                    23 => AUDIO_FIELDS_V23,
-                    _ => AUDIO_FIELDS,
-                },
-                &["asset", "offset"],
-            ),
-            Obj::Warp => pick(WARP_FIELDS, &["mode", "bpm"]),
+    #[test]
+    fn the_table_is_well_formed() {
+        let mut seen = BTreeSet::new();
+        for s in SPECS {
+            assert!(
+                seen.insert((s.object, s.name)),
+                "{:?}.{} is listed twice",
+                s.object,
+                s.name
+            );
+            assert!(
+                s.since >= 1 && s.since < s.until,
+                "{:?}.{}",
+                s.object,
+                s.name
+            );
+            assert!(
+                !s.ignorable || !s.object.paths().is_empty(),
+                "{:?}.{} is ignorable, but its object has no path an older reader could match",
+                s.object,
+                s.name
+            );
         }
+        // The last field of a clip is its content: the loader reads it by that name.
+        for (clip, content) in [
+            (Obj::NoteClip, "notes"),
+            (Obj::AudioClip, "audio"),
+            (Obj::AutomationClip, "points"),
+        ] {
+            for v in 1..=u64::from(PROJECT_VERSION) {
+                assert_eq!(fields(clip, v).last(), Some(&content), "{clip:?} v{v}");
+            }
+        }
+        assert_eq!(current_fields(Obj::CurvePattern), ["a", "b"]);
     }
 
     #[test]
-    fn schema_matches_legacy_field_lists() {
-        let objects: std::collections::BTreeSet<Obj> = SPECS.iter().map(|s| s.object).collect();
-        assert_eq!(objects.len(), 34, "every object is in the table");
-        for object in objects {
-            for version in 1..=u64::from(PROJECT_VERSION) {
-                let (fields, required) = legacy(object, version);
-                // A device's required fields are checked by its own loader, not the table's.
-                let required = if object == Obj::Device {
-                    Vec::new()
-                } else {
-                    required
-                };
-                assert_eq!(
-                    self::fields(object, version),
-                    fields,
-                    "{object:?} fields at version {version}"
-                );
-                if object != Obj::Device {
-                    assert_eq!(
-                        self::required(object, version),
-                        required,
-                        "{object:?} required fields at version {version}"
-                    );
-                }
-            }
-        }
+    fn a_field_is_listed_from_the_version_that_added_it() {
+        assert!(!fields(Obj::Device, 35).contains(&"patch"));
+        assert!(fields(Obj::Device, 36).contains(&"patch"));
+        assert!(!fields(Obj::Root, 27).contains(&"midi_maps"));
+        assert!(fields(Obj::Root, 28).contains(&"midi_maps"));
+        assert!(!required(Obj::Root, 1).contains(&"console"));
+        assert!(required(Obj::Root, 2).contains(&"console"));
+        // A version past the reader's gets the newest lists.
+        assert_eq!(
+            fields(Obj::Song, 99),
+            fields(Obj::Song, u64::from(PROJECT_VERSION))
+        );
+    }
+
+    const fn row(name: &'static str, since: u32) -> FieldSpec {
+        field(Obj::NoteClip, name, since)
+    }
+
+    #[test]
+    fn the_compat_version_is_the_newest_change_an_older_reader_cannot_skip() {
+        let specs = [
+            row("a", 1),
+            row("b", 5),
+            row("c", 7).ignorable(),
+            row("d", 8).ignorable(),
+        ];
+        assert_eq!(compat_version(&specs, 8), 5);
+        assert_eq!(compat_version(&specs, 6), 5);
+        assert_eq!(compat_version(&specs, 4), 1);
+        let mut dropped = row("e", 3);
+        dropped.until = 6;
+        let specs = [row("c", 7).ignorable(), dropped];
+        assert_eq!(
+            compat_version(&specs, 8),
+            6,
+            "a removed field is not skippable"
+        );
+        assert_eq!(compat_version(&specs, 5), 3);
+        // Today's table has no ignorable row, so the current version is its own compat.
+        assert_eq!(compat_version(SPECS, PROJECT_VERSION), PROJECT_VERSION);
+    }
+
+    #[test]
+    fn the_ignorable_list_names_what_a_reader_of_the_compat_version_lacks() {
+        let specs = [
+            row("b", 5),
+            row("c", 7).ignorable(),
+            row("d", 8).ignorable(),
+            field(Obj::Root, "x", 8).ignorable(),
+            field(Obj::Device, "y", 8).ignorable(),
+        ];
+        let list = ignorable_paths(&specs, 5, 8);
+        let names: Vec<&str> = list.keys().map(String::as_str).collect();
+        assert_eq!(
+            names,
+            [
+                "song.tracks[].lanes[].clips[].c",
+                "song.tracks[].lanes[].clips[].d",
+                "song.tracks[].lanes[].take_groups[].takes[].c",
+                "song.tracks[].lanes[].take_groups[].takes[].d",
+                "x",
+            ],
+            "a device field has no path, a field a reader of 7 knows is left out for it"
+        );
+        assert_eq!(list["x"], 8);
+        assert_eq!(ignorable_paths(&specs, 7, 8).len(), 3);
+    }
+
+    fn newer(extra: Value) -> Value {
+        let mut v = serde_json::json!({
+            "format": "atomik-project",
+            "version": PROJECT_VERSION + 1,
+            "song": { "tracks": [ { "lanes": [ { "clips": [ { "id": 1 }, { "id": 2 } ] } ] } ] }
+        });
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    }
+
+    #[test]
+    fn a_newer_file_without_compat_is_left_for_the_loader_to_refuse() {
+        let mut v = newer(serde_json::json!({}));
+        let mut warnings = Vec::new();
+        let e = admit_newer(&mut v, &mut warnings).unwrap_err();
+        assert!(e.to_string().contains("unsupported version"), "{e}");
+        let mut v = newer(serde_json::json!({ "compat": PROJECT_VERSION + 1 }));
+        let e = admit_newer(&mut v, &mut warnings).unwrap_err();
+        assert!(e.to_string().contains("needs a reader of version"), "{e}");
+        // Files of this reader's version or older are not its business.
+        let mut v = serde_json::json!({ "format": "atomik-project", "version": 1 });
+        assert!(!admit_newer(&mut v, &mut warnings).unwrap());
+    }
+
+    #[test]
+    fn a_newer_file_loses_the_listed_fields_and_becomes_a_file_of_this_version() {
+        let tail = "song.tracks[].lanes[].clips[].tail".to_owned();
+        let mut v = newer(serde_json::json!({
+            "compat": PROJECT_VERSION,
+            "ignorable": { tail: PROJECT_VERSION + 1, "song.tracks[].lanes[].clips[].id": PROJECT_VERSION },
+        }));
+        v["song"]["tracks"][0]["lanes"][0]["clips"][1]["tail"] = serde_json::json!(true);
+        v["song"]["tracks"][0]["lanes"][0]["clips"][1]["other"] = serde_json::json!(true);
+        let mut warnings = Vec::new();
+        assert!(admit_newer(&mut v, &mut warnings).unwrap());
+        assert_eq!(
+            warnings,
+            ["song.tracks[0].lanes[0].clips[1].tail: ignored, a field of a newer project format"]
+        );
+        assert_eq!(v["version"], PROJECT_VERSION);
+        assert!(v.get("compat").is_none() && v.get("ignorable").is_none());
+        let clip = &v["song"]["tracks"][0]["lanes"][0]["clips"][1];
+        assert!(clip.get("tail").is_none(), "the listed field is gone");
+        assert!(
+            clip.get("other").is_some(),
+            "an unlisted one is left for the reader to refuse"
+        );
+        assert_eq!(clip["id"], 2, "a field this reader knows stays");
     }
 }

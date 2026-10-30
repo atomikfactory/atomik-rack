@@ -95,7 +95,12 @@ pub(crate) fn write_curves(w: &mut String, curves: &CurveDoc, ind: &str) {
             "{sep}
 {b}{{"
         );
-        for (r, (row, name)) in p.rows.iter().zip(CURVE_PATTERN_FIELDS).enumerate() {
+        for (r, (row, name)) in p
+            .rows
+            .iter()
+            .zip(schema::current_fields(Obj::CurvePattern))
+            .enumerate()
+        {
             let sep = if r == 0 { "" } else { "," };
             let _ = write!(
                 w,

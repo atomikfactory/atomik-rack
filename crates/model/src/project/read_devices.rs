@@ -9,15 +9,12 @@ pub(crate) fn load_zones(
     path: &JsonPath,
     with_reverse: bool,
 ) -> Result<Vec<ZoneDoc>, ModelError> {
-    let fields = if with_reverse {
-        ZONE_FIELDS_V6
-    } else {
-        ZONE_FIELDS
-    };
+    // The zone fields differ only by `reverse`, which version 6 added.
+    let version = if with_reverse { 6 } else { 1 };
     let mut zones = Vec::new();
     for (i, item) in array(v, path)?.iter().enumerate() {
         let p = path.index(i);
-        let z = object(item, &p, fields, fields)?;
+        let z = schema::object(item, &p, Obj::Zone, version)?;
         let u = |name: &str, max: u64| uint(&z[name], &p.field(name), max);
         let f = |name: &str| number(&z[name], &p.field(name)).map(|x| x as f32);
         let transpose_path = p.field("transpose");
@@ -83,7 +80,7 @@ pub(super) fn ranged(v: &Value, path: &JsonPath, lo: u64, hi: u64) -> Result<u8,
 /// Reads a device's `"steps"` object (v7). Whether the device may have one is checked by the
 /// caller, which knows the registry.
 pub(crate) fn load_steps(v: &Value, path: &JsonPath) -> Result<StepSeqDoc, ModelError> {
-    let o = object(v, path, PATTERNS_FIELDS, PATTERNS_FIELDS)?;
+    let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
     if !(1..=MAX_PATTERNS).contains(&list.len()) {
@@ -95,7 +92,7 @@ pub(crate) fn load_steps(v: &Value, path: &JsonPath) -> Result<StepSeqDoc, Model
     let mut patterns = Vec::with_capacity(list.len());
     for (i, item) in list.iter().enumerate() {
         let p = list_path.index(i);
-        let o = object(item, &p, PATTERN_FIELDS, PATTERN_FIELDS)?;
+        let o = schema::current(item, &p, Obj::Pattern)?;
         let name_path = p.field("name");
         let name = string(&o["name"], &name_path)?;
         if name.chars().count() > MAX_NAME_CHARS {
@@ -122,7 +119,7 @@ pub(crate) fn load_steps(v: &Value, path: &JsonPath) -> Result<StepSeqDoc, Model
         let mut steps = Vec::with_capacity(MAX_STEPS);
         for (j, item) in raw.iter().enumerate() {
             let sp = steps_path.index(j);
-            let s = object(item, &sp, STEP_FIELDS, STEP_FIELDS)?;
+            let s = schema::current(item, &sp, Obj::Step)?;
             steps.push(StepDoc {
                 on: boolean(&s["on"], &sp.field("on"))?,
                 key: ranged(&s["key"], &sp.field("key"), 0, 127)?,
@@ -146,7 +143,7 @@ pub(crate) fn load_steps(v: &Value, path: &JsonPath) -> Result<StepSeqDoc, Model
 /// Reads a device's `"curves"` object (v32). Whether the device may have one is checked by the
 /// caller, which knows the registry.
 pub(crate) fn load_curves(v: &Value, path: &JsonPath) -> Result<CurveDoc, ModelError> {
-    let o = object(v, path, PATTERNS_FIELDS, PATTERNS_FIELDS)?;
+    let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
     if !(1..=MAX_PATTERNS).contains(&list.len()) {
@@ -158,9 +155,12 @@ pub(crate) fn load_curves(v: &Value, path: &JsonPath) -> Result<CurveDoc, ModelE
     let mut patterns = Vec::with_capacity(list.len());
     for (i, item) in list.iter().enumerate() {
         let p = list_path.index(i);
-        let o = object(item, &p, CURVE_PATTERN_FIELDS, CURVE_PATTERN_FIELDS)?;
+        let o = schema::current(item, &p, Obj::CurvePattern)?;
         let mut rows = [Vec::new(), Vec::new()];
-        for (row, name) in rows.iter_mut().zip(CURVE_PATTERN_FIELDS) {
+        for (row, name) in rows
+            .iter_mut()
+            .zip(schema::current_fields(Obj::CurvePattern))
+        {
             let row_path = p.field(name);
             let raw = array(&o[*name], &row_path)?;
             if raw.len() != MAX_STEPS {
@@ -171,7 +171,7 @@ pub(crate) fn load_curves(v: &Value, path: &JsonPath) -> Result<CurveDoc, ModelE
             }
             for (j, item) in raw.iter().enumerate() {
                 let sp = row_path.index(j);
-                let s = object(item, &sp, CURVE_STEP_FIELDS, CURVE_STEP_FIELDS)?;
+                let s = schema::current(item, &sp, Obj::CurveStep)?;
                 let value_path = sp.field("value");
                 let value = s["value"].as_i64().ok_or_else(|| {
                     value_path.error(format!("expected an integer, found {}", s["value"]))
@@ -194,7 +194,7 @@ pub(crate) fn load_curves(v: &Value, path: &JsonPath) -> Result<CurveDoc, ModelE
 /// Reads a device's `"drums"` object (v33). Whether the device may have one is checked by the
 /// caller, which knows the registry.
 pub(crate) fn load_drums(v: &Value, path: &JsonPath) -> Result<DrumDoc, ModelError> {
-    let o = object(v, path, PATTERNS_FIELDS, PATTERNS_FIELDS)?;
+    let o = schema::current(v, path, Obj::Patterns)?;
     let list_path = path.field("patterns");
     let list = array(&o["patterns"], &list_path)?;
     if !(1..=MAX_PATTERNS).contains(&list.len()) {
@@ -206,7 +206,7 @@ pub(crate) fn load_drums(v: &Value, path: &JsonPath) -> Result<DrumDoc, ModelErr
     let mut patterns = Vec::with_capacity(list.len());
     for (i, item) in list.iter().enumerate() {
         let p = list_path.index(i);
-        let o = object(item, &p, DRUM_PATTERN_FIELDS, DRUM_PATTERN_FIELDS)?;
+        let o = schema::current(item, &p, Obj::DrumPattern)?;
         let name_path = p.field("name");
         let name = string(&o["name"], &name_path)?;
         if name.chars().count() > MAX_NAME_CHARS {
@@ -234,7 +234,7 @@ pub(crate) fn load_drums(v: &Value, path: &JsonPath) -> Result<DrumDoc, ModelErr
         let mut steps = Vec::with_capacity(DRUM_LANES);
         for (j, item) in raw.iter().enumerate() {
             let lp = lanes_path.index(j);
-            let l = object(item, &lp, DRUM_LANE_FIELDS, DRUM_LANE_FIELDS)?;
+            let l = schema::current(item, &lp, Obj::DrumLane)?;
             let role_path = lp.field("role");
             let role_name = string(&l["role"], &role_path)?;
             let role = DrumRole::from_name(role_name).ok_or_else(|| {
@@ -328,12 +328,7 @@ pub(super) fn load_assets(
         if !is_valid_asset_hash(hash) {
             return Err(p.error("asset ids are 64 lowercase hex digits"));
         }
-        let a = object(
-            item,
-            &p,
-            ASSET_FIELDS,
-            &["channels", "sample_rate", "frames"],
-        )?;
+        let a = schema::current(item, &p, Obj::Asset)?;
         let channels = uint(&a["channels"], &p.field("channels"), u64::from(u16::MAX))? as u16;
         if channels == 0 {
             return Err(p.field("channels").error("an asset has at least 1 channel"));

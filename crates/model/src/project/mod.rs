@@ -344,9 +344,7 @@ use crate::organise::{
     group_name_ok,
 };
 use crate::patch::{
-    DEVICE_FIELDS_V2, DEVICE_FIELDS_V4, DEVICE_FIELDS_V7, DEVICE_FIELDS_V8, DEVICE_FIELDS_V9,
-    DEVICE_FIELDS_V11, DEVICE_FIELDS_V32, DEVICE_FIELDS_V33, DEVICE_FIELDS_V36, DeviceFormat,
-    JsonPath, array, describe, f32_text, f64_text, json_str, load_rack, number, object,
+    DeviceFormat, JsonPath, array, describe, f32_text, f64_text, json_str, load_rack, number,
     parse_color, string, uint, write_devices_and_cables,
 };
 use crate::song::{
@@ -376,7 +374,6 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-mod legacy;
 mod read_clip;
 mod read_console;
 mod read_devices;
@@ -389,13 +386,13 @@ mod write_clip;
 mod write_console;
 mod write_devices;
 
-use legacy::*;
 use read_clip::*;
 use read_console::*;
 use read_devices::*;
 use read_legacy::*;
 use read_song::*;
 use read_track::*;
+use schema::Obj;
 use write_clip::*;
 use write_console::*;
 
@@ -505,6 +502,12 @@ pub(crate) fn load_with_warnings(
     let mut value: Value =
         serde_json::from_str(json).map_err(|e| root.error(format!("invalid JSON: {e}")))?;
     let mut warnings = Vec::new();
+    // A file from a newer build that says an older reader may skip its additions.
+    if schema::admit_newer(&mut value, &mut warnings)? {
+        let text = value.to_string();
+        let doc = load_value(&value, &text, registry)?;
+        return Ok((doc, warnings));
+    }
     // A file older than version 8 may use `boundary` as a device key; it is reserved now.
     let old = value
         .get("version")
@@ -540,49 +543,14 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
     }
     let version_path = root.field("version");
     let version = uint(obj.get("version").unwrap_or(&null), &version_path, u64::MAX)?;
-    let (fields, required) = match version {
-        1 => (ROOT_FIELDS_V1, ROOT_REQUIRED_V1),
-        2 => (ROOT_FIELDS_V2, ROOT_REQUIRED_V2),
-        3 => (ROOT_FIELDS_V3, ROOT_REQUIRED_V2),
-        4 => (ROOT_FIELDS_V4, ROOT_REQUIRED_V2),
-        5 => (ROOT_FIELDS_V5, ROOT_REQUIRED_V2),
-        6 => (ROOT_FIELDS_V6, ROOT_REQUIRED_V2),
-        7 => (ROOT_FIELDS_V7, ROOT_REQUIRED_V2),
-        8 => (ROOT_FIELDS_V8, ROOT_REQUIRED_V2),
-        9 => (ROOT_FIELDS_V9, ROOT_REQUIRED_V2),
-        10 => (ROOT_FIELDS_V10, ROOT_REQUIRED_V2),
-        11 => (ROOT_FIELDS_V11, ROOT_REQUIRED_V2),
-        12..=27 => (ROOT_FIELDS_V12, ROOT_REQUIRED_V2),
-        28 => (ROOT_FIELDS_V28, ROOT_REQUIRED_V2),
-        29..=36 => (ROOT_FIELDS_V29, ROOT_REQUIRED_V2),
-        _ => {
-            return Err(version_path.error(format!(
-                "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
-            )));
-        }
-    };
-    object(value, &root, fields, required)?;
-    let device_fields = if version >= 36 {
-        DEVICE_FIELDS_V36
-    } else if version >= 33 {
-        DEVICE_FIELDS_V33
-    } else if version >= 32 {
-        DEVICE_FIELDS_V32
-    } else if version >= 11 {
-        DEVICE_FIELDS_V11
-    } else if version >= 9 {
-        DEVICE_FIELDS_V9
-    } else if version >= 8 {
-        DEVICE_FIELDS_V8
-    } else if version >= 7 {
-        DEVICE_FIELDS_V7
-    } else if version >= 4 {
-        DEVICE_FIELDS_V4
-    } else {
-        DEVICE_FIELDS_V2
-    };
+    if !(1..=u64::from(PROJECT_VERSION)).contains(&version) {
+        return Err(version_path.error(format!(
+            "unsupported version {version}; this reader reads versions 1 to {PROJECT_VERSION}"
+        )));
+    }
+    schema::object(value, &root, Obj::Root, version)?;
     let fmt = DeviceFormat {
-        fields: device_fields,
+        fields: schema::fields(Obj::Device, version),
         zone_reverse: version >= 6,
     };
     // A plugin the registry does not know is built from its saved layout; the loader

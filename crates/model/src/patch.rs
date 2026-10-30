@@ -160,42 +160,7 @@ const ROOT_REQUIRED: &[&str] = &[
     "devices",
 ];
 const DEVICE_FIELDS_V1: &[&str] = &["id", "type", "params"];
-pub(crate) const DEVICE_FIELDS_V2: &[&str] = &["id", "type", "params", "name", "folded", "color"];
-/// Project format v4 adds `zones`.
-pub(crate) const DEVICE_FIELDS_V4: &[&str] =
-    &["id", "type", "params", "name", "folded", "color", "zones"];
-/// Project format v7 adds `steps`.
-pub(crate) const DEVICE_FIELDS_V7: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "zones", "steps",
-];
-/// Project format v8 adds `inner` (a container's inside).
-pub(crate) const DEVICE_FIELDS_V8: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "zones", "steps", "inner",
-];
-/// Project format v9 adds `plugin` (a plugin device's document).
-pub(crate) const DEVICE_FIELDS_V9: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "zones", "steps", "inner", "plugin",
-];
-/// Project format v11 adds `column` (the rack column of a top-level device; omitted for 0).
-pub(crate) const DEVICE_FIELDS_V11: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "inner",
-    "plugin",
-];
-/// Project format v32 adds `curves`.
-pub(crate) const DEVICE_FIELDS_V32: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
-    "inner", "plugin",
-];
-/// Project format v33 adds `drums`.
-pub(crate) const DEVICE_FIELDS_V33: &[&str] = &[
-    "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
-    "drums", "inner", "plugin",
-];
-/// Project format v36 adds `patch` (the name of the patch a device took its sound from).
-pub(crate) const DEVICE_FIELDS_V36: &[&str] = &[
-    "id", "type", "params", "name", "patch", "folded", "color", "column", "zones", "steps",
-    "curves", "drums", "inner", "plugin",
-];
+const DEVICE_FIELDS_V2: &[&str] = &["id", "type", "params", "name", "folded", "color"];
 
 /// How the device objects of a file are read.
 #[derive(Clone, Copy)]
