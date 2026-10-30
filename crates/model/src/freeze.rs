@@ -431,6 +431,8 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | WorkflowCommand::PasteAutomationPoints { clip, .. }
             | WorkflowCommand::DuplicatePoints { clip, .. } => clip_frozen(clip),
             WorkflowCommand::DuplicateTrack { device } => track_frozen(device),
+            WorkflowCommand::ApplyPatch { device, .. }
+            | WorkflowCommand::ResetDevice { device } => device_frozen(device),
             WorkflowCommand::RemoveDevices { keys } | WorkflowCommand::DeleteDevices { keys } => {
                 keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {

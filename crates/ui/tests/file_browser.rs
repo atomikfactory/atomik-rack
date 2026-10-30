@@ -1356,6 +1356,7 @@ fn item_row(name: &str, kind: FileKind, detail: &str) -> FileRow {
         item: Some(ItemInfo {
             detail: detail.into(),
             category: String::new(),
+            ..Default::default()
         }),
         ..audio(name)
     }
@@ -1371,6 +1372,7 @@ fn device_row(type_id: &str, name: &str, category: &str) -> FileRow {
         item: Some(ItemInfo {
             detail: category.into(),
             category: category.into(),
+            ..Default::default()
         }),
         favorite: false,
         tags: Vec::new(),
@@ -1587,6 +1589,7 @@ fn visible_item_rows_without_detail_are_requested_once_and_devices_never() {
         ItemInfo {
             detail: "2 devices: Poly, Delay".into(),
             category: String::new(),
+            ..Default::default()
         },
     )]);
     assert!(paint(&mut v).texts().contains(&"2 devices: Poly, Delay"));

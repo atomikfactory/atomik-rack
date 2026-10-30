@@ -22,6 +22,8 @@ pub enum ClipboardData {
     Devices(DeviceSnapshot),
     /// Tracks: devices together with their song tracks.
     Tracks(DeviceSnapshot),
+    /// The settings of one device (its whole sound), for Paste Settings.
+    Settings(DeviceSnapshot),
 }
 
 /// The kind of [`ClipboardData`], for messages and enabling rules.
@@ -37,6 +39,8 @@ pub enum ClipboardKind {
     Devices,
     /// Tracks.
     Tracks,
+    /// The settings of one device.
+    Settings,
 }
 
 impl ClipboardKind {
@@ -48,6 +52,7 @@ impl ClipboardKind {
             ClipboardKind::AutomationPoints => "automation points",
             ClipboardKind::Devices => "devices",
             ClipboardKind::Tracks => "tracks",
+            ClipboardKind::Settings => "settings",
         }
     }
 }
@@ -61,6 +66,7 @@ impl ClipboardData {
             ClipboardData::AutomationPoints(_) => ClipboardKind::AutomationPoints,
             ClipboardData::Devices(_) => ClipboardKind::Devices,
             ClipboardData::Tracks(_) => ClipboardKind::Tracks,
+            ClipboardData::Settings(_) => ClipboardKind::Settings,
         }
     }
 
@@ -70,7 +76,9 @@ impl ClipboardData {
             ClipboardData::Clips(s) => s.entries.len(),
             ClipboardData::Notes(s) => s.notes.len(),
             ClipboardData::AutomationPoints(s) => s.points.len(),
-            ClipboardData::Devices(s) | ClipboardData::Tracks(s) => s.devices.len(),
+            ClipboardData::Devices(s) | ClipboardData::Tracks(s) | ClipboardData::Settings(s) => {
+                s.devices.len()
+            }
         }
     }
 
@@ -86,7 +94,7 @@ impl ClipboardData {
             ClipboardData::Clips(s) => s.span,
             ClipboardData::Notes(s) => s.span,
             ClipboardData::AutomationPoints(s) => s.span,
-            ClipboardData::Devices(_) | ClipboardData::Tracks(_) => 0,
+            ClipboardData::Devices(_) | ClipboardData::Tracks(_) | ClipboardData::Settings(_) => 0,
         }
     }
 }

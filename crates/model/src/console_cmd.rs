@@ -361,6 +361,7 @@ fn master_device(key: DeviceKey, name: String) -> RackDevice {
         inner: None,
         plugin: None,
         column: 0,
+        patch_name: String::new(),
     }
 }
 

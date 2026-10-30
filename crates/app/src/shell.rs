@@ -234,6 +234,16 @@ pub enum ShellRequest {
         /// What continues once the project is saved.
         then: PendingAction,
     },
+    /// Show a save dialog for a device patch (the patch strip's SAVE, Rack > Save Patch): an
+    /// `.atomikpatch` file starting in `dir` (the library's Patches folder) and named `name`; the
+    /// platform dialog asks before it overwrites a file. Then call [`Shell::save_patch_to`] with
+    /// the path. A cancelled dialog does nothing.
+    PickSavePatch {
+        /// The folder the dialog starts in.
+        dir: PathBuf,
+        /// The suggested file name, with its extension.
+        name: String,
+    },
     /// Show a save dialog for the diagnostics report (Help > Export Diagnostics), named by
     /// [`crate::diagnostics::default_file_name`], then call [`Shell::export_diagnostics_to`].
     PickExportDiagnostics,
@@ -381,6 +391,8 @@ pub struct Shell<B: AudioBackend> {
     pending: Vec<ShellRequest>,
     /// The sampler the Load dialog is for.
     load_device: Option<DeviceKey>,
+    /// The device a patch save dialog is open for.
+    patch_device: Option<DeviceKey>,
     /// The plugin banner above the rack: the project uses plugins, or the last run
     /// ended unexpectedly.
     banner: PluginBannerView,
@@ -558,6 +570,7 @@ impl<B: AudioBackend> Shell<B> {
             geom_saved_at: f64::NEG_INFINITY,
             pending: Vec::new(),
             load_device: None,
+            patch_device: None,
             banner,
             plugin_settings: None,
             relink: None,
@@ -2471,6 +2484,34 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Saves the device a patch dialog was opened for as the patch item `path` (the platform
+    /// dialog confirmed an overwrite). See [`ShellRequest::PickSavePatch`].
+    pub fn save_patch_to(&mut self, path: &Path) {
+        if let Some(device) = self.patch_device.take() {
+            self.core.save_device_patch(&device, path);
+        }
+        self.repaint = true;
+    }
+
+    /// Starts saving `device` as a patch: the platform's save dialog asks for the name.
+    fn begin_save_patch(&mut self, device: DeviceKey) {
+        match self.core.patch_save_suggestion(&device) {
+            Some((dir, name)) => {
+                self.patch_device = Some(device);
+                self.pending.push(ShellRequest::PickSavePatch { dir, name });
+            }
+            None => self
+                .core
+                .report("There is no library folder: choose one in Settings > Workflow"),
+        }
+    }
+
+    /// Shows the patch folder of `device` in the file browser.
+    fn browse_patches(&mut self, device: &DeviceKey) {
+        self.set_file_browser_visible(true);
+        self.core.browse_patches(device);
+    }
+
     /// Imports the files picked with the sample editor's Load button into the sampler it was
     /// opened for (as a drop with no key).
     pub fn load_samples(&mut self, paths: Vec<PathBuf>) {
@@ -3116,6 +3157,13 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             ("rack.save_to_library", None) => self.core.save_selection_to_library(),
+            ("rack.save_patch", None) => match self.core.view().primary() {
+                Some(device) => self.begin_save_patch(device),
+                None => self.core.report("Select a device first"),
+            },
+            ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("edit.copy_settings", None) => self.core.copy_settings(),
+            ("edit.paste_settings", None) => self.core.paste_settings(),
             ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
             ("view.cables_cycle", None) => {
                 let view = self.core.view_mut();
@@ -3575,6 +3623,7 @@ impl<B: AudioBackend> Shell<B> {
         MenuEnable {
             selection: core.has_selection(pane),
             paste: core.can_paste(pane),
+            paste_settings: pane == Pane::Rack && core.can_paste_settings(),
             has_track: core
                 .view()
                 .primary()
@@ -3896,6 +3945,14 @@ impl<B: AudioBackend> Shell<B> {
                         self.pending.append(&mut requests);
                     }
                 }
+                UiAction::DevicePatch {
+                    device,
+                    op: atomik_ui::PatchOp::Save,
+                } => self.begin_save_patch(device.clone()),
+                UiAction::DevicePatch {
+                    device,
+                    op: atomik_ui::PatchOp::Browse,
+                } => self.browse_patches(device),
                 UiAction::LoadSamplesDialog { device } => {
                     self.load_device = Some(device.clone());
                     self.pending.push(ShellRequest::PickLoadSamples);

@@ -175,6 +175,15 @@ pub enum UiAction {
         /// Where it goes.
         slot: RackSlot,
     },
+    /// A patch item was dropped on the patch strip of a device: the device takes the patch if
+    /// the file holds one device of the device's type (the app says why when it does not). One
+    /// undo step.
+    ApplyLibraryPatch {
+        /// The `.atomikpatch` file.
+        path: PathBuf,
+        /// The device (path key).
+        device: DeviceKey,
+    },
     /// A note clip item was dropped on a note lane of the arrangement: paste it on lane `lane`
     /// (an index into the track's lanes, always a note lane) of `track` at the snapped song
     /// tick `tick` (never negative). One undo step; a drop anywhere else emits nothing.
@@ -269,6 +278,15 @@ pub enum UiAction {
     },
     /// The speaker tool is released: stop the audition of [`UiAction::AuditionSpan`].
     StopAudition,
+    /// A press on the patch strip of a device panel: step to the previous or next patch of its
+    /// type, browse the patches, or save the device as a patch (the app asks for the name). The
+    /// press also selected the device.
+    DevicePatch {
+        /// The device (path key).
+        device: DeviceKey,
+        /// What was pressed.
+        op: PatchOp,
+    },
     /// Slice the loop of `device` (the Slice button of the slicer panel or of the slice editor).
     /// The UI has no samples, so the **app** computes the markers and applies one
     /// [`atomik_model::Command::SetZones`] built with [`atomik_model::slices_from_markers`]
@@ -462,6 +480,19 @@ pub enum UiAction {
     /// A file browser request ([`crate::FileBrowserView`]); the app owns the disk, the
     /// library database and the preview player.
     Browse(BrowseAction),
+}
+
+/// A part of the patch strip of a device panel (see [`UiAction::DevicePatch`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchOp {
+    /// The previous-patch arrow.
+    Previous,
+    /// The next-patch arrow.
+    Next,
+    /// The patch name: browse the patches of the device's type.
+    Browse,
+    /// The save button.
+    Save,
 }
 
 /// What a context menu was opened on (see [`UiAction::ContextMenu`]).

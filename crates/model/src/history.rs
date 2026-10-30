@@ -69,6 +69,12 @@ pub(crate) enum Edit {
         old: Option<[u8; 3]>,
         new: Option<[u8; 3]>,
     },
+    /// The patch name a device shows (empty is none).
+    PatchName {
+        key: DeviceKey,
+        old: String,
+        new: String,
+    },
     Connect(Cable),
     Disconnect(Cable),
     /// Set (`Some`) or reset to the default (`None`) a param; `default` is the descriptor
@@ -341,6 +347,12 @@ pub(crate) enum Edit {
         old: MacroDoc,
         new: MacroDoc,
     },
+    /// A plugin device's state blob (`None` is "none stored"): what a patch applies.
+    PluginState {
+        key: DeviceKey,
+        old: Option<std::sync::Arc<atomik_device_sdk::PluginStateBlob>>,
+        new: Option<std::sync::Arc<atomik_device_sdk::PluginStateBlob>>,
+    },
     /// A plugin device's pinned params.
     PluginPins {
         key: DeviceKey,
@@ -502,6 +514,11 @@ impl Edit {
                 new: old,
             },
             Edit::Color { key, old, new } => Edit::Color {
+                key,
+                old: new,
+                new: old,
+            },
+            Edit::PatchName { key, old, new } => Edit::PatchName {
                 key,
                 old: new,
                 new: old,
@@ -721,6 +738,11 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::PluginState { key, old, new } => Edit::PluginState {
+                key,
+                old: new,
+                new: old,
+            },
             Edit::PluginPins { key, old, new } => Edit::PluginPins {
                 key,
                 old: new,
@@ -841,6 +863,10 @@ impl Edit {
             }
             Edit::Color { key, new, .. } => {
                 device_mut(doc, key)?.color = *new;
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::PatchName { key, new, .. } => {
+                device_mut(doc, key)?.patch_name.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Connect(c) => {
@@ -1295,6 +1321,12 @@ impl Edit {
                     container: container.clone(),
                 }]
             }
+            Edit::PluginState { key, new, .. } => {
+                plugin_mut(doc, key)?.state.clone_from(new);
+                vec![SyncOp::PluginStateChanged {
+                    device: key.clone(),
+                }]
+            }
             Edit::PluginPins { key, new, .. } => {
                 plugin_mut(doc, key)?.pinned.clone_from(new);
                 vec![SyncOp::PluginChanged {
@@ -1624,6 +1656,7 @@ mod tests {
             inner: None,
             plugin: None,
             column: 0,
+            patch_name: String::new(),
         }
     }
 

@@ -21,6 +21,13 @@ pub(crate) fn rack_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     })
 }
 
+/// The first patch item (a `.atomikpatch` file).
+pub(crate) fn patch_item(paths: &[PathBuf]) -> Option<&PathBuf> {
+    paths
+        .iter()
+        .find(|p| classify(p, false) == Some(FileKind::Patch))
+}
+
 /// The first note clip item.
 pub(crate) fn clip_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     paths

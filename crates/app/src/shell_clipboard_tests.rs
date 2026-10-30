@@ -332,6 +332,10 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.disconnect",
             "rack.go_to_track",
             "rack.save_to_library",
+            "edit.copy_settings",
+            "edit.paste_settings",
+            "rack.reset_device",
+            "rack.save_patch",
         ]
     );
     let text = |id: &str| {

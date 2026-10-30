@@ -90,6 +90,7 @@ impl Mirror {
                 | SyncOp::PatternsChanged { .. }
                 | SyncOp::MacrosChanged { .. }
                 | SyncOp::PluginChanged { .. }
+                | SyncOp::PluginStateChanged { .. }
                 | SyncOp::SplitsChanged { .. }
                 | SyncOp::FrozenChanged => {}
                 // The song mirror is checked by the song property tests.

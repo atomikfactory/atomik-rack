@@ -377,6 +377,7 @@ impl<S: EngineSink> AppCore<S> {
         let assets: Option<&std::collections::BTreeMap<String, AssetMeta>> = match command {
             WorkflowCommand::PasteDevices { snapshot, .. }
             | WorkflowCommand::PasteDevicesAt { snapshot, .. } => Some(&snapshot.assets),
+            WorkflowCommand::ApplyPatch { snapshot, .. } => Some(&snapshot.assets),
             WorkflowCommand::PasteClips { clips, .. } => Some(&clips.assets),
             _ => None,
         };
@@ -584,6 +585,9 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::LayerRecording { .. }
             | WorkflowCommand::EngulfRecording { .. }
             | WorkflowCommand::DisconnectDevice { .. }
+            | WorkflowCommand::ApplyPatch { .. }
+            | WorkflowCommand::ResetDevice { .. }
+            | WorkflowCommand::SetPatchName { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}
         }

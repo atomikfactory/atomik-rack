@@ -323,6 +323,8 @@ pub struct AppCore<S: EngineSink> {
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
+    /// Where each device last took a patch from (the patch strip's previous and next).
+    patches: patches::PatchState,
 }
 
 impl<S: EngineSink + std::fmt::Debug> std::fmt::Debug for AppCore<S> {
@@ -469,6 +471,7 @@ impl<S: EngineSink> AppCore<S> {
             browser: browser::BrowserState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
+            patches: patches::PatchState::default(),
             piano_clip: None,
             snapshot: None,
             sent_loop: None,
@@ -813,6 +816,17 @@ impl<S: EngineSink> AppCore<S> {
                 container,
                 slot,
             } => self.load_library_item(&path, LoadTarget::Rack { container, slot }),
+            UiAction::ApplyLibraryPatch { path, device } => {
+                self.load_library_item(&path, LoadTarget::Device(device));
+            }
+            UiAction::DevicePatch {
+                device,
+                op: atomik_ui::PatchOp::Previous,
+            } => self.step_patch(&device, -1),
+            UiAction::DevicePatch {
+                device,
+                op: atomik_ui::PatchOp::Next,
+            } => self.step_patch(&device, 1),
             UiAction::InsertLibraryClip {
                 path,
                 track,
@@ -1370,6 +1384,8 @@ impl<S: EngineSink> AppCore<S> {
                 // Plugin pins, run mode, power or link: power and run mode reach the
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),
+                // A patch (or its undo) replaced a plugin's state: the live instance takes it.
+                SyncOp::PluginStateChanged { device } => self.plugin_state_changed(device),
                 SyncOp::SongChanged => stale.0 = true,
                 // The graph changes (devices leave, a player comes): a new engine.
                 SyncOp::FrozenChanged => restart = true,
@@ -2852,6 +2868,9 @@ mod browser;
 mod library;
 pub use library::LoadTarget;
 
+#[path = "app_core_patches.rs"]
+mod patches;
+
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
     RECOVERY_PERIOD_SECS, STATE_QUIET_SECS,
@@ -2999,6 +3018,10 @@ mod browser_tests;
 #[cfg(test)]
 #[path = "app_core_library_tests.rs"]
 mod library_tests;
+
+#[cfg(test)]
+#[path = "app_core_patches_tests.rs"]
+mod patches_tests;
 
 #[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]

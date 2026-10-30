@@ -77,6 +77,10 @@ pub enum LoadTarget {
         /// Where it goes.
         slot: RackSlot,
     },
+    /// A device of the rack (a drop on its patch strip): a patch item of one device of the same
+    /// type replaces the device's sound in place, as one undo step. Any other item is refused
+    /// with a message.
+    Device(DeviceKey),
     /// A note lane of a track at a song tick (a drop on the arrangement).
     Track {
         /// The track's instrument device.
@@ -155,6 +159,12 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn load_item(&mut self, path: &Path, target: LoadTarget) -> Result<(), String> {
+        if let LoadTarget::Device(device) = &target {
+            return match classify(path, false) {
+                Some(FileKind::Patch) => self.apply_patch_file(path, device),
+                _ => Err(format!("'{}' is not a device patch", file_name(path))),
+            };
+        }
         if let Some(type_id) = device_type_of(path) {
             return self.load_device_row(type_id, target);
         }

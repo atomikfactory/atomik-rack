@@ -24,6 +24,8 @@ pub struct MenuEnable {
     pub selection: bool,
     /// The clipboard holds something the pane can paste.
     pub paste: bool,
+    /// Rack: the clipboard holds settings the primary device can take (Paste Settings).
+    pub paste_settings: bool,
     /// Rack: the primary device has a song track (Go to Track).
     pub has_track: bool,
     /// Arrangement: two or more clips are selected (Join).
@@ -398,6 +400,11 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.disconnect", e.selection),
                 item("rack.go_to_track", e.has_track),
                 item("rack.save_to_library", e.selection && !e.master_only),
+                Spec::Separator,
+                item("edit.copy_settings", e.selection && !e.master_only),
+                item("edit.paste_settings", e.paste_settings),
+                item("rack.reset_device", e.selection && !e.master_only),
+                item("rack.save_patch", e.selection && !e.master_only),
             ]);
             v
         }
@@ -934,6 +941,10 @@ mod tests {
                 "rack.disconnect",
                 "rack.go_to_track",
                 "rack.save_to_library",
+                "edit.copy_settings",
+                "edit.paste_settings",
+                "rack.reset_device",
+                "rack.save_patch",
             ]
         );
     }
