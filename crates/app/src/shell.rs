@@ -4863,6 +4863,14 @@ impl<B: AudioBackend> Shell<B> {
                 let session = self.core.sink();
                 let mut lists = DeviceLists::query(session.backend());
                 lists.input_note = crate::status::input_note(session.status());
+                lists.stream_notes = [
+                    crate::status::stream_alert(session.status()),
+                    crate::status::latency_note(session.status()),
+                    crate::status::drift_note(session.status()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
                 let dialog = SettingsDialog::new(session.settings().clone(), lists)
                     .with_preferences(
                         KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),

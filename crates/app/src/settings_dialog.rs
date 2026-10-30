@@ -46,6 +46,9 @@ pub struct DeviceLists {
     /// What the running stream opened for input (shown as a note), e.g.
     /// `Input: 2 channels open (Example USB ASIO)`.
     pub input_note: Option<String>,
+    /// What the running stream reports: its buffer and latency, whether it still delivers audio,
+    /// and the warning that input and output are different devices (their clocks drift).
+    pub stream_notes: Vec<String>,
 }
 
 impl DeviceLists {
@@ -70,6 +73,7 @@ impl DeviceLists {
             midi_outputs,
             errors,
             input_note: None,
+            stream_notes: Vec::new(),
         }
     }
 }
@@ -101,6 +105,9 @@ pub enum Choice {
     Workers(u16),
     /// Worker linger spins.
     Linger(u64),
+    /// What to do when the audio device is lost: `true` switches to the host's default devices
+    /// on its own, `false` only says so and offers Audio > Restart Audio.
+    LossReset(bool),
 }
 
 /// A titled group of options.
@@ -517,6 +524,17 @@ impl SettingsDialog {
                     .collect(),
                 chips: true,
             },
+            Section {
+                title: "If the audio device is lost",
+                options: vec![
+                    ("Offer a restart".to_string(), Choice::LossReset(false)),
+                    (
+                        "Switch to the default devices".to_string(),
+                        Choice::LossReset(true),
+                    ),
+                ],
+                chips: true,
+            },
         ]
     }
 
@@ -608,6 +626,7 @@ impl SettingsDialog {
             Choice::SurfaceOutput(n) => d.surface.output == *n,
             Choice::Workers(w) => d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
+            Choice::LossReset(r) => d.device_loss.reset_to_default == *r,
         }
     }
 
@@ -636,6 +655,7 @@ impl SettingsDialog {
             Choice::SurfaceOutput(n) => self.draft.surface.output = n,
             Choice::Workers(w) => self.draft.workers = w,
             Choice::Linger(l) => self.draft.worker_linger_spins = l,
+            Choice::LossReset(r) => self.draft.device_loss.reset_to_default = r,
         }
     }
 
@@ -655,6 +675,7 @@ impl SettingsDialog {
                 .to_string(),
         ];
         notes.extend(self.lists.input_note.iter().cloned());
+        notes.extend(self.lists.stream_notes.iter().cloned());
         notes.push(
             "Record offset: positive places recordings earlier (added to the measured latency)."
                 .to_string(),
