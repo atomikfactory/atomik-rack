@@ -54,6 +54,9 @@ impl ArrangementView {
         if self.menu.is_some() || !matches!(self.drag, Drag::None) {
             return None;
         }
+        if let Some(h) = self.insp_help(pos) {
+            return Some(h);
+        }
         let rect_of =
             |track: usize, lane: usize| self.row_of(track, lane).map(|r| self.row_rect(r));
         let help = |rect: Rect, text: &'static str| Some(Help::new(rect, text));

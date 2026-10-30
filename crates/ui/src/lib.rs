@@ -342,6 +342,7 @@ pub mod rack;
 pub mod relink_panel;
 pub mod sample_editor;
 pub mod scene_canvas;
+pub mod segment_field;
 pub mod seq_edit;
 pub mod seq_editor;
 pub mod seq_paint;
@@ -370,8 +371,9 @@ pub use action::{
     BrowseAction, ContextTarget, ImportTarget, Place, SliceMode, TransportAction, UiAction,
 };
 pub use arrangement::{
-    ArrangementView, AudioHandle, HEIGHT_LARGE, HEIGHT_SMALL, LaneButton, LaneMenu,
-    MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, TrackButton, TrackLevel, TrackMeterInfo,
+    ArrangementView, AudioHandle, ClipField, HEIGHT_LARGE, HEIGHT_SMALL, INSPECTOR_HEIGHT,
+    LaneButton, LaneMenu, MARKER_LIST_WIDTH, MARKER_STRIP_HEIGHT, MeterSource, PointField,
+    PointShown, TrackButton, TrackLevel, TrackMeterInfo,
 };
 pub use browser::device_rows;
 pub use canvas::{Align, Canvas, CanvasExt, Geom, TextRun};
@@ -393,7 +395,7 @@ pub use midi_maps_panel::{MidiMapRow, MidiMapsAction, MidiMapsView};
 pub use midi_marks::MidiMarks;
 pub use notes_panel::{NotesAction, NotesMode, NotesRow, NotesValues, NotesView};
 pub use param_search_panel::{ParamSearchAction, ParamSearchRow, ParamSearchView};
-pub use piano_roll::PianoRollView;
+pub use piano_roll::{NOTE_INSPECTOR_HEIGHT, NoteField, PianoRollView};
 pub use plugin_banner::{BannerKind, PluginBannerView};
 pub use plugin_params::{PluginGestureMerger, PluginParamsView};
 pub use plugin_settings::PluginSettingsView;

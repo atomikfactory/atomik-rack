@@ -1587,6 +1587,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("view.toggle_flip", "Back of Rack", G::View, C::Global).menu(),
+    cmd("view.toggle_inspector", "Inspector", G::View, C::Global).menu(),
     cmd("view.toggle_marker_list", "Marker List", G::View, C::Global).menu(),
     cmd(
         "view.toggle_marker_strip",

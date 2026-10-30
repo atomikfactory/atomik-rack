@@ -641,6 +641,7 @@ mod tests {
             console_links: false,
             tempo_lane: false,
             marker_strip: false,
+            inspector: false,
             marker_list: false,
             rack_navigator: true,
             rack: true,
