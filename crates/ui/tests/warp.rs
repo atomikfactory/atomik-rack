@@ -353,3 +353,50 @@ fn the_panel_paints_and_its_picture_changes_with_the_values() {
     v.step(WarpRow::Tempo, 1);
     assert_ne!(paint(&v), a);
 }
+
+#[test]
+fn scale_steps_in_percent_and_divides_the_source_tempo_when_applied() {
+    let mut v = WarpView::new(Theme::dark(), WarpValues::default());
+    assert_eq!(v.value_text(WarpRow::Scale), "100 %");
+    let plus = v.plus_rect(WarpRow::Scale).center();
+    click(&mut v, plus);
+    assert_eq!(v.value_text(WarpRow::Scale), "101 %");
+    for _ in 0..1000 {
+        v.step(WarpRow::Scale, 1);
+    }
+    assert_eq!(v.value_text(WarpRow::Scale), "400 %");
+    for _ in 0..1000 {
+        v.step(WarpRow::Scale, -1);
+    }
+    assert_eq!(v.value_text(WarpRow::Scale), "25 %");
+    // Twice as fast: half the source tempo; half as fast: double it (within the range).
+    let base = WarpSettings::default();
+    let mut values = WarpValues::from_settings(&base);
+    assert_eq!(values.scale_pct, 100);
+    assert_eq!(values.apply_to(&base), base, "100 % changes nothing");
+    values.scale_pct = 200;
+    assert_eq!(values.apply_to(&base).source_bpm, 60.0);
+    values.scale_pct = 50;
+    assert_eq!(values.apply_to(&base).source_bpm, 240.0);
+    values.bpm_tenths = 9000;
+    values.scale_pct = 25;
+    assert_eq!(values.apply_to(&base).source_bpm, 999.0);
+}
+
+#[test]
+fn reset_asks_the_app_to_reset_and_only_with_a_clip() {
+    let mut v = WarpView::new(Theme::dark(), WarpValues::default());
+    let reset = v.reset_rect().center();
+    assert!(click(&mut v, reset).is_empty());
+    v.set_target("1 audio clip".into(), true);
+    assert_eq!(
+        click(&mut v, reset),
+        vec![UiAction::Warp(WarpAction::Reset)]
+    );
+    assert!(v.help_at(reset).is_some());
+    let detect = v.detect_rect();
+    assert!(
+        v.reset_rect().x0 > detect.x1,
+        "RESET sits right of DETECT TEMPO"
+    );
+}

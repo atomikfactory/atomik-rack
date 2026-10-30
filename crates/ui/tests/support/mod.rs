@@ -60,6 +60,7 @@ pub fn device(k: &str, type_id: &str, name: &str) -> RackDevice {
         inner: None,
         plugin: None,
         column: 0,
+        patch_name: String::new(),
     }
 }
 

@@ -548,7 +548,8 @@ impl PianoRollView {
 
     /// Selects a tool (the `tool.*` commands and the toolbar buttons do this).
     pub fn set_tool(&mut self, tool: Tool) {
-        if self.vp.set_tool(tool) {
+        // The speaker is not a note tool.
+        if Tool::NOTE.contains(&tool) && self.vp.set_tool(tool) {
             self.repaint = true;
         }
     }
@@ -1109,7 +1110,7 @@ impl PianoRollView {
             TopItem::QuantizeOptions => Rect::new(b.x1 - 62.0, y, b.x1 - 40.0, y + 18.0),
             TopItem::Snap => Rect::new(b.x1 - 186.0, y, b.x1 - 132.0, y + 18.0),
             TopItem::Tool(t) => {
-                let i = Tool::ALL.iter().position(|x| *x == t).unwrap_or(0) as f64;
+                let i = Tool::NOTE.iter().position(|x| *x == t).unwrap_or(0) as f64;
                 let x = b.x1 - 294.0 + i * 25.0;
                 Rect::new(x, y, x + 23.0, y + 18.0)
             }
@@ -1161,7 +1162,7 @@ impl PianoRollView {
                 TopItem::Close,
             ]
             .into_iter()
-            .chain(Tool::ALL.into_iter().map(TopItem::Tool))
+            .chain(Tool::NOTE.into_iter().map(TopItem::Tool))
             .chain(TopItem::SCALE_BAR)
             .find(|i| self.top_rect(*i).contains(pos));
             return Hit::Top(item);
@@ -1258,6 +1259,7 @@ impl PianoRollView {
                 Tool::Pencil => "Pencil tool: click to draw a note",
                 Tool::Eraser => "Eraser tool: click a note to delete it",
                 Tool::Razor => "Razor tool: click a note to split it at the snapped position",
+                Tool::Speaker => "Speaker tool: press on an audio clip to hear it",
             })
             .with_command(t.command_id()),
             TopItem::ScaleRoot => help("Root note of the scale: click to choose"),
@@ -2249,7 +2251,7 @@ impl PianoRollView {
     }
 
     fn run_command(&mut self, id: &str, arg: Option<&str>) -> CommandOutcome {
-        if let Some(tool) = Tool::from_command(id) {
+        if let Some(tool) = Tool::from_command(id).filter(|t| Tool::NOTE.contains(t)) {
             self.set_tool(tool);
             return CommandOutcome::Handled(Vec::new());
         }
@@ -3588,7 +3590,7 @@ impl PianoRollView {
             Align::Center,
         );
         let shown = self.vp.shown_tool();
-        for tool in Tool::ALL {
+        for tool in Tool::NOTE {
             let tr = self.top_rect(TopItem::Tool(tool));
             let active = tool == shown;
             sp::lcd(

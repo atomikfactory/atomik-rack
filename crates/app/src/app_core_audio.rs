@@ -131,6 +131,10 @@ pub(super) struct AudioState {
     pub(super) export: super::export::ExportState,
     /// The Audio to Notes extraction that is running ([`super::notes`]).
     pub(super) notes: super::notes::NotesState,
+    /// The transients of the audio clip editor ([`super::clip_editor`]).
+    pub(super) onsets: super::clip_editor::OnsetState,
+    /// The speaker tool's audition ([`super::audition`]).
+    pub(super) audition: super::audition::AuditionState,
     pub(super) peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// Whole-asset RAM buffers for samplers: shared with the memory assets of
     /// audio tracks where those exist, loaded by a worker for streamed ones. Keeping the
@@ -183,6 +187,8 @@ impl AudioState {
             freeze: super::freeze::FreezeState::default(),
             export: super::export::ExportState::default(),
             notes: super::notes::NotesState::default(),
+            onsets: super::clip_editor::OnsetState::default(),
+            audition: super::audition::AuditionState::default(),
             peaks: BTreeMap::new(),
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
@@ -327,6 +333,8 @@ impl<S: EngineSink> AppCore<S> {
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         self.slice_editor
             .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
+        self.audio_editor
+            .set_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
         // The waveform of a granular sampler's panel.
         self.view
             .set_sample_peaks(&loaded.hash, Arc::clone(&loaded.peaks));
@@ -337,6 +345,8 @@ impl<S: EngineSink> AppCore<S> {
             self.sample_editor
                 .set_samples(&loaded.hash, Arc::clone(data));
             self.slice_editor
+                .set_samples(&loaded.hash, Arc::clone(data));
+            self.audio_editor
                 .set_samples(&loaded.hash, Arc::clone(data));
         }
         self.audio
@@ -351,6 +361,7 @@ impl<S: EngineSink> AppCore<S> {
         self.arrangement.clear_peaks(hash);
         self.sample_editor.clear_peaks(hash);
         self.slice_editor.clear_peaks(hash);
+        self.audio_editor.clear_peaks(hash);
         self.view.clear_sample_peaks(hash);
     }
 
@@ -469,6 +480,11 @@ impl<S: EngineSink> AppCore<S> {
                     job,
                     result,
                 } if generation == current => self.apply_noted(job, result),
+                Msg::Onsets {
+                    generation,
+                    job,
+                    result,
+                } if generation == current => self.apply_onsets(job, result),
                 Msg::Scanned {
                     generation,
                     root,
@@ -507,6 +523,7 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Frozen { .. }
                 | Msg::Exported { .. }
                 | Msg::Noted { .. }
+                | Msg::Onsets { .. }
                 | Msg::Scanned { .. } => {}
             }
         }
@@ -925,7 +942,21 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         let rate = self.doc().sample_rate;
-        let length = ticks_for_frames(&self.doc().song, start, info.frames, rate);
+        let warp = {
+            let song = &self.doc().song;
+            crate::import_warp::import_warp(
+                &loaded.meta,
+                info.frames,
+                rate,
+                song.tempo_table().map().bpm(start as f64),
+                song.bar_ticks_at(start),
+                self.warp_imports,
+            )
+        };
+        let length = match &warp {
+            Some(w) => w.length,
+            None => ticks_for_frames(&self.doc().song, start, info.frames, rate),
+        };
         run(
             self,
             Command::Song(SongCommand::AddAudioClip {
@@ -940,10 +971,42 @@ impl<S: EngineSink> AppCore<S> {
                 fade_curve: atomik_model::FadeCurve::Linear,
             }),
         )?;
+        if let Some(w) = warp {
+            self.warp_new_clip(w.source_bpm, length);
+        }
         if let Some(b) = self.audio.batches.get_mut(&batch) {
             b.cursor = start + length;
         }
         Ok(())
+    }
+
+    /// Turns warp on at `source_bpm` for the clip just added, as part of the undo step that
+    /// added it. A failure leaves the clip unwarped (it was added whole).
+    fn warp_new_clip(&mut self, source_bpm: f64, length: i64) {
+        let Some(id) = self.document.last_clip_id() else {
+            return;
+        };
+        let Some((_, _, clip)) = self.doc().song.clip(id) else {
+            return;
+        };
+        let atomik_model::ClipContent::Audio(content) = &clip.content else {
+            return;
+        };
+        let mut content = content.clone();
+        content.warp.enabled = true;
+        content.warp.source_bpm =
+            source_bpm.clamp(atomik_model::WARP_BPM_MIN, atomik_model::WARP_BPM_MAX);
+        let command = Command::Song(SongCommand::SetAudioClip {
+            id,
+            start: clip.start,
+            length,
+            muted: clip.muted,
+            content,
+            merge: None,
+        });
+        self.join_next = true;
+        let _ = self.apply_command(command);
+        self.join_next = false;
     }
 
     // ------------------------------------------------------------------ open and replace

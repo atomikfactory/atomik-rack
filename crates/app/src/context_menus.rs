@@ -24,6 +24,8 @@ pub struct MenuEnable {
     pub selection: bool,
     /// The clipboard holds something the pane can paste.
     pub paste: bool,
+    /// Rack: the clipboard holds settings the primary device can take (Paste Settings).
+    pub paste_settings: bool,
     /// Rack: the primary device has a song track (Go to Track).
     pub has_track: bool,
     /// Arrangement: two or more clips are selected (Join).
@@ -398,6 +400,14 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.disconnect", e.selection),
                 item("rack.go_to_track", e.has_track),
                 item("rack.save_to_library", e.selection && !e.master_only),
+                Spec::Separator,
+                item("edit.copy_settings", e.selection && !e.master_only),
+                item("edit.paste_settings", e.paste_settings),
+                item("rack.reset_device", e.selection && !e.master_only),
+                item("rack.save_patch", e.selection && !e.master_only),
+                item("rack.browse_patch", e.selection && !e.master_only),
+                item("rack.patch_prev", e.selection && !e.master_only),
+                item("rack.patch_next", e.selection && !e.master_only),
             ]);
             v
         }
@@ -773,6 +783,25 @@ pub fn jack_entries(menu: &JackMenu) -> Vec<Entry> {
     rows
 }
 
+/// The rows of the pop-up on a patch name: one check item per patch (the current one checked)
+/// that runs `rack.patch_pick` with the patch file as its argument.
+pub fn patch_entries(items: &[(String, std::path::PathBuf)], current: Option<usize>) -> Vec<Entry> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, (name, path))| {
+            Entry::Item(MenuItemDef {
+                command: "rack.patch_pick".to_string(),
+                arg: Some(path.to_string_lossy().into_owned()),
+                label: name.clone(),
+                shortcut: None,
+                enabled: true,
+                checked: Some(current == Some(i)),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -934,6 +963,13 @@ mod tests {
                 "rack.disconnect",
                 "rack.go_to_track",
                 "rack.save_to_library",
+                "edit.copy_settings",
+                "edit.paste_settings",
+                "rack.reset_device",
+                "rack.save_patch",
+                "rack.browse_patch",
+                "rack.patch_prev",
+                "rack.patch_next",
             ]
         );
     }

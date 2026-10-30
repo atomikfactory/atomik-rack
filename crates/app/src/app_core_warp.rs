@@ -261,6 +261,37 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Reset to Unstretched Tempo: warp off and the markers cleared on every selected audio clip,
+    /// as one undo step. A warped clip is resized to play the same stretch of audio at its own
+    /// speed; mode, source tempo and transposition are kept.
+    pub fn reset_warp(&mut self) {
+        let clips = self.selected_audio();
+        if clips.is_empty() {
+            return self.reject("Select an audio clip to reset".to_owned());
+        }
+        let rate = self.doc().sample_rate;
+        let song = &self.doc().song;
+        let changes = clips
+            .iter()
+            .map(|s| {
+                let was_warped = s.content.warp.enabled;
+                let mut content = s.content.clone();
+                content.warp.enabled = false;
+                content.warp.markers.clear();
+                let length = if was_warped && !content.reverse {
+                    let span = s.source_end(rate).saturating_sub(content.source_offset);
+                    song.clip(s.id).map(|(_, _, clip)| {
+                        crate::audio_import::ticks_for_frames(song, clip.start, span, rate)
+                    })
+                } else {
+                    None
+                };
+                (s, content, length)
+            })
+            .collect();
+        self.set_contents(changes);
+    }
+
     /// The samples a detector reads for `s`: the mono mix of its source span (at most
     /// [`DETECT_SECONDS`]), with the asset frame of its first sample.
     fn detector_samples(&self, s: &Selected) -> Option<(Vec<f32>, u64)> {

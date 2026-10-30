@@ -74,6 +74,7 @@ impl FileBrowserView {
         c.push_transform(Affine::scale(self.scale));
         c.push_clip(&self.bounds.into());
         c.fill_with(self.bounds, self.theme.browser_bg);
+        self.paint_banner(c, &lay);
         self.paint_header(c, &lay);
         self.paint_tree(c, &lay);
         self.paint_splitter(c, &lay);
@@ -99,6 +100,26 @@ impl FileBrowserView {
         }
         c.pop_clip();
         c.pop_transform();
+    }
+
+    /// The band of the patch target: orange, naming the device the panel applies patches to.
+    fn paint_banner(&self, c: &mut dyn Canvas, lay: &Layout) {
+        let Some(target) = &self.target else {
+            return;
+        };
+        c.fill_with(lay.banner, crate::theme::PATCH_TARGET);
+        c.push_clip(&lay.banner.into());
+        c.text(&TextRun::new(
+            fit_label(
+                &format!("PATCHES FOR {}", target.label.to_uppercase()),
+                lay.banner.width() - 2.0 * lay::PAD,
+                SMALL_FONT,
+            ),
+            pt(lay.banner.x0 + lay::PAD, baseline(lay.banner, SMALL_FONT)),
+            SMALL_FONT,
+            Color::from_rgba8(0x20, 0x12, 0x04, 255),
+        ));
+        c.pop_clip();
     }
 
     fn paint_field(
@@ -496,7 +517,9 @@ impl FileBrowserView {
             self.list_scroll,
         );
         if self.view.is_empty() {
-            let msg = if !self.rows.is_empty() {
+            let msg = if self.target.is_some() && self.query_empty {
+                "No patches for this device here"
+            } else if !self.rows.is_empty() {
                 "No match"
             } else if matches!(
                 self.location,

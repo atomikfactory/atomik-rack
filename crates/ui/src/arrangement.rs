@@ -516,6 +516,8 @@ enum Drag {
         /// How far the starts have moved so far.
         applied: i64,
     },
+    /// The speaker tool is held on an audio clip: the audition stops on the release.
+    Audition,
     /// The razor dragged over a lane: the range is cut out on the release (a press without a
     /// drag splits the clip under it).
     Razor {
@@ -1862,8 +1864,8 @@ impl ArrangementView {
     /// A toolbar button in the corner, right of the snap selector.
     fn tool_rect(&self, tool: Tool) -> Rect {
         let i = Tool::ALL.iter().position(|t| *t == tool).unwrap_or(0) as f64;
-        let (x, y) = (self.bounds.x0 + 106.0 + i * 25.0, self.bounds.y0 + 8.0);
-        Rect::new(x, y, x + 23.0, y + 18.0)
+        let (x, y) = (self.bounds.x0 + 106.0 + i * 20.0, self.bounds.y0 + 8.0);
+        Rect::new(x, y, x + 19.0, y + 18.0)
     }
 
     fn clamp_scroll(&mut self) {
@@ -2663,7 +2665,7 @@ impl ArrangementView {
             Hit::Lane { track, lane } if primary && tool == Tool::Razor => {
                 self.start_razor(track, lane, None, pos, modifiers);
             }
-            Hit::Lane { .. } if primary && tool == Tool::Eraser => {}
+            Hit::Lane { .. } if primary && matches!(tool, Tool::Eraser | Tool::Speaker) => {}
             // Shift or Ctrl on an empty lane starts the rubber band (a plain drag draws).
             Hit::Lane { .. }
                 if primary
@@ -2980,6 +2982,10 @@ impl ArrangementView {
         self.pick_note_lane(track, lane);
         if primary {
             match self.vp.effective_tool(modifiers) {
+                Tool::Speaker => {
+                    self.start_audition(&clip, pos, out);
+                    return;
+                }
                 Tool::Razor => {
                     self.start_razor(track, lane, Some(id), pos, modifiers);
                     return;
@@ -3223,6 +3229,11 @@ impl ArrangementView {
                     out.push(UiAction::OpenPianoRoll(id));
                     return;
                 }
+                if clicks >= 2 && matches!(clip.content, ClipContent::Audio(_)) {
+                    self.selection.select_only(id);
+                    out.push(UiAction::OpenAudioEditor(id));
+                    return;
+                }
                 let was_selected = self.selection.contains(&id);
                 // The copy-drag role adds the clip to the selection, and a drag from it copies
                 // the selection; a click without a drag takes a selected clip out again (on the
@@ -3365,6 +3376,37 @@ impl ArrangementView {
             .max(1)
     }
 
+    /// Starts the speaker on an audio clip: from the frame the clip plays at the pressed tick
+    /// to the end of what it plays, as it is in its file, until the button is released.
+    fn start_audition(&mut self, clip: &Clip, pos: Point, out: &mut Vec<UiAction>) {
+        let ClipContent::Audio(a) = &clip.content else {
+            return;
+        };
+        let Some(meta) = self.assets.get(&a.asset) else {
+            return;
+        };
+        let at = self.axis.x_to_tick(pos.x);
+        let span = atomik_model::audition_span(
+            &self.song,
+            meta.sample_rate,
+            clip.start,
+            a,
+            clip.length,
+            at,
+            meta.frames,
+        );
+        if let Some(span) = span {
+            out.push(UiAction::AuditionSpan {
+                asset: a.asset.clone(),
+                start_frame: span.start_frame,
+                end_frame: span.end_frame,
+                reverse: span.reverse,
+                gain_db: a.gain_db,
+            });
+            self.drag = Drag::Audition;
+        }
+    }
+
     /// Starts the razor on lane `lane` of track `track`: a click splits `clip`, a drag cuts the
     /// range out.
     fn start_razor(
@@ -3484,6 +3526,7 @@ impl ArrangementView {
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::Meter { .. }
+            | Drag::Audition
             | Drag::Comp { .. }
             | Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
@@ -3827,6 +3870,7 @@ impl ArrangementView {
             | Drag::Resize { .. }
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Razor { .. } => CursorHint::Razor,
+            Drag::Audition => CursorHint::Speaker,
             Drag::Audio {
                 grab: AudioGrab::TrimStart,
                 ..
@@ -3886,6 +3930,7 @@ impl ArrangementView {
                 }
             }
             Drag::Mark => self.marker_drag_up(out),
+            Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::Comp {
                 group,
@@ -4299,13 +4344,17 @@ impl ArrangementView {
                 }
             }
             "sequencer.open_clip" => {
+                // The first selected clip that has an editor: notes open the piano roll, audio
+                // the audio clip editor.
                 let first = self
                     .selected_in_order()
                     .into_iter()
-                    .find(|c| matches!(c.content, ClipContent::Notes(_)))
-                    .map(|c| c.id);
+                    .find(|c| matches!(c.content, ClipContent::Notes(_) | ClipContent::Audio(_)));
                 match first {
-                    Some(id) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(id)]),
+                    Some(c) if matches!(c.content, ClipContent::Audio(_)) => {
+                        CommandOutcome::Handled(vec![UiAction::OpenAudioEditor(c.id)])
+                    }
+                    Some(c) => CommandOutcome::Handled(vec![UiAction::OpenPianoRoll(c.id)]),
                     None => CommandOutcome::Declined,
                 }
             }

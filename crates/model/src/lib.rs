@@ -8,6 +8,7 @@
 
 mod audio_edit;
 mod audio_notes;
+mod audition;
 pub mod automation_rec;
 mod automation_view;
 mod clip_io;
@@ -22,6 +23,7 @@ mod container_io;
 pub mod controller;
 mod curves;
 mod curves_cmd;
+mod device_patch;
 mod drums;
 mod drums_cmd;
 mod expand;
@@ -47,6 +49,7 @@ mod rack_columns;
 mod record_over;
 mod relink;
 mod rules;
+pub mod slice_edit;
 mod slices;
 mod song_cmd;
 mod steps;
@@ -75,6 +78,7 @@ pub use container::{
     boundary_sockets, scoped_cable, split_path,
 };
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
+pub use device_patch::MAX_PATCH_NAME_CHARS;
 pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
 pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
 pub use freeze::{
@@ -127,6 +131,7 @@ pub use audio_edit::{
     StripParams, normalise_gain_db, peak, slice_envelope, split_envelope, strip_silence,
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
+pub use audition::{AuditionSpan, audition_span};
 pub use automation_rec::WriteMode;
 pub use automation_view::ShownValues;
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
@@ -152,6 +157,7 @@ pub use organise::{
     OutlineKind, TrackGroup,
 };
 use rack_columns::Placement;
+pub use slice_edit::SliceError;
 pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
@@ -166,11 +172,14 @@ pub use validate::Violation;
 pub use warp::{
     AudioQuantize, MAX_WARP_MARKERS, WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpJob,
     WarpMarker, WarpMode, WarpSettings, bpm_for_beats, estimate_bpm, quantize_audio,
-    source_at_tick, tick_at_source, warp_job, warp_jobs,
+    source_at_tick, tick_at_source, warp_job, warp_jobs, warped_at_song_tempo,
 };
 
 /// Most host input channels a document may ask for (the engine interface's limit).
 pub const MAX_INPUT_CHANNELS: u16 = 32;
+
+/// Longest display name of a pool asset, in characters.
+pub const MAX_ASSET_NAME: usize = 200;
 
 /// What the sample pool stores about an asset. Assets are immutable and identified by
 /// their content hash (`atomik-audio-file`: 64 lowercase hex digits).
@@ -260,6 +269,10 @@ pub struct RackDevice {
     /// The rack column the device is shown in (top level only; always 0 for a device inside a
     /// container). See [`RackDoc::columns`] for the ordering invariant.
     pub column: u16,
+    /// The name of the patch the device last took its sound from (the patch strip shows it);
+    /// empty when it has none. Display only: it plays nothing, and it is stored only when
+    /// non-empty (project format 36).
+    pub patch_name: String,
 }
 
 /// The rack document.
@@ -438,6 +451,16 @@ pub enum Command {
         from: String,
         /// The asset that takes its place.
         to: String,
+    },
+    /// Renames a pool asset (one undo step): the name the file browser, the clip editor and the
+    /// clip labels show. The name is trimmed and must be 1..=[`MAX_ASSET_NAME`] characters
+    /// without control characters; a name equal to the current one is rejected. Reports
+    /// [`SyncOp::ViewChanged`]. Not accepted by [`Command::Batch`].
+    RenameAsset {
+        /// The asset id.
+        asset: String,
+        /// The new display name.
+        name: String,
     },
     /// Set the interface's input channel count (0..=[`MAX_INPUT_CHANNELS`]).
     /// Cables from inputs above the new count are removed in the same step. Reports
@@ -650,6 +673,7 @@ pub enum Command {
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
 /// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
+/// | `RenameAsset` | `ViewChanged` |
 /// | tempo map (`SongCommand::SetTempoMap` and `DragTempoMap`, also set `tempo_bpm`) | `TempoChanged(first bpm)`, `SongChanged` |
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
@@ -667,6 +691,8 @@ pub enum Command {
 /// | plugin added (`PluginCommand::Add`, also inside a container; `PluginCommand::AddAt` also reports `ViewChanged` when it adds a column) | as for `AddDevice` / `AddInner` (`DeviceAdded`, `RoutingChanged`, `ConsoleChanged` for an instrument's channel); the app creates the real plugin from [`RackDevice::plugin`] |
 /// | `SetPinned`, `SetRunMode`, `SetPower`, `Relink` (also undo/redo, also in a `Batch`, once per device) | `PluginChanged` |
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
+/// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
+/// | `SetPatchName` (also undo/redo) | `ViewChanged` |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
 ///
 /// A step with several parts (e.g. `AddDevice` of an instrument with its channel and
@@ -743,6 +769,13 @@ pub enum SyncOp {
     /// power reach the live device; after a `Relink` the device's type id may have changed, so
     /// the app swaps the instance for the new plugin or its stand-in).
     PluginChanged {
+        /// The plugin device (path key).
+        device: DeviceKey,
+    },
+    /// A plugin device's state blob changed (a patch applied to it, its undo and redo; not
+    /// the captures the app stores itself). The app restores [`RackDevice::plugin`]'s state into
+    /// the live instance.
+    PluginStateChanged {
         /// The plugin device (path key).
         device: DeviceKey,
     },
@@ -866,6 +899,10 @@ pub struct Document {
     last_clip: Option<ClipId>,
     /// Changes whenever [`Document::doc`] may have changed (see [`Document::revision`]).
     revision: u64,
+    /// The steps of an open trial, oldest first (see [`Document::apply_trial`]).
+    trial: Vec<Edit>,
+    /// The redo history an open trial set aside.
+    trial_redo: Vec<Edit>,
 }
 
 /// The source of document revisions: process wide, so two documents (a replaced one and the
@@ -927,6 +964,8 @@ impl Document {
             merge: None,
             last_clip: None,
             revision: next_revision(),
+            trial: Vec::new(),
+            trial_redo: Vec::new(),
         }
     }
 
@@ -1000,6 +1039,7 @@ impl Document {
                 | SongCommand::SetClipContent { merge: Some(m), .. }
                 | SongCommand::SetClipControllers { merge: Some(m), .. }
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
+                | SongCommand::SetWarpMarkers { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
             Command::Workflow(
@@ -1177,6 +1217,86 @@ impl Document {
         Ok(ops)
     }
 
+    /// Applies `command` as one more step of a trial: the document changes and the sync ops
+    /// come back, but no undo step is recorded and the redo history is kept aside. A trial is
+    /// a run of previews (stepping through the patches of a device, say) that the user then
+    /// accepts with [`Document::commit_trial`], one undo step for the whole run, or drops with
+    /// [`Document::cancel_trial`], which puts the document back. Nothing else may be applied
+    /// while a trial is open (the caller ends it first); undo and redo refuse to run.
+    ///
+    /// # Errors
+    /// As [`Document::apply`]; a rejected command leaves the trial as it was.
+    pub fn apply_trial(
+        &mut self,
+        command: Command,
+        registry: &Registry,
+    ) -> Result<Vec<SyncOp>, ModelError> {
+        let redo = std::mem::take(&mut self.redo);
+        let depth = self.undo.len();
+        let ops = match self.apply(command, registry) {
+            Ok(ops) => ops,
+            Err(e) => {
+                self.redo = redo;
+                return Err(e);
+            }
+        };
+        if self.undo.len() > depth
+            && let Some(step) = self.undo.pop()
+        {
+            if self.trial.is_empty() {
+                self.trial_redo = redo;
+            }
+            self.trial.push(step);
+        } else if self.trial.is_empty() {
+            // The command changed nothing the history records: the redo history stays.
+            self.redo = redo;
+        }
+        self.merge = None;
+        Ok(ops)
+    }
+
+    /// Whether a trial is open ([`Document::apply_trial`] ran and was not ended).
+    pub fn in_trial(&self) -> bool {
+        !self.trial.is_empty()
+    }
+
+    /// Accepts the open trial: its steps become one undo step (none when it changed nothing).
+    pub fn commit_trial(&mut self) {
+        self.merge = None;
+        self.trial_redo.clear();
+        match self.trial.len() {
+            0 => {}
+            1 => self.undo.append(&mut self.trial),
+            _ => {
+                let steps = std::mem::take(&mut self.trial);
+                self.undo.push(Edit::Compound(steps));
+            }
+        }
+    }
+
+    /// Drops the open trial: the document is as it was before it, and so is the redo history.
+    /// The sync ops to apply come back (empty without a trial).
+    ///
+    /// # Errors
+    /// [`ModelError::Invariant`] when a step does not fit the document (the trial stays open
+    /// with the steps that were not undone).
+    pub fn cancel_trial(&mut self) -> Result<Vec<SyncOp>, ModelError> {
+        self.merge = None;
+        let mut ops = Vec::new();
+        while let Some(step) = self.trial.pop() {
+            match step.inverse().perform(&mut self.doc) {
+                Ok(more) => ops.extend(more),
+                Err(fault) => {
+                    self.trial.push(step);
+                    return Err(fault.into());
+                }
+            }
+        }
+        self.redo = std::mem::take(&mut self.trial_redo);
+        self.revision = next_revision();
+        Ok(ops)
+    }
+
     /// Undoes the last step; `None` when there is nothing to undo (or when the step cannot be
     /// undone: it stays where it is and the document is unchanged; [`Document::try_undo`] says
     /// why).
@@ -1197,6 +1317,9 @@ impl Document {
     /// document is as it was and the step stays on the undo stack.
     pub fn try_undo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
+        if self.in_trial() {
+            return Ok(None);
+        }
         let Some(edit) = self.undo.pop() else {
             return Ok(None);
         };
@@ -1219,6 +1342,9 @@ impl Document {
     /// As [`Document::try_undo`]; the step stays on the redo stack.
     pub fn try_redo(&mut self, _registry: &Registry) -> Result<Option<Vec<SyncOp>>, ModelError> {
         self.merge = None;
+        if self.in_trial() {
+            return Ok(None);
+        }
         let Some(edit) = self.redo.pop() else {
             return Ok(None);
         };
@@ -1248,7 +1374,7 @@ impl Document {
     /// keeps exactly these files in the bundle's `Audio/` folder on save.
     pub fn referenced_assets(&self) -> BTreeSet<String> {
         let mut out = self.doc.referenced_assets();
-        for edit in self.undo.iter().chain(&self.redo) {
+        for edit in self.undo.iter().chain(&self.redo).chain(&self.trial) {
             edit.collect_assets(&mut out);
         }
         out
@@ -1339,6 +1465,8 @@ impl Document {
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
                                     | SongCommand::SetAudioClip { .. }
+                                    | SongCommand::SetWarpMarkers { .. }
+                                    | SongCommand::SplitClip { .. }
                                     | SongCommand::StripSilence { .. }
                                     | SongCommand::SetTrackColor { .. }
                                     | SongCommand::SetLaneFolded { .. }
@@ -1350,7 +1478,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadCable(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;
@@ -1583,6 +1711,7 @@ impl Document {
             Command::Plugin(c) => plugin_cmd::plan(doc, registry, c)?,
             Command::RegisterAsset { .. } => unreachable!("handled before planning"),
             Command::RelinkAsset { from, to } => relink::plan(doc, &from, &to)?,
+            Command::RenameAsset { asset, name } => rules::plan_rename_asset(doc, &asset, &name)?,
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {

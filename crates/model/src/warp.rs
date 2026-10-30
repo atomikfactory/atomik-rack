@@ -198,8 +198,9 @@ fn rel_source(w: &WarpSettings, spt: f64, dt: f64) -> f64 {
         (None, Some(b)) => b.source as f64 - (b.tick as f64 - dt) * spt,
         (Some(a), None) => a.source as f64 + (dt - a.tick as f64) * spt,
         (Some(a), Some(b)) => {
-            let t = (dt - a.tick as f64) / (b.tick - a.tick) as f64;
-            a.source as f64 + t * (b.source - a.source) as f64
+            // Multiply before dividing: a marker on the natural line gives its exact frame.
+            a.source as f64
+                + (dt - a.tick as f64) * (b.source - a.source) as f64 / (b.tick - a.tick) as f64
         }
     }
 }
@@ -213,8 +214,8 @@ fn rel_tick(w: &WarpSettings, spt: f64, src: f64) -> f64 {
         (None, Some(b)) => b.tick as f64 - (b.source as f64 - src) / spt,
         (Some(a), None) => a.tick as f64 + (src - a.source as f64) / spt,
         (Some(a), Some(b)) => {
-            let t = (src - a.source as f64) / (b.source - a.source) as f64;
-            a.tick as f64 + t * (b.tick - a.tick) as f64
+            a.tick as f64
+                + (src - a.source as f64) * (b.tick - a.tick) as f64 / (b.source - a.source) as f64
         }
     }
 }
@@ -524,6 +525,23 @@ pub struct AudioQuantize {
     pub strength: f64,
 }
 
+/// `a` ready for marker editing: a clip without warp is switched on at the song tempo at its
+/// start (source tempo = that tempo, markers cleared, Beats mode when it was in Repitch), so it
+/// plays as before; a warped clip is returned unchanged.
+pub fn warped_at_song_tempo(song: &Song, start: i64, a: &AudioClipContent) -> AudioClipContent {
+    let mut out = a.clone();
+    if !out.warp.enabled {
+        let bpm = song.tempo_table().map().bpm(start as f64);
+        out.warp.enabled = true;
+        out.warp.source_bpm = bpm.clamp(WARP_BPM_MIN, WARP_BPM_MAX);
+        out.warp.markers.clear();
+        if out.warp.mode == WarpMode::Repitch {
+            out.warp.mode = WarpMode::Beats;
+        }
+    }
+    out
+}
+
 /// Quantizes the audio of a clip that starts at `start` and is `length` ticks long: every
 /// transient in `onsets` (asset frames) moves to the nearest grid line by `strength` of the
 /// distance. This sets warp markers (replacing any), so the audio is stretched locally between
@@ -548,13 +566,7 @@ pub fn quantize_audio(
         return Err("the quantize grid and strength must be valid".into());
     }
     let strength = q.strength.clamp(0.0, 1.0);
-    let mut base = a.clone();
-    if !base.warp.enabled {
-        let bpm = song.tempo_table().map().bpm(start as f64);
-        base.warp.enabled = true;
-        base.warp.source_bpm = bpm.clamp(WARP_BPM_MIN, WARP_BPM_MAX);
-        base.warp.markers.clear();
-    }
+    let base = warped_at_song_tempo(song, start, a);
     let offset = base.source_offset;
     let lo = base.source_offset as f64;
     let hi = source_at_tick(song, sample_rate, start, &base, start + length);
@@ -600,9 +612,6 @@ pub fn quantize_audio(
     }
     let mut out = base;
     out.warp.markers = markers;
-    if out.warp.mode == WarpMode::Repitch && !a.warp.enabled {
-        out.warp.mode = WarpMode::Beats;
-    }
     out.warp.validate()?;
     Ok(out)
 }

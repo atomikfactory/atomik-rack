@@ -125,6 +125,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_piano_roll();
         self.close_sample_editor();
         self.close_slice_editor();
+        self.close_audio_editor();
         self.close_seq_editor();
         self.close_container_editor();
         self.step_editor.open(device, clip);

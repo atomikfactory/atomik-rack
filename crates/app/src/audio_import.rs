@@ -10,7 +10,7 @@
 
 use crate::audio_writer::TakeResult;
 use crate::stream_source::{open_stream_asset, should_stream};
-use atomik_audio_file::{AssetInfo, Bundle, PeakPyramid};
+use atomik_audio_file::{AssetInfo, Bundle, FileMeta, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::Song;
@@ -49,6 +49,8 @@ pub(crate) struct Loaded {
     pub asset: SongAsset,
     /// The waveform peaks.
     pub peaks: Arc<PeakPyramid>,
+    /// What the source file says about its tempo (set by imports; empty otherwise).
+    pub meta: FileMeta,
 }
 
 /// What workers tell the UI thread.
@@ -118,6 +120,13 @@ pub(crate) enum Msg {
         generation: u64,
         job: u64,
         result: Result<NotesFound, String>,
+    },
+    /// The transients of the clip open in the audio clip editor were detected (or it failed):
+    /// see the transients section of [`crate::AppCore`]'s audio clip editor.
+    Onsets {
+        generation: u64,
+        job: u64,
+        result: Result<Vec<u64>, String>,
     },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
@@ -190,6 +199,53 @@ pub(crate) fn spawn_onsets(
                 job,
                 result,
             });
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that runs `work` (the transient detection of one clip) and sends
+/// [`Msg::Onsets`]; a panic sends a failure instead, so the request can never stay open.
+pub(crate) fn spawn_clip_onsets(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    work: Box<dyn FnOnce() -> Result<Vec<u64>, String> + Send>,
+) -> std::io::Result<()> {
+    struct Sent {
+        tx: Sender<Msg>,
+        generation: u64,
+        job: u64,
+        sent: bool,
+    }
+    impl Sent {
+        fn send(&mut self, result: Result<Vec<u64>, String>) {
+            self.sent = true;
+            let _ = self.tx.send(Msg::Onsets {
+                generation: self.generation,
+                job: self.job,
+                result,
+            });
+        }
+    }
+    impl Drop for Sent {
+        fn drop(&mut self) {
+            if !self.sent {
+                self.send(Err("the detection stopped unexpectedly".to_owned()));
+            }
+        }
+    }
+    std::thread::Builder::new()
+        .name("atomik-clip-onsets".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let mut sent = Sent {
+                tx,
+                generation,
+                job,
+                sent: false,
+            };
+            let result = work();
+            sent.send(result);
         })
         .map(|_| ())
 }
@@ -343,6 +399,7 @@ pub(crate) fn load_asset(bundle: &Bundle, hash: &str, threshold: u64) -> Result<
         info: None,
         asset,
         peaks: Arc::new(peaks),
+        meta: FileMeta::default(),
     })
 }
 
@@ -355,6 +412,7 @@ pub(crate) fn import_file(
 ) -> Result<Loaded, String> {
     let info = bundle.import(path, rate).map_err(|e| e.to_string())?;
     let mut loaded = load_asset(bundle, &info.hash, threshold)?;
+    loaded.meta = atomik_audio_file::read_file_meta(path);
     loaded.info = Some(info);
     Ok(loaded)
 }

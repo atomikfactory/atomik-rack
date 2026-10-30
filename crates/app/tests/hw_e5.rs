@@ -85,6 +85,7 @@ fn e5_3_stress_on_the_cable() {
     let session = LiveSession::new(SystemBackend, cable_settings(128, false), true);
     let mut core = AppCore::with_doc(session, stress_song_doc(&reg), None);
     let paths = write_stress_audio(&stress_audio_dir(), core.doc().sample_rate).unwrap();
+    core.set_warp_imports(atomik_app::import_warp::WarpImports::Off);
     core.import_audio(paths, ImportTarget::NewTracks, 0);
     core.wait_background();
     let streamed = core
@@ -142,6 +143,7 @@ fn e5_2_loopback_recording_on_the_cable() {
     doc.sample_rate = rate as u32;
     let session = LiveSession::new(SystemBackend, cable_settings(256, true), true);
     let mut core = AppCore::with_doc(session, doc, None);
+    core.set_warp_imports(atomik_app::import_warp::WarpImports::Off);
     core.import_audio(vec![click], ImportTarget::NewTracks, 0);
     core.wait_background();
     let status = core.sink_mut().poll().clone();

@@ -234,6 +234,16 @@ pub enum ShellRequest {
         /// What continues once the project is saved.
         then: PendingAction,
     },
+    /// Show a save dialog for a device patch (the patch strip's SAVE, Rack > Save Patch): an
+    /// `.atomikpatch` file starting in `dir` (the library's Patches folder) and named `name`; the
+    /// platform dialog asks before it overwrites a file. Then call [`Shell::save_patch_to`] with
+    /// the path. A cancelled dialog does nothing.
+    PickSavePatch {
+        /// The folder the dialog starts in.
+        dir: PathBuf,
+        /// The suggested file name, with its extension.
+        name: String,
+    },
     /// Show a save dialog for the diagnostics report (Help > Export Diagnostics), named by
     /// [`crate::diagnostics::default_file_name`], then call [`Shell::export_diagnostics_to`].
     PickExportDiagnostics,
@@ -381,6 +391,10 @@ pub struct Shell<B: AudioBackend> {
     pending: Vec<ShellRequest>,
     /// The sampler the Load dialog is for.
     load_device: Option<DeviceKey>,
+    /// The device a patch save dialog is open for.
+    patch_device: Option<DeviceKey>,
+    /// The device whose patch name opened the pop-up of its folder's patches.
+    patch_menu: Option<DeviceKey>,
     /// The plugin banner above the rack: the project uses plugins, or the last run
     /// ended unexpectedly.
     banner: PluginBannerView,
@@ -558,6 +572,8 @@ impl<B: AudioBackend> Shell<B> {
             geom_saved_at: f64::NEG_INFINITY,
             pending: Vec::new(),
             load_device: None,
+            patch_device: None,
+            patch_menu: None,
             banner,
             plugin_settings: None,
             relink: None,
@@ -627,6 +643,10 @@ impl<B: AudioBackend> Shell<B> {
             .core
             .piano_roll_mut()
             .set_inspector(shell.ui.show_inspector);
+        shell
+            .core
+            .audio_editor_mut()
+            .set_mode(shell.ui.audio_editor_mode);
         shell
             .core
             .arrangement_mut()
@@ -964,6 +984,21 @@ impl<B: AudioBackend> Shell<B> {
             WarpAction::Apply => {
                 if let Some(values) = self.warp.as_ref().map(|v| v.values().clone()) {
                     self.core.apply_warp(&values);
+                    // The scale is spent: the panel shows the clip as it is now.
+                    if values.scale_pct != 100
+                        && let Some(now) = self.core.warp_values()
+                        && let Some(view) = &mut self.warp
+                    {
+                        view.set_values(now);
+                    }
+                }
+            }
+            WarpAction::Reset => {
+                self.core.reset_warp();
+                if let Some(now) = self.core.warp_values()
+                    && let Some(view) = &mut self.warp
+                {
+                    view.set_values(now);
                 }
             }
             WarpAction::Detect => {
@@ -1552,6 +1587,7 @@ impl<B: AudioBackend> Shell<B> {
             .set_autosave_minutes(self.workflow.autosave_minutes);
         self.core.set_record_mode(self.workflow.record_mode);
         self.core.set_keep_events(self.workflow.keep_events);
+        self.core.set_warp_imports(self.workflow.warp_imports);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);
@@ -1731,6 +1767,10 @@ impl<B: AudioBackend> Shell<B> {
                 ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
             }
             Pane::PianoRoll => ContextStack::new(&[Context::Editor, Context::Sequencer]),
+            Pane::AudioEditor if self.core.audio_editor().is_text_owner() => {
+                ContextStack::new(&[Context::Text, Context::Editor, Context::Sequencer])
+            }
+            Pane::AudioEditor => ContextStack::new(&[Context::Editor, Context::Sequencer]),
             Pane::SeqEditor if self.core.seq_editor().is_text_owner() => {
                 ContextStack::new(&[Context::Text, Context::Editor])
             }
@@ -1994,6 +2034,7 @@ impl<B: AudioBackend> Shell<B> {
             self.core.sample_editor_mut().set_bounds(song);
             self.core.step_editor_mut().set_bounds(song);
             self.core.slice_editor_mut().set_bounds(song);
+            self.core.audio_editor_mut().set_bounds(song);
             self.core.seq_editor_mut().set_bounds(song);
             self.core.container_editor_mut().set_bounds(song);
             self.core.plugin_params_mut().set_bounds(song);
@@ -2101,6 +2142,8 @@ impl<B: AudioBackend> Shell<B> {
             Pane::PluginParams
         } else if self.core.piano_roll_clip().is_some() {
             Pane::PianoRoll
+        } else if self.core.audio_editor_clip().is_some() {
+            Pane::AudioEditor
         } else {
             Pane::Arrangement
         }
@@ -2122,6 +2165,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SampleEditor
             | Pane::StepEditor
             | Pane::SliceEditor
+            | Pane::AudioEditor
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams
@@ -2135,6 +2179,7 @@ impl<B: AudioBackend> Shell<B> {
             | Pane::SampleEditor
             | Pane::StepEditor
             | Pane::SliceEditor
+            | Pane::AudioEditor
             | Pane::SeqEditor
             | Pane::ContainerEditor
             | Pane::PluginParams => self.song_pane(),
@@ -2164,6 +2209,9 @@ impl<B: AudioBackend> Shell<B> {
         self.core
             .slice_editor_mut()
             .set_focused(pane == Pane::SliceEditor);
+        self.core
+            .audio_editor_mut()
+            .set_focused(pane == Pane::AudioEditor);
         self.core
             .seq_editor_mut()
             .set_focused(pane == Pane::SeqEditor);
@@ -2436,6 +2484,105 @@ impl<B: AudioBackend> Shell<B> {
                 | Pane::Rack),
             ) => Some(pane),
             _ => None,
+        }
+    }
+
+    /// Saves the device a patch dialog was opened for as the patch item `path` (the platform
+    /// dialog confirmed an overwrite). See [`ShellRequest::PickSavePatch`].
+    pub fn save_patch_to(&mut self, path: &Path) {
+        if let Some(device) = self.patch_device.take() {
+            self.core.save_device_patch(&device, path);
+        }
+        self.repaint = true;
+    }
+
+    /// Starts saving `device` as a patch: the platform's save dialog asks for the name.
+    fn begin_save_patch(&mut self, device: DeviceKey) {
+        match self.core.patch_save_suggestion(&device) {
+            Some((dir, name)) => {
+                self.patch_device = Some(device);
+                self.pending.push(ShellRequest::PickSavePatch { dir, name });
+            }
+            None => self
+                .core
+                .report("There is no library folder: choose one in Settings > Workflow"),
+        }
+    }
+
+    /// Aims the file browser at `device`: it lists the patches for its type and applies them as
+    /// auditions (see `AppCore::begin_patch_browse`).
+    fn browse_patches(&mut self, device: &DeviceKey) {
+        self.set_file_browser_visible(true);
+        self.core.begin_patch_browse(device);
+        self.save_ui_state();
+    }
+
+    /// Return accepts and Escape cancels the patch audition while the patch browser is aimed at
+    /// a device, whichever pane has the keys (the file browser decides these two itself, from
+    /// the row it has selected, and a text field keeps them). True when the key was used.
+    fn patch_browse_key(&mut self, key: &Key) -> bool {
+        if self.core.patch_browse_device().is_none()
+            || self.live_pane(self.focus) == Pane::FileBrowser
+            || self.context_stack().contexts().contains(&Context::Text)
+        {
+            return false;
+        }
+        match key {
+            Key::Enter => self.core.commit_patch_browse(),
+            Key::Escape => self.core.cancel_patch_browse(),
+            _ => return false,
+        }
+        self.save_ui_state();
+        true
+    }
+
+    /// Previous (`-1`) or next (`1`) patch for the device the patch browser is aimed at, else the
+    /// primary selected device.
+    fn step_patch_of_selection(&mut self, delta: i32) {
+        let device = self
+            .core
+            .patch_browse_device()
+            .cloned()
+            .or_else(|| self.core.view().primary());
+        match device {
+            Some(device) => self.core.step_patch(&device, delta),
+            None => self.core.report("Select a device first"),
+        }
+    }
+
+    /// Opens the pop-up of the patches of `device`'s type in its folder, under its patch name
+    /// (the current one checked). A choice runs `rack.patch_pick` with the file.
+    fn open_patch_siblings(&mut self, device: &DeviceKey) {
+        let (items, current) = self.core.patch_siblings(device);
+        if items.is_empty() {
+            self.core
+                .report("There are no patches for this device type in the folder");
+            return;
+        }
+        let Some(at) = self
+            .core
+            .view()
+            .patch_strip_center(device, atomik_ui::PatchOp::Browse)
+        else {
+            return;
+        };
+        let at = self.rack_window_point(at);
+        let entries = context_menus::patch_entries(&items, current);
+        self.patch_menu = Some(device.clone());
+        let (window, size) = self.menu_window(Pane::Rack);
+        let menu = ContextMenu::from_entries(entries, at, size);
+        self.show_context_menu(Pane::Rack, window, menu);
+    }
+
+    /// A patch chosen in the pop-up of a patch name (see [`Self::open_patch_siblings`]).
+    fn pick_patch_from_menu(&mut self, path: &str) {
+        let device = self
+            .patch_menu
+            .take()
+            .or_else(|| self.core.view().primary());
+        match device {
+            Some(device) => self.core.pick_patch(&device, Path::new(path)),
+            None => self.core.report("Select a device first"),
         }
     }
 
@@ -2800,6 +2947,9 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
+            if *pressed && self.patch_browse_key(key) {
+                return Vec::new();
+            }
             self.piano_keys_modifiers(key, *modifiers, *pressed);
             let stack = self.context_stack();
             let mods = self.keys_routing_modifiers(key, *modifiers);
@@ -3084,6 +3234,20 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             ("rack.save_to_library", None) => self.core.save_selection_to_library(),
+            ("rack.save_patch", None) => match self.core.view().primary() {
+                Some(device) => self.begin_save_patch(device),
+                None => self.core.report("Select a device first"),
+            },
+            ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("rack.browse_patch", None) => match self.core.view().primary() {
+                Some(device) => self.browse_patches(&device),
+                None => self.core.report("Select a device first"),
+            },
+            ("rack.patch_next", None) => self.step_patch_of_selection(1),
+            ("rack.patch_prev", None) => self.step_patch_of_selection(-1),
+            ("rack.patch_pick", Some(path)) => self.pick_patch_from_menu(path),
+            ("edit.copy_settings", None) => self.core.copy_settings(),
+            ("edit.paste_settings", None) => self.core.paste_settings(),
             ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
             ("view.cables_cycle", None) => {
                 let view = self.core.view_mut();
@@ -3230,11 +3394,24 @@ impl<B: AudioBackend> Shell<B> {
                 .arrangement()
                 .selected_clips()
                 .into_iter()
-                .find(|id| song.clip(*id).is_some_and(|(_, _, c)| c.content.is_notes()))
+                .find(|id| {
+                    song.clip(*id)
+                        .is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())
+                })
         };
         if let Some(id) = selected {
             self.reveal_lower_pane();
-            let action = UiAction::OpenPianoRoll(id);
+            let is_audio = self
+                .core
+                .doc()
+                .song
+                .clip(id)
+                .is_some_and(|(_, _, c)| c.content.is_audio());
+            let action = if is_audio {
+                UiAction::OpenAudioEditor(id)
+            } else {
+                UiAction::OpenPianoRoll(id)
+            };
             self.core.handle_action(action.clone());
             self.pane_actions(&[action]);
         } else {
@@ -3387,15 +3564,18 @@ impl<B: AudioBackend> Shell<B> {
         let zoom = self.core.arrangement().track_zoom();
         let roll = self.core.piano_roll();
         let (keys, snap_scale, fold) = (roll.key_height(), roll.snap_to_scale(), roll.fold());
+        let audio_mode = self.core.audio_editor().mode();
         if (zoom - self.ui.track_zoom).abs() > f64::EPSILON
             || (keys - self.ui.piano_roll_key_height).abs() > f64::EPSILON
             || snap_scale != self.ui.piano_roll_snap_scale
             || fold != self.ui.piano_roll_fold
+            || audio_mode != self.ui.audio_editor_mode
         {
             self.ui.track_zoom = zoom;
             self.ui.piano_roll_key_height = keys;
             self.ui.piano_roll_snap_scale = snap_scale;
             self.ui.piano_roll_fold = fold;
+            self.ui.audio_editor_mode = audio_mode;
             self.save_ui_state();
         }
     }
@@ -3405,6 +3585,7 @@ impl<B: AudioBackend> Shell<B> {
         self.ui.file_browser_width = view.width();
         self.ui.file_browser_tree_fraction = view.tree_fraction();
         self.ui.file_browser_auto_preview = view.auto_preview();
+        self.ui.patch_folders.clone_from(self.core.patch_folders());
         if let Some(path) = &self.ui_state_path
             && let Err(e) = self.ui.save(path)
         {
@@ -3527,6 +3708,7 @@ impl<B: AudioBackend> Shell<B> {
         MenuEnable {
             selection: core.has_selection(pane),
             paste: core.can_paste(pane),
+            paste_settings: pane == Pane::Rack && core.can_paste_settings(),
             has_track: core
                 .view()
                 .primary()
@@ -3546,7 +3728,7 @@ impl<B: AudioBackend> Shell<B> {
             open_clip: clips.iter().any(|id| {
                 doc.song
                     .clip(*id)
-                    .is_some_and(|(_, _, c)| c.content.is_notes())
+                    .is_some_and(|(_, _, c)| c.content.is_notes() || c.content.is_audio())
             }),
             master_only: pane == Pane::Rack
                 && core.view().selection_len() == 1
@@ -3811,6 +3993,12 @@ impl<B: AudioBackend> Shell<B> {
                         self.set_focus(Pane::Arrangement);
                     }
                 }
+                UiAction::OpenAudioEditor(_) => self.show_audio_editor(),
+                UiAction::CloseAudioEditor => {
+                    if self.focus == Pane::AudioEditor {
+                        self.set_focus(Pane::Arrangement);
+                    }
+                }
                 UiAction::OpenSliceEditor(_) => self.show_slice_editor(),
                 UiAction::CloseSliceEditor => {
                     if self.focus == Pane::SliceEditor {
@@ -3825,6 +4013,10 @@ impl<B: AudioBackend> Shell<B> {
                     self.save_ui_state();
                 }
                 UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.save_ui_state(),
+                // The audition ended in the file browser: the folder it used is remembered.
+                UiAction::Browse(BrowseAction::Load(_) | BrowseAction::Cancel) => {
+                    self.save_ui_state();
+                }
                 UiAction::Browse(BrowseAction::DragFiles(paths)) => {
                     self.file_drag = Some(FileDrag {
                         paths: paths.clone(),
@@ -3842,6 +4034,18 @@ impl<B: AudioBackend> Shell<B> {
                         self.pending.append(&mut requests);
                     }
                 }
+                UiAction::DevicePatch {
+                    device,
+                    op: atomik_ui::PatchOp::Save,
+                } => self.begin_save_patch(device.clone()),
+                UiAction::DevicePatch {
+                    device,
+                    op: atomik_ui::PatchOp::Browse,
+                } => self.browse_patches(device),
+                UiAction::DevicePatch {
+                    device,
+                    op: atomik_ui::PatchOp::Siblings,
+                } => self.open_patch_siblings(device),
                 UiAction::LoadSamplesDialog { device } => {
                     self.load_device = Some(device.clone());
                     self.pending.push(ShellRequest::PickLoadSamples);
@@ -3986,6 +4190,21 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// The audio clip editor was opened (the core did it): make sure the lower pane shows it and
+    /// give it the keys.
+    fn show_audio_editor(&mut self) {
+        if self.core.audio_editor_clip().is_none() {
+            return;
+        }
+        if !self.ui.show_song || self.lower_is_console() {
+            self.ui.show_song = true;
+            self.ui.show_console = false;
+            self.console_changed();
+        }
+        self.layout_view();
+        self.set_focus(Pane::AudioEditor);
+    }
+
     /// The slice editor was opened (the core did it): make sure the lower pane shows it and
     /// give it the keys.
     fn show_slice_editor(&mut self) {
@@ -4010,6 +4229,7 @@ impl<B: AudioBackend> Shell<B> {
         view.set_tree_fraction(ui.file_browser_tree_fraction);
         view.set_auto_preview(ui.file_browser_auto_preview);
         self.core.set_file_browser_folder(ui.file_browser_folder);
+        self.core.set_patch_folders(ui.patch_folders);
         if ui.file_browser_visible {
             self.core.set_file_browser_visible(true);
         }
@@ -5092,6 +5312,7 @@ impl<B: AudioBackend> Shell<B> {
                     Pane::SampleEditor => self.core.sample_editor().needs_repaint(),
                     Pane::StepEditor => self.core.step_editor().needs_repaint(),
                     Pane::SliceEditor => self.core.slice_editor().needs_repaint(),
+                    Pane::AudioEditor => self.core.audio_editor().needs_repaint(),
                     Pane::SeqEditor => self.core.seq_editor().needs_repaint(),
                     Pane::ContainerEditor => self.core.container_editor().needs_repaint(),
                     Pane::PluginParams => self.core.plugin_params().needs_repaint(),
@@ -5451,6 +5672,9 @@ mod create_tests;
 #[cfg(test)]
 #[path = "shell_browser_tests.rs"]
 mod shell_browser_tests;
+#[cfg(test)]
+#[path = "shell_patch_tests.rs"]
+mod shell_patch_tests;
 
 #[cfg(test)]
 #[path = "shell_editor_keys_tests.rs"]

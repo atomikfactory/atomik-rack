@@ -191,6 +191,11 @@ pub(crate) const DEVICE_FIELDS_V33: &[&str] = &[
     "id", "type", "params", "name", "folded", "color", "column", "zones", "steps", "curves",
     "drums", "inner", "plugin",
 ];
+/// Project format v36 adds `patch` (the name of the patch a device took its sound from).
+pub(crate) const DEVICE_FIELDS_V36: &[&str] = &[
+    "id", "type", "params", "name", "patch", "folded", "color", "column", "zones", "steps",
+    "curves", "drums", "inner", "plugin",
+];
 
 /// How the device objects of a file are read.
 #[derive(Clone, Copy)]
@@ -424,6 +429,15 @@ pub(crate) fn load_device(
         Some(v) => parse_color(v, &path.field("color"))?,
         None => None,
     };
+    let patch_name = match obj.get("patch") {
+        Some(v) => {
+            let patch_path = path.field("patch");
+            let text = string(v, &patch_path)?;
+            crate::device_patch::check_patch_name(text).map_err(|m| patch_path.error(m))?;
+            text.to_owned()
+        }
+        None => String::new(),
+    };
     let plugin = match obj.get("plugin") {
         Some(v) if is_plugin_type_id(type_id) => {
             Some(Box::new(plugin_io::load_plugin(v, &plugin_path, type_id)?))
@@ -511,6 +525,7 @@ pub(crate) fn load_device(
         },
         plugin,
         column,
+        patch_name,
     })
 }
 
@@ -671,6 +686,10 @@ pub(crate) fn write_device(
         json_str(&d.name),
         d.folded
     );
+    // Optional and project-only: a patch file (v2) never carries one.
+    if project && !d.patch_name.is_empty() {
+        let _ = write!(w, ", \"patch\": {}", json_str(&d.patch_name));
+    }
     if let Some([r, g, b]) = d.color {
         let _ = write!(w, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
     }

@@ -176,6 +176,7 @@ mod tests {
         r.item = Some(crate::ItemInfo {
             detail: String::new(),
             category: "Instrument".to_string(),
+            ..Default::default()
         });
         assert!(m("instru", &r));
         assert!(m("poly instrument", &r));

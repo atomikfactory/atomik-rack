@@ -355,6 +355,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.copy", "Copy", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.copy_settings", "Copy Settings", G::Edit, C::Rack),
     cmd("edit.cut", "Cut", G::Edit, C::Global).decline().menu(),
     cmd("edit.delete", "Delete", G::Edit, C::Global)
         .decline()
@@ -365,6 +366,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("edit.paste", "Paste", G::Edit, C::Global)
         .decline()
         .menu(),
+    cmd("edit.paste_settings", "Paste Settings", G::Edit, C::Rack),
     cmd(
         "edit.quantize_options",
         "Quantize Options",
@@ -383,6 +385,55 @@ const COMMANDS: &[CommandDef] = &[
         G::Editor,
         C::Editor,
     ),
+    cmd(
+        "editor.audio_add_marker",
+        "Add Marker at Pointer",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_add_transients",
+        "Add Markers at Transients",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_mode_overview",
+        "Audio Editor: Overview",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_mode_slice",
+        "Audio Editor: Slice",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_revert",
+        "Revert Markers",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_split_markers",
+        "Split Clip at Markers",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
+    cmd(
+        "editor.audio_to_slicer",
+        "Clip to Loop Slicer",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd(
         "editor.chordify",
         "Chordify Selection",
@@ -877,6 +928,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.add_column", "Add Column", G::Rack, C::Rack),
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
+    cmd("rack.browse_patch", "Browse Patches", G::Rack, C::Rack),
     cmd("rack.disconnect", "Disconnect", G::Rack, C::Rack),
     cmd(
         "rack.extend_next",
@@ -888,7 +940,12 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
+    cmd("rack.patch_next", "Next Patch", G::Rack, C::Rack).rep(),
+    cmd("rack.patch_pick", "Pick Patch", G::Rack, C::Rack),
+    cmd("rack.patch_prev", "Previous Patch", G::Rack, C::Rack).rep(),
     cmd("rack.remove_column", "Remove Column", G::Rack, C::Rack),
+    cmd("rack.reset_device", "Reset Device", G::Rack, C::Rack),
+    cmd("rack.save_patch", "Save Patch", G::Rack, C::Rack),
     cmd("rack.save_to_library", "Save to Library", G::Rack, C::Rack),
     cmd("rack.select_next", "Select Next Device", G::Rack, C::Rack).rep(),
     cmd(
@@ -1541,6 +1598,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("tool.pencil", "Pencil Tool", G::Tools, C::Sequencer),
     cmd("tool.razor", "Razor Tool", G::Tools, C::Sequencer),
     cmd("tool.select", "Select Tool", G::Tools, C::Sequencer),
+    cmd("tool.speaker", "Speaker Tool", G::Tools, C::Sequencer),
     cmd(
         "transport.add_marker",
         "Add Marker",

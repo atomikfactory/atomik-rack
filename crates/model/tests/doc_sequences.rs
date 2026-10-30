@@ -36,6 +36,9 @@ enum WfOp {
     Disconnect(usize),
     DuplicateTrack(usize),
     PasteDevices(Vec<usize>, usize, bool),
+    /// A device takes the patch of another one of its type (the second index; the same device
+    /// when none else is of its type), or, for `true`, goes back to a new device's sound.
+    ApplyPatch(usize, usize, bool),
     PasteClips(Vec<usize>, i64, Option<usize>),
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
@@ -48,6 +51,8 @@ enum WfOp {
     Quantize(usize, u8, bool),
     Player(usize, usize),
     NotesCable(usize, usize),
+    /// Warp markers of a clip from tick and frame gaps (0), or a split at them (1), or the name of an asset (2).
+    Warp(u8, usize, Vec<(i64, u64)>),
     Take(TakeOp),
 }
 
@@ -165,6 +170,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12).prop_map(WfOp::Disconnect),
         (0usize..12).prop_map(WfOp::DuplicateTrack),
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
+        (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
             b * BAR / 2,
@@ -180,6 +186,12 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::NotesCable(a, b)),
+        (
+            0u8..3,
+            0usize..12,
+            proptest::collection::vec((1i64..4000, 1u64..200_000), 0..5)
+        )
+            .prop_map(|(k, c, g)| WfOp::Warp(k, c, g)),
         take_op().prop_map(WfOp::Take),
     ]
 }
@@ -255,6 +267,21 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 at: *at,
             })
         }
+        WfOp::ApplyPatch(target, source, reset) => {
+            let device = pick(&top, *target)?;
+            if *reset {
+                return Some(wf(WorkflowCommand::ResetDevice { device }));
+            }
+            let type_id = &doc.device(&device)?.type_id;
+            let same: Vec<DeviceKey> = top
+                .iter()
+                .filter(|k| doc.device(k).is_some_and(|d| &d.type_id == type_id))
+                .cloned()
+                .collect();
+            let from = pick(&same, *source)?;
+            let snapshot = DeviceSnapshot::capture(doc, &[from], false).ok()?;
+            wf(WorkflowCommand::ApplyPatch { device, snapshot })
+        }
         WfOp::PasteClips(s, at, track) => {
             let picked: Vec<ClipId> = s.iter().filter_map(|i| pick(&ids, *i)).collect();
             wf(WorkflowCommand::PasteClips {
@@ -319,6 +346,53 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             ))
         }
         WfOp::Take(op) => sc(resolve_take(op, doc)?),
+        WfOp::Warp(kind, c, gaps) => {
+            let id = pick(&ids, *c)?;
+            let (_, _, clip) = doc.song.clip(id)?;
+            let atomik_model::ClipContent::Audio(a) = &clip.content else {
+                return None;
+            };
+            match kind {
+                0 => {
+                    let (mut tick, mut source) = (0i64, 0u64);
+                    let mut markers = Vec::new();
+                    for (dt, ds) in gaps {
+                        tick += *dt;
+                        source += *ds;
+                        markers.push(atomik_model::WarpMarker { tick, source });
+                    }
+                    sc(SongCommand::SetWarpMarkers {
+                        id,
+                        markers,
+                        merge: None,
+                    })
+                }
+                1 => {
+                    // One Batch of splits at the markers, each on the right piece of the last.
+                    let next = doc.song.next_clip_id;
+                    let mut commands = Vec::new();
+                    let mut current = id;
+                    for (k, tick) in atomik_model::slice_edit::split_ticks(&a.warp, clip.length)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        commands.push(sc(SongCommand::SplitClip {
+                            id: current,
+                            at: clip.start + tick,
+                        }));
+                        current = ClipId(next + k as u64);
+                    }
+                    if commands.is_empty() {
+                        return None;
+                    }
+                    Command::Batch(commands)
+                }
+                _ => Command::RenameAsset {
+                    asset: a.asset.clone(),
+                    name: format!("take {}", gaps.len()),
+                },
+            }
+        }
         WfOp::Quantize(c, grid, ends) => sc(SongCommand::ApplyQuantize {
             clips: vec![pick(&ids, *c)?],
             quantize: QuantizeParams {

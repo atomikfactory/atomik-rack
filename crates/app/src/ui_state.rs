@@ -14,6 +14,7 @@
 //!   "show_rack_navigator": true,
 //!   "track_zoom": 1.0, "piano_roll_key_height": 12.0,
 //!   "piano_roll_snap_scale": false, "piano_roll_fold": "off",
+//!   "audio_editor_mode": "overview",
 //!   "console_notice_seen": false,
 //!   "windows": { "rack": { "detached": true, "geom": { "x": 40, "y": 60, "width": 1200.0,
 //!                "height": 700.0, "maximised": false, "monitor": "DISPLAY1" } } } }
@@ -21,11 +22,12 @@
 
 use crate::record::InputQuantize;
 use crate::windows::WindowsState;
-use atomik_ui::FileBrowserView;
 use atomik_ui::arrangement::clamp_track_zoom;
 use atomik_ui::key_rows::Fold;
 use atomik_ui::piano_roll::{KEY_HEIGHT, MAX_KEY_HEIGHT, MIN_KEY_HEIGHT};
+use atomik_ui::{AudioMode, FileBrowserView};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The UI state file name.
@@ -77,6 +79,9 @@ pub struct UiState {
     /// Which keys the piano roll shows (`"off"`, `"scale"` or `"used"`). An absent key means
     /// every key.
     pub piano_roll_fold: Fold,
+    /// The mode the audio clip editor opens in (`"overview"` or `"slice"`). An absent key means
+    /// overview.
+    pub audio_editor_mode: AudioMode,
     /// The one-time notice that the console devices are shown now was given.
     pub console_notice_seen: bool,
     /// The file browser panel shows on the left.
@@ -89,6 +94,11 @@ pub struct UiState {
     pub file_browser_auto_preview: bool,
     /// The folder the file list showed last.
     pub file_browser_folder: Option<PathBuf>,
+    /// The folder the patch browser last used for each device type (type id to folder), so
+    /// Browse on a device opens where its type was last browsed. Absent entries mean the
+    /// library's Patches folder.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub patch_folders: BTreeMap<String, PathBuf>,
     /// Which panes live in their own window and where every window was. An absent key means
     /// everything attached.
     pub windows: WindowsState,
@@ -113,12 +123,14 @@ impl Default for UiState {
             piano_roll_key_height: KEY_HEIGHT,
             piano_roll_snap_scale: false,
             piano_roll_fold: Fold::Off,
+            audio_editor_mode: AudioMode::Overview,
             console_notice_seen: false,
             file_browser_visible: false,
             file_browser_width: FileBrowserView::DEFAULT_WIDTH,
             file_browser_tree_fraction: DEFAULT_TREE_FRACTION,
             file_browser_auto_preview: true,
             file_browser_folder: None,
+            patch_folders: BTreeMap::new(),
             windows: WindowsState::default(),
         }
     }
@@ -245,6 +257,7 @@ mod tests {
             piano_roll_key_height: 30.0,
             piano_roll_snap_scale: true,
             piano_roll_fold: Fold::Used,
+            audio_editor_mode: AudioMode::Slice,
             file_browser_visible: true,
             ..UiState::default()
         };

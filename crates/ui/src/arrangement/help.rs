@@ -46,6 +46,9 @@ fn tool(t: Tool, rect: Rect) -> Help {
         Tool::Pencil => "Pencil tool: click to draw a clip or an automation point",
         Tool::Eraser => "Eraser tool: click a clip or a point to delete it",
         Tool::Razor => "Razor tool: click a clip to split it at the snapped position",
+        Tool::Speaker => {
+            "Speaker tool: press on an audio clip to hear it as it is in its file, release to stop"
+        }
     };
     Help::new(rect, text).with_command(t.command_id())
 }

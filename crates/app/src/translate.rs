@@ -29,6 +29,7 @@ pub fn cursor_art(hint: CursorHint) -> Option<CursorArt> {
         CursorHint::Pen => Some(CursorArt::Pen),
         CursorHint::Eraser => Some(CursorArt::Eraser),
         CursorHint::Razor => Some(CursorArt::Razor),
+        CursorHint::Speaker => Some(CursorArt::Speaker),
         _ => None,
     }
 }
@@ -39,9 +40,11 @@ pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
         CursorHint::Default => CursorIcon::Default,
         CursorHint::ResizeHorizontal => CursorIcon::EwResize,
         CursorHint::Move => CursorIcon::Move,
-        CursorHint::Crosshair | CursorHint::Pen | CursorHint::Eraser | CursorHint::Razor => {
-            CursorIcon::Crosshair
-        }
+        CursorHint::Crosshair
+        | CursorHint::Pen
+        | CursorHint::Eraser
+        | CursorHint::Razor
+        | CursorHint::Speaker => CursorIcon::Crosshair,
     }
 }
 
@@ -387,6 +390,7 @@ mod tests {
         assert_eq!(cursor_art(CursorHint::Pen), Some(CursorArt::Pen));
         assert_eq!(cursor_art(CursorHint::Eraser), Some(CursorArt::Eraser));
         assert_eq!(cursor_art(CursorHint::Razor), Some(CursorArt::Razor));
+        assert_eq!(cursor_art(CursorHint::Speaker), Some(CursorArt::Speaker));
     }
 
     #[test]

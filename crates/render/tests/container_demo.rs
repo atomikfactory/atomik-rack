@@ -403,6 +403,7 @@ fn flat_twin(doc: &RackDoc, registry: &atomik_device_sdk::Registry) -> RackDoc {
             inner: None,
             plugin: None,
             column: 0,
+            patch_name: String::new(),
         })
         .collect();
     twin.cables = expanded
@@ -789,6 +790,7 @@ fn expanded_patch_ids_never_collide_with_user_keys() {
         inner: None,
         plugin: None,
         column: 0,
+        patch_name: String::new(),
     });
     let e2 = tricky.expand(&registry);
     let (p2, ids2) = flat::expanded_patch(&tricky, &e2);

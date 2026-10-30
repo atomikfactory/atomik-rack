@@ -255,6 +255,7 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.sample_editor_mut().set_scale(scale);
                 self.core.step_editor_mut().set_scale(scale);
                 self.core.slice_editor_mut().set_scale(scale);
+                self.core.audio_editor_mut().set_scale(scale);
                 self.core.seq_editor_mut().set_scale(scale);
                 self.core.container_editor_mut().set_scale(scale);
                 self.core.plugin_params_mut().set_scale(scale);

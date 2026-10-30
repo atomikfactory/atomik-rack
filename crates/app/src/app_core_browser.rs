@@ -276,6 +276,13 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    /// Shows the folder `folder` in the file browser (which the caller has made visible).
+    pub(super) fn show_folder(&mut self, folder: PathBuf) {
+        if self.browser.shown {
+            self.show(Place::Folder(folder));
+        }
+    }
+
     /// Lists the shown place again and selects the row of the renamed item `path` once it is
     /// there (without opening another rename entry).
     pub(super) fn show_renamed(&mut self, path: PathBuf) {
@@ -378,7 +385,12 @@ impl<S: EngineSink> AppCore<S> {
     /// [`BrowseAction::LayoutChanged`] belong to the shell and are ignored here.
     pub fn browse(&mut self, action: BrowseAction) {
         match action {
-            BrowseAction::Show(place) => self.show(place),
+            BrowseAction::Show(place) => {
+                if let Place::Folder(folder) = &place {
+                    self.remember_patch_folder(folder);
+                }
+                self.show(place)
+            }
             BrowseAction::Parent => {
                 if let Some(Place::Folder(path)) = self.file_browser.location()
                     && let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
@@ -453,7 +465,16 @@ impl<S: EngineSink> AppCore<S> {
             | BrowseAction::DragFiles(_)
             | BrowseAction::LayoutChanged => {}
             // Loading, opening and renaming library items is the library work of the app.
+            // Aimed at a device, a patch is for that device: it is applied and accepted.
+            BrowseAction::Load(path)
+                if self.patch_browse_device().is_some()
+                    && classify(&path, false) == Some(atomik_library::FileKind::Patch) =>
+            {
+                self.accept_patch(&path);
+            }
             BrowseAction::Load(path) => self.load_library_item(&path, LoadTarget::Default),
+            BrowseAction::Audition(path) => self.audition_patch(&path),
+            BrowseAction::Cancel => self.cancel_patch_browse(),
             BrowseAction::OpenProject(path) => self.open_library_project(&path),
             BrowseAction::RenameItem { path, to } => self.rename_library_item(&path, &to),
         }
@@ -857,7 +878,7 @@ impl<S: EngineSink> AppCore<S> {
         });
     }
 
-    fn stop_preview(&mut self) {
+    pub(super) fn stop_preview(&mut self) {
         if self.browser.preview.take().is_some() || self.sink.preview_active() {
             let _ = self.sink.preview_stop();
         }

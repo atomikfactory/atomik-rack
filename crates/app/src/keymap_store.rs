@@ -11,6 +11,7 @@
 //! - `workflow.json` keeps fields this build does not know (a newer build or a later step of the
 //!   phase, such as the rack layout flags), so saving never drops them.
 
+use crate::import_warp::WarpImports;
 use crate::record_over::{KeepEvents, RecordMode};
 use atomik_ui::keymap::UserKeymap;
 use serde_json::{Map, Value};
@@ -71,6 +72,8 @@ pub struct WorkflowPrefs {
     pub record_mode: RecordMode,
     /// What a note edit does with notes that start past their clip's end (default Keep).
     pub keep_events: KeepEvents,
+    /// Which imported audio files are warped to the song tempo (default Loops only).
+    pub warp_imports: WarpImports,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -90,6 +93,7 @@ impl Default for WorkflowPrefs {
             open_last_project: false,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
+            warp_imports: WarpImports::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -137,6 +141,11 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(KeepEvents::from_id)
                 .unwrap_or(defaults.keep_events),
+            warp_imports: obj
+                .get("warp_imports")
+                .and_then(Value::as_str)
+                .and_then(WarpImports::from_id)
+                .unwrap_or(defaults.warp_imports),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -154,6 +163,7 @@ impl WorkflowPrefs {
                             | "open_last_project"
                             | "record_mode"
                             | "keep_events"
+                            | "warp_imports"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -195,6 +205,10 @@ impl WorkflowPrefs {
         map.insert(
             "keep_events".into(),
             Value::String(self.keep_events.id().into()),
+        );
+        map.insert(
+            "warp_imports".into(),
+            Value::String(self.warp_imports.id().into()),
         );
         if let Some(folder) = &self.library_folder {
             map.insert(
@@ -550,6 +564,29 @@ mod tests {
         let p = d.join("deeper").join("still").join(KEYMAP_FILE);
         save_user_keymap(&p, &user()).unwrap();
         assert!(p.exists());
+    }
+
+    #[test]
+    fn warp_on_import_defaults_to_loops_only_and_round_trips() {
+        use crate::import_warp::WarpImports;
+        assert_eq!(WorkflowPrefs::default().warp_imports, WarpImports::Loops);
+        assert_eq!(
+            WorkflowPrefs::from_json("{}").unwrap().warp_imports,
+            WarpImports::Loops
+        );
+        let p = WorkflowPrefs::from_json(r#"{"warp_imports": 7}"#).unwrap();
+        assert_eq!(p.warp_imports, WarpImports::Loops);
+        for mode in WarpImports::ALL {
+            let set = WorkflowPrefs {
+                warp_imports: mode,
+                ..WorkflowPrefs::default()
+            };
+            let text = set.to_json();
+            assert!(text.contains(&format!("\"warp_imports\": \"{}\"", mode.id())));
+            let back = WorkflowPrefs::from_json(&text).unwrap();
+            assert_eq!(back, set);
+            assert!(back.extra.is_empty());
+        }
     }
 
     #[test]

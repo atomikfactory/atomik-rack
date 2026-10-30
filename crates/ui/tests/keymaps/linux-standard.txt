@@ -15,6 +15,9 @@ edit.paste | global | Ctrl+V
 edit.redo | global | Ctrl+Y, Ctrl+Shift+Z
 edit.select_all | global | Ctrl+A
 edit.undo | global | Ctrl+Z
+editor.audio_add_marker | editor | I
+editor.audio_mode_overview | editor | 1
+editor.audio_mode_slice | editor | 2
 editor.chordify | editor | Shift+C
 editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left
@@ -104,8 +107,11 @@ mixer.value_page_up | mixer | PageUp
 mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
+rack.browse_patch | rack | Ctrl+Shift+B
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
+rack.patch_next | rack | Ctrl+Right
+rack.patch_prev | rack | Ctrl+Left
 rack.select_next | rack | Down
 rack.select_prev | rack | Up
 sequencer.audio_crossfade toggle | sequencer | X
@@ -144,6 +150,8 @@ tool.razor | sequencer | R
 tool.razor | editor | R
 tool.select | sequencer | Q
 tool.select | editor | Q
+tool.speaker | sequencer | T
+tool.speaker | editor | T
 transport.add_marker | global | Shift+M
 transport.all_notes_off | global | !, Shift+!
 transport.bar_back | global | Numpad7

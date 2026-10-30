@@ -8,6 +8,9 @@ edit.redo | global | Cmd+Y, Cmd+Shift+Y, Cmd+Shift+Z
 edit.select_all | sequencer | Cmd+A
 edit.select_all | editor | Cmd+A
 edit.undo | global | Cmd+Z
+editor.audio_add_marker | editor | I
+editor.audio_mode_overview | editor | 1
+editor.audio_mode_slice | editor | 2
 editor.nudge_left | editor | Left
 editor.nudge_left_beat | editor | Shift+Left
 editor.nudge_left_tick | editor | Opt+Left
@@ -84,6 +87,9 @@ mixer.value_page_up | mixer | PageUp
 mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
+rack.browse_patch | rack | Cmd+Shift+B
+rack.patch_next | rack | Cmd+Right
+rack.patch_prev | rack | Cmd+Left
 sequencer.nudge_left | sequencer | Cmd+Left
 sequencer.nudge_left_beat | sequencer | Cmd+Shift+Left
 sequencer.nudge_left_tick | sequencer | Cmd+Opt+Left

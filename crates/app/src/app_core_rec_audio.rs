@@ -453,6 +453,7 @@ impl<S: EngineSink> AppCore<S> {
             info: Some(lap.info.clone()),
             asset: lap.asset.clone(),
             peaks: Arc::clone(&lap.peaks),
+            meta: Default::default(),
         };
         self.insert_loaded(&loaded);
         let rate = self.doc().sample_rate;

@@ -259,6 +259,7 @@ pub fn device_rows(registry: &Registry) -> Vec<FileRow> {
             item: Some(ItemInfo {
                 detail: kind_label(d).to_string(),
                 category: kind_label(d).to_string(),
+                ..Default::default()
             }),
             favorite: false,
             tags: Vec::new(),

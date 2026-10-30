@@ -24,9 +24,9 @@ use atomik_model::{
 use atomik_render::project::song_input_with_warps;
 use atomik_ui::kurbo::Point;
 use atomik_ui::{
-    ArrangementView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView, Help, PianoRollView,
-    PluginParamsView, RackView, SampleEditorView, SeqEditorView, SliceEditorView, StepEditorView,
-    Theme, TransportAction, TransportBar, UiAction, UiEvent,
+    ArrangementView, AudioEditorView, Canvas, ChannelMeters, ConsoleView, ContainerEditorView,
+    Help, PianoRollView, PluginParamsView, RackView, SampleEditorView, SeqEditorView,
+    SliceEditorView, StepEditorView, Theme, TransportAction, TransportBar, UiAction, UiEvent,
 };
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -82,6 +82,8 @@ pub enum Pane {
     StepEditor,
     /// The slice editor (in place of the arrangement).
     SliceEditor,
+    /// The audio clip editor (in place of the arrangement).
+    AudioEditor,
     /// The sequencer grid editor (in place of the arrangement).
     SeqEditor,
     /// The container editor, splits and macros (in place of the arrangement).
@@ -224,6 +226,7 @@ pub struct AppCore<S: EngineSink> {
     sample_editor: SampleEditorView,
     step_editor: StepEditorView,
     slice_editor: SliceEditorView,
+    audio_editor: AudioEditorView,
     seq_editor: SeqEditorView,
     container_editor: ContainerEditorView,
     /// The container editor is shown (the view has no close of its own).
@@ -262,10 +265,15 @@ pub struct AppCore<S: EngineSink> {
     record_mode: RecordMode,
     /// What a note edit does with notes that start past their clip's end.
     keep_events: KeepEvents,
+    /// Which imported audio files are warped to the song tempo.
+    warp_imports: crate::import_warp::WarpImports,
     /// The note clip an open drag edited, to complete under `keep_events` when the drag ends.
     keep_pending: Option<ClipId>,
     /// The next applied command is folded into the undo step before it (a follow-up).
     join_next: bool,
+    /// The next applied command is a step of the open patch trial: no undo entry (see
+    /// `Document::apply_trial`).
+    trial_next: bool,
     take: Option<Take>,
     /// Automation recording: the armed lanes and the running take's lane recorders.
     autorec: autorec::AutoRec,
@@ -318,6 +326,9 @@ pub struct AppCore<S: EngineSink> {
     /// Third-party plugins: the manager, the catalog, the instances. Declared after
     /// the sink so the engine's devices drop before the manager that owns their plugins.
     plugins: plugins::PluginState,
+    /// Where each device last took a patch from, the patch browsing target and the lists it
+    /// steps through.
+    patches: patches::PatchState,
 }
 
 impl<S: EngineSink + std::fmt::Debug> std::fmt::Debug for AppCore<S> {
@@ -428,6 +439,7 @@ impl<S: EngineSink> AppCore<S> {
             sample_editor: SampleEditorView::new(theme.clone()),
             step_editor: StepEditorView::new(theme.clone()),
             slice_editor: SliceEditorView::new(theme.clone()),
+            audio_editor: AudioEditorView::new(theme.clone()),
             seq_editor: SeqEditorView::new(theme.clone()),
             container_editor: ContainerEditorView::new(theme.clone()),
             container_open: false,
@@ -463,6 +475,7 @@ impl<S: EngineSink> AppCore<S> {
             browser: browser::BrowserState::default(),
             plugin_params_open: false,
             plugins: plugins::PluginState::new(),
+            patches: patches::PatchState::default(),
             piano_clip: None,
             snapshot: None,
             sent_loop: None,
@@ -474,8 +487,10 @@ impl<S: EngineSink> AppCore<S> {
             quantize: InputQuantize::Off,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
+            warp_imports: crate::import_warp::WarpImports::default(),
             keep_pending: None,
             join_next: false,
+            trial_next: false,
             take: None,
             autorec: autorec::AutoRec::new(),
             autoview: autoview::AutoView::default(),
@@ -626,6 +641,11 @@ impl<S: EngineSink> AppCore<S> {
     /// Applies a command and syncs the engine and the view. On rejection nothing changes and
     /// the view shows the error.
     pub fn apply_command(&mut self, command: Command) -> Result<(), ModelError> {
+        // Anything but a step of the patch trial accepts the trial first (it is one undo step).
+        let trial = std::mem::take(&mut self.trial_next);
+        if !trial {
+            self.commit_patch_browse();
+        }
         // A setup choice on a guitar amp becomes the batch that loads it.
         let command = self.expand_setup(command);
         // Muting an automation lane holds the value it gave.
@@ -652,7 +672,9 @@ impl<S: EngineSink> AppCore<S> {
             note_edit_of(&command)
         };
         let applied = catch_unwind(AssertUnwindSafe(|| {
-            if joined {
+            if trial {
+                self.document.apply_trial(command, &self.registry)
+            } else if joined {
                 self.document.apply_joined(command, &self.registry)
             } else {
                 self.document.apply(command, &self.registry)
@@ -751,6 +773,20 @@ impl<S: EngineSink> AppCore<S> {
             }
             UiAction::OpenSliceEditor(key) => self.open_slice_editor(key),
             UiAction::CloseSliceEditor => self.close_slice_editor(),
+            UiAction::OpenAudioEditor(id) => self.open_audio_editor(id),
+            UiAction::CloseAudioEditor => self.close_audio_editor(),
+            UiAction::ClipToSlicer(id) => self.clip_to_slicer(id),
+            UiAction::DetectTransients { clip, sensitivity } => {
+                self.detect_transients(clip, sensitivity)
+            }
+            UiAction::AuditionSpan {
+                asset,
+                start_frame,
+                end_frame,
+                reverse,
+                gain_db,
+            } => self.audition_span(&asset, (start_frame, end_frame), reverse, gain_db),
+            UiAction::StopAudition => self.stop_audition(),
             UiAction::SliceLoop { device, mode } => self.slice_loop(device, mode),
             UiAction::SlicesToTrack { device } => self.slices_to_track(device),
             UiAction::ImportSamples {
@@ -792,6 +828,17 @@ impl<S: EngineSink> AppCore<S> {
                 container,
                 slot,
             } => self.load_library_item(&path, LoadTarget::Rack { container, slot }),
+            UiAction::ApplyLibraryPatch { path, device } => {
+                self.load_library_item(&path, LoadTarget::Device(device));
+            }
+            UiAction::DevicePatch {
+                device,
+                op: atomik_ui::PatchOp::Previous,
+            } => self.step_patch(&device, -1),
+            UiAction::DevicePatch {
+                device,
+                op: atomik_ui::PatchOp::Next,
+            } => self.step_patch(&device, 1),
             UiAction::InsertLibraryClip {
                 path,
                 track,
@@ -829,6 +876,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.help_at(pos),
             Pane::StepEditor => self.step_editor.help_at(pos),
             Pane::SliceEditor => self.slice_editor.help_at(pos),
+            Pane::AudioEditor => self.audio_editor.help_at(pos),
             Pane::SeqEditor => self.seq_editor.help_at(pos),
             Pane::ContainerEditor => self.container_editor.help_at(pos),
             Pane::PluginParams => self.plugin_params.help_at(pos),
@@ -861,6 +909,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.handle(event, doc, &self.registry),
             Pane::StepEditor => self.step_editor.handle(event, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.handle(event, doc, &self.registry),
+            Pane::AudioEditor => self.audio_editor.handle(event, doc, &self.registry),
             Pane::SeqEditor => self.seq_editor.handle(event, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.handle(event, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.handle(event, doc, &self.registry),
@@ -898,6 +947,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Undoes the last step; false when there is nothing to undo.
     pub fn undo(&mut self) -> bool {
+        self.commit_patch_browse();
         self.plugins_flush_dirty();
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo(&self.registry)));
         self.after_history_step(done, "undo")
@@ -905,6 +955,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Redoes the last undone step; false when there is nothing to redo.
     pub fn redo(&mut self) -> bool {
+        self.commit_patch_browse();
         self.plugins_flush_dirty();
         let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo(&self.registry)));
         self.after_history_step(done, "redo")
@@ -979,6 +1030,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sample_editor.sync(doc, &self.registry);
         self.step_editor.sync(doc, &self.registry);
         self.slice_editor.sync(doc, &self.registry);
+        self.audio_editor.sync(doc, &self.registry);
         self.seq_editor.sync(doc, &self.registry);
         self.container_editor.sync(doc, &self.registry);
         if self.plugin_params_open {
@@ -987,6 +1039,8 @@ impl<S: EngineSink> AppCore<S> {
         self.sample_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         self.slice_editor
+            .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
+        self.audio_editor
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         // The clip inspector shows what the arrangement has selected.
         self.transport_bar
@@ -1002,6 +1056,9 @@ impl<S: EngineSink> AppCore<S> {
         }
         if self.slice_editor.device().is_some() && !self.slice_editor.is_present() {
             self.close_slice_editor();
+        }
+        if self.audio_editor.clip().is_some() && !self.audio_editor.is_present() {
+            self.close_audio_editor();
         }
         if self.seq_editor.device().is_some() && !self.seq_editor.is_present() {
             self.close_seq_editor();
@@ -1087,6 +1144,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_discard_on_next_reset();
         self.plugin_params_open = false;
         self.set_saved(doc.clone());
+        self.end_patch_browse_for_new_document();
         self.document = Document::new(doc);
         self.file = file;
         self.rejection = None;
@@ -1101,6 +1159,7 @@ impl<S: EngineSink> AppCore<S> {
         self.close_sample_editor();
         self.close_step_editor();
         self.close_slice_editor();
+        self.close_audio_editor();
         self.close_seq_editor();
         self.close_container_editor();
         // A new project shows the top level of the rack (the scope is view state).
@@ -1340,6 +1399,8 @@ impl<S: EngineSink> AppCore<S> {
                 // Plugin pins, run mode, power or link: power and run mode reach the
                 // live instance, a relink makes the engine rebuild.
                 SyncOp::PluginChanged { .. } => self.plugins_sync_op(op),
+                // A patch (or its undo) replaced a plugin's state: the live instance takes it.
+                SyncOp::PluginStateChanged { device } => self.plugin_state_changed(device),
                 SyncOp::SongChanged => stale.0 = true,
                 // The graph changes (devices leave, a player comes): a new engine.
                 SyncOp::FrozenChanged => restart = true,
@@ -2156,6 +2217,7 @@ impl<S: EngineSink> AppCore<S> {
             Pane::SampleEditor => self.sample_editor.paint(canvas, doc, &self.registry),
             Pane::StepEditor => self.step_editor.paint(canvas, doc, &self.registry),
             Pane::SliceEditor => self.slice_editor.paint(canvas, doc, &self.registry),
+            Pane::AudioEditor => self.audio_editor.paint(canvas, doc, &self.registry),
             Pane::SeqEditor => self.seq_editor.paint(canvas, doc, &self.registry),
             Pane::ContainerEditor => self.container_editor.paint(canvas, doc, &self.registry),
             Pane::PluginParams => self.plugin_params.paint(canvas, doc, &self.registry),
@@ -2212,6 +2274,7 @@ impl<S: EngineSink> AppCore<S> {
             self.close_sample_editor();
             self.close_step_editor();
             self.close_slice_editor();
+            self.close_audio_editor();
             self.close_seq_editor();
             self.close_container_editor();
             self.release_piano_roll_audition();
@@ -2375,6 +2438,16 @@ impl<S: EngineSink> AppCore<S> {
     /// Sets the keep-events policy (see [`crate::record_over`]).
     pub fn set_keep_events(&mut self, policy: KeepEvents) {
         self.keep_events = policy;
+    }
+
+    /// Which imported audio files are warped to the song tempo.
+    pub fn warp_imports(&self) -> crate::import_warp::WarpImports {
+        self.warp_imports
+    }
+
+    /// Sets the warp-on-import choice for the next imports.
+    pub fn set_warp_imports(&mut self, mode: crate::import_warp::WarpImports) {
+        self.warp_imports = mode;
     }
 
     /// Completes the edit of note clip `id` under the keep-events policy: the follow-up commands
@@ -2719,6 +2792,12 @@ mod drums;
 #[path = "app_core_slicer.rs"]
 mod slicer;
 
+#[path = "app_core_audio_editor.rs"]
+mod clip_editor;
+
+#[path = "app_core_audition.rs"]
+mod audition;
+
 #[path = "app_core_players.rs"]
 mod players;
 
@@ -2803,6 +2882,9 @@ mod browser;
 #[path = "app_core_library.rs"]
 mod library;
 pub use library::LoadTarget;
+
+#[path = "app_core_patches.rs"]
+mod patches;
 
 pub use plugins::{
     LOG_CAPACITY, PluginConfig, PluginPaths, PluginWindowInfo, PluginWindowRequest, RECOVERY_KEEP,
@@ -2953,6 +3035,10 @@ mod browser_tests;
 mod library_tests;
 
 #[cfg(test)]
+#[path = "app_core_patches_tests.rs"]
+mod patches_tests;
+
+#[cfg(test)]
 #[path = "app_core_tempo_tests.rs"]
 mod tempo_tests;
 
@@ -2971,6 +3057,14 @@ mod inspector_tests;
 #[cfg(test)]
 #[path = "app_core_warp_tests.rs"]
 mod warp_tests;
+
+#[cfg(test)]
+#[path = "app_core_audio_editor_tests.rs"]
+mod audio_editor_tests;
+
+#[cfg(test)]
+#[path = "app_core_audition_tests.rs"]
+mod audition_tests;
 
 #[cfg(test)]
 #[path = "app_core_keys_tests.rs"]

@@ -518,6 +518,9 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                 "sample_zones": d.zones.len(), "step_sequencer": d.steps.is_some(), "cv_curves": d.curves.is_some(),
                 "drum_patterns": d.drums.as_ref().map_or(0, |x| x.patterns.len()),
             });
+            if !d.patch_name.is_empty() {
+                v["patch"] = json!(d.patch_name);
+            }
             if include_params {
                 let params: serde_json::Map<String, Value> = d
                     .params

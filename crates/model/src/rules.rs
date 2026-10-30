@@ -564,6 +564,39 @@ pub(crate) fn check_asset(hash: &str, meta: &AssetMeta) -> Result<(), ModelError
     Ok(())
 }
 
+/// Plans `Command::RenameAsset`: the name is trimmed and must be 1..=`MAX_ASSET_NAME` characters
+/// without control characters; the asset must be in the pool and the name must differ.
+pub(crate) fn plan_rename_asset(
+    doc: &RackDoc,
+    asset: &str,
+    name: &str,
+) -> Result<Edit, ModelError> {
+    let meta = doc
+        .assets
+        .get(asset)
+        .ok_or_else(|| ModelError::UnknownKey(format!("asset {asset}")))?;
+    let name = name.trim();
+    if name.is_empty()
+        || name.chars().count() > crate::MAX_ASSET_NAME
+        || name.chars().any(char::is_control)
+    {
+        return Err(ModelError::OutOfRange(format!(
+            "an asset name must be 1 to {} characters without control characters",
+            crate::MAX_ASSET_NAME
+        )));
+    }
+    if name == meta.original_name {
+        return Err(ModelError::BadSong(
+            "the asset already has that name".into(),
+        ));
+    }
+    Ok(Edit::AssetName {
+        asset: asset.to_owned(),
+        old: meta.original_name.clone(),
+        new: name.to_owned(),
+    })
+}
+
 /// `Command::RegisterAsset`: adds the asset, or checks it against the one already there.
 pub(crate) fn register_asset(
     doc: &mut RackDoc,

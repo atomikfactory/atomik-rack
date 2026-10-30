@@ -262,6 +262,8 @@ pub struct PanelInfo<'a> {
     pub folded: bool,
     /// Panel height.
     pub height: f64,
+    /// The patch browser applies patches to this device: the patch name is drawn in orange.
+    pub patch_browse: bool,
     /// Seed for small per-device variations (screw angles).
     pub seed: u64,
     /// Drum panel: the selected pad (1..=16).
@@ -386,6 +388,98 @@ pub fn bypass_button_rect(height: f64, folded: bool) -> Rect {
 /// the tuner opens or closes the panel.
 pub fn tuner_button_rect() -> Rect {
     bypass_button_rect(f64::from(atomik_device_sdk::RACK_UNIT), false)
+}
+
+/// The parts of the patch strip on the foot of an unfolded name plate, in panel coordinates:
+/// previous patch, the patch name (a click browses), next patch and save.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PatchStrip {
+    /// The previous-patch arrow.
+    pub prev: Rect,
+    /// The patch name field.
+    pub name: Rect,
+    /// The next-patch arrow.
+    pub next: Rect,
+    /// The save button.
+    pub save: Rect,
+}
+
+/// The patch strip of a plate `height` tall: a row beside the fold chevron, under everything
+/// else on the plate (the BYPASS and TUNER switches end 24 px above the panel bottom).
+pub fn patch_strip(height: f64) -> PatchStrip {
+    let cy = height - 13.0;
+    let (y0, y1) = (cy - 6.0, cy + 6.0);
+    let x = PLATE_X.0;
+    PatchStrip {
+        prev: Rect::new(x + 20.0, y0, x + 29.0, y1),
+        name: Rect::new(x + 30.0, y0, x + 54.0, y1),
+        next: Rect::new(x + 55.0, y0, x + 64.0, y1),
+        save: Rect::new(x + 66.0, y0, x + 77.0, y1),
+    }
+}
+
+/// Whether a plate has the patch strip: it belongs to a device of the document whose type takes
+/// patches (not the audio interface, not a console device) and shows while the device is not
+/// folded.
+pub fn has_patch_strip(device: Option<&RackDevice>, folded: bool) -> bool {
+    !folded
+        && device.is_some_and(|d| {
+            !atomik_model::console::is_console_type(&d.type_id)
+                && d.type_id != atomik_model::SPLIT_TYPE
+        })
+}
+
+fn patch_strip_paint<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
+    let strip = patch_strip(info.height);
+    for (rect, forward) in [(strip.prev, false), (strip.next, true)] {
+        let m = rect.center();
+        let dx = if forward { 1.5 } else { -1.5 };
+        let mut p = BezPath::new();
+        p.move_to(pt(m.x - dx, m.y - 3.5));
+        p.line_to(pt(m.x + dx, m.y));
+        p.line_to(pt(m.x - dx, m.y + 3.5));
+        c.stroke(&p.into(), &round_stroke(1.4), &solid(theme.text_muted));
+    }
+    c.fill_with(RoundedRect::from_rect(strip.name, 2.0), theme.lcd);
+    if info.patch_browse {
+        c.stroke_with(
+            RoundedRect::from_rect(strip.name, 2.0),
+            1.2,
+            crate::theme::PATCH_TARGET,
+        );
+    }
+    let named = info.device.is_some_and(|d| !d.patch_name.is_empty());
+    let label = info
+        .device
+        .filter(|d| !d.patch_name.is_empty())
+        .map_or("-", |d| d.patch_name.as_str());
+    c.text(
+        &TextRun::new(
+            fit_label(label, strip.name.width() - 4.0, 6.0),
+            pt(strip.name.x0 + 3.0, strip.name.center().y + 2.2),
+            6.0,
+            if info.patch_browse {
+                crate::theme::PATCH_TARGET
+            } else if named {
+                info.accent
+            } else {
+                theme.text_muted
+            },
+        )
+        .weight(600),
+    );
+    // Save: a small disk.
+    let m = strip.save.center();
+    let body = Rect::new(m.x - 4.0, m.y - 4.0, m.x + 4.0, m.y + 4.0);
+    c.stroke_with(RoundedRect::from_rect(body, 1.0), 1.0, theme.text_muted);
+    c.fill_with(
+        Rect::new(m.x - 2.5, m.y - 4.0, m.x + 2.5, m.y - 1.0),
+        theme.text_muted,
+    );
+    c.fill_with(
+        Rect::new(m.x - 2.5, m.y + 1.0, m.x + 2.5, m.y + 4.0),
+        with_alpha(theme.text_muted, 0.6),
+    );
 }
 
 /// Whether the panel of `info` is an audio track's, whose name plate has the TUNER switch.
@@ -545,6 +639,9 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
         .weight(600)
         .spacing(0.9),
     );
+    if info.side == Side::Front && has_patch_strip(info.device, info.folded) {
+        patch_strip_paint(c, theme, info);
+    }
     plate_foot(c, theme, info, r);
 }
 
@@ -558,11 +655,19 @@ fn plate_foot<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>
         );
     } else {
         // Status LED.
-        let led = pt(
-            r.x1 - 9.0,
-            r.y1 - 9.0 + if info.device.is_none() { 0.0 } else { 2.0 },
-        );
-        c.fill_with(Circle::new(led, 5.0), with_alpha(info.accent, 0.22));
+        // With the patch strip on the foot of the plate the LED moves to the top corner.
+        let (led, glow) = if has_patch_strip(info.device, info.folded) {
+            (pt(r.x1 - 8.0, r.y0 + 8.0), 4.0)
+        } else {
+            (
+                pt(
+                    r.x1 - 9.0,
+                    r.y1 - 9.0 + if info.device.is_none() { 0.0 } else { 2.0 },
+                ),
+                5.0,
+            )
+        };
+        c.fill_with(Circle::new(led, glow), with_alpha(info.accent, 0.22));
         c.fill_with(Circle::new(led, 2.4), info.accent);
     }
 }

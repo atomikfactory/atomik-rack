@@ -386,6 +386,7 @@ pub(crate) fn add_audio_track(
             inner: None,
             plugin: None,
             column: 0,
+            patch_name: String::new(),
         },
         cables: Vec::new(),
     };
@@ -1395,6 +1396,30 @@ pub(crate) fn plan(
                     start,
                     length,
                     muted,
+                    content: ClipContent::Audio(content),
+                    ..c.clone()
+                }),
+            }
+        }
+        SongCommand::SetWarpMarkers { id, markers, .. } => {
+            let (device, lane, c) = find_clip(doc, id)?;
+            let ClipContent::Audio(a) = &c.content else {
+                return Err(bad(format!("clip {} is not an audio clip", id.0)));
+            };
+            if a.warp.markers == markers {
+                return Err(bad("the clip already has those warp markers"));
+            }
+            if markers.last().is_some_and(|m| m.tick > c.length) {
+                return Err(range("a warp marker lies past the end of the clip"));
+            }
+            let mut content = a.clone();
+            content.warp.markers = markers;
+            check_audio(doc, &content)?;
+            Edit::Clip {
+                device,
+                lane,
+                old: Some(c.clone()),
+                new: Some(Clip {
                     content: ClipContent::Audio(content),
                     ..c.clone()
                 }),

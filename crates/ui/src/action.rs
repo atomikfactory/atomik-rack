@@ -175,6 +175,15 @@ pub enum UiAction {
         /// Where it goes.
         slot: RackSlot,
     },
+    /// A patch item was dropped on the patch strip of a device: the device takes the patch if
+    /// the file holds one device of the device's type (the app says why when it does not). One
+    /// undo step.
+    ApplyLibraryPatch {
+        /// The `.atomikpatch` file.
+        path: PathBuf,
+        /// The device (path key).
+        device: DeviceKey,
+    },
     /// A note clip item was dropped on a note lane of the arrangement: paste it on lane `lane`
     /// (an index into the track's lanes, always a note lane) of `track` at the snapped song
     /// tick `tick` (never negative). One undo step; a drop anywhere else emits nothing.
@@ -232,6 +241,52 @@ pub enum UiAction {
     OpenSliceEditor(DeviceKey),
     /// Close the slice editor and show the arrangement again.
     CloseSliceEditor,
+    /// Open this audio clip in the audio clip editor (double-click on an audio clip, Enter): call
+    /// [`crate::AudioEditorView::open`] and show it in place of the arrangement. Opening another
+    /// clip while the editor is open keeps its mode.
+    OpenAudioEditor(ClipId),
+    /// Close the audio clip editor and show the arrangement again.
+    CloseAudioEditor,
+    /// Make a Loop Slicer from the audio clip: a new device that slices the clip's span of its
+    /// file at the clip's warp markers, as one undo step (the app owns the device keys).
+    ClipToSlicer(ClipId),
+    /// Find the transients of the audio clip open in the audio clip editor (Slice mode opened, a
+    /// clip opened in it, or the sensitivity changed): the app detects them off the UI thread, in
+    /// the span of the file the clip plays, and gives them back with
+    /// [`crate::AudioEditorView::set_transients`]. `sensitivity` is in percent (0..=100).
+    DetectTransients {
+        /// The clip.
+        clip: ClipId,
+        /// Detector sensitivity in percent.
+        sensitivity: u8,
+    },
+    /// The speaker tool is pressed: play the frames `start_frame..end_frame` of `asset` as they
+    /// are in the file (at the file's own rate, no warp, fades or envelope), from the end down
+    /// when `reverse`, at `gain_db`. Live only; a new press replaces the audition and
+    /// [`UiAction::StopAudition`] (the release) ends it.
+    AuditionSpan {
+        /// The asset (its content hash).
+        asset: String,
+        /// First frame of the span.
+        start_frame: u64,
+        /// The frame after the last one.
+        end_frame: u64,
+        /// Play the span backwards.
+        reverse: bool,
+        /// Gain in dB.
+        gain_db: f32,
+    },
+    /// The speaker tool is released: stop the audition of [`UiAction::AuditionSpan`].
+    StopAudition,
+    /// A press on the patch strip of a device panel: step to the previous or next patch of its
+    /// type, browse the patches, or save the device as a patch (the app asks for the name). The
+    /// press also selected the device.
+    DevicePatch {
+        /// The device (path key).
+        device: DeviceKey,
+        /// What was pressed.
+        op: PatchOp,
+    },
     /// Slice the loop of `device` (the Slice button of the slicer panel or of the slice editor).
     /// The UI has no samples, so the **app** computes the markers and applies one
     /// [`atomik_model::Command::SetZones`] built with [`atomik_model::slices_from_markers`]
@@ -427,6 +482,21 @@ pub enum UiAction {
     Browse(BrowseAction),
 }
 
+/// A part of the patch strip of a device panel (see [`UiAction::DevicePatch`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchOp {
+    /// The previous-patch arrow.
+    Previous,
+    /// The next-patch arrow.
+    Next,
+    /// The patch name: browse the patches of the device's type.
+    Browse,
+    /// The save button.
+    Save,
+    /// A right-click on the patch name: a pop-up of the patches of the same type in the folder.
+    Siblings,
+}
+
 /// What a context menu was opened on (see [`UiAction::ContextMenu`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextTarget {
@@ -556,6 +626,13 @@ pub enum BrowseAction {
     Preview(PathBuf),
     /// Stop the preview.
     StopPreview,
+    /// With a patch target ([`crate::FileBrowserView::set_patch_target`]): this patch row was
+    /// selected (clicked, or stepped to with the arrow keys). Apply it to the target device as
+    /// a preview with no undo step.
+    Audition(PathBuf),
+    /// With a patch target: Escape. Put the target device back as it was and end patch
+    /// browsing.
+    Cancel,
     /// Toggle favourite on these files together (see `LibraryDb::toggle_favorite`).
     ToggleFavorite(Vec<PathBuf>),
     /// Tag these files.
