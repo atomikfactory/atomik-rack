@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[232.00,471.00,492.00,953.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[230.00,468.00,490.00,950.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[230.00,468.00,490.00,950.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[232.00,471.00,492.00,986.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[230.00,468.00,490.00,983.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[230.00,468.00,490.00,983.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[262.00,488.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Cmd+X","at":[476.00,488.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[262.00,512.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -32,5 +32,7 @@
 {"text":"Previous Patch","at":[262.00,914.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Cmd+Left","at":[476.00,914.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Next Patch","at":[262.00,938.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Cmd+Right","at":[476.00,938.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"}
+{"text":"Cmd+Right","at":[476.00,938.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
+{"fill":{"rect":[240.00,950.00,480.00,951.00]},"brush":"#ffffff1c"},
+{"text":"Choose MIDI Out Port","at":[262.00,971.50],"size":13.00,"weight":400,"align":"start","color":"#8f96a0ff"}
 ]}

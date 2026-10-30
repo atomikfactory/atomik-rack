@@ -408,6 +408,8 @@ pub struct Shell<B: AudioBackend> {
     patch_device: Option<DeviceKey>,
     /// The device whose patch name opened the pop-up of its folder's patches.
     patch_menu: Option<DeviceKey>,
+    /// The MIDI Out device whose port pop-up is open.
+    midi_out_menu: Option<DeviceKey>,
     /// The plugin banner above the rack: the project uses plugins, or the last run
     /// ended unexpectedly.
     banner: PluginBannerView,
@@ -590,6 +592,7 @@ impl<B: AudioBackend> Shell<B> {
             load_device: None,
             patch_device: None,
             patch_menu: None,
+            midi_out_menu: None,
             banner,
             plugin_settings: None,
             relink: None,
@@ -2592,6 +2595,50 @@ impl<B: AudioBackend> Shell<B> {
         self.show_context_menu(Pane::Rack, window, menu);
     }
 
+    /// Opens the pop-up of the output ports under the plate of the MIDI Out device `device`, the
+    /// device's own port checked (or the default). A choice runs `rack.midi_out_pick`.
+    fn open_midi_out_ports(&mut self, device: &DeviceKey) {
+        let Some(current) = self.core.midi_out_port_of(device) else {
+            self.core.report("Select a MIDI Out device first");
+            return;
+        };
+        let ports = self
+            .core
+            .sink()
+            .backend()
+            .list_midi_out()
+            .unwrap_or_default();
+        let Some(at) = self
+            .core
+            .view()
+            .patch_strip_center(device, atomik_ui::PatchOp::Browse)
+        else {
+            return;
+        };
+        let at = self.rack_window_point(at);
+        let entries = context_menus::midi_out_entries(&ports, current.as_deref());
+        self.midi_out_menu = Some(device.clone());
+        let (window, size) = self.menu_window(Pane::Rack);
+        let menu = ContextMenu::from_entries(entries, at, size);
+        self.show_context_menu(Pane::Rack, window, menu);
+    }
+
+    /// A port chosen in the pop-up of a MIDI Out device (see [`Self::open_midi_out_ports`]); an
+    /// empty name is the default.
+    fn pick_midi_out_port(&mut self, port: &str) {
+        let device = self
+            .midi_out_menu
+            .take()
+            .or_else(|| self.core.view().primary());
+        match device {
+            Some(device) => {
+                let port = (!port.is_empty()).then(|| port.to_owned());
+                self.core.set_midi_out_port(&device, port);
+            }
+            None => self.core.report("Select a MIDI Out device first"),
+        }
+    }
+
     /// A patch chosen in the pop-up of a patch name (see [`Self::open_patch_siblings`]).
     fn pick_patch_from_menu(&mut self, path: &str) {
         let device = self
@@ -3264,6 +3311,11 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.patch_next", None) => self.step_patch_of_selection(1),
             ("rack.patch_prev", None) => self.step_patch_of_selection(-1),
             ("rack.patch_pick", Some(path)) => self.pick_patch_from_menu(path),
+            ("rack.midi_out_port", None) => match self.core.view().primary() {
+                Some(device) => self.open_midi_out_ports(&device),
+                None => self.core.report("Select a MIDI Out device first"),
+            },
+            ("rack.midi_out_pick", Some(port)) => self.pick_midi_out_port(port),
             ("edit.copy_settings", None) => self.core.copy_settings(),
             ("edit.paste_settings", None) => self.core.paste_settings(),
             ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
@@ -3752,6 +3804,11 @@ impl<B: AudioBackend> Shell<B> {
                 && core.view().selection_len() == 1
                 && doc.console.master.is_some()
                 && core.view().primary() == doc.console.master,
+            midi_out: pane == Pane::Rack
+                && core
+                    .view()
+                    .primary()
+                    .is_some_and(|d| core.midi_out_port_of(&d).is_some()),
             assign_send: pane == Pane::Rack
                 && core
                     .view()

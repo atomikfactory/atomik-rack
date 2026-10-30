@@ -970,7 +970,8 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
         [
             "Control surface",
             "Surface MIDI input",
-            "Surface MIDI output"
+            "Surface MIDI output",
+            "MIDI Out device port"
         ]
     );
     let sections = d.sections();
@@ -979,6 +980,7 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
     assert_eq!(labels(0), ["None", "Control surface (MCU-compatible)"]);
     assert_eq!(labels(1), ["None", "Example Surface", "Example Keyboard"]);
     assert_eq!(labels(2), ["None", "Example Surface"]);
+    assert_eq!(labels(3), ["None", "Example Surface"]);
     // Nothing is chosen by default.
     for (_, _, c) in &d.layout(VIEW).options {
         assert_eq!(
@@ -988,6 +990,7 @@ fn the_surfaces_tab_offers_a_driver_and_the_two_ports() {
                 Choice::SurfaceDriver(None)
                     | Choice::SurfaceInput(None)
                     | Choice::SurfaceOutput(None)
+                    | Choice::MidiOutPort(None)
             )
         );
     }
@@ -1019,6 +1022,36 @@ fn choosing_a_surface_is_applied_with_the_settings() {
     pick(&mut d, "Surface MIDI output", "None");
     assert_eq!(d.draft().surface.output, None);
     assert_eq!(d.draft().surface.input.as_deref(), Some("Example Surface"));
+}
+
+#[test]
+fn the_port_of_the_midi_out_devices_is_chosen_with_the_settings() {
+    let mut d = surfaces_dialog(AudioSettings::default());
+    goto(&mut d, Tab::Surfaces);
+    pick(&mut d, "MIDI Out device port", "Example Surface");
+    assert_eq!(d.draft().midi_out_port.as_deref(), Some("Example Surface"));
+    assert_eq!(
+        d.draft().surface.output,
+        None,
+        "the surface's own port is separate"
+    );
+    let apply = d.layout(VIEW).apply.center();
+    let DialogOutcome::Apply(s) = down(&mut d, apply) else {
+        panic!("apply");
+    };
+    assert_eq!(s.midi_out_port.as_deref(), Some("Example Surface"));
+    // A saved port that is not plugged in stays selectable, and None clears it.
+    let gone = AudioSettings {
+        midi_out_port: Some("Old Synth".into()),
+        ..AudioSettings::default()
+    };
+    let mut d = surfaces_dialog(gone);
+    goto(&mut d, Tab::Surfaces);
+    let last = d.sections()[3].options.last().unwrap().clone();
+    assert_eq!(last.0, "Old Synth (not found)");
+    assert!(d.is_selected(&last.1));
+    pick(&mut d, "MIDI Out device port", "None");
+    assert_eq!(d.draft().midi_out_port, None);
 }
 
 #[test]

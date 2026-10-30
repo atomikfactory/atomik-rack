@@ -339,6 +339,7 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.browse_patch",
             "rack.patch_prev",
             "rack.patch_next",
+            "rack.midi_out_port",
         ]
     );
     let text = |id: &str| {
