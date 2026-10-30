@@ -17,11 +17,12 @@
 //! * Output: sum of voices · 0.5 · master gain (5 ms smoothing), then a soft limiter that is
 //!   linear up to ±2 and saturates smoothly towards ±4, which guarantees |x| < 4 for every param
 //!   combination. There is no stereo spread in this slice, so `out_l == out_r`.
-//! * Channel messages: pitch bend moves every voice by up to ±2 semitones ([`BEND_RANGE`], at the
-//!   16-sample control rate) and the mod wheel (CC 1) adds up to one semitone of LFO vibrato
-//!   ([`WHEEL_VIBRATO`]) on top of `lfo.to_pitch`. Both are device state that `AllOff` leaves
-//!   alone (as a hardware synth does) and `reset` clears; other controllers and pressure are
-//!   ignored.
+//! * Channel messages: pitch bend moves every voice by up to `bend.range` semitones (default 2;
+//!   RPN 0 changes it; at the 16-sample control rate) and the mod wheel (CC 1) adds up to one
+//!   semitone of LFO vibrato ([`WHEEL_VIBRATO`]) on top of `lfo.to_pitch`. Both are device state
+//!   that `AllOff` leaves alone (as a hardware synth does) and `reset` clears. The sustain pedal
+//!   (CC 64), volume (CC 7), expression (CC 11) and pressure are kept by a
+//!   [`ControllerState`]; other controllers are ignored.
 //! * Randomness (noise, sample & hold LFO) comes from `Rng`s derived from `PrepareInfo::seed`.
 
 use atomik_core::{BATCH, NoteKind, ParamDescriptor, ParamId, Taper, Unit};
@@ -34,6 +35,7 @@ use atomik_dsp::{
     balance_gains, note_to_hz,
 };
 
+use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
 use crate::cv_in::{clean, db_gain};
 
 /// Number of preallocated voices.
@@ -101,7 +103,8 @@ const P_CV_PITCH: u32 = 31;
 const P_CV_RESONANCE: u32 = 32;
 const P_CV_LEVEL: u32 = 33;
 const P_CV_PAN: u32 = 34;
-const PARAM_COUNT: usize = 35;
+const P_BEND_RANGE: u32 = 35;
+const PARAM_COUNT: usize = 36;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -421,6 +424,15 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::None,
         false,
     ),
+    param(
+        P_BEND_RANGE,
+        "bend.range",
+        "Bend range",
+        (0.0, MAX_BEND_RANGE, DEFAULT_BEND_RANGE),
+        Lin,
+        Unit::Semitones,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -540,8 +552,6 @@ const CONTROL_INTERVAL: u32 = 16;
 const CV_PITCH_RANGE: f32 = 24.0;
 /// Fixed range of the level CV in dB (times `master.level_cv_trim`).
 const CV_LEVEL_RANGE_DB: f32 = 24.0;
-/// Pitch bend range in semitones each way.
-const BEND_RANGE: f32 = 2.0;
 /// Extra LFO depth in semitones at a full mod wheel (CC 1).
 const WHEEL_VIBRATO: f32 = 1.0;
 /// Per-voice output gain before the master stage.
@@ -584,7 +594,7 @@ struct Shared {
     env_amount: f32,
     key_track: f32,
     lfo_to_pitch: f32,
-    /// Pitch bend in semitones, `-BEND_RANGE..=BEND_RANGE`.
+    /// Pitch bend in semitones, `-range..=range` (the controller state's range).
     bend: f32,
     /// Mod wheel (CC 1), `0..=1`.
     wheel: f32,
@@ -822,6 +832,8 @@ pub struct PolySynth {
     master: Smoother,
     cv_level_db: f32,
     cv_pan_amount: f32,
+    /// Sustain, volume, expression, pressure and the bend range.
+    ctl: ControllerState,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -868,6 +880,7 @@ impl PolySynth {
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
             cv_level_db: CV_LEVEL_RANGE_DB,
             cv_pan_amount: 1.0,
+            ctl: ControllerState::new(),
             fresh: true,
             seed: 0,
             #[cfg(test)]
@@ -932,6 +945,10 @@ impl PolySynth {
             P_CV_RESONANCE => self.shared.cv_resonance_amount = v,
             P_CV_LEVEL => self.cv_level_db = v * CV_LEVEL_RANGE_DB,
             P_CV_PAN => self.cv_pan_amount = v,
+            P_BEND_RANGE => {
+                self.ctl.set_bend_range(v);
+                self.shared.bend = self.ctl.bend_semitones();
+            }
             P_VOICES => {
                 self.voice_limit = (v.round().max(1.0) as usize).min(MAX_VOICES);
                 for vc in &mut voices[self.voice_limit..] {
@@ -947,6 +964,7 @@ impl PolySynth {
     }
 
     fn note_on(&mut self, key: u8, velocity: f32) {
+        self.ctl.note_on(key);
         let p = self.shared;
         let order = self.next_order;
         self.next_order += 1;
@@ -978,20 +996,40 @@ impl PolySynth {
     fn handle(&mut self, kind: NoteKind) {
         match kind {
             NoteKind::On { key, velocity } => self.note_on(key, velocity),
-            NoteKind::Off { key } => self
-                .voices
-                .iter_mut()
-                .filter(|v| v.sounding_key() == Some(key))
-                .for_each(Voice::release),
-            NoteKind::AllOff => self.voices.iter_mut().for_each(Voice::release),
-            NoteKind::PitchBend { value } => self.shared.bend = value.clamp(-1.0, 1.0) * BEND_RANGE,
+            NoteKind::Off { key } => {
+                if self.ctl.note_off(key) {
+                    self.release_key(key);
+                }
+            }
+            NoteKind::AllOff => {
+                self.ctl.all_off();
+                self.voices.iter_mut().for_each(Voice::release);
+            }
             NoteKind::Cc {
                 controller: 1,
                 value,
             } => self.shared.wheel = value.clamp(0.0, 1.0),
-            // The other controllers, pressure and expressions are ignored.
-            _ => {}
+            // Pedal, volume, expression, pressure, bend and its range.
+            _ => {
+                if self.ctl.handle(kind) == Effect::ReleaseHeld {
+                    let voices = &mut self.voices;
+                    self.ctl.release_held(|key| {
+                        voices
+                            .iter_mut()
+                            .filter(|v| v.sounding_key() == Some(key))
+                            .for_each(Voice::release);
+                    });
+                }
+                self.shared.bend = self.ctl.bend_semitones();
+            }
         }
+    }
+
+    fn release_key(&mut self, key: u8) {
+        self.voices
+            .iter_mut()
+            .filter(|v| v.sounding_key() == Some(key))
+            .for_each(Voice::release);
     }
 
     #[cfg(test)]
@@ -1028,6 +1066,7 @@ impl Device for PolySynth {
             v.vel_gain.set_time(VELOCITY_GLIDE_MS, sr);
         }
         self.master.set_time(MASTER_SMOOTH_MS, sr);
+        self.ctl.set_sample_rate(sr);
         self.lfo = Lfo::new(derive_seed(info.seed, 0));
         self.apply_all();
         self.reset();
@@ -1042,6 +1081,7 @@ impl Device for PolySynth {
             v.noise = Rng::new(derive_seed(self.seed, i as u64 + 1));
         }
         self.next_order = 0;
+        self.ctl.reset();
         self.shared.bend = 0.0;
         self.shared.wheel = 0.0;
         self.lfo.reset();
@@ -1073,6 +1113,7 @@ impl Device for PolySynth {
         let cv_res = *ctx.input(RESONANCE_CV_IN);
         self.shared.cv_resonance_on = ctx.is_connected(RESONANCE_CV_IN);
         let mut mix = [0.0f32; BATCH];
+        let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
@@ -1095,6 +1136,7 @@ impl Device for PolySynth {
             for v in self.voices.iter_mut().filter(|v| v.is_active()) {
                 v.render(&mut mix[start..end], &m, &p);
             }
+            self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
         }
         let level_on = ctx.is_connected(LEVEL_CV_IN);
@@ -1105,6 +1147,9 @@ impl Device for PolySynth {
                 g *= db_gain(self.cv_level_db, lv);
             }
             *s = soft_limit(*s * g);
+        }
+        for (s, g) in mix.iter_mut().zip(&ctl_gain) {
+            *s *= g;
         }
         if ctx.is_connected(PAN_CV_IN) {
             // Mono voice sum balanced by the pan CV (unity at the centre, like a stereo balance).
@@ -1130,7 +1175,10 @@ impl Device for PolySynth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{SR, assert_keys, harness, off, on, sweep_params_min_max};
+    use crate::test_support::{
+        SR, assert_bend_range, assert_keys, assert_sustain_pedal, assert_volume_and_expression,
+        harness, off, on, sweep_params_min_max,
+    };
     use atomik_core::NoteEvent;
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::signal::{db, dominant_frequency, max_step, peak, rms};
@@ -1234,6 +1282,7 @@ mod tests {
                 "filter.resonance_cv_trim",
                 "master.level_cv_trim",
                 "pan_cv_trim",
+                "bend.range",
             ],
             &[
                 "notes_in",
@@ -1454,9 +1503,45 @@ mod tests {
             controller: 1,
             value: 1.0,
         });
-        assert_eq!((s.shared.bend, s.shared.wheel), (-BEND_RANGE, 1.0));
+        assert_eq!((s.shared.bend, s.shared.wheel), (-DEFAULT_BEND_RANGE, 1.0));
         s.reset();
         assert_eq!((s.shared.bend, s.shared.wheel), (0.0, 0.0));
+    }
+
+    /// A steady sine with a quick release.
+    fn performance_synth() -> DeviceHarness {
+        let (mut h, _) = synth();
+        pure_sine(&mut h);
+        h.set_param("env.amp.release", 5.0);
+        h
+    }
+
+    #[test]
+    fn process_sustain_pedal_holds_the_release_until_pedal_up() {
+        assert_sustain_pedal(performance_synth, &OUT, 57);
+    }
+
+    #[test]
+    fn process_volume_and_expression_scale_the_output() {
+        assert_volume_and_expression(performance_synth, &OUT, 57);
+    }
+
+    #[test]
+    fn process_bend_range_param_and_rpn_zero() {
+        assert_bend_range(performance_synth, &OUT, 57);
+    }
+
+    #[test]
+    fn handle_pressure_reaches_the_modulation_source() {
+        let mut s = PolySynth::new();
+        s.handle(NoteKind::ChannelPressure { value: 0.5 });
+        s.handle(NoteKind::PolyPressure {
+            key: 60,
+            value: 0.75,
+        });
+        assert_eq!((s.ctl.pressure(60), s.ctl.pressure(61)), (0.75, 0.5));
+        s.reset();
+        assert_eq!(s.ctl.pressure(60), 0.0);
     }
 
     #[test]

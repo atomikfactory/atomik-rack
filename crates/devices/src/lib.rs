@@ -19,6 +19,7 @@ pub mod channel;
 pub mod character;
 pub mod compressor;
 pub mod container;
+pub mod controller_state;
 mod cv_in;
 pub mod cv_sequencer;
 pub mod distortion;

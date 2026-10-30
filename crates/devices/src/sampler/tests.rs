@@ -2,7 +2,10 @@
 //! (allocation freedom) (stealing, layering and swaps are deterministic).
 
 use super::*;
-use crate::test_support::{SR, assert_keys, harness, off, on, sweep_params_min_max};
+use crate::test_support::{
+    SR, assert_bend_range, assert_keys, assert_sustain_pedal, assert_volume_and_expression,
+    harness, off, on, sweep_params_min_max,
+};
 use atomik_core::{NoteEvent, NoteKind};
 use atomik_device_sdk::SampleBuffer;
 use atomik_testkit::harness::DeviceHarness;
@@ -176,6 +179,78 @@ fn all_off(offset: u16) -> NoteEvent {
     }
 }
 
+/// A long quiet sine on every key with a 5 ms release.
+fn performance_synth() -> DeviceHarness {
+    let (mut h, _) = with_map(&map(
+        vec![buffer(vec![sine(96_000, 109.0, 0.5)])],
+        vec![zone(0, 96_000)],
+    ));
+    h.set_param("env.amp.release", 5.0);
+    h
+}
+
+#[test]
+fn sustain_pedal_holds_the_release_until_pedal_up() {
+    assert_sustain_pedal(performance_synth, &OUT, 60);
+}
+
+#[test]
+fn volume_and_expression_scale_the_output() {
+    assert_volume_and_expression(performance_synth, &OUT, 60);
+}
+
+#[test]
+fn bend_range_param_and_rpn_zero() {
+    assert_bend_range(performance_synth, &OUT, 60);
+}
+
+#[test]
+fn sustain_pedal_leaves_one_shot_zones_alone() {
+    let mut z = zone(0, 96_000);
+    z.trigger = TriggerMode::OneShot;
+    let make = || {
+        let (mut h, _) = with_map(&map(vec![buffer(vec![sine(96_000, 109.0, 0.5)])], vec![z]));
+        h.set_param("env.amp.release", 5.0);
+        h
+    };
+    let run = |pedal: bool| {
+        let mut h = make();
+        if pedal {
+            h.push_note(
+                "notes_in",
+                NoteEvent {
+                    offset: 0,
+                    kind: NoteKind::Cc {
+                        controller: 64,
+                        value: 1.0,
+                    },
+                },
+            );
+        }
+        h.push_note("notes_in", on(1, 60, 1.0));
+        h.push_note("notes_in", off(5, 60));
+        bits(&h.render(100, &OUT).remove(0))
+    };
+    assert_eq!(
+        run(true),
+        run(false),
+        "a one-shot ignores the note-off either way"
+    );
+}
+
+#[test]
+fn pressure_reaches_the_modulation_source() {
+    let mut s = Sampler::new();
+    s.handle(NoteKind::ChannelPressure { value: 0.5 });
+    s.handle(NoteKind::PolyPressure {
+        key: 60,
+        value: 0.75,
+    });
+    assert_eq!((s.ctl.pressure(60), s.ctl.pressure(61)), (0.75, 0.5));
+    s.reset();
+    assert_eq!(s.ctl.pressure(60), 0.0);
+}
+
 #[test]
 fn descriptor_validates() {
     assert_keys(
@@ -211,6 +286,7 @@ fn descriptor_validates() {
             "filter.resonance_cv_trim",
             "master.level_cv_trim",
             "pan_cv_trim",
+            "bend.range",
         ],
         &[
             "notes_in",

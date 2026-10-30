@@ -11,6 +11,9 @@
 //!   the playhead of `atomik_dsp::Playhead` (loops, ping-pong, crossfade and edge clamping are
 //!   specified there). With the loop off, the last frames before `end` fade linearly to zero
 //!   (see `end_fade_len`), so the voice reaches silence at `end` and then goes idle.
+//! * **Performance controllers.** Pitch bend adds up to `bend.range` semitones (default 2) to the
+//!   pitch of every voice; the sustain pedal holds back the note-off of gate zones; volume and
+//!   expression scale the output (see [`crate::controller_state`]).
 //! * **Reverse.** A zone with `reverse` plays from `end - 1` down to `start` through the same
 //!   playhead (no loop; the end fade of 64 frames or 1.5 ms is at `start`).
 //! * **Trigger modes.** Gate zones release on note-off; one-shot zones ignore note-off and play
@@ -60,6 +63,7 @@ use atomik_dsp::{
 };
 use std::sync::Arc;
 
+use crate::controller_state::{ControllerState, DEFAULT_BEND_RANGE, Effect, MAX_BEND_RANGE};
 use crate::cv_in::{clean, db_gain};
 use crate::poly_synth::{derive_seed, soft_limit};
 
@@ -122,7 +126,8 @@ const P_CV_CUTOFF: u32 = 26;
 const P_CV_RESONANCE: u32 = 27;
 const P_CV_LEVEL: u32 = 28;
 const P_CV_PAN: u32 = 29;
-const PARAM_COUNT: usize = 30;
+const P_BEND_RANGE: u32 = 30;
+const PARAM_COUNT: usize = 31;
 
 use Taper::{Decibel as Db, Exponential as Exp, Linear as Lin};
 
@@ -397,6 +402,15 @@ static PARAMS: [ParamDescriptor; PARAM_COUNT] = [
         Unit::None,
         false,
     ),
+    param(
+        P_BEND_RANGE,
+        "bend.range",
+        "Bend range",
+        (0.0, MAX_BEND_RANGE, DEFAULT_BEND_RANGE),
+        Lin,
+        Unit::Semitones,
+        false,
+    ),
 ];
 
 const NOTES_IN: SocketId = SocketId(0);
@@ -579,6 +593,8 @@ struct Shared {
     sample_rate: f32,
     tune_semi: f32,
     tune_fine: f32,
+    /// Pitch bend in semitones, `-range..=range` (the controller state's range).
+    bend: f32,
     velocity_amount: f32,
     filter_on: bool,
     filter_mode: FilterMode,
@@ -826,7 +842,7 @@ impl Voice {
         let (lfo, cv_pitch, cv_cutoff) = (m.lfo[n], m.pitch[n], m.cutoff[n]);
         let z = &self.zone;
         let semis = (i32::from(self.key) - i32::from(z.root_key) + i32::from(z.transpose)) as f32;
-        let exponent = (semis + p.tune_semi) / 12.0
+        let exponent = (semis + p.tune_semi + p.bend) / 12.0
             + (z.tune_cents + p.tune_fine) / 1200.0
             + (lfo * p.lfo_to_pitch + cv_pitch.clamp(-1.0, 1.0) * p.cv_pitch) / 12.0;
         self.ratio = f64::from(exponent.exp2());
@@ -988,6 +1004,8 @@ pub struct Sampler {
     next_order: u64,
     lfo: Lfo,
     master: Smoother,
+    /// Sustain, volume, expression, pressure and the bend range.
+    ctl: ControllerState,
     /// Set by `prepare`/`reset`: the next `process` snaps the master gain to its target.
     fresh: bool,
     seed: u64,
@@ -1016,6 +1034,7 @@ impl Sampler {
                 sample_rate: 48_000.0,
                 tune_semi: 0.0,
                 tune_fine: 0.0,
+                bend: 0.0,
                 velocity_amount: 0.5,
                 filter_on: false,
                 filter_mode: FilterMode::Lowpass,
@@ -1041,6 +1060,7 @@ impl Sampler {
             next_order: 0,
             lfo: Lfo::new(derive_seed(0, 0)),
             master: Smoother::new(0.0, MASTER_SMOOTH_MS, 48_000.0),
+            ctl: ControllerState::new(),
             fresh: true,
             seed: 0,
             current: None,
@@ -1109,12 +1129,17 @@ impl Sampler {
             P_CV_RESONANCE => s.cv_resonance = v,
             P_CV_LEVEL => s.cv_level_db = v * CV_LEVEL_RANGE_DB,
             P_CV_PAN => s.cv_pan = v,
+            P_BEND_RANGE => {
+                self.ctl.set_bend_range(v);
+                s.bend = self.ctl.bend_semitones();
+            }
             _ => {}
         }
     }
 
     /// Starts one voice per matching zone of the current map.
     fn note_on(&mut self, key: u8, velocity: f32) {
+        self.ctl.note_on(key);
         let Some(map) = self.current.as_deref() else {
             return;
         };
@@ -1161,10 +1186,30 @@ impl Sampler {
     fn handle(&mut self, kind: NoteKind) {
         match kind {
             NoteKind::On { key, velocity } => self.note_on(key, velocity),
-            NoteKind::Off { key } => self.note_off(key),
-            NoteKind::AllOff => self.voices.iter_mut().for_each(Voice::release),
-            // Channel messages and expressions are ignored.
-            _ => {}
+            NoteKind::Off { key } => {
+                if self.ctl.note_off(key) {
+                    self.note_off(key);
+                }
+            }
+            NoteKind::AllOff => {
+                self.ctl.all_off();
+                self.voices.iter_mut().for_each(Voice::release);
+            }
+            // Pedal, volume, expression, pressure, bend and its range.
+            _ => {
+                if self.ctl.handle(kind) == Effect::ReleaseHeld {
+                    let mut keys = [0u8; 128];
+                    let mut n = 0;
+                    self.ctl.release_held(|key| {
+                        keys[n] = key;
+                        n += 1;
+                    });
+                    for &key in &keys[..n] {
+                        self.note_off(key);
+                    }
+                }
+                self.shared.bend = self.ctl.bend_semitones();
+            }
         }
     }
 
@@ -1207,6 +1252,7 @@ impl Device for Sampler {
             v.fenv.set_sample_rate(sr);
         }
         self.master.set_time(MASTER_SMOOTH_MS, sr);
+        self.ctl.set_sample_rate(sr);
         self.lfo = Lfo::new(derive_seed(info.seed, 0));
         self.apply_all();
         self.reset();
@@ -1221,6 +1267,8 @@ impl Device for Sampler {
             v.filter_ready = false;
         }
         self.next_order = 0;
+        self.ctl.reset();
+        self.shared.bend = 0.0;
         self.lfo.reset();
         let m = self.master.target();
         self.master.set_immediate(m);
@@ -1311,6 +1359,7 @@ impl Device for Sampler {
         self.shared.cv_resonance_on = ctx.is_connected(RESONANCE_CV_IN);
         self.shared.cv_pan_on = ctx.is_connected(PAN_CV_IN);
         let mut mix = [[0.0f32; BATCH]; 2];
+        let mut ctl_gain = [1.0f32; BATCH];
         let events = ctx.notes_in(NOTES_IN);
         let mut next = 0;
         let mut start = 0;
@@ -1355,6 +1404,7 @@ impl Device for Sampler {
                     &p,
                 );
             }
+            self.ctl.fill_gain(&mut ctl_gain[start..end]);
             start = end;
         }
         let level_on = ctx.is_connected(LEVEL_CV_IN);
@@ -1367,6 +1417,8 @@ impl Device for Sampler {
             }
             *l = soft_limit(*l * m);
             *r = soft_limit(*r * m);
+            *l *= ctl_gain[n];
+            *r *= ctl_gain[n];
         }
         *ctx.output(OUT_L) = mix[0];
         *ctx.output(OUT_R) = mix[1];
