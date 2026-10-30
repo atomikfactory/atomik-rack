@@ -21,6 +21,8 @@ pub enum CursorHint {
     Eraser,
     /// A blade: the razor tool.
     Razor,
+    /// A speaker: the speaker tool.
+    Speaker,
 }
 
 impl CursorHint {
@@ -31,6 +33,7 @@ impl CursorHint {
             crate::Tool::Pencil => CursorHint::Pen,
             crate::Tool::Eraser => CursorHint::Eraser,
             crate::Tool::Razor => CursorHint::Razor,
+            crate::Tool::Speaker => CursorHint::Speaker,
         }
     }
 }

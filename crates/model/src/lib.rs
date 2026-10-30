@@ -8,6 +8,7 @@
 
 mod audio_edit;
 mod audio_notes;
+mod audition;
 pub mod automation_rec;
 mod automation_view;
 mod clip_io;
@@ -128,6 +129,7 @@ pub use audio_edit::{
     StripParams, normalise_gain_db, peak, slice_envelope, split_envelope, strip_silence,
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
+pub use audition::{AuditionSpan, audition_span};
 pub use automation_rec::WriteMode;
 pub use automation_view::ShownValues;
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};

@@ -1,4 +1,4 @@
-//! The bitmaps of the edit-tool mouse cursors (pen, eraser, razor), drawn in code.
+//! The bitmaps of the edit-tool mouse cursors (pen, eraser, razor, speaker), drawn in code.
 //!
 //! Each cursor is a few shapes in a 32 x 32 design grid, rasterised at the size the window's
 //! scale asks for (4 x 4 samples per pixel, straight alpha), so it is crisp at 1x and 2x. A
@@ -14,6 +14,8 @@ pub enum CursorArt {
     Eraser,
     /// A pair of scissors: the point between the blade tips is the hotspot.
     Razor,
+    /// A loudspeaker with sound waves: the middle of its box is the hotspot.
+    Speaker,
 }
 
 /// A rendered cursor: straight-alpha RGBA, `size` x `size` pixels.
@@ -164,6 +166,23 @@ fn design(art: CursorArt) -> (Vec<Shape>, Pt) {
             ];
             (shapes, (16.0, 3.0))
         }
+        CursorArt::Speaker => {
+            let body = [236, 238, 242];
+            let wave = [250, 205, 60];
+            let shapes = vec![
+                Shape::Capsule((24.0, 12.0), (24.0, 20.0), 1.3, wave),
+                Shape::Capsule((28.0, 8.0), (28.0, 24.0), 1.3, wave),
+                Shape::Poly(
+                    vec![(12.0, 12.0), (20.0, 6.0), (20.0, 26.0), (12.0, 20.0)],
+                    body,
+                ),
+                Shape::Poly(
+                    vec![(4.0, 12.0), (13.0, 12.0), (13.0, 20.0), (4.0, 20.0)],
+                    body,
+                ),
+            ];
+            (shapes, (9.0, 16.0))
+        }
     }
 }
 
@@ -235,7 +254,12 @@ fn sample(shapes: &[Shape], p: Pt) -> Option<[u8; 3]> {
 mod tests {
     use super::*;
 
-    const ALL: [CursorArt; 3] = [CursorArt::Pen, CursorArt::Eraser, CursorArt::Razor];
+    const ALL: [CursorArt; 4] = [
+        CursorArt::Pen,
+        CursorArt::Eraser,
+        CursorArt::Razor,
+        CursorArt::Speaker,
+    ];
 
     #[test]
     fn a_bitmap_has_its_size_a_hotspot_inside_and_visible_pixels() {
@@ -296,6 +320,7 @@ mod tests {
         let bitmaps: Vec<_> = ALL.iter().map(|&a| render(a, 32)).collect();
         assert_ne!(bitmaps[0].rgba, bitmaps[1].rgba);
         assert_ne!(bitmaps[1].rgba, bitmaps[2].rgba);
+        assert_ne!(bitmaps[2].rgba, bitmaps[3].rgba);
         for b in &bitmaps {
             assert!(
                 b.rgba

@@ -119,6 +119,14 @@ fn toolbar(v: &AudioEditorView, c: &mut dyn Canvas) {
             sp::rect(c, l.modes[i], st.base.background.with_alpha(0.55));
         }
     }
+    sp::button(
+        c,
+        st,
+        l.speaker,
+        "SPEAKER",
+        v.speaker.then_some(v.accent),
+        v.hover == Hit::Speaker,
+    );
     if v.mode != AudioMode::Slice {
         return;
     }
@@ -169,10 +177,49 @@ fn toolbar(v: &AudioEditorView, c: &mut dyn Canvas) {
         None,
         ready && has_markers && v.hover == Hit::ToSlicer,
     );
+    let detecting = ready;
+    muted_label(v, c, "SENS", l.sens_down.x0 - 32.0, ty);
+    sp::button(
+        c,
+        st,
+        l.sens_down,
+        "-",
+        None,
+        detecting && v.hover == Hit::SensDown,
+    );
+    sp::label(
+        c,
+        &format!("{}", v.sensitivity),
+        (l.sens_down.x1 + l.sens_up.x0) / 2.0,
+        l.bar.center().y + 4.0,
+        10.0,
+        st.base.text,
+        Align::Center,
+    );
+    sp::button(
+        c,
+        st,
+        l.sens_up,
+        "+",
+        None,
+        detecting && v.hover == Hit::SensUp,
+    );
+    let can_add = ready && !v.transients.is_empty();
+    sp::button(
+        c,
+        st,
+        l.add_all,
+        "ADD ALL",
+        None,
+        can_add && v.hover == Hit::AddAll,
+    );
     for (r, on) in [
         (l.revert, revert_on),
         (l.split, ready && has_markers),
         (l.to_slicer, ready && has_markers),
+        (l.sens_down, ready),
+        (l.sens_up, ready),
+        (l.add_all, can_add),
     ] {
         if !on {
             sp::rect(c, r, st.base.background.with_alpha(0.55));
@@ -335,7 +382,7 @@ fn markers(v: &AudioEditorView, c: &mut dyn Canvas) {
     let n = v.framed.len();
     let active = match &v.drag {
         Drag::Marker(d) => Some(d.index),
-        Drag::None => None,
+        Drag::None | Drag::Audition => None,
     };
     for (i, m) in v.framed.iter().enumerate() {
         let x = v.x_of(m.tick as f64).round() + 0.5;

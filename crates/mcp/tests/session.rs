@@ -2463,3 +2463,63 @@ fn session_export_validates_its_arguments_and_the_path() {
     assert!(r.is_error);
     assert!(r.first_text().contains("outside the allowed folders"));
 }
+
+/// The warp marker count of every audio clip of the open session, in document order.
+fn audio_marker_counts(s: &mut Server) -> Vec<u64> {
+    let v = ok(s, "session_status", json!({}));
+    let mut counts = Vec::new();
+    for track in v["document"]["song"]["tracks"].as_array().unwrap() {
+        for lane in track["lanes"].as_array().unwrap() {
+            for clip in lane["audio_clips"].as_array().into_iter().flatten() {
+                counts.push(clip["warp"]["markers"].as_u64().unwrap_or(0));
+            }
+        }
+    }
+    counts
+}
+
+#[test]
+fn the_audio_clip_editor_opens_slices_and_adds_a_marker_with_the_pointer() {
+    let mut s = server();
+    ok(
+        &mut s,
+        "session_open",
+        json!({"path": "examples/projects/audio-demo.atomik"}),
+    );
+    let before = audio_marker_counts(&mut s);
+    assert!(!before.is_empty(), "the demo has audio clips");
+    // Select the first audio clip with a click under its label and open it with F8.
+    let (cx, cy) = text_pos(&mut s, "Audio Demo");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "click", "x": cx + 30.0, "y": cy + 12.0}),
+    );
+    ok(&mut s, "session_key", json!({"key": "F8"}));
+    let (_, _) = text_pos(&mut s, "AUDIO CLIP");
+    // Mode 2 is Slice: the toolbar gains the marker, sensitivity and speaker controls.
+    ok(&mut s, "session_key", json!({"key": "2"}));
+    for want in ["SENS", "ADD ALL", "SPEAKER", "REVERT"] {
+        text_pos(&mut s, want);
+    }
+    // Double-click on the waveform, well below the toolbar and the ruler.
+    let (x, y) = text_pos(&mut s, "SPEAKER");
+    ok(
+        &mut s,
+        "session_pointer",
+        json!({"action": "double_click", "x": x - 420.0, "y": y + 90.0}),
+    );
+    let after = audio_marker_counts(&mut s);
+    assert!(
+        after.iter().sum::<u64>() > before.iter().sum::<u64>(),
+        "a marker was added: {before:?} -> {after:?}"
+    );
+    // The whole step (warp on, the marker) is one undo.
+    ok(&mut s, "session_command", json!({"id": "edit.undo"}));
+    let undone = audio_marker_counts(&mut s);
+    assert_eq!(undone.iter().sum::<u64>(), before.iter().sum::<u64>());
+    // The speaker toggle is a key in the editor; pressing it again switches it off.
+    ok(&mut s, "session_key", json!({"key": "t"}));
+    ok(&mut s, "session_key", json!({"key": "t"}));
+    ok(&mut s, "session_key", json!({"key": "Escape"}));
+}

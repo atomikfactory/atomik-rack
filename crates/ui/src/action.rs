@@ -241,6 +241,34 @@ pub enum UiAction {
     /// Make a Loop Slicer from the audio clip: a new device that slices the clip's span of its
     /// file at the clip's warp markers, as one undo step (the app owns the device keys).
     ClipToSlicer(ClipId),
+    /// Find the transients of the audio clip open in the audio clip editor (Slice mode opened, a
+    /// clip opened in it, or the sensitivity changed): the app detects them off the UI thread, in
+    /// the span of the file the clip plays, and gives them back with
+    /// [`crate::AudioEditorView::set_transients`]. `sensitivity` is in percent (0..=100).
+    DetectTransients {
+        /// The clip.
+        clip: ClipId,
+        /// Detector sensitivity in percent.
+        sensitivity: u8,
+    },
+    /// The speaker tool is pressed: play the frames `start_frame..end_frame` of `asset` as they
+    /// are in the file (at the file's own rate, no warp, fades or envelope), from the end down
+    /// when `reverse`, at `gain_db`. Live only; a new press replaces the audition and
+    /// [`UiAction::StopAudition`] (the release) ends it.
+    AuditionSpan {
+        /// The asset (its content hash).
+        asset: String,
+        /// First frame of the span.
+        start_frame: u64,
+        /// The frame after the last one.
+        end_frame: u64,
+        /// Play the span backwards.
+        reverse: bool,
+        /// Gain in dB.
+        gain_db: f32,
+    },
+    /// The speaker tool is released: stop the audition of [`UiAction::AuditionSpan`].
+    StopAudition,
     /// Slice the loop of `device` (the Slice button of the slicer panel or of the slice editor).
     /// The UI has no samples, so the **app** computes the markers and applies one
     /// [`atomik_model::Command::SetZones`] built with [`atomik_model::slices_from_markers`]

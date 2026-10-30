@@ -147,6 +147,8 @@ tool.razor | sequencer | R
 tool.razor | editor | R
 tool.select | sequencer | Q
 tool.select | editor | Q
+tool.speaker | sequencer | T
+tool.speaker | editor | T
 transport.add_marker | global | Shift+M
 transport.all_notes_off | global | !, Shift+!
 transport.bar_back | global | Numpad7

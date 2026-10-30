@@ -17,17 +17,78 @@
 //! markers, a reversed clip and a clip whose file is missing are refused with a message.
 
 use super::AppCore;
+use super::audio_edit_ops::for_each_chunk;
 use super::slicer::LOOP_SLICER;
+use crate::audio_import::spawn_clip_onsets;
 use crate::sink::EngineSink;
 use atomik_model::slice_edit;
 use atomik_model::{
     ClipContent, ClipId, Command, DeviceKey, default_loop_beats, slices_from_markers,
+    source_at_tick,
 };
-use atomik_ui::AudioEditorView;
+use atomik_ui::{AudioEditorView, AudioMode};
 use std::sync::Arc;
 
 /// The loop slicer's length parameter.
 const BEATS_PARAM: &str = "loop.beats";
+/// The longest stretch of a clip the transient detector reads, in seconds.
+pub const MAX_ONSET_SECONDS: u64 = 300;
+/// How many detections stay cached.
+const ONSET_CACHE: usize = 8;
+
+/// A finished detection: the transients (asset frames) found in the frames `from..to` of an asset
+/// at one sensitivity.
+struct CachedOnsets {
+    asset: String,
+    sensitivity: u8,
+    from: u64,
+    to: u64,
+    frames: Arc<[u64]>,
+}
+
+/// The detection the editor waits for.
+struct Request {
+    id: u64,
+    clip: ClipId,
+    asset: String,
+    sensitivity: u8,
+    from: u64,
+    to: u64,
+}
+
+/// The transient detections of the audio clip editor: a small cache by (asset, sensitivity) and
+/// the one request in flight. A result of an older request is dropped.
+#[derive(Default)]
+pub(super) struct OnsetState {
+    cache: Vec<CachedOnsets>,
+    latest: Option<Request>,
+    next: u64,
+}
+
+impl OnsetState {
+    /// The transients in `from..to` of a cached detection that covers that span.
+    fn lookup(&self, asset: &str, sensitivity: u8, from: u64, to: u64) -> Option<Vec<u64>> {
+        let hit = self.cache.iter().find(|c| {
+            c.asset == asset && c.sensitivity == sensitivity && c.from <= from && to <= c.to
+        })?;
+        Some(
+            hit.frames
+                .iter()
+                .copied()
+                .filter(|f| (from..to).contains(f))
+                .collect(),
+        )
+    }
+
+    fn store(&mut self, found: CachedOnsets) {
+        self.cache
+            .retain(|c| !(c.asset == found.asset && c.sensitivity == found.sensitivity));
+        if self.cache.len() >= ONSET_CACHE {
+            self.cache.remove(0);
+        }
+        self.cache.push(found);
+    }
+}
 
 impl<S: EngineSink> AppCore<S> {
     /// The audio clip editor.
@@ -70,6 +131,118 @@ impl<S: EngineSink> AppCore<S> {
             .set_missing_assets(self.audio.missing.iter().map(|m| m.hash.clone()));
         self.arrangement.set_selected_clips(&[id]);
         self.audio_editor.sync(self.document.doc(), &self.registry);
+        if self.audio_editor.mode() == AudioMode::Slice {
+            self.detect_transients(id, self.audio_editor.sensitivity());
+        }
+    }
+
+    // ------------------------------------------------------------------ transients
+
+    /// Finds the transients of the audio clip for the editor (`UiAction::DetectTransients`): a
+    /// cached detection that covers the clip's span is used at once, else a worker reads the
+    /// span the clip plays (at most [`MAX_ONSET_SECONDS`] of it) and the result arrives with
+    /// [`Self::apply_onsets`]. A request replaces the one before it.
+    pub fn detect_transients(&mut self, id: ClipId, sensitivity: u8) {
+        let sensitivity = sensitivity.min(100);
+        let doc = self.doc();
+        let Some((_, _, clip)) = doc.song.clip(id) else {
+            return;
+        };
+        let ClipContent::Audio(a) = &clip.content else {
+            return;
+        };
+        let Some(asset) = self.audio.assets.get(&a.asset).cloned() else {
+            return;
+        };
+        let rate = doc
+            .assets
+            .get(&a.asset)
+            .map_or(doc.sample_rate, |m| m.sample_rate);
+        let from = a.source_offset;
+        let end = source_at_tick(
+            &doc.song,
+            doc.sample_rate,
+            clip.start,
+            a,
+            clip.start + clip.length,
+        )
+        .round()
+        .max(0.0) as u64;
+        let end = end.min(asset.frames());
+        let to = end.min(from.saturating_add(MAX_ONSET_SECONDS * u64::from(rate)));
+        let hash = a.asset.clone();
+        if to <= from {
+            self.audio.onsets.latest = None;
+            self.audio_editor.set_transients(Vec::new());
+            return;
+        }
+        if let Some(found) = self.audio.onsets.lookup(&hash, sensitivity, from, to) {
+            self.audio.onsets.latest = None;
+            self.audio_editor.set_transients(found);
+            return;
+        }
+        let job = self.audio.onsets.next;
+        self.audio.onsets.next += 1;
+        let work: Box<dyn FnOnce() -> Result<Vec<u64>, String> + Send> = Box::new(move || {
+            let mut mono: Vec<f32> = Vec::with_capacity((to - from) as usize);
+            for_each_chunk(&asset, from, to, |planes| {
+                let len = planes.iter().map(|p| p.len()).min().unwrap_or(0);
+                let k = planes.len().max(1) as f32;
+                mono.extend((0..len).map(|i| planes.iter().map(|p| p[i]).sum::<f32>() / k));
+            });
+            let found = atomik_dsp::detect_onsets(&[&mono], rate, f32::from(sensitivity) / 100.0);
+            Ok(found.into_iter().map(|f| f + from).collect())
+        });
+        match spawn_clip_onsets(self.audio.tx.clone(), self.audio.generation, job, work) {
+            Ok(()) => {
+                self.audio.pending += 1;
+                self.audio.onsets.latest = Some(Request {
+                    id: job,
+                    clip: id,
+                    asset: hash,
+                    sensitivity,
+                    from,
+                    to,
+                });
+                if end > to {
+                    self.report("Transients are looked for in the first 5 minutes of the clip");
+                }
+            }
+            Err(e) => self.reject(format!("transients: cannot start the detection: {e}")),
+        }
+    }
+
+    /// A detection finished: it is cached and, when the editor still waits for it, shown.
+    pub(super) fn apply_onsets(&mut self, job: u64, result: Result<Vec<u64>, String>) {
+        let Some(req) = self.audio.onsets.latest.take() else {
+            return;
+        };
+        if req.id != job {
+            // A newer request replaced the one this result answers.
+            self.audio.onsets.latest = Some(req);
+            return;
+        }
+        let frames = match result {
+            Ok(f) => f,
+            Err(e) => return self.reject(format!("transients: {e}")),
+        };
+        let shown: Vec<u64> = frames
+            .iter()
+            .copied()
+            .filter(|f| (req.from..req.to).contains(f))
+            .collect();
+        self.audio.onsets.store(CachedOnsets {
+            asset: req.asset,
+            sensitivity: req.sensitivity,
+            from: req.from,
+            to: req.to,
+            frames: frames.into(),
+        });
+        if self.audio_editor.clip() == Some(req.clip)
+            && self.audio_editor.sensitivity() == req.sensitivity
+        {
+            self.audio_editor.set_transients(shown);
+        }
     }
 
     /// Opens the audio clip editor on the first selected audio clip of the arrangement. False

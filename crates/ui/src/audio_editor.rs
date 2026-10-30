@@ -11,6 +11,7 @@
 //! ```text
 //! top bar    AUDIO CLIP   <track> · <asset name>                                  [x]
 //! toolbar    MODE [Overview][Slice][Vocal][Comp]   DRAG [Stretch][Slide]  [Revert] [Split] [To slicer]
+//!            SENS [-] 50 [+] [Add all]                                        [Speaker]
 //! ruler      bars and beats of the song under the clip
 //! waveform   the clip in clip time: the audio is drawn where it plays, so a stretched span is
 //!            drawn wider or narrower; warp markers are the vertical lines
@@ -33,8 +34,15 @@
 //! # Interaction in Slice mode
 //!
 //! * **Add.** Double-click on the waveform, or the `editor.audio_add_marker` command at the
-//!   pointer. Detected transients are drawn when the host supplies them
-//!   ([`AudioEditorView::set_transients`]).
+//!   pointer. The marker goes on the detected transient within a few pixels of the pointer when
+//!   there is one (the sound does not change either way), else where the clip plays at the pointer.
+//! * **Transients.** Entering Slice mode, opening a clip in it and the SENS buttons emit
+//!   [`UiAction::DetectTransients`]; the host answers with [`AudioEditorView::set_transients`]
+//!   and they are drawn under the ruler. **Add all** (`editor.audio_add_transients`) puts a
+//!   marker on every one, as one undo step.
+//! * **Speaker.** The SPEAKER toggle (`tool.speaker`) makes a press on the waveform play the clip
+//!   from there to its end as it is in its file ([`UiAction::AuditionSpan`]), unprocessed;
+//!   the release (or Esc) emits [`UiAction::StopAudition`]. It edits nothing.
 //! * **Move (stretch).** Drag a marker: it follows the pointer in time with its audio frame, the
 //!   audio on both sides stretches. The clip's start and end are pinned (the first and last
 //!   marker are drawn dimmed and cannot be moved).
@@ -65,6 +73,7 @@ use crate::timeline::{Bars, MAX_PX_PER_TICK, TimeAxis};
 use crate::tooltip::Help;
 use atomik_audio_file::PeakPyramid;
 use atomik_device_sdk::Registry;
+use atomik_model::audition_span;
 use atomik_model::slice_edit::{self, Side};
 use atomik_model::{
     AssetMeta, AudioClipContent, ClipContent, ClipId, Command, DeviceKey, RackDoc, Song,
@@ -91,6 +100,11 @@ const SCROLL_STEP: f64 = 36.0;
 const ZOOM_STEP: f64 = 1.15;
 const MERGE_BASE: u64 = 13 << 40;
 const NAME_MAX_CHARS: usize = 200;
+/// How close, in logical pixels, a double-click must be to a detected transient to snap to it.
+const SNAP_PX: f64 = 8.0;
+/// The transient detector's sensitivity at start, in percent, and the step of its buttons.
+const DEFAULT_SENSITIVITY: u8 = 50;
+const SENSITIVITY_STEP: u8 = 10;
 
 /// The editing mode of the audio clip editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -159,6 +173,10 @@ enum Hit {
     Revert,
     Split,
     ToSlicer,
+    SensDown,
+    SensUp,
+    AddAll,
+    Speaker,
     /// An interior marker, by its index in the framed list.
     Marker(usize),
     Wave,
@@ -192,6 +210,8 @@ struct MarkerDrag {
 enum Drag {
     None,
     Marker(Box<MarkerDrag>),
+    /// The speaker is held on the waveform: the audition stops on the release.
+    Audition,
 }
 
 /// The clip being edited, as the document holds it.
@@ -217,6 +237,10 @@ struct Layout {
     revert: Rect,
     split: Rect,
     to_slicer: Rect,
+    sens_down: Rect,
+    sens_up: Rect,
+    add_all: Rect,
+    speaker: Rect,
     ruler: Rect,
     wave: Rect,
     footer: Rect,
@@ -252,6 +276,10 @@ pub struct AudioEditorView {
     missing: BTreeSet<String>,
     /// Detected transients as asset frames, drawn on the ruler when the host supplies them.
     transients: Vec<u64>,
+    /// The transient detector's sensitivity in percent.
+    sensitivity: u8,
+    /// The speaker is on: a press on the waveform plays it instead of editing.
+    speaker: bool,
     drag: Drag,
     hover: Hit,
     pointer: Option<Point>,
@@ -291,6 +319,8 @@ impl AudioEditorView {
             samples: BTreeMap::new(),
             missing: BTreeSet::new(),
             transients: Vec::new(),
+            sensitivity: DEFAULT_SENSITIVITY,
+            speaker: false,
             drag: Drag::None,
             hover: Hit::None,
             pointer: None,
@@ -455,6 +485,38 @@ impl AudioEditorView {
         }
     }
 
+    /// The detected transients of the open clip, as asset frames.
+    pub fn transients(&self) -> &[u64] {
+        &self.transients
+    }
+
+    /// The transient detector's sensitivity in percent (0..=100).
+    pub fn sensitivity(&self) -> u8 {
+        self.sensitivity
+    }
+
+    /// Sets the sensitivity (the persisted choice on start-up) without asking for a detection.
+    pub fn set_sensitivity(&mut self, percent: u8) {
+        let percent = percent.min(100);
+        if percent != self.sensitivity {
+            self.sensitivity = percent;
+            self.repaint = true;
+        }
+    }
+
+    /// Whether the speaker is on: a press on the waveform plays the audio under it.
+    pub fn speaker(&self) -> bool {
+        self.speaker
+    }
+
+    /// Switches the speaker on or off.
+    pub fn set_speaker(&mut self, on: bool) {
+        if on != self.speaker {
+            self.speaker = on;
+            self.repaint = true;
+        }
+    }
+
     /// The marker the pointer is over or has selected, for tests and the host: the framed list.
     pub fn markers(&self) -> &[WarpMarker] {
         &self.framed
@@ -508,6 +570,26 @@ impl AudioEditorView {
         self.layout().to_slicer.center()
     }
 
+    /// Centre of the sensitivity "less" button.
+    pub fn sensitivity_down_center(&self) -> Point {
+        self.layout().sens_down.center()
+    }
+
+    /// Centre of the sensitivity "more" button.
+    pub fn sensitivity_up_center(&self) -> Point {
+        self.layout().sens_up.center()
+    }
+
+    /// Centre of the Add All button (a marker at every detected transient).
+    pub fn add_all_button_center(&self) -> Point {
+        self.layout().add_all.center()
+    }
+
+    /// Centre of the speaker toggle.
+    pub fn speaker_button_center(&self) -> Point {
+        self.layout().speaker.center()
+    }
+
     /// Centre of the title (double-click renames).
     pub fn title_center(&self) -> Point {
         self.layout().title.center()
@@ -541,6 +623,10 @@ impl AudioEditorView {
         let revert = Rect::new(x, y0, x + 58.0, y1);
         let split = Rect::new(revert.x1 + 4.0, y0, revert.x1 + 50.0, y1);
         let to_slicer = Rect::new(split.x1 + 4.0, y0, split.x1 + 86.0, y1);
+        let sens_down = Rect::new(to_slicer.x1 + 52.0, y0, to_slicer.x1 + 72.0, y1);
+        let sens_up = Rect::new(sens_down.x1 + 36.0, y0, sens_down.x1 + 56.0, y1);
+        let add_all = Rect::new(sens_up.x1 + 12.0, y0, sens_up.x1 + 76.0, y1);
+        let speaker = Rect::new(b.x1 - 78.0, y0, b.x1 - 8.0, y1);
         let footer = rect(b.x0, b.y1 - FOOTER_HEIGHT, b.x1, b.y1);
         let ruler = rect(
             b.x0 + PAD,
@@ -560,6 +646,10 @@ impl AudioEditorView {
             revert,
             split,
             to_slicer,
+            sens_down,
+            sens_up,
+            add_all,
+            speaker,
             ruler,
             wave,
             footer,
@@ -773,6 +863,9 @@ impl AudioEditorView {
                 return Hit::Mode(*m);
             }
         }
+        if l.speaker.contains(pos) {
+            return Hit::Speaker;
+        }
         if self.mode == AudioMode::Slice {
             for (r, h) in [
                 (l.stretch, Hit::Stretch),
@@ -780,6 +873,9 @@ impl AudioEditorView {
                 (l.revert, Hit::Revert),
                 (l.split, Hit::Split),
                 (l.to_slicer, Hit::ToSlicer),
+                (l.sens_down, Hit::SensDown),
+                (l.sens_up, Hit::SensUp),
+                (l.add_all, Hit::AddAll),
             ] {
                 if r.contains(pos) {
                     return h;
@@ -849,6 +945,19 @@ impl AudioEditorView {
                     "Make a loop slicer that slices the clip at its markers",
                 )
                 .with_command("editor.audio_to_slicer"),
+            ),
+            Hit::SensDown => help(l.sens_down, "Find fewer transients"),
+            Hit::SensUp => help(l.sens_up, "Find more transients"),
+            Hit::AddAll => Some(
+                Help::new(l.add_all, "Put a marker on every detected transient")
+                    .with_command("editor.audio_add_transients"),
+            ),
+            Hit::Speaker => Some(
+                Help::new(
+                    l.speaker,
+                    "Press on the clip to hear it as it is in its file, release to stop",
+                )
+                .with_command("tool.speaker"),
             ),
             Hit::Marker(_) | Hit::Wave | Hit::None => None,
         }
@@ -930,6 +1039,11 @@ impl AudioEditorView {
             Hit::Revert => self.revert(out),
             Hit::Split => self.split(doc, out),
             Hit::ToSlicer => self.send_to_slicer(out),
+            Hit::SensDown => self.step_sensitivity(false, out),
+            Hit::SensUp => self.step_sensitivity(true, out),
+            Hit::AddAll => self.add_all_transients(doc, out),
+            Hit::Speaker => self.speaker = !self.speaker,
+            Hit::Marker(_) | Hit::Wave if self.speaker => self.start_audition(pos, doc, out),
             Hit::Marker(i) => {
                 self.selected = Some(i);
                 let Some(info) = &self.info else { return };
@@ -950,8 +1064,7 @@ impl AudioEditorView {
             }
             Hit::Wave => {
                 if clicks >= 2 && self.slicing() {
-                    let tick = self.tick_of(pos.x).round() as i64;
-                    self.add_marker(tick, doc, out);
+                    self.add_marker_at(pos.x, doc, out);
                 } else {
                     self.selected = None;
                 }
@@ -976,7 +1089,7 @@ impl AudioEditorView {
         let (rate, length) = (self.rate, self.length());
         let tick = match &self.drag {
             Drag::Marker(d) => self.tick_of(pos.x + d.grab).round() as i64,
-            Drag::None => return,
+            Drag::None | Drag::Audition => return,
         };
         let Drag::Marker(d) = &mut self.drag else {
             return;
@@ -1028,6 +1141,11 @@ impl AudioEditorView {
 
     fn pointer_up(&mut self, out: &mut Vec<UiAction>) {
         self.repaint = true;
+        if matches!(self.drag, Drag::Audition) {
+            self.drag = Drag::None;
+            out.push(UiAction::StopAudition);
+            return;
+        }
         if let Drag::Marker(d) = std::mem::replace(&mut self.drag, Drag::None)
             && d.emitted
         {
@@ -1036,6 +1154,11 @@ impl AudioEditorView {
     }
 
     fn cancel_drag(&mut self, out: &mut Vec<UiAction>) {
+        if matches!(self.drag, Drag::Audition) {
+            self.drag = Drag::None;
+            out.push(UiAction::StopAudition);
+            return;
+        }
         let Drag::Marker(d) = std::mem::replace(&mut self.drag, Drag::None) else {
             return;
         };
@@ -1176,6 +1299,7 @@ impl AudioEditorView {
         {
             out.push(UiAction::Command(cmd));
         }
+        out.extend(self.detect_action());
     }
 
     /// The command that switches warp on at the song tempo (`None` when it is on).
@@ -1248,14 +1372,61 @@ impl AudioEditorView {
         Some(warped_at_song_tempo(&doc.song, info.start, &info.content).warp)
     }
 
-    fn add_marker(&mut self, tick: i64, doc: &RackDoc, out: &mut Vec<UiAction>) {
+    /// The request for the transients of the open clip, while Slice mode edits it.
+    fn detect_action(&self) -> Option<UiAction> {
+        let clip = self.clip.filter(|_| self.slicing())?;
+        Some(UiAction::DetectTransients {
+            clip,
+            sensitivity: self.sensitivity,
+        })
+    }
+
+    /// Moves the sensitivity one step and asks for the transients again.
+    fn step_sensitivity(&mut self, up: bool, out: &mut Vec<UiAction>) {
+        let next = if up {
+            self.sensitivity.saturating_add(SENSITIVITY_STEP).min(100)
+        } else {
+            self.sensitivity.saturating_sub(SENSITIVITY_STEP)
+        };
+        if next != self.sensitivity {
+            self.sensitivity = next;
+            out.extend(self.detect_action());
+        }
+    }
+
+    /// The detected transient nearest to logical `x` within [`SNAP_PX`], as source frames from
+    /// the clip's offset.
+    fn transient_near(&self, x: f64) -> Option<u64> {
+        let offset = self.info.as_ref()?.content.source_offset;
+        self.transients
+            .iter()
+            .filter_map(|f| {
+                let rel = f.checked_sub(offset)?;
+                let tick = self.tick_of_source(rel as f64)?;
+                Some((rel, (self.x_of(tick) - x).abs()))
+            })
+            .filter(|(_, d)| *d <= SNAP_PX)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(rel, _)| rel)
+    }
+
+    /// Adds a marker at logical `x`: on the detected transient within reach, else where the
+    /// clip plays at `x`.
+    fn add_marker_at(&mut self, x: f64, doc: &RackDoc, out: &mut Vec<UiAction>) {
         if !self.slicing() {
             return;
         }
         let Some(warp) = self.working_warp(doc) else {
             return;
         };
-        match slice_edit::add_at_tick(&warp, self.rate, self.length(), tick) {
+        let added = match self.transient_near(x) {
+            Some(source) => slice_edit::add_at_source(&warp, self.rate, self.length(), source),
+            None => {
+                let tick = self.tick_of(x).round() as i64;
+                slice_edit::add_at_tick(&warp, self.rate, self.length(), tick)
+            }
+        };
+        match added {
             Ok((list, at)) => {
                 if let Some(cmd) = self.markers_command(doc, list, None) {
                     self.selected = Some(at);
@@ -1263,6 +1434,69 @@ impl AudioEditorView {
                 }
             }
             Err(e) => self.status = e.to_string(),
+        }
+    }
+
+    /// Puts a marker on every detected transient: one command, one undo step.
+    fn add_all_transients(&mut self, doc: &RackDoc, out: &mut Vec<UiAction>) {
+        if !self.slicing() {
+            return;
+        }
+        let Some(warp) = self.working_warp(doc) else {
+            return;
+        };
+        let offset = self.info.as_ref().map_or(0, |i| i.content.source_offset);
+        let sources: Vec<u64> = self
+            .transients
+            .iter()
+            .filter_map(|f| f.checked_sub(offset))
+            .collect();
+        if sources.is_empty() {
+            self.status = "No transients found: raise the sensitivity".into();
+            return;
+        }
+        match slice_edit::add_at_sources(&warp, self.rate, self.length(), &sources) {
+            Ok(list) => {
+                if let Some(cmd) = self.markers_command(doc, list, None) {
+                    self.selected = None;
+                    out.push(UiAction::Command(cmd));
+                }
+            }
+            Err(_) => self.status = "Every transient already has a marker".into(),
+        }
+    }
+
+    /// Starts the speaker at logical `pos`: the clip's audio from there to its end, as it is in
+    /// the file, until the button is released.
+    fn start_audition(&mut self, pos: Point, doc: &RackDoc, out: &mut Vec<UiAction>) {
+        let (Some(info), Some(meta)) = (&self.info, &self.meta) else {
+            return;
+        };
+        if self.missing.contains(&info.content.asset) || !self.present {
+            return;
+        }
+        let at = info.start + self.tick_of(pos.x).round() as i64;
+        let span = audition_span(
+            &doc.song,
+            self.rate,
+            info.start,
+            &info.content,
+            info.length,
+            at,
+            meta.frames,
+        );
+        match span {
+            Some(span) => {
+                out.push(UiAction::AuditionSpan {
+                    asset: info.content.asset.clone(),
+                    start_frame: span.start_frame,
+                    end_frame: span.end_frame,
+                    reverse: span.reverse,
+                    gain_db: info.content.gain_db,
+                });
+                self.drag = Drag::Audition;
+            }
+            None => self.status = "The clip plays nothing from there".into(),
         }
     }
 
@@ -1426,12 +1660,13 @@ impl AudioEditorView {
                     return CommandOutcome::Declined;
                 };
                 let before = out.len();
-                let tick = self.tick_of(pos.x).round() as i64;
-                self.add_marker(tick, doc, &mut out);
+                self.add_marker_at(pos.x, doc, &mut out);
                 if out.len() == before && !self.status.is_empty() {
                     return CommandOutcome::NotApplicable(self.status.clone());
                 }
             }
+            "editor.audio_add_transients" => self.add_all_transients(doc, &mut out),
+            "tool.speaker" => self.speaker = !self.speaker,
             "editor.audio_revert" => self.revert(&mut out),
             "editor.audio_split_markers" => self.split(doc, &mut out),
             "editor.audio_to_slicer" => self.send_to_slicer(&mut out),

@@ -857,7 +857,7 @@ impl<S: EngineSink> AppCore<S> {
         });
     }
 
-    fn stop_preview(&mut self) {
+    pub(super) fn stop_preview(&mut self) {
         if self.browser.preview.take().is_some() || self.sink.preview_active() {
             let _ = self.sink.preview_stop();
         }
