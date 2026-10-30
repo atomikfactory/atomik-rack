@@ -452,8 +452,22 @@ fn shutdown_releases_everything_and_closes_the_ports() {
     assert_eq!(released, vec![vec![0x82, 60, 0], vec![0xB2, 123, 0]]);
 }
 
+/// Waits until `done` holds, up to `limit`; real threads on a loaded machine can be late, so the
+/// tests below only bound the lateness generously. Exact timing is checked in the `Core::step`
+/// tests with an injected clock.
+fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let end = Instant::now() + limit;
+    while Instant::now() < end {
+        if done() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    done()
+}
+
 #[test]
-fn the_thread_sends_at_the_right_time_and_releases_on_drop() {
+fn the_thread_sends_in_order_and_releases_on_drop() {
     let (rig, opener) = Rig::new();
     let clock = Arc::new(FrameClock::new());
     let latency = Arc::new(AtomicU64::new(0));
@@ -464,12 +478,20 @@ fn the_thread_sends_at_the_right_time_and_releases_on_drop() {
     // 50 ms and 60 ms from now.
     let tap = tap_with(&[(2_400, &[0x90, 60, 100]), (2_880, &[0x90, 62, 100])]);
     thread.set_routes(vec![(1, tap)], ports(&[(1, Some("A"))]));
-    std::thread::sleep(Duration::from_millis(20));
-    assert!(rig.sent().is_empty(), "nothing before its time");
-    std::thread::sleep(Duration::from_millis(250));
-    let sent = rig.sent();
-    assert_eq!(sent.len(), 2);
-    assert!(thread.stats().sent >= 2);
+    let mut sent = Vec::new();
+    let arrived = wait_for(Duration::from_secs(5), || {
+        sent.extend(rig.sent());
+        sent.len() >= 2
+    });
+    let elapsed = t0.elapsed();
+    assert!(arrived, "both notes arrive within seconds, got {sent:?}");
+    // Never early: the first is due 50 ms after the anchor (a little slack for the clock read).
+    assert!(elapsed >= Duration::from_millis(40), "sent early: {elapsed:?}");
+    // Generously late at worst, even on a loaded runner.
+    assert!(elapsed < Duration::from_secs(2), "sent far too late: {elapsed:?}");
+    let order: Vec<_> = sent.iter().map(|(_, b)| b.clone()).collect();
+    assert_eq!(order, vec![vec![0x90, 60, 100], vec![0x90, 62, 100]]);
+    assert!(wait_for(Duration::from_secs(5), || thread.stats().sent >= 2));
     drop(thread);
     let after: Vec<_> = rig.sent().into_iter().map(|(_, b)| b).collect();
     assert_eq!(
