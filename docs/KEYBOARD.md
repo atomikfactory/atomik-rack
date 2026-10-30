@@ -11,8 +11,9 @@ Chords are shown as the menus show them. `Ctrl` is the Control key; on macOS the
 | Press and drag | Arrangement ruler | Locates the snapped position under the pointer and keeps locating while the pointer moves (not before zero) |
 | Drag the playhead | Arrangement (ruler flag, or its line in the grid) and piano roll (its line in the grid, or the ruler) | Moves the playhead by the distance dragged, snapped |
 | Drag the L or R flag | Arrangement ruler, lower band | Moves the left or the right locator, snapped, with one snap step left between them; the loop is set on release (Escape cancels) |
-| `Alt+click` | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
-| `Ctrl+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| `Ctrl+click` (`Alt+click` on macOS) | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
+| `Alt+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| `Shift+click` | Arrangement ruler | Sets the End marker to the snapped position |
 | Drag a marker line | Arrangement grid, while the marker strip is shown | Moves the marker, as dragging its label in the strip does |
 | `Ctrl+Alt` held | While dragging any of these | No snap |
 
@@ -62,6 +63,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Close | - | `Ctrl+W` |
 | Import Audio | `Ctrl+I` | `Ctrl+Shift+I` |
 | Add Marker | - | `Shift+M` |
+| All Notes Off | - | `!`, `Shift+!` |
 | Back One Bar | - | `Numpad7` |
 | Fast Forward One Bar | - | `Numpad5` |
 | Forward One Bar | - | `Numpad8` |
@@ -71,6 +73,10 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Loop Selection and Play | - | `P` (sequencer) |
 | Loop to Selection | - | `Ctrl+L` (sequencer) |
 | Metronome | - | `C`, `Numpad9` |
+| Move Loop (bar:+1) | - | `Alt+Shift+Right` |
+| Move Loop (bar:-1) | - | `Alt+Shift+Left` |
+| Move Loop (length:+1) | - | `Alt+Shift+Up` |
+| Move Loop (length:-1) | - | `Alt+Shift+Down` |
 | Next Marker | - | `.` |
 | Play | - | `NumpadEnter` |
 | Play / Stop | `Space`, `Shift+Space` (rack, sequencer) | `Space` |
@@ -82,7 +88,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Stop | - | `Shift+Enter`, `Numpad0` |
 | Tempo Down | - | `NumpadSub` |
 | Tempo Up | - | `NumpadAdd` |
-| Clip Editor | - | `F8`, `Shift+Tab` |
+| Clip Editor | - | `F8`, `Shift+Tab` (global); `Ctrl+E` (sequencer) |
 | Cycle Cable Display | - | `K` |
 | Detach Mixer | - | `Ctrl+Shift+F5` |
 | Detach Rack | - | `Ctrl+Shift+F6` |
@@ -93,8 +99,8 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Piano Keys | `F9` | `F4` |
 | Rack | - | `F6` |
 | Sequencer Only | - | `F7` |
-| Zoom In | `Ctrl+=`, `Ctrl+Shift+=`, `Ctrl++`, `Ctrl+Shift++` | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++` (global); `H` (sequencer, editor) |
-| Zoom Out | `Ctrl+-` | `Ctrl+-` (global); `G` (sequencer, editor) |
+| Zoom In | `Ctrl+=`, `Ctrl+Shift+=`, `Ctrl++`, `Ctrl+Shift++` | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++`, `Ctrl+Alt+=`, `Ctrl+Alt++` (global); `H` (sequencer, editor) |
+| Zoom Out | `Ctrl+-` | `Ctrl+-`, `Ctrl+Alt+-` (global); `G` (sequencer, editor) |
 | Copy | - | `Ctrl+C` |
 | Cut | - | `Ctrl+X` |
 | Delete | `Delete`, `Backspace` (rack, sequencer, editor) | `Delete`, `Backspace` |
@@ -106,13 +112,15 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Extend Selection Up | - | `Shift+Up` (rack) |
 | Select Next Device | - | `Down` (rack) |
 | Select Previous Device | - | `Up` (rack) |
-| Follow Playhead | - | `F` (sequencer, editor) |
-| Group Tracks | - | `Ctrl+Shift+G` (sequencer) |
+| Audio Crossfade (toggle) | - | `X` (sequencer) |
+| Close Clip | - | `Esc` (sequencer) |
+| Follow Playhead | - | `F` |
+| Group Tracks | - | `Ctrl+Shift+T` (sequencer) |
 | Join | - | `Ctrl+J` (sequencer) |
-| Move Track Down | - | `Alt+Down` (sequencer) |
-| Move Track Up | - | `Alt+Up` (sequencer) |
+| Move Track Down | - | `Ctrl+Alt+Down` (sequencer) |
+| Move Track Up | - | `Ctrl+Alt+Up` (sequencer) |
 | Open Clip | - | `Enter` (sequencer) |
-| Reset Track Heights | - | `Shift+Z` (sequencer) |
+| Reset Track Heights | - | `Alt+Z` (sequencer) |
 | Select Next Clip | - | `Right` (sequencer) |
 | Select Next Track | - | `Down` (sequencer) |
 | Select Previous Clip | - | `Left` (sequencer) |
@@ -121,7 +129,8 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Snap On/Off | - | `S` (sequencer, editor) |
 | Split at Playhead | `Ctrl+E` (sequencer) | `Alt+X` (sequencer) |
 | Taller Tracks | - | `Shift+H` (sequencer) |
-| Zoom to Selection | - | `Z` (sequencer, editor) |
+| Track Height (fit) | - | `Alt+M` (sequencer) |
+| Zoom to Selection | - | `Z`, `Shift+Z` (sequencer); `Z` (editor) |
 | Chordify Selection | - | `Shift+C` (editor) |
 | Extend Selection to Next Note | - | `Shift+Right` (editor) |
 | Extend Selection to Previous Note | - | `Shift+Left` (editor) |
@@ -177,6 +186,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
 | Add Marker | global | `Shift+M` | `Shift+M` | `Shift+M` |
+| All Notes Off | global | `!`, `Shift+!` | `!`, `Shift+!` | `!`, `Shift+!` |
 | Back One Bar | global | `Numpad7` | `Numpad7` | `Numpad7` |
 | Fast Forward One Bar | global | `Numpad5` | `Numpad5` | `Numpad5` |
 | Forward One Bar | global | `Numpad8` | `Numpad8` | `Numpad8` |
@@ -186,6 +196,10 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Loop Selection and Play | sequencer | `P` | `P` | `P` |
 | Loop to Selection | sequencer | `Ctrl+L` | `Cmd+L` | `Ctrl+L` |
 | Metronome | global | `C`, `Numpad9` | `C`, `Numpad9` | `C`, `Numpad9` |
+| Move Loop (bar:+1) | global | `Alt+Shift+Right` | `Opt+Shift+Right` | `Alt+Shift+Right` |
+| Move Loop (bar:-1) | global | `Alt+Shift+Left` | `Opt+Shift+Left` | `Alt+Shift+Left` |
+| Move Loop (length:+1) | global | `Alt+Shift+Up` | `Opt+Shift+Up` | `Alt+Shift+Up` |
+| Move Loop (length:-1) | global | `Alt+Shift+Down` | `Opt+Shift+Down` | `Alt+Shift+Down` |
 | Next Marker | global | `.` | `.` | `.` |
 | Play | global | `NumpadEnter` | `NumpadEnter` | `NumpadEnter` |
 | Play / Stop | global | `Space` | `Space` | `Space` |
@@ -205,6 +219,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Actual Size | global | `Ctrl+0` | `Cmd+0` | `Ctrl+0` |
 | Back of Rack | global | `Tab` | `Tab` | `Tab` |
 | Clip Editor | global | `F8`, `Shift+Tab` | `F8`, `Shift+Tab`, `Cmd+Opt+Digit8` | `F8`, `Shift+Tab` |
+| Clip Editor | sequencer | `Ctrl+E` | `Cmd+E` | `Ctrl+E` |
 | Console | global | `F5` | `F5`, `Cmd+Opt+Digit5` | `F5` |
 | Cycle Cable Display | global | `K` | `K` | `K` |
 | Detach Mixer | global | `Ctrl+Shift+F5` | `Cmd+Shift+F5` | `Ctrl+Shift+F5` |
@@ -217,10 +232,10 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Piano Keys | global | `F4` | `F4`, `Cmd+Opt+Digit4` | `F4` |
 | Rack | global | `F6` | `F6`, `Cmd+Opt+Digit6` | `F6` |
 | Sequencer Only | global | `F7` | `F7`, `Cmd+Opt+Digit7` | `F7` |
-| Zoom In | global | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++` | `Cmd+=`, `Cmd++`, `Cmd+Shift+=`, `Cmd+Shift++` | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++` |
+| Zoom In | global | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++`, `Ctrl+Alt+=`, `Ctrl+Alt++` | `Cmd+=`, `Cmd++`, `Cmd+Shift+=`, `Cmd+Shift++`, `Cmd+Opt+=`, `Cmd+Opt++` | `Ctrl+=`, `Ctrl++`, `Ctrl+Shift+=`, `Ctrl+Shift++`, `Ctrl+Alt+=`, `Ctrl+Alt++` |
 | Zoom In | sequencer | `H` | `H` | `H` |
 | Zoom In | editor | `H` | `H` | `H` |
-| Zoom Out | global | `Ctrl+-` | `Cmd+-` | `Ctrl+-` |
+| Zoom Out | global | `Ctrl+-`, `Ctrl+Alt+-` | `Cmd+-`, `Cmd+Opt+-` | `Ctrl+-`, `Ctrl+Alt+-` |
 | Zoom Out | sequencer | `G` | `G` | `G` |
 | Zoom Out | editor | `G` | `G` | `G` |
 
@@ -250,12 +265,13 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 
 | Command | Where | Windows | macOS | Linux |
 |---|---|---|---|---|
-| Follow Playhead | sequencer | `F` | `F` | `F` |
-| Follow Playhead | editor | `F` | `F` | `F` |
-| Group Tracks | sequencer | `Ctrl+Shift+G` | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Audio Crossfade (toggle) | sequencer | `X` | `X` | `X` |
+| Close Clip | sequencer | `Esc` | `Esc` | `Esc` |
+| Follow Playhead | global | `F` | `F` | `F` |
+| Group Tracks | sequencer | `Ctrl+Shift+T` | `Cmd+Shift+T` | `Ctrl+Shift+T` |
 | Join | sequencer | `Ctrl+J` | `Cmd+J` | `Ctrl+J` |
-| Move Track Down | sequencer | `Alt+Down` | `Opt+Down` | `Alt+Down` |
-| Move Track Up | sequencer | `Alt+Up` | `Opt+Up` | `Alt+Up` |
+| Move Track Down | sequencer | `Ctrl+Alt+Down` | `Cmd+Opt+Down` | `Ctrl+Alt+Down` |
+| Move Track Up | sequencer | `Ctrl+Alt+Up` | `Cmd+Opt+Up` | `Ctrl+Alt+Up` |
 | Mute Clips | sequencer | `M` | `M` | `M` |
 | Nudge Clips Left | sequencer | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
 | Nudge Clips Left by Beat | sequencer | `Ctrl+Shift+Left` | `Cmd+Shift+Left` | `Ctrl+Shift+Left` |
@@ -264,7 +280,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Nudge Clips Right by Beat | sequencer | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
 | Nudge Clips Right by Tick | sequencer | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
 | Open Clip | sequencer | `Enter` | `Enter` | `Enter` |
-| Reset Track Heights | sequencer | `Shift+Z` | `Shift+Z` | `Shift+Z` |
+| Reset Track Heights | sequencer | `Alt+Z` | `Opt+Z` | `Alt+Z` |
 | Select Next Clip | sequencer | `Right` | `Right` | `Right` |
 | Select Next Track | sequencer | `Down` | `Down` | `Down` |
 | Select Previous Clip | sequencer | `Left` | `Left` | `Left` |
@@ -274,7 +290,8 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Snap On/Off | editor | `S` | `S` | `S` |
 | Split at Playhead | sequencer | `Alt+X` | `Opt+X` | `Alt+X` |
 | Taller Tracks | sequencer | `Shift+H` | `Shift+H` | `Shift+H` |
-| Zoom to Selection | sequencer | `Z` | `Z` | `Z` |
+| Track Height (fit) | sequencer | `Alt+M` | `Opt+M` | `Alt+M` |
+| Zoom to Selection | sequencer | `Z`, `Shift+Z` | `Z`, `Shift+Z` | `Z`, `Shift+Z` |
 | Zoom to Selection | editor | `Z` | `Z` | `Z` |
 
 ### Editor
@@ -410,7 +427,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Select Tool | sequencer | `Q` | `Q` | `Q` |
 | Select Tool | editor | `Q` | `Q` | `Q` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Quantize Options, Arpeggiate Selection, Conform Selection to Scale, Detect Scale from Notes, Set Fold, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Strum Selection, Clear Recent Songs, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Import MIDI, Import MIDI as Song, Open Recent, Relink Missing Audio, Stress Rack, Stress Song, Export Diagnostics, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Compare A/B, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Remove from VCA, Store Snapshot, Delay Compensation, Toggle Polarity, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Patch Jack, Remove Column, Save to Library, Add Note Lane, Audio Crossfade, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce in Place, Bounce in Place and Mute Originals, Clear Static Value, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Fold Automation Lanes, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Set Left Locator Here, Set Right Locator Here, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Mute Automation Lane, Rename Folder..., Rename Note Lane..., Rename Track..., Save Clip to Library, Set Static Value, Set Snap, Set Snap Mode, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Track Height, Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, Add Range Marker from Loop, Auto-create Lanes, Clear Override, Input Quantize, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Cables, Automation Follows Selection, Show Automation Lane, Show Console Devices in Rack, Show Console Links, Inspector, Marker List, Marker Strip, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Quantize Options, Arpeggiate Selection, Conform Selection to Scale, Detect Scale from Notes, Set Fold, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Strum Selection, Clear Recent Songs, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Import MIDI, Import MIDI as Song, Open Recent, Relink Missing Audio, Stress Rack, Stress Song, Export Diagnostics, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Compare A/B, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Remove from VCA, Store Snapshot, Delay Compensation, Toggle Polarity, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Patch Jack, Remove Column, Save to Library, Add Note Lane, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce in Place, Bounce in Place and Mute Originals, Clear Static Value, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Fold Automation Lanes, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Set Left Locator Here, Set Right Locator Here, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Mute Automation Lane, Rename Folder..., Rename Note Lane..., Rename Track..., Save Clip to Library, Set Static Value, Set Snap, Set Snap Mode, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, Add Range Marker from Loop, Auto-create Lanes, Clear Override, Input Quantize, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Cables, Automation Follows Selection, Show Automation Lane, Show Console Devices in Rack, Show Console Links, Inspector, Marker List, Marker Strip, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
 
 ## Atomik legacy keys
 
@@ -571,4 +588,4 @@ Commands without a key in this profile (menus and Settings still reach them): Pl
 | Set Velocity (8) | keys | `8` | `8` | `8` |
 | Set Velocity (9) | keys | `9` | `9` | `9` |
 
-Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Quantize Options, Arpeggiate Selection, Chordify Selection, Conform Selection to Scale, Detect Scale from Notes, Extend Selection to Next Note, Extend Selection to Previous Note, Set Fold, Fold, Snap to Scale, Select Next Note, Select Previous Note, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Strum Selection, Taller Keys, Shorter Keys, Reset Key Height, Clear Recent Songs, Close, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Import MIDI, Import MIDI as Song, Open Recent, Relink Missing Audio, Stress Rack, Stress Song, Export Diagnostics, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Compare A/B, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Remove from VCA, Route to New Output Bus, Store Snapshot, Delay Compensation, Toggle Polarity, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Patch Jack, Remove Column, Save to Library, Select Next Device, Select Previous Device, Add Note Lane, Audio Crossfade, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce in Place, Bounce in Place and Mute Originals, Clear Static Value, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Fold Automation Lanes, Follow Playhead, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Group Tracks, Join, Set Left Locator Here, Set Right Locator Here, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Move Track Down, Move Track Up, Mute Automation Lane, Open Clip, Rename Folder..., Rename Note Lane..., Rename Track..., Save Clip to Library, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Static Value, Set Snap, Set Snap Mode, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Track Height, Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, Zoom to Selection, Taller Tracks, Shorter Tracks, Reset Track Heights, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Add Marker, Add Range Marker from Loop, Auto-create Lanes, Back One Bar, Forward One Bar, Clear Override, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Loop to Selection, Metronome, Next Marker, Play, Pre-count, Previous Marker, Rewind One Bar, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Detach Mixer, Detach Rack, Find Parameter..., Focus Browser Search, Automation Follows Selection, Sequencer Only, Show Automation Lane, Show Console Devices in Rack, Show Console Links, Clip Editor, Inspector, Marker List, Marker Strip, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Plugins, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Cancel Browser Search, Create Selected Device, Browser Down, Browser Up, Create Audio Track, Create Effect, Create Instrument, Create Mixer Channel, Copy, Cut, Paste, Quantize Options, Arpeggiate Selection, Chordify Selection, Conform Selection to Scale, Detect Scale from Notes, Extend Selection to Next Note, Extend Selection to Previous Note, Set Fold, Fold, Snap to Scale, Select Next Note, Select Previous Note, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Strum Selection, Taller Keys, Shorter Keys, Reset Key Height, Clear Recent Songs, Close, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Import MIDI, Import MIDI as Song, Open Recent, Relink Missing Audio, Stress Rack, Stress Song, Export Diagnostics, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Compare A/B, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Remove from VCA, Route to New Output Bus, Store Snapshot, Delay Compensation, Toggle Polarity, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Extend Selection Down, Extend Selection Up, Go to Track, Patch Jack, Remove Column, Save to Library, Select Next Device, Select Previous Device, Add Note Lane, Audio Crossfade, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce in Place, Bounce in Place and Mute Originals, Clear Static Value, Close Clip, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Fold Automation Lanes, Follow Playhead, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Group Tracks, Join, Set Left Locator Here, Set Right Locator Here, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Move Track Down, Move Track Up, Mute Automation Lane, Open Clip, Rename Folder..., Rename Note Lane..., Rename Track..., Save Clip to Library, Select Next Clip, Select Next Track, Select Previous Clip, Select Previous Track, Set Static Value, Set Snap, Set Snap Mode, Snap On/Off, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Track Height, Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, Zoom to Selection, Taller Tracks, Shorter Tracks, Reset Track Heights, Eraser Tool, Pencil Tool, Razor Tool, Select Tool, Add Marker, Add Range Marker from Loop, All Notes Off, Auto-create Lanes, Back One Bar, Forward One Bar, Clear Override, Fast Forward One Bar, Go to Locator, Input Quantize, Loop Selection and Play, Move Loop, Loop to Selection, Metronome, Next Marker, Play, Pre-count, Previous Marker, Rewind One Bar, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Stop, Tempo Down, Tempo Up, Cables, Cycle Cable Display, Detach Mixer, Detach Rack, Find Parameter..., Focus Browser Search, Automation Follows Selection, Sequencer Only, Show Automation Lane, Show Console Devices in Rack, Show Console Links, Clip Editor, Inspector, Marker List, Marker Strip, Piano Roll, Rack, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.

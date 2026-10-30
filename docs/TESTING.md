@@ -213,7 +213,7 @@ Each layer has its tests. `crates/model/tests/organise.rs` runs the eleven comma
 Hand checks, not automated (they need a real window):
 
 - Group a few tracks, collapse and expand the folder, rename it (and a track, by double-clicking its name in the header), nest a folder in another and check that the headers of the tracks inside are indented one step per level while the clips stay put, drag the window narrower and check the folder row and the headers at the default, the smallest and the largest track heights, in the dark and light themes.
-- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Alt+Up and Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu and, on macOS, the native one.
+- Shift-click and ctrl-click headers, then try Group Tracks, the move keys (Ctrl+Alt+Up and Ctrl+Alt+Down are free on your OS and keyboard layout) and the Track menu, in the in-window menu and, on macOS, the native one.
 - Type a long folder name and a long comment, press Escape and Enter, click away while typing, and hover the note mark of a comment near the right edge of the window.
 - Fold and unfold automation lanes, record automation into a folded lane, and open and close take rows, saving and reopening the project in between.
 - Open a large project with many tracks and a few folders and check that scrolling and the Fit preset stay responsive.

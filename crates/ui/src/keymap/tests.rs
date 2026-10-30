@@ -83,12 +83,15 @@ fn reference_shadows_are_the_expected_notes() {
         text,
         [
             "sequencer Return sequencer.open_clip over transport.go_start",
+            "sequencer Cmd+E view.toggle_editor over create.effect",
             "browser Return browser.create over transport.go_start",
+            "files F files.favorite over sequencer.follow",
             "files Return files.open over transport.go_start",
             "files Space files.toggle_preview over transport.play_stop",
             "files Backspace files.parent over edit.delete",
             "files Cmd+A files.select_all over edit.select_all",
             "files Cmd+F files.search over view.toggle_browser",
+            "keys F keys.note over sequencer.follow",
             "keys K keys.note over view.cables_cycle",
             "keys L keys.note over transport.loop",
         ]
@@ -252,7 +255,7 @@ fn reference_default_table_of_the_plan() {
             None,
         ),
         ("S", &[Context::Sequencer], "sequencer.snap_toggle", None),
-        ("F", &[Context::Editor], "sequencer.follow", None),
+        ("F", &[Context::Global], "sequencer.follow", None),
         ("H", &[Context::Sequencer], "view.zoom_in", None),
         ("G", &[Context::Editor], "view.zoom_out", None),
         ("Z", &[Context::Sequencer], "sequencer.zoom_selection", None),
@@ -268,19 +271,19 @@ fn reference_default_table_of_the_plan() {
         ),
         ("Cmd+J", &[Context::Sequencer], "sequencer.join", None),
         (
-            "Cmd+Shift+G",
+            "Cmd+Shift+T",
             &[Context::Sequencer],
             "sequencer.group_tracks",
             None,
         ),
         (
-            "Alt+Up",
+            "Cmd+Alt+Up",
             &[Context::Sequencer],
             "sequencer.move_track_up",
             None,
         ),
         (
-            "Alt+Down",
+            "Cmd+Alt+Down",
             &[Context::Sequencer],
             "sequencer.move_track_down",
             None,
@@ -847,16 +850,20 @@ fn reference_keys_hold_on_linux_and_mac_with_only_the_listed_exceptions() {
         ("Cmd+K", &[Context::Sequencer], "editor.quantize"),
         ("Cmd+Up", &[Context::Editor], "editor.transpose_up"),
         (
-            "Cmd+Shift+G",
+            "Cmd+Shift+T",
             &[Context::Sequencer],
             "sequencer.group_tracks",
         ),
-        ("Alt+Up", &[Context::Sequencer], "sequencer.move_track_up"),
+        (
+            "Cmd+Alt+Up",
+            &[Context::Sequencer],
+            "sequencer.move_track_up",
+        ),
         ("Cmd+Shift+Down", &[Context::Editor], "editor.octave_down"),
         ("Return", &[Context::Sequencer], "sequencer.open_clip"),
         ("Z", &[Context::Sequencer], "sequencer.zoom_selection"),
         ("S", &[Context::Editor], "sequencer.snap_toggle"),
-        ("F", &[Context::Sequencer], "sequencer.follow"),
+        ("F", &[Context::Global], "sequencer.follow"),
     ];
     for os in [Os::Linux, Os::Mac] {
         let k = km(Profile::Standard, os);
@@ -1161,4 +1168,89 @@ fn default_keymap_detach_chords_no_conflict() {
             assert_eq!(reserved(os, Context::Global, &c), None, "{text} on {os:?}");
         }
     }
+}
+
+#[test]
+fn the_standard_profile_binds_the_daily_keys_of_the_classic_layout() {
+    let rows: &[(&str, &[Context], &str, Option<&str>)] = &[
+        (
+            "X",
+            &[Context::Sequencer],
+            "sequencer.audio_crossfade",
+            Some("toggle"),
+        ),
+        (
+            "Alt+M",
+            &[Context::Sequencer],
+            "sequencer.track_height",
+            Some("fit"),
+        ),
+        ("Cmd+E", &[Context::Sequencer], "view.toggle_editor", None),
+        ("Cmd+E", &[Context::Global], "create.effect", None),
+        (
+            "Escape",
+            &[Context::Sequencer],
+            "sequencer.close_clip",
+            None,
+        ),
+        (
+            "Shift+Z",
+            &[Context::Sequencer],
+            "sequencer.zoom_selection",
+            None,
+        ),
+        (
+            "Alt+Z",
+            &[Context::Sequencer],
+            "sequencer.zoom_tracks_reset",
+            None,
+        ),
+        ("Cmd+Alt+=", &[Context::Global], "view.zoom_in", None),
+        ("Cmd+Alt+-", &[Context::Global], "view.zoom_out", None),
+        (
+            "Alt+Shift+Left",
+            &[Context::Global],
+            "transport.loop_move",
+            Some("bar:-1"),
+        ),
+        (
+            "Alt+Shift+Right",
+            &[Context::Global],
+            "transport.loop_move",
+            Some("bar:+1"),
+        ),
+        (
+            "Alt+Shift+Down",
+            &[Context::Global],
+            "transport.loop_move",
+            Some("length:-1"),
+        ),
+        (
+            "Alt+Shift+Up",
+            &[Context::Global],
+            "transport.loop_move",
+            Some("length:+1"),
+        ),
+        (
+            "Shift+!",
+            &[Context::Global],
+            "transport.all_notes_off",
+            None,
+        ),
+        ("F", &[Context::Global], "sequencer.follow", None),
+    ];
+    for os in Os::ALL {
+        let k = km(Profile::Standard, os);
+        for (c, ctxs, want, arg) in rows {
+            let got = first(k.resolve(&chord(c, os), &stack(ctxs)));
+            assert_eq!(got.command, *want, "{os:?} {c}");
+            assert_eq!(got.arg.as_deref(), *arg, "{os:?} {c}");
+        }
+    }
+    // The legacy profile keeps its keys.
+    let legacy = km(Profile::Legacy, Os::Windows);
+    assert_eq!(
+        legacy.resolve(&chord("X", Os::Windows), &stack(&[Context::Sequencer])),
+        Resolution::Unbound
+    );
 }

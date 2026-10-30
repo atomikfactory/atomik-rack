@@ -217,8 +217,9 @@ const POINTER_GESTURES: &str = "## Pointer gestures: playhead, locators and mark
 | Press and drag | Arrangement ruler | Locates the snapped position under the pointer and keeps locating while the pointer moves (not before zero) |
 | Drag the playhead | Arrangement (ruler flag, or its line in the grid) and piano roll (its line in the grid, or the ruler) | Moves the playhead by the distance dragged, snapped |
 | Drag the L or R flag | Arrangement ruler, lower band | Moves the left or the right locator, snapped, with one snap step left between them; the loop is set on release (Escape cancels) |
-| `Alt+click` | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
-| `Ctrl+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| `Ctrl+click` (`Alt+click` on macOS) | Arrangement ruler | Sets the left locator (the loop start) to the snapped position |
+| `Alt+click` (`Cmd+click` on macOS) | Arrangement ruler | Sets the right locator (the loop end) to the snapped position |
+| `Shift+click` | Arrangement ruler | Sets the End marker to the snapped position |
 | Drag a marker line | Arrangement grid, while the marker strip is shown | Moves the marker, as dragging its label in the strip does |
 | `Ctrl+Alt` held | While dragging any of these | No snap |
 

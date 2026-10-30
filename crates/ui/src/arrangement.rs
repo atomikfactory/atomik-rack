@@ -25,7 +25,7 @@ use crate::audio::{self, InputSel, TempoMap};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
-use crate::keymap::{CommandOutcome, GestureClass, Role, Roles};
+use crate::keymap::{CommandOutcome, GestureClass, Os, Role, Roles};
 use crate::library_drop;
 use crate::marker_edit::RangePart;
 use crate::paint::fit_label;
@@ -390,12 +390,18 @@ impl Menu {
     }
 }
 
-/// The locator a modified press in the ruler sets: Alt the left one (`Some(false)`), Ctrl or
-/// Cmd the right one (`Some(true)`). Both together (Ctrl+Alt is the no-snap hold) set none.
+/// The locator a modified press in the ruler sets, `Some(false)` the left one, `Some(true)` the
+/// right one. On macOS Alt sets the left and Cmd the right; on Windows and Linux Ctrl sets the
+/// left and Alt the right. Both together (Ctrl+Alt is the no-snap hold) set none.
 fn locator_edge(m: Modifiers) -> Option<bool> {
+    locator_edge_on(m, Os::host() == Os::Mac)
+}
+
+/// [`locator_edge`] for the macOS order (`mac`) or the Windows and Linux one.
+fn locator_edge_on(m: Modifiers, mac: bool) -> Option<bool> {
     match (m.alt, m.command()) {
-        (true, false) => Some(false),
-        (false, true) => Some(true),
+        (true, false) => Some(!mac),
+        (false, true) => Some(mac),
         _ => None,
     }
 }
@@ -950,6 +956,12 @@ impl ArrangementView {
     /// the button is released, even outside the bounds.
     pub fn is_dragging(&self) -> bool {
         !matches!(self.drag, Drag::None)
+    }
+
+    /// True while a gesture or a menu would take Escape itself (a drag to cancel, a menu to
+    /// close), so Escape does not close the open clip.
+    pub fn escape_pending(&self) -> bool {
+        self.is_dragging() || self.menu.is_some()
     }
 
     /// True when something changed since the last [`Self::paint`].
@@ -2512,7 +2524,7 @@ impl ArrangementView {
             && in_ruler
             && let Some(right) = locator_edge(modifiers)
         {
-            // Alt+click sets the left locator, Ctrl+click (Cmd) the right one.
+            // The modifier picks the locator (see `locator_edge`).
             // The modifier is the gesture here, not the no-snap hold: the locator always snaps.
             let grid = self.step(Modifiers::NONE);
             let t = snap_round(self.axis.x_to_tick(pos.x), grid.clone()).max(0);
@@ -2521,6 +2533,14 @@ impl ArrangementView {
                 range: locator_range(self.song.loop_range, right, t, min),
                 enabled: self.song.loop_enabled,
             }));
+            return;
+        }
+        if primary && in_ruler && modifiers.shift && !modifiers.alt && !modifiers.command() {
+            // Shift+click sets the End marker at the snapped tick (never at zero).
+            let t = snap_round(self.axis.x_to_tick(pos.x), self.step(Modifiers::NONE)).max(1);
+            if t != self.song.end_tick() {
+                out.push(song_cmd(SongCommand::SetSongEnd(t)));
+            }
             return;
         }
         match hit {

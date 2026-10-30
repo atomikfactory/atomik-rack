@@ -663,3 +663,31 @@ fn a_reversed_clip_draws_its_waveform() {
     assert_eq!(reversed.len(), forward.len(), "one polygon per channel too");
     assert_ne!(reversed, forward, "and it is the mirrored audio");
 }
+
+#[test]
+fn the_crossfade_toggle_turns_each_selected_clip_on_or_off() {
+    let reg = registry();
+    let mut doc = audio_doc();
+    edit_clip(&mut doc, 10, |a| a.xfade = None);
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_clips(&[ClipId(10)]);
+    let on = one_content(&run(
+        &mut v,
+        &doc,
+        &reg,
+        "sequencer.audio_crossfade",
+        Some("toggle"),
+    ));
+    assert_eq!(on.xfade, Some(FadeCurve::EqualPower));
+    edit_clip(&mut doc, 10, |a| a.xfade = Some(FadeCurve::Linear));
+    let mut v = audio_arrangement(&doc, &reg);
+    v.set_selected_clips(&[ClipId(10)]);
+    let off = one_content(&run(
+        &mut v,
+        &doc,
+        &reg,
+        "sequencer.audio_crossfade",
+        Some("toggle"),
+    ));
+    assert_eq!(off.xfade, None);
+}

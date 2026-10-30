@@ -108,12 +108,13 @@ rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
 rack.select_next | rack | Down
 rack.select_prev | rack | Up
-sequencer.follow | sequencer | F
-sequencer.follow | editor | F
-sequencer.group_tracks | sequencer | Cmd+Shift+G
+sequencer.audio_crossfade toggle | sequencer | X
+sequencer.close_clip | sequencer | Esc
+sequencer.follow | global | F
+sequencer.group_tracks | sequencer | Cmd+Shift+T
 sequencer.join | sequencer | Cmd+J
-sequencer.move_track_down | sequencer | Opt+Down
-sequencer.move_track_up | sequencer | Opt+Up
+sequencer.move_track_down | sequencer | Cmd+Opt+Down
+sequencer.move_track_up | sequencer | Cmd+Opt+Up
 sequencer.nudge_left | sequencer | Cmd+Left
 sequencer.nudge_left_beat | sequencer | Cmd+Shift+Left
 sequencer.nudge_left_tick | sequencer | Cmd+Opt+Left
@@ -129,11 +130,12 @@ sequencer.snap_toggle | sequencer | S
 sequencer.snap_toggle | editor | S
 sequencer.split_at_playhead | sequencer | Opt+X
 sequencer.toggle_mute | sequencer | M
-sequencer.zoom_selection | sequencer | Z
+sequencer.track_height fit | sequencer | Opt+M
+sequencer.zoom_selection | sequencer | Z, Shift+Z
 sequencer.zoom_selection | editor | Z
 sequencer.zoom_tracks_in | sequencer | Shift+H
 sequencer.zoom_tracks_out | sequencer | Shift+G
-sequencer.zoom_tracks_reset | sequencer | Shift+Z
+sequencer.zoom_tracks_reset | sequencer | Opt+Z
 tool.eraser | sequencer | E
 tool.eraser | editor | E
 tool.pencil | sequencer | W
@@ -143,6 +145,7 @@ tool.razor | editor | R
 tool.select | sequencer | Q
 tool.select | editor | Q
 transport.add_marker | global | Shift+M
+transport.all_notes_off | global | !, Shift+!
 transport.bar_back | global | Numpad7
 transport.bar_forward | global | Numpad8
 transport.forward_bar | global | Numpad5
@@ -151,6 +154,10 @@ transport.go_locator right | global | Numpad2, Opt+Right
 transport.go_start | global | NumpadDecimal, Enter
 transport.loop | global | L, NumpadDiv
 transport.loop_and_play | sequencer | P
+transport.loop_move bar:+1 | global | Opt+Shift+Right
+transport.loop_move bar:-1 | global | Opt+Shift+Left
+transport.loop_move length:+1 | global | Opt+Shift+Up
+transport.loop_move length:-1 | global | Opt+Shift+Down
 transport.loop_to_selection | sequencer | Cmd+L
 transport.metronome | global | C, Numpad9
 transport.next_marker | global | .
@@ -173,14 +180,15 @@ view.sequencer_only | global | F7, Cmd+Opt+Digit7
 view.toggle_browser | global | F3, Cmd+F, Cmd+B, Cmd+Opt+Digit3
 view.toggle_console | global | F5, Cmd+Opt+Digit5
 view.toggle_editor | global | F8, Shift+Tab, Cmd+Opt+Digit8
+view.toggle_editor | sequencer | Cmd+E
 view.toggle_file_browser | global | F9, Cmd+Opt+Digit9
 view.toggle_flip | global | Tab
 view.toggle_piano_keys | global | F4, Cmd+Opt+Digit4
 view.toggle_rack | global | F6, Cmd+Opt+Digit6
-view.zoom_in | global | Cmd+=, Cmd++, Cmd+Shift+=, Cmd+Shift++
+view.zoom_in | global | Cmd+=, Cmd++, Cmd+Shift+=, Cmd+Shift++, Cmd+Opt+=, Cmd+Opt++
 view.zoom_in | sequencer | H
 view.zoom_in | editor | H
-view.zoom_out | global | Cmd+-
+view.zoom_out | global | Cmd+-, Cmd+Opt+-
 view.zoom_out | sequencer | G
 view.zoom_out | editor | G
 view.zoom_reset | global | Cmd+0
