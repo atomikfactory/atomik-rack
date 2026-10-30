@@ -752,27 +752,34 @@ fn the_workflow_tab_steps_the_record_mode_and_the_keep_events_policy() {
     let mut d = dialog();
     goto(&mut d, Tab::Workflow);
     let l = d.workflow_layout(VIEW).unwrap();
-    assert_eq!(l.cycles.len(), 3);
+    assert_eq!(l.cycles.len(), 4);
     assert_eq!(l.cycles[0].value, "Replace (takes)");
     assert_eq!(l.cycles[1].value, "Keep");
     assert_eq!(l.cycles[2].value, "Loops only");
+    assert_eq!(l.cycles[3].value, "Standard");
     let (_, apply) = d.buttons(VIEW);
     assert!(
-        l.cycles[2].rect.y1 <= apply.y0,
+        l.cycles[3].rect.y1 <= apply.y0,
         "the rows sit above the Apply button"
     );
     down(&mut d, l.cycles[0].button.center());
     down(&mut d, l.cycles[1].button.center());
     down(&mut d, l.cycles[1].button.center());
     down(&mut d, l.cycles[2].button.center());
+    down(&mut d, l.cycles[3].button.center());
     let (_, wf) = d.preferences().unwrap();
     assert_eq!(wf.record_mode, RecordMode::Layer);
     assert_eq!(wf.keep_events, KeepEvents::NewClip);
     assert_eq!(wf.warp_imports, crate::import_warp::WarpImports::All);
+    assert_eq!(
+        wf.master_keyboard,
+        crate::master_keyboard::MasterKeyboard::Separated
+    );
     let l = d.workflow_layout(VIEW).unwrap();
     assert_eq!(l.cycles[0].value, "Layer");
     assert_eq!(l.cycles[1].value, "New clip");
     assert_eq!(l.cycles[2].value, "All files");
+    assert_eq!(l.cycles[3].value, "Separated");
 }
 
 #[test]

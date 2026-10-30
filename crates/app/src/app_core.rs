@@ -182,6 +182,13 @@ pub struct AppCore<S: EngineSink> {
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
+    /// Manual Rec: selecting a track no longer arms it (session state).
+    manual_rec: bool,
+    /// The track the master keyboard plays in Separated mode (session state, forgotten when a
+    /// document is replaced).
+    mki: Option<DeviceKey>,
+    /// How the master keyboard picks its track (the Workflow preference).
+    master_keyboard: crate::master_keyboard::MasterKeyboard,
     /// The arrangement's selected track the last arming followed (see `follow_arrangement_track`).
     arranged_track: Option<DeviceKey>,
     /// A new arrangement track selection awaits its pointer release to hand the keys to the rack.
@@ -410,6 +417,9 @@ impl<S: EngineSink> AppCore<S> {
             registry,
             clipboard: Clipboard::new(),
             auto_armed: Vec::new(),
+            manual_rec: false,
+            mki: None,
+            master_keyboard: crate::master_keyboard::MasterKeyboard::default(),
             arranged_track: None,
             arrangement_track_changed: false,
             console_selection: Vec::new(),
@@ -728,6 +738,8 @@ impl<S: EngineSink> AppCore<S> {
             }
             // The param being touched: the arrangement follows it when it is set to.
             UiAction::ParamTouched { device, param } => self.param_touched(&device, &param),
+            UiAction::SetMasterKeyboard(track) => self.set_master_keyboard_track(track),
+            UiAction::ToggleManualRec => self.set_manual_rec(!self.manual_rec),
             UiAction::ToggleLaneArm { device, param } => {
                 self.toggle_automation_arm(&device, &param);
             }
@@ -1073,6 +1085,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sync_midi_marks();
         self.follow_selected_device();
         self.target.set(self.notes_target());
+        self.sync_master_keyboard_marker();
         self.views_synced_at = Some(revision);
     }
 
@@ -1164,6 +1177,7 @@ impl<S: EngineSink> AppCore<S> {
         self.file = file;
         self.rejection = None;
         self.auto_armed.clear();
+        self.mki = None;
         self.arranged_track = None;
         self.console_selection.clear();
         self.snapshot_hint = None;
@@ -2161,12 +2175,18 @@ impl<S: EngineSink> AppCore<S> {
         Some((*self.ids.get(&flat)?, socket))
     }
 
-    /// Where live MIDI notes go. With record-armed tracks: the selected device if it is
-    /// armed, else the first armed track's device (an armed track receives the keyboard).
-    /// Otherwise the selected device's first notes input if it has one, else the first device
-    /// in rack order with a notes input.
+    /// Where live MIDI notes go. In Separated master keyboard mode: the track chosen with its
+    /// header arrow, while it has a notes input. Otherwise, with record-armed tracks: the
+    /// selected device if it is armed, else the first armed track's device (an armed track
+    /// receives the keyboard). Otherwise the selected device's first notes input if it has
+    /// one, else the first device in rack order with a notes input.
     pub fn notes_target(&self) -> Option<Target> {
         let doc = self.doc();
+        if self.master_keyboard == crate::master_keyboard::MasterKeyboard::Separated
+            && let Some(target) = self.mki.as_ref().and_then(|k| self.target_of(k))
+        {
+            return Some(target);
+        }
         let selected = self.view.selected();
         let mut armed = doc.song.tracks.iter().filter(|t| t.armed);
         if let Some(first) = armed.next() {
@@ -3033,6 +3053,11 @@ mod clipboard_tests;
 #[cfg(test)]
 #[path = "app_core_console_select_tests.rs"]
 mod console_select_tests;
+
+#[cfg(test)]
+#[path = "app_core_master_keyboard_tests.rs"]
+mod master_keyboard_tests;
+
 #[cfg(test)]
 #[path = "app_core_create_tests.rs"]
 mod create_tests;

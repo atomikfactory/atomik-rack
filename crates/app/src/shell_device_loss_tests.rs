@@ -20,6 +20,8 @@ struct World {
     broken: RefCell<Option<String>>,
     /// The output device of every start.
     starts: RefCell<Vec<Option<String>>>,
+    /// The MIDI input ports that are plugged in.
+    midi: RefCell<Vec<String>>,
 }
 
 #[derive(Clone, Default)]
@@ -52,7 +54,7 @@ impl AudioBackend for Fake {
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
-        Ok(Vec::new())
+        Ok(self.0.midi.borrow().clone())
     }
 
     fn start(
@@ -352,4 +354,46 @@ fn a_stall_resets_to_the_default_devices_only_after_two_seconds() {
     s.poll_status_at(t0 + Duration::from_millis(2_500));
     assert_eq!(world.0.starts.borrow().len(), 2);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_open_settings_dialog_lists_the_midi_ports_again_every_second() {
+    let dir = scratch("port-relist");
+    let world = Fake::default();
+    let mut s = shell(&world, &saved("Interface", false), &dir);
+    s.execute(AppCommand::AudioSettings);
+    let t0 = crate::session::clock_now();
+    s.poll_status_at(t0);
+    let ports = |s: &Shell<Fake>| s.dialog.as_ref().unwrap().lists().midi_ports.clone();
+    assert!(ports(&s).is_empty());
+    // A controller is plugged in: the list does not change before the second is up...
+    world.0.midi.borrow_mut().push("Example Pads".into());
+    s.poll_status_at(t0 + Duration::from_millis(500));
+    assert!(ports(&s).is_empty());
+    // ...and does after it.
+    s.poll_status_at(t0 + Duration::from_millis(1_100));
+    assert_eq!(ports(&s), ["Example Pads"]);
+    // Closing the dialog stops the listing.
+    s.dialog = None;
+    world.0.midi.borrow_mut().clear();
+    s.poll_status_at(t0 + Duration::from_millis(5_000));
+    assert!(s.ports_listed_at.is_none());
+}
+
+#[test]
+fn rescan_midi_ports_says_what_is_open() {
+    let dir = scratch("rescan");
+    let world = Fake::default();
+    let mut s = shell(&world, &saved("Interface", false), &dir);
+    s.execute(AppCommand::RescanMidi);
+    let said = s.core().last_rejection().unwrap();
+    assert!(said.contains("No MIDI input is switched on"), "{said}");
+    // A switched-on port that is not there is named.
+    let mut wanted = saved("Interface", false);
+    wanted.midi_inputs = vec![crate::settings::MidiInputSetting::enabled("Example Pads")];
+    let dir = scratch("rescan-missing");
+    let mut s = shell(&world, &wanted, &dir);
+    s.execute(AppCommand::RescanMidi);
+    let said = s.core().last_rejection().unwrap();
+    assert!(said.contains("Example Pads"), "{said}");
 }

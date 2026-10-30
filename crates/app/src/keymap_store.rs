@@ -12,6 +12,7 @@
 //!   phase, such as the rack layout flags), so saving never drops them.
 
 use crate::import_warp::WarpImports;
+use crate::master_keyboard::MasterKeyboard;
 use crate::record_over::{KeepEvents, RecordMode};
 use atomik_ui::keymap::UserKeymap;
 use serde_json::{Map, Value};
@@ -74,6 +75,8 @@ pub struct WorkflowPrefs {
     pub keep_events: KeepEvents,
     /// Which imported audio files are warped to the song tempo (default Loops only).
     pub warp_imports: WarpImports,
+    /// How the master keyboard picks its track (default Standard: it follows the selection).
+    pub master_keyboard: MasterKeyboard,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -94,6 +97,7 @@ impl Default for WorkflowPrefs {
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
             warp_imports: WarpImports::default(),
+            master_keyboard: MasterKeyboard::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -146,6 +150,11 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(WarpImports::from_id)
                 .unwrap_or(defaults.warp_imports),
+            master_keyboard: obj
+                .get("master_keyboard")
+                .and_then(Value::as_str)
+                .and_then(MasterKeyboard::from_id)
+                .unwrap_or(defaults.master_keyboard),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -164,6 +173,7 @@ impl WorkflowPrefs {
                             | "record_mode"
                             | "keep_events"
                             | "warp_imports"
+                            | "master_keyboard"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -209,6 +219,10 @@ impl WorkflowPrefs {
         map.insert(
             "warp_imports".into(),
             Value::String(self.warp_imports.id().into()),
+        );
+        map.insert(
+            "master_keyboard".into(),
+            Value::String(self.master_keyboard.id().into()),
         );
         if let Some(folder) = &self.library_folder {
             map.insert(
@@ -644,5 +658,39 @@ mod tests {
         // A wrongly typed value is the default.
         let bad = WorkflowPrefs::from_json("{\"open_last_project\": \"yes\"}").unwrap();
         assert!(!bad.open_last_project);
+    }
+}
+
+#[cfg(test)]
+mod master_keyboard_tests {
+    use super::*;
+    use crate::master_keyboard::MasterKeyboard;
+
+    #[test]
+    fn the_master_keyboard_mode_is_saved_and_defaults_to_standard() {
+        assert_eq!(
+            WorkflowPrefs::default().master_keyboard,
+            MasterKeyboard::Standard
+        );
+        // An older file has no such field; a wrong value is the default.
+        let old = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(old.master_keyboard, MasterKeyboard::Standard);
+        let bad = WorkflowPrefs::from_json(r#"{"master_keyboard": 3}"#).unwrap();
+        assert_eq!(bad.master_keyboard, MasterKeyboard::Standard);
+        let set = WorkflowPrefs {
+            master_keyboard: MasterKeyboard::Separated,
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(
+            text.contains("\"master_keyboard\": \"separated\""),
+            "{text}"
+        );
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(
+            back.extra.is_empty(),
+            "the field is known, not kept as extra"
+        );
     }
 }

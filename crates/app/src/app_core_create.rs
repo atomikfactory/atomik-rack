@@ -62,9 +62,30 @@ impl<S: EngineSink> AppCore<S> {
             .filter(|t| t.armed && !pre.tracks.contains(&t.device))
             .map(|t| t.device.clone())
             .collect();
-        for k in new_tracks {
-            if !self.auto_armed.contains(&k) {
-                self.auto_armed.push(k);
+        if self.manual_rec && !new_tracks.is_empty() {
+            // Manual Rec: the creation armed the new tracks; hand arming back to the user in
+            // the same undo step.
+            let batch = new_tracks
+                .iter()
+                .filter_map(|k| {
+                    let t = self.document.doc().song.track(k)?;
+                    Some(Command::Song(SongCommand::SetTrackFlags {
+                        device: k.clone(),
+                        muted: t.muted,
+                        solo: t.solo,
+                        armed: false,
+                    }))
+                })
+                .collect();
+            self.join_next = true;
+            // A rejection is already reported to the view.
+            let _ = self.apply_command(Command::Batch(batch));
+            self.join_next = false;
+        } else {
+            for k in new_tracks {
+                if !self.auto_armed.contains(&k) {
+                    self.auto_armed.push(k);
+                }
             }
         }
         let doc = self.document.doc();
@@ -229,6 +250,72 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
+    /// Tells the arrangement which track's header arrow is lit (the track the master keyboard
+    /// plays) and whether the arrows can be clicked (Separated mode), and Manual Rec's state.
+    pub(super) fn sync_master_keyboard_marker(&mut self) {
+        let separated = self.master_keyboard == crate::master_keyboard::MasterKeyboard::Separated;
+        let playing = self
+            .notes_target_device()
+            .map(|d| d.key.clone())
+            .filter(|k| self.doc().song.track(k).is_some());
+        self.arrangement.set_master_keyboard(playing, separated);
+        self.arrangement.set_manual_rec(self.manual_rec);
+    }
+
+    /// Whether Manual Rec is on: selecting a track does not arm it.
+    pub fn manual_rec(&self) -> bool {
+        self.manual_rec
+    }
+
+    /// Switches Manual Rec. Turning it on forgets which tracks the app armed on its own, so
+    /// later creations never disarm tracks the user armed by hand.
+    pub fn set_manual_rec(&mut self, on: bool) {
+        if self.manual_rec == on {
+            return;
+        }
+        self.manual_rec = on;
+        if on {
+            self.auto_armed.clear();
+        }
+        self.after_view_change();
+        self.report(if on {
+            "Manual Rec: selecting a track no longer arms it"
+        } else {
+            "Manual Rec off: selecting a track arms it"
+        });
+    }
+
+    /// How the master keyboard picks its track.
+    pub fn master_keyboard_mode(&self) -> crate::master_keyboard::MasterKeyboard {
+        self.master_keyboard
+    }
+
+    /// Sets how the master keyboard picks its track (the Workflow preference).
+    pub fn set_master_keyboard_mode(&mut self, mode: crate::master_keyboard::MasterKeyboard) {
+        if self.master_keyboard != mode {
+            self.master_keyboard = mode;
+            self.after_view_change();
+        }
+    }
+
+    /// The track the Separated master keyboard plays (`None`: it follows the selection).
+    pub fn master_keyboard_track(&self) -> Option<&DeviceKey> {
+        self.mki.as_ref()
+    }
+
+    /// Chooses the track the Separated master keyboard plays; `None` hands it back to the
+    /// selection. A key with no song track is refused.
+    pub fn set_master_keyboard_track(&mut self, track: Option<DeviceKey>) {
+        if track
+            .as_ref()
+            .is_some_and(|k| self.doc().song.track(k).is_none())
+        {
+            return;
+        }
+        self.mki = track;
+        self.after_view_change();
+    }
+
     /// Arms the song track of `device` and disarms the tracks an earlier auto-arm armed, then
     /// selects the device in the rack (what the live keyboard plays). One batched undo step.
     fn arm_track_device(&mut self, device: &DeviceKey) {
@@ -241,6 +328,13 @@ impl<S: EngineSink> AppCore<S> {
             .track(&device)
             .is_some_and(|t| t.is_automation_only())
         {
+            self.view
+                .set_selection(std::slice::from_ref(&device), Some(&device));
+            self.after_view_change();
+            return;
+        }
+        // Manual Rec: the track is selected but arming stays with the user.
+        if self.manual_rec {
             self.view
                 .set_selection(std::slice::from_ref(&device), Some(&device));
             self.after_view_change();
