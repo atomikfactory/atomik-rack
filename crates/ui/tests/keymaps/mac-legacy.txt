@@ -84,6 +84,12 @@ mixer.value_page_up | mixer | PageUp
 mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
+sequencer.nudge_left | sequencer | Cmd+Left
+sequencer.nudge_left_beat | sequencer | Cmd+Shift+Left
+sequencer.nudge_left_tick | sequencer | Cmd+Opt+Left
+sequencer.nudge_right | sequencer | Cmd+Right
+sequencer.nudge_right_beat | sequencer | Cmd+Shift+Right
+sequencer.nudge_right_tick | sequencer | Cmd+Opt+Right
 sequencer.split_at_playhead | sequencer | Cmd+E
 sequencer.toggle_mute | sequencer | M
 transport.go_start | rack | Enter, Shift+Enter

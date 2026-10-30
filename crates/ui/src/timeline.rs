@@ -242,6 +242,8 @@ pub enum Snap {
     Off,
     /// Whole bars.
     Bar,
+    /// Half notes (`PPQ * 2`).
+    Half,
     /// Beats of the meter.
     Beat,
     /// Eighth notes (`PPQ / 2`).
@@ -253,6 +255,10 @@ pub enum Snap {
     ThirtySecond,
     /// Sixty-fourth notes (`PPQ / 16`).
     SixtyFourth,
+    /// One-hundred-twenty-eighth notes (`PPQ / 32`).
+    OneTwentyEighth,
+    /// Half-note triplets (`PPQ * 4 / 3`: three in the time of two half notes).
+    HalfTriplet,
     /// Quarter-note triplets (`PPQ * 2 / 3`: three in the time of two beats).
     QuarterTriplet,
     /// Eighth-note triplets (`PPQ / 3`).
@@ -272,13 +278,16 @@ pub const GRID_MIN_PX: f64 = 7.0;
 
 impl Snap {
     /// Every resolution, in selector order.
-    pub const ALL: [Snap; 12] = [
+    pub const ALL: [Snap; 15] = [
         Snap::Bar,
+        Snap::Half,
         Snap::Beat,
         Snap::Eighth,
         Snap::Sixteenth,
         Snap::ThirtySecond,
         Snap::SixtyFourth,
+        Snap::OneTwentyEighth,
+        Snap::HalfTriplet,
         Snap::QuarterTriplet,
         Snap::EighthTriplet,
         Snap::SixteenthTriplet,
@@ -293,11 +302,14 @@ impl Snap {
         match self {
             Snap::Off => None,
             Snap::Bar => Some(meter.bar_ticks()),
+            Snap::Half => Some(PPQ * 2),
             Snap::Beat => Some(meter.beat_ticks()),
             Snap::Eighth => Some(PPQ / 2),
             Snap::Sixteenth | Snap::Grid => Some(PPQ / 4),
             Snap::ThirtySecond => Some(PPQ / 8),
             Snap::SixtyFourth => Some(PPQ / 16),
+            Snap::OneTwentyEighth => Some(PPQ / 32),
+            Snap::HalfTriplet => Some(PPQ * 4 / 3),
             Snap::QuarterTriplet => Some(PPQ * 2 / 3),
             Snap::EighthTriplet => Some(PPQ / 3),
             Snap::SixteenthTriplet => Some(PPQ / 6),
@@ -331,11 +343,14 @@ impl Snap {
         match self {
             Snap::Off => "Off",
             Snap::Bar => "Bar",
+            Snap::Half => "1/2",
             Snap::Beat => "Beat",
             Snap::Eighth => "1/8",
             Snap::Sixteenth => "1/16",
             Snap::ThirtySecond => "1/32",
             Snap::SixtyFourth => "1/64",
+            Snap::OneTwentyEighth => "1/128",
+            Snap::HalfTriplet => "1/2T",
             Snap::QuarterTriplet => "1/4T",
             Snap::EighthTriplet => "1/8T",
             Snap::SixteenthTriplet => "1/16T",

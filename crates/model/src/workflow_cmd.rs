@@ -203,6 +203,55 @@ pub enum WorkflowCommand {
         /// At least two clips.
         ids: Vec<ClipId>,
     },
+    /// Moves the start of every listed note or automation clip by `start_delta` ticks (negative:
+    /// earlier) and gives the length back or takes it, so the clip ends where it did (one undo
+    /// step). The content stays where it is in song time: the offset moves by the delta. A
+    /// clip that grows left past content tick 0 shifts its notes, controller points or
+    /// automation points right to make room (a looped clip wraps its loop instead). Audio clips,
+    /// a start below 0 and a length that would fall to 0 reject the command. `merge` joins the
+    /// trim to the drag-merge group of the `SetClipGeometry` commands of the same drag.
+    TrimClips {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Ticks the start moves by.
+        start_delta: i64,
+        /// Drag-merge group.
+        merge: Option<u64>,
+    },
+    /// Removes what the listed note and automation clips do not play: notes that start outside
+    /// the clip's content window (`[offset, offset + length)`, or the loop window of a looped
+    /// clip) and automation or controller points outside it, keeping the nearest point on each
+    /// side so the curve at the window edges stays what it was. Audio clips are skipped. One
+    /// undo step; a command that would change nothing rejects.
+    DeleteOutsideEvents {
+        /// The clips.
+        ids: Vec<ClipId>,
+    },
+    /// Splits every listed clip that `at` falls strictly inside at that tick, in one undo step.
+    /// The new right halves take ids from the song's next free id in song order (clips sorted
+    /// by start, then id; the last is [`crate::Document::last_clip_id`]). A command that
+    /// splits nothing rejects.
+    SplitClips {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Song tick.
+        at: i64,
+    },
+    /// Cuts the song range `[start, end)` out of every listed clip it touches (a razor drag):
+    /// the part inside goes, the parts outside stay (a clip the range lies inside leaves two
+    /// clips, the right one with a new id). With `copy` the clips stay as they are and a copy
+    /// of each clip's part inside the range is placed so the range starts at `end`. One undo
+    /// step; new ids come from the song's next free id in song order.
+    CutOut {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Start of the range, in song ticks.
+        start: i64,
+        /// End of the range (greater than `start`).
+        end: i64,
+        /// Copy the range instead of removing it.
+        copy: bool,
+    },
     /// Merges a recorded take into the note clip under its start (a *Layer* recording): the
     /// clip keeps its id, start and offset, grows to hold the take, keeps every old note, takes
     /// the take's notes (a new note replaces an old one with the same start and key) and, for
@@ -506,6 +555,17 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
+        WorkflowCommand::TrimClips {
+            ids, start_delta, ..
+        } => plain(trim_clips(doc, registry, &ids, start_delta)),
+        WorkflowCommand::DeleteOutsideEvents { ids } => plain(delete_outside_events(doc, &ids)),
+        WorkflowCommand::SplitClips { ids, at } => split_clips(doc, &ids, at),
+        WorkflowCommand::CutOut {
+            ids,
+            start,
+            end,
+            copy,
+        } => cut_out(doc, &ids, (start, end), copy),
         WorkflowCommand::LayerRecording { clip, take } => {
             crate::record_over::plan_layer(doc, registry, clip, &take)
         }
@@ -1471,4 +1531,288 @@ fn points_edit(
         }
         Ok(ClipContent::Automation(points.into_values().collect()))
     })
+}
+
+/// The unique clips of `ids` in song order (by start, then id), each with its device and lane.
+fn clips_in_song_order<'d>(
+    doc: &'d RackDoc,
+    ids: &[ClipId],
+) -> Result<Vec<(DeviceKey, usize, &'d Clip)>, ModelError> {
+    let wanted: BTreeSet<ClipId> = ids.iter().copied().collect();
+    if wanted.is_empty() {
+        return Err(bad_song("no clips are selected"));
+    }
+    let mut clips = Vec::new();
+    for id in &wanted {
+        clips.push(clip_of(doc, *id)?);
+    }
+    clips.sort_by_key(|(_, _, c)| (c.start, c.id));
+    Ok(clips)
+}
+
+/// Plans `TrimClips`: see the command docs.
+fn trim_clips(
+    doc: &RackDoc,
+    registry: &Registry,
+    ids: &[ClipId],
+    delta: i64,
+) -> Result<Edit, ModelError> {
+    if delta == 0 {
+        return Err(bad_song("the start does not move"));
+    }
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips_in_song_order(doc, ids)? {
+        if c.content.is_audio() {
+            return Err(bad_song(format!(
+                "clip {} is an audio clip: trim it with its own handle",
+                c.id.0
+            )));
+        }
+        let start = c.start.saturating_add(delta);
+        let length = c.length.saturating_sub(delta);
+        let (offset, shift) = match c.loop_length {
+            Some(n) => ((c.offset + delta).rem_euclid(n), 0),
+            None if c.offset + delta < 0 => (0, -(c.offset + delta)),
+            None => (c.offset + delta, 0),
+        };
+        check_geometry(start, length, offset, c.loop_length).map_err(ModelError::OutOfRange)?;
+        let mut new = Clip {
+            start,
+            length,
+            offset,
+            ..c.clone()
+        };
+        if shift > 0 {
+            let desc = rules::descriptor(registry, &rules::device(doc, &device)?.type_id)?;
+            let kind = lane_kind(doc, &device, lane)?;
+            let moved = |p: &AutomationPoint| AutomationPoint {
+                tick: p.tick.saturating_add(shift),
+                ..*p
+            };
+            new.content = check_content(
+                doc,
+                match &c.content {
+                    ClipContent::Notes(notes) => ClipContent::Notes(
+                        notes
+                            .iter()
+                            .map(|n| Note {
+                                tick: n.tick.saturating_add(shift),
+                                ..*n
+                            })
+                            .collect(),
+                    ),
+                    ClipContent::Automation(points) => {
+                        ClipContent::Automation(points.iter().map(moved).collect())
+                    }
+                    audio @ ClipContent::Audio(_) => audio.clone(),
+                },
+                kind,
+                desc,
+            )?;
+            new.controllers = c
+                .controllers
+                .iter()
+                .map(|l| ControllerLane::new(l.kind, l.points.iter().map(moved).collect()))
+                .collect();
+            crate::controller::check_lanes(&new.controllers, crate::song::MAX_TICK)
+                .map_err(ModelError::OutOfRange)?;
+        }
+        edits.push(Edit::Clip {
+            device,
+            lane,
+            old: Some(c.clone()),
+            new: Some(new),
+        });
+    }
+    Ok(Edit::Compound(edits))
+}
+
+/// The points of `points` (sorted by tick) that start inside `[lo, hi)`, with the last one
+/// before `lo` (unless a point sits at `lo`) and the first one from `hi` on, so the curve inside
+/// the window is unchanged.
+fn points_around(points: &[AutomationPoint], lo: i64, hi: i64) -> Vec<AutomationPoint> {
+    let first = points.partition_point(|p| p.tick < lo);
+    let last = points.partition_point(|p| p.tick < hi);
+    let from = if points.get(first).is_some_and(|p| p.tick == lo) {
+        first
+    } else {
+        first.saturating_sub(1)
+    };
+    points[from..(last + 1).min(points.len())].to_vec()
+}
+
+/// Plans `DeleteOutsideEvents`: see the command docs.
+fn delete_outside_events(doc: &RackDoc, ids: &[ClipId]) -> Result<Edit, ModelError> {
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips_in_song_order(doc, ids)? {
+        let (lo, hi) = match c.loop_length {
+            Some(n) => (0, n),
+            None => (c.offset, c.offset + c.length),
+        };
+        let content = match &c.content {
+            ClipContent::Notes(notes) => ClipContent::Notes(
+                notes
+                    .iter()
+                    .filter(|n| (lo..hi).contains(&n.tick))
+                    .copied()
+                    .collect(),
+            ),
+            ClipContent::Automation(points) => {
+                ClipContent::Automation(points_around(points, lo, hi))
+            }
+            ClipContent::Audio(_) => continue,
+        };
+        let controllers = canonical(
+            c.controllers
+                .iter()
+                .map(|l| ControllerLane::new(l.kind, points_around(&l.points, lo, hi)))
+                .collect(),
+        );
+        if content == c.content && controllers == c.controllers {
+            continue;
+        }
+        edits.push(Edit::Clip {
+            device,
+            lane,
+            old: Some(c.clone()),
+            new: Some(Clip {
+                content,
+                controllers,
+                ..c.clone()
+            }),
+        });
+    }
+    if edits.is_empty() {
+        return Err(bad_song("no events lie outside the clips"));
+    }
+    Ok(Edit::Compound(edits))
+}
+
+/// Plans `SplitClips`: see the command docs.
+fn split_clips(
+    doc: &RackDoc,
+    ids: &[ClipId],
+    at: i64,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    let first = doc.song.next_clip_id;
+    let mut next = first;
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips_in_song_order(doc, ids)? {
+        if !(c.start < at && at < c.end()) {
+            continue;
+        }
+        let (left, mut right) = crate::song_cmd::split_pair(doc, c, at)?;
+        right.id = ClipId(next);
+        next = next
+            .checked_add(1)
+            .ok_or_else(|| bad_song("clip ids are exhausted"))?;
+        edits.push(Edit::Clip {
+            device: device.clone(),
+            lane,
+            old: Some(c.clone()),
+            new: Some(left),
+        });
+        edits.push(Edit::Clip {
+            device,
+            lane,
+            old: None,
+            new: Some(right),
+        });
+    }
+    if next == first {
+        return Err(bad_song(format!("no clip spans tick {at}")));
+    }
+    edits.push(Edit::NextClipId {
+        old: first,
+        new: next,
+    });
+    Ok((Edit::Compound(edits), Some(ClipId(next - 1))))
+}
+
+/// Plans `CutOut`: see the command docs.
+fn cut_out(
+    doc: &RackDoc,
+    ids: &[ClipId],
+    (start, end): (i64, i64),
+    copy: bool,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    if start >= end {
+        return Err(bad_song("the range must end after it starts"));
+    }
+    let first = doc.song.next_clip_id;
+    let mut next = first;
+    let mut alloc = || -> Result<ClipId, ModelError> {
+        let id = ClipId(next);
+        next = next
+            .checked_add(1)
+            .ok_or_else(|| bad_song("clip ids are exhausted"))?;
+        Ok(id)
+    };
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips_in_song_order(doc, ids)? {
+        if c.end() <= start || c.start >= end {
+            continue;
+        }
+        // The part inside the range, cut the way a split cuts.
+        let mut inside = c.clone();
+        let mut before = None;
+        let mut after = None;
+        if c.start < start {
+            let (l, r) = crate::song_cmd::split_pair(doc, &inside, start)?;
+            before = Some(l);
+            inside = r;
+        }
+        if inside.end() > end {
+            let (l, r) = crate::song_cmd::split_pair(doc, &inside, end)?;
+            after = Some(r);
+            inside = l;
+        }
+        let put = |old: Option<Clip>, new: Option<Clip>| Edit::Clip {
+            device: device.clone(),
+            lane,
+            old,
+            new,
+        };
+        if copy {
+            let placed = Clip {
+                id: alloc()?,
+                start: inside.start + (end - start),
+                ..inside
+            };
+            check_geometry(
+                placed.start,
+                placed.length,
+                placed.offset,
+                placed.loop_length,
+            )
+            .map_err(ModelError::OutOfRange)?;
+            edits.push(put(None, Some(placed)));
+            continue;
+        }
+        match (before, after) {
+            (Some(l), Some(mut r)) => {
+                r.id = alloc()?;
+                edits.push(put(Some(c.clone()), Some(l)));
+                edits.push(put(None, Some(r)));
+            }
+            (Some(l), None) => edits.push(put(Some(c.clone()), Some(l))),
+            (None, Some(mut r)) => {
+                // The clip loses its head and keeps its id.
+                r.id = c.id;
+                edits.push(put(Some(c.clone()), Some(r)));
+            }
+            (None, None) => edits.push(put(Some(c.clone()), None)),
+        }
+    }
+    if edits.is_empty() {
+        return Err(bad_song("no clip lies inside the range"));
+    }
+    if next == first {
+        return Ok((Edit::Compound(edits), None));
+    }
+    edits.push(Edit::NextClipId {
+        old: first,
+        new: next,
+    });
+    Ok((Edit::Compound(edits), Some(ClipId(next - 1))))
 }

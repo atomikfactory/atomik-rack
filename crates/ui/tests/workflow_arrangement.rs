@@ -111,32 +111,22 @@ fn split_at_playhead_splits_the_selection_else_every_clip_under_the_playhead() {
     select(&mut v, &[1, 3]);
     let s = v.command("sequencer.split_at_playhead", None, &doc, &reg);
     assert_eq!(
-        song_commands(s.actions()),
-        vec![
-            SongCommand::SplitClip {
-                id: ClipId(1),
-                at: 2 * BAR + PPQ
-            },
-            SongCommand::SplitClip {
-                id: ClipId(3),
-                at: 2 * BAR + PPQ
-            },
-        ]
+        workflow_commands(s.actions()),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(1), ClipId(3)],
+            at: 2 * BAR + PPQ
+        }]
     );
     select(&mut v, &[]);
     v.set_playhead(BAR + PPQ);
     let s = v.command("sequencer.split_at_playhead", None, &doc, &reg);
-    let ids: Vec<ClipId> = song_commands(s.actions())
-        .into_iter()
-        .map(|c| match c {
-            SongCommand::SplitClip { id, at } => {
-                assert_eq!(at, BAR + PPQ);
-                id
-            }
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(ids, vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)]);
+    assert_eq!(
+        workflow_commands(s.actions()),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)],
+            at: BAR + PPQ
+        }]
+    );
 }
 
 #[test]
@@ -412,9 +402,9 @@ fn the_razor_splits_the_clip_under_the_pointer_at_the_snapped_position() {
     let p = lane_point(&v, "keys", BAR + PPQ + 100);
     let a = click(&mut v, p, Modifiers::NONE);
     assert_eq!(
-        song_commands(&a),
-        vec![SongCommand::SplitClip {
-            id: ClipId(3),
+        workflow_commands(&a),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(3)],
             at: BAR + PPQ
         }]
     );
@@ -424,8 +414,11 @@ fn the_razor_splits_the_clip_under_the_pointer_at_the_snapped_position() {
     let a = click(&mut v, p, Modifiers::NONE);
     let at = v.x_to_tick(p.x);
     assert_eq!(
-        song_commands(&a),
-        vec![SongCommand::SplitClip { id: ClipId(3), at }]
+        workflow_commands(&a),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(3)],
+            at
+        }]
     );
 }
 
@@ -435,17 +428,14 @@ fn a_razor_click_in_the_ruler_splits_every_track_at_that_position() {
     v.set_tool(Tool::Razor);
     let p = Point::new(v.tick_to_x(BAR + PPQ), v.ruler_label_y());
     let a = click(&mut v, p, Modifiers::NONE);
-    let ids: Vec<ClipId> = song_commands(&a)
-        .into_iter()
-        .map(|c| match c {
-            SongCommand::SplitClip { id, at } => {
-                assert_eq!(at, BAR + PPQ);
-                id
-            }
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(ids, vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)]);
+    assert_eq!(
+        workflow_commands(&a),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)],
+            at: BAR + PPQ
+        }],
+        "one command for every track: one undo step"
+    );
     assert!(
         !a.iter().any(|x| matches!(x, UiAction::Transport(_))),
         "no locate with the razor"
@@ -478,11 +468,11 @@ fn the_pencil_makes_a_click_draw_and_leaves_clips_alone() {
     let empty = lane_point(&v, "lead", 8 * BAR);
     let a = click(&mut v, empty, Modifiers::NONE);
     let added = song_commands(&a);
-    assert_eq!(added.len(), 1, "a click draws a one-bar clip");
+    assert_eq!(added.len(), 1, "a click draws a clip one snap step long");
     match &added[0] {
         SongCommand::AddClip { device, clip, .. } => {
             assert_eq!(device, &key("lead"));
-            assert_eq!(clip.length, BAR);
+            assert_eq!(clip.length, PPQ / 4, "the default snap is a sixteenth");
             assert_eq!(clip.start % (PPQ / 4), 0, "snapped");
         }
         other => panic!("{other:?}"),

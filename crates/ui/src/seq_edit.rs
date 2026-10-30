@@ -3,6 +3,7 @@
 //! selection model, note normalization, quantize, and automation values.
 
 use crate::timeline::{Quant, snap_ceil, snap_floor, snap_round};
+use crate::viewport::SnapMode;
 use atomik_core::ParamDescriptor;
 use atomik_model::{AutomationPoint, Clip, Curve, Note};
 use std::collections::BTreeSet;
@@ -133,6 +134,22 @@ pub fn rubber_band(a: Point, b: Point, items: &[Rect]) -> BTreeSet<usize> {
 /// grid and never before 0.
 pub fn drag_start(orig_start: i64, delta: i64, step: impl Quant) -> i64 {
     snap_round(orig_start + delta, step).max(0)
+}
+
+/// New start for a body drag in relative snap mode: the pointer delta rounds to whole grid
+/// steps, so the item keeps its distance from the grid (a clip dragged 1.3 steps lands 1 step
+/// away). Never before 0. With snapping off the delta is exact.
+pub fn drag_start_rel(orig_start: i64, delta: i64, step: impl Quant) -> i64 {
+    let moved = step.unit().filter(|s| *s > 0).round_to(delta);
+    (orig_start + moved).max(0)
+}
+
+/// [`drag_start`] or [`drag_start_rel`] by the snap mode.
+pub fn drag_start_by(mode: SnapMode, orig_start: i64, delta: i64, step: impl Quant) -> i64 {
+    match mode {
+        SnapMode::Absolute => drag_start(orig_start, delta, step),
+        SnapMode::Relative => drag_start_rel(orig_start, delta, step),
+    }
 }
 
 /// New length for a right-edge drag: the original end plus the delta, rounded to the grid,
@@ -487,6 +504,31 @@ mod tests {
     use atomik_model::{ClipContent, ClipId};
 
     const BAR: i64 = 4 * PPQ;
+
+    #[test]
+    fn a_relative_drag_moves_by_whole_steps_and_keeps_the_offset_from_the_grid() {
+        let step = Some(PPQ / 4);
+        let s = PPQ / 4;
+        // 1.3 steps lands 1 step away; the clip keeps its 100 ticks off the grid.
+        assert_eq!(
+            drag_start_rel(BAR + 100, s + s * 3 / 10, step),
+            BAR + 100 + s
+        );
+        assert_eq!(
+            drag_start_rel(BAR + 100, s * 3 / 2, step),
+            BAR + 100 + 2 * s
+        );
+        assert_eq!(drag_start_rel(BAR + 100, -s * 4 / 10, step), BAR + 100);
+        // Absolute snapping pulls it onto a line.
+        assert_eq!(drag_start(BAR + 100, s * 13 / 10, step), BAR + s);
+        // Never before 0; snapping off is exact.
+        assert_eq!(drag_start_rel(100, -10 * s, step), 0);
+        assert_eq!(drag_start_rel(100, 37, None::<i64>), 137);
+        assert_eq!(
+            drag_start_by(SnapMode::Relative, BAR + 100, s * 13 / 10, step),
+            BAR + 100 + s
+        );
+    }
 
     fn clip(start: i64, length: i64, offset: i64, looped: Option<i64>) -> Clip {
         Clip {

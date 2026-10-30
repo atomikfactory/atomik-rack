@@ -35,7 +35,7 @@ use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::tempo_lane::{self as lane, TEMPO_LANE_HEIGHT};
 use crate::theme::{Theme, mix};
 use crate::timeline::{Bars, PPQ, Snap, SnapGrid, TimeAxis, snap_floor, snap_round};
-use crate::viewport::{Tool, ViewportState};
+use crate::viewport::{SnapMode, Tool, ViewportState};
 use crate::wave_paint::{MAX_COLUMNS, WaveChannel, WaveDetail, paint_channel};
 use atomik_audio_file::PeakPyramid;
 use atomik_core::ParamDescriptor;
@@ -491,11 +491,38 @@ enum Drag {
     Resize {
         start: Point,
         clip: Clip,
+        /// The other selected clips: each takes the grabbed clip's change of length.
+        others: Vec<Clip>,
         merge: u64,
         moved: bool,
         emitted: bool,
         loop_mode: bool,
         last: (i64, Option<i64>),
+    },
+    /// The left edge of note and automation clips: the start moves, the end stays.
+    Trim {
+        start: Point,
+        /// The grabbed clip first, then the other selected clips that are not audio.
+        originals: Vec<Clip>,
+        merge: u64,
+        moved: bool,
+        emitted: bool,
+        /// How far the starts have moved so far.
+        applied: i64,
+    },
+    /// The razor dragged over a lane: the range is cut out on the release (a press without a
+    /// drag splits the clip under it).
+    Razor {
+        start: Point,
+        track: usize,
+        lane: usize,
+        /// The clip a click without a drag splits.
+        clip: Option<ClipId>,
+        t0: i64,
+        t1: i64,
+        moved: bool,
+        /// The copy role was held at the last move: the range is copied, not cut out.
+        copy: bool,
     },
     Draw {
         start: Point,
@@ -938,6 +965,11 @@ impl ArrangementView {
     /// The snap resolution.
     pub fn snap(&self) -> Snap {
         self.snap
+    }
+
+    /// Whether a move snaps to grid lines or by whole steps.
+    pub fn snap_mode(&self) -> SnapMode {
+        self.vp.snap_mode()
     }
 
     /// Sets the snap resolution.
@@ -2235,12 +2267,9 @@ impl ArrangementView {
                             part,
                         };
                     }
-                    let audio = matches!(clip.content, ClipContent::Audio(_));
                     let part = match seq_edit::hit_span(pos.x, r.x0, r.x1, EDGE_PX) {
                         Some(SpanPart::End) => ClipPart::Edge,
-                        _ if audio && pos.x < r.x0 + EDGE_PX.min(r.width() / 3.0) => {
-                            ClipPart::EdgeStart
-                        }
+                        _ if pos.x < r.x0 + EDGE_PX.min(r.width() / 3.0) => ClipPart::EdgeStart,
                         _ if pos.y < r.y0 + CLIP_HEADER => ClipPart::Header,
                         _ if automation => ClipPart::AutoBody,
                         _ => ClipPart::Body,
@@ -2611,7 +2640,10 @@ impl ArrangementView {
                     at: pos,
                 });
             }
-            Hit::Lane { .. } if primary && matches!(tool, Tool::Razor | Tool::Eraser) => {}
+            Hit::Lane { track, lane } if primary && tool == Tool::Razor => {
+                self.start_razor(track, lane, None, pos, modifiers);
+            }
+            Hit::Lane { .. } if primary && tool == Tool::Eraser => {}
             // Shift or Ctrl on an empty lane starts the rubber band (a plain drag draws).
             Hit::Lane { .. }
                 if primary
@@ -2642,7 +2674,7 @@ impl ArrangementView {
                 if clicks >= 2 {
                     // A double-click on an empty lane creates a one-bar clip.
                     let start = snap_floor(t, self.step(modifiers)).max(0);
-                    let length = self.bars.bar_ticks_at(start);
+                    let length = self.new_clip_length(start, modifiers);
                     out.push(new_clip_cmd(device, lane, automation, start, length));
                     return;
                 }
@@ -2929,8 +2961,7 @@ impl ArrangementView {
         if primary {
             match self.vp.effective_tool(modifiers) {
                 Tool::Razor => {
-                    let at = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
-                    out.extend(self.split_all_at(at, Some(id)));
+                    self.start_razor(track, lane, Some(id), pos, modifiers);
                     return;
                 }
                 Tool::Eraser => {
@@ -3075,6 +3106,28 @@ impl ArrangementView {
                     original.clone_from(points);
                 }
             }
+            ClipPart::EdgeStart if primary && !clip.content.is_audio() => {
+                self.selection.click(id, modifiers.command(), false);
+                if !self.selection.contains(&id) {
+                    return;
+                }
+                let mut originals = vec![clip];
+                originals.extend(
+                    self.song_clips()
+                        .filter(|c| c.id != id && self.selection.contains(&c.id))
+                        .filter(|c| !c.content.is_audio())
+                        .cloned(),
+                );
+                let merge = self.merge_id();
+                self.drag = Drag::Trim {
+                    start: pos,
+                    originals,
+                    merge,
+                    moved: false,
+                    emitted: false,
+                    applied: 0,
+                };
+            }
             ClipPart::FadeIn | ClipPart::FadeOut | ClipPart::Gain | ClipPart::EdgeStart
                 if primary =>
             {
@@ -3124,8 +3177,18 @@ impl ArrangementView {
                 }
                 let merge = self.merge_id();
                 let loop_mode = modifiers.shift && !matches!(clip.content, ClipContent::Audio(_));
+                // The other selected clips follow the grabbed one (not while the loop length moves).
+                let others: Vec<Clip> = if loop_mode {
+                    Vec::new()
+                } else {
+                    self.song_clips()
+                        .filter(|c| c.id != id && self.selection.contains(&c.id))
+                        .cloned()
+                        .collect()
+                };
                 self.drag = Drag::Resize {
                     start: pos,
+                    others,
                     last: (clip.length, clip.loop_length),
                     clip,
                     merge,
@@ -3232,6 +3295,79 @@ impl ArrangementView {
         };
     }
 
+    /// Moves the selected clips one snap step (a beat, a tick) earlier or later as one undo step:
+    /// a batch of geometry commands, the whole group stopping at tick 0.
+    fn nudge_clips(&self, id: &str) -> CommandOutcome {
+        let clips = self.selected_in_order();
+        let Some(first) = clips.iter().map(|c| c.start).min() else {
+            return CommandOutcome::Declined;
+        };
+        let amount = if id.ends_with("_tick") {
+            1
+        } else if id.ends_with("_beat") {
+            self.bars.beat_ticks_at(first)
+        } else {
+            self.step(Modifiers::NONE)
+                .step_at(first)
+                .unwrap_or_else(|| self.bars.beat_ticks_at(first))
+        };
+        let sign = if id.starts_with("sequencer.nudge_left") {
+            -1
+        } else {
+            1
+        };
+        let dt = (sign * amount).max(-first);
+        if dt == 0 {
+            return CommandOutcome::Handled(Vec::new());
+        }
+        let moves = clips
+            .iter()
+            .map(|c| {
+                Command::Song(SongCommand::SetClipGeometry {
+                    id: c.id,
+                    start: c.start + dt,
+                    length: c.length,
+                    offset: c.offset,
+                    loop_length: c.loop_length,
+                    muted: c.muted,
+                    merge: None,
+                })
+            })
+            .collect();
+        CommandOutcome::Handled(vec![UiAction::Command(Command::Batch(moves))])
+    }
+
+    /// The length of a clip created at `start` by a click: one snap step (a bar with snap off).
+    fn new_clip_length(&self, start: i64, modifiers: Modifiers) -> i64 {
+        self.step(modifiers)
+            .step_at(start)
+            .unwrap_or_else(|| self.bars.bar_ticks_at(start))
+            .max(1)
+    }
+
+    /// Starts the razor on lane `lane` of track `track`: a click splits `clip`, a drag cuts the
+    /// range out.
+    fn start_razor(
+        &mut self,
+        track: usize,
+        lane: usize,
+        clip: Option<ClipId>,
+        pos: Point,
+        modifiers: Modifiers,
+    ) {
+        let t = snap_round(self.axis.x_to_tick(pos.x), self.step(modifiers));
+        self.drag = Drag::Razor {
+            start: pos,
+            track,
+            lane,
+            clip,
+            t0: t,
+            t1: t,
+            moved: false,
+            copy: false,
+        };
+    }
+
     fn song_clips(&self) -> impl Iterator<Item = &Clip> {
         self.song
             .tracks
@@ -3314,6 +3450,10 @@ impl ArrangementView {
             RowKind::Lane { track, lane } => Some((track, lane)),
             _ => None,
         });
+        let snap_mode = self.vp.snap_mode();
+        let roles = self.vp.roles();
+        let copy_role = roles.is_active(Role::CopyDrag, modifiers, GestureClass::DragItem);
+        let constrain = roles.is_active(Role::Constrain, modifiers, GestureClass::DragItem);
         let (tempo, assets) = (&self.tempo, &self.assets);
         match &mut self.drag {
             Drag::None
@@ -3347,9 +3487,14 @@ impl ArrangementView {
                 }
                 *over = over_row;
                 let delta = axis.dx_to_ticks(pos.x - start.x);
-                let new = seq_edit::drag_start(*grabbed_start, delta, step);
+                let new = seq_edit::drag_start_by(snap_mode, *grabbed_start, delta, step);
                 let min_start = originals.iter().map(|c| c.start).min().unwrap_or(0);
-                let dt = (new - *grabbed_start).max(-min_start);
+                // The constrain role keeps the start: the drag only changes lanes.
+                let dt = if constrain {
+                    0
+                } else {
+                    (new - *grabbed_start).max(-min_start)
+                };
                 if *copy {
                     // The copies land on the release; the clips stay where they are.
                     *last_dt = dt;
@@ -3371,6 +3516,7 @@ impl ArrangementView {
             Drag::Resize {
                 start,
                 clip,
+                others,
                 merge,
                 moved,
                 emitted,
@@ -3382,7 +3528,7 @@ impl ArrangementView {
                     return;
                 }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
-                let new = if *loop_mode {
+                let wanted = if *loop_mode {
                     let orig = clip.loop_length.unwrap_or(clip.length);
                     let l = seq_edit::drag_length(clip.start, clip.start + orig, delta, step, min);
                     (clip.length, Some(l))
@@ -3396,42 +3542,70 @@ impl ArrangementView {
                     );
                     (l, clip.loop_length)
                 };
-                let mut new = new;
-                let mut audio_content = None;
-                if let ClipContent::Audio(a) = &clip.content {
-                    let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
-                    let mut frames = clip_frames(tempo, clip.start, new.0, rate);
-                    let mut source_offset = a.source_offset;
-                    if a.reverse {
-                        // The end of a reversed clip is the low end of its source span: the
-                        // offset moves with it, and the clip grows no further than frame 0.
-                        let old = clip_frames(tempo, clip.start, clip.length, rate);
-                        let (_, allowed) = audio::reversed_end_resize(a.source_offset, old, frames);
-                        if allowed < frames {
-                            let end_frame = tempo.frame_at(clip.start, rate) + allowed;
-                            let end = tempo.tick_at_frame(end_frame as f64, rate).round() as i64;
-                            new.0 = (end - clip.start).max(min);
-                            frames = clip_frames(tempo, clip.start, new.0, rate);
-                        }
-                        source_offset = audio::reversed_end_resize(a.source_offset, old, frames).0;
-                    }
-                    let (fade_in, fade_out) = audio::clamp_fades(a.fade_in, a.fade_out, frames);
-                    audio_content = Some(AudioClipContent {
-                        source_offset,
-                        fade_in,
-                        fade_out,
-                        ..a.clone()
-                    });
-                }
+                let (new, cmd) = resize_cmd(clip, wanted, min, tempo, assets, *merge);
                 if new != *last {
-                    out.push(match audio_content {
-                        Some(content) => audio_clip_cmd(clip, clip.start, new.0, content, *merge),
-                        None => geometry_cmd(clip, clip.start, new.0, new.1, *merge),
-                    });
+                    out.push(cmd);
+                    // Every other selected clip changes by what the grabbed one did.
+                    let dl = new.0 - clip.length;
+                    for o in others.iter() {
+                        let (_, cmd) = resize_cmd(
+                            o,
+                            ((o.length + dl).max(min), o.loop_length),
+                            min,
+                            tempo,
+                            assets,
+                            *merge,
+                        );
+                        out.push(cmd);
+                    }
                     *last = new;
                     *emitted = true;
                 }
                 self.repaint = true;
+            }
+            Drag::Trim {
+                start,
+                originals,
+                merge,
+                moved,
+                emitted,
+                applied,
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                if !*moved {
+                    return;
+                }
+                let grabbed = originals[0].start;
+                let delta = axis.dx_to_ticks(pos.x - start.x);
+                let wanted = seq_edit::drag_start_by(snap_mode, grabbed, delta, step) - grabbed;
+                // Every start stays at tick 0 or later and every clip at least `min` long.
+                let lowest = originals.iter().map(|c| c.start).min().unwrap_or(0);
+                let shortest = originals.iter().map(|c| c.length).min().unwrap_or(min);
+                let d = wanted.clamp(-lowest, (shortest - min).max(0));
+                if d != *applied {
+                    out.push(workflow_cmd(WorkflowCommand::TrimClips {
+                        ids: originals.iter().map(|c| c.id).collect(),
+                        start_delta: d - *applied,
+                        merge: Some(*merge),
+                    }));
+                    *applied = d;
+                    *emitted = true;
+                }
+                self.repaint = true;
+            }
+            Drag::Razor {
+                start,
+                t0,
+                t1,
+                moved,
+                copy,
+                ..
+            } => {
+                *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+                *t1 = snap_round(axis.x_to_tick(pos.x), step);
+                *copy = copy_role;
+                self.repaint = true;
+                let _ = t0;
             }
             Drag::Audio {
                 start,
@@ -3630,7 +3804,9 @@ impl ArrangementView {
             Drag::Playhead { .. }
             | Drag::LoopEdge { .. }
             | Drag::End { .. }
-            | Drag::Resize { .. } => CursorHint::ResizeHorizontal,
+            | Drag::Resize { .. }
+            | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
+            Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audio {
                 grab: AudioGrab::TrimStart,
                 ..
@@ -3751,7 +3927,48 @@ impl ArrangementView {
                     self.point_sel = None;
                 }
             }
+            Drag::Razor {
+                track,
+                lane,
+                clip,
+                t0,
+                t1,
+                moved,
+                copy,
+                ..
+            } => {
+                if !moved || t0 == t1 {
+                    // A click splits the clip under the pointer.
+                    if let Some(id) = clip {
+                        out.extend(self.split_all_at(t0, Some(id)));
+                    }
+                } else {
+                    let (start, end) = (t0.min(t1), t0.max(t1));
+                    let ids: Vec<ClipId> = self
+                        .song
+                        .tracks
+                        .get(track)
+                        .and_then(|t| t.lanes.get(lane))
+                        .map(|l| {
+                            l.clips
+                                .iter()
+                                .filter(|c| c.start < end && c.end() > start)
+                                .map(|c| c.id)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !ids.is_empty() {
+                        out.push(workflow_cmd(WorkflowCommand::CutOut {
+                            ids,
+                            start,
+                            end,
+                            copy,
+                        }));
+                    }
+                }
+            }
             Drag::Resize { emitted, .. }
+            | Drag::Trim { emitted, .. }
             | Drag::Point { emitted, .. }
             | Drag::TempoPoint { emitted, .. }
             | Drag::Meter { emitted, .. }
@@ -3777,7 +3994,7 @@ impl ArrangementView {
                     if pencil {
                         // The pencil draws with a plain click: a one-bar clip.
                         let start = snap_floor(t0, self.step(modifiers)).max(0);
-                        let length = self.bars.bar_ticks_at(start);
+                        let length = self.new_clip_length(start, modifiers);
                         out.push(new_clip_cmd(device, lane, automation, start, length));
                     }
                     return;
@@ -3999,6 +4216,34 @@ impl ArrangementView {
                 }
                 CommandOutcome::Handled(vec![workflow_cmd(WorkflowCommand::JoinClips { ids })])
             }
+            "sequencer.delete_outside_events" => {
+                let selected: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
+                let ids = if selected.is_empty() {
+                    self.song_clips().map(|c| c.id).collect()
+                } else {
+                    selected
+                };
+                if ids.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                CommandOutcome::Handled(vec![workflow_cmd(WorkflowCommand::DeleteOutsideEvents {
+                    ids,
+                })])
+            }
+            "sequencer.nudge_left"
+            | "sequencer.nudge_right"
+            | "sequencer.nudge_left_beat"
+            | "sequencer.nudge_right_beat"
+            | "sequencer.nudge_left_tick"
+            | "sequencer.nudge_right_tick" => self.nudge_clips(id),
+            "sequencer.set_snap_mode" => match arg.and_then(SnapMode::from_arg) {
+                Some(mode) => {
+                    self.vp.set_snap_mode(mode);
+                    self.repaint = true;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
             "sequencer.select_next_track" => self.select_track(1),
             "sequencer.select_prev_track" => self.select_track(-1),
             "sequencer.split_at_playhead" => {
@@ -4197,14 +4442,19 @@ impl ArrangementView {
         CommandOutcome::Handled(Vec::new())
     }
 
-    /// `SplitClip` for every clip (of `only`, when given) that `at` falls strictly inside, in
-    /// song order.
+    /// One `SplitClips` for every clip (of `only`, when given) that `at` falls strictly inside:
+    /// one undo step however many clips it cuts. Nothing when no clip spans `at`.
     fn split_all_at_in(&self, at: i64, only: Option<&[ClipId]>) -> Vec<UiAction> {
-        self.song_clips()
+        let ids: Vec<ClipId> = self
+            .song_clips()
             .filter(|c| only.is_none_or(|ids| ids.contains(&c.id)))
             .filter(|c| at > c.start && at < c.start + c.length)
-            .map(|c| song_cmd(SongCommand::SplitClip { id: c.id, at }))
-            .collect()
+            .map(|c| c.id)
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        vec![workflow_cmd(WorkflowCommand::SplitClips { ids, at })]
     }
 
     /// The razor: split `only` (one clip) or, with `None`, every clip at `at`.
@@ -4350,17 +4600,30 @@ impl ArrangementView {
             Drag::Marquee { base, .. } => self.selection.set(base),
             Drag::Resize {
                 clip,
+                others,
                 merge,
                 emitted: true,
                 ..
             } => {
-                out.push(geometry_cmd(
-                    &clip,
-                    clip.start,
-                    clip.length,
-                    clip.loop_length,
-                    merge,
-                ));
+                for c in std::iter::once(&clip).chain(&others) {
+                    out.push(geometry_cmd(c, c.start, c.length, c.loop_length, merge));
+                }
+                out.push(UiAction::EndMerge);
+            }
+            Drag::Trim {
+                originals,
+                merge,
+                applied,
+                emitted: true,
+                ..
+            } => {
+                if applied != 0 {
+                    out.push(workflow_cmd(WorkflowCommand::TrimClips {
+                        ids: originals.iter().map(|c| c.id).collect(),
+                        start_delta: -applied,
+                        merge: Some(merge),
+                    }));
+                }
                 out.push(UiAction::EndMerge);
             }
             Drag::Audio {
@@ -4553,6 +4816,33 @@ impl ArrangementView {
             let accent = sp::device_accent(&st.base, doc, device);
             c.fill_with(RoundedRect::from_rect(r, 3.0), accent.with_alpha(0.25));
             c.stroke_with(RoundedRect::from_rect(r, 3.0), 1.0, accent);
+        }
+        if let Drag::Razor {
+            track,
+            lane,
+            t0,
+            t1,
+            moved: true,
+            copy,
+            ..
+        } = &self.drag
+            && let Some(device) = self.song.tracks.get(*track).map(|t| &t.device)
+            && let Some(lr) = self.lane_rect(device, *lane)
+            && t0 != t1
+        {
+            let r = Rect::new(
+                self.axis.tick_to_x(*t0.min(t1)),
+                lr.y0 + 1.0,
+                self.axis.tick_to_x(*t0.max(t1)),
+                lr.y1 - 1.0,
+            );
+            let accent = if *copy { st.selection } else { st.record };
+            c.fill_with(RoundedRect::from_rect(r, 2.0), accent.with_alpha(0.22));
+            c.stroke(
+                &RoundedRect::from_rect(r, 2.0).into(),
+                &Stroke::new(1.0).with_dashes(0.0, [4.0, 3.0]),
+                &accent.into(),
+            );
         }
         self.paint_drag_overlays(c, doc, tl);
         self.paint_drop_hint(c, doc, tl);
@@ -5650,9 +5940,18 @@ impl ArrangementView {
         let r = Rect::new(b.x0, b.y0, self.axis.x0, self.ruler_bottom());
         sp::rect(c, r, st.header);
         c.text(
-            &TextRun::new("SNAP", pt(r.x0 + 12.0, r.y0 + 21.0), 8.0, t.text_muted)
-                .weight(700)
-                .spacing(1.0),
+            &TextRun::new(
+                if self.vp.snap_mode() == SnapMode::Relative {
+                    "SNAP REL"
+                } else {
+                    "SNAP"
+                },
+                pt(r.x0 + 12.0, r.y0 + 21.0),
+                8.0,
+                t.text_muted,
+            )
+            .weight(700)
+            .spacing(1.0),
         );
         let sr = self.snap_rect();
         sp::lcd(
@@ -5702,11 +6001,14 @@ pub(crate) fn snap_from_arg(arg: &str) -> Option<Snap> {
     Some(match arg {
         "off" => Snap::Off,
         "bar" => Snap::Bar,
+        "half" => Snap::Half,
         "beat" => Snap::Beat,
         "eighth" => Snap::Eighth,
         "sixteenth" => Snap::Sixteenth,
         "thirtysecond" => Snap::ThirtySecond,
         "sixtyfourth" => Snap::SixtyFourth,
+        "onetwentyeighth" => Snap::OneTwentyEighth,
+        "half_triplet" => Snap::HalfTriplet,
         "quarter_triplet" => Snap::QuarterTriplet,
         "eighth_triplet" => Snap::EighthTriplet,
         "sixteenth_triplet" => Snap::SixteenthTriplet,
@@ -5930,6 +6232,47 @@ fn audio_clip_cmd(
         content,
         merge: Some(merge),
     })
+}
+
+/// The command that resizes `clip` to `wanted` (length, loop length) and the geometry it leaves.
+/// An audio clip's fades follow its length, and a reversed one moves its source offset with its
+/// end and grows no further than its source.
+fn resize_cmd(
+    clip: &Clip,
+    wanted: (i64, Option<i64>),
+    min: i64,
+    tempo: &TempoMap,
+    assets: &BTreeMap<String, AssetMeta>,
+    merge: u64,
+) -> ((i64, Option<i64>), UiAction) {
+    let mut new = wanted;
+    let ClipContent::Audio(a) = &clip.content else {
+        return (new, geometry_cmd(clip, clip.start, new.0, new.1, merge));
+    };
+    let rate = assets.get(&a.asset).map_or(DEFAULT_RATE, |m| m.sample_rate);
+    let mut frames = clip_frames(tempo, clip.start, new.0, rate);
+    let mut source_offset = a.source_offset;
+    if a.reverse {
+        // The end of a reversed clip is the low end of its source span: the offset moves with
+        // it, and the clip grows no further than frame 0.
+        let old = clip_frames(tempo, clip.start, clip.length, rate);
+        let (_, allowed) = audio::reversed_end_resize(a.source_offset, old, frames);
+        if allowed < frames {
+            let end_frame = tempo.frame_at(clip.start, rate) + allowed;
+            let end = tempo.tick_at_frame(end_frame as f64, rate).round() as i64;
+            new.0 = (end - clip.start).max(min);
+            frames = clip_frames(tempo, clip.start, new.0, rate);
+        }
+        source_offset = audio::reversed_end_resize(a.source_offset, old, frames).0;
+    }
+    let (fade_in, fade_out) = audio::clamp_fades(a.fade_in, a.fade_out, frames);
+    let content = AudioClipContent {
+        source_offset,
+        fade_in,
+        fade_out,
+        ..a.clone()
+    };
+    (new, audio_clip_cmd(clip, clip.start, new.0, content, merge))
 }
 
 fn geometry_cmd(

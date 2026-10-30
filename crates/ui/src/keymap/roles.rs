@@ -49,11 +49,11 @@ impl Role {
         match self {
             Role::AlternateTool | Role::DisableSnap => &["viewport"],
             Role::ToggleSelect | Role::RangeSelect => &["rack/selection"],
-            Role::CopyDrag => &["arrangement"],
+            Role::CopyDrag => &["arrangement", "piano_roll"],
             Role::FineAdjust => &["rack/selection", "console"],
             Role::ResetParam => &["rack/selection", "console"],
             Role::EditAutomation => &["rack/selection", "console"],
-            Role::Constrain => &[],
+            Role::Constrain => &["arrangement", "piano_roll"],
         }
     }
 
@@ -440,6 +440,7 @@ mod tests {
             "rack/selection" => include_str!("../rack/selection.rs"),
             "arrangement" => include_str!("../arrangement.rs"),
             "console" => include_str!("../console.rs"),
+            "piano_roll" => include_str!("../piano_roll.rs"),
             other => panic!("no source registered for {other}"),
         }
     }
@@ -460,9 +461,8 @@ mod tests {
     }
 
     #[test]
-    fn the_roles_without_a_consumer_are_not_listed_but_stay_known() {
+    fn a_role_without_a_consumer_is_not_listed_but_stays_known() {
         let unlisted: Vec<Role> = Role::ALL.into_iter().filter(|r| !r.is_wired()).collect();
-        assert_eq!(unlisted, [Role::Constrain]);
         for role in unlisted {
             assert!(!Role::listed().any(|r| r == role));
             assert_eq!(Role::from_id(role.id()), Some(role));

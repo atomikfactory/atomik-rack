@@ -20,7 +20,7 @@ use crate::controller_lane::{
 use crate::cursor::CursorHint;
 use crate::event::{Key, Modifiers, PointerButton, UiEvent};
 use crate::key_rows::{Fold, KeyRows};
-use crate::keymap::{CommandOutcome, ROOT_ARGS, Roles};
+use crate::keymap::{CommandOutcome, GestureClass, ROOT_ARGS, Role, Roles};
 use crate::paint::fit_label;
 use crate::quantize_panel::QuantizeAction;
 use crate::seq_edit::{self, Selection, SpanPart};
@@ -222,6 +222,10 @@ enum Drag {
         last: Vec<Note>,
         sounding: u8,
         reselect: Option<usize>,
+        /// The copy role was held at the press: a drag adds moved copies, the notes stay.
+        copy: bool,
+        /// A press with the copy role on a selected note: a click without a drag deselects it.
+        toggle_off: Option<usize>,
     },
     Resize {
         start: Point,
@@ -1673,8 +1677,19 @@ impl PianoRollView {
         out: &mut Vec<UiAction>,
     ) {
         let was = self.selection.contains(&i);
-        let toggle = modifiers.command();
-        self.selection.click(i, toggle, modifiers.shift && !toggle);
+        // The copy role adds the note to the selection and a drag from it copies the selection;
+        // a click without a drag takes a selected note out again (on the release).
+        let copy = matches!(part, SpanPart::Body)
+            && self
+                .vp
+                .roles()
+                .is_active(Role::CopyDrag, modifiers, GestureClass::DragItem);
+        let toggle = modifiers.command() && !copy;
+        if copy {
+            self.selection.add(i);
+        } else {
+            self.selection.click(i, toggle, modifiers.shift && !toggle);
+        }
         if !self.selection.contains(&i) {
             return;
         }
@@ -1722,6 +1737,8 @@ impl PianoRollView {
                     emitted: false,
                     sounding: key,
                     reselect,
+                    copy,
+                    toggle_off: (copy && was).then_some(i),
                 };
             }
         }
@@ -1912,6 +1929,11 @@ impl PianoRollView {
         let row_here = self.row_at(pos.y) as i32;
         let scale = self.scale();
         let snap_scale = self.snap_scale;
+        let snap_mode = self.vp.snap_mode();
+        let constrain =
+            self.vp
+                .roles()
+                .is_active(Role::Constrain, modifiers, GestureClass::DragItem);
         let rows = &self.rows;
         let (vtop, vh) = self.velocity_range();
         let rects: Vec<Rect> = if matches!(self.drag, Drag::Band { .. }) {
@@ -1999,6 +2021,7 @@ impl PianoRollView {
                 emitted,
                 last,
                 sounding,
+                copy,
                 ..
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
@@ -2007,7 +2030,18 @@ impl PianoRollView {
                 }
                 let g = originals[*grabbed];
                 let delta = axis.dx_to_ticks(pos.x - start.x);
-                let dt = seq_edit::drag_start(g.tick, delta, step) - g.tick;
+                // The constrain role keeps the move on one axis, the one the pointer went furthest.
+                let (dx, dy) = ((pos.x - start.x).abs(), (pos.y - start.y).abs());
+                let (along_time, along_pitch) = if constrain {
+                    (dx >= dy, dx < dy)
+                } else {
+                    (true, true)
+                };
+                let dt = if along_time {
+                    seq_edit::drag_start_by(snap_mode, g.tick, delta, step) - g.tick
+                } else {
+                    0
+                };
                 let timed = seq_edit::move_notes(originals, sel, dt, 0);
                 let moved_notes = vertical_move(
                     rows,
@@ -2016,13 +2050,20 @@ impl PianoRollView {
                     &timed,
                     sel,
                     *grabbed,
-                    *anchor_row - row_here,
+                    if along_pitch {
+                        *anchor_row - row_here
+                    } else {
+                        0
+                    },
                 );
                 let now_key = moved_notes[*grabbed].key;
-                let mut tracked = BTreeSet::new();
-                tracked.insert(*grabbed);
-                tracked.extend(sel.iter().copied());
-                let (list, new) = seq_edit::normalize_notes(moved_notes, sel);
+                let (list, new) = if *copy {
+                    // The notes stay and their moved copies join them.
+                    let copies: Vec<Note> = sel.iter().map(|i| moved_notes[*i]).collect();
+                    with_notes(originals, &copies)
+                } else {
+                    seq_edit::normalize_notes(moved_notes, sel)
+                };
                 if now_key != *sounding {
                     out.extend(audition(*sounding, false));
                     out.extend(audition(now_key, true));
@@ -2130,6 +2171,7 @@ impl PianoRollView {
                 emitted,
                 moved,
                 reselect,
+                toggle_off,
                 ..
             } => {
                 out.extend(self.audition(sounding, false));
@@ -2138,6 +2180,9 @@ impl PianoRollView {
                 }
                 if !moved && let Some(i) = reselect {
                     self.selection.select_only(i);
+                }
+                if !moved && let Some(i) = toggle_off {
+                    self.selection.toggle(i);
                 }
             }
             Drag::Resize { emitted, .. } | Drag::ResizeStart { emitted, .. } => {
@@ -2429,6 +2474,13 @@ impl PianoRollView {
             "sequencer.set_snap" => match arg.and_then(snap_from_arg) {
                 Some(snap) => {
                     self.snap = snap;
+                    CommandOutcome::Handled(Vec::new())
+                }
+                None => CommandOutcome::Declined,
+            },
+            "sequencer.set_snap_mode" => match arg.and_then(crate::viewport::SnapMode::from_arg) {
+                Some(mode) => {
+                    self.vp.set_snap_mode(mode);
                     CommandOutcome::Handled(Vec::new())
                 }
                 None => CommandOutcome::Declined,

@@ -114,6 +114,12 @@ sequencer.group_tracks | sequencer | Ctrl+Shift+G
 sequencer.join | sequencer | Ctrl+J
 sequencer.move_track_down | sequencer | Alt+Down
 sequencer.move_track_up | sequencer | Alt+Up
+sequencer.nudge_left | sequencer | Ctrl+Left
+sequencer.nudge_left_beat | sequencer | Ctrl+Shift+Left
+sequencer.nudge_left_tick | sequencer | Ctrl+Alt+Left
+sequencer.nudge_right | sequencer | Ctrl+Right
+sequencer.nudge_right_beat | sequencer | Ctrl+Shift+Right
+sequencer.nudge_right_tick | sequencer | Ctrl+Alt+Right
 sequencer.open_clip | sequencer | Enter
 sequencer.select_next_clip | sequencer | Right
 sequencer.select_next_track | sequencer | Down

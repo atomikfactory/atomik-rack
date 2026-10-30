@@ -646,6 +646,68 @@ pub(crate) fn check_new_clip(
     })
 }
 
+/// The two halves of clip `c` cut at song tick `at` (strictly inside it): the left keeps the
+/// clip's id and the right carries the same id for the caller to replace. Both keep the content
+/// alignment (see `SplitClip`).
+pub(crate) fn split_pair(doc: &RackDoc, c: &Clip, at: i64) -> Result<(Clip, Clip), ModelError> {
+    let song = &doc.song;
+    if !(c.start < at && at < c.end()) {
+        return Err(range(format!(
+            "split point {at} is not strictly inside clip {} [{}, {})",
+            c.id.0,
+            c.start,
+            c.end()
+        )));
+    }
+    let shift = c.offset + (at - c.start);
+    let mut right = Clip {
+        start: at,
+        length: c.end() - at,
+        offset: c.loop_length.map_or(shift, |n| shift.rem_euclid(n)),
+        ..c.clone()
+    };
+    let mut left = Clip {
+        length: at - c.start,
+        ..c.clone()
+    };
+    if let ClipContent::Audio(a) = &c.content {
+        // The right half starts the frames between the two ticks later in the asset
+        // (tempo map and document sample rate), at most at the asset end. No fade is
+        // invented at the cut: the left half keeps the fade in, the right the fade out.
+        let delta = song.frame_at(at, doc.sample_rate) - song.frame_at(c.start, doc.sample_rate);
+        let asset_frames = doc.assets.get(&a.asset).map_or(u64::MAX, |m| m.frames);
+        let mut r = a.clone();
+        r.fade_in = 0;
+        let left_frames = delta;
+        if a.reverse {
+            // Backwards, the left half plays the upper part of the span.
+            let right_frames =
+                song.frame_at(c.end(), doc.sample_rate) - song.frame_at(at, doc.sample_rate);
+            if let ClipContent::Audio(l) = &mut left.content {
+                l.source_offset = a
+                    .source_offset
+                    .saturating_add(right_frames)
+                    .min(asset_frames);
+            }
+        } else {
+            let (offset, markers) =
+                a.piece_from(song, doc.sample_rate, c.start, at, delta, asset_frames);
+            r.source_offset = offset;
+            r.warp.markers = markers;
+        }
+        let (right_envelope, left_envelope) = split_envelope(&a.envelope, left_frames);
+        r.envelope = right_envelope;
+        right.content = ClipContent::Audio(r);
+        right.offset = 0;
+        if let ClipContent::Audio(l) = &mut left.content {
+            l.fade_out = 0;
+            l.envelope = left_envelope;
+        }
+    }
+    check_geometry(right.start, right.length, right.offset, right.loop_length).map_err(range)?;
+    Ok((left, right))
+}
+
 /// An insertion of `clip` under a freshly allocated id, plus the id bump.
 pub(crate) fn insert_new(
     doc: &RackDoc,
@@ -1208,62 +1270,7 @@ pub(crate) fn plan(
         }
         SongCommand::SplitClip { id, at } => {
             let (device, lane, c) = find_clip(doc, id)?;
-            if !(c.start < at && at < c.end()) {
-                return Err(range(format!(
-                    "split point {at} is not strictly inside clip {} [{}, {})",
-                    id.0,
-                    c.start,
-                    c.end()
-                )));
-            }
-            let shift = c.offset + (at - c.start);
-            let mut right = Clip {
-                start: at,
-                length: c.end() - at,
-                offset: c.loop_length.map_or(shift, |n| shift.rem_euclid(n)),
-                ..c.clone()
-            };
-            let mut left = Clip {
-                length: at - c.start,
-                ..c.clone()
-            };
-            if let ClipContent::Audio(a) = &c.content {
-                // The right half starts the frames between the two ticks later in the asset
-                // (tempo map and document sample rate), at most at the asset end. No fade is
-                // invented at the cut: the left half keeps the fade in, the right the fade out.
-                let delta =
-                    song.frame_at(at, doc.sample_rate) - song.frame_at(c.start, doc.sample_rate);
-                let asset_frames = doc.assets.get(&a.asset).map_or(u64::MAX, |m| m.frames);
-                let mut r = a.clone();
-                r.fade_in = 0;
-                let left_frames = delta;
-                if a.reverse {
-                    // Backwards, the left half plays the upper part of the span.
-                    let right_frames = song.frame_at(c.end(), doc.sample_rate)
-                        - song.frame_at(at, doc.sample_rate);
-                    if let ClipContent::Audio(l) = &mut left.content {
-                        l.source_offset = a
-                            .source_offset
-                            .saturating_add(right_frames)
-                            .min(asset_frames);
-                    }
-                } else {
-                    let (offset, markers) =
-                        a.piece_from(song, doc.sample_rate, c.start, at, delta, asset_frames);
-                    r.source_offset = offset;
-                    r.warp.markers = markers;
-                }
-                let (right_envelope, left_envelope) = split_envelope(&a.envelope, left_frames);
-                r.envelope = right_envelope;
-                right.content = ClipContent::Audio(r);
-                right.offset = 0;
-                if let ClipContent::Audio(l) = &mut left.content {
-                    l.fade_out = 0;
-                    l.envelope = left_envelope;
-                }
-            }
-            check_geometry(right.start, right.length, right.offset, right.loop_length)
-                .map_err(range)?;
+            let (left, right) = split_pair(doc, c, at)?;
             let (insert, new_id) = insert_new(doc, device.clone(), lane, right)?;
             let edit = Edit::Compound(vec![
                 Edit::Clip {
