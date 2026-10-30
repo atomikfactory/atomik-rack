@@ -414,7 +414,11 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             WorkflowCommand::RemoveClips { ids }
             | WorkflowCommand::DuplicateClips { ids }
             | WorkflowCommand::SetClipsMuted { ids, .. }
-            | WorkflowCommand::JoinClips { ids } => ids.iter().find_map(clip_frozen),
+            | WorkflowCommand::JoinClips { ids }
+            | WorkflowCommand::TrimClips { ids, .. }
+            | WorkflowCommand::DeleteOutsideEvents { ids }
+            | WorkflowCommand::SplitClips { ids, .. }
+            | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
             WorkflowCommand::MoveClips { moves, .. } => moves
                 .iter()
                 .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),

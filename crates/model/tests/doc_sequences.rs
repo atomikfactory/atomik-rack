@@ -39,6 +39,8 @@ enum WfOp {
     PasteClips(Vec<usize>, i64, Option<usize>),
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
+    /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick.
+    Gesture(u8, Vec<usize>, i64),
     PasteNotes(usize, Vec<usize>, i64),
     DuplicateNotes(usize, Vec<usize>),
     AddDevice(usize),
@@ -170,6 +172,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
+        (0u8..5, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..4).prop_map(WfOp::AddDevice),
@@ -267,6 +270,24 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         WfOp::Join(s) => wf(WorkflowCommand::JoinClips {
             ids: s.iter().filter_map(|i| pick(&ids, *i)).collect(),
         }),
+        WfOp::Gesture(kind, s, t) => {
+            let ids = s.iter().filter_map(|i| pick(&ids, *i)).collect();
+            wf(match kind {
+                0 => WorkflowCommand::TrimClips {
+                    ids,
+                    start_delta: *t,
+                    merge: None,
+                },
+                1 => WorkflowCommand::DeleteOutsideEvents { ids },
+                2 => WorkflowCommand::SplitClips { ids, at: *t },
+                k => WorkflowCommand::CutOut {
+                    ids,
+                    start: *t,
+                    end: *t + BAR,
+                    copy: *k == 4,
+                },
+            })
+        }
         WfOp::PasteNotes(c, n, at) => {
             let id = pick(&ids, *c)?;
             let (_, _, clip) = doc.song.clip(id)?;

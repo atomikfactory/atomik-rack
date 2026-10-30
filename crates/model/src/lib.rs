@@ -1002,9 +1002,10 @@ impl Document {
                 | SongCommand::SetAudioClip { merge: Some(m), .. }
                 | SongCommand::SetClipGrid { merge: Some(m), .. },
             ) => Some(MergeKey::Clip(*m)),
-            Command::Workflow(WorkflowCommand::MoveClips { merge: Some(m), .. }) => {
-                Some(MergeKey::Clip(*m))
-            }
+            Command::Workflow(
+                WorkflowCommand::MoveClips { merge: Some(m), .. }
+                | WorkflowCommand::TrimClips { merge: Some(m), .. },
+            ) => Some(MergeKey::Clip(*m)),
             Command::Song(SongCommand::DragTempoMap { merge, .. }) => {
                 Some(MergeKey::TempoMap(*merge))
             }
