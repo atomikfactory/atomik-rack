@@ -76,6 +76,18 @@
 //!   (the tempo at the batch start, the instantaneous one inside a ramp) and `TimeInfo::time_signature`
 //!   (the meter at the batch start); `set_tempo` only matters for song-less racks, where it
 //!   drives the transport too (the tick is kept when it changes while playing).
+//! * **Clock out.** With clock out on ([`crate::SyncOut`]) each playing batch also writes a MIDI
+//!   clock for every 640 ticks (`F(640 k)` through the tempo map, so exact across ramps) into a
+//!   lock-free queue stamped with engine frames; Start, Stop and Continue follow the changes of
+//!   the transport, a Song Position Pointer a locate or a loop wrap. Stopped, the clock can run
+//!   on at the tempo of the position. A batch that sends nothing costs one atomic load.
+//! * **Following.** While the [`crate::ExternalClock`] is followed, the player replaces every
+//!   tempo map with one constant segment at the clock's tempo (the position keeps its musical
+//!   place when the tempo moves: the tick is kept, the frame recomputed), starts, stops and
+//!   locates as the clock does, ignores the transport commands and the count-in, leaves the audio
+//!   clips out (they are placed on the song's own tempo) and stops the transport, releasing every
+//!   held note, when the clock count stops moving for half a second. The phase of the clock is
+//!   not tracked: the song runs on the tempo measured, from the start the clock gave.
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
@@ -85,9 +97,10 @@ use crate::seq::{
     TransportCommand, TransportState,
 };
 use crate::stream::{StreamRequest, StreamStats};
+use crate::sync::{ClockOut, ExternalClock, SyncOut, clocks_in};
 use atomik_core::{
     BATCH, Batch, LoopWrap, MeterMap, MeterSegment, NoteKind, PPQ, ParamId, Tempo, TempoMap,
-    TempoSegment,
+    TempoSegment, Ticks,
 };
 use atomik_device_sdk::SocketId;
 use rtrb::Producer;
@@ -533,6 +546,22 @@ struct Counting {
     remaining: u64,
 }
 
+/// The player is following an external clock (see the module docs, *Following*).
+#[derive(Debug, Clone, Copy)]
+struct Follow {
+    /// The tempo the song plays at: the external clock's, constant between two batches.
+    tempo: Tempo,
+    /// The locates of the clock already applied.
+    locates: u64,
+    /// The clock count at the last batch, and the frames since it last moved.
+    clocks: u64,
+    quiet_frames: u64,
+}
+
+/// The clock may be silent this long (in seconds) while the sender runs before the transport
+/// stops: more than one clock at the slowest tempo (20 BPM: 125 ms).
+const CLOCK_LOST_SECONDS: f64 = 0.5;
+
 /// The RT player state (owned by the engine).
 pub(crate) struct Player {
     song: Option<Box<SongSnapshot>>,
@@ -567,6 +596,11 @@ pub(crate) struct Player {
     shared: Arc<TransportCell>,
     /// The lanes a take is writing; the player skips them.
     hold: Arc<AutomationHold>,
+    /// MIDI clock out.
+    sync: ClockOut,
+    /// The clock source the player follows while the cell says so.
+    external: Arc<ExternalClock>,
+    follow: Option<Follow>,
     /// Refill requests to the streamer.
     requests: Producer<StreamRequest>,
     /// Stream counters shared with the handle.
@@ -603,9 +637,22 @@ impl Player {
             beat: click_table(sample_rate, 1320.0, 0.6),
             shared: Arc::new(TransportCell::default()),
             hold: Arc::new(AutomationHold::new()),
+            sync: ClockOut::new(),
+            external: ExternalClock::new(),
+            follow: None,
             requests,
             stats,
         }
+    }
+
+    /// The clock-out settings and queue the handle shares.
+    pub(crate) fn sync_out(&self) -> Arc<SyncOut> {
+        self.sync.shared()
+    }
+
+    /// The cell a clock input writes and the handle switches.
+    pub(crate) fn external(&self) -> Arc<ExternalClock> {
+        Arc::clone(&self.external)
     }
 
     /// The hold the handle writes the lanes to skip to.
@@ -643,10 +690,19 @@ impl Player {
     ) -> Option<Box<SongSnapshot>> {
         let constant = [TempoSegment::constant(engine_tempo)];
         let old = self.song.take();
-        let old_map = old
-            .as_deref()
-            .map_or(TempoMap(&constant), SongSnapshot::map);
-        let new_map = TempoMap(&new.tempo);
+        // While following, the position is on the external clock's constant tempo, whatever the
+        // snapshots' own maps say.
+        let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
+        let old_map = match ext.as_ref() {
+            Some(e) => TempoMap(e),
+            None => old
+                .as_deref()
+                .map_or(TempoMap(&constant), SongSnapshot::map),
+        };
+        let new_map = match ext.as_ref() {
+            Some(e) => TempoMap(e),
+            None => TempoMap(&new.tempo),
+        };
         if old_map.0 != new_map.0 {
             // Keep the musical position (the tick), not the frame.
             let tick = old_map.tick(self.pos as f64, sr);
@@ -687,12 +743,14 @@ impl Player {
             cursors,
             ..
         } = &mut *new;
-        seek(TempoMap(tempo), sr, tracks, cursors, self.pos);
+        let map = ext.as_ref().map_or(TempoMap(tempo), |e| TempoMap(e));
+        seek(map, sr, tracks, cursors, self.pos);
         self.song = Some(new);
         old
     }
 
-    /// Applies a transport command at this batch boundary.
+    /// Applies a transport command at this batch boundary. While following an external clock the
+    /// transport is the clock's: Play, Stop, Locate and a count-in are ignored.
     pub(crate) fn command(
         &mut self,
         command: TransportCommand,
@@ -700,7 +758,29 @@ impl Player {
         sr: f64,
         dropped: &AtomicU64,
     ) {
+        if self.follow.is_some()
+            && matches!(
+                command,
+                TransportCommand::Play
+                    | TransportCommand::PlayWithPreRoll(_)
+                    | TransportCommand::Stop
+                    | TransportCommand::Locate(_)
+            )
+        {
+            return;
+        }
+        self.apply_command(command, engine_tempo, sr, dropped);
+    }
+
+    fn apply_command(
+        &mut self,
+        command: TransportCommand,
+        engine_tempo: Tempo,
+        sr: f64,
+        dropped: &AtomicU64,
+    ) {
         let constant = [TempoSegment::constant(engine_tempo)];
+        let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
         let Self {
             song,
             playing,
@@ -711,10 +791,13 @@ impl Player {
         } = self;
         let (map, mut parts) = match song.as_deref_mut() {
             Some(s) => (
-                TempoMap(&s.tempo),
+                ext.as_ref().map_or(TempoMap(&s.tempo), |e| TempoMap(e)),
                 Some((&s.tracks[..], &mut s.cursors[..])),
             ),
-            None => (TempoMap(&constant), None),
+            None => (
+                ext.as_ref().map_or(TempoMap(&constant), |e| TempoMap(e)),
+                None,
+            ),
         };
         let mut em = Emitter {
             events,
@@ -760,6 +843,7 @@ impl Player {
                 }
             }
             TransportCommand::Locate(tick) => {
+                self.sync.located(tick.0);
                 if let Some((tracks, cursors)) = parts.as_mut() {
                     if *playing {
                         em.all_off(tracks, cursors);
@@ -794,6 +878,109 @@ impl Player {
         }
     }
 
+    /// Follows the external clock at a batch boundary (see the module docs): takes the clock's
+    /// tempo, applies its locates and its start and stop, and stops the transport when the
+    /// clock disappears. Switching following on or off stops the transport first.
+    fn poll_external(&mut self, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
+        match (self.external.following(), self.follow) {
+            (false, None) => {}
+            (true, None) => self.enter_follow(sr, engine_tempo, dropped),
+            (false, Some(_)) => self.leave_follow(sr, engine_tempo, dropped),
+            (true, Some(f)) => self.follow_step(f, sr, engine_tempo, dropped),
+        }
+    }
+
+    /// The tick of the position and the tempo there, on the song's own map (or the engine's).
+    fn own_tempo_at_position(&self, sr: f64, engine_tempo: Tempo) -> (f64, Tempo) {
+        let constant = [TempoSegment::constant(engine_tempo)];
+        let map = self
+            .song
+            .as_deref()
+            .map_or(TempoMap(&constant), SongSnapshot::map);
+        let tick = map.tick(self.pos as f64, sr);
+        (tick, Tempo::new(map.bpm(tick)).unwrap_or(engine_tempo))
+    }
+
+    fn enter_follow(&mut self, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
+        let state = self.external.read();
+        self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
+        let (tick, own) = self.own_tempo_at_position(sr, engine_tempo);
+        let tempo = state
+            .tempo
+            .and_then(|bpm| Tempo::new(bpm.clamp(20.0, 999.0)).ok())
+            .unwrap_or(own);
+        self.follow = Some(Follow {
+            tempo,
+            locates: state.locates,
+            clocks: state.clocks,
+            quiet_frames: 0,
+        });
+        // The same musical position on the clock's tempo, with the cursors moved to it.
+        self.apply_command(
+            TransportCommand::Locate(Ticks(tick.round() as i64)),
+            engine_tempo,
+            sr,
+            dropped,
+        );
+    }
+
+    fn leave_follow(&mut self, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
+        self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
+        let tempo = self.follow.map_or(engine_tempo, |f| f.tempo);
+        let tick = TempoMap(&[TempoSegment::constant(tempo)]).tick(self.pos as f64, sr);
+        self.follow = None;
+        self.apply_command(
+            TransportCommand::Locate(Ticks(tick.round() as i64)),
+            engine_tempo,
+            sr,
+            dropped,
+        );
+    }
+
+    fn follow_step(&mut self, mut f: Follow, sr: f64, engine_tempo: Tempo, dropped: &AtomicU64) {
+        let s = self.external.read();
+        if let Some(t) = s
+            .tempo
+            .and_then(|bpm| Tempo::new(bpm.clamp(20.0, 999.0)).ok())
+            .filter(|t| *t != f.tempo)
+        {
+            // The same musical position on the new tempo.
+            let tick = TempoMap(&[TempoSegment::constant(f.tempo)]).tick(self.pos as f64, sr);
+            self.pos = TempoMap(&[TempoSegment::constant(t)])
+                .frame(tick, sr)
+                .round()
+                .max(0.0) as u64;
+            f.tempo = t;
+        }
+        let locate = (s.locates != f.locates).then_some(s.position);
+        f.locates = s.locates;
+        if s.clocks == f.clocks {
+            f.quiet_frames += BATCH as u64;
+        } else {
+            f.clocks = s.clocks;
+            f.quiet_frames = 0;
+        }
+        let silent = f.quiet_frames as f64 > CLOCK_LOST_SECONDS * sr;
+        self.follow = Some(f);
+        if let Some(position) = locate {
+            self.apply_command(
+                TransportCommand::Locate(Ticks(position)),
+                engine_tempo,
+                sr,
+                dropped,
+            );
+        }
+        let running = self.playing || self.pre_roll.is_some();
+        if running && (!s.running || silent) {
+            // A lost clock is a stop (nothing is left sounding); the sender running again with
+            // clocks coming continues it.
+            self.apply_command(TransportCommand::Stop, engine_tempo, sr, dropped);
+        } else if !running && s.running && !silent {
+            self.apply_command(TransportCommand::Play, engine_tempo, sr, dropped);
+        }
+        self.follow = Some(f);
+    }
+
     /// The engine tempo changed: a song-less transport keeps its tick.
     pub(crate) fn engine_tempo_changed(&mut self, old: Tempo, new: Tempo, sr: f64) {
         if self.song.is_none() && old != new {
@@ -816,7 +1003,11 @@ impl Player {
         engine_tempo: Tempo,
         dropped: &AtomicU64,
     ) -> BatchTime {
+        self.poll_external(sr, engine_tempo, dropped);
         let constant = [TempoSegment::constant(engine_tempo)];
+        // Following an external clock: its constant tempo replaces every map, and the audio
+        // clips (placed on the song's own tempo) are left out.
+        let ext = self.follow.map(|f| [TempoSegment::constant(f.tempo)]);
         let Self {
             song,
             playing,
@@ -832,19 +1023,20 @@ impl Player {
             hold,
             pre_roll,
             counting,
+            sync,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
         let (map, meters, lanes, mut parts, mut aud) = match song.as_deref_mut() {
             Some(s) => (
-                TempoMap(&s.tempo),
+                ext.as_ref().map_or(TempoMap(&s.tempo), |e| TempoMap(e)),
                 MeterMap(&s.meter),
                 &s.lanes[..],
                 Some((&s.tracks[..], &mut s.cursors[..])),
-                Some((&s.audio[..], &mut s.audio_rt[..])),
+                ext.is_none().then_some((&s.audio[..], &mut s.audio_rt[..])),
             ),
             None => (
-                TempoMap(&constant),
+                ext.as_ref().map_or(TempoMap(&constant), |e| TempoMap(e)),
                 MeterMap(&four_four),
                 &[][..],
                 None,
@@ -877,6 +1069,8 @@ impl Player {
                 chase(map, sr, tracks, cursors, *pos, 0, &mut em);
             }
         }
+        // MIDI clock out: the transport changes since the last batch go out first.
+        let sync_cfg = sync.batch_start(frame, *playing, map.tick(*pos as f64, sr).round() as i64);
         if *playing
             && let Some((ls, le)) = lp
             && *pos == le
@@ -884,6 +1078,7 @@ impl Player {
             wrap(map, sr, &mut parts, &mut em, 0, ls);
             *pos = ls;
             *loop_count += 1;
+            sync.wrapped(frame, self.loop_start, sync_cfg);
         }
         self.shared.publish(&TransportState {
             playing: *playing,
@@ -921,6 +1116,9 @@ impl Player {
         };
         *click_count = 0;
         *counting = false;
+        if sync_cfg.enabled && sync_cfg.while_stopped && (pre_roll.is_some() || !*playing) {
+            sync.idle(frame, BATCH, ticks_per_frame);
+        }
         if let Some(c) = pre_roll.as_mut() {
             // Counting in: the position holds, nothing of the song plays, and the clicks that
             // fall in this batch are queued.
@@ -990,12 +1188,18 @@ impl Player {
                 }
                 beat = meters.beat_after(beat.0);
             }
+            if sync_cfg.enabled {
+                clocks_in(map, sr, a, b, |f| {
+                    sync.clock(frame + off as u64 + (f - a));
+                });
+            }
             *pos = b;
             off += len as usize;
             if wraps && let Some((ls, _)) = lp {
                 wrap(map, sr, &mut parts, &mut em, off, ls);
                 *pos = ls;
                 *loop_count += 1;
+                sync.wrapped(frame + off as u64, self.loop_start, sync_cfg);
                 if time.loop_wrap.is_none() && parts.is_some() && off < BATCH {
                     time.loop_wrap = Some(LoopWrap {
                         offset: off as u16,
