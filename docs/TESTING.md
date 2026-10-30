@@ -64,6 +64,8 @@ The guard only sees the current thread, and only code that runs inside the closu
 | `cli_block_size_does_not_change_output` | [crates/render/tests/e2e.rs](../crates/render/tests/e2e.rs) | `--block 1` and `--block 4096` produce byte-identical WAV files (f32), and `--block 100` and `--block 63` do too (24-bit) |
 | `process_is_deterministic_for_a_seed` | [crates/devices/src/poly_synth.rs](../crates/devices/src/poly_synth.rs) | The synth's noise and sample & hold are reproducible for a seed |
 
+`crates/model/tests/doc_sequences.rs` is the whole-document property test: random runs of the song, console, audio and workflow commands (copy, paste, duplicate, join, quantize) over a document with a rack, a console, a container, a plugin, tracks and audio. After every step the document passes `RackDoc::validate`; an accepted command is one undo step whose undo and redo give back the document before and after (track heights left out); a rejected one changes neither the document nor the history and is never an `Invariant` error. It runs 256 sequences by default; `PROPTEST_CASES=10000 cargo test --release -p atomik-model --test doc_sequences` is the long run. `crates/model/tests/validate.rs` covers `validate` and `save_project_checked`, and the unit tests in `crates/model/src/history.rs` cover an edit that does not fit (an error, the document and history unchanged, a compound rolled back).
+
 Property-test regressions are saved in `proptest-regressions/` folders and `*.proptest-regressions` files next to the tests. Commit them.
 
 ## Golden files
