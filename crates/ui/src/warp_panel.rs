@@ -7,9 +7,10 @@
 //! Warp             [-]  On            [+]
 //! Mode             [-]  Beats         [+]
 //! Source tempo     [-]  96.0 BPM      [+]  [/2] [x2]
+//! Scale            [-]  100 %         [+]
 //! Transpose        [-]  +3 st         [+]
 //! Fine tune        [-]  +20 cents     [+]
-//! [ APPLY ]  [ DETECT TEMPO ]
+//! [ APPLY ]  [ DETECT TEMPO ]  [ RESET ]
 //! ```
 //!
 //! A modal view the app places over the window like the strip silence panel. It has no
@@ -20,10 +21,15 @@
 //! * `APPLY` emits [`WarpAction::Apply`] (not while there is no audio clip to work on).
 //! * `DETECT TEMPO` emits [`WarpAction::Detect`]; the app listens to the first selected clip and
 //!   answers with [`WarpView::set_values`].
+//! * `RESET` emits [`WarpAction::Reset`] (Reset to Unstretched Tempo: warp off, markers cleared; not
+//!   while there is no audio clip to work on).
 //! * `CLOSE` emits [`WarpAction::Close`].
 //!
 //! Every value has a `-` and a `+` button and answers the wheel. The tempo steps by 1 BPM, `/2`
 //! and `x2` halve and double it (the usual fix for a detector that found half or double time).
+//! Scale is the playback speed in percent of the clip as it is (the source tempo divided by it
+//! when APPLY runs): 200 plays the audio twice as fast. It reads 100 whenever the panel is filled
+//! from a clip.
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas};
@@ -34,6 +40,11 @@ use crate::step_drag::{PX_PER_STEP, StepDrag, wheel_steps};
 use crate::theme::Theme;
 use crate::tooltip::{Help, stepper_help};
 use atomik_model::{WARP_BPM_MAX, WARP_BPM_MIN, WARP_TRANSPOSE_MAX_CENTS, WarpMode, WarpSettings};
+
+/// The lowest scale in percent.
+pub const WARP_SCALE_MIN: u32 = 25;
+/// The highest scale in percent.
+pub const WARP_SCALE_MAX: u32 = 400;
 use vello::kurbo::{Affine, Point, Rect};
 
 const PAD: f64 = 14.0;
@@ -61,6 +72,9 @@ pub struct WarpValues {
     pub semitones: i32,
     /// Cents on top of the semitones, `-99..=99`.
     pub cents: i32,
+    /// Playback speed in percent of the clip as it is, [`WARP_SCALE_MIN`]..=[`WARP_SCALE_MAX`];
+    /// APPLY divides the source tempo by it. A clip always reads 100.
+    pub scale_pct: u32,
 }
 
 impl Default for WarpValues {
@@ -78,6 +92,7 @@ impl WarpValues {
             bpm_tenths: (w.source_bpm * 10.0).round() as u32,
             semitones: w.semitones(),
             cents: w.cents(),
+            scale_pct: 100,
         }
     }
 
@@ -86,7 +101,9 @@ impl WarpValues {
         WarpSettings {
             enabled: self.enabled,
             mode: self.mode,
-            source_bpm: f64::from(self.bpm_tenths) / 10.0,
+            source_bpm: (f64::from(self.bpm_tenths) / 10.0 * 100.0
+                / f64::from(self.scale_pct.clamp(WARP_SCALE_MIN, WARP_SCALE_MAX)))
+            .clamp(WARP_BPM_MIN, WARP_BPM_MAX),
             transpose_cents: (self.semitones * 100 + self.cents)
                 .clamp(-WARP_TRANSPOSE_MAX_CENTS, WARP_TRANSPOSE_MAX_CENTS),
             markers: base.markers.clone(),
@@ -101,6 +118,8 @@ pub enum WarpAction {
     Apply,
     /// Estimate the source tempo of the first target clip.
     Detect,
+    /// Turn warp off and clear the markers of the target clips (Reset to Unstretched Tempo).
+    Reset,
     /// Close the panel.
     Close,
 }
@@ -114,6 +133,8 @@ pub enum WarpRow {
     Mode,
     /// The source tempo.
     Tempo,
+    /// The scale in percent.
+    Scale,
     /// Semitones.
     Transpose,
     /// Cents.
@@ -122,10 +143,11 @@ pub enum WarpRow {
 
 impl WarpRow {
     /// Every row, top down.
-    pub const ALL: [WarpRow; 5] = [
+    pub const ALL: [WarpRow; 6] = [
         WarpRow::Warp,
         WarpRow::Mode,
         WarpRow::Tempo,
+        WarpRow::Scale,
         WarpRow::Transpose,
         WarpRow::Fine,
     ];
@@ -135,6 +157,7 @@ impl WarpRow {
             WarpRow::Warp => "Warp",
             WarpRow::Mode => "Mode",
             WarpRow::Tempo => "Source tempo",
+            WarpRow::Scale => "Scale",
             WarpRow::Transpose => "Transpose",
             WarpRow::Fine => "Fine tune",
         }
@@ -220,6 +243,7 @@ impl WarpView {
             WarpRow::Warp => if v.enabled { "On" } else { "Off" }.to_owned(),
             WarpRow::Mode => v.mode.label().to_owned(),
             WarpRow::Tempo => format!("{:.1} BPM", f64::from(v.bpm_tenths) / 10.0),
+            WarpRow::Scale => format!("{} %", v.scale_pct),
             WarpRow::Transpose => format!("{:+} st", v.semitones),
             WarpRow::Fine => format!("{:+} cents", v.cents),
         }
@@ -238,6 +262,11 @@ impl WarpView {
             WarpRow::Tempo => {
                 let (lo, hi) = ((WARP_BPM_MIN * 10.0) as i32, (WARP_BPM_MAX * 10.0) as i32);
                 v.bpm_tenths = (v.bpm_tenths as i32 + dir * 10).clamp(lo, hi) as u32;
+            }
+            WarpRow::Scale => {
+                v.scale_pct = (v.scale_pct as i32 + dir)
+                    .clamp(WARP_SCALE_MIN as i32, WARP_SCALE_MAX as i32)
+                    as u32;
             }
             WarpRow::Transpose => {
                 let max = WARP_TRANSPOSE_MAX_CENTS / 100;
@@ -348,6 +377,12 @@ impl WarpView {
         Rect::new(a.x1 + 8.0, a.y0, a.x1 + 8.0 + 150.0, a.y1)
     }
 
+    /// The RESET button.
+    pub fn reset_rect(&self) -> Rect {
+        let d = self.detect_rect();
+        Rect::new(d.x1 + 8.0, d.y0, d.x1 + 8.0 + 70.0, d.y1)
+    }
+
     /// True while a value is being dragged.
     pub fn is_dragging(&self) -> bool {
         self.drag.is_some()
@@ -375,6 +410,12 @@ impl WarpView {
             return help(
                 self.detect_rect(),
                 "Estimate the source tempo from the transients of the clip",
+            );
+        }
+        if self.reset_rect().contains(pos) {
+            return help(
+                self.reset_rect(),
+                "Reset to Unstretched Tempo: warp off and markers cleared, the clip plays its audio as it is (one undo step)",
             );
         }
         for (up, text) in [
@@ -465,6 +506,9 @@ impl WarpView {
         }
         if self.detect_rect().contains(pos) {
             return self.can_apply.then_some(WarpAction::Detect);
+        }
+        if self.reset_rect().contains(pos) {
+            return self.can_apply.then_some(WarpAction::Reset);
         }
         for up in [false, true] {
             if self.factor_rect(up).contains(pos) {
@@ -576,6 +620,15 @@ impl WarpView {
             "DETECT TEMPO",
             None,
             self.can_apply && hovered(detect),
+        );
+        let reset = self.reset_rect();
+        sp::button(
+            c,
+            st,
+            reset,
+            "RESET",
+            None,
+            self.can_apply && hovered(reset),
         );
         c.pop_clip();
         c.pop_transform();
