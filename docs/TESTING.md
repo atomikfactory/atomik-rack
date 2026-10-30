@@ -1461,3 +1461,33 @@ Hand checks, not automated (they need an audio interface and your hands):
   so, the previous device keeps playing and `settings.json` is unchanged.
 - Choose an input and an output on two different interfaces and record for a minute: the dialog
   warns about drift, and `input overruns` appears in the status bar when the clocks slip.
+
+## Several MIDI inputs
+
+`crates/app/src/midi.rs` tests the shared live feed: two ports into one target, a note-off that
+follows its note-on across ports and a moved target, a mapping-only port, the order of the queue
+(`LiveFeed::admit`) and the cap of two buffers past the host frame, so a note stamped far ahead
+cannot block the head note. `session_tests.rs` drives `LiveSession` through a fake backend whose
+ports can be sent bytes and unplugged: every enabled port open at once, switching one off closes
+only that port, a port plugged in later opens on a rescan, a role change reopens one port, and two
+settings that name one port open it once. `settings.rs` tests the old `midi_input` file (it loads
+as one enabled input and is saved in the new form). The dialog tests cover the switches and the
+re-listing, `shell_device_loss_tests.rs` the one second re-listing and the rescan command,
+`app_core_master_keyboard_tests.rs` the Standard and Separated modes, Manual Rec and the clear
+buttons (one undo step each), and `crates/ui/tests/arrangement_master_keys.rs` the corner buttons
+and the header arrow. `session_midi_input` with a `port` argument is in `crates/mcp/tests/midi.rs`.
+
+Hand checks, not automated (they need two MIDI controllers):
+
+- Plug in a keyboard and a pad controller, switch both on in Audio Settings > MIDI inputs: both
+  play the selected instrument at once, with no stuck notes when you release keys on both together.
+- Switch one off: it stops playing at once and the other keeps going. Switch it on again.
+- Unplug a controller while Audio Settings is open: the list drops it within a second; plug it in
+  again: it reappears and, if switched on, opens (the status bar lists the open ports).
+- Unplug it with the dialog closed, plug it in again and use Audio > Rescan MIDI Ports.
+- Set a pad controller to mapping only, map a pad to Play: the pad runs the transport and plays no
+  note; the keyboard still plays.
+- Workflow > Master keyboard > Separated: click the arrow on one track header, then select other
+  tracks: the keyboard keeps playing the first. Click the arrow again to hand it back.
+- Click MAN REC in the arrangement corner: selecting tracks no longer arms them. M and S clear all
+  mutes and solos; Edit > Undo takes each back in one step.
