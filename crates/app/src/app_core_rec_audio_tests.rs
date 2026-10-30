@@ -723,6 +723,8 @@ fn a_slow_disk_costs_counted_underruns_but_never_blocks_the_audio_thread() {
     let dir = tmp("slow");
     let wav = write_ramp(&dir, "slow.wav", 96_000);
     let mut core = AppCore::with_doc(OfflineSink::new(), empty_doc(), None);
+    // The file plays as imported (a warped clip would play a rendered buffer instead).
+    core.set_warp_imports(crate::import_warp::WarpImports::Off);
     core.import_audio(vec![wav], atomik_ui::ImportTarget::NewTracks, 0);
     core.wait_background();
     // Swap the engine's copy for the same asset behind a disk far too slow to keep up.

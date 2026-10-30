@@ -964,6 +964,21 @@ impl<B: AudioBackend> Shell<B> {
             WarpAction::Apply => {
                 if let Some(values) = self.warp.as_ref().map(|v| v.values().clone()) {
                     self.core.apply_warp(&values);
+                    // The scale is spent: the panel shows the clip as it is now.
+                    if values.scale_pct != 100
+                        && let Some(now) = self.core.warp_values()
+                        && let Some(view) = &mut self.warp
+                    {
+                        view.set_values(now);
+                    }
+                }
+            }
+            WarpAction::Reset => {
+                self.core.reset_warp();
+                if let Some(now) = self.core.warp_values()
+                    && let Some(view) = &mut self.warp
+                {
+                    view.set_values(now);
                 }
             }
             WarpAction::Detect => {
@@ -1552,6 +1567,7 @@ impl<B: AudioBackend> Shell<B> {
             .set_autosave_minutes(self.workflow.autosave_minutes);
         self.core.set_record_mode(self.workflow.record_mode);
         self.core.set_keep_events(self.workflow.keep_events);
+        self.core.set_warp_imports(self.workflow.warp_imports);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);

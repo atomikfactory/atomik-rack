@@ -85,6 +85,8 @@ pub enum Cycle {
     RecordMode,
     /// What a note edit does with notes that start past their clip's end.
     KeepEvents,
+    /// Which imported audio files are warped to the song tempo.
+    WarpImports,
 }
 
 /// A row with a button that steps through the choices of a setting.
@@ -267,6 +269,12 @@ impl WorkflowTab {
                 "A note placed past its clip's end: Keep leaves it silent, Expand lengthens the clip, New clip moves it.",
                 self.prefs.keep_events.label(),
             ),
+            (
+                Cycle::WarpImports,
+                "Warp on import",
+                "Audio with a tempo or a whole number of bars follows the song tempo; Loops only skips one-shots.",
+                self.prefs.warp_imports.label(),
+            ),
         ] {
             cycles.push(CycleRow {
                 rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -325,6 +333,9 @@ impl WorkflowTab {
                             }
                             Cycle::KeepEvents => {
                                 self.prefs.keep_events = self.prefs.keep_events.next();
+                            }
+                            Cycle::WarpImports => {
+                                self.prefs.warp_imports = self.prefs.warp_imports.next();
                             }
                         }
                     }

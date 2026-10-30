@@ -262,6 +262,8 @@ pub struct AppCore<S: EngineSink> {
     record_mode: RecordMode,
     /// What a note edit does with notes that start past their clip's end.
     keep_events: KeepEvents,
+    /// Which imported audio files are warped to the song tempo.
+    warp_imports: crate::import_warp::WarpImports,
     /// The note clip an open drag edited, to complete under `keep_events` when the drag ends.
     keep_pending: Option<ClipId>,
     /// The next applied command is folded into the undo step before it (a follow-up).
@@ -474,6 +476,7 @@ impl<S: EngineSink> AppCore<S> {
             quantize: InputQuantize::Off,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
+            warp_imports: crate::import_warp::WarpImports::default(),
             keep_pending: None,
             join_next: false,
             take: None,
@@ -2375,6 +2378,16 @@ impl<S: EngineSink> AppCore<S> {
     /// Sets the keep-events policy (see [`crate::record_over`]).
     pub fn set_keep_events(&mut self, policy: KeepEvents) {
         self.keep_events = policy;
+    }
+
+    /// Which imported audio files are warped to the song tempo.
+    pub fn warp_imports(&self) -> crate::import_warp::WarpImports {
+        self.warp_imports
+    }
+
+    /// Sets the warp-on-import choice for the next imports.
+    pub fn set_warp_imports(&mut self, mode: crate::import_warp::WarpImports) {
+        self.warp_imports = mode;
     }
 
     /// Completes the edit of note clip `id` under the keep-events policy: the follow-up commands

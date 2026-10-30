@@ -36,6 +36,7 @@ impl Drop for Tmp {
 
 fn core() -> AppCore<RecordingSink> {
     let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.set_warp_imports(crate::import_warp::WarpImports::Off);
     c.sink_mut().take();
     c
 }

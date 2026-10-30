@@ -10,7 +10,7 @@
 
 use crate::audio_writer::TakeResult;
 use crate::stream_source::{open_stream_asset, should_stream};
-use atomik_audio_file::{AssetInfo, Bundle, PeakPyramid};
+use atomik_audio_file::{AssetInfo, Bundle, FileMeta, PeakPyramid};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
 use atomik_model::Song;
@@ -49,6 +49,8 @@ pub(crate) struct Loaded {
     pub asset: SongAsset,
     /// The waveform peaks.
     pub peaks: Arc<PeakPyramid>,
+    /// What the source file says about its tempo (set by imports; empty otherwise).
+    pub meta: FileMeta,
 }
 
 /// What workers tell the UI thread.
@@ -343,6 +345,7 @@ pub(crate) fn load_asset(bundle: &Bundle, hash: &str, threshold: u64) -> Result<
         info: None,
         asset,
         peaks: Arc::new(peaks),
+        meta: FileMeta::default(),
     })
 }
 
@@ -355,6 +358,7 @@ pub(crate) fn import_file(
 ) -> Result<Loaded, String> {
     let info = bundle.import(path, rate).map_err(|e| e.to_string())?;
     let mut loaded = load_asset(bundle, &info.hash, threshold)?;
+    loaded.meta = atomik_audio_file::read_file_meta(path);
     loaded.info = Some(info);
     Ok(loaded)
 }

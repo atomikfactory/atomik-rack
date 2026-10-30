@@ -45,6 +45,9 @@ fn click(s: &mut Shell<NullBackend>, p: atomik_ui::kurbo::Point) {
 
 /// A 2 s mono file with a noise burst every 24 000 frames (a beat at 120 BPM), imported as a clip.
 fn imported(s: &mut Shell<NullBackend>) -> ClipId {
+    // The warp tests apply and undo warps themselves: the file is imported as is.
+    s.core_mut()
+        .set_warp_imports(crate::import_warp::WarpImports::Off);
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
         "atomik-shell-warp-{}-{}",
@@ -260,4 +263,37 @@ fn a_loop_as_bars_and_quantize_audio_from_the_menu() {
     s.core_mut().undo();
     assert!(s.run_command("sequencer.audio_quantize", None).is_some());
     s.core_mut().wait_background();
+}
+
+#[test]
+fn the_warp_panel_scale_applies_once_and_reset_turns_the_warp_off() {
+    let mut s = shell();
+    let id = imported(&mut s);
+    s.core_mut().arrangement_mut().set_selected_clips(&[id]);
+    s.execute(AppCommand::AudioWarp);
+    assert!(audio(&s, id).warp.enabled);
+    s.execute(AppCommand::AudioWarpPanel);
+    // Scale up to 125 %, then APPLY: the source tempo falls to 96, and the panel reads 100 again.
+    let (plus, apply, reset) = {
+        let v = s.warp_view().unwrap();
+        (
+            v.plus_rect(WarpRow::Scale).center(),
+            v.apply_rect().center(),
+            v.reset_rect().center(),
+        )
+    };
+    for _ in 0..25 {
+        click(&mut s, plus);
+    }
+    assert_eq!(s.warp_view().unwrap().values().scale_pct, 125);
+    click(&mut s, apply);
+    assert!((audio(&s, id).warp.source_bpm - 96.0).abs() < 1e-9);
+    assert_eq!(s.warp_view().unwrap().values().scale_pct, 100);
+    assert_eq!(s.warp_view().unwrap().values().bpm_tenths, 960);
+    // RESET: warp off, the panel follows, one undo step brings it back.
+    click(&mut s, reset);
+    assert!(!audio(&s, id).warp.enabled);
+    assert!(!s.warp_view().unwrap().values().enabled);
+    s.core_mut().undo();
+    assert!(audio(&s, id).warp.enabled);
 }

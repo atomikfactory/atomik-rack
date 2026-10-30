@@ -3,6 +3,7 @@
 //! files in temporary folders.
 
 use super::*;
+use crate::import_warp::WarpImports;
 use crate::sink::{RecordingSink, SinkCall};
 use atomik_audio_file::{AudioData, write_wav_f32};
 use atomik_core::PPQ;
@@ -32,6 +33,8 @@ impl Drop for Tmp {
 
 fn core() -> AppCore<RecordingSink> {
     let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    // These tests warp by hand: the files they import stay as they are.
+    c.set_warp_imports(WarpImports::Off);
     c.sink_mut().take();
     c
 }
@@ -89,6 +92,7 @@ fn values(enabled: bool, mode: WarpMode, bpm_tenths: u32, st: i32) -> WarpValues
         bpm_tenths,
         semitones: st,
         cents: 0,
+        scale_pct: 100,
     }
 }
 
@@ -293,4 +297,177 @@ fn undoing_a_warp_cancels_its_render_and_keeps_the_song_dry() {
     c.wait_background();
     assert!(c.audio.warps.is_empty());
     assert_eq!(audio(&c, ids[0]).warp, WarpSettings::default());
+}
+
+// ---------------------------------------------------------------------- warp on import
+
+/// A core with the default import choice (Loops only).
+fn core_loops() -> AppCore<RecordingSink> {
+    let mut c = AppCore::with_doc(RecordingSink::new(), empty_doc(), None);
+    c.sink_mut().take();
+    assert_eq!(c.warp_imports(), WarpImports::Loops);
+    c
+}
+
+fn only_clip(c: &AppCore<RecordingSink>) -> (i64, AudioClipContent) {
+    let clips: Vec<_> = c
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .flat_map(|t| t.lanes.iter().flat_map(|l| l.clips.iter()))
+        .collect();
+    assert_eq!(clips.len(), 1);
+    match &clips[0].content {
+        ClipContent::Audio(a) => (clips[0].length, a.clone()),
+        _ => panic!("not audio"),
+    }
+}
+
+/// `wav` with an `acid` chunk (tempo and beats) spliced in after the RIFF header.
+fn with_acid(path: &PathBuf, flags: u32, beats: u32, tempo: f32) {
+    let bytes = std::fs::read(path).unwrap();
+    let mut body = Vec::new();
+    body.extend(flags.to_le_bytes());
+    body.extend(60u16.to_le_bytes());
+    body.extend(0u16.to_le_bytes());
+    body.extend(0f32.to_le_bytes());
+    body.extend(beats.to_le_bytes());
+    body.extend(4u16.to_le_bytes());
+    body.extend(4u16.to_le_bytes());
+    body.extend(tempo.to_le_bytes());
+    let mut out = bytes[..12].to_vec();
+    out.extend(b"acid");
+    out.extend((body.len() as u32).to_le_bytes());
+    out.extend(&body);
+    out.extend(&bytes[12..]);
+    let riff = (out.len() - 8) as u32;
+    out[4..8].copy_from_slice(&riff.to_le_bytes());
+    std::fs::write(path, out).unwrap();
+}
+
+#[test]
+fn a_four_bar_loop_at_100_bpm_imported_into_a_120_bpm_song_warps_to_four_bars() {
+    let t = Tmp::new("loop100");
+    // 4 bars at 100 BPM: 9.6 s.
+    let a = wav(&t, "loop.wav", 460_800, clicks(28_800, 0));
+    let mut c = core_loops();
+    let ids = import(&mut c, &[a]);
+    let (length, content) = only_clip(&c);
+    assert_eq!(length, 4 * c.doc().song.bar_ticks());
+    assert!(content.warp.enabled);
+    assert!(
+        (content.warp.source_bpm - 100.0).abs() < 0.01,
+        "{}",
+        content.warp.source_bpm
+    );
+    assert!(content.warp.markers.is_empty());
+    // The warp joined the step that added the clip: one undo removes the clip, not just the warp.
+    assert!(c.undo());
+    c.wait_background();
+    assert!(c.doc().song.tracks.iter().all(|t| {
+        t.lanes
+            .iter()
+            .all(|l| l.clips.iter().all(|k| k.id != ids[0]))
+    }));
+}
+
+#[test]
+fn a_one_shot_is_not_warped_and_off_imports_as_is() {
+    let t = Tmp::new("shot");
+    let a = wav(&t, "hit.wav", 24_000, clicks(24_000, 0));
+    let mut c = core_loops();
+    import(&mut c, &[a]);
+    let (length, content) = only_clip(&c);
+    assert_eq!(content.warp, WarpSettings::default());
+    assert_eq!(length, PPQ);
+    // A loop with the choice Off: today's import, no warp, the real duration.
+    let l = wav(&t, "loop.wav", 460_800, clicks(28_800, 0));
+    let mut off = core();
+    import(&mut off, &[l]);
+    let (length, content) = only_clip(&off);
+    assert_eq!(content.warp, WarpSettings::default());
+    assert_eq!(
+        length,
+        crate::audio_import::ticks_for_frames(&off.doc().song, 0, 460_800, 48_000)
+    );
+}
+
+#[test]
+fn a_file_with_a_tempo_chunk_is_warped_and_the_one_shot_flag_is_obeyed() {
+    let t = Tmp::new("acid");
+    // 1.3 s: not a clean bar length.
+    let a = wav(&t, "tempo.wav", 62_400, clicks(30_000, 0));
+    with_acid(&a, 0, 2, 93.0);
+    let b = wav(&t, "flagged.wav", 62_400, clicks(30_001, 0));
+    with_acid(&b, 1, 2, 93.0);
+    let mut c = core_loops();
+    import(&mut c, &[a]);
+    let (_, content) = only_clip(&c);
+    assert!(content.warp.enabled);
+    // 62 400 frames hold 2 beats at 92.3 BPM: close to the stated tempo, so beats win.
+    assert!((content.warp.source_bpm - 92.3).abs() < 0.1);
+    let mut d = core_loops();
+    import(&mut d, &[b]);
+    assert!(!only_clip(&d).1.warp.enabled);
+    // All files warps the flagged one-shot too (nothing else is known: the song tempo).
+    let mut e = core_loops();
+    e.set_warp_imports(WarpImports::All);
+    let f = wav(&t, "any.wav", 24_000, clicks(24_000, 0));
+    import(&mut e, &[f]);
+    let (length, content) = only_clip(&e);
+    assert!(content.warp.enabled);
+    assert_eq!((content.warp.source_bpm, length), (120.0, PPQ));
+}
+
+#[test]
+fn scale_and_reset_are_one_undo_step_each_and_reset_keeps_the_audio_span() {
+    let t = Tmp::new("scale");
+    let a = wav(&t, "loop.wav", 460_800, clicks(28_800, 0));
+    let mut c = core_loops();
+    let ids = import(&mut c, &[a]);
+    select(&mut c, &ids);
+    let bar = c.doc().song.bar_ticks();
+    assert_eq!(only_clip(&c).0, 4 * bar);
+    // Scale 200 % through the panel's values: the source tempo halves.
+    let mut v = c.warp_values().unwrap();
+    assert_eq!(v.scale_pct, 100);
+    v.scale_pct = 200;
+    c.apply_warp(&v);
+    let (_, content) = only_clip(&c);
+    assert!((content.warp.source_bpm - 50.0).abs() < 0.01);
+    assert!(c.undo());
+    assert!((only_clip(&c).1.warp.source_bpm - 100.0).abs() < 0.01);
+    // Reset: warp off, markers gone, the clip is as long as the audio it plays.
+    let clip = c.doc().song.clip(ids[0]).unwrap().2.clone();
+    let mut marked = audio(&c, ids[0]);
+    marked.warp.markers = vec![atomik_model::WarpMarker {
+        tick: 1_000,
+        source: 1_875,
+    }];
+    c.apply_command(Command::Song(SongCommand::SetAudioClip {
+        id: ids[0],
+        start: clip.start,
+        length: clip.length,
+        muted: false,
+        content: marked,
+        merge: None,
+    }))
+    .unwrap();
+    c.reset_warp();
+    let (length, content) = only_clip(&c);
+    assert!(!content.warp.enabled && content.warp.markers.is_empty());
+    assert_eq!(
+        length,
+        crate::audio_import::ticks_for_frames(&c.doc().song, 0, 460_800, 48_000)
+    );
+    // One undo brings the warp, its markers and the length back.
+    assert!(c.undo());
+    let (length, content) = only_clip(&c);
+    assert!(content.warp.enabled && content.warp.markers.len() == 1);
+    assert_eq!(length, 4 * bar);
+    // Nothing selected: refused.
+    c.arrangement_mut().set_selected_clips(&[]);
+    c.reset_warp();
+    assert!(c.last_rejection().is_some());
 }

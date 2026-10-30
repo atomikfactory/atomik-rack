@@ -820,6 +820,7 @@ fn missing_project(tag: &str, names: &[&str]) -> String {
         let ramp: Vec<f32> = (0..4_800).map(|n| n as f32 / 4_800.0 * seed).collect();
         let file = dir.join("source").join(name);
         write_wav_file(&file, &[ramp], 48_000, SampleFormat::F32).unwrap();
+        core.set_warp_imports(atomik_app::import_warp::WarpImports::Off);
         core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
         core.wait_background();
     }
@@ -1500,6 +1501,7 @@ fn melody_project(tag: &str) -> String {
     }
     let file = dir.join("source").join("tune.wav");
     write_wav_file(&file, &[x], 48_000, SampleFormat::F32).unwrap();
+    core.set_warp_imports(atomik_app::import_warp::WarpImports::Off);
     core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
     core.wait_background();
     core.save_as(&dir.join("song.atomik")).unwrap();
@@ -1660,6 +1662,7 @@ fn meter_project(tag: &str, right_gain: f32) -> String {
     let right: Vec<f32> = left.iter().map(|v| v * right_gain).collect();
     let file = dir.join("source").join("tone.wav");
     write_wav_file(&file, &[left, right], 48_000, SampleFormat::F32).unwrap();
+    core.set_warp_imports(atomik_app::import_warp::WarpImports::Off);
     core.import_audio(vec![file], atomik_ui::ImportTarget::NewTracks, 0);
     core.wait_background();
     let track = core.doc().song.tracks[0].device.clone();

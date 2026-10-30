@@ -925,7 +925,21 @@ impl<S: EngineSink> AppCore<S> {
             }
         };
         let rate = self.doc().sample_rate;
-        let length = ticks_for_frames(&self.doc().song, start, info.frames, rate);
+        let warp = {
+            let song = &self.doc().song;
+            crate::import_warp::import_warp(
+                &loaded.meta,
+                info.frames,
+                rate,
+                song.tempo_table().map().bpm(start as f64),
+                song.bar_ticks_at(start),
+                self.warp_imports,
+            )
+        };
+        let length = match &warp {
+            Some(w) => w.length,
+            None => ticks_for_frames(&self.doc().song, start, info.frames, rate),
+        };
         run(
             self,
             Command::Song(SongCommand::AddAudioClip {
@@ -940,10 +954,42 @@ impl<S: EngineSink> AppCore<S> {
                 fade_curve: atomik_model::FadeCurve::Linear,
             }),
         )?;
+        if let Some(w) = warp {
+            self.warp_new_clip(w.source_bpm, length);
+        }
         if let Some(b) = self.audio.batches.get_mut(&batch) {
             b.cursor = start + length;
         }
         Ok(())
+    }
+
+    /// Turns warp on at `source_bpm` for the clip just added, as part of the undo step that
+    /// added it. A failure leaves the clip unwarped (it was added whole).
+    fn warp_new_clip(&mut self, source_bpm: f64, length: i64) {
+        let Some(id) = self.document.last_clip_id() else {
+            return;
+        };
+        let Some((_, _, clip)) = self.doc().song.clip(id) else {
+            return;
+        };
+        let atomik_model::ClipContent::Audio(content) = &clip.content else {
+            return;
+        };
+        let mut content = content.clone();
+        content.warp.enabled = true;
+        content.warp.source_bpm =
+            source_bpm.clamp(atomik_model::WARP_BPM_MIN, atomik_model::WARP_BPM_MAX);
+        let command = Command::Song(SongCommand::SetAudioClip {
+            id,
+            start: clip.start,
+            length,
+            muted: clip.muted,
+            content,
+            merge: None,
+        });
+        self.join_next = true;
+        let _ = self.apply_command(command);
+        self.join_next = false;
     }
 
     // ------------------------------------------------------------------ open and replace
