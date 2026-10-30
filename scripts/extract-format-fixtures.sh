@@ -9,13 +9,14 @@
 # usage: sh scripts/extract-format-fixtures.sh [FIRST [LAST]]     (defaults 13 and the current version)
 set -eu
 cd "$(dirname "$0")/.."
-src=crates/model/src/project.rs
+src=crates/model/src/project/mod.rs
 out=crates/model/tests/fixtures
 first=${1:-13}
 last=${2:-$(sed -n 's/^pub const PROJECT_VERSION: u32 = \([0-9]*\);.*/\1/p' "$src")}
 n=$first
 while [ "$n" -le "$last" ]; do
-    commit=$(git log --format=%h -S"PROJECT_VERSION: u32 = $n;" -- "$src" | tail -1)
+    # The module was one file, project.rs, until it was split into a folder.
+    commit=$(git log --format=%h -S"PROJECT_VERSION: u32 = $n;" -- "$src" crates/model/src/project.rs | tail -1)
     if [ -z "$commit" ]; then
         echo "version $n: no commit introduced it" >&2
         exit 1
