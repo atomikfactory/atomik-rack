@@ -18,6 +18,7 @@ thiserror.workspace = true
 atomik-library.workspace = true
 
 [dev-dependencies]
+atomik-testkit.workspace = true
 proptest.workspace = true
 
 [lints]

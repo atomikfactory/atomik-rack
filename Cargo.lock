@@ -254,6 +254,7 @@ name = "atomik-audio-file"
 version = "0.2.0-rc.2"
 dependencies = [
  "atomik-library",
+ "atomik-testkit",
  "hound",
  "proptest",
  "rubato",

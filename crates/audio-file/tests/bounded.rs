@@ -1,84 +1,18 @@
 //! Hostile and corrupt audio never allocates more than the file itself can account for: a header
 //! that claims gigabytes is refused (or read as the few bytes it has), with a small peak.
-#![allow(missing_docs, unsafe_code)] // the counting allocator below is `unsafe` by nature
+#![allow(missing_docs)]
 
 mod common;
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::io::Write;
 
 use atomik_audio_file::{
     AudioData, AudioFileError, Bundle, WavStreamReader, decode_bytes, decode_bytes_with,
     decode_file, read_wav_f32, read_wav_f32_limited, write_wav_f32,
 };
+use atomik_testkit::no_alloc::peak_heap_of as peak_of;
 
-thread_local! {
-    static LIVE: Cell<isize> = const { Cell::new(0) };
-    static PEAK: Cell<isize> = const { Cell::new(0) };
-}
-
-/// Counts the live heap bytes of each thread and remembers the highest value; a test measures
-/// its own thread, so the other tests of this binary do not disturb it.
-struct Counting;
-
-fn grow(by: usize) {
-    let _ = LIVE.try_with(|live| {
-        live.set(live.get() + by as isize);
-        let _ = PEAK.try_with(|peak| peak.set(peak.get().max(live.get())));
-    });
-}
-
-fn shrink(by: usize) {
-    let _ = LIVE.try_with(|live| live.set(live.get() - by as isize));
-}
-
-// SAFETY: every method forwards unchanged to `System`, which upholds the `GlobalAlloc`
-// contract; the counting only touches const-initialised thread-locals that never allocate.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: forwarded with the caller's layout.
-        let p = unsafe { System.alloc(layout) };
-        if !p.is_null() {
-            grow(layout.size());
-        }
-        p
-    }
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: forwarded with the caller's layout.
-        let p = unsafe { System.alloc_zeroed(layout) };
-        if !p.is_null() {
-            grow(layout.size());
-        }
-        p
-    }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        shrink(layout.size());
-        // SAFETY: `ptr` was allocated by `System` through this allocator with `layout`.
-        unsafe { System.dealloc(ptr, layout) }
-    }
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // SAFETY: `ptr` and `layout` come from this allocator; `new_size` is the caller's.
-        let p = unsafe { System.realloc(ptr, layout, new_size) };
-        if !p.is_null() {
-            shrink(layout.size());
-            grow(new_size);
-        }
-        p
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: Counting = Counting;
-
-/// Runs `f` and returns its result with the most heap bytes it held at once (this thread).
-fn peak_of<R>(f: impl FnOnce() -> R) -> (R, usize) {
-    let base = LIVE.with(Cell::get);
-    PEAK.with(|p| p.set(base));
-    let result = f();
-    let peak = PEAK.with(Cell::get) - base;
-    (result, usize::try_from(peak).unwrap_or(0))
-}
+atomik_testkit::install_alloc_guard!();
 
 const FEW_MIB: usize = 4 << 20;
 
