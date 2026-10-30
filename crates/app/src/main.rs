@@ -31,14 +31,25 @@ fn run_app() {
         match atomik_app::cli::cheat_sheet(&cli) {
             Ok(text) => print!("{text}"),
             Err(e) => {
-                eprintln!("atomik: {e}");
+                atomik_app::logging::fatal(&e.to_string());
                 std::process::exit(1);
             }
         }
         return;
     }
+    // The log and the crash reports come first, so that everything after them (settings,
+    // plugins, audio) can report. Both live in `<config folder>/logs`.
+    let settings_path = cli
+        .settings
+        .clone()
+        .or_else(atomik_app::settings::default_settings_path);
+    let config = atomik_app::settings::config_folder(settings_path.as_deref());
+    let logs = atomik_app::logging::log_dir(&config.dir);
+    atomik_app::logging::init(&logs);
+    // Kept for the whole run; dropping it would put the previous panic hook back.
+    let _crash_hook = atomik_app::crash::install(&logs);
     if let Err(e) = atomik_app::platform::run(cli) {
-        eprintln!("atomik: {e}");
+        atomik_app::logging::fatal(&e);
         std::process::exit(1);
     }
 }

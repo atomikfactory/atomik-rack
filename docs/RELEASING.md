@@ -224,7 +224,7 @@ To build by hand, follow the build instructions in the [README](../README.md) an
 
 ## ASIO
 
-The ASIO backend is an opt-in build feature (`asio`) that needs the Steinberg ASIO SDK. The SDK is never bundled, committed or downloaded by CI, and official release binaries are built without it. Anyone who wants ASIO builds from source with their own copy of the SDK, under the SDK's own licence terms.
+The ASIO backend is an opt-in build feature (`asio`) that needs the Steinberg ASIO SDK. The SDK is never bundled, committed or downloaded by CI, and official release binaries are built without it. Whether that should change is an open question in the [decision log](DECISIONS.md#b-asio-sdk-licensing-for-official-builds). Anyone who wants ASIO builds from source with their own copy of the SDK, under the SDK's own licence terms.
 
 ## Checksums
 

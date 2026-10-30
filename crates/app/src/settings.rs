@@ -373,6 +373,36 @@ pub fn default_settings_path() -> Option<PathBuf> {
     config_dir(TargetOs::current(), &|k| std::env::var_os(k)).map(|d| d.join(SETTINGS_FILE))
 }
 
+/// The folder that holds the plugin cache, the plugin journal, the recovery snapshots and the
+/// logs of a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigFolder {
+    /// The folder: the settings file's, or the temporary one when there is no settings file.
+    pub dir: PathBuf,
+    /// True when there is no settings file (no config folder in the environment), so `dir` is
+    /// the temporary fallback.
+    pub fallback: bool,
+}
+
+/// What the app tells the user when it runs on the temporary fallback folder.
+pub const NO_CONFIG_NOTE: &str = "No config folder was found: settings are not saved, and the plugin cache, journal, recovery snapshots and logs use a temporary folder";
+
+/// The folder next to `settings_path` (the default settings file, or `--settings`), or a folder
+/// in the OS temporary directory when the run has no settings file: recovery and the plugin
+/// journal then still exist, for this run.
+pub fn config_folder(settings_path: Option<&Path>) -> ConfigFolder {
+    match settings_path.and_then(Path::parent) {
+        Some(dir) => ConfigFolder {
+            dir: dir.to_path_buf(),
+            fallback: false,
+        },
+        None => ConfigFolder {
+            dir: std::env::temp_dir().join("atomik-rack"),
+            fallback: true,
+        },
+    }
+}
+
 /// Loads settings from `path`. A missing file gives the defaults and no error; an unreadable
 /// or invalid file gives the defaults and the error (to show to the user).
 pub fn load(path: &Path) -> (AudioSettings, Option<SettingsError>) {
@@ -437,6 +467,18 @@ mod tests {
         std::env::temp_dir()
             .join(format!("atomik-app-settings-{}", std::process::id()))
             .join(name)
+    }
+
+    #[test]
+    fn a_run_without_a_settings_file_uses_a_temporary_config_folder() {
+        let none = config_folder(None);
+        assert!(none.fallback);
+        assert!(none.dir.starts_with(std::env::temp_dir()));
+        let beside = config_folder(Some(Path::new("some/dir/foo.json")));
+        assert_eq!(beside.dir, Path::new("some/dir"));
+        assert!(!beside.fallback);
+        // A bare file name is the working directory, as the plugin cache always read it.
+        assert!(!config_folder(Some(Path::new("foo.json"))).fallback);
     }
 
     #[test]

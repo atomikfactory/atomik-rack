@@ -136,7 +136,7 @@ use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
 use crate::settings::{self, AudioSettings, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
-use crate::status::status_text;
+use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
 use crate::windows::{WindowHit, WindowKind};
@@ -234,6 +234,9 @@ pub enum ShellRequest {
         /// What continues once the project is saved.
         then: PendingAction,
     },
+    /// Show a save dialog for the diagnostics report (Help > Export Diagnostics), named by
+    /// [`crate::diagnostics::default_file_name`], then call [`Shell::export_diagnostics_to`].
+    PickExportDiagnostics,
     /// Show a folder dialog (the Plugins settings' ADD FOLDER), then call
     /// [`Shell::add_plugin_folder`] with the picked folder.
     PickPluginFolder,
@@ -354,6 +357,15 @@ pub struct Shell<B: AudioBackend> {
     status: String,
     /// The engine fault already announced with a toast (cleared when the fault is).
     fault_announced: bool,
+    /// The overload counters of the last status poll, and the ones last written to the log.
+    overload: OverloadStats,
+    /// The audio status of the last poll, for the diagnostics report.
+    audio_status: AudioStatus,
+    overload_logged: OverloadStats,
+    /// Status polls since the counters were last logged (they are logged at most every 20).
+    overload_polls: u32,
+    /// The devices text last given to the crash report.
+    crash_context: String,
     repaint: bool,
     /// What holds the pointer, and the window the press happened in.
     capture: Option<(WindowKind, Capture)>,
@@ -533,6 +545,11 @@ impl<B: AudioBackend> Shell<B> {
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
             fault_announced: false,
+            overload: OverloadStats::default(),
+            audio_status: AudioStatus::default(),
+            overload_logged: OverloadStats::default(),
+            overload_polls: 0,
+            crash_context: String::new(),
             repaint: true,
             capture: None,
             focus: Pane::Rack,
@@ -1279,6 +1296,43 @@ impl<B: AudioBackend> Shell<B> {
             .join("midi-presets");
         let _ = std::fs::create_dir_all(&dir);
         Some(dir)
+    }
+
+    /// The folder of the logs and the crash reports of this run.
+    pub fn log_folder(&self) -> PathBuf {
+        crate::logging::log_dir(&crate::settings::config_folder(self.settings_path.as_deref()).dir)
+    }
+
+    /// The report Help > Export Diagnostics writes: the status, the counters, the settings, the
+    /// plugin state, the last crash and the log, with the home folder redacted.
+    pub fn diagnostics_inputs(&mut self) -> crate::diagnostics::Inputs {
+        self.poll_status();
+        let (plugin_cache, plugin_journal) = self.core.plugin_state_files();
+        crate::diagnostics::Inputs {
+            log_dir: self.log_folder(),
+            settings_path: self.settings_path.clone(),
+            plugin_cache,
+            plugin_journal,
+            status_line: self.status.clone(),
+            audio: self.audio_status.clone(),
+            home_dirs: crate::diagnostics::home_dirs(&|k| std::env::var_os(k)),
+        }
+    }
+
+    /// Writes the diagnostics report to the picked file and says where it went.
+    pub fn export_diagnostics_to(&mut self, path: &Path) {
+        let inputs = self.diagnostics_inputs();
+        match crate::diagnostics::export(&inputs, path) {
+            Ok(()) => {
+                log::info!("diagnostics written to {}", path.display());
+                self.notify(format!("Diagnostics written to {}", path.display()));
+            }
+            Err(e) => {
+                log::error!("cannot write the diagnostics to {}: {e}", path.display());
+                self.notify(format!("Could not write the diagnostics: {e}"));
+            }
+        }
+        self.repaint = true;
     }
 
     /// Writes the project's MIDI mappings to the picked preset file.
@@ -4499,6 +4553,7 @@ impl<B: AudioBackend> Shell<B> {
                 }
             }
             AppCommand::ImportMidiPreset => vec![ShellRequest::PickImportMidiPreset],
+            AppCommand::ExportDiagnostics => vec![ShellRequest::PickExportDiagnostics],
             AppCommand::ClearMidiMaps => {
                 if !self.core.clear_midi_maps() {
                     self.notify("There are no MIDI mappings to clear");
@@ -4824,6 +4879,29 @@ impl<B: AudioBackend> Shell<B> {
         self.poll_status();
     }
 
+    /// The overload counters of the last status poll.
+    pub fn overload(&self) -> OverloadStats {
+        self.overload
+    }
+
+    /// Writes the overload counters into the log when one grew: at once the first time, then at
+    /// most every 20th poll (about every 5 seconds), so an xrun storm is a line, not a flood.
+    /// The audio thread never logs; this is where its counters become records.
+    fn log_overload(&mut self) {
+        self.overload_polls = self.overload_polls.saturating_add(1);
+        let (now, before) = (self.overload.fields(), self.overload_logged.fields());
+        if !now.iter().zip(&before).any(|(a, b)| a.1 > b.1) {
+            // Equal, or reset by a rebuilt engine: the new baseline.
+            self.overload_logged = self.overload;
+            return;
+        }
+        if self.overload_polls >= 20 || self.overload_logged.is_clear() {
+            log::warn!("overload: {}", self.overload.parts().join(", "));
+            self.overload_logged = self.overload;
+            self.overload_polls = 0;
+        }
+    }
+
     /// Reads audio telemetry into the status bar; true when its text changed.
     pub fn poll_status(&mut self) -> bool {
         self.reload_keymap_file();
@@ -4842,6 +4920,23 @@ impl<B: AudioBackend> Shell<B> {
             ));
         } else if !status.faulted {
             self.fault_announced = false;
+        }
+        let (plugin_drops, late_batches) = self.core.plugin_overload();
+        status.overload.plugin_drops = plugin_drops;
+        status.overload.late_sandbox_batches = late_batches;
+        self.overload = status.overload;
+        self.audio_status = status.clone();
+        self.log_overload();
+        let context = crate::status::crash_context(&status);
+        if context != self.crash_context {
+            crate::crash::set_context(&context);
+            self.crash_context = context;
+        }
+        if let Some(report) = crate::crash::flush_deferred() {
+            self.notify(format!(
+                "A panic was caught on an audio thread; the report is in {}",
+                report.display()
+            ));
         }
         let mut text = status_text(&status);
         if let Some(alert) = self.core.pdc_alert() {
@@ -5240,6 +5335,10 @@ mod sampler_tests;
 #[cfg(test)]
 #[path = "shell_bypass_tests.rs"]
 mod bypass_tests;
+
+#[cfg(test)]
+#[path = "shell_diagnostics_tests.rs"]
+mod diagnostics_tests;
 
 #[cfg(test)]
 #[path = "shell_drums_tests.rs"]

@@ -193,6 +193,7 @@ impl Session {
             "title": self.shell.title(),
             "dirty": self.shell.core().is_dirty(),
             "status_text": self.shell.status_text(),
+            "overload": overload_json(self.shell.overload()),
             "focus": format!("{:?}", self.shell.focus()),
             "lower_pane": format!("{:?}", self.shell.lower_pane()),
             "library": self.shell.library_root().map(|p| p.to_string_lossy().into_owned()),
@@ -471,13 +472,26 @@ fn library_folder(server: &Server, name: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("{name}: not a folder"))
 }
 
+/// The `overload` block of `session_status`: the counters the status bar shows when they are
+/// not zero, all of them here (a headless session has no audio stream, so they read 0).
+fn overload_json(o: atomik_app::status::OverloadStats) -> Value {
+    json!({
+        "dropped_events": o.dropped_events,
+        "input_overruns": o.input_overruns,
+        "tap_overflow_frames": o.tap_overflow_frames,
+        "plugin_drops": o.plugin_drops,
+        "control_stalled": o.control_stalled,
+        "late_sandbox_batches": o.late_sandbox_batches,
+    })
+}
+
 // --------------------------------------------------------------- session_status
 
 fn status_def() -> Value {
     definition(
         "session_status",
         "The open session: title, unsaved changes, the recent songs, status line, focused pane, undo/redo \
-availability, whether a take records, the automation lanes armed for recording, window size, and the document (devices, cables, song; automation lanes with their write mode).",
+availability, whether a take records, the automation lanes armed for recording, the overload counters (dropped events, input overruns, record overflow, plugin drops, control stalls, late sandbox batches), window size, and the document (devices, cables, song; automation lanes with their write mode).",
         &[(
             "include_params",
             "boolean",

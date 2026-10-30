@@ -58,6 +58,8 @@ png = "0.18.1"
 # Windows only (build script of atomik-app): embeds the application icon in atomik.exe.
 embed-resource = "3.0.11"
 thiserror = "2.0.21"
+# The logging facade: the app installs a file logger; the libraries only emit records.
+log = "0.4.34"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 hound = "3.5.1"

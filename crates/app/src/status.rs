@@ -53,6 +53,57 @@ pub struct AudioStatus {
     pub stream_underruns: u64,
     /// Whether the project has streamed (disk) assets: shows the underrun counter.
     pub streaming: bool,
+    /// Work dropped or late on the real-time side; the non-zero counters are shown.
+    pub overload: OverloadStats,
+}
+
+/// The counters of work the real-time side had to drop or could not do in time. The audio
+/// callback only increments them (atomics); the UI thread reads them a few times a second, shows
+/// the non-zero ones in the status bar, and writes the changes into the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OverloadStats {
+    /// Note events the engine dropped because a socket's buffer was full, or no target took
+    /// them.
+    pub dropped_events: u64,
+    /// Input frames the capture ring lost because the output callback did not read them in time.
+    pub input_overruns: u64,
+    /// Frames of the audio recording tap lost because its ring was full (recorded as silence).
+    pub tap_overflow_frames: u64,
+    /// Events a plugin could not take or give, summed over the plugins in the rack.
+    pub plugin_drops: u64,
+    /// Times the control path (MIDI and automation to the engine) found its queue stalled.
+    pub control_stalled: u64,
+    /// Sandbox batches whose result came back after the audio thread needed it, summed over the
+    /// sandboxed plugins in the rack.
+    pub late_sandbox_batches: u64,
+}
+
+impl OverloadStats {
+    /// Every counter with its label, in the order the status bar shows them.
+    pub fn fields(&self) -> [(&'static str, u64); 6] {
+        [
+            ("dropped events", self.dropped_events),
+            ("input overruns", self.input_overruns),
+            ("record overflow", self.tap_overflow_frames),
+            ("plugin drops", self.plugin_drops),
+            ("control stalled", self.control_stalled),
+            ("late sandbox batches", self.late_sandbox_batches),
+        ]
+    }
+
+    /// True when every counter is zero.
+    pub fn is_clear(&self) -> bool {
+        self.fields().iter().all(|(_, n)| *n == 0)
+    }
+
+    /// `label count` for each counter that is not zero: the pieces the status bar shows.
+    pub fn parts(&self) -> Vec<String> {
+        self.fields()
+            .iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(label, n)| format!("{label} {n}"))
+            .collect()
+    }
 }
 
 /// One line of status text, e.g.
@@ -83,6 +134,7 @@ pub fn status_text(s: &AudioStatus) -> String {
         if s.streaming || s.stream_underruns > 0 {
             parts.push(format!("underruns {}", s.stream_underruns));
         }
+        parts.extend(s.overload.parts());
         if s.input_channels_wanted > 0 {
             parts.push(input_text(s));
         }
@@ -154,6 +206,27 @@ fn input_text(s: &AudioStatus) -> String {
         ));
     }
     text
+}
+
+/// What a crash report says about the session: the audio host and device, the rate and buffer,
+/// and the MIDI port.
+pub fn crash_context(s: &AudioStatus) -> String {
+    let audio = if s.running {
+        format!(
+            "{} \"{}\" {} Hz, buffer {}",
+            s.host,
+            s.device,
+            s.sample_rate,
+            s.buffer_frames.map_or("?".to_string(), |n| n.to_string())
+        )
+    } else {
+        format!("{} (audio off)", s.host)
+    };
+    let midi = match &s.midi_port {
+        Some(port) => format!("\"{port}\""),
+        None => "off".to_string(),
+    };
+    format!("audio {audio}; MIDI {midi}")
 }
 
 #[cfg(test)]
@@ -242,6 +315,54 @@ mod tests {
         assert!(!status_text(&running()).contains("underruns"));
     }
 
+    #[test]
+    fn overload_counters_show_only_when_they_are_not_zero() {
+        let clear = running();
+        assert!(clear.overload.is_clear());
+        assert!(!status_text(&clear).contains("dropped"));
+        let busy = AudioStatus {
+            overload: OverloadStats {
+                dropped_events: 4,
+                input_overruns: 0,
+                tap_overflow_frames: 128,
+                plugin_drops: 2,
+                control_stalled: 1,
+                late_sandbox_batches: 9,
+            },
+            ..running()
+        };
+        assert_eq!(
+            status_text(&busy),
+            "WASAPI \u{b7} Virtual Cable Input \u{b7} 48 kHz \u{b7} buffer 480 \
+             \u{b7} DSP 3% (peak 5%) \u{b7} xruns 2 \u{b7} dropped events 4 \
+             \u{b7} record overflow 128 \u{b7} plugin drops 2 \u{b7} control stalled 1 \
+             \u{b7} late sandbox batches 9 \u{b7} MIDI Example Keyboard \u{2192} Bass"
+        );
+        let one = AudioStatus {
+            overload: OverloadStats {
+                input_overruns: 3,
+                ..OverloadStats::default()
+            },
+            ..running()
+        };
+        assert!(status_text(&one).contains("xruns 2 \u{b7} input overruns 3 \u{b7} MIDI"));
+        assert!(!one.overload.is_clear());
+    }
+
+    #[test]
+    fn the_crash_context_names_the_devices() {
+        assert_eq!(
+            crash_context(&running()),
+            "audio WASAPI \"Virtual Cable Input\" 48000 Hz, buffer 480; MIDI \"Example Keyboard\""
+        );
+        assert_eq!(
+            crash_context(&AudioStatus {
+                host: "ASIO".into(),
+                ..AudioStatus::default()
+            }),
+            "audio ASIO (audio off); MIDI off"
+        );
+    }
     #[test]
     fn midi_errors_and_missing_targets_are_shown() {
         let s = AudioStatus {

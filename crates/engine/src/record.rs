@@ -328,6 +328,12 @@ impl RecordTap {
         self.overflow.load(Ordering::Relaxed)
     }
 
+    /// The overflow counter itself, to read it while another thread drains the tap (for the
+    /// status bar): the same number as [`RecordTap::overflow_frames`].
+    pub fn overflow_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.overflow)
+    }
+
     /// Appends the available input frames to `out` (one `Vec` per tapped channel, in the order
     /// given to `record_tap`; `out` is grown to that many vectors if shorter) and returns
     /// `(first engine frame, frames appended)`, or `None` if nothing was available.

@@ -61,6 +61,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         Some(path) => settings::load(path),
         None => (AudioSettings::default(), None),
     };
+    let config = settings::config_folder(settings_path.as_deref());
     let mut settings = cli.apply(saved);
     if cli.stress_audio && settings.stream_threshold_bytes.is_none() {
         settings.stream_threshold_bytes = Some(STRESS_AUDIO_THRESHOLD_BYTES);
@@ -79,7 +80,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
     let plugin_settings_sandbox = plugin_settings.sandbox;
     let mut plugin_config = plugin_setup::plugin_config(
         plugin_settings,
-        settings_path.as_deref().and_then(std::path::Path::parent),
+        Some(config.dir.as_path()),
         exe.as_deref().map(plugin_setup::scanner_command),
     );
     // Where plugins run is read once, here: the Settings switch applies at the next start.
@@ -213,11 +214,14 @@ pub fn run(cli: Cli) -> Result<(), String> {
     if cli.starts_empty() {
         shell.restore_last_project();
     }
-    for message in [settings_error.map(|e| e.to_string()), open_error]
+    let no_config = config
+        .fallback
+        .then(|| settings::NO_CONFIG_NOTE.to_string());
+    for message in [settings_error.map(|e| e.to_string()), open_error, no_config]
         .into_iter()
         .flatten()
     {
-        eprintln!("atomik: {message}");
+        log::warn!("{message}");
         shell.notify(message);
     }
     if cli.back {
@@ -264,7 +268,7 @@ pub fn run(cli: Cli) -> Result<(), String> {
         shell.execute(AppCommand::Transport(TransportAction::Play));
     }
     let status = shell.status_text().to_string();
-    eprintln!("atomik: {status}");
+    log::info!("{status}");
     let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
     let now = clock::now();
     let screenshot_at = cli
@@ -402,7 +406,7 @@ impl App {
         }
         self.shell.shutdown();
         self.shell.poll_status();
-        eprintln!("atomik: at exit: {}", self.shell.status_text());
+        log::info!("at exit: {}", self.shell.status_text());
         // MIDI, stream, then the engine, all dropped here on the UI thread; then the plugins
         // (editors closed, the crash journal removed: a clean exit).
         self.shell.core_mut().sink_mut().shutdown();
@@ -458,7 +462,7 @@ impl App {
         }
         for kind in plan.create {
             if let Err(e) = self.create_window(event_loop, kind) {
-                eprintln!("atomik: cannot create the {kind:?} window: {e}");
+                log::error!("cannot create the {kind:?} window: {e}");
                 if kind == WindowKind::Main {
                     event_loop.exit();
                 } else {
@@ -689,7 +693,7 @@ impl App {
                     .create_surface(Arc::clone(&window), size.width, size.height)
                 {
                     Ok(surface) => w.surface = Some(surface),
-                    Err(e) => eprintln!("atomik: {e}"),
+                    Err(e) => log::error!("{e}"),
                 }
                 window.request_redraw();
             }
@@ -713,8 +717,8 @@ impl App {
             match render_offscreen(&window.scene, Color::BLACK, w, h)
                 .and_then(|pixels| write_png(&path, &pixels, w, h))
             {
-                Ok(()) => eprintln!("atomik: screenshot {w}x{h} written to {}", path.display()),
-                Err(e) => eprintln!("atomik: screenshot failed: {e}"),
+                Ok(()) => log::info!("screenshot {w}x{h} written to {}", path.display()),
+                Err(e) => log::error!("screenshot failed: {e}"),
             }
         }
     }
@@ -944,6 +948,21 @@ impl App {
                     }
                     if let Some(path) = dialog.pick_file() {
                         self.shell.relink_file(path);
+                    }
+                }
+                ShellRequest::PickExportDiagnostics => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export diagnostics")
+                        .add_filter("Text report", &["txt"])
+                        .set_file_name(crate::diagnostics::default_file_name());
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(mut path) = dialog.save_file() {
+                        if path.extension().is_none() {
+                            path.set_extension("txt");
+                        }
+                        self.shell.export_diagnostics_to(&path);
                     }
                 }
                 ShellRequest::PickExportMidiPreset => {

@@ -334,6 +334,9 @@ pub enum AppCommand {
     PluginSettings,
     /// Audio ▸ Restart Audio.
     RestartAudio,
+    /// Help ▸ Export Diagnostics…: one report (settings, plugin state, counters, the last crash
+    /// and the log) to attach to an issue.
+    ExportDiagnostics,
 }
 
 impl AppCommand {
@@ -520,6 +523,7 @@ impl AppCommand {
             AppCommand::AudioSettings => ("audio.settings", None),
             AppCommand::PluginSettings => ("audio.plugins", None),
             AppCommand::RestartAudio => ("audio.restart", None),
+            AppCommand::ExportDiagnostics => ("help.export_diagnostics", None),
         })
     }
 
@@ -736,6 +740,7 @@ impl AppCommand {
             ("audio.settings", None) => AppCommand::AudioSettings,
             ("audio.plugins", None) => AppCommand::PluginSettings,
             ("audio.restart", None) => AppCommand::RestartAudio,
+            ("help.export_diagnostics", None) => AppCommand::ExportDiagnostics,
             _ => return None,
         })
     }
@@ -1774,6 +1779,13 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Settings\u{2026}", AppCommand::AudioSettings),
             ],
         },
+        Menu {
+            title: "Help",
+            entries: vec![item(
+                "Export Diagnostics\u{2026}",
+                AppCommand::ExportDiagnostics,
+            )],
+        },
     ]
 }
 
@@ -1975,6 +1987,7 @@ mod tests {
             AppCommand::AudioSettings,
             AppCommand::PluginSettings,
             AppCommand::RestartAudio,
+            AppCommand::ExportDiagnostics,
         ];
         for step in [GainStep::Up, GainStep::Down, GainStep::Reset] {
             v.push(AppCommand::AudioGain(step));
@@ -2327,7 +2340,7 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_bar_has_the_five_menus_with_their_items() {
+    fn the_menu_bar_has_its_menus_with_their_items() {
         let m = menus(&state(), &legacy(Os::Windows));
         let titles: Vec<_> = m.iter().map(|m| m.title).collect();
         assert_eq!(
@@ -2341,7 +2354,8 @@ mod tests {
                 "Create",
                 "Track",
                 "Audio",
-                "Options"
+                "Options",
+                "Help"
             ]
         );
         let labels = |i: usize| m[i].items().map(|it| it.label.as_ref()).collect::<Vec<_>>();
