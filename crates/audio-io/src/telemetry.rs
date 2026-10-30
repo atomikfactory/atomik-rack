@@ -3,7 +3,7 @@
 
 use crate::{Telemetry, XRUN_EVENT_CAPACITY, XrunEvent, XrunKind};
 use rtrb::{Consumer, Producer, RingBuffer};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// The only wall-clock read of this crate: timestamps the start and end of each audio callback.
@@ -268,6 +268,10 @@ pub(crate) struct TelemetryState {
     /// Sticky engine fault: 0 none, `u64::MAX` the callback itself panicked, else the faulted
     /// device's instance id + 1.
     fault: AtomicU64,
+    /// Input frames lost to clock drift (published by the render callback).
+    input_lost: AtomicU64,
+    /// A stream error said the device is gone (sticky).
+    device_lost: AtomicBool,
     load: LoadMeter,
     /// Input capture-to-callback delay, output callback-to-playback delay, and the frames
     /// waiting in the input ring after each render (all smoothed, in frames).
@@ -347,6 +351,16 @@ impl TelemetryState {
         self.in_backlog.record(frames);
     }
 
+    /// Publishes the total of input frames lost to drift (one relaxed store per callback).
+    pub(crate) fn set_input_lost(&self, frames: u64) {
+        self.input_lost.store(frames, Ordering::Relaxed);
+    }
+
+    /// Records that the backend reported the device gone (sticky; one relaxed store).
+    pub(crate) fn set_device_lost(&self) {
+        self.device_lost.store(true, Ordering::Relaxed);
+    }
+
     /// Records one stream error callback (wait-free).
     pub(crate) fn on_stream_error(&self) {
         self.errors.fetch_add(1, Ordering::Relaxed);
@@ -381,6 +395,8 @@ impl TelemetryState {
             events_dropped: self.events_dropped.load(Ordering::Relaxed),
             input_latency_frames: self.in_capture.get().saturating_add(self.in_backlog.get()),
             output_latency_frames: self.out_playback.get(),
+            input_overruns: self.input_lost.load(Ordering::Relaxed),
+            device_lost: self.device_lost.load(Ordering::Relaxed),
             faulted: fault != 0,
             faulted_device: match fault {
                 0 | u64::MAX => None,

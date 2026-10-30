@@ -279,6 +279,7 @@ pub fn start_with_input(
                 format: out_choice.format,
                 scratch_out: vec![0.0; max_frames * usize::from(out_choice.channels)],
                 scratch_in: vec![0.0; max_frames * usize::from(in_channels)],
+                input_loss: InputLoss::default(),
                 halted: false,
             };
             out_device.build_output_stream_raw(
@@ -376,8 +377,11 @@ fn error_callback(
 ) {
     let telemetry = Arc::clone(telemetry);
     let (mut tx, rx) = event_channel();
-    let callback = move |_| {
+    let callback = move |error: cpal::Error| {
         telemetry.on_stream_error();
+        if is_device_loss(error.kind()) {
+            telemetry.set_device_lost();
+        }
         let event = XrunEvent {
             at: telemetry::now().saturating_duration_since(origin),
             kind: XrunKind::StreamError,
@@ -389,6 +393,16 @@ fn error_callback(
         telemetry.push_event(&mut tx, event);
     };
     (callback, rx)
+}
+
+/// Whether a stream error means the stream can no longer deliver audio: the device is gone, or
+/// the stream configuration became invalid. (A route change the backend followed, a busy device
+/// and xruns leave the stream alive.)
+fn is_device_loss(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::DeviceNotAvailable | cpal::ErrorKind::StreamInvalidated
+    )
 }
 
 fn stream_config(
@@ -561,6 +575,8 @@ struct OutputCallback {
     format: SampleKind,
     scratch_out: Vec<f32>,
     scratch_in: Vec<f32>,
+    /// What the input ring lost to clock drift.
+    input_loss: InputLoss,
     /// The callback caught a panic from the engine itself: it renders silence from then on.
     /// (A panicking device never gets here: the engine contains it.)
     halted: bool,
@@ -584,7 +600,8 @@ impl OutputCallback {
             .on_output_timing(timestamp.callback, timestamp.playback, self.sample_rate);
         if let Some(reader) = payload.input.as_mut() {
             let in_ch = usize::from(self.adapter.inputs());
-            reader.trim(in_ch * frames * (1 + INPUT_SLACK_BUFFERS));
+            let discarded = reader.trim(in_ch * frames * (1 + INPUT_SLACK_BUFFERS));
+            self.input_loss.on_trim(discarded);
         }
         let mut render = Render {
             engine: &mut payload.engine,
@@ -621,6 +638,9 @@ impl OutputCallback {
             let in_ch = usize::from(self.adapter.inputs()).max(1);
             let backlog = u32::try_from(reader.available() / in_ch).unwrap_or(u32::MAX);
             self.telemetry.on_input_backlog(backlog);
+            let in_ch = u64::from(self.adapter.inputs());
+            self.telemetry
+                .set_input_lost(self.input_loss.frames(reader.overruns(), in_ch));
         }
         let elapsed = telemetry::now().saturating_duration_since(start);
         // Max over this callback's render calls (one for buffers up to the chunk size, where it
@@ -646,6 +666,32 @@ impl OutputCallback {
             };
             self.telemetry.push_event(&mut self.events, event);
         }
+    }
+}
+
+/// Counts the captured input the render callback could not use because the capture clock runs
+/// ahead of the output clock: the writer's drops (ring full) and the oldest samples the render
+/// callback discards to bound the latency. Plain integers owned by the callback.
+#[derive(Debug, Default)]
+struct InputLoss {
+    /// Samples discarded by trimming, after the first trim.
+    trimmed: u64,
+    /// The first trim only drops what the input stream captured before the output stream
+    /// started: it is a start-up artefact, not drift, and is not counted.
+    seen_first: bool,
+}
+
+impl InputLoss {
+    fn on_trim(&mut self, discarded: usize) {
+        if self.seen_first {
+            self.trimmed = self.trimmed.saturating_add(discarded as u64);
+        }
+        self.seen_first = true;
+    }
+
+    /// Total lost frames given the ring's dropped samples and the input channel count.
+    fn frames(&self, ring_dropped: u64, channels: u64) -> u64 {
+        ring_dropped.saturating_add(self.trimmed) / channels.max(1)
     }
 }
 
@@ -743,6 +789,64 @@ mod tests {
         let result = recover(&rx, Duration::from_millis(50));
         assert!(matches!(result, Err(IoError::Backend(_))));
         drop(tx);
+    }
+
+    #[test]
+    fn only_a_gone_or_invalid_device_counts_as_lost() {
+        let telemetry = Arc::new(TelemetryState::new());
+        let (mut on_error, mut events) = error_callback(&telemetry, telemetry::now());
+        for kind in [
+            cpal::ErrorKind::Xrun,
+            cpal::ErrorKind::DeviceBusy,
+            cpal::ErrorKind::DeviceChanged,
+        ] {
+            on_error(cpal::Error::new(kind));
+        }
+        let t = telemetry.snapshot();
+        assert_eq!(t.stream_errors, 3);
+        assert!(!t.device_lost);
+        on_error(cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable));
+        let t = telemetry.snapshot();
+        assert_eq!((t.stream_errors, t.xruns), (4, 4));
+        assert!(t.device_lost, "sticky once reported");
+        on_error(cpal::Error::new(cpal::ErrorKind::Xrun));
+        assert!(telemetry.snapshot().device_lost);
+        let mut queued = 0;
+        while events.pop().is_ok() {
+            queued += 1;
+        }
+        assert_eq!(queued, 5, "every error is also queued as an event");
+        let invalid = Arc::new(TelemetryState::new());
+        let (mut on_error, _events) = error_callback(&invalid, telemetry::now());
+        on_error(cpal::Error::new(cpal::ErrorKind::StreamInvalidated));
+        assert!(invalid.snapshot().device_lost);
+    }
+
+    #[test]
+    fn input_overruns_count_a_starved_ring_and_skip_the_start_up_trim() {
+        // The capture side writes faster than the render side reads: the ring fills up.
+        let (mut writer, mut reader) = sample_ring(8);
+        let mut loss = InputLoss::default();
+        let block = [0.25f32; 6];
+        // Start-up: whatever was captured before the first render is discarded, not counted.
+        writer.write(&block);
+        loss.on_trim(reader.trim(2));
+        assert_eq!(loss.frames(reader.overruns(), 2), 0);
+        // Two channels: the writer now outpaces the reader and the ring overflows.
+        for _ in 0..3 {
+            writer.write(&block);
+        }
+        assert!(reader.overruns() > 0);
+        let dropped = reader.overruns();
+        assert_eq!(loss.frames(reader.overruns(), 2), dropped / 2);
+        // Later trims count too.
+        let discarded = reader.trim(2);
+        loss.on_trim(discarded);
+        assert_eq!(
+            loss.frames(reader.overruns(), 2),
+            (dropped + discarded as u64) / 2
+        );
+        assert!(loss.frames(reader.overruns(), 2) > dropped / 2);
     }
 
     #[test]

@@ -26,6 +26,11 @@
 //!   per callback). The callback pushes an [`XrunEvent`] (time, kind, load, gap, the engine's
 //!   level-barrier spins) into a wait-free channel; the control thread reads them with
 //!   [`RunningStream::drain_events`]. A full channel drops and counts events, never blocks.
+//! - Liveness: [`Liveness`] compares the callback counter against the clock on the control
+//!   thread and reports [`StreamState::Stalled`] when no callback arrives for
+//!   `max(4 periods, 250 ms)`; a stream error that says the device is gone sets
+//!   [`Telemetry::device_lost`] (the error callback only stores an atomic). Neither needs the
+//!   callback to do more than it does.
 //! - [`RunningStream::stop`] returns the engine: the callback owns it and sends it back through
 //!   a one-slot channel when the stream drops the callback, so the engine is dropped on the
 //!   caller's thread.
@@ -61,6 +66,7 @@ mod adapter;
 
 mod convert;
 mod handoff;
+mod liveness;
 mod ring;
 mod rt;
 mod select;
@@ -68,6 +74,7 @@ mod stream;
 mod telemetry;
 
 pub use adapter::CallbackAdapter;
+pub use liveness::{Liveness, STALL_MIN, STALL_PERIODS, START_GRACE, StreamState, stall_after};
 pub use stream::{RunningStream, StreamInfo, list, start, start_with_input};
 pub use telemetry::{LoadMeter, XrunDetector, is_late, is_overrun};
 
@@ -190,6 +197,16 @@ pub struct Telemetry {
     /// The engine's device instance id of the first device that panicked, when that is what
     /// faulted; `None` for a fault outside any device (or no fault).
     pub faulted_device: Option<u32>,
+    /// Captured input frames (per channel) lost because the input and output clocks drift
+    /// apart: the writer found the input ring full, or the render callback discarded the oldest
+    /// captured frames to keep the latency bounded (the very first discard, of whatever was
+    /// captured before the output started, is not counted). Each is a click in monitored input
+    /// and recorded takes. Total; 0 without input.
+    pub input_overruns: u64,
+    /// True once a stream error callback reported the device gone (unplugged, or the stream
+    /// became invalid). Sticky until the stream is rebuilt. A stream whose callbacks merely stop
+    /// is detected by [`Liveness`] instead.
+    pub device_lost: bool,
 }
 
 /// What kind of xrun an [`XrunEvent`] reports.
