@@ -336,7 +336,7 @@ impl<S: EngineSink> AppCore<S> {
     /// track (a device without a Notes input, a channel strip or an effect, gets an automation
     /// track), the macro's lane on the bank's track when a macro drives it, `None` when neither
     /// can exist (an audio track, a device inside a container, an internal param).
-    fn lane_host(&self, device: &DeviceKey, param: &str) -> Option<(DeviceKey, String)> {
+    pub(super) fn lane_host(&self, device: &DeviceKey, param: &str) -> Option<(DeviceKey, String)> {
         let doc = self.doc();
         let host = match doc.bank_driver(device, param) {
             Some(a) => (a.bank.clone(), macro_key(a.index)),
@@ -348,6 +348,16 @@ impl<S: EngineSink> AppCore<S> {
             && desc.param_by_key(&host.1).is_some()
             && !host.1.starts_with("internal."))
         .then_some(host)
+    }
+
+    /// Whether the lane that shows `param` of `device` exists (Clear Automation works).
+    pub fn has_lane_to_clear(&self, device: &DeviceKey, param: &str) -> bool {
+        self.lane_host(device, param).is_some_and(|(host, lane)| {
+            self.doc()
+                .song
+                .track(&host)
+                .is_some_and(|t| t.automation_lane(&lane).is_some())
+        })
     }
 
     /// Whether `param` of `device` has a lane to show or add (see [`Self::lane_host`]).

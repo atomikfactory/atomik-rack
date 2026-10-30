@@ -633,6 +633,7 @@ mod tests {
             recording: false,
             loop_enabled: false,
             metronome: false,
+            auto_lanes: false,
             pre_count: false,
             quantize: crate::record::InputQuantize::Off,
             console: false,
