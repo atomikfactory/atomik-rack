@@ -968,3 +968,44 @@ fn project_inspect_marks_an_automation_track_and_lists_its_lanes() {
         "only an automation track has it"
     );
 }
+
+#[test]
+fn project_inspect_lists_a_muted_automation_lane_and_its_static_value() {
+    use atomik_model::{Command, Document, SongCommand, load_project};
+    let mut s = server();
+    let reg = atomik_render::default_registry();
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut d = Document::new(load_project(&text, &reg).unwrap());
+    let channel = d.doc().console.channels[0].channel.clone();
+    for c in [
+        SongCommand::AddAutomationLane {
+            device: channel.clone(),
+            param: "fader".into(),
+        },
+        SongCommand::SetLaneMuted {
+            device: channel.clone(),
+            lane: 0,
+            muted: true,
+        },
+        SongCommand::SetLaneStatic {
+            device: channel.clone(),
+            param: "fader".into(),
+            value: Some(0.5),
+        },
+    ] {
+        d.apply(Command::Song(c), &reg).unwrap();
+    }
+    let path = tmp("muted-static-lane.atomik");
+    std::fs::write(&path, atomik_model::save_project(d.doc())).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let tracks = r.parsed()["song"]["tracks"].clone();
+    let t = tracks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["device"] == json!(channel.as_str()))
+        .expect("the channel's track");
+    assert_eq!(t["lanes"][0]["muted"], json!(true));
+    assert_eq!(t["lanes"][0]["static"], json!(0.5));
+}
