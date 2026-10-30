@@ -5,6 +5,7 @@
 
 mod context;
 mod descriptor;
+mod midi_tap;
 mod panel;
 mod player;
 mod plugin;
@@ -17,6 +18,7 @@ pub use descriptor::{
     DescriptorError, DeviceDescriptor, DeviceKind, Direction, SocketDescriptor, SocketId,
     SocketKind,
 };
+pub use midi_tap::{MIDI_TAP_EVENTS, MidiEvent, MidiTap, releases as midi_releases};
 pub use panel::{ControlKind, PanelControl, PanelLayout, PanelSocket, RACK_UNIT, RACK_WIDTH};
 pub use player::{
     CURVE_ROWS, CurveStep, CvSeqData, DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole,
@@ -116,6 +118,15 @@ pub trait Device: Send + 'static {
     /// submitted, and handed to the UI through the meter bank; the device keeps its own clone
     /// and pushes every batch it processes. Non-RT; the default is no tap.
     fn scope_tap(&self) -> Option<Arc<ScopeTap>> {
+        None
+    }
+
+    /// Opt-in to a [`MidiTap`]: the queue of timestamped MIDI messages the app's output thread
+    /// sends to a port (the MIDI Out device). Read once by the engine, when the device is
+    /// inserted or its plan is submitted, and handed to the app through the meter bank; the device
+    /// keeps its own clone and pushes the messages it makes while it processes. Non-RT; the
+    /// default is no tap.
+    fn midi_tap(&self) -> Option<Arc<MidiTap>> {
         None
     }
 

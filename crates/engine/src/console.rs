@@ -45,7 +45,7 @@
 
 use crate::graph::Endpoint;
 use atomik_core::{BATCH, Batch};
-use atomik_device_sdk::ScopeTap;
+use atomik_device_sdk::{MidiTap, ScopeTap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -97,6 +97,9 @@ pub struct Meters {
     /// The scope taps of the arena devices that have one (`Device::scope_tap`). Only the control
     /// side (insert, remove, plan submit) and readers lock it; the audio thread never does.
     scopes: std::sync::Mutex<Vec<(crate::DeviceInstanceId, Arc<ScopeTap>)>>,
+    /// The MIDI taps of the arena devices that have one (`Device::midi_tap`), kept like the scope
+    /// taps: only the control side and the app's MIDI output thread lock it.
+    midis: std::sync::Mutex<Vec<(crate::DeviceInstanceId, Arc<MidiTap>)>>,
 }
 
 /// Published `Device::meter_values` of the device in one arena slot. `owner` is the device id
@@ -153,6 +156,7 @@ impl Meters {
             slots: (0..METER_CAPACITY).map(|_| MeterSlot::default()).collect(),
             devices: (0..arena_slots).map(|_| DeviceValueSlot::new()).collect(),
             scopes: std::sync::Mutex::new(Vec::new()),
+            midis: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -176,6 +180,34 @@ impl Meters {
         if let Ok(mut scopes) = self.scopes.lock() {
             scopes.clear();
         }
+    }
+
+    /// Non-RT. Registers the MIDI tap of device `id` (replacing an earlier one of that id).
+    pub(crate) fn register_midi(&self, id: crate::DeviceInstanceId, tap: Arc<MidiTap>) {
+        if let Ok(mut midis) = self.midis.lock() {
+            midis.retain(|(i, _)| *i != id);
+            midis.push((id, tap));
+        }
+    }
+
+    /// Non-RT. Forgets the MIDI tap of device `id`.
+    pub(crate) fn unregister_midi(&self, id: crate::DeviceInstanceId) {
+        if let Ok(mut midis) = self.midis.lock() {
+            midis.retain(|(i, _)| *i != id);
+        }
+    }
+
+    /// Non-RT. Forgets every MIDI tap (a plan replaced the whole arena).
+    pub(crate) fn clear_midis(&self) {
+        if let Ok(mut midis) = self.midis.lock() {
+            midis.clear();
+        }
+    }
+
+    /// The MIDI taps of the devices in the engine (`Device::midi_tap`), by device id. The app\x27s
+    /// output thread drains them with [`MidiTap::pop`]; the engine never waits for it.
+    pub fn midi_taps(&self) -> Vec<(crate::DeviceInstanceId, Arc<MidiTap>)> {
+        self.midis.lock().map(|m| m.clone()).unwrap_or_default()
     }
 
     /// The scope tap of device `id` (`Device::scope_tap`), if it has one and is in the engine.

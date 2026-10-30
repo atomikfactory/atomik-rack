@@ -584,10 +584,14 @@ impl EngineHandle {
         }
         let RenderPlan { routing, nodes } = plan;
         self.meters.clear_scopes();
+        self.meters.clear_midis();
         for (k, node) in nodes.iter().enumerate() {
             self.latencies.publish(k, node.device.latency_frames());
             if let (Some(tap), Some(routed)) = (node.device.scope_tap(), routing.devices.get(k)) {
                 self.meters.register_scope(routed.id, tap);
+            }
+            if let (Some(tap), Some(routed)) = (node.device.midi_tap(), routing.devices.get(k)) {
+                self.meters.register_midi(routed.id, tap);
             }
         }
         let devices: BTreeMap<_, _> = routing
@@ -959,6 +963,16 @@ impl EngineHandle {
         self.meters.scope_tap(id)
     }
 
+    /// The MIDI taps of the devices in the engine (see [`Meters::midi_taps`]).
+    pub fn device_midi_taps(
+        &self,
+    ) -> Vec<(
+        crate::DeviceInstanceId,
+        std::sync::Arc<atomik_device_sdk::MidiTap>,
+    )> {
+        self.meters.midi_taps()
+    }
+
     /// The latest known `Device::latency_frames()` of arena device `id`:
     /// read on this side when the device is inserted (after `prepare` and its params), then
     /// re-published by the engine at every batch boundary, after params and automation. So a
@@ -1062,6 +1076,9 @@ impl EngineHandle {
         if let Some(tap) = device.scope_tap() {
             self.meters.register_scope(id, tap);
         }
+        if let Some(tap) = device.midi_tap() {
+            self.meters.register_midi(id, tap);
+        }
         let node = Box::new(Node::new(device));
         self.push(frame, ControlOp::Insert { id, slot, node })?;
         self.latencies.publish(slot, latency);
@@ -1081,6 +1098,7 @@ impl EngineHandle {
         }
         self.push(frame, ControlOp::Remove(id))?;
         self.meters.unregister_scope(id);
+        self.meters.unregister_midi(id);
         self.mirror.devices.remove(&id);
         self.mirror.free.insert(slot);
         Ok(())
