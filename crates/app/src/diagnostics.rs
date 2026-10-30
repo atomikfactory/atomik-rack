@@ -270,24 +270,27 @@ mod tests {
 
     #[test]
     fn home_folders_are_hidden_in_every_spelling() {
-        let homes = vec!["C:\\Users\\Ben".to_string(), "/home/ben".to_string()];
-        let text = "a C:\\Users\\Ben\\x b c:/users/ben/y \"C:\\\\Users\\\\Ben\\\\z\" /home/ben/.cfg D:\\Music";
+        let homes = vec![
+            "C:\\Users\\name\\".trim_end_matches('\\').to_string(),
+            "/home/name".to_string(),
+        ];
+        let text = "a C:\\Users\\name\\x b c:/users/name/y \"C:\\\\Users\\\\name\\\\z\" /home/name/.cfg D:\\Plugins";
         assert_eq!(
             redact(text, &homes),
-            "a ~\\x b ~/y \"~\\\\z\" ~/.cfg D:\\Music"
+            "a ~\\x b ~/y \"~\\\\z\" ~/.cfg D:\\Plugins"
         );
         // A short or empty value is never a home (it would erase every slash).
         assert_eq!(redact("a/b", &["/".to_string(), String::new()]), "a/b");
         assert_eq!(
-            home_dirs(&|k| (k == "HOME").then(|| "/home/ben/".into())),
-            ["/home/ben"]
+            home_dirs(&|k| (k == "HOME").then(|| "/home/name/".into())),
+            ["/home/name"]
         );
     }
 
     #[test]
     fn the_report_carries_the_log_the_counters_and_no_home_paths() {
         let root = scratch("report");
-        let home = root.join("home").join("ben");
+        let home = root.join("home").join("name");
         let home_text = home.to_string_lossy().into_owned();
         let logs = home.join("logs");
         std::fs::create_dir_all(&logs).unwrap();
