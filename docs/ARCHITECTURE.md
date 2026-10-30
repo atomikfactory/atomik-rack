@@ -40,9 +40,9 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v36), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v37), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
-| `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
+| `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
 | `atomik-plugin-clap` | [crates/plugin-clap](../crates/plugin-clap) | core, device-sdk, plugin-host (clack-host, clack-extensions) | `crate` | The CLAP backend (every `unsafe` block has a `SAFETY:` comment) |
 | `atomik-plugin-vst3` | [crates/plugin-vst3](../crates/plugin-vst3) | core, device-sdk, plugin-host (vst3, libloading) | `crate` | The VST3 backend, hosting `.vst3` modules through the `vst3` bindings (every `unsafe` block has a `SAFETY:` comment) |
@@ -222,7 +222,10 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 36 (older versions still load; version 36
+- **Project files** are `.atomik` JSON, format version 37 (older versions still load; version 37
+  adds a MIDI Out device's `"midi_out": { "port": name }`, the output port it sends to, written only
+  once a port is chosen and refused on any other device type and in a version 36 file (see 4,
+  "MIDI output"); version 36
   also adds a device's `"patch"` after its `"name"`, the name of the patch it took its sound from
   (display only, written only when non-empty; see 6l); version 36 adds an automation lane's
   `"muted": true` and `"static": value` after its `"folded"`, written only when set (see 2.6a);
@@ -1834,6 +1837,7 @@ device is never dispatched.
 | `atomik-library` | library: copies the audio of a saved item into its sibling bundle | Yes (disk) |
 | `atomik-adopt` | library: copies the audio of a loaded item into the session bundle, then decodes and builds peaks like `atomik-load` | Yes (disk) |
 | MIDI callback (midir) | maps event times to frames, pushes live notes; parses every message once more for the control path and queues it in the control hub (a short mutex, never held by the audio thread), consuming it when a mapping listens | Yes, then one wait-free push |
+| `atomik-midi-out` | MIDI output: drains the taps of the MIDI Out devices, converts engine frames to wall-clock times, sends each message to its port when due (polls every millisecond, spins for the last 0.3 ms); releases the notes of a source that goes away | Yes, but never waits for the audio thread |
 | Control surface callback (midir) | queues the raw bytes of the surface (SysEx included); the UI thread polls, decodes and answers | Yes (a short mutex) |
 
 The engine is created as two halves by `new_engine(cfg)` or `new_engine_with_options(..)`:
@@ -1902,7 +1906,32 @@ others alone; a port that is not there yet is reported in the status and opened 
 MIDI Ports (`audio.rescan_midi`) or, while Audio Settings is open, by the one second re-listing
 of the ports. The `session_midi_input` tool takes the name of the port a message comes from.
 
-**Master keyboard.** Workflow, **Master keyboard** (`MasterKeyboard`, in `workflow.json`): in
+**MIDI output.** The MIDI Out device (`atomik.midi-out`, see [DEVICES.md](DEVICES.md)) sends notes and
+controllers to a port, and the audio thread never touches a port. The device turns what it
+receives into MIDI bytes and pushes each, stamped with the engine host frame it belongs to, on a
+`MidiTap` (`Device::midi_tap`, device-sdk): a preallocated lock-free ring of 4 096 messages of at
+most three bytes, written by the device and read by one thread, with 256 slots kept for messages
+that release a note (a full ring counts what it loses and, when a release is lost, tells the
+reader to silence the port). The engine publishes the tap of every device that has one through
+its meter bank (`Meters::midi_taps`, kept like the scope taps and forgotten when the device is
+removed or a plan replaces the arena). `LiveSession` hands the taps, and the port of each device
+(the device's own, else `midi_out_port` of the settings), to the `atomik-midi-out` thread
+(`atomik_midi_io::out`), which it starts with the first such device. The thread converts frames
+to wall-clock times from the `FrameClock` the audio callback publishes plus the output latency
+(`frame_due`), holds one time-ordered queue per port (`Scheduler`), polls the taps every
+millisecond and spins for the last 0.3 ms before a message is due. It records which notes each
+source has sounding, so a source that goes away (the device deleted, its port changed, the
+session ended, the engine rebuilt) is silenced with a note off per note and All Notes Off on its
+channels. A port that will not open or that refuses a send drops its messages and is tried again
+once a second. `AppCore` tells the sink which port each device sends to (`set_midi_out_ports`,
+by engine device id) after every edit and rebuild. The scheduler and the thread are not specific
+to notes: a message is a source, a port, a due time and up to three bytes, which is all MIDI clock
+output needs. The jitter of the path is about a poll interval (1 ms) for a message produced less
+than that ahead and tens of microseconds otherwise, plus the port driver's own latency; a bounce
+never sends MIDI (the device is silent in an offline run and has no audio output).
+
+**Master keyboard.** Workflow, **Master keyboard**
+ (`MasterKeyboard`, in `workflow.json`): in
 Standard mode the live keyboard follows the selected track; in Separated mode it plays the track
 chosen with the arrow on its arrangement header (`AppCore::master_keyboard_track`, session state)
 until the arrow is clicked again. `notes_target` reads that track first. **Manual Rec**
@@ -3212,7 +3241,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (324) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (326) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

@@ -1,8 +1,9 @@
 # Device reference
 
-Atomik Rack ships thirty-three original devices: the poly synth, the wavetable synth, the FM synth,
+Atomik Rack ships thirty-four original devices: the poly synth, the wavetable synth, the FM synth,
 the grain sampler, line mixer and stereo delay, the Mod Source (LFOs and envelope as CV), the Macro
-Bank (eight macro knobs that drive params of other devices), the effects (reverb, compressor, EQ,
+Bank (eight macro knobs that drive params of other devices), the MIDI Out (notes and controllers to
+a hardware synth or a virtual port), the effects (reverb, compressor, EQ,
 distortion, modulation, mastering), the guitar amp (with its cabinet, effects and setups), the
 analysers (spectrum and phase meter), the Character effect, the audio track, the sampler, the drum
 machine and the loop slicer, the note players (step sequencer, arpeggiator, note filter, key &
@@ -1202,6 +1203,69 @@ take it. Source: [crates/devices/src/macro_bank.rs](../crates/devices/src/macro_
 - **Names and assignments** are project data (`"macros"`), not params: a macro has an optional name
   of up to 24 characters, and each assignment carries a range in plain values of its target and an
   invert flag.
+
+## MIDI Out: `atomik.midi-out` (Utility)
+
+Sends notes and controllers to a MIDI output port, so a hardware synth (or any program listening on
+a virtual port) plays what a track holds. It makes no sound and has no audio sockets. A track can
+play it like an instrument (Create Effect lists it with the utilities), and a note player can feed
+it. Source: [crates/devices/src/midi_out.rs](../crates/devices/src/midi_out.rs).
+
+The destination port is not a param: it is a name, kept on the device in the project (format 37,
+`"midi_out": { "port": "..." }`, written only once a port is chosen). Right-click the device and
+choose Choose MIDI Out Port to pick one of the ports the system lists, or leave it on the default,
+which is the MIDI Out device port of the Settings (Surfaces tab). A device with neither sends
+nothing. A project that names a port that is not plugged in keeps the name and sends nothing until
+the port is back (the app tries again once a second).
+
+### Sockets
+
+| Key | Kind | Direction | Notes |
+|---|---|---|---|
+| `notes_in` | Notes | in | Notes, controllers, bend and pressure to send. |
+| `cv1` ... `cv8` | CV | in | Each drives one controller (see the CC params); an unconnected input sends nothing. |
+
+### Params
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| `channel` | Channel | 1..16 | 1 | The MIDI channel of every message. |
+| `program` | Program | -1..127 | -1 | The program change to send; -1 sends none. |
+| `bank` | Bank | -1..16383 | -1 | The bank (14 bits: CC 0 holds the upper seven, CC 32 the lower seven) sent before the program; -1 sends none. |
+| `transpose` | Transpose | -48..48 | 0 | Semitones added to the keys of notes and key pressure. |
+| `latency_ms` | Latency | -200..200 ms | 0 | Moves every message in time: positive sends later, negative earlier. |
+| `cc1.number` ... `cc8.number` | CC 1 number ... | 0..127 | 1, 7, 10, 11, 71, 74, 91, 93 | The controller a CV input drives. |
+| `cc1.scale` ... `cc8.scale` | CC 1 scale ... | -4..4 | 1 | The value sent is `127 * (cv * scale + offset)`, rounded and clamped to 0..127. |
+| `cc1.offset` ... `cc8.offset` | CC 1 offset ... | -1..1 | 0 | See `scale`. |
+
+### Behaviour (as built)
+
+- **Time.** The device stamps every message with the engine frame it belongs to (the batch frame
+  plus the offset of the event, plus the latency). The app's MIDI output thread (`atomik-midi-out`)
+  turns frames into wall-clock times with the audio callback's published clock and the output
+  latency, so a message leaves when its frame is heard, then sends it to the port. midir has no
+  timestamps: the thread polls the queue every millisecond, sleeps until a message is nearly due
+  and spins for the last 0.3 ms. A message leaves within about a millisecond of its time when it
+  was produced less than a millisecond ahead, and within tens of microseconds otherwise; the
+  driver of the port adds its own latency (1 to 3 ms for a USB class-compliant device, more for a
+  5-pin DIN interface at 31250 baud, where a chord is a few milliseconds long on the wire). Use
+  `latency_ms` to line a synth's audio up with the rest.
+- **Notes.** The device remembers the key and channel every sounding note went out on, so changing
+  `transpose` or `channel` while a key is held still releases the note that was started, and a
+  note on for a key that is still down releases it first. A key that transposes out of 0..127 is
+  dropped, with its note off.
+- **Controllers from CV.** The value at the end of each batch is sent when its 7-bit value changes,
+  at most 100 times a second per input; the newest value is never held back longer than that.
+- **Program and bank** go out when the device starts and whenever either param changes.
+- **Never a stuck note.** The `AllOff` the engine sends on stop, on a locate and at a loop wrap
+  releases every note the device started (one note off each) and sends All Notes Off on the
+  channels it used. When the device is deleted, its port changes or the session ends, the output
+  thread releases what it sent itself. The queue between the device and the thread holds 4 096
+  messages and keeps its last 256 slots for messages that release a note; if one is lost anyway,
+  the thread silences the port.
+- **Bounces.** A bounce never sends MIDI. In an offline run the device sends nothing, and it has no
+  audio output, so a project with and without it renders the same bits. The device is live only.
+- **No latency.** It has no audio path and reports no processing latency to the rest of the rack.
 
 ## Mastering: `atomik.mastering` (Effect)
 

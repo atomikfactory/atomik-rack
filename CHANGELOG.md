@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MIDI Out device: play hardware synths from the sequencer.** A new utility device, **MIDI Out**
+  (`atomik.midi-out`), sends the notes of a track (or of a note player) and eight CV inputs, mapped to
+  controllers with a number, scale and offset, to a MIDI output port. It has a channel, transpose,
+  program and bank, and a latency offset in milliseconds (negative sends earlier) that lines a
+  synth's audio up with the song. Right-click it and Choose MIDI Out Port, or leave the default, the
+  new MIDI Out device port in Audio Settings > Surfaces. Messages are sent when their frame is heard,
+  by a dedicated thread that polls every millisecond and spins for the last 0.3 ms; stop, locate and
+  a loop wrap release every note the device started, and deleting the device, changing its port or
+  closing the session releases them too, so no note hangs. A bounce never sends MIDI, and bounces
+  with or without the device are identical. **Project format 37**: a MIDI Out device may carry
+  `"midi_out": { "port": name }`, written only once a port is chosen; files without it differ from
+  their version 36 file in the version line alone. The output scheduler and thread are shared with
+  the MIDI clock output to come.
 - **Several MIDI inputs at once, master keyboard modes and Manual Rec.** Audio Settings > MIDI
   inputs lists every port with a switch: all the switched-on ports are open together (a keyboard and
   a pad controller), and a port can be set to feed mappings only so its notes play nothing. The
