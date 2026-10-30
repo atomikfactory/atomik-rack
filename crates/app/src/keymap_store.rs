@@ -61,6 +61,8 @@ pub struct WorkflowPrefs {
     /// The library folder the user chose (`None`: the default, see
     /// [`crate::settings::default_library_dir`]).
     pub library_folder: Option<PathBuf>,
+    /// Minutes between autosave snapshots of a changed project (0: off, default 5).
+    pub autosave_minutes: u32,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -76,6 +78,7 @@ impl Default for WorkflowPrefs {
             rack_visible: true,
             keys_notice_seen: false,
             library_folder: None,
+            autosave_minutes: 5,
             extra: BTreeMap::new(),
         }
     }
@@ -108,6 +111,10 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .filter(|p| !p.is_empty())
                 .map(PathBuf::from),
+            autosave_minutes: obj
+                .get("autosave_minutes")
+                .and_then(Value::as_u64)
+                .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -121,6 +128,7 @@ impl WorkflowPrefs {
                             | "rack_visible"
                             | "keys_notice_seen"
                             | "library_folder"
+                            | "autosave_minutes"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -147,6 +155,10 @@ impl WorkflowPrefs {
             "keys_notice_seen".into(),
             Value::Bool(self.keys_notice_seen),
         );
+        map.insert(
+            "autosave_minutes".into(),
+            Value::from(self.autosave_minutes),
+        );
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -165,27 +177,11 @@ impl WorkflowPrefs {
 
 /// Writes `text` to `path` atomically: a temporary file in the same folder, then a rename.
 pub fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
-    let fail = |e: std::io::Error| format!("{}: {e}", path.display());
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(fail)?;
-    }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, text).map_err(fail)?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        fail(e)
-    })
+    crate::recovery::atomic_write(path, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Moves an unusable file out of the way as `<name>.bad`.
-fn quarantine(path: &Path) -> Option<PathBuf> {
-    let mut bad = path.as_os_str().to_owned();
-    bad.push(".bad");
-    let bad = PathBuf::from(bad);
-    std::fs::rename(path, &bad).ok().map(|()| bad)
-}
+use crate::recovery::quarantine;
 
 fn read(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(path) {
@@ -517,5 +513,17 @@ mod tests {
         let p = d.join("deeper").join("still").join(KEYMAP_FILE);
         save_user_keymap(&p, &user()).unwrap();
         assert!(p.exists());
+    }
+
+    #[test]
+    fn autosave_minutes_round_trips_defaults_to_five_and_is_clamped() {
+        assert_eq!(WorkflowPrefs::default().autosave_minutes, 5);
+        assert_eq!(WorkflowPrefs::from_json("{}").unwrap().autosave_minutes, 5);
+        let off = WorkflowPrefs::from_json("{\"autosave_minutes\": 0}").unwrap();
+        assert_eq!(off.autosave_minutes, 0);
+        assert_eq!(WorkflowPrefs::from_json(&off.to_json()).unwrap(), off);
+        let big = WorkflowPrefs::from_json("{\"autosave_minutes\": 99999}").unwrap();
+        assert_eq!(big.autosave_minutes, 240);
+        assert!(!big.extra.contains_key("autosave_minutes"));
     }
 }

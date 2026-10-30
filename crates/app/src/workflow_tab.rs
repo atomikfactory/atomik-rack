@@ -65,6 +65,28 @@ pub struct LibraryRow {
     pub default: Rect,
 }
 
+/// The autosave row: the period and the button that steps through the choices.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutosaveRow {
+    /// The whole row.
+    pub rect: Rect,
+    /// The period as shown (`Off`, `5 min`).
+    pub value: String,
+    /// The button that steps to the next choice.
+    pub button: Rect,
+}
+
+/// The autosave periods the button steps through, in minutes (0 is off).
+const AUTOSAVE_CHOICES: [u32; 7] = [0, 1, 2, 5, 10, 15, 30];
+
+/// The choice after `minutes`; a value that is not a choice starts the cycle over at off.
+fn next_autosave(minutes: u32) -> u32 {
+    AUTOSAVE_CHOICES
+        .iter()
+        .position(|&m| m == minutes)
+        .map_or(0, |i| AUTOSAVE_CHOICES[(i + 1) % AUTOSAVE_CHOICES.len()])
+}
+
 /// Longest folder text shown, in characters; a longer path keeps its tail.
 const PATH_CHARS: usize = 44;
 
@@ -75,6 +97,8 @@ pub struct WorkflowLayout {
     pub toggles: Vec<Toggle>,
     /// The library folder row under them.
     pub library: LibraryRow,
+    /// The autosave row under the library row.
+    pub autosave: AutosaveRow,
     /// The note under them.
     pub note: (Point, String),
 }
@@ -181,9 +205,19 @@ impl WorkflowTab {
             ),
         };
         y += ROW + GAP;
+        let autosave = AutosaveRow {
+            rect: Rect::new(x0, y, x0 + inner, y + ROW),
+            value: match self.prefs.autosave_minutes {
+                0 => "Off".to_string(),
+                m => format!("{m} min"),
+            },
+            button: Rect::new(x0 + inner - BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+        };
+        y += ROW + GAP;
         WorkflowLayout {
             toggles,
             library,
+            autosave,
             note: (
                 Point::new(x0, y + 12.0),
                 "Saved in workflow.json next to settings.json when you press Apply.".to_string(),
@@ -214,6 +248,9 @@ impl WorkflowTab {
                 }
                 if layout.library.default.contains(*pos) {
                     self.prefs.library_folder = None;
+                }
+                if layout.autosave.button.contains(*pos) {
+                    self.prefs.autosave_minutes = next_autosave(self.prefs.autosave_minutes);
                 }
                 let hit = layout.toggles.into_iter().find(|t| t.rect.contains(*pos));
                 if let Some(t) = hit {
@@ -283,6 +320,40 @@ impl WorkflowTab {
             canvas.text(
                 &TextRun::new(
                     label,
+                    Point::new(r.center().x, r.y0 + 18.5),
+                    12.0,
+                    theme.text,
+                )
+                .align(Align::Center),
+            );
+        }
+        let auto = &l.autosave;
+        canvas.text(&TextRun::new(
+            "Autosave",
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 20.0),
+            13.0,
+            theme.text,
+        ));
+        canvas.text(&TextRun::new(
+            "A changed project is copied to the recovery folder this often; the next start offers it after a crash.",
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 38.0),
+            11.0,
+            theme.text_muted,
+        ));
+        {
+            let r = auto.button;
+            let lit = self.hover.is_some_and(|p| r.contains(p));
+            canvas.fill_with(
+                RoundedRect::from_rect(r, 6.0),
+                if lit {
+                    theme.selection
+                } else {
+                    theme.browser_row
+                },
+            );
+            canvas.text(
+                &TextRun::new(
+                    auto.value.clone(),
                     Point::new(r.center().x, r.y0 + 18.5),
                     12.0,
                     theme.text,

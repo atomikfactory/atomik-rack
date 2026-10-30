@@ -368,13 +368,25 @@ pub fn load(path: &Path) -> (AudioSettings, Option<SettingsError>) {
     match std::fs::read_to_string(path) {
         Ok(text) => match AudioSettings::from_json(&text) {
             Ok(s) => (s, None),
-            Err(message) => (
-                AudioSettings::default(),
-                Some(SettingsError::Parse {
-                    path: path.to_path_buf(),
-                    message,
-                }),
-            ),
+            Err(message) => {
+                // Kept as `settings.json.bad` so the next save does not overwrite what the
+                // user may want to repair by hand.
+                let message = match crate::recovery::quarantine(path) {
+                    Some(bad) => format!(
+                        "{message}; the file was kept as {} and the defaults are used",
+                        bad.file_name()
+                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+                    ),
+                    None => format!("{message}; the defaults are used"),
+                };
+                (
+                    AudioSettings::default(),
+                    Some(SettingsError::Parse {
+                        path: path.to_path_buf(),
+                        message,
+                    }),
+                )
+            }
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (AudioSettings::default(), None),
         Err(source) => (
@@ -387,16 +399,15 @@ pub fn load(path: &Path) -> (AudioSettings, Option<SettingsError>) {
     }
 }
 
-/// Writes settings to `path`, creating its directory.
+/// Writes settings to `path`, creating its directory. The write is atomic (a temporary file,
+/// then a rename), so a crash never leaves a truncated file.
 pub fn save(path: &Path, settings: &AudioSettings) -> Result<(), SettingsError> {
-    let io = |source| SettingsError::Io {
-        path: path.to_path_buf(),
-        source,
-    };
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(io)?;
-    }
-    std::fs::write(path, settings.to_json()).map_err(io)
+    crate::recovery::atomic_write(path, settings.to_json().as_bytes()).map_err(|source| {
+        SettingsError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
+    })
 }
 
 #[cfg(test)]

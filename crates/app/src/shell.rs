@@ -450,10 +450,10 @@ impl<B: AudioBackend> Shell<B> {
     /// Wraps a core.
     pub fn new(core: AppCore<LiveSession<B>>, options: ShellOptions) -> Self {
         let banner = PluginBannerView::new(core.view().theme().clone());
-        let mut ui = options
+        let (mut ui, ui_note) = options
             .ui_state_path
             .as_deref()
-            .map(UiState::load)
+            .map(UiState::load_checked)
             .unwrap_or_default();
         // The one-time notice that console devices are shown now. Only with
         // a state file to remember it in, and not for a user who switched them off already.
@@ -474,7 +474,7 @@ impl<B: AudioBackend> Shell<B> {
             .map(keymap_store::workflow_path);
         let loaded_keymap = keymap_path.as_deref().map(keymap_store::load_user_keymap);
         let loaded_workflow = workflow_path.as_deref().map(keymap_store::load_workflow);
-        let mut startup_notes: Vec<String> = Vec::new();
+        let mut startup_notes: Vec<String> = ui_note.into_iter().collect();
         let user_keymap = match loaded_keymap {
             Some(l) => {
                 startup_notes.extend(l.status);
@@ -1459,6 +1459,8 @@ impl<B: AudioBackend> Shell<B> {
     /// Hands the workflow preferences to the views: the follow start state, whether a create
     /// browser stays open, and the rack flag (through the layout).
     fn apply_workflow_to_views(&mut self) {
+        self.core
+            .set_autosave_minutes(self.workflow.autosave_minutes);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);

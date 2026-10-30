@@ -280,6 +280,10 @@ impl PluginBannerView {
                 "This project uses {count} third-party plugin{}",
                 if *count == 1 { "" } else { "s" }
             ),
+            BannerKind::UncleanExit { plugins, .. } if plugins.is_empty() => {
+                "Atomik ended unexpectedly last time; a recovery copy of your project is available"
+                    .to_string()
+            }
             BannerKind::UncleanExit { plugins, .. } => format!(
                 "Atomik ended unexpectedly while these plugins were loaded: {}",
                 plugins.join(", ")

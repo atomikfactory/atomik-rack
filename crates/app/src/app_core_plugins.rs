@@ -59,17 +59,21 @@
 //! # Crash handling
 //!
 //! A [`CrashJournal`] lists the loaded plugins and is removed on a clean exit; at the next start
-//! [`PluginConfig::previous_crash`] shows the unclean-exit banner. While any plugin is loaded
-//! [`AppCore::plugin_tick`] writes a recovery snapshot of the project every 60 s and after each
-//! state capture, to `<config>/recovery`, keeping the last three, never over the user's file.
+//! [`PluginConfig::previous_crash`] shows the unclean-exit banner. [`AppCore::plugin_tick`] writes
+//! a recovery snapshot of a changed project every autosave period (default 5 minutes, every 60 s
+//! while a plugin is loaded) and after each plugin state capture, to `<config>/recovery`,
+//! keeping the last three, never over the user's file. The snapshots are written by one thread
+//! ([`crate::recovery::RecoveryWriter`]). A session marker in the same folder tells the next start
+//! that a run did not quit cleanly, which shows the banner for any project, plugins or not.
 
 use super::AppCore;
+use crate::recovery::{RecoveryWriter, SessionMarker};
 use crate::sink::EngineSink;
 use atomik_device_sdk::{Device, DeviceDescriptor, PluginRef, RunMode};
 use atomik_engine::DeviceInstanceId;
 use atomik_model::{
     Command, DeviceKey, Document, ExpandedDevice, ModelError, PluginCommand, PluginDoc, RackDoc,
-    SyncOp, register_stand_ins, save_project,
+    SyncOp, register_stand_ins,
 };
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
@@ -87,8 +91,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Seconds between recovery snapshots while a plugin is loaded.
+/// Seconds between recovery snapshots of a changed project while a plugin is loaded.
 pub const RECOVERY_PERIOD_SECS: f64 = 60.0;
+/// The autosave period until the preference says otherwise.
+pub const DEFAULT_AUTOSAVE_MINUTES: f64 = 5.0;
 /// How many recovery snapshots are kept.
 pub const RECOVERY_KEEP: usize = 3;
 /// The quiet time after `state.mark_dirty` before the state is captured.
@@ -103,8 +109,11 @@ pub struct PluginPaths {
     pub cache: Option<PathBuf>,
     /// `plugins-in-use.json`, the crash journal.
     pub journal: Option<PathBuf>,
-    /// `recovery/`, the recovery snapshots.
+    /// `recovery/`, the recovery snapshots and the session marker.
     pub recovery: Option<PathBuf>,
+    /// The folder that holds the session scratch bundles, scanned at start for unfinished
+    /// recordings of a session that ended unexpectedly (the OS temp folder).
+    pub scratch: Option<PathBuf>,
 }
 
 impl PluginPaths {
@@ -114,6 +123,7 @@ impl PluginPaths {
             cache: Some(dir.join("plugins.json")),
             journal: Some(dir.join("plugins-in-use.json")),
             recovery: Some(dir.join("recovery")),
+            scratch: Some(std::env::temp_dir()),
         }
     }
 }
@@ -205,15 +215,21 @@ enum EditorWindow {
     External,
 }
 
-/// The recovery snapshot writer state.
+/// The recovery snapshot state.
 #[derive(Debug)]
 struct Recovery {
     dir: RecoveryDir,
+    /// When the last snapshot was queued (the first tick starts the clock).
     last: Option<f64>,
     wanted: bool,
     /// The sequence number of the last snapshot name (names only ever grow).
     sequence: u64,
-    writers: Vec<std::thread::JoinHandle<()>>,
+    /// The one thread that serialises, writes and prunes.
+    writer: Option<RecoveryWriter>,
+    /// The document revision of the last snapshot: no change since means nothing to write.
+    revision: Option<u64>,
+    /// Tells the next start whether this run ended cleanly.
+    marker: Option<SessionMarker>,
 }
 
 /// Plugin state of the app core.
@@ -238,6 +254,8 @@ pub(super) struct PluginState {
     pub(super) pending: VecDeque<DeviceKey>,
     /// How many instances the current batch of creations started with (for "3/8").
     batch_total: usize,
+    /// Seconds between autosave snapshots of a changed project (0: off).
+    autosave_secs: f64,
     batch_done: usize,
     /// Why a device is FAILED (an error, a restore that failed, a creation that failed).
     failed: BTreeMap<DeviceKey, String>,
@@ -295,6 +313,7 @@ impl PluginState {
             loaded: BTreeMap::new(),
             pending: VecDeque::new(),
             batch_total: 0,
+            autosave_secs: DEFAULT_AUTOSAVE_MINUTES * 60.0,
             batch_done: 0,
             failed: BTreeMap::new(),
             crashed: BTreeMap::new(),
@@ -392,6 +411,16 @@ fn unix_seconds() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// True when the snapshot at `snapshot` is newer than the project file (or there is no project
+/// file, or a time cannot be read): only then is it worth offering.
+fn newer_than_project(snapshot: &Path, project: Option<&Path>) -> bool {
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (modified(snapshot), project.and_then(modified)) {
+        (Some(s), Some(p)) => s > p,
+        _ => true,
+    }
+}
+
 fn rescan_mode(mode: PluginRescan) -> RescanMode {
     match mode {
         PluginRescan::Incremental => RescanMode::Incremental,
@@ -430,12 +459,19 @@ impl<S: EngineSink> AppCore<S> {
         p.settings = config.settings;
         p.cache = config.cache;
         p.journal = config.paths.journal.as_ref().map(CrashJournal::new);
-        p.recovery = config.paths.recovery.as_ref().map(|dir| Recovery {
-            dir: RecoveryDir::new(dir),
-            last: None,
-            wanted: false,
-            sequence: 0,
-            writers: Vec::new(),
+        let mut unclean_exit = false;
+        p.recovery = config.paths.recovery.as_ref().map(|dir| {
+            let (marker, unclean) = SessionMarker::start(dir);
+            unclean_exit = unclean;
+            Recovery {
+                dir: RecoveryDir::new(dir),
+                last: None,
+                wanted: false,
+                sequence: 0,
+                writer: RecoveryWriter::new(),
+                revision: None,
+                marker,
+            }
         });
         p.paths = config.paths;
         p.runner = config.runner;
@@ -461,10 +497,23 @@ impl<S: EngineSink> AppCore<S> {
                 plugins,
                 has_recovery,
             });
+        } else if unclean_exit
+            && self.plugins.recovery.as_ref().is_some_and(|r| {
+                r.dir
+                    .newest()
+                    .is_some_and(|snapshot| newer_than_project(&snapshot, self.file.as_deref()))
+            })
+        {
+            // No plugin was loaded, but the last run still did not end cleanly and left a copy.
+            self.plugins.show_banner(BannerKind::UncleanExit {
+                plugins: Vec::new(),
+                has_recovery: true,
+            });
         }
         if !self.doc().plugin_devices().is_empty() {
             self.rebuild_engine();
         }
+        self.recover_orphan_recordings();
     }
 
     /// The user's plugin settings.
@@ -790,11 +839,37 @@ impl<S: EngineSink> AppCore<S> {
             }
         }
         let loaded = !self.plugins.instances.is_empty();
-        let write = match &self.plugins.recovery {
-            Some(r) if loaded => {
-                r.wanted || r.last.is_none_or(|last| now - last >= RECOVERY_PERIOD_SECS)
+        let revision = self.document.revision();
+        // A loaded plugin snapshots on its period whatever happened (its own state moves
+        // without a command); otherwise only a project that differs from its saved state and
+        // from the last snapshot is worth a write.
+        let changed = loaded
+            || (self
+                .plugins
+                .recovery
+                .as_ref()
+                .is_some_and(|r| r.revision != Some(revision))
+                && self.is_dirty());
+        let autosave = self.plugins.autosave_secs;
+        let write = match &mut self.plugins.recovery {
+            Some(r) => {
+                let first = r.last.is_none();
+                if first || (!changed && !loaded) {
+                    // The period counts from the first change after a snapshot, not from
+                    // the last time the project was looked at.
+                    r.last = Some(now);
+                }
+                let last = r.last.unwrap_or(now);
+                // A loaded plugin has state the user cannot recreate, so it snapshots sooner.
+                let period = if loaded {
+                    RECOVERY_PERIOD_SECS.min(autosave.max(1.0))
+                } else {
+                    autosave
+                };
+                let due = (first && loaded) || now - last >= period;
+                r.wanted || (autosave > 0.0 && changed && due)
             }
-            _ => false,
+            None => false,
         };
         if write {
             self.write_recovery_snapshot(now);
@@ -1907,46 +1982,60 @@ impl<S: EngineSink> AppCore<S> {
 
     fn write_recovery_snapshot(&mut self, now: f64) {
         self.plugins_capture_all();
+        let revision = self.document.revision();
+        let name = self.file.as_ref().and_then(|p| p.file_stem()).map_or_else(
+            || "untitled".to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        // The frame only clones the document; the writer thread serialises and writes it.
+        let doc: RackDoc = self.document.doc().clone();
         let Some(recovery) = self.plugins.recovery.as_mut() else {
             return;
         };
         recovery.last = Some(now);
         recovery.wanted = false;
-        recovery.writers.retain(|h| !h.is_finished());
-        let name = self.file.as_ref().and_then(|p| p.file_stem()).map_or_else(
-            || "untitled".to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        );
+        recovery.revision = Some(revision);
         recovery.sequence = unix_seconds().max(recovery.sequence + 1);
-        let path = recovery.dir.next_path(&name, recovery.sequence);
-        let dir = recovery.dir.clone();
-        let mut doc: RackDoc = self.document.doc().clone();
-        doc.prune_unreferenced_assets();
-        let text = save_project(&doc);
-        let handle = std::thread::spawn(move || {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let mut tmp = path.as_os_str().to_owned();
-            tmp.push(".tmp");
-            let tmp = PathBuf::from(tmp);
-            if std::fs::write(&tmp, text).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
-            }
-            let _ = dir.prune(RECOVERY_KEEP);
-        });
-        if let Some(r) = self.plugins.recovery.as_mut() {
-            r.writers.push(handle);
+        if let Some(writer) = &recovery.writer {
+            writer.submit(
+                doc,
+                recovery.dir.clone(),
+                name,
+                recovery.sequence,
+                RECOVERY_KEEP,
+            );
         }
     }
 
-    /// Waits for the snapshot writers (tests, and the exit path).
+    /// Waits for the queued snapshots to reach the disk (tests, and the exit path).
     pub fn wait_recovery_writes(&mut self) {
-        if let Some(r) = self.plugins.recovery.as_mut() {
-            for h in r.writers.drain(..) {
-                let _ = h.join();
-            }
+        if let Some(writer) = self
+            .plugins
+            .recovery
+            .as_ref()
+            .and_then(|r| r.writer.as_ref())
+        {
+            writer.wait();
         }
+    }
+
+    /// Sets the autosave period in minutes (0 turns the periodic snapshot of a changed project
+    /// off; a snapshot after a plugin's state changed is still written).
+    pub fn set_autosave_minutes(&mut self, minutes: u32) {
+        self.plugins.autosave_secs = f64::from(minutes) * 60.0;
+    }
+
+    /// The recovery folder, when the app has one (where the session markers live too).
+    pub(super) fn recovery_folder(&self) -> Option<PathBuf> {
+        self.plugins
+            .recovery
+            .as_ref()
+            .map(|r| r.dir.path().to_path_buf())
+    }
+
+    /// The folder holding the session scratch bundles to scan for unfinished recordings.
+    pub(super) fn scratch_scan_folder(&self) -> Option<PathBuf> {
+        self.plugins.paths.scratch.clone()
     }
 
     // ------------------------------------------------------------------ editor windows
@@ -2189,6 +2278,15 @@ impl<S: EngineSink> AppCore<S> {
         self.plugins_poll_events();
         if let Some(journal) = &mut self.plugins.journal {
             let _ = journal.clean_exit();
+        }
+        // The last thing: a run that ends before this point leaves its marker behind.
+        if let Some(marker) = self
+            .plugins
+            .recovery
+            .as_mut()
+            .and_then(|r| r.marker.as_mut())
+        {
+            marker.clean_exit();
         }
     }
 
