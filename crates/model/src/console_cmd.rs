@@ -93,13 +93,20 @@ impl<'r> Planner<'r> {
                 if let Some(leave) =
                     leaving.and_then(|k| crate::console_vca::leave_edit(&self.scratch.console, k))
                 {
-                    leave.perform(&mut self.scratch);
+                    self.perform(&leave);
                     self.edits.push(leave);
                 }
-                edit.perform(&mut self.scratch);
+                self.perform(&edit);
                 self.edits.push(edit);
             }
         }
+    }
+
+    /// Performs `edit` on the scratch. An edit that does not fit is still recorded by the
+    /// caller: the real document is in the same state as the scratch was, so applying the planned
+    /// step fails the same way, as an error that leaves the document unchanged.
+    fn perform(&mut self, edit: &Edit) {
+        let _ = edit.perform(&mut self.scratch);
     }
 
     /// The planned step.
@@ -404,11 +411,14 @@ pub(crate) fn ensure_master(p: &mut Planner<'_>) -> Result<DeviceKey, ModelError
 /// cables as the first channel creates, see [`ensure_master`] and rule 6).
 pub(crate) fn install_starter_master(doc: &mut RackDoc) {
     let (master, edits) = new_master_edits(doc, 0, STARTER_MASTER_NAME);
+    // The starter is built from constants on an empty document: every edit fits.
     for edit in edits {
-        edit.perform(doc);
+        let done = edit.perform(doc);
+        debug_assert!(done.is_ok(), "the starter master: {done:?}");
     }
     for cable in main_cables(&master, doc.output_channels) {
-        Edit::Connect(cable).perform(doc);
+        let done = Edit::Connect(cable).perform(doc);
+        debug_assert!(done.is_ok(), "the starter cables: {done:?}");
     }
 }
 
@@ -841,7 +851,7 @@ mod tests {
         let (key, edits) = new_master_edits(&crate::empty_doc(), 0, STARTER_MASTER_NAME);
         let mut again = crate::empty_doc();
         edits.iter().for_each(|e| {
-            e.perform(&mut again);
+            e.perform(&mut again).unwrap();
         });
         assert_eq!(doc.devices, again.devices);
         assert_eq!(doc.console.master, Some(key));

@@ -29,6 +29,7 @@ use atomik_ui::{
     Theme, TransportAction, TransportBar, UiAction, UiEvent,
 };
 use std::collections::BTreeMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -648,10 +649,15 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             note_edit_of(&command)
         };
-        let applied = if joined {
-            self.document.apply_joined(command, &self.registry)
-        } else {
-            self.document.apply(command, &self.registry)
+        let applied = catch_unwind(AssertUnwindSafe(|| {
+            if joined {
+                self.document.apply_joined(command, &self.registry)
+            } else {
+                self.document.apply(command, &self.registry)
+            }
+        }));
+        let Ok(applied) = applied else {
+            return Err(self.after_internal_error("a command"));
         };
         match applied {
             Ok(ops) => {
@@ -891,27 +897,61 @@ impl<S: EngineSink> AppCore<S> {
     /// Undoes the last step; false when there is nothing to undo.
     pub fn undo(&mut self) -> bool {
         self.plugins_flush_dirty();
-        match self.document.undo(&self.registry) {
-            Some(ops) => {
-                self.sync_ops(&ops);
-                self.refresh_missing();
-                true
-            }
-            None => false,
-        }
+        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_undo(&self.registry)));
+        self.after_history_step(done, "undo")
     }
 
     /// Redoes the last undone step; false when there is nothing to redo.
     pub fn redo(&mut self) -> bool {
         self.plugins_flush_dirty();
-        match self.document.redo(&self.registry) {
-            Some(ops) => {
+        let done = catch_unwind(AssertUnwindSafe(|| self.document.try_redo(&self.registry)));
+        self.after_history_step(done, "redo")
+    }
+
+    /// The end of an undo or a redo: syncs what it changed; a step that does not fit the
+    /// document, or a panic inside it, is reported and leaves the document as it was.
+    fn after_history_step(
+        &mut self,
+        done: std::thread::Result<Result<Option<Vec<SyncOp>>, ModelError>>,
+        what: &str,
+    ) -> bool {
+        match done {
+            Ok(Ok(Some(ops))) => {
                 self.sync_ops(&ops);
                 self.refresh_missing();
                 true
             }
-            None => false,
+            Ok(Ok(None)) => false,
+            Ok(Err(e)) => {
+                log::error!("{what} failed: {e}");
+                self.reject(format!("Cannot {what}: {e}"));
+                false
+            }
+            Err(_) => {
+                self.after_internal_error(what);
+                false
+            }
         }
+    }
+
+    /// A panic was caught around a command, an undo or a redo: the document is only read while a
+    /// command is planned and every edit checks before it changes anything, so what was open
+    /// stays as it was. Tells the user, closes the drag-merge group and asks for an emergency
+    /// recovery snapshot (the panic hook has written the crash report).
+    fn after_internal_error(&mut self, what: &str) -> ModelError {
+        self.document.end_merge();
+        let intact = self.document.doc().validate().is_ok();
+        log::error!("internal error in {what}; document intact: {intact}");
+        let message = if intact {
+            "Internal error, document restored".to_owned()
+        } else {
+            "Internal error: the document may be damaged, save a copy and restart".to_owned()
+        };
+        self.reject(message.clone());
+        if intact {
+            self.request_recovery_snapshot();
+        }
+        ModelError::Invalid(message)
     }
 
     /// Selects a device (or none) and retargets live notes.

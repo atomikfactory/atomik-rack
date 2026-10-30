@@ -70,7 +70,7 @@ use crate::stream_source::STREAM_THRESHOLD_BYTES;
 use atomik_audio_file::{AudioFileError, Bundle, PeakPyramid, save_text_atomic};
 use atomik_device_sdk::SampleBuffer;
 use atomik_engine::SongAsset;
-use atomik_model::{AssetMeta, Command, DeviceKey, SongCommand, save_project};
+use atomik_model::{AssetMeta, Command, DeviceKey, SongCommand};
 use atomik_render::bundle::{
     MissingAsset, existing_bundle_root, missing_assets, save_as_layout, sibling_bundle_root,
 };
@@ -1106,7 +1106,7 @@ impl<S: EngineSink> AppCore<S> {
         let keep = self.document.referenced_assets();
         let mut saved = self.doc().clone();
         saved.prune_unreferenced_assets();
-        let text = save_project(&saved);
+        let text = atomik_model::save_project_checked(&saved)?;
         let mut dest: Option<Bundle> = None;
         if let (Some(root), false) = (&root, keep.is_empty()) {
             let created = match &self.audio.bundle {

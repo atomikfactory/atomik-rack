@@ -337,7 +337,7 @@ pub(crate) fn sync_state(
     let p = doc
         .resolve_mut(device)
         .and_then(|d| d.plugin.as_mut())
-        .expect("checked above");
+        .ok_or_else(|| bad(format!("{device} is not a plugin device")))?;
     p.state = Some(Arc::new(state));
     Ok(())
 }
@@ -353,7 +353,7 @@ pub(crate) fn sync_layout(
     let p = doc
         .resolve_mut(device)
         .and_then(|d| d.plugin.as_mut())
-        .expect("checked above");
+        .ok_or_else(|| bad(format!("{device} is not a plugin device")))?;
     p.layout = layout;
     Ok(())
 }

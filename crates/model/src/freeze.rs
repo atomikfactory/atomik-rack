@@ -539,7 +539,7 @@ pub(crate) fn plan_rendered_track(
     }
     let track = add_audio_track(doc, registry, name, after)?;
     let mut scratch = doc.clone();
-    track.perform(&mut scratch);
+    track.perform(&mut scratch)?;
     let device = scratch
         .song
         .tracks

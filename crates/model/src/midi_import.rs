@@ -17,7 +17,7 @@ use crate::DeviceKey;
 use crate::console_cmd::Planner;
 use crate::history::Edit;
 use crate::song::{Clip, Marker, MeterEvent, SongCommand, TempoEvent};
-use crate::song_cmd::{check_end, check_markers, check_meter_map, check_tempo_map, new_track};
+use crate::song_cmd::{check_markers, check_meter_map, check_tempo_map, new_track};
 use crate::workflow_create::{CreateOptions, CreateSource, create_instrument};
 use crate::{Command, Document, ModelError, RackDoc, rules};
 use atomik_device_sdk::Registry;
@@ -68,7 +68,6 @@ pub(crate) fn plan(
         skip_track: true,
         disarm: Vec::new(),
     };
-    let mut farthest = 0i64;
     for t in import.tracks {
         let key: DeviceKey = rules::generate_key(p.doc(), &import.instrument);
         let index = p.doc().devices.len();
@@ -96,7 +95,6 @@ pub(crate) fn plan(
             old: None,
             new: Some(new_track(key.clone())),
         });
-        farthest = farthest.max(t.clip.end());
         let add_clip = Command::Song(SongCommand::AddClip {
             device: key,
             lane: 0,
@@ -139,15 +137,6 @@ pub(crate) fn plan(
             new: check_markers(new)?,
         });
     }
-    let song = &p.doc().song;
-    if farthest > song.end {
-        let table = song.meter_table();
-        let end = table.map().next_bar_line(farthest - 1).max(farthest);
-        check_end(end).map_err(ModelError::OutOfRange)?;
-        p.push(Edit::SongEnd {
-            old: song.end,
-            new: end,
-        });
-    }
+    // The song End follows the clips: applying the step moves it out to the next bar line.
     Ok(p.finish())
 }

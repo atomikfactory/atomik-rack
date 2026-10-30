@@ -718,16 +718,21 @@ impl Edit {
     /// Performs the edit on `doc` and returns the engine-sync operations, in the order the
     /// app must process them.
     ///
-    /// # Panics
-    /// If the edit does not fit `doc`; edits are only built from validated commands and
-    /// replayed in history order, so this is an internal invariant.
-    pub(crate) fn perform(&self, doc: &mut RackDoc) -> Vec<SyncOp> {
-        match self {
+    /// Edits are built from validated commands and replayed in history order, so a mismatch is an
+    /// internal fault, but it is reported, not assumed: an edit that does not fit `doc` returns
+    /// an [`InvariantError`] and leaves `doc` exactly as it was (every leaf checks before it
+    /// changes anything, and a compound undoes the leaves it had performed).
+    ///
+    /// # Errors
+    /// When the device, track, lane, clip, cable or index the edit names is not in `doc`.
+    pub(crate) fn perform(&self, doc: &mut RackDoc) -> Result<Vec<SyncOp>, InvariantError> {
+        Ok(match self {
             Edit::Insert {
                 index,
                 device,
                 cables,
             } => {
+                check_insert(*index, doc.devices.len(), "devices")?;
                 // A new device never breaks the column order: its column is held between its
                 // neighbours' (a plain `AddDevice` carries column 0 and so joins the column of
                 // the device before it).
@@ -752,8 +757,13 @@ impl Edit {
                 ops
             }
             Edit::Remove { index, device, .. } => {
-                let removed = doc.devices.remove(*index);
-                debug_assert_eq!(&removed.key, &device.key);
+                check_remove(
+                    doc.devices.get(*index).map(|d| &d.key),
+                    &device.key,
+                    "devices",
+                    *index,
+                )?;
+                doc.devices.remove(*index);
                 doc.cables
                     .retain(|c| c.from.device != device.key && c.to.device != device.key);
                 vec![
@@ -762,14 +772,20 @@ impl Edit {
                 ]
             }
             Edit::Layout { new, .. } => {
+                let keys: BTreeSet<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
+                let named: BTreeSet<&DeviceKey> = new.iter().map(|(k, _)| k).collect();
+                if new.len() != doc.devices.len() || named != keys {
+                    return fail("a layout names every device once");
+                }
                 let mut by_key: BTreeMap<DeviceKey, RackDevice> =
                     doc.devices.drain(..).map(|d| (d.key.clone(), d)).collect();
                 for (key, column) in new {
-                    let mut d = by_key.remove(key).expect("edit targets an existing device");
-                    d.column = *column;
-                    doc.devices.push(d);
+                    // Checked above: every key is present once.
+                    if let Some(mut d) = by_key.remove(key) {
+                        d.column = *column;
+                        doc.devices.push(d);
+                    }
                 }
-                debug_assert!(by_key.is_empty(), "a layout names every device");
                 vec![SyncOp::ViewChanged]
             }
             Edit::Columns { new, .. } => {
@@ -777,24 +793,28 @@ impl Edit {
                 vec![SyncOp::ViewChanged]
             }
             Edit::Folded { key, new, .. } => {
-                device_mut(doc, key).folded = *new;
+                device_mut(doc, key)?.folded = *new;
                 vec![SyncOp::ViewChanged]
             }
             Edit::Name { key, new, .. } => {
-                device_mut(doc, key).name.clone_from(new);
+                device_mut(doc, key)?.name.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Color { key, new, .. } => {
-                device_mut(doc, key).color = *new;
+                device_mut(doc, key)?.color = *new;
                 vec![SyncOp::ViewChanged]
             }
             Edit::Connect(c) => {
-                let at = doc.cables.binary_search(c).unwrap_err();
+                let Err(at) = doc.cables.binary_search(c) else {
+                    return fail("the cable is already there");
+                };
                 doc.cables.insert(at, c.clone());
                 vec![SyncOp::RoutingChanged]
             }
             Edit::Disconnect(c) => {
-                let at = doc.cables.binary_search(c).expect("cable present");
+                let Ok(at) = doc.cables.binary_search(c) else {
+                    return fail("the cable is not there");
+                };
                 doc.cables.remove(at);
                 vec![SyncOp::RoutingChanged]
             }
@@ -805,7 +825,7 @@ impl Edit {
                 default,
                 ..
             } => {
-                let params = &mut device_mut(doc, key).params;
+                let params = &mut device_mut(doc, key)?.params;
                 match new {
                     Some(v) => {
                         params.insert(param.clone(), *v);
@@ -829,43 +849,54 @@ impl Edit {
                 ops
             }
             Edit::Tempo { new, .. } => {
+                let Some(first) = doc.song.tempo.first_mut() else {
+                    return fail("the song has no tempo event");
+                };
+                first.bpm = *new;
                 doc.tempo_bpm = *new;
-                doc.song.tempo[0].bpm = *new;
                 vec![SyncOp::TempoChanged(*new)]
             }
             Edit::Track { index, old, new } => {
-                if let Some(old) = old {
-                    let removed = doc.song.tracks.remove(*index);
-                    debug_assert_eq!(&removed, old);
+                let tracks = &mut doc.song.tracks;
+                check_replace(
+                    tracks.get(*index).map(|t| &t.device),
+                    old.as_ref().map(|t| &t.device),
+                    new.is_some(),
+                    *index,
+                    tracks.len(),
+                    "tracks",
+                )?;
+                if old.is_some() {
+                    tracks.remove(*index);
                 }
                 if let Some(new) = new {
-                    doc.song.tracks.insert(*index, new.clone());
+                    tracks.insert(*index, new.clone());
                 }
                 vec![SyncOp::SongChanged]
             }
             Edit::TrackFlags { device, new, .. } => {
-                let t = track_mut(doc, device);
+                let t = track_mut(doc, device)?;
                 [t.muted, t.solo, t.armed] = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::TrackChase { device, new, .. } => {
-                track_mut(doc, device).chase = *new;
+                track_mut(doc, device)?.chase = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::TrackEntry { device, new, .. } => {
-                track_mut(doc, device).notes_to.clone_from(new);
+                track_mut(doc, device)?.notes_to.clone_from(new);
                 vec![SyncOp::SongChanged]
             }
             Edit::LaneMeta {
                 device, lane, new, ..
             } => {
-                let lane = &mut track_mut(doc, device).lanes[*lane];
+                let lane = lane_mut(doc, device, *lane)?;
                 lane.name.clone_from(&new.0);
                 lane.muted = new.1;
                 vec![SyncOp::SongChanged]
             }
             Edit::Frozen { device, new, .. } => {
-                track_mut(doc, device).frozen.clone_from(new);
+                track_mut(doc, device)?.frozen.clone_from(new);
                 vec![SyncOp::SongChanged, SyncOp::FrozenChanged]
             }
             Edit::LaneWrite {
@@ -888,7 +919,15 @@ impl Edit {
                 old,
                 new,
             } => {
-                let lanes = &mut track_mut(doc, device).lanes;
+                let lanes = &mut track_mut(doc, device)?.lanes;
+                check_replace(
+                    lanes.get(*index).map(|_| index),
+                    old.as_ref().map(|_| index),
+                    new.is_some(),
+                    *index,
+                    lanes.len(),
+                    "lanes",
+                )?;
                 if old.is_some() {
                     lanes.remove(*index);
                 }
@@ -903,12 +942,15 @@ impl Edit {
                 old,
                 new,
             } => {
-                let clips = &mut track_mut(doc, device).lanes[*lane].clips;
-                if let Some(old) = old {
-                    let at = clips
-                        .iter()
-                        .position(|c| c.id == old.id)
-                        .expect("edit targets an existing clip");
+                let clips = &mut lane_mut(doc, device, *lane)?.clips;
+                let at = match old {
+                    Some(old) => match clips.iter().position(|c| c.id == old.id) {
+                        Some(at) => Some(at),
+                        None => return fail("the clip is not on the lane"),
+                    },
+                    None => None,
+                };
+                if let Some(at) = at {
                     clips.remove(at);
                 }
                 if let Some(new) = new {
@@ -920,9 +962,7 @@ impl Edit {
             Edit::TakeGroups {
                 device, lane, new, ..
             } => {
-                track_mut(doc, device).lanes[*lane]
-                    .take_groups
-                    .clone_from(new);
+                lane_mut(doc, device, *lane)?.take_groups.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::NextClipId { new, .. } => {
@@ -930,9 +970,13 @@ impl Edit {
                 vec![SyncOp::SongChanged]
             }
             Edit::TempoMap { new, .. } => {
+                let Some(first) = new.first() else {
+                    return fail("a tempo map has at least one event");
+                };
+                let bpm = first.bpm;
                 doc.song.tempo.clone_from(new);
-                doc.tempo_bpm = new[0].bpm;
-                vec![SyncOp::TempoChanged(new[0].bpm), SyncOp::SongChanged]
+                doc.tempo_bpm = bpm;
+                vec![SyncOp::TempoChanged(bpm), SyncOp::SongChanged]
             }
             Edit::MeterMap { new, .. } => {
                 doc.song.meter.clone_from(new);
@@ -982,9 +1026,16 @@ impl Edit {
             }
             Edit::ConsoleChannel { index, old, new } => {
                 let channels = &mut doc.console.channels;
-                if let Some(old) = old {
-                    let removed = channels.remove(*index);
-                    debug_assert_eq!(&removed, old);
+                check_replace(
+                    channels.get(*index).map(|c| &c.channel),
+                    old.as_ref().map(|c| &c.channel),
+                    new.is_some(),
+                    *index,
+                    channels.len(),
+                    "console channels",
+                )?;
+                if old.is_some() {
+                    channels.remove(*index);
                 }
                 if let Some(new) = new {
                     channels.insert(*index, new.clone());
@@ -992,15 +1043,21 @@ impl Edit {
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleMove { from, to } => {
-                let c = doc.console.channels.remove(*from);
-                doc.console.channels.insert(*to, c);
+                move_within(&mut doc.console.channels, *from, *to, "console channels")?;
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleBus { index, old, new } => {
                 let buses = &mut doc.console.buses;
-                if let Some(old) = old {
-                    let removed = buses.remove(*index);
-                    debug_assert_eq!(&removed, old);
+                check_replace(
+                    buses.get(*index).map(|b| &b.bus),
+                    old.as_ref().map(|b| &b.bus),
+                    new.is_some(),
+                    *index,
+                    buses.len(),
+                    "console buses",
+                )?;
+                if old.is_some() {
+                    buses.remove(*index);
                 }
                 if let Some(new) = new {
                     buses.insert(*index, new.clone());
@@ -1041,8 +1098,7 @@ impl Edit {
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleBusMove { from, to } => {
-                let b = doc.console.buses.remove(*from);
-                doc.console.buses.insert(*to, b);
+                move_within(&mut doc.console.buses, *from, *to, "console buses")?;
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleMaster { new, .. } => {
@@ -1050,7 +1106,10 @@ impl Edit {
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::ConsoleReturn { slot, new, .. } => {
-                doc.console.returns[*slot].clone_from(new);
+                let Some(returned) = doc.console.returns.get_mut(*slot) else {
+                    return fail(format!("there is no FX return {slot}"));
+                };
+                returned.clone_from(new);
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::Compensation { new, .. } => {
@@ -1058,23 +1117,23 @@ impl Edit {
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::Zones { key, new, .. } => {
-                device_mut(doc, key).zones.clone_from(new);
+                device_mut(doc, key)?.zones.clone_from(new);
                 vec![SyncOp::ZonesChanged(key.clone())]
             }
             Edit::Steps { key, new, .. } => {
-                device_mut(doc, key).steps.clone_from(new);
+                device_mut(doc, key)?.steps.clone_from(new);
                 vec![SyncOp::PatternsChanged {
                     device: key.clone(),
                 }]
             }
             Edit::Curves { key, new, .. } => {
-                device_mut(doc, key).curves.clone_from(new);
+                device_mut(doc, key)?.curves.clone_from(new);
                 vec![SyncOp::PatternsChanged {
                     device: key.clone(),
                 }]
             }
             Edit::Drums { key, new, .. } => {
-                device_mut(doc, key).drums.clone_from(new);
+                device_mut(doc, key)?.drums.clone_from(new);
                 vec![SyncOp::PatternsChanged {
                     device: key.clone(),
                 }]
@@ -1089,7 +1148,8 @@ impl Edit {
                 device,
                 cables,
             } => {
-                let inner = container_mut(doc, container);
+                let inner = container_mut(doc, container)?;
+                check_insert(*index, inner.devices.len(), "container devices")?;
                 inner.devices.insert(*index, device.clone());
                 inner.cables.extend(cables.iter().cloned());
                 inner.cables.sort();
@@ -1115,9 +1175,14 @@ impl Edit {
                 device,
                 ..
             } => {
-                let inner = container_mut(doc, container);
-                let removed = inner.devices.remove(*index);
-                debug_assert_eq!(&removed.key, &device.key);
+                let inner = container_mut(doc, container)?;
+                check_remove(
+                    inner.devices.get(*index).map(|d| &d.key),
+                    &device.key,
+                    "container devices",
+                    *index,
+                )?;
+                inner.devices.remove(*index);
                 inner
                     .cables
                     .retain(|c| c.from.device != device.key && c.to.device != device.key);
@@ -1131,20 +1196,23 @@ impl Edit {
                 from,
                 to,
             } => {
-                let inner = container_mut(doc, container);
-                let d = inner.devices.remove(*from);
-                inner.devices.insert(*to, d);
+                let inner = container_mut(doc, container)?;
+                move_within(&mut inner.devices, *from, *to, "container devices")?;
                 vec![SyncOp::ViewChanged]
             }
             Edit::InnerConnect { container, cable } => {
-                let cables = &mut container_mut(doc, container).cables;
-                let at = cables.binary_search(cable).unwrap_err();
+                let cables = &mut container_mut(doc, container)?.cables;
+                let Err(at) = cables.binary_search(cable) else {
+                    return fail("the inner cable is already there");
+                };
                 cables.insert(at, cable.clone());
                 vec![SyncOp::RoutingChanged]
             }
             Edit::InnerDisconnect { container, cable } => {
-                let cables = &mut container_mut(doc, container).cables;
-                let at = cables.binary_search(cable).expect("cable present");
+                let cables = &mut container_mut(doc, container)?.cables;
+                let Ok(at) = cables.binary_search(cable) else {
+                    return fail("the inner cable is not there");
+                };
                 cables.remove(at);
                 vec![SyncOp::RoutingChanged]
             }
@@ -1153,7 +1221,7 @@ impl Edit {
                 old,
                 new,
             } => {
-                container_mut(doc, container).splits.clone_from(new);
+                container_mut(doc, container)?.splits.clone_from(new);
                 let targets =
                     |l: &[NoteSplit]| l.iter().map(|s| s.target.clone()).collect::<Vec<_>>();
                 let mut ops = vec![SyncOp::SplitsChanged {
@@ -1171,41 +1239,46 @@ impl Edit {
                 new,
                 ..
             } => {
-                container_mut(doc, container).macros[usize::from(*index)].clone_from(new);
+                let Some(slot) = container_mut(doc, container)?
+                    .macros
+                    .get_mut(usize::from(*index))
+                else {
+                    return fail(format!("the container has no macro {index}"));
+                };
+                slot.clone_from(new);
                 vec![SyncOp::MacrosChanged {
                     container: container.clone(),
                 }]
             }
             Edit::PluginPins { key, new, .. } => {
-                plugin_mut(doc, key).pinned.clone_from(new);
+                plugin_mut(doc, key)?.pinned.clone_from(new);
                 vec![SyncOp::PluginChanged {
                     device: key.clone(),
                 }]
             }
             Edit::PluginRun { key, new, .. } => {
-                plugin_mut(doc, key).run_on_audio_thread = *new;
+                plugin_mut(doc, key)?.run_on_audio_thread = *new;
                 vec![SyncOp::PluginChanged {
                     device: key.clone(),
                 }]
             }
             Edit::PluginPower { key, new, .. } => {
-                plugin_mut(doc, key).powered = *new;
+                plugin_mut(doc, key)?.powered = *new;
                 vec![SyncOp::PluginChanged {
                     device: key.clone(),
                 }]
             }
             Edit::PluginRelink { key, new, .. } => {
-                let device = device_mut(doc, key);
-                device.type_id.clone_from(&new.type_id);
-                let p = device
-                    .plugin
-                    .as_mut()
-                    .expect("edit targets a plugin device");
+                let device = device_mut(doc, key)?;
+                let Some(p) = device.plugin.as_mut() else {
+                    return fail(format!("{key} is not a plugin device"));
+                };
                 p.format = new.format;
                 p.id.clone_from(&new.id);
                 p.path_hint.clone_from(&new.path_hint);
                 p.layout.clone_from(&new.layout);
                 p.pinned.clone_from(&new.pinned);
+                device.type_id.clone_from(&new.type_id);
                 vec![SyncOp::PluginChanged {
                     device: key.clone(),
                 }]
@@ -1217,15 +1290,30 @@ impl Edit {
                 // the devices it names.
                 let mut flat = Vec::new();
                 flatten(edits, &mut flat);
-                for edit in flat {
+                for (done, edit) in flat.iter().enumerate() {
                     let inserted = matches!(edit, Edit::Insert { .. } | Edit::InnerInsert { .. });
-                    for op in edit.perform(doc) {
-                        ops.push(op, inserted);
+                    match edit.perform(doc) {
+                        Ok(performed) => {
+                            for op in performed {
+                                ops.push(op, inserted);
+                            }
+                        }
+                        Err(fault) => {
+                            // All or nothing: put back what the earlier leaves changed.
+                            for earlier in flat[..done].iter().rev() {
+                                if let Err(again) = earlier.inverse().perform(doc) {
+                                    return fail(format!(
+                                        "{fault}; undoing the earlier edits failed too: {again}"
+                                    ));
+                                }
+                            }
+                            return Err(fault);
+                        }
                     }
                 }
                 ops.finish()
             }
-        }
+        })
     }
 }
 
@@ -1301,39 +1389,151 @@ impl CompoundOps {
     }
 }
 
-fn track_mut<'d>(doc: &'d mut RackDoc, device: &DeviceKey) -> &'d mut Track {
-    doc.song
-        .tracks
-        .iter_mut()
-        .find(|t| &t.device == device)
-        .expect("edit targets an existing track")
+/// The edit does not fit the document it was asked to change: it names a device, track, lane,
+/// clip, cable or index the document does not have. Edits come from validated commands and are
+/// replayed in history order, so this reports an internal fault (a planner and the history
+/// disagree) instead of aborting the process; the document is left as it was.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the edit does not fit the document: {0}")]
+pub struct InvariantError(String);
+
+impl InvariantError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
 }
 
-fn device_mut<'d>(doc: &'d mut RackDoc, key: &DeviceKey) -> &'d mut RackDevice {
-    doc.resolve_mut(key)
-        .expect("edit targets an existing device")
+fn fail<T>(message: impl Into<String>) -> Result<T, InvariantError> {
+    Err(InvariantError::new(message))
 }
 
-fn plugin_mut<'d>(doc: &'d mut RackDoc, key: &DeviceKey) -> &'d mut crate::PluginDoc {
-    device_mut(doc, key)
-        .plugin
-        .as_deref_mut()
-        .expect("edit targets a plugin device")
+/// `index` may receive an insert into a list of `len` items.
+fn check_insert(index: usize, len: usize, what: &str) -> Result<(), InvariantError> {
+    if index > len {
+        return fail(format!("{what}: index {index} is past the end ({len})"));
+    }
+    Ok(())
 }
 
-fn container_mut<'d>(doc: &'d mut RackDoc, key: &DeviceKey) -> &'d mut ContainerDoc {
-    doc.inner_mut(key)
-        .expect("edit targets an existing container")
+/// The item at `index` (`found`) is the one the edit removes (`wanted`).
+fn check_remove<K: PartialEq>(
+    found: Option<&K>,
+    wanted: &K,
+    what: &str,
+    index: usize,
+) -> Result<(), InvariantError> {
+    if found != Some(wanted) {
+        return fail(format!("{what}: index {index} is not the item to remove"));
+    }
+    Ok(())
+}
+
+/// An insert (`old` none), removal (`adding` false) or replacement at `index` of a list of `len`
+/// items; `found` is the key of the item at `index`, `old` the key the edit expects there.
+fn check_replace<K: PartialEq>(
+    found: Option<K>,
+    old: Option<K>,
+    adding: bool,
+    index: usize,
+    len: usize,
+    what: &str,
+) -> Result<(), InvariantError> {
+    let removing = old.is_some();
+    if let Some(old) = old {
+        check_remove(found.as_ref(), &old, what, index)?;
+    }
+    if adding {
+        check_insert(index, len - usize::from(removing), what)?;
+    }
+    Ok(())
+}
+
+/// Moves the item at `from` to `to`; both must be in range.
+fn move_within<T>(
+    list: &mut Vec<T>,
+    from: usize,
+    to: usize,
+    what: &str,
+) -> Result<(), InvariantError> {
+    if from >= list.len() || to >= list.len() {
+        return fail(format!(
+            "{what}: cannot move {from} to {to} in {} items",
+            list.len()
+        ));
+    }
+    let item = list.remove(from);
+    list.insert(to, item);
+    Ok(())
+}
+
+fn track_mut<'d>(
+    doc: &'d mut RackDoc,
+    device: &DeviceKey,
+) -> Result<&'d mut Track, InvariantError> {
+    match doc.song.tracks.iter_mut().find(|t| &t.device == device) {
+        Some(track) => Ok(track),
+        None => fail(format!("there is no track {device}")),
+    }
+}
+
+fn lane_mut<'d>(
+    doc: &'d mut RackDoc,
+    device: &DeviceKey,
+    lane: usize,
+) -> Result<&'d mut Lane, InvariantError> {
+    match track_mut(doc, device)?.lanes.get_mut(lane) {
+        Some(lane) => Ok(lane),
+        None => fail(format!("track {device} has no lane {lane}")),
+    }
+}
+
+fn device_mut<'d>(
+    doc: &'d mut RackDoc,
+    key: &DeviceKey,
+) -> Result<&'d mut RackDevice, InvariantError> {
+    match doc.resolve_mut(key) {
+        Some(device) => Ok(device),
+        None => fail(format!("there is no device {key}")),
+    }
+}
+
+fn plugin_mut<'d>(
+    doc: &'d mut RackDoc,
+    key: &DeviceKey,
+) -> Result<&'d mut crate::PluginDoc, InvariantError> {
+    match device_mut(doc, key)?.plugin.as_deref_mut() {
+        Some(plugin) => Ok(plugin),
+        None => fail(format!("{key} is not a plugin device")),
+    }
+}
+
+fn container_mut<'d>(
+    doc: &'d mut RackDoc,
+    key: &DeviceKey,
+) -> Result<&'d mut ContainerDoc, InvariantError> {
+    match doc.inner_mut(key) {
+        Some(inner) => Ok(inner),
+        None => fail(format!("there is no container {key}")),
+    }
 }
 
 /// The edit that moves the song End out to the next bar line when `edit` (already performed on
 /// `doc`) puts a clip past it, `None` when no clip reaches beyond the End. It never moves the
 /// End back: shortening is `SongCommand::SetSongEnd`. The caller records it in the same undo
 /// step as `edit`.
+///
+/// Every way an edit can bring a clip in counts: a clip, a whole lane, a whole track (a paste or
+/// a duplicate), however deep in a compound. When the bar line would pass the longest song the
+/// End can be, the End stops at the clip's own end.
 pub(crate) fn song_end_growth(doc: &RackDoc, edit: &Edit) -> Option<Edit> {
+    fn lane_reach(lane: &Lane) -> Option<i64> {
+        lane.clips.iter().map(|c| c.start + c.length).max()
+    }
     fn farthest(edit: &Edit) -> Option<i64> {
         match edit {
             Edit::Clip { new: Some(c), .. } => Some(c.start + c.length),
+            Edit::Lane { new: Some(l), .. } => lane_reach(l),
+            Edit::Track { new: Some(t), .. } => t.lanes.iter().filter_map(lane_reach).max(),
             Edit::Compound(edits) => edits.iter().filter_map(farthest).max(),
             _ => None,
         }
@@ -1341,10 +1541,134 @@ pub(crate) fn song_end_growth(doc: &RackDoc, edit: &Edit) -> Option<Edit> {
     let song = &doc.song;
     let reach = farthest(edit).filter(|r| *r > song.end)?;
     let table = song.meter_table();
-    let end = table.map().next_bar_line(reach - 1).max(reach);
+    let bar = table.map().next_bar_line(reach - 1).max(reach);
+    let end = if crate::song_cmd::check_end(bar).is_ok() {
+        bar
+    } else {
+        reach
+    };
     crate::song_cmd::check_end(end).ok()?;
     Some(Edit::SongEnd {
         old: song.end,
         new: end,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Document, empty_doc};
+    use atomik_device_sdk::Registry;
+
+    fn ghost() -> DeviceKey {
+        DeviceKey("ghost".into())
+    }
+
+    fn bare() -> RackDevice {
+        RackDevice {
+            key: ghost(),
+            type_id: "test.ghost".into(),
+            name: "ghost".into(),
+            params: BTreeMap::new(),
+            folded: false,
+            color: None,
+            zones: Vec::new(),
+            steps: None,
+            curves: None,
+            drums: None,
+            inner: None,
+            plugin: None,
+            column: 0,
+        }
+    }
+
+    fn folded() -> Edit {
+        Edit::Folded {
+            key: ghost(),
+            old: false,
+            new: true,
+        }
+    }
+
+    #[test]
+    fn an_edit_that_names_something_missing_is_an_error_and_changes_nothing() {
+        let before = empty_doc();
+        for edit in [
+            folded(),
+            Edit::Remove {
+                index: 3,
+                device: bare(),
+                cables: Vec::new(),
+            },
+            Edit::Insert {
+                index: 9,
+                device: bare(),
+                cables: Vec::new(),
+            },
+            Edit::TrackFlags {
+                device: ghost(),
+                old: [false; 3],
+                new: [true; 3],
+            },
+            Edit::Disconnect(Cable {
+                from: crate::SocketRef {
+                    device: ghost(),
+                    socket: "out".into(),
+                },
+                to: crate::SocketRef {
+                    device: ghost(),
+                    socket: "in".into(),
+                },
+            }),
+            Edit::ConsoleMove { from: 0, to: 1 },
+            Edit::ConsoleReturn {
+                slot: 99,
+                old: None,
+                new: None,
+            },
+        ] {
+            let mut doc = before.clone();
+            let err = edit.perform(&mut doc).unwrap_err();
+            assert!(!err.to_string().is_empty());
+            assert_eq!(doc, before, "{edit:?}");
+        }
+    }
+
+    #[test]
+    fn a_compound_that_fails_part_way_puts_back_what_it_had_changed() {
+        let before = empty_doc();
+        let mut doc = before.clone();
+        let compound = Edit::Compound(vec![
+            Edit::Tempo {
+                old: before.tempo_bpm,
+                new: before.tempo_bpm + 10.0,
+            },
+            Edit::Columns { old: 1, new: 2 },
+            folded(),
+        ]);
+        assert!(compound.perform(&mut doc).is_err());
+        assert_eq!(doc, before, "the tempo and the columns are back");
+    }
+
+    #[test]
+    fn an_undo_step_that_does_not_fit_is_an_error_and_stays_on_the_stack() {
+        let reg = Registry::new();
+        let mut d = Document::new(empty_doc());
+        d.undo.push(folded());
+        let before = d.doc().clone();
+        let revision = d.revision();
+        let err = d.try_undo(&reg).unwrap_err();
+        assert!(matches!(err, crate::ModelError::Invariant(_)), "{err:?}");
+        assert_eq!(d.doc(), &before);
+        assert_eq!(d.revision(), revision);
+        assert!(d.can_undo() && !d.can_redo(), "the history is untouched");
+        assert!(
+            d.undo(&reg).is_none(),
+            "the plain undo reports nothing done"
+        );
+        d.undo.clear();
+        d.redo.push(folded());
+        assert!(d.try_redo(&reg).is_err());
+        assert!(d.can_redo() && !d.can_undo());
+    }
 }

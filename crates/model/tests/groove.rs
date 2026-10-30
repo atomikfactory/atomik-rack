@@ -525,3 +525,45 @@ fn the_clips_a_take_group_compiled_are_left_alone() {
     );
     assert!(e.to_string().contains("no note"), "{e}");
 }
+
+#[test]
+fn a_quantize_at_the_last_tick_keeps_every_note_inside_the_song_and_the_file_saves() {
+    use atomik_model::MAX_TICK;
+    let reg = registry();
+    let mut d = song_start(&reg);
+    d.apply(add_track("lead"), &reg).unwrap();
+    // Two notes of one key that the grid pulls onto the same last tick.
+    let notes = vec![
+        note(MAX_TICK - 2, S, 62, 0.8),
+        note(MAX_TICK - 1, S, 60, 0.8),
+        note(MAX_TICK, S, 60, 0.8),
+    ];
+    d.apply(add_clip("lead", 0, notes_clip(0, MAX_TICK, notes)), &reg)
+        .unwrap();
+    let q = QuantizeParams {
+        grid: 1 << 10,
+        ..QuantizeParams::default()
+    };
+    quantize(&mut d, &reg, &[1], q);
+    let out = notes_of(&d, 1);
+    assert!(
+        out.iter().all(|n| (0..=MAX_TICK).contains(&n.tick)),
+        "{out:?}"
+    );
+    let mut places: Vec<_> = out.iter().map(|n| (n.tick, n.key)).collect();
+    places.dedup();
+    assert_eq!(places.len(), out.len(), "no two notes share a place");
+    d.doc().validate().unwrap();
+    // The notes are ones a SetClipContent accepts, and the project saves and loads.
+    d.apply(
+        sc(SongCommand::SetClipContent {
+            id: ClipId(1),
+            content: ClipContent::Notes(out),
+            merge: None,
+        }),
+        &reg,
+    )
+    .unwrap();
+    let text = save_project(d.doc());
+    assert_eq!(save_project(&load_project(&text, &reg).unwrap()), text);
+}

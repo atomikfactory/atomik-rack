@@ -759,7 +759,10 @@ pub(crate) fn with_entries(doc: &RackDoc, registry: &Registry, edit: Edit) -> Ed
         return edit;
     }
     let mut after = doc.clone();
-    edit.perform(&mut after);
+    if edit.perform(&mut after).is_err() {
+        // Applying the edit reports the same fault, with the document unchanged.
+        return edit;
+    }
     let mut moves = Vec::new();
     for track in doc.song.tracks.iter().filter(|t| !t.is_audio()) {
         let entry = doc.notes_entry(track);
