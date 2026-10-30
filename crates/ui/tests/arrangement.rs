@@ -398,17 +398,12 @@ fn delete_duplicate_and_split() {
     v.set_playhead(2 * BAR + PPQ);
     let s = v.command("sequencer.split_at_playhead", None, &doc, &reg);
     assert_eq!(
-        song_commands(s.actions()),
-        vec![
-            SongCommand::SplitClip {
-                id: ClipId(1),
-                at: 2 * BAR + PPQ
-            },
-            SongCommand::SplitClip {
-                id: ClipId(3),
-                at: 2 * BAR + PPQ
-            },
-        ]
+        workflow_commands(s.actions()),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(1), ClipId(3)],
+            at: 2 * BAR + PPQ
+        }],
+        "one command, one undo step"
     );
     let del = v.command("edit.delete", None, &doc, &reg);
     assert_eq!(
@@ -428,25 +423,19 @@ fn split_without_selection_splits_every_clip_under_the_playhead() {
     let mut v = arrangement(&doc, &reg);
     v.set_playhead(BAR + PPQ);
     let s = v.command("sequencer.split_at_playhead", None, &doc, &reg);
-    let ids: Vec<ClipId> = song_commands(s.actions())
-        .into_iter()
-        .map(|c| match c {
-            SongCommand::SplitClip { id, at } => {
-                assert_eq!(at, BAR + PPQ);
-                id
-            }
-            other => panic!("{other:?}"),
-        })
-        .collect();
-    assert_eq!(ids, vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)]);
+    assert_eq!(
+        workflow_commands(s.actions()),
+        vec![WorkflowCommand::SplitClips {
+            ids: vec![ClipId(1), ClipId(4), ClipId(2), ClipId(3)],
+            at: BAR + PPQ
+        }]
+    );
     // On a clip boundary nothing splits.
     v.set_playhead(BAR * 4);
     let s = v.command("sequencer.split_at_playhead", None, &doc, &reg);
-    assert!(
-        song_commands(s.actions())
-            .iter()
-            .all(|c| !matches!(c, SongCommand::SplitClip { id: ClipId(1), .. }))
-    );
+    assert!(workflow_commands(s.actions()).iter().all(
+        |c| !matches!(c, WorkflowCommand::SplitClips { ids, .. } if ids.contains(&ClipId(1)))
+    ));
 }
 
 #[test]
@@ -594,7 +583,7 @@ fn ruler_click_locates_and_snap_button_cycles() {
         |e| v.handle(e, &doc, &reg),
         &[right_down(s), right_up(s), right_down(s), right_up(s)],
     );
-    assert_eq!(v.snap(), Snap::Bar);
+    assert_eq!(v.snap(), Snap::Half);
 }
 
 // ---------------------------------------------------------------- zoom, scroll, keys
@@ -793,7 +782,7 @@ fn dragging_the_snap_selector_steps_the_resolutions_and_a_click_still_cycles() {
     let _ = run(|e| v.handle(e, &doc, &reg), &[down(s), up(s)]);
     assert_eq!(
         v.snap(),
-        Snap::Beat,
+        Snap::Half,
         "a click without movement cycles forward"
     );
 }
@@ -812,6 +801,12 @@ fn the_wheel_over_the_snap_selector_steps_one_resolution_per_notch() {
     let _ = v.handle(&wheel(1.0), &doc, &reg);
     assert_eq!(v.snap(), Snap::Eighth);
     let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    let _ = v.handle(&wheel(-1.0), &doc, &reg);
+    assert_eq!(
+        v.snap(),
+        Snap::Half,
+        "the half note lies between the bar and the beat"
+    );
     let _ = v.handle(&wheel(-1.0), &doc, &reg);
     assert_eq!(v.snap(), Snap::Bar);
     let _ = v.handle(&wheel(-1.0), &doc, &reg);

@@ -172,15 +172,20 @@ pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `file.open_recent`: the place in the recent list, 0 the newest song.
 pub const RECENT_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7"];
+/// The values of `sequencer.set_snap_mode`.
+pub const SNAP_MODE_ARGS: &[&str] = &["absolute", "relative"];
 /// The values of `sequencer.set_snap`.
 pub const SNAP_ARGS: &[&str] = &[
     "off",
     "bar",
+    "half",
     "beat",
     "eighth",
     "sixteenth",
     "thirtysecond",
     "sixtyfourth",
+    "onetwentyeighth",
+    "half_triplet",
     "quarter_triplet",
     "eighth_triplet",
     "sixteenth_triplet",
@@ -1065,6 +1070,13 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.delete_outside_events",
+        "Delete Events Outside Clips",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
         G::Sequencer,
@@ -1239,6 +1251,54 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd(
+        "sequencer.nudge_left",
+        "Nudge Clips Left",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
+        "sequencer.nudge_left_beat",
+        "Nudge Clips Left by Beat",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
+        "sequencer.nudge_left_tick",
+        "Nudge Clips Left by Tick",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
+        "sequencer.nudge_right",
+        "Nudge Clips Right",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
+        "sequencer.nudge_right_beat",
+        "Nudge Clips Right by Beat",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
+        "sequencer.nudge_right_tick",
+        "Nudge Clips Right by Tick",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .rep()
+    .decline(),
+    cmd(
         "sequencer.open_clip",
         "Open Clip",
         G::Sequencer,
@@ -1310,6 +1370,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     ),
     cmd("sequencer.set_snap", "Set Snap", G::Sequencer, C::Sequencer).arg(SNAP_ARGS),
+    cmd(
+        "sequencer.set_snap_mode",
+        "Set Snap Mode",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(SNAP_MODE_ARGS),
     cmd(
         "sequencer.snap_toggle",
         "Snap On/Off",

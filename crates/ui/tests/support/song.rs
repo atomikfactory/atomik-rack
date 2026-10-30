@@ -242,6 +242,17 @@ pub fn song_commands(actions: &[UiAction]) -> Vec<atomik_model::SongCommand> {
         .collect()
 }
 
+/// Only the workflow commands among `actions`.
+pub fn workflow_commands(actions: &[UiAction]) -> Vec<atomik_model::WorkflowCommand> {
+    commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            atomik_model::Command::Workflow(w) => Some(w),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Feeds a sequence of events to a view-like handler and collects every action.
 pub fn run(f: impl FnMut(&UiEvent) -> Vec<UiAction>, events: &[UiEvent]) -> Vec<UiAction> {
     events.iter().flat_map(f).collect()

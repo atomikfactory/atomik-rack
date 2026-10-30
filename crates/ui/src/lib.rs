@@ -426,5 +426,5 @@ pub use transport::{
 };
 pub use vello;
 pub use vello::{kurbo, peniko};
-pub use viewport::{Tool, ViewportState};
+pub use viewport::{SnapMode, Tool, ViewportState};
 pub use warp_panel::{WarpAction, WarpRow, WarpValues, WarpView};

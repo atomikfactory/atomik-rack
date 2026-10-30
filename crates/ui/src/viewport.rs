@@ -62,6 +62,27 @@ impl Tool {
     }
 }
 
+/// How a move or a nudge meets the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SnapMode {
+    /// The item lands on a grid line (what an item off the grid snaps to).
+    #[default]
+    Absolute,
+    /// The item moves by whole grid steps and keeps its distance from the grid.
+    Relative,
+}
+
+impl SnapMode {
+    /// The mode a `sequencer.set_snap_mode` argument names.
+    pub fn from_arg(arg: &str) -> Option<SnapMode> {
+        match arg {
+            "absolute" => Some(SnapMode::Absolute),
+            "relative" => Some(SnapMode::Relative),
+            _ => None,
+        }
+    }
+}
+
 /// Tool, roles, follow, snap and zoom toggles of one time view.
 #[derive(Debug, Clone)]
 pub struct ViewportState {
@@ -72,6 +93,7 @@ pub struct ViewportState {
     paused: bool,
     playing: bool,
     snap_stash: Option<Snap>,
+    snap_mode: SnapMode,
     zoomed_to_selection: bool,
 }
 
@@ -92,6 +114,7 @@ impl ViewportState {
             paused: false,
             playing: false,
             snap_stash: None,
+            snap_mode: SnapMode::Absolute,
             zoomed_to_selection: false,
         }
     }
@@ -165,6 +188,16 @@ impl ViewportState {
         } else {
             snap.step_zoomed(meter, px_per_tick)
         }
+    }
+
+    /// Whether moves snap to grid lines or by whole steps.
+    pub fn snap_mode(&self) -> SnapMode {
+        self.snap_mode
+    }
+
+    /// Sets the snap mode.
+    pub fn set_snap_mode(&mut self, mode: SnapMode) {
+        self.snap_mode = mode;
     }
 
     /// Switches snapping off and back to the value it had; returns the new snap.
