@@ -11,6 +11,7 @@
 //! - `workflow.json` keeps fields this build does not know (a newer build or a later step of the
 //!   phase, such as the rack layout flags), so saving never drops them.
 
+use crate::record_over::{KeepEvents, RecordMode};
 use atomik_ui::keymap::UserKeymap;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -66,6 +67,10 @@ pub struct WorkflowPrefs {
     /// Start with the song that was open last time, when no project is named on the command
     /// line (default off).
     pub open_last_project: bool,
+    /// What a finished MIDI take does with the clips already on its lane (default Replace).
+    pub record_mode: RecordMode,
+    /// What a note edit does with notes that start past their clip's end (default Keep).
+    pub keep_events: KeepEvents,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -83,6 +88,8 @@ impl Default for WorkflowPrefs {
             library_folder: None,
             autosave_minutes: 5,
             open_last_project: false,
+            record_mode: RecordMode::default(),
+            keep_events: KeepEvents::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -120,6 +127,16 @@ impl WorkflowPrefs {
                 .and_then(Value::as_u64)
                 .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
             open_last_project: flag("open_last_project", defaults.open_last_project),
+            record_mode: obj
+                .get("record_mode")
+                .and_then(Value::as_str)
+                .and_then(RecordMode::from_id)
+                .unwrap_or(defaults.record_mode),
+            keep_events: obj
+                .get("keep_events")
+                .and_then(Value::as_str)
+                .and_then(KeepEvents::from_id)
+                .unwrap_or(defaults.keep_events),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -135,6 +152,8 @@ impl WorkflowPrefs {
                             | "library_folder"
                             | "autosave_minutes"
                             | "open_last_project"
+                            | "record_mode"
+                            | "keep_events"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -168,6 +187,14 @@ impl WorkflowPrefs {
         map.insert(
             "open_last_project".into(),
             Value::Bool(self.open_last_project),
+        );
+        map.insert(
+            "record_mode".into(),
+            Value::String(self.record_mode.id().into()),
+        );
+        map.insert(
+            "keep_events".into(),
+            Value::String(self.keep_events.id().into()),
         );
         if let Some(folder) = &self.library_folder {
             map.insert(
@@ -523,6 +550,37 @@ mod tests {
         let p = d.join("deeper").join("still").join(KEYMAP_FILE);
         save_user_keymap(&p, &user()).unwrap();
         assert!(p.exists());
+    }
+
+    #[test]
+    fn the_record_mode_and_keep_events_round_trip_and_default_to_replace_and_keep() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(
+            (d.record_mode, d.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        let p = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(
+            (p.record_mode, p.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        // An unknown name or a wrongly typed value is the default.
+        let p = WorkflowPrefs::from_json(r#"{"record_mode": "nope", "keep_events": 3}"#).unwrap();
+        assert_eq!(
+            (p.record_mode, p.keep_events),
+            (RecordMode::Replace, KeepEvents::Keep)
+        );
+        let set = WorkflowPrefs {
+            record_mode: RecordMode::Layer,
+            keep_events: KeepEvents::NewClip,
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(text.contains("\"record_mode\": \"layer\""), "{text}");
+        assert!(text.contains("\"keep_events\": \"new_clip\""), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(back.extra.is_empty());
     }
 
     #[test]

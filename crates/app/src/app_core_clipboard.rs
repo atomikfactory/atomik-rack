@@ -577,6 +577,8 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::MoveDevicesToSlot { .. }
             | WorkflowCommand::RemoveClips { .. }
             | WorkflowCommand::SetClipsMuted { .. }
+            | WorkflowCommand::LayerRecording { .. }
+            | WorkflowCommand::EngulfRecording { .. }
             | WorkflowCommand::DisconnectDevice { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}

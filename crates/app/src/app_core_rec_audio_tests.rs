@@ -1091,3 +1091,45 @@ fn the_clip_latch_is_one_for_the_header_and_the_transport_bar() {
     assert!(!core.transport_bar().rec_clip_latched());
     assert!(!header_meter(&core, &key).latched);
 }
+
+/// A second take recorded over the first one neither hides it nor gets hidden by it: the clip
+/// becomes a take group of two takes (one undo step) and the new take plays over the overlap.
+#[test]
+fn recording_over_an_audio_clip_makes_a_take_group_of_two_takes_in_one_undo_step() {
+    let mut core = core_with(2);
+    let key = add_audio_track(&mut core, "Guitar");
+    arm(&mut core, &key, true);
+    let record = |core: &mut AppCore<OfflineSink>| {
+        core.transport_action(TransportAction::ToggleRecord);
+        pump(core, 4_800, 480);
+        pump(core, 48_000, 480);
+        core.transport_action(TransportAction::Stop);
+        pump(core, 4_800, 480);
+        core.wait_background();
+    };
+    record(&mut core);
+    let first = clips(&core, &key);
+    assert_eq!(first.len(), 1);
+    assert!(
+        core.doc().song.track(&key).unwrap().lanes[0]
+            .take_groups
+            .is_empty()
+    );
+    core.transport_action(TransportAction::ReturnToZero);
+    record(&mut core);
+    let group = &core.doc().song.track(&key).unwrap().lanes[0].take_groups;
+    assert_eq!(group.len(), 1, "one group");
+    assert_eq!(group[0].takes.len(), 2, "the old clip and the new take");
+    assert_eq!(asset_of(&group[0].takes[0]).0, asset_of(&first[0]).0);
+    let overlap = first[0].start + first[0].length / 2;
+    assert_eq!(group[0].take_at(overlap), Some(1), "the new take plays");
+    assert!(core.undo());
+    let after = clips(&core, &key);
+    assert_eq!(after.len(), 1, "undo brings the plain clip back");
+    assert_eq!(after[0].id, first[0].id);
+    assert!(
+        core.doc().song.track(&key).unwrap().lanes[0]
+            .take_groups
+            .is_empty()
+    );
+}

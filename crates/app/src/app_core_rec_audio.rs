@@ -40,7 +40,9 @@
 //!   registered (`RegisterAsset`, not an undo step). A track with one lap gets one
 //!   `AddAudioClip`; a track with several laps (a loop recording) gets **one `NewTakeGroup`**,
 //!   the laps stacked as takes with the last lap playing (pick or comp them in the arrangement),
-//!   exactly like MIDI laps. Each is one undo step per track. Undo removes the clip or the
+//!   exactly like MIDI laps. Laps that land on clips already on the lane never hide them or get
+//!   hidden: they join the take group whose compiled clips they overlap (`AddTake`) or make a
+//!   group with the overlapped plain clips (`GroupAsTakes`). Each is one undo step per track. Undo removes the clip or the
 //!   group; the asset stays in the pool until a save prunes it (the
 //!   orphan rule). A clip starts on the first tick at or after its audio ([`place_lap`]) with a
 //!   sub-tick `source_offset`, so every sample plays on its exact song frame.
@@ -474,9 +476,13 @@ impl<S: EngineSink> AppCore<S> {
         Some((placement.start_tick, length, placement.source_offset))
     }
 
-    /// Adds the placed laps of one track: a single lap is one `AddAudioClip`; several laps (a
-    /// loop recording) become the stacked takes of one `NewTakeGroup`, later laps on top, so
-    /// the last lap plays until the user picks or comps another. Both are one undo step.
+    /// Adds the placed laps of one track. On a lane with nothing under the take: a single lap is
+    /// one `AddAudioClip`; several laps (a loop recording) become the stacked takes of one
+    /// `NewTakeGroup`, later laps on top, so the last lap plays until the user picks or comps
+    /// another. A take over existing clips never hides, or is hidden by, them: the laps join the
+    /// take group whose comp clips they overlap (`AddTake`, one per lap), or the overlapped plain
+    /// clips and the laps become a new group (`GroupAsTakes`); the new takes play over the overlap
+    /// and the old clips everywhere else. Every case is one undo step.
     fn add_lap_clips(&mut self, device: DeviceKey, laps: Vec<PlacedLap>) {
         let content = |asset: String, source_offset: u64| AudioClipContent {
             asset,
@@ -490,8 +496,63 @@ impl<S: EngineSink> AppCore<S> {
             xfade: None,
             warp: Default::default(),
         };
-        let command = if let [(start, length, asset, source_offset)] = laps.as_slice() {
-            SongCommand::AddAudioClip {
+        let clips: Vec<Clip> = laps
+            .iter()
+            .map(|(start, length, asset, source_offset)| Clip {
+                id: ClipId(0),
+                start: *start,
+                length: *length,
+                offset: 0,
+                loop_length: None,
+                muted: false,
+                grid: None,
+                scale: None,
+                controllers: Vec::new(),
+                content: ClipContent::Audio(content(asset.clone(), *source_offset)),
+            })
+            .collect();
+        let from = clips.iter().map(|c| c.start).min().unwrap_or(0);
+        let to = clips.iter().map(Clip::end).max().unwrap_or(0);
+        let lane = 0;
+        // What the lane holds under the take: the take group whose comp clips overlap it, else
+        // the plain clips that do.
+        let (group, loose) = self
+            .doc()
+            .song
+            .track(&device)
+            .and_then(|t| t.lanes.get(lane))
+            .map_or((None, Vec::new()), |l| {
+                let overlapping: Vec<&Clip> = l
+                    .clips
+                    .iter()
+                    .filter(|c| !c.muted && c.start < to && c.end() > from)
+                    .collect();
+                let group = l
+                    .take_groups
+                    .iter()
+                    .find(|g| overlapping.iter().any(|c| g.clips.contains(&c.id)))
+                    .map(|g| g.id);
+                let loose = overlapping
+                    .iter()
+                    .filter(|c| !l.take_groups.iter().any(|g| g.clips.contains(&c.id)))
+                    .map(|c| c.id)
+                    .collect();
+                (group, loose)
+            });
+        let commands: Vec<SongCommand> = if let Some(group) = group {
+            clips
+                .into_iter()
+                .map(|clip| SongCommand::AddTake { group, clip })
+                .collect()
+        } else if !loose.is_empty() {
+            vec![SongCommand::GroupAsTakes {
+                device,
+                lane,
+                clips: loose,
+                extra: clips,
+            }]
+        } else if let [(start, length, asset, source_offset)] = laps.as_slice() {
+            vec![SongCommand::AddAudioClip {
                 device,
                 start: *start,
                 length: *length,
@@ -501,31 +562,20 @@ impl<S: EngineSink> AppCore<S> {
                 fade_in: 0,
                 fade_out: 0,
                 fade_curve: atomik_model::FadeCurve::Linear,
-            }
+            }]
         } else {
-            let takes = laps
-                .into_iter()
-                .map(|(start, length, asset, source_offset)| Clip {
-                    id: ClipId(0),
-                    start,
-                    length,
-                    offset: 0,
-                    loop_length: None,
-                    muted: false,
-                    grid: None,
-                    scale: None,
-                    controllers: Vec::new(),
-                    content: ClipContent::Audio(content(asset, source_offset)),
-                })
-                .collect();
-            SongCommand::NewTakeGroup {
+            vec![SongCommand::NewTakeGroup {
                 device,
-                lane: 0,
-                takes,
-            }
+                lane,
+                takes: clips,
+            }]
         };
-        // A rejection is already reported.
-        let _ = self.apply_command(Command::Song(command));
+        for (i, command) in commands.into_iter().enumerate() {
+            // The takes after the first fold into its undo step. A rejection is already reported.
+            self.join_next = i > 0;
+            let _ = self.apply_command(Command::Song(command));
+            self.join_next = false;
+        }
         self.document.end_merge();
     }
 

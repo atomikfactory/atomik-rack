@@ -8,7 +8,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::console::OutputDest;
 use atomik_model::{
     Command, ConsoleBus, ConsoleCommand, Document, PROJECT_VERSION, load_patch, load_project,
-    new_project_doc, save_patch, save_project,
+    save_patch, save_project,
 };
 use common::plugin::plugin_console_registry;
 use common::*;
@@ -27,7 +27,7 @@ fn fixture(name: &str) -> String {
 /// Two synths, a bus "Drums" with a nested bus "Sub \"A\" é" under it, channel 1 on the sub.
 fn project() -> (Document, Registry) {
     let r = plugin_console_registry();
-    let mut d = Document::new(new_project_doc());
+    let mut d = Document::new(legacy_project_doc());
     run(
         &mut d,
         &r,
@@ -67,9 +67,9 @@ fn error(text: &str, r: &Registry) -> String {
 
 #[test]
 fn the_format_is_version_12() {
-    assert_eq!(PROJECT_VERSION, 34);
+    assert_eq!(PROJECT_VERSION, 35);
     let (d, _) = project();
-    assert!(save_project(d.doc()).contains("\"version\": 34,"));
+    assert!(save_project(d.doc()).contains("\"version\": 35,"));
 }
 
 #[test]
@@ -153,7 +153,7 @@ fn buses_need_version_12() {
     let (d, r) = project();
     let text = save_project(d.doc());
     for v in 3..=11 {
-        let old = text.replace("\"version\": 34", &format!("\"version\": {v}"));
+        let old = text.replace("\"version\": 35", &format!("\"version\": {v}"));
         let e = error(&old, &r);
         assert!(e.contains("console") && e.contains("buses"), "v{v}: {e}");
     }

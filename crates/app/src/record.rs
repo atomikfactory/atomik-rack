@@ -22,7 +22,9 @@
 //!   one clip, in lap order. The app puts a track's clips on its note lane as one take group
 //!   (`SongCommand::NewTakeGroup`, one undo step) when there are several, so the passes are
 //!   stacked takes and the last one plays until the user picks or comps another; a single clip
-//!   (no loop, or the loop never wrapped) is a plain `AddClip` as before.
+//!   (no loop, or the loop never wrapped) is a plain `AddClip` as before. In the **Layer** record
+//!   mode the laps become one merged clip instead and the take goes into the clip under it
+//!   (see [`crate::record_over`]).
 //! - **Clip range.** A lap covers the recorded time (lap 0: from the take's start to the loop
 //!   end or the stop; later laps: from the loop start), widened to its notes, rounded out to
 //!   whole bars. Notes are relative to the clip start, sorted by `(tick, key)`, without

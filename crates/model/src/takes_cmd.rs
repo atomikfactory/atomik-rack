@@ -162,6 +162,121 @@ pub(crate) fn plan(
                 edit,
             ]))
         }
+        SongCommand::GroupAsTakes {
+            device,
+            lane,
+            clips,
+            extra,
+        } => {
+            let t = &doc.song.tracks[track_index(doc, &device)?];
+            let lane_ref = t
+                .lanes
+                .get(lane)
+                .ok_or_else(|| bad(format!("{device} has no lane {lane}")))?;
+            if matches!(lane_ref.kind, LaneKind::Automation(_)) {
+                return Err(bad("takes are for notes and audio lanes"));
+            }
+            let total = clips.len() + extra.len();
+            if total == 0 || total > MAX_TAKES {
+                return Err(range(format!(
+                    "a take group needs 1..={MAX_TAKES} takes, found {total}"
+                )));
+            }
+            let mut moved: Vec<&Clip> = Vec::with_capacity(clips.len());
+            for id in &clips {
+                let c = lane_ref.clips.iter().find(|c| c.id == *id).ok_or_else(|| {
+                    bad(format!("clip {} is not on lane {lane} of {device}", id.0))
+                })?;
+                if lane_ref.take_groups.iter().any(|g| g.clips.contains(id)) {
+                    return Err(bad(format!(
+                        "clip {} is already compiled from a take group",
+                        id.0
+                    )));
+                }
+                if moved.iter().any(|m| m.id == *id) {
+                    return Err(bad(format!("clip {} is listed twice", id.0)));
+                }
+                moved.push(c);
+            }
+            moved.sort_by_key(|c| (c.start, c.id));
+            let mut edits: Vec<Edit> = moved
+                .iter()
+                .map(|c| Edit::Clip {
+                    device: device.clone(),
+                    lane,
+                    old: Some((*c).clone()),
+                    new: None,
+                })
+                .collect();
+            let mut takes: Vec<Clip> = moved.into_iter().cloned().collect();
+            let mut next = doc.song.next_clip_id;
+            let first = next;
+            for clip in extra {
+                let mut clip = check_new_clip(doc, registry, &device, lane, clip)?;
+                clip.id = ClipId(next);
+                next = next
+                    .checked_add(1)
+                    .ok_or_else(|| bad("clip ids are exhausted"))?;
+                takes.push(clip);
+            }
+            let group = TakeGroup {
+                id: doc.song.next_take_group_id(),
+                comp: layered_comp(&takes),
+                takes,
+                clips: Vec::new(),
+            };
+            let mut scratch = doc.clone();
+            scratch.song.next_clip_id = next;
+            edits.insert(
+                0,
+                Edit::NextClipId {
+                    old: first,
+                    new: next,
+                },
+            );
+            edits.push(build(
+                &scratch,
+                &device,
+                lane,
+                None,
+                Some(group),
+                Clips::Recompile,
+            )?);
+            Ok(Edit::Compound(edits))
+        }
+        SongCommand::AddTake { group, clip } => {
+            let (device, lane, g) = find(doc, group)?;
+            if g.takes.len() >= MAX_TAKES {
+                return Err(range(format!(
+                    "a take group holds at most {MAX_TAKES} takes"
+                )));
+            }
+            let mut clip = check_new_clip(doc, registry, &device, lane, clip)?;
+            let id = doc.song.next_clip_id;
+            let next = id
+                .checked_add(1)
+                .ok_or_else(|| bad("clip ids are exhausted"))?;
+            clip.id = ClipId(id);
+            let mut new = g.clone();
+            let (start, end) = (clip.start, clip.end());
+            new.takes.push(clip);
+            let top = new.takes.len() - 1;
+            set_segment(&mut new.comp, top, start, end);
+            let mut scratch = doc.clone();
+            scratch.song.next_clip_id = next;
+            let edit = build(
+                &scratch,
+                &device,
+                lane,
+                Some(g),
+                Some(new),
+                Clips::Recompile,
+            )?;
+            Ok(Edit::Compound(vec![
+                Edit::NextClipId { old: id, new: next },
+                edit,
+            ]))
+        }
         SongCommand::PickTake { group, take } => {
             let (device, lane, g) = find(doc, group)?;
             if take >= g.takes.len() {

@@ -203,6 +203,32 @@ pub enum WorkflowCommand {
         /// At least two clips.
         ids: Vec<ClipId>,
     },
+    /// Merges a recorded take into the note clip under its start (a *Layer* recording): the
+    /// clip keeps its id, start and offset, grows to hold the take, keeps every old note, takes
+    /// the take's notes (a new note replaces an old one with the same start and key) and, for
+    /// each controller kind the take carries, its points over the take's span. The clip must be
+    /// an unlooped note clip and the take (a note clip, content offset 0 as a recording makes
+    /// it) must start inside it. One undo step; the song End follows a longer clip. See
+    /// [`crate::record_over`] for the rules.
+    LayerRecording {
+        /// The clip that takes the notes.
+        clip: ClipId,
+        /// The recorded clip (its id is ignored; it is not added).
+        take: Clip,
+    },
+    /// Adds a recorded take as a new note clip and makes it the clip that plays over its span (an
+    /// *Engulf*): an unmuted clip that starts inside the take and ends within it is removed, one
+    /// that starts inside it and ends after it has its start trimmed to the take's end (content
+    /// offset advanced, a loop keeps its phase). Clips that start before the take are not
+    /// touched. One undo step; the new id is reported like `AddClip`'s.
+    EngulfRecording {
+        /// Device (track).
+        device: DeviceKey,
+        /// The note lane.
+        lane: usize,
+        /// The recorded clip (id ignored).
+        clip: Clip,
+    },
     /// Pastes notes into a note clip so the earliest starts at song tick `at_tick`. A pasted
     /// note replaces a note with the same start and key. The clip keeps its length.
     PasteNotes {
@@ -480,6 +506,12 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
+        WorkflowCommand::LayerRecording { clip, take } => {
+            crate::record_over::plan_layer(doc, registry, clip, &take)
+        }
+        WorkflowCommand::EngulfRecording { device, lane, clip } => {
+            crate::record_over::plan_engulf(doc, registry, &device, lane, clip)
+        }
         WorkflowCommand::RemoveClips { ids } => plain(remove_clips(doc, &ids)),
         WorkflowCommand::SetClipsMuted { ids, muted } => plain(set_clips_muted(doc, &ids, muted)),
         WorkflowCommand::PasteNotes {

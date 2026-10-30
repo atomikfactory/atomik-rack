@@ -204,7 +204,10 @@ pub fn demo_doc() -> RackDoc {
             enabled: false,
         }),
     );
-    d.doc().clone()
+    // The committed demo predates note tails: it keeps them off so it sounds as it always did.
+    let mut doc = d.doc().clone();
+    doc.song.tails = false;
+    doc
 }
 
 #[test]
@@ -251,7 +254,7 @@ fn the_committed_project_is_the_generated_one_and_canonical() {
     assert_eq!(save_project(&doc), text);
     assert_eq!(load_project(&save_project(&doc), &registry).unwrap(), doc);
     assert!(
-        text.contains("\"version\": 34"),
+        text.contains("\"version\": 35"),
         "saved in the current format"
     );
 }

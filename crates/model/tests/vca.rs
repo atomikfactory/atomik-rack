@@ -9,7 +9,7 @@ use atomik_device_sdk::Registry;
 use atomik_model::console::{MAX_VCA_NAME_CHARS, MAX_VCAS, OutputDest, VCA_PALETTE, VcaFeed};
 use atomik_model::{
     Command, ConsoleCommand, Document, PROJECT_VERSION, SyncOp, WorkflowCommand, load_project,
-    new_project_doc, save_project,
+    save_project,
 };
 use common::console_ops::assert_console_invariants;
 use common::workflow::wf;
@@ -19,7 +19,7 @@ use serde_json::Value;
 /// The starter with four synths: channels `channel`, `channel-2`, `channel-3`, `channel-4`.
 fn project() -> (Document, Registry) {
     let r = console_registry();
-    let mut doc = new_project_doc();
+    let mut doc = legacy_project_doc();
     doc.output_channels = 8;
     let mut d = Document::new(doc);
     run(
@@ -531,9 +531,9 @@ fn grouped() -> (Document, Registry) {
 fn groups_round_trip_in_format_26_in_a_stable_text() {
     let (d, r) = grouped();
     let text = save_project(d.doc());
-    assert_eq!(PROJECT_VERSION, 34);
+    assert_eq!(PROJECT_VERSION, 35);
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 34);
+    assert_eq!(v["version"], 35);
     assert_eq!(v["console"]["vcas"][0]["name"], "Drums");
     assert_eq!(v["console"]["vcas"][0]["level_db"], -4.5);
     assert_eq!(v["console"]["vcas"][0]["mute"], true);
@@ -554,12 +554,12 @@ fn a_project_without_groups_differs_from_its_version_25_file_in_the_version_line
     let (d, r) = project();
     let text = save_project(d.doc());
     assert!(!text.contains("vcas"));
-    let v25 = text.replace("\"version\": 34", "\"version\": 25");
+    let v25 = text.replace("\"version\": 35", "\"version\": 25");
     let loaded = load_project(&v25, &r).unwrap();
     assert!(loaded.console.vcas.is_empty());
     assert_eq!(save_project(&loaded), text);
     // A file before the format has no field for them.
-    let with = save_project(grouped().0.doc()).replace("\"version\": 34", "\"version\": 25");
+    let with = save_project(grouped().0.doc()).replace("\"version\": 35", "\"version\": 25");
     let e = load_project(&with, &r).unwrap_err().to_string();
     assert!(e.contains("vcas"), "{e}");
 }

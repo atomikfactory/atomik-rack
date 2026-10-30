@@ -308,3 +308,33 @@ fn chase_events_are_independent_of_the_host_block_size() {
         assert_eq!(scenario(block), base, "block {block}");
     }
 }
+
+/// A note that starts inside the loop and rings past its end (a note tail) is released at the wrap
+/// and chased again from the loop start: no key is left held across the wrap.
+#[test]
+fn a_tail_note_started_in_the_loop_is_released_at_the_wrap() {
+    // Loop [0, PPQ) = frames [0, 24000); the note starts at U ticks and rings for 3 PPQ.
+    let notes = vec![vnote(U, 3 * PPQ, 60, 0.8)];
+    let ev = play_one(strack, notes, &[looping(0, PPQ), PLAY], 24_064);
+    // The note starts after the loop start, so nothing is chased after the wrap.
+    assert_eq!(ev, vec![(100, on_v(60, 0.8)), (24_000, off(60))]);
+}
+
+/// A long note still sounding at Stop is released by the stop.
+#[test]
+fn a_long_note_is_released_when_the_transport_stops() {
+    let notes = vec![vnote(0, 8 * PPQ, 60, 0.8)];
+    let (mut e, mut h, logs) = note_logs(1, 0);
+    h.submit_song(song(vec![strack(logs[0].0, notes)], &[(0, 120.0)]))
+        .unwrap();
+    h.transport(PLAY).unwrap();
+    run(&mut e, 6_400, 64);
+    h.transport(TransportCommand::Stop).unwrap();
+    run(&mut e, 640, 64);
+    let ev = logs[0].1.events();
+    assert_eq!(ev[0], (0, on_v(60, 0.8)));
+    let released = ev[1..]
+        .iter()
+        .any(|(f, k)| *f == 6_400 && matches!(k, NoteKind::Off { key: 60 } | NoteKind::AllOff));
+    assert!(released, "{ev:?}");
+}
