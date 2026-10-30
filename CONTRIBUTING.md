@@ -6,6 +6,7 @@ Before you start:
 
 1. For anything larger than a small fix, open an issue first so we can agree on the approach.
 2. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), especially the crate dependency rules, and [docs/TESTING.md](docs/TESTING.md).
+3. Check the [decision log](docs/DECISIONS.md): if your change touches a question settled or still open there, follow the entry, or say in the issue why it should change.
 
 All participants follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
