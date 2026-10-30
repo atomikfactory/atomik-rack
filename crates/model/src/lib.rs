@@ -46,6 +46,7 @@ mod plugin_cmd;
 mod plugin_io;
 mod project;
 mod rack_columns;
+mod read_limit;
 mod record_over;
 mod relink;
 mod rules;
@@ -103,6 +104,10 @@ pub use plugin::{
 };
 pub use project::{PROJECT_FORMAT, PROJECT_VERSION};
 pub use rack_columns::{MAX_RACK_COLUMNS, RackSlot, ResolvedSlot};
+pub use read_limit::{
+    MAX_DOCUMENT_BYTES, MAX_DOCUMENT_ENV, document_size_limit, read_document_text,
+    read_text_limited,
+};
 pub use record_over::{covering_note_clip, layered_clip, merge_laps};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
