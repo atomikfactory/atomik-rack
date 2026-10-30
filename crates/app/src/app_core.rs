@@ -1942,6 +1942,14 @@ impl<S: EngineSink> AppCore<S> {
         self.doc().resolve(&key)
     }
 
+    /// The name of the device the engine knows as instance `id` (a faulted device, for the
+    /// status line), if it is still in the rack.
+    pub fn device_name_of_instance(&self, id: u32) -> Option<String> {
+        let key = self.ids.iter().find(|(_, v)| v.0 == id)?.0;
+        let key = containers::container_of_split(key);
+        self.doc().resolve(&key).map(|d| d.name.clone())
+    }
+
     /// The shared live-notes target cell, read by the MIDI input thread.
     pub fn note_target_cell(&self) -> &Arc<NoteTarget> {
         &self.target

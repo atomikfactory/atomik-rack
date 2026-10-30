@@ -163,8 +163,11 @@ pub fn play<B: Backend>(
     let xrun_events_dropped = telemetry.events_dropped;
     totals.record(telemetry, seconds, midi_dropped, handle.dropped_events());
     report.events(&stream);
-    let engine = stream.stop();
-    drop(engine);
+    let stopped = stream.stop();
+    if let Err(e) = &stopped {
+        let _ = writeln!(stderr, "atomik-play: warning: {e}");
+    }
+    drop(stopped);
     handle.collect_garbage();
     if xrun_events_dropped > 0 {
         let warning = format!(

@@ -304,7 +304,7 @@ pub fn run(args: &Args, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Resul
             );
         }
         let started = clock();
-        let channels = render_built(built, block);
+        let channels = render_built(built, block)?;
         (channels, patch.sample_rate, started.elapsed())
     };
     write_wav_file(&args.output, &channels, sample_rate, args.format).map_err(|source| {

@@ -40,9 +40,9 @@ impl LiveStream for FakeStream {
     fn info(&self) -> &StreamInfo {
         &self.info
     }
-    fn stop(self) -> Engine {
+    fn stop(self) -> Result<Engine, IoError> {
         self.stops.set(self.stops.get() + 1);
-        self.engine
+        Ok(self.engine)
     }
 }
 

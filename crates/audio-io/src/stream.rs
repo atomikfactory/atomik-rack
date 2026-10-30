@@ -18,6 +18,7 @@ use crate::{DeviceInfo, HostInfo, HostKind, IoError, StreamSpec, Telemetry, Xrun
 use atomik_engine::{Engine, FrameClock};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rtrb::{Consumer, Producer};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -116,9 +117,11 @@ impl RunningStream {
 
     /// Stops the stream and returns the engine.
     ///
-    /// # Panics
-    /// If the audio backend does not release the stream callback within 5 s (a backend bug).
-    pub fn stop(self) -> Engine {
+    /// If the audio backend does not release the stream callback within 5 s (a driver that
+    /// hangs on stop) this returns an error instead of aborting: the stream has already been
+    /// dropped, so the engine stays with the backend's callback (it is leaked, never freed on
+    /// the wrong thread) and the caller should build a new engine.
+    pub fn stop(self) -> Result<Engine, IoError> {
         let Self {
             output,
             input,
@@ -128,10 +131,7 @@ impl RunningStream {
         // Dropping the output stream drops its callback, which sends the payload back here.
         drop(output);
         drop(input);
-        let payload = payload_rx
-            .recv_timeout(BACKEND_TIMEOUT)
-            .expect("the audio backend did not release the engine after the stream was dropped");
-        payload.engine
+        recover(&payload_rx, BACKEND_TIMEOUT).map(|payload| payload.engine)
     }
 
     /// What was opened.
@@ -144,6 +144,15 @@ impl RunningStream {
     pub fn realtime_priority(&self) -> Option<bool> {
         self.promotion.result()
     }
+}
+
+/// Waits up to `timeout` for the callback's payload to come back after its stream was dropped.
+fn recover<P>(rx: &Receiver<P>, timeout: Duration) -> Result<P, IoError> {
+    rx.recv_timeout(timeout).map_err(|_| {
+        IoError::Backend(
+            "the audio backend did not release the engine after the stream was dropped".to_string(),
+        )
+    })
 }
 
 /// Lists every available host and its devices.
@@ -272,6 +281,7 @@ pub fn start_with_input(
                 format: out_choice.format,
                 scratch_out: vec![0.0; max_frames * usize::from(out_choice.channels)],
                 scratch_in: vec![0.0; max_frames * usize::from(in_channels)],
+                halted: false,
             };
             out_device.build_output_stream_raw(
                 stream_config(out_choice, spec.sample_rate, size),
@@ -553,6 +563,9 @@ struct OutputCallback {
     format: SampleKind,
     scratch_out: Vec<f32>,
     scratch_in: Vec<f32>,
+    /// The callback caught a panic from the engine itself: it renders silence from then on.
+    /// (A panicking device never gets here: the engine contains it.)
+    halted: bool,
 }
 
 impl OutputCallback {
@@ -561,7 +574,7 @@ impl OutputCallback {
         // before anything is rendered. Later callbacks only load an atomic here.
         self.promotion.promote_once(rt::promote_current_thread);
         let start = telemetry::now();
-        let Some(payload) = self.payload.get_mut() else {
+        let Some(payload) = self.payload.get_mut().filter(|_| !self.halted) else {
             data.bytes_mut().fill(0);
             return;
         };
@@ -581,7 +594,10 @@ impl OutputCallback {
             adapter: &mut self.adapter,
             scratch_in: &mut self.scratch_in,
         };
-        match self.format {
+        // Last line of defence: a panic must never unwind into the host's audio thread. (The
+        // engine already contains device panics; this catches anything else, and `catch_unwind`
+        // costs nothing while nothing panics.)
+        let rendered = catch_unwind(AssertUnwindSafe(|| match self.format {
             SampleKind::F32 => match data.as_slice_mut::<f32>() {
                 Some(out) => render.f32(out),
                 None => data.bytes_mut().fill(0),
@@ -594,7 +610,15 @@ impl OutputCallback {
                 Some(out) => render.int(&mut self.scratch_out, out),
                 None => data.bytes_mut().fill(0),
             },
+        }));
+        if rendered.is_err() {
+            self.halted = true;
+            self.telemetry.set_callback_panicked();
+            data.bytes_mut().fill(0);
+            return;
         }
+        self.telemetry
+            .set_fault(payload.engine.fault().map(|id| id.0));
         if let Some(reader) = payload.input.as_ref() {
             let in_ch = usize::from(self.adapter.inputs()).max(1);
             let backlog = u32::try_from(reader.available() / in_ch).unwrap_or(u32::MAX);
@@ -708,5 +732,25 @@ fn push_int<T: IntSample>(writer: &mut RingWriter, scratch: &mut [f32], src: &[T
         let scratch = &mut scratch[..chunk.len()];
         convert::to_f32(chunk, scratch);
         writer.write(scratch);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_backend_that_never_releases_the_engine_is_an_error_not_an_abort() {
+        // The fake backend keeps the callback (here: just the sender) alive forever.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<u32>(1);
+        let result = recover(&rx, Duration::from_millis(50));
+        assert!(matches!(result, Err(IoError::Backend(_))));
+        drop(tx);
+    }
+
+    #[test]
+    fn a_backend_that_releases_the_callback_hands_the_payload_back() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<u32>(1);
+        tx.send(7).unwrap();
+        assert_eq!(recover(&rx, Duration::from_millis(50)).unwrap(), 7);
     }
 }

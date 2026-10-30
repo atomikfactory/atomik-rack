@@ -1051,6 +1051,8 @@ pub(crate) fn render_core(
     if let Some(host) = plugins.host.as_deref_mut() {
         host.poll();
     }
+    // Torn down above even when the render failed, so a faulted device never skips it.
+    let channels = channels?;
     Ok(channels.map(|channels| Core {
         rendered: Rendered {
             channels,
