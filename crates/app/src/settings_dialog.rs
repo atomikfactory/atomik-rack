@@ -21,8 +21,8 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, HostChoice, LINGER_CHOICES, MidiInputRole, PRE_COUNT_CHOICES,
-    RECORD_OFFSET_CHOICES, WORKER_CHOICES,
+    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES, MidiInputRole,
+    PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -113,6 +113,22 @@ pub enum Choice {
     /// What to do when the audio device is lost: `true` switches to the host's default devices
     /// on its own, `false` only says so and offers Audio > Restart Audio.
     LossReset(bool),
+    /// MIDI clock out on or off.
+    ClockOut(bool),
+    /// An output port the clock is sent to: a click switches it on or off.
+    ClockPort(String),
+    /// The offset of every clock output port, in milliseconds.
+    ClockOffset(i32),
+    /// Whether the clock keeps running while the transport is stopped.
+    ClockWhileStopped(bool),
+    /// Whether Song Position Pointer is sent.
+    ClockPosition(bool),
+    /// Whether a locate while playing sends Stop, the position and Continue.
+    ClockRestart(bool),
+    /// The input port the clock is followed from (`None` = none).
+    ClockInPort(Option<String>),
+    /// Whether the transport follows the clock in.
+    ClockFollow(bool),
 }
 
 /// A titled group of options.
@@ -137,11 +153,19 @@ pub enum Tab {
     Workflow,
     /// The control surface.
     Surfaces,
+    /// MIDI clock in and out.
+    Sync,
 }
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 4] = [Tab::Audio, Tab::Keyboard, Tab::Workflow, Tab::Surfaces];
+    pub const ALL: [Tab; 5] = [
+        Tab::Audio,
+        Tab::Keyboard,
+        Tab::Workflow,
+        Tab::Surfaces,
+        Tab::Sync,
+    ];
 
     /// The tab label.
     pub fn label(self) -> &'static str {
@@ -150,6 +174,7 @@ impl Tab {
             Tab::Keyboard => "Keyboard",
             Tab::Workflow => "Workflow",
             Tab::Surfaces => "Surfaces",
+            Tab::Sync => "Sync",
         }
     }
 
@@ -159,6 +184,7 @@ impl Tab {
             Tab::Keyboard => "Keyboard shortcuts",
             Tab::Workflow => "Workflow",
             Tab::Surfaces => "Control surfaces",
+            Tab::Sync => "MIDI clock",
         }
     }
 }
@@ -334,7 +360,7 @@ impl SettingsDialog {
     /// The panel of the tab that shows.
     pub fn panel(&self, view: Size) -> Rect {
         match self.tab {
-            Tab::Audio | Tab::Surfaces => self.layout(view).panel,
+            Tab::Audio | Tab::Surfaces | Tab::Sync => self.layout(view).panel,
             Tab::Keyboard => {
                 let width = (view.width - 32.0).clamp(320.0, 780.0);
                 let height = (view.height - 48.0).clamp(300.0, (view.height - 32.0).max(300.0));
@@ -392,6 +418,9 @@ impl SettingsDialog {
     /// The sections: host, output device, buffer, MIDI input, workers, linger. Saved values
     /// that are no longer available are still listed (marked) so they stay selectable.
     pub fn sections(&self) -> Vec<Section> {
+        if self.tab == Tab::Sync {
+            return self.sync_sections();
+        }
         if self.tab == Tab::Surfaces {
             return self.surface_sections();
         }
@@ -578,6 +607,120 @@ impl SettingsDialog {
         sections
     }
 
+    /// The Sync tab: MIDI clock out (ports, offset, while stopped, position) and in (port,
+    /// follow). A saved port that is not plugged in is still listed (marked) so it stays
+    /// selectable.
+    fn sync_sections(&self) -> Vec<Section> {
+        let y = &self.draft.sync;
+        let switch = |on: fn(bool) -> Choice| {
+            vec![("Off".to_string(), on(false)), ("On".to_string(), on(true))]
+        };
+        let mut out_ports: Vec<(String, Choice)> = self
+            .lists
+            .midi_outputs
+            .iter()
+            .map(|p| (p.clone(), Choice::ClockPort(p.clone())))
+            .collect();
+        out_ports.extend(
+            y.out_ports
+                .iter()
+                .filter(|p| !self.lists.midi_outputs.contains(&p.name))
+                .map(|p| {
+                    (
+                        format!("{} (not found)", p.name),
+                        Choice::ClockPort(p.name.clone()),
+                    )
+                }),
+        );
+        let mut offsets = CLOCK_OFFSET_CHOICES.to_vec();
+        for port in &y.out_ports {
+            if !offsets.contains(&port.offset_ms) {
+                offsets.push(port.offset_ms);
+            }
+        }
+        offsets.sort_unstable();
+        let offsets = offsets
+            .into_iter()
+            .map(|ms| {
+                (
+                    format!("{ms:+} ms").replace("+0", "0"),
+                    Choice::ClockOffset(ms),
+                )
+            })
+            .collect();
+        let mut in_ports = vec![("None".to_string(), Choice::ClockInPort(None))];
+        in_ports.extend(
+            self.lists
+                .midi_ports
+                .iter()
+                .map(|p| (p.clone(), Choice::ClockInPort(Some(p.clone())))),
+        );
+        if let Some(saved) = y
+            .clock_in_port
+            .as_ref()
+            .filter(|p| !self.lists.midi_ports.contains(p))
+        {
+            in_ports.push((
+                format!("{saved} (not found)"),
+                Choice::ClockInPort(Some(saved.clone())),
+            ));
+        }
+        vec![
+            Section {
+                title: "MIDI clock out",
+                options: switch(Choice::ClockOut),
+                chips: true,
+            },
+            Section {
+                title: "Clock out ports",
+                options: out_ports,
+                chips: false,
+            },
+            Section {
+                title: "Offset of every clock out port",
+                options: offsets,
+                chips: true,
+            },
+            Section {
+                title: "While the transport is stopped",
+                options: vec![
+                    ("Stop sending".to_string(), Choice::ClockWhileStopped(false)),
+                    ("Keep sending".to_string(), Choice::ClockWhileStopped(true)),
+                ],
+                chips: true,
+            },
+            Section {
+                title: "Song position",
+                options: vec![
+                    ("Send position".to_string(), Choice::ClockPosition(true)),
+                    ("Do not send it".to_string(), Choice::ClockPosition(false)),
+                ],
+                chips: true,
+            },
+            Section {
+                title: "A locate while playing",
+                options: vec![
+                    (
+                        "Stop, position, continue".to_string(),
+                        Choice::ClockRestart(true),
+                    ),
+                    ("Position only".to_string(), Choice::ClockRestart(false)),
+                ],
+                chips: true,
+            },
+            Section {
+                title: "MIDI clock in port",
+                options: in_ports,
+                chips: false,
+            },
+            Section {
+                title: "Follow the clock in",
+                options: switch(Choice::ClockFollow),
+                chips: true,
+            },
+        ]
+    }
+
     /// The Surfaces tab: the driver and the two ports. A saved port that is not plugged in is
     /// still listed (marked) so it stays selectable.
     fn surface_sections(&self) -> Vec<Section> {
@@ -681,6 +824,15 @@ impl SettingsDialog {
             Choice::Workers(w) => d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
             Choice::LossReset(r) => d.device_loss.reset_to_default == *r,
+            Choice::ClockOut(on) => d.sync.clock_out == *on,
+            Choice::ClockPort(p) => d.sync.out_ports.iter().any(|o| o.name == *p),
+            Choice::ClockOffset(ms) if d.sync.out_ports.is_empty() => *ms == 0,
+            Choice::ClockOffset(ms) => d.sync.out_ports.iter().all(|o| o.offset_ms == *ms),
+            Choice::ClockWhileStopped(on) => d.sync.send_while_stopped == *on,
+            Choice::ClockPosition(on) => d.sync.send_position == *on,
+            Choice::ClockRestart(on) => d.sync.restart_on_locate == *on,
+            Choice::ClockInPort(n) => d.sync.clock_in_port == *n,
+            Choice::ClockFollow(on) => d.sync.follow_clock == *on,
         }
     }
 
@@ -721,10 +873,39 @@ impl SettingsDialog {
             Choice::Workers(w) => self.draft.workers = w,
             Choice::Linger(l) => self.draft.worker_linger_spins = l,
             Choice::LossReset(r) => self.draft.device_loss.reset_to_default = r,
+            Choice::ClockOut(on) => self.draft.sync.clock_out = on,
+            Choice::ClockPort(p) => {
+                let on = self.draft.sync.out_ports.iter().any(|o| o.name == p);
+                self.draft.sync.set_out_port(&p, !on);
+            }
+            Choice::ClockOffset(ms) => {
+                for port in &mut self.draft.sync.out_ports {
+                    port.offset_ms = ms;
+                }
+            }
+            Choice::ClockWhileStopped(on) => self.draft.sync.send_while_stopped = on,
+            Choice::ClockPosition(on) => self.draft.sync.send_position = on,
+            Choice::ClockRestart(on) => self.draft.sync.restart_on_locate = on,
+            Choice::ClockInPort(n) => self.draft.sync.clock_in_port = n,
+            Choice::ClockFollow(on) => self.draft.sync.follow_clock = on,
         }
     }
 
     fn notes(&self) -> Vec<String> {
+        if self.tab == Tab::Sync {
+            let mut notes = vec![
+                "Clock out sends 24 clocks per quarter note, Start, Stop and Continue to every port switched on."
+                    .to_string(),
+                "A positive offset sends the clock later, a negative one earlier; it moves every port."
+                    .to_string(),
+                "Following a clock: its tempo, Start, Stop, Continue and position drive the transport."
+                    .to_string(),
+                "The transport buttons do nothing then, the audio clips are silent and a bounce is never affected."
+                    .to_string(),
+            ];
+            notes.extend(self.lists.errors.iter().cloned());
+            return notes;
+        }
         if self.tab == Tab::Surfaces {
             let mut notes = vec![
                 "A surface shows the console: its faders, V-pots, keys and displays follow it."
@@ -857,7 +1038,7 @@ impl SettingsDialog {
                 self.tab = tab;
                 return DialogOutcome::Open;
             }
-            if !matches!(self.tab, Tab::Audio | Tab::Surfaces) {
+            if !matches!(self.tab, Tab::Audio | Tab::Surfaces | Tab::Sync) {
                 return self.handle_preferences(event, view);
             }
         }
@@ -925,7 +1106,7 @@ impl SettingsDialog {
         let out = match tab {
             Tab::Keyboard => prefs.keyboard.handle(event, panel),
             Tab::Workflow => prefs.workflow.handle(event, panel),
-            Tab::Audio | Tab::Surfaces => TabOutcome::Open,
+            Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
         match out {
             TabOutcome::Open => DialogOutcome::Open,

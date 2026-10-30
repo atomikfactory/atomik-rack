@@ -118,6 +118,15 @@ pub enum AppCommand {
     /// Options ▸ Pre-count (Ctrl+P): the count-in of a recording on or off. It is a setting
     /// (`pre_count_bars`), so the shell applies and saves it.
     TogglePreCount,
+    /// Options ▸ Sync ▸ MIDI Clock Out: send MIDI clock to the ports of the Sync settings (a
+    /// setting, so the shell applies and saves it).
+    ToggleClockOut,
+    /// Options ▸ Sync ▸ Send Clock While Stopped: keep sending the clock while the transport is
+    /// stopped.
+    ToggleClockWhileStopped,
+    /// Options ▸ Sync ▸ Follow MIDI Clock: the transport follows the clock of the Sync settings'
+    /// input port.
+    ToggleClockIn,
     /// Options ▸ Chase Notes: the selected track's note chase on or off.
     ToggleChase,
     /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
@@ -412,6 +421,9 @@ impl AppCommand {
             }
             AppCommand::Transport(TransportAction::Locate(_)) => return None,
             AppCommand::TogglePreCount => ("transport.pre_count", None),
+            AppCommand::ToggleClockOut => ("sync.clock_out", None),
+            AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
+            AppCommand::ToggleClockIn => ("sync.follow_clock", None),
             AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
             AppCommand::Quantize(InputQuantize::Off) => ("transport.input_quantize", Some("off")),
             AppCommand::Quantize(InputQuantize::Eighth) => {
@@ -604,6 +616,9 @@ impl AppCommand {
                 AppCommand::Transport(TransportAction::ClearOverride)
             }
             ("transport.pre_count", None) => AppCommand::TogglePreCount,
+            ("sync.clock_out", None) => AppCommand::ToggleClockOut,
+            ("sync.clock_while_stopped", None) => AppCommand::ToggleClockWhileStopped,
+            ("sync.follow_clock", None) => AppCommand::ToggleClockIn,
             ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
             ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::Off),
             ("transport.input_quantize", Some("eighth")) => {
@@ -893,6 +908,12 @@ pub struct MenuState {
     pub auto_lanes: bool,
     /// The pre-count (the count-in of a recording) is on.
     pub pre_count: bool,
+    /// MIDI clock is being sent.
+    pub clock_out: bool,
+    /// The clock is sent while the transport is stopped too.
+    pub clock_while_stopped: bool,
+    /// The transport follows a MIDI clock.
+    pub follow_clock: bool,
     /// Input quantize for recording.
     pub quantize: InputQuantize,
     /// The console shows in the lower pane.
@@ -1801,6 +1822,27 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     state.compensation,
                 ),
                 MenuEntry::Separator,
+                MenuEntry::Submenu(Submenu {
+                    label: "Sync",
+                    entries: vec![
+                        check(
+                            "MIDI Clock Out",
+                            AppCommand::ToggleClockOut,
+                            state.clock_out,
+                        ),
+                        check(
+                            "Send Clock While Stopped",
+                            AppCommand::ToggleClockWhileStopped,
+                            state.clock_while_stopped,
+                        ),
+                        check(
+                            "Follow MIDI Clock",
+                            AppCommand::ToggleClockIn,
+                            state.follow_clock,
+                        ),
+                    ],
+                }),
+                MenuEntry::Separator,
                 item("Settings\u{2026}", AppCommand::AudioSettings),
             ],
         },
@@ -1845,6 +1887,9 @@ mod tests {
             metronome: false,
             auto_lanes: false,
             pre_count: false,
+            clock_out: false,
+            clock_while_stopped: false,
+            follow_clock: false,
             quantize: InputQuantize::Off,
             console: false,
             console_maximised: false,
@@ -2068,6 +2113,9 @@ mod tests {
             v.push(AppCommand::Transport(t));
         }
         v.push(AppCommand::TogglePreCount);
+        v.push(AppCommand::ToggleClockOut);
+        v.push(AppCommand::ToggleClockWhileStopped);
+        v.push(AppCommand::ToggleClockIn);
         v.push(AppCommand::ToggleChase);
         for q in [
             InputQuantize::Off,
@@ -2587,6 +2635,9 @@ mod tests {
                 "Input Quantize: 1/16",
                 "Chase Notes",
                 "Delay Compensation",
+                "MIDI Clock Out",
+                "Send Clock While Stopped",
+                "Follow MIDI Clock",
                 "Settings\u{2026}"
             ]
         );
@@ -2625,6 +2676,9 @@ mod tests {
         assert_eq!(pre.shortcut.as_deref(), Some("Ctrl+P"));
         let on = MenuState {
             pre_count: true,
+            clock_out: false,
+            clock_while_stopped: false,
+            follow_clock: false,
             ..state()
         };
         let m = menus(&on, &standard);
@@ -2660,6 +2714,9 @@ mod tests {
                 metronome: false,
                 auto_lanes: false,
                 pre_count: false,
+                clock_out: false,
+                clock_while_stopped: false,
+                follow_clock: false,
                 quantize: InputQuantize::Eighth,
                 console: true,
                 console_maximised: false,

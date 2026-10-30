@@ -1847,6 +1847,9 @@ impl<B: AudioBackend> Shell<B> {
             metronome: self.core.metronome(),
             auto_lanes: self.core.auto_create_lanes(),
             pre_count: self.core.pre_count_bars() > 0,
+            clock_out: self.core.sink().settings().sync.clock_out,
+            clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
+            follow_clock: self.core.sink().settings().sync.follow_clock,
             quantize: self.core.input_quantize(),
             console: self.console_visible(),
             console_maximised: self.maximised(),
@@ -4660,6 +4663,33 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::TogglePreCount => {
                 let mut settings = self.core.sink().settings().clone();
                 settings.pre_count_bars = self.core.pre_count_toggled();
+                self.apply_settings(settings);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::ToggleClockOut => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.sync.clock_out = !settings.sync.clock_out;
+                if settings.sync.clock_out && settings.sync.out_ports.is_empty() {
+                    self.notify("MIDI clock out has no port yet: choose one in Settings > Sync");
+                }
+                self.apply_settings(settings);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::ToggleClockWhileStopped => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.sync.send_while_stopped = !settings.sync.send_while_stopped;
+                self.apply_settings(settings);
+                self.menubar.as_mut().map(MenuBar::close);
+                Vec::new()
+            }
+            AppCommand::ToggleClockIn => {
+                let mut settings = self.core.sink().settings().clone();
+                settings.sync.follow_clock = !settings.sync.follow_clock;
+                if settings.sync.follow_clock && settings.sync.clock_in_port.is_none() {
+                    self.notify("MIDI clock in has no port yet: choose one in Settings > Sync");
+                }
                 self.apply_settings(settings);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
