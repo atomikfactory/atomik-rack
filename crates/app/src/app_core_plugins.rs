@@ -77,9 +77,9 @@ use atomik_model::{
 };
 use atomik_plugin_host::ScanReport;
 use atomik_plugin_host::{
-    CrashJournal, EditorKind, InUsePlugin, InstanceId, InstantiateRequest, LOST, ManagerEvent,
-    NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle, PluginSettings,
-    PluginStatus, RecoveryDir, RescanMode, ScanJob, ScanRunner, blacklist_in_use,
+    CrashJournal, EditorKind, HUNG, InUsePlugin, InstanceId, InstantiateRequest, LOST,
+    ManagerEvent, NativeParent, ParamPhase, PluginCache, PluginCatalog, PluginHandle,
+    PluginSettings, PluginStatus, RecoveryDir, RescanMode, ScanJob, ScanRunner, blacklist_in_use,
 };
 use atomik_render::plugins::{PluginHost, PluginIsolation};
 use atomik_ui::plugin_data::{
@@ -101,6 +101,8 @@ pub const RECOVERY_KEEP: usize = 3;
 pub const STATE_QUIET_SECS: f64 = 1.0;
 /// Lines of the bounded plugin log shown in Settings.
 pub const LOG_CAPACITY: usize = 200;
+/// How many times in a row a plugin that stopped answering audio is reloaded without the user.
+const MAX_AUTO_RELOADS: u8 = 2;
 
 /// The files the plugin machinery keeps in the config directory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -261,6 +263,8 @@ pub(super) struct PluginState {
     failed: BTreeMap<DeviceKey, String>,
     /// Why a device is CRASHED: its plugin process ended (sandbox).
     crashed: BTreeMap<DeviceKey, String>,
+    /// How many times a hung plugin was reloaded by itself since the user last pressed RELOAD.
+    auto_reloads: BTreeMap<DeviceKey, u8>,
     /// Devices whose saved state failed to restore: the blob is kept, never captured over.
     no_capture: BTreeSet<DeviceKey>,
     /// The descriptor each live device was inserted with.
@@ -317,6 +321,7 @@ impl PluginState {
             batch_done: 0,
             failed: BTreeMap::new(),
             crashed: BTreeMap::new(),
+            auto_reloads: BTreeMap::new(),
             no_capture: BTreeSet::new(),
             live_desc: BTreeMap::new(),
             offline: BTreeSet::new(),
@@ -811,6 +816,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.plugins.failed.remove(flat);
         self.plugins.crashed.remove(flat);
+        self.plugins.auto_reloads.remove(flat);
         self.plugins.no_capture.remove(flat);
         self.plugins.shown.remove(flat);
         self.view
@@ -971,7 +977,11 @@ impl<S: EngineSink> AppCore<S> {
                 if let Some(key) = self.plugins.keys.get(&instance).cloned() {
                     self.plugins.log(format!("[{key}] crashed: {reason}"));
                     self.plugins.failed.remove(&key);
-                    self.plugins.crashed.insert(key, reason);
+                    let hung = reason.starts_with(HUNG);
+                    self.plugins.crashed.insert(key.clone(), reason);
+                    if hung {
+                        self.reload_hung_plugin(&key);
+                    }
                 }
             }
             ManagerEvent::LayoutChanged { instance, layout } => {
@@ -1447,7 +1457,10 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::OpenPluginGui { device } => self.open_plugin_gui(device),
             UiAction::OpenPluginParams { device } => self.open_plugin_params(device),
             UiAction::ClosePluginParams => self.close_plugin_params(),
-            UiAction::ReloadPlugin { device } => self.reload_plugin(device),
+            UiAction::ReloadPlugin { device } => {
+                self.plugins.auto_reloads.remove(device);
+                self.reload_plugin(device);
+            }
             UiAction::AutomatePluginParam { device, param } => {
                 self.automate_plugin_param(device, *param);
             }
@@ -1458,6 +1471,23 @@ impl<S: EngineSink> AppCore<S> {
             _ => return false,
         }
         true
+    }
+
+    /// A plugin whose process stopped answering audio was ended: it is reloaded from the
+    /// document's last captured state, as RELOAD does, [`MAX_AUTO_RELOADS`] times in a row; a
+    /// plugin that keeps hanging is left CRASHED for the user to decide.
+    fn reload_hung_plugin(&mut self, device: &DeviceKey) {
+        let tries = self.plugins.auto_reloads.entry(device.clone()).or_insert(0);
+        if *tries >= MAX_AUTO_RELOADS {
+            self.plugins.log(format!(
+                "[{device}] hung again: not reloaded by itself; press RELOAD to try once more"
+            ));
+            return;
+        }
+        *tries += 1;
+        self.plugins
+            .log(format!("[{device}] hung: reloading it from its last state"));
+        self.reload_plugin(device);
     }
 
     /// RELOAD: a stand-in whose plugin is installed gets its instance; a live instance restores
