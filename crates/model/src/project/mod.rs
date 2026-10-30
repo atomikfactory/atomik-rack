@@ -492,8 +492,7 @@ pub(crate) fn load(json: &str, registry: &Registry) -> Result<RackDoc, ModelErro
     load_with_warnings(json, registry).map(|(doc, _)| doc)
 }
 
-/// [`load`] and the load warnings (the rename of a device keyed `boundary`, see
-/// [`rename_boundary`]).
+/// [`load`] and the load warnings (see [`crate::load_project_with_warnings`]).
 pub(crate) fn load_with_warnings(
     json: &str,
     registry: &Registry,
@@ -505,7 +504,7 @@ pub(crate) fn load_with_warnings(
     // A file from a newer build that says an older reader may skip its additions.
     if schema::admit_newer(&mut value, &mut warnings)? {
         let text = value.to_string();
-        let doc = load_value(&value, &text, registry)?;
+        let doc = load_value(&value, &text, registry, &mut warnings)?;
         return Ok((doc, warnings));
     }
     // A file older than version 8 may use `boundary` as a device key; it is reserved now.
@@ -518,14 +517,20 @@ pub(crate) fn load_with_warnings(
         let doc = if value.get("format").and_then(Value::as_str) == Some(PATCH_FORMAT) {
             crate::patch::load(&text, registry)?
         } else {
-            load_value(&value, &text, registry)?
+            load_value(&value, &text, registry, &mut warnings)?
         };
         return Ok((doc, warnings));
     }
-    load_value(&value, json, registry).map(|doc| (doc, warnings))
+    let doc = load_value(&value, json, registry, &mut warnings)?;
+    Ok((doc, warnings))
 }
 
-fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
+fn load_value(
+    value: &Value,
+    json: &str,
+    registry: &Registry,
+    warnings: &mut Vec<String>,
+) -> Result<RackDoc, ModelError> {
     let root = JsonPath::default();
     let obj = value
         .as_object()
@@ -579,9 +584,15 @@ fn load_value(value: &Value, json: &str, registry: &Registry) -> Result<RackDoc,
         doc.assets = load_assets(assets, &root.field("assets"))?;
     }
     check_device_zones(&doc, &root.field("devices"), registry)?;
-    doc.song = load_song(&obj["song"], &root.field("song"), (&doc, registry), version)?;
+    doc.song = load_song(
+        &obj["song"],
+        &root.field("song"),
+        (&doc, registry),
+        version,
+        warnings,
+    )?;
     if version == 1 {
-        return Ok(migrate_v1(doc, registry));
+        return Ok(migrate_v1(doc, registry, warnings));
     }
     doc.console = load_console(&obj["console"], &root.field("console"), &doc, version)?;
     if let Some(maps) = obj.get("midi_maps") {

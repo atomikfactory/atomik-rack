@@ -27,9 +27,10 @@ fn newer() -> Value {
 }
 
 fn message(e: &ModelError) -> String {
-    let ModelError::Patch(m) = e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let m = &format!("{at}: {message}");
     m.clone()
 }
 

@@ -571,7 +571,7 @@ fn a_rendered_track_adds_one_clip_and_mutes_the_originals_in_one_step() {
             &reg,
         )
         .expect_err("asset not in the pool");
-    assert!(matches!(e, ModelError::UnknownKey(_)));
+    assert!(matches!(e, ModelError::MissingAsset(_)));
     assert_eq!(d.doc(), &before);
 }
 

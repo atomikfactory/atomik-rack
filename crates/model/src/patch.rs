@@ -56,7 +56,10 @@ impl JsonPath {
     }
 
     pub(crate) fn error(&self, message: impl std::fmt::Display) -> ModelError {
-        ModelError::Patch(format!("{self}: {message}"))
+        ModelError::Load {
+            path: self.to_string(),
+            message: message.to_string(),
+        }
     }
 }
 

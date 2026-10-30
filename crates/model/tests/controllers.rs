@@ -509,9 +509,10 @@ fn bad_lanes_in_a_file_name_their_json_path() {
         let mut v: Value = serde_json::from_str(&good).unwrap();
         edit(&mut v);
         let e = load_project(&v.to_string(), &reg).expect_err("must be rejected");
-        let ModelError::Patch(msg) = &e else {
+        let ModelError::Load { path: at, message } = &e else {
             panic!("case {i}: expected a patch error, got {e:?}")
         };
+        let msg = &format!("{at}: {message}");
         assert!(msg.starts_with(&path), "case {i}: {msg} (wanted {path})");
         assert!(msg.contains(needle), "case {i}: {msg} lacks {needle:?}");
     }

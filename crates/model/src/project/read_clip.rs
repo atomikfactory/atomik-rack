@@ -10,14 +10,14 @@ pub(super) fn load_take_groups(
     kind: &LaneKind,
     (doc, desc): (&RackDoc, &atomik_device_sdk::DeviceDescriptor),
     song: &Song,
-    (lane_clips, clip_first, open): (&[Clip], &mut ClipFirst, &mut Vec<bool>),
+    (lane_clips, clip_first, loose): (&[Clip], &mut ClipFirst, &mut Loose),
 ) -> Result<Vec<TakeGroup>, ModelError> {
     let mut claimed: BTreeMap<u64, JsonPath> = BTreeMap::new();
     let mut groups = Vec::new();
     for (g, item) in array(v, path)?.iter().enumerate() {
         let gp = path.index(g);
         let obj = schema::object(item, &gp, Obj::TakeGroup, version)?;
-        open.push(flag(obj, &gp, "open")?);
+        loose.open.push(flag(obj, &gp, "open")?);
         let takes_path = gp.field("takes");
         let mut takes = Vec::new();
         for (k, t) in array(&obj["takes"], &takes_path)?.iter().enumerate() {
@@ -63,6 +63,9 @@ pub(super) fn load_take_groups(
             // plain clip edit (files saved before the writer dropped those ids); the group only
             // keeps the ids to swap its clips on the next comp change, so it is dropped.
             if !lane_clips.iter().any(|c| c.id.0 == id) {
+                loose.warnings.push(format!(
+                    "{ip}: comp clip {id} is not on the lane and was dropped from the take group"
+                ));
                 continue;
             }
             if let Some(first) = claimed.insert(id, ip.clone()) {

@@ -1051,7 +1051,7 @@ fn a_workflow_command_cannot_be_batched() {
     let r = registry();
     let mut d = chain(&r);
     let e = rejected(&mut d, &r, Command::Batch(vec![duplicate(&["delay"])]));
-    assert!(matches!(e, ModelError::BadCable(_)), "{e:?}");
+    assert!(matches!(e, ModelError::BadBatch(_)), "{e:?}");
 }
 
 // ---------------------------------------------------------------- more edges

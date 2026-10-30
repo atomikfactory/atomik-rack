@@ -5,8 +5,8 @@ use super::*;
 /// Version 1 → 2: when the registry has the console devices, every
 /// instrument gets a channel, in rack order, exactly as `ConsoleCommand::AddChannel` wires
 /// it (so the master is created with the first one). Instruments that cannot get one (no
-/// audio output) are skipped. Without console devices the console stays empty.
-pub(super) fn migrate_v1(doc: RackDoc, registry: &Registry) -> RackDoc {
+/// audio output) are skipped with a warning. Without console devices the console stays empty.
+pub(super) fn migrate_v1(doc: RackDoc, registry: &Registry, warnings: &mut Vec<String>) -> RackDoc {
     if !crate::console_cmd::console_available(registry) {
         return doc;
     }
@@ -19,10 +19,18 @@ pub(super) fn migrate_v1(doc: RackDoc, registry: &Registry) -> RackDoc {
     let mut document = crate::Document::new(doc);
     for source in instruments {
         // A rejected channel leaves the document unchanged.
-        let _ = document.apply(
-            crate::Command::Console(crate::ConsoleCommand::AddChannel { source }),
+        let result = document.apply(
+            crate::Command::Console(crate::ConsoleCommand::AddChannel {
+                source: source.clone(),
+            }),
             registry,
         );
+        if let Err(e) = result {
+            warnings.push(format!(
+                "console: {:?} was left without a channel ({e})",
+                source.0
+            ));
+        }
     }
     document.doc().clone()
 }

@@ -18,6 +18,8 @@ pub(super) struct Loose {
     pub(super) folded: BTreeSet<(DeviceKey, String)>,
     /// One flag per take group, in file order: its take rows are shown.
     pub(super) open: Vec<bool>,
+    /// What the file had that the loaded song does not (see the load warnings).
+    pub(super) warnings: Vec<String>,
 }
 
 /// A note lane name: trimmed, non-empty, at most [`MAX_LANE_NAME_CHARS`] characters, without
@@ -185,7 +187,7 @@ pub(super) fn load_track(
                 &kind,
                 (doc, desc),
                 song,
-                (&clips, clip_first, &mut loose.open),
+                (&clips, clip_first, loose),
             )?,
             None => Vec::new(),
         };

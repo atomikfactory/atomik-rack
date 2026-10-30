@@ -399,7 +399,10 @@ pub(crate) fn stand_in_registry(
         return Ok(None);
     }
     let mut copy = Registry::new();
-    let fail = |e: atomik_device_sdk::RegistryError| ModelError::Patch(format!("$: {e}"));
+    let fail = |e: atomik_device_sdk::RegistryError| ModelError::Load {
+        path: "$".into(),
+        message: e.to_string(),
+    };
     for t in registry.type_ids() {
         let factory = *registry.get(t).expect("listed types are registered");
         if registry.takes_samples(t) {
@@ -419,8 +422,10 @@ pub(crate) fn stand_in_registry(
         copy.register_plugin(t.to_owned(), desc).map_err(fail)?;
     }
     for (type_id, h) in missing {
-        let desc = descriptor_for(&h.plugin, &h.layout)
-            .map_err(|e| ModelError::Patch(format!("$: {type_id}: {e}")))?;
+        let desc = descriptor_for(&h.plugin, &h.layout).map_err(|e| ModelError::Load {
+            path: "$".into(),
+            message: format!("{type_id}: {e}"),
+        })?;
         copy.register_plugin(type_id, desc).map_err(fail)?;
     }
     Ok(Some(copy))

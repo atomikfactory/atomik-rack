@@ -373,7 +373,7 @@ fn add_audio_clip_rejections() {
     // Unknown asset.
     assert!(matches!(
         rejects(&mut d, add_audio_clip("audio-track", 0, BAR, 9), &reg),
-        ModelError::UnknownKey(_)
+        ModelError::MissingAsset(_)
     ));
     // Unknown device, device without a track, notes track.
     assert!(matches!(
@@ -567,7 +567,7 @@ fn set_clip_content_replaces_audio_content_and_validates() {
     assert_eq!(doc_clip(d.doc(), id).content, ClipContent::Audio(audio(1)));
     assert!(matches!(
         rejects(&mut d, set(ClipContent::Audio(audio(9))), &reg),
-        ModelError::UnknownKey(_)
+        ModelError::MissingAsset(_)
     ));
     assert!(matches!(
         rejects(&mut d, set(ClipContent::Notes(vec![])), &reg),
@@ -962,7 +962,7 @@ fn a_cable_batch_is_validated_in_order_and_rejected_as_a_whole() {
     assert!(matches!(e, ModelError::BadCable(_)), "{e:?}");
     // Only cable commands may be batched.
     let e = rejects(&mut d, Command::Batch(vec![Command::SetTempo(100.0)]), &reg);
-    assert!(matches!(e, ModelError::BadCable(_)), "{e:?}");
+    assert!(matches!(e, ModelError::BadBatch(_)), "{e:?}");
     // An empty batch is rejected (it would record an empty step).
     rejects(&mut d, Command::Batch(Vec::new()), &reg);
 }

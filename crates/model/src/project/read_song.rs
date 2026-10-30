@@ -73,11 +73,12 @@ pub(super) fn load_markers(v: Option<&Value>, path: &JsonPath) -> Result<Vec<Mar
 }
 
 /// The optional `"track_heights"` object: device key to a height in `24..=400`. The keys of
-/// devices without a track are ignored (the file may have outlived a track).
+/// devices without a track are ignored, with a warning (the file may have outlived a track).
 pub(super) fn load_track_heights(
     v: Option<&Value>,
     path: &JsonPath,
     song: &Song,
+    warnings: &mut Vec<String>,
 ) -> Result<BTreeMap<DeviceKey, u16>, ModelError> {
     let Some(v) = v else {
         return Ok(BTreeMap::new());
@@ -97,6 +98,11 @@ pub(super) fn load_track_heights(
         let key = DeviceKey(key.clone());
         if song.tracks.iter().any(|t| t.device == key) {
             heights.insert(key, h);
+        } else {
+            warnings.push(format!(
+                "{p}: the height of {:?} was ignored, the song has no track for that device",
+                key.0
+            ));
         }
     }
     Ok(heights)
@@ -322,6 +328,7 @@ pub(super) fn load_song(
     path: &JsonPath,
     (doc, registry): (&RackDoc, &Registry),
     version: u64,
+    warnings: &mut Vec<String>,
 ) -> Result<Song, ModelError> {
     let obj = schema::object(v, path, Obj::Song, version)?;
 
@@ -460,6 +467,8 @@ pub(super) fn load_song(
         obj.get("track_heights"),
         &path.field("track_heights"),
         &song,
+        warnings,
     )?;
+    warnings.append(&mut loose.warnings);
     Ok(song)
 }

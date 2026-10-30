@@ -688,7 +688,16 @@ fn a_comp_clip_id_that_is_not_on_the_lane_is_dropped_on_load() {
         a.push(serde_json::json!(9999));
         a.push(serde_json::json!(1));
     });
-    let loaded = load_project(&stale, &reg).unwrap();
+    let (loaded, warnings) = atomik_model::load_project_with_warnings(&stale, &reg).unwrap();
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+    assert!(
+        warnings[0].contains("comp clip 9999 is not on the lane"),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings[1].contains("comp clip 1 is not on the lane"),
+        "{warnings:?}"
+    );
     let (_, _, g) = loaded.song.take_groups().next().unwrap();
     let want: Vec<ClipId> = kept.iter().map(|v| ClipId(v.as_u64().unwrap())).collect();
     assert_eq!(g.clips, want);

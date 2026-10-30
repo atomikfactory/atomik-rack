@@ -1114,9 +1114,10 @@ fn bad_organisation_is_refused_with_its_json_path() {
         let mut v: Value = serde_json::from_str(&good).unwrap();
         edit(&mut v);
         let e = load_project(&v.to_string(), &reg).expect_err("must be rejected");
-        let ModelError::Patch(msg) = &e else {
-            panic!("expected a patch error, got {e:?}")
+        let ModelError::Load { path: at, message } = &e else {
+            panic!("expected a load error, got {e:?}")
         };
+        let msg = &format!("{at}: {message}");
         assert!(
             msg.starts_with(&format!("{path}: ")),
             "{msg} (wanted {path})"

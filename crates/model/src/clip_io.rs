@@ -92,7 +92,7 @@ pub fn save_clip_file(file: &ClipFile) -> Result<String, ModelError> {
     Ok(w)
 }
 
-/// Reads an `atomik-clip` text. Errors are [`ModelError::Patch`] with `"<json path>: <what is
+/// Reads an `atomik-clip` text. Errors are [`ModelError::Load`] with `"<json path>: <what is
 /// wrong>"`.
 pub fn load_clip_file(text: &str) -> Result<ClipFile, ModelError> {
     let root = JsonPath::default();
