@@ -13,7 +13,9 @@
 //! than the file has is read up to the end of the file, and an event cut short by the end of its
 //! chunk ends the track. A data byte with no running status, a data byte above 127, a delta
 //! time of more than four bytes, a bad header or a file with no track at all are errors. It never
-//! panics, for any input.
+//! panics, for any input, and it keeps at most [`MAX_EVENTS_PER_TRACK`] events per track and
+//! [`MAX_EVENTS`] per file (a larger count is an error), so a small hostile file cannot make it
+//! allocate without bound.
 //!
 //! [`SmfFile::to_bytes`] writes the file back with running status and an end-of-track event per
 //! track. Events must be in tick order; a delta above 28 bits is clamped (about 4.5 hours at
@@ -21,6 +23,13 @@
 
 /// The most `MTrk` chunks [`read`] takes (a larger count is more likely garbage than music).
 pub const MAX_TRACKS: usize = 4096;
+
+/// The most events [`read`] keeps from one track. A file of a few megabytes can hold millions of
+/// three-byte events, each of which costs tens of bytes once read; real tracks stay far below.
+pub const MAX_EVENTS_PER_TRACK: usize = 1 << 21;
+
+/// The most events [`read`] keeps from all tracks of a file together.
+pub const MAX_EVENTS: usize = 1 << 23;
 
 /// Why a file could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -235,6 +244,7 @@ pub fn read(bytes: &[u8]) -> Result<SmfFile, SmfError> {
         return Err(SmfError::NotMidi("zero ticks per quarter note".to_owned()));
     }
     let mut tracks = Vec::new();
+    let mut events = 0usize;
     while c.left() >= 8 {
         let id = c.take(4).map(<[u8]>::to_vec).unwrap_or_default();
         let len = c.take(4).map(be_u32).unwrap_or(0);
@@ -251,6 +261,12 @@ pub fn read(bytes: &[u8]) -> Result<SmfFile, SmfError> {
             )));
         }
         tracks.push(read_track(data, tracks.len(), data_start)?);
+        events += tracks.last().map_or(0, |t| t.events.len());
+        if events > MAX_EVENTS {
+            return Err(SmfError::Unsupported(format!(
+                "more than {MAX_EVENTS} events in the file"
+            )));
+        }
     }
     if tracks.is_empty() {
         return Err(SmfError::NotMidi("the file has no track".to_owned()));
@@ -288,6 +304,11 @@ fn read_track(data: &[u8], index: usize, base: usize) -> Result<SmfTrack, SmfErr
     let mut tick = 0u64;
     let mut running = 0u8;
     loop {
+        if track.events.len() > MAX_EVENTS_PER_TRACK {
+            return Err(SmfError::Unsupported(format!(
+                "track {index} has more than {MAX_EVENTS_PER_TRACK} events"
+            )));
+        }
         let delta = match read_vlq(&mut c) {
             Ok(Some(d)) => d,
             Ok(None) => break,
