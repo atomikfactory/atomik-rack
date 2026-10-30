@@ -514,3 +514,19 @@ fn a_mixer_key_that_collides_in_the_context_is_a_conflict() {
     let msg = s.core().last_rejection().unwrap();
     assert!(msg.contains("keymap.json") && msg.contains("Down"), "{msg}");
 }
+
+#[test]
+fn ctrl_p_toggles_the_pre_count_and_saves_it_with_the_settings() {
+    let dir = config("precount");
+    let mut s = shell_in(&dir, Os::Windows, Some(Profile::Standard));
+    assert_eq!(s.core().pre_count_bars(), 0);
+    tap(&mut s, Os::Windows, "Cmd+P");
+    assert_eq!(s.core().pre_count_bars(), 1);
+    assert_eq!(s.core().sink().settings().pre_count_bars, 1);
+    let text = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(text.contains("\"pre_count_bars\": 1"), "{text}");
+    tap(&mut s, Os::Windows, "Cmd+P");
+    assert_eq!(s.core().pre_count_bars(), 0);
+    let text = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(text.contains("\"pre_count_bars\": 0"), "{text}");
+}

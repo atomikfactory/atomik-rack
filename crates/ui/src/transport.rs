@@ -115,6 +115,10 @@ pub struct TransportState {
     pub metronome: bool,
     /// Position in song ticks.
     pub position: i64,
+    /// Bars of pre-count a recording starts with (0 = off).
+    pub pre_count: u8,
+    /// The beat of the bar being counted in (1-based) while the pre-count runs, else 0.
+    pub count_in: u16,
 }
 
 /// A transport bar button.
@@ -836,15 +840,33 @@ impl TransportBar {
         let (bbt, time) = self.position_text();
         let lcd_text = t.highlight;
         sp::lcd(c, st, pos_r, None);
+        let counting = self.state.count_in > 0;
         sp::label(
             c,
-            "POS",
+            if counting { "COUNT" } else { "POS" },
             pos_r.x0 + 6.0,
             pos_r.y0 + 10.0,
             6.5,
             t.text_muted,
             Align::Start,
         );
+        if self.state.pre_count > 0 && !counting {
+            sp::label(
+                c,
+                &format!("PRE {}", self.state.pre_count),
+                pos_r.x1 - 8.0,
+                pos_r.y0 + 10.0,
+                6.5,
+                t.text_muted,
+                Align::End,
+            );
+        }
+        // While the count-in runs the readout shows its beat; the position holds.
+        let bbt = if counting {
+            self.state.count_in.to_string()
+        } else {
+            bbt
+        };
         c.text(
             &TextRun::new(bbt, pt(pos_r.x1 - 8.0, pos_r.y1 - 7.0), 13.0, lcd_text)
                 .weight(600)

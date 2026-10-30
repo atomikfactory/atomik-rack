@@ -113,6 +113,11 @@ pub enum AppCommand {
     Transport(TransportAction),
     /// Transport ▸ Input Quantize.
     Quantize(InputQuantize),
+    /// Options ▸ Pre-count (Ctrl+P): the count-in of a recording on or off. It is a setting
+    /// (`pre_count_bars`), so the shell applies and saves it.
+    TogglePreCount,
+    /// Options ▸ Chase Notes: the selected track's note chase on or off.
+    ToggleChase,
     /// View ▸ Show Console Devices in Rack (the channel and master devices in the rack).
     ToggleConsoleDevices,
     /// View > Show Console Links: draw the channel to master cables on the back of
@@ -388,6 +393,8 @@ impl AppCommand {
                 ("transport.metronome", None)
             }
             AppCommand::Transport(TransportAction::Locate(_)) => return None,
+            AppCommand::TogglePreCount => ("transport.pre_count", None),
+            AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
             AppCommand::Quantize(InputQuantize::Off) => ("transport.input_quantize", Some("off")),
             AppCommand::Quantize(InputQuantize::Eighth) => {
                 ("transport.input_quantize", Some("eighth"))
@@ -568,6 +575,8 @@ impl AppCommand {
             ("transport.metronome", None) => {
                 AppCommand::Transport(TransportAction::ToggleMetronome)
             }
+            ("transport.pre_count", None) => AppCommand::TogglePreCount,
+            ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
             ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::Off),
             ("transport.input_quantize", Some("eighth")) => {
                 AppCommand::Quantize(InputQuantize::Eighth)
@@ -847,6 +856,8 @@ pub struct MenuState {
     pub loop_enabled: bool,
     /// The metronome is on.
     pub metronome: bool,
+    /// The pre-count (the count-in of a recording) is on.
+    pub pre_count: bool,
     /// Input quantize for recording.
     pub quantize: InputQuantize,
     /// The console shows in the lower pane.
@@ -1722,6 +1733,32 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 ),
             ],
         },
+        // The playback and recording settings, gathered: each entry is the command it already
+        // has in its own menu, which keeps working.
+        Menu {
+            title: "Options",
+            entries: vec![
+                check(
+                    "Click",
+                    transport(TransportAction::ToggleMetronome),
+                    state.metronome,
+                ),
+                check("Pre-count", AppCommand::TogglePreCount, state.pre_count),
+                MenuEntry::Separator,
+                quantize("Input Quantize: Off", InputQuantize::Off),
+                quantize("Input Quantize: 1/8", InputQuantize::Eighth),
+                quantize("Input Quantize: 1/16", InputQuantize::Sixteenth),
+                MenuEntry::Separator,
+                item("Chase Notes", AppCommand::ToggleChase),
+                check(
+                    "Delay Compensation",
+                    AppCommand::ToggleCompensation,
+                    state.compensation,
+                ),
+                MenuEntry::Separator,
+                item("Settings\u{2026}", AppCommand::AudioSettings),
+            ],
+        },
     ]
 }
 
@@ -1753,6 +1790,7 @@ mod tests {
             recording: false,
             loop_enabled: false,
             metronome: false,
+            pre_count: false,
             quantize: InputQuantize::Off,
             console: false,
             console_maximised: false,
@@ -1968,6 +2006,8 @@ mod tests {
         ] {
             v.push(AppCommand::Transport(t));
         }
+        v.push(AppCommand::TogglePreCount);
+        v.push(AppCommand::ToggleChase);
         for q in [
             InputQuantize::Off,
             InputQuantize::Eighth,
@@ -2281,7 +2321,8 @@ mod tests {
                 "Mixer",
                 "Create",
                 "Track",
-                "Audio"
+                "Audio",
+                "Options"
             ]
         );
         let labels = |i: usize| m[i].items().map(|it| it.label.as_ref()).collect::<Vec<_>>();
@@ -2471,6 +2512,62 @@ mod tests {
                 "Audio to Notes\u{2026}"
             ]
         );
+        assert_eq!(
+            labels(8),
+            [
+                "Click",
+                "Pre-count",
+                "Input Quantize: Off",
+                "Input Quantize: 1/8",
+                "Input Quantize: 1/16",
+                "Chase Notes",
+                "Delay Compensation",
+                "Settings\u{2026}"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_options_menu_reuses_the_commands_of_their_own_menus() {
+        let m = menus(&state(), &legacy(Os::Windows));
+        let options = &m[8];
+        assert_eq!(options.title, "Options");
+        let command = |label: &str| {
+            options
+                .items()
+                .find(|i| i.label.as_ref() == label)
+                .unwrap_or_else(|| panic!("no {label}"))
+                .command
+        };
+        assert_eq!(
+            command("Click"),
+            AppCommand::Transport(TransportAction::ToggleMetronome)
+        );
+        assert_eq!(command("Pre-count"), AppCommand::TogglePreCount);
+        assert_eq!(command("Chase Notes"), AppCommand::ToggleChase);
+        assert_eq!(
+            command("Delay Compensation"),
+            AppCommand::ToggleCompensation
+        );
+        assert_eq!(command("Settings\u{2026}"), AppCommand::AudioSettings);
+        // Pre-count has a key in the standard profile and shows it.
+        let standard = Keymap::bundled(Profile::Standard, Os::Windows);
+        let m = menus(&state(), &standard);
+        let pre = m[8]
+            .items()
+            .find(|i| i.label.as_ref() == "Pre-count")
+            .unwrap();
+        assert_eq!(pre.shortcut.as_deref(), Some("Ctrl+P"));
+        let on = MenuState {
+            pre_count: true,
+            ..state()
+        };
+        let m = menus(&on, &standard);
+        let pre = m[8]
+            .items()
+            .find(|i| i.label.as_ref() == "Pre-count")
+            .unwrap();
+        assert_eq!(pre.checked, Some(true));
     }
 
     #[test]
@@ -2495,6 +2592,7 @@ mod tests {
                 recording: false,
                 loop_enabled: true,
                 metronome: false,
+                pre_count: false,
                 quantize: InputQuantize::Eighth,
                 console: true,
                 console_maximised: false,

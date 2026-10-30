@@ -578,6 +578,125 @@ fn recording_turns_live_notes_into_a_clip_on_stop() {
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }
 
+/// With a pre-count the take starts with a count-in: the click counts, nothing played during it
+/// is recorded, and the clip starts where the song does.
+#[test]
+fn recording_with_a_pre_count_records_nothing_before_the_song_starts() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.set_pre_count_bars(1);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    let plan = c
+        .song_snapshot()
+        .unwrap()
+        .pre_roll(Ticks(0), 1, f64::from(c.doc().sample_rate))
+        .unwrap();
+    assert_eq!((plan.beats, plan.per_bar, plan.frames), (4, 4, 96_000));
+    assert_eq!(
+        transports(&calls),
+        [TransportCommand::PlayWithPreRoll(plan)]
+    );
+    assert!(c.is_recording() && c.is_playing());
+    // The engine counts: not playing yet, the song starts 96000 frames after engine frame 1000.
+    let counting = TransportState {
+        playing: false,
+        engine_frame: 1000,
+        pre_roll_frames: 96_000,
+        pre_roll_beat: 1,
+        ..TransportState::default()
+    };
+    c.sink_mut().state = counting;
+    c.sink_mut().recorded = vec![RecordedNote {
+        device: id(1),
+        kind: NoteKind::On {
+            key: 45,
+            velocity: 0.9,
+        },
+        frame: 5000,
+    }];
+    c.frame();
+    let shown = c.transport_bar().state();
+    assert_eq!((shown.pre_count, shown.count_in), (1, 1));
+    // The song starts at engine frame 97000; a note a beat in is recorded, the one before is not.
+    let start = TransportState {
+        playing: true,
+        engine_frame: 97_000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 97_000 + (tick as f64 * 1.5625).round() as u64;
+    c.sink_mut().state = start;
+    c.sink_mut().recorded = vec![
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::On {
+                key: 48,
+                velocity: 0.5,
+            },
+            frame: frame(PPQ),
+        },
+        RecordedNote {
+            device: id(1),
+            kind: NoteKind::Off { key: 48 },
+            frame: frame(2 * PPQ),
+        },
+    ];
+    c.frame();
+    assert_eq!(c.transport_bar().state().count_in, 0);
+    c.sink_mut().state = TransportState {
+        tick: 3 * PPQ,
+        engine_frame: frame(3 * PPQ),
+        song_frame: frame(3 * PPQ) - 97_000,
+        ..start
+    };
+    transport(&mut c, TransportAction::Stop);
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert_eq!(clips[0].start, 0, "the clip starts at bar 1");
+    let ClipContent::Notes(notes) = &clips[0].content else {
+        panic!("note clip")
+    };
+    assert_eq!(notes.len(), 1, "only the note after the count");
+    assert_eq!(notes[0].key, 48);
+    assert!((notes[0].tick - PPQ).abs() <= 1, "{}", notes[0].tick);
+}
+
+#[test]
+fn the_pre_count_counts_in_from_the_position_and_not_when_already_playing() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c.set_pre_count_bars(2);
+    c.sink_mut().take();
+    transport(&mut c, TransportAction::Locate(BAR));
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    let plan = c.song_snapshot().unwrap().pre_roll(Ticks(BAR), 2, 48_000.0);
+    assert_eq!(
+        transports(&calls),
+        [TransportCommand::PlayWithPreRoll(plan.unwrap())]
+    );
+    assert_eq!(plan.unwrap().beats, 8);
+    // Already running: a take starts at once, with nothing to count in.
+    transport(&mut c, TransportAction::Stop);
+    transport(&mut c, TransportAction::Play);
+    c.sink_mut().take();
+    let calls = transport(&mut c, TransportAction::ToggleRecord);
+    assert!(c.is_recording());
+    assert!(transports(&calls).is_empty(), "{calls:?}");
+}
+
+#[test]
+fn the_pre_count_toggle_returns_to_the_last_length_and_is_clamped() {
+    let mut c = with_track();
+    assert_eq!((c.pre_count_bars(), c.pre_count_toggled()), (0, 1));
+    c.set_pre_count_bars(3);
+    assert_eq!((c.pre_count_bars(), c.pre_count_toggled()), (3, 0));
+    c.set_pre_count_bars(0);
+    assert_eq!(c.pre_count_toggled(), 3, "back to the length it had");
+    c.set_pre_count_bars(9);
+    assert_eq!(c.pre_count_bars(), 4);
+}
+
 /// A track that enters at the top of a player stack records what is played into that entry (the
 /// input notes, before the players), into its own clip.
 #[test]

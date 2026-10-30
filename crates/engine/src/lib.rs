@@ -50,7 +50,7 @@ pub use preview::{
 };
 pub use record::{LIMIT_RELEASE_FRAMES, RecordTap, TapChannel, TapControls};
 pub use seq::{
-    SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,
+    PreRoll, SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,
     SongSnapshot, SongTempo, SongTrack, TransportCommand, TransportState, compile_song,
 };
 #[doc(hidden)]

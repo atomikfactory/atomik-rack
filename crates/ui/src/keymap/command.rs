@@ -1280,7 +1280,8 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
-    .decline(),
+    .decline()
+    .menu(),
     cmd(
         "sequencer.toggle_folder",
         "Collapse or Expand Folder",
@@ -1468,6 +1469,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("transport.pre_count", "Pre-count", G::Transport, C::Global).menu(),
     cmd(
         "transport.prev_marker",
         "Previous Marker",

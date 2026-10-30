@@ -118,6 +118,7 @@ fn record_transport() -> DisplayList {
         recording: false,
         metronome: true,
         position: 2 * BAR + PPQ + PPQ / 2,
+        ..TransportState::default()
     });
     let mut dl = DisplayList::new();
     v.paint(&mut dl, &doc, &reg);
@@ -134,6 +135,7 @@ fn record_transport_rec_input() -> DisplayList {
         recording: true,
         metronome: false,
         position: BAR + PPQ,
+        ..TransportState::default()
     });
     let device = key("bass");
     v.set_rec_input(Some(atomik_ui::RecInput {

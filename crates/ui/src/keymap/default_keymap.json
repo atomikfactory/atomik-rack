@@ -54,6 +54,7 @@
         { "command": "transport.go_locator", "arg": "right", "context": "global", "chords": ["Numpad2", "Alt+Right"] },
         { "command": "transport.loop", "context": "global", "chords": ["L", "NumpadDiv"] },
         { "command": "transport.metronome", "context": "global", "chords": ["C", "Numpad9"] },
+        { "command": "transport.pre_count", "context": "global", "chords": ["Cmd+P"] },
         { "command": "transport.add_marker", "context": "global", "chords": ["Shift+M"] },
         { "command": "transport.prev_marker", "context": "global", "chords": [","] },
         { "command": "transport.next_marker", "context": "global", "chords": ["."] },
