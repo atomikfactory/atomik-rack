@@ -4,6 +4,7 @@
 //! Nothing in this crate runs on the audio thread. Every function may allocate and block on
 //! disk. Results are deterministic: the same input bytes always give the same samples.
 
+mod archive;
 mod bundle;
 mod data;
 mod decode;
@@ -15,6 +16,10 @@ mod resample;
 mod stream_decode;
 mod wav;
 
+pub use archive::{
+    ARCHIVE_EXTENSION, ArchiveError, ArchiveLimits, ArchiveReport, Extracted, archive_size,
+    archive_work, extract_archive, is_safe_component, read_archive_project, write_archive,
+};
 pub use bundle::{AssetInfo, Bundle, is_valid_hash, save_text_atomic};
 pub use data::AudioData;
 pub use decode::{
