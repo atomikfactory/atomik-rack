@@ -575,7 +575,8 @@ without them loads at 0 dB with clip-safe off).
   error of the straight line between the kept neighbours at a dropped point's tick, in parameter
   units): the first and last points and every `Step` point stay, the rest go when within the
   tolerance. The app passes `AppCore::automation_thinning` (default 0.5 %, 0 keeps everything) times
-  the parameter's range.
+  the parameter's range; the level is the Interface setting Automation thinning (`ThinLevel`:
+  Normal 0.5 %, Heavy 2 %, Maximum 5 %), which the pencil and Cleanup Automation use too.
 - **A take is a Batch of `AddClip`.** Each segment becomes an automation clip on the lane (ticks
   relative to the clip start, `Linear` points), and a later clip hides an earlier one where they
   overlap, which is how Overwrite and Touch replace what was there without deleting it: the old
@@ -3457,7 +3458,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (377) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (378) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -3762,10 +3763,10 @@ creation chain in the **Creation chain** bullet.
   piano roll duplicates notes (`DuplicateNotes`). The restructuring commands are workflow
   commands too: `InsertTime` and `RemoveTime` (the `time_edit` module of the model) move clips,
   take groups, markers, ranges, tempo and meter events, the loop and the song End together and are
-  refused while a track is frozen; `ReverseClips`, `ScaleTempo` and `ChopClips` (`clip_transform`)
-  work on a selection, and `JoinClips` leaves muted clips out and unrolls loops. They act at the
-  loop locators and on the selection through the `sequencer.*` ids the Edit menu and the clip menu
-  use. *Clipboard*
+  refused while a track is frozen; `ReverseClips`, `ScaleTempo`, `ChopClips` and
+  `CleanupAutomation` (`clip_transform`) work on a selection, and `JoinClips` leaves muted clips
+  out and unrolls loops. They act at the loop locators and on the selection through the
+  `sequencer.*` ids the Edit menu and the clip menu use. *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of
@@ -4635,9 +4636,12 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   be recorded into note clips as controller lanes (2.12). A Touch starts at the first move of a
   control, not at the press (a press without a move is not seen; a surface's touch-sensitive fader
   is the exception, it holds the gesture from the touch), and an un-dragged change (a typed value,
-  the MCP server) touches for one tick. Arming a lane takes effect at the next take. The thinning
-  amount is not a preference yet. A recorded lane is held in the engine from the touch; between
-  touches the lane plays as it was, with a jump back at the release.
+  the MCP server) touches for one tick. Arming a lane takes effect at the next take. A recorded
+  lane is held in the engine from the touch; between touches the lane plays as it was, with a jump
+  back at the release. With the tempo lane armed (the R button of its header) a take also records
+  the tempo the map has at the playhead after each tempo edit, as an Overwrite pass: at the end the
+  events inside the written stretch are replaced by the thinned points (`tempo_pass_map`) in one
+  `SetTempoMap` that joins the last tempo edit's undo step. The take does not retime itself.
 - **MIDI controller data.** Controller lanes belong to note clips: there is no lane without a note
   clip, no per-note expression (MPE) data, and a recorded lane is one `Step` point per burst of
   events, not a smooth curve. A ramp is played as steps of 40 ticks. Pressure is kept as a

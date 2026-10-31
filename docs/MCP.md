@@ -328,6 +328,8 @@ The restructuring commands are Edit menu items, so `session_commands` lists them
 3. Set the locators first (drag them in the ruler with `session_pointer`), then `session_command` `sequencer.insert_bars`: every clip, marker, range and tempo or meter change after the left locator moves by the length of the loop range, a clip that straddles the locator is split there, and the song End moves out by the same length. `sequencer.remove_bars` with the same locators removes them again; the result plays the same as the start (clips that were split stay two clips). With a track frozen both answer with a toast and change nothing. Compare `session_bounce` of the project with and without a silent range inserted before its first clip: the second is the first delayed by the inserted time.
 4. `session_key` `x` toggles the crossfade of the selected audio clips (`sequencer.audio_crossfade`); the zone edges of a crossfade are not draggable yet.
 
+5. Cleanup Automation is an Edit menu submenu (`sequencer.cleanup_automation` with `normal`, `heavy` or `maximum`). `session_pointer` `click` an automation clip, then run it: `project_inspect` shows fewer points in the clip, a ramp drawn point by point is its two ends, and `edit.undo` brings all of them back in one step. Pick the pencil (`session_key` with the tool key, or the corner button) and `session_pointer` `drag` across an automation clip to draw: `project_inspect` shows about one point per snap step before thinning and fewer after, and the whole stroke is one undo step.
+
 The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.
 
 ### Recipe: loops, clip names and colours
