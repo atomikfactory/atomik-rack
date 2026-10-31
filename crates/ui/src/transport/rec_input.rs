@@ -41,7 +41,7 @@ const GAP: f64 = 8.0;
 /// Gap between the clip inspector (or the readouts) and the section.
 const LEAD: f64 = 18.0;
 /// Right margin of the bar.
-const TAIL: f64 = 12.0;
+pub(super) const TAIL: f64 = 12.0;
 /// Height of a box.
 const BOX_H: f64 = 28.0;
 /// Font size of the gain value.

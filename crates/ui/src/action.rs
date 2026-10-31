@@ -461,6 +461,11 @@ pub enum UiAction {
     /// The audio export panel ([`crate::ExportView`]) asks for something: start the export with its
     /// options, or cancel (close the options, stop the render).
     Export(crate::export_panel::ExportAction),
+    /// The click-level slider of the transport bar moved: the metronome level, 0..=1.
+    SetMetronomeGain(f32),
+    /// The Q Rec switch or its grid changed: snap recorded note starts to a grid of this many
+    /// ticks, or not at all (`None`).
+    SetInputQuantize(Option<i64>),
     /// The quantize panel ([`crate::QuantizeView`]) asks for something: apply its settings, measure
     /// a groove from a clip, delete one, or close.
     Quantize(crate::quantize_panel::QuantizeAction),
@@ -541,6 +546,8 @@ pub enum ContextTarget {
     MarkerRange,
     /// The marker strip away from its markers.
     MarkerStrip,
+    /// The overflow button of the transport bar (shown when its controls do not all fit).
+    TransportMore,
     /// A knob, fader or switch (the shell knows which from [`UiAction::ControlMenu`]).
     Control,
 }
@@ -593,6 +600,13 @@ pub enum TransportAction {
     /// Toggle the creation of automation lanes for the parameters moved during a take (the
     /// AUTO LANES switch next to Record).
     ToggleAutoLanes,
+    /// Move the position by `bars` bar lines (negative: back): a held Rewind or Forward button
+    /// sends this over and over, with larger steps the longer it is held.
+    Bars(i64),
+    /// Jump to the left (`false`) or the right (`true`) locator, the ends of the loop.
+    GoLocator(bool),
+    /// A tap of the tap-tempo button: the app times the taps and sets the tempo.
+    TapTempo,
     /// Let the lanes held by a hand-moved value play again (the OVERRIDE lamp).
     ClearOverride,
 }

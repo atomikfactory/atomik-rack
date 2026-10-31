@@ -229,6 +229,25 @@ pub fn tick_to_seconds(tick: i64, tempo: &[TempoEvent]) -> f64 {
     table.map().seconds(tick.max(0) as f64)
 }
 
+/// The song tick at `seconds` through a tempo map (the inverse of [`tick_to_seconds`], rounded
+/// to the nearest tick; negative times give 0).
+pub fn seconds_to_tick(seconds: f64, tempo: &[TempoEvent]) -> i64 {
+    let points: Vec<TempoPoint> = tempo
+        .iter()
+        .map(|e| TempoPoint {
+            tick: e.tick,
+            bpm: e.bpm,
+            ramp: e.ramp,
+        })
+        .collect();
+    let table = TempoTable::new(&points).unwrap_or_else(|_| {
+        TempoTable::constant(
+            Tempo::new(120.0).unwrap_or_else(|_| unreachable!("120 BPM is a valid tempo")),
+        )
+    });
+    table.map().tick(seconds.max(0.0), 1.0).round().max(0.0) as i64
+}
+
 /// `"mm:ss.mmm"` (minutes keep growing past 59), e.g. `"01:04.250"`. Negative gives zero.
 pub fn format_time(seconds: f64) -> String {
     let ms_total = (seconds.max(0.0) * 1000.0).round() as u64;

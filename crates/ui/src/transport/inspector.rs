@@ -514,6 +514,16 @@ impl TransportBar {
         self.insp.drag.is_some()
     }
 
+    /// The width the whole clip inspector wants after the readouts and its lead (0 when no clip
+    /// is selected): the transport bar's cluster leaves it free.
+    pub(super) fn inspector_demand(&self) -> f64 {
+        if self.insp.source == InspectorSource::None {
+            return 0.0;
+        }
+        let all: f64 = SLOTS.iter().map(|s| s.width() + GAP).sum();
+        LEAD + 118.0 + GAP + all - GAP
+    }
+
     fn inspector_layout(&self) -> Layout {
         let mut out = Layout {
             name: None,
@@ -522,7 +532,7 @@ impl TransportBar {
         if self.insp.source == InspectorSource::None {
             return out;
         }
-        let x0 = self.lcd_rects()[3].x1 + LEAD;
+        let x0 = self.cluster_end() + LEAD;
         let limit = self.bounds.x1 - TAIL - self.rec_reserved();
         let y0 = self.bounds.center().y - BOX_H / 2.0;
         let all: f64 = SLOTS.iter().map(|s| s.width() + GAP).sum();
