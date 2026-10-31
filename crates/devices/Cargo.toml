@@ -16,7 +16,12 @@ atomik-dsp.workspace = true
 
 [dev-dependencies]
 atomik-testkit.workspace = true
+criterion.workspace = true
 proptest.workspace = true
+
+[[bench]]
+name = "process"
+harness = false
 
 [lints]
 workspace = true

@@ -741,3 +741,33 @@ fn saving_and_opening_a_project_keep_the_recent_list() {
         std::fs::remove_file(f).ok();
     }
 }
+
+#[test]
+fn opening_a_file_records_where_the_time_went_stage_by_stage() {
+    let mut c = core();
+    assert!(
+        c.open_stages().items().is_empty(),
+        "nothing before the first open"
+    );
+    c.open_str(demo_v2(), None).unwrap();
+    let names: Vec<&str> = c.open_stages().items().iter().map(|(n, _)| *n).collect();
+    assert_eq!(
+        names,
+        [
+            "parse",
+            "stand-ins",
+            "build",
+            "devices",
+            "compile",
+            "submit",
+            "sync",
+            "other",
+            "plugins"
+        ]
+    );
+    let line = c.open_stages().line("opened the project");
+    assert!(line.starts_with("opened the project in "), "{line}");
+    // A failed open leaves the previous record alone.
+    assert!(c.open_str("{ not json", None).is_err());
+    assert_eq!(c.open_stages().items().len(), names.len());
+}

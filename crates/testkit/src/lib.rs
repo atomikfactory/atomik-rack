@@ -3,6 +3,7 @@
 //!
 //! `no_alloc`, `harness` and `signal` are shared contracts; the fakes live in the `fakes` module.
 
+pub mod bench;
 pub mod fakes;
 pub mod harness;
 pub mod no_alloc;

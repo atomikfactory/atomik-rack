@@ -66,6 +66,7 @@ mod adapter;
 
 mod convert;
 mod handoff;
+mod histogram;
 mod liveness;
 mod ring;
 mod rt;
@@ -74,6 +75,10 @@ mod stream;
 mod telemetry;
 
 pub use adapter::CallbackAdapter;
+pub use histogram::{
+    CallbackStats, SPIN_BUCKETS, TIME_BUCKETS, spin_bucket, spin_bucket_max, time_bucket,
+    time_bucket_max_ns,
+};
 pub use liveness::{Liveness, STALL_MIN, STALL_PERIODS, START_GRACE, StreamState, stall_after};
 pub use stream::{RunningStream, StreamInfo, list, start, start_with_input};
 pub use telemetry::{LoadMeter, XrunDetector, is_late, is_overrun};
@@ -207,6 +212,9 @@ pub struct Telemetry {
     /// became invalid). Sticky until the stream is rebuilt. A stream whose callbacks merely stop
     /// is detected by [`Liveness`] instead.
     pub device_lost: bool,
+    /// Callback time and level-barrier wait histograms, totals since the stream started (they do
+    /// not reset on read). Percentiles: [`CallbackStats::time_percentile_ns`].
+    pub callback: CallbackStats,
 }
 
 /// What kind of xrun an [`XrunEvent`] reports.

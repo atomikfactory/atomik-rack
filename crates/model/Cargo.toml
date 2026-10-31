@@ -20,7 +20,13 @@ thiserror.workspace = true
 
 [dev-dependencies]
 atomik-devices.workspace = true
+atomik-testkit.workspace = true
+criterion.workspace = true
 proptest.workspace = true
+
+[[bench]]
+name = "document"
+harness = false
 
 [lints]
 workspace = true

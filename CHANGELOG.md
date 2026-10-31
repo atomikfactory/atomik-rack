@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Performance measurement.** Every speed claim can now be re-measured with one command per
+  crate: `cargo bench -p atomik-render --bench render_batch` (bounces of a generated rack, song,
+  64-strip console, 200 and 2,000 automation lanes and a 100-track song), `-p atomik-devices
+  --bench process` (every built-in device), `-p atomik-dsp --bench blocks` and `-p atomik-model
+  --bench document` (save, load, validate, expand and an edit with its undo). Each case prints the
+  median and the 99th percentile of 21 samples. The generated documents of the stress options moved
+  to `atomik_model::stress`, with new ones for a song of any size and a console of gated,
+  compressed strips. The live callback keeps an allocation-free histogram of its own time and of
+  the level-barrier wait, and the end of an `atomik-play --stats` run prints its percentiles
+  (`cb_p50_us`, `cb_p99_us`, `cb_p999_us`, `cb_max_us`, `spins_p99`). Opening a project logs where
+  the time went (parse, build, devices, compile, submit, sync). A scheduled workflow, never run for
+  a pull request, keeps the bench output, fails when the instructions of a bench grow by more than
+  10 % over the committed baseline, and runs the release real-time-factor check. See
+  [docs/TESTING.md](docs/TESTING.md#benchmarks-and-the-performance-job).
 - **Combine and Uncombine: wrap devices in a container and unwrap them again.** The new commands
   **Combine** and **Uncombine** (Edit menu and device context menu, `Ctrl+Shift+G` and
   `Ctrl+Shift+U`; `rack.combine` and `rack.uncombine`) put the selected devices into a new

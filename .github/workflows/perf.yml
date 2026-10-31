@@ -1,0 +1,127 @@
+name: Performance
+
+# Scheduled measurements, never on a pull request and never gating one. Three jobs:
+#
+# - benches: runs the criterion benches of render, devices, dsp and model (one command per crate)
+#   and keeps their output, with a description of the runner, as an artifact. Wall-clock time on
+#   a shared runner is noisy: it is for reading, not for failing.
+# - instructions: runs each bench binary once under valgrind and fails when a count is more than
+#   10 % above perf/baseline-instructions.txt (scripts/perf-gate.sh). Instruction counts do not
+#   depend on the runner's load. With no baseline file yet, it measures, uploads the counts and
+#   passes: commit them as perf/baseline-instructions.txt to start gating. The manual input
+#   `inject_regression` inflates the counts by 20 % before the comparison, to prove that the gate
+#   fails.
+# - realtime: the release-profile check that a demo patch renders at least 50 times faster than
+#   real time.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      inject_regression:
+        description: "Inflate the measured instruction counts by 20 % (the job must then fail)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  benches:
+    name: benches
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: perf
+      - name: Describe the runner
+        run: |
+          mkdir -p perf-out
+          {
+            echo "runner: $RUNNER_NAME ($RUNNER_OS $RUNNER_ARCH)"
+            rustc -V
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|MHz'
+            grep -E 'MemTotal' /proc/meminfo
+            uname -sr
+          } | tee perf-out/runner.txt
+      - name: Run the benches
+        run: |
+          for spec in "atomik-render render_batch" "atomik-devices process" "atomik-dsp blocks" "atomik-model document"; do
+            set -- $spec
+            cargo bench -p "$1" --bench "$2" 2>&1 | tee "perf-out/$2.txt"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-output
+          path: |
+            perf-out
+            target/criterion
+          if-no-files-found: warn
+
+  instructions:
+    name: instruction counts
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: perf-instructions
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind
+      - name: Build the benches
+        run: |
+          cargo bench --no-run -p atomik-render --bench render_batch
+          cargo bench --no-run -p atomik-devices --bench process
+          cargo bench --no-run -p atomik-dsp --bench blocks
+          cargo bench --no-run -p atomik-model --bench document
+      - name: Count instructions
+        run: |
+          mkdir -p perf-out
+          sh scripts/perf-gate.sh measure perf-out/instructions.txt
+      - name: Inject a regression (manual runs only)
+        if: ${{ inputs.inject_regression }}
+        run: |
+          sh scripts/perf-gate.sh inflate perf-out/instructions.txt perf-out/instructions-injected.txt 1.2
+          cp perf-out/instructions-injected.txt perf-out/instructions.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: instruction-counts
+          path: perf-out
+      - name: Compare with the baseline
+        run: |
+          if [ -f perf/baseline-instructions.txt ]; then
+            sh scripts/perf-gate.sh compare perf/baseline-instructions.txt perf-out/instructions.txt 10
+          else
+            echo "::notice::no perf/baseline-instructions.txt yet: the counts are in the artifact; commit them there to gate on them"
+          fi
+
+  realtime:
+    name: real-time factor
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: perf-realtime
+      - run: cargo test --release -p atomik-render --test e2e -- --ignored --nocapture realtime_factor_release

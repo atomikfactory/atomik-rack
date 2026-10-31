@@ -4,6 +4,7 @@ use crate::clipboard::Clipboard;
 use crate::record::{InputQuantize, RecordedNote, Take};
 use crate::record_over::{KeepEvents, RecordMode, keep_events_follow_up, note_take_command};
 use crate::sink::EngineSink;
+use crate::stage_timer::{StageClock, Stages};
 use crate::target::{NoteTarget, Target};
 use atomik_core::{NoteKind, ParamId, SampleRate, Tempo, Ticks};
 use atomik_device_sdk::{DeviceDescriptor, Registry, SocketId};
@@ -14,7 +15,7 @@ use atomik_engine::{
 };
 use atomik_model::console::{
     BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM,
-    VCA_SOLO_PARAM, VcaFeed, is_console_type,
+    VCA_SOLO_PARAM, VcaFeed,
 };
 use atomik_model::{
     ClipContent, ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY,
@@ -228,6 +229,10 @@ pub struct AppCore<S: EngineSink> {
     dirty_memo: std::cell::Cell<Option<(u64, u64, bool)>>,
     /// The document revision every view was last synced at by `after_view_change`.
     views_synced_at: Option<u64>,
+    /// Time spent in the stages of the latest [`AppCore::rebuild_engine`].
+    rebuild_stages: Stages,
+    /// Time spent in the stages of the latest [`AppCore::open_str`].
+    open_stages: Stages,
     target: Arc<NoteTarget>,
     rejection: Option<String>,
     arrangement: ArrangementView,
@@ -372,19 +377,7 @@ pub fn default_registry() -> Registry {
     registry
 }
 
-/// `registry` without the console devices (`atomik.channel`, `atomik.master`): documents
-/// built with it get no automatic channels. The stress rack (a rack stress test, not a
-/// console one) and the sync tests use it.
-pub fn without_console(registry: &Registry) -> Registry {
-    let mut out = Registry::new();
-    for type_id in registry.type_ids().filter(|t| !is_console_type(t)) {
-        if let Some(f) = registry.get(type_id) {
-            // Already validated by `registry`, and the ids are unique there.
-            let _ = out.register(*f);
-        }
-    }
-    out
-}
+pub use atomik_model::stress::without_console;
 
 /// The engine configuration for a document (host inputs as the document's `input_channels`).
 pub fn engine_config(doc: &RackDoc) -> EngineConfig {
@@ -448,6 +441,8 @@ impl<S: EngineSink> AppCore<S> {
             saved_gen: 0,
             dirty_memo: std::cell::Cell::new(None),
             views_synced_at: None,
+            rebuild_stages: Stages::new(),
+            open_stages: Stages::new(),
             document: Document::new(doc),
             view,
             ids: BTreeMap::new(),
@@ -1159,13 +1154,37 @@ impl<S: EngineSink> AppCore<S> {
     /// file had that the document does not (see [`atomik_model::load_project_with_warnings`]) is
     /// logged and counted in a toast.
     pub fn open_str(&mut self, json: &str, path: Option<PathBuf>) -> Result<(), AppError> {
+        let mut clock = StageClock::start();
+        let mut stages = Stages::new();
         let (doc, warnings) = load_project_with_warnings(json, &self.registry)?;
+        clock.lap(&mut stages, "parse");
         // The plugins of the file that are not installed get stand-ins built from its layouts.
         register_stand_ins(&doc, &mut self.registry)?;
+        clock.lap(&mut stages, "stand-ins");
         self.replace(doc, path);
+        // `replace` ran the engine rebuild: its stages go in place of its own lump.
+        let mut replace = Stages::new();
+        clock.lap(&mut replace, "replace");
+        stages.extend(&self.rebuild_stages);
+        stages.push(
+            "other",
+            replace.total().saturating_sub(self.rebuild_stages.total()),
+        );
         self.plugins_after_open();
         self.report_load_warnings(&warnings);
+        clock.lap(&mut stages, "plugins");
+        log::info!("{}", stages.line("opened the project"));
+        self.open_stages = stages;
         Ok(())
+    }
+
+    /// Where the time of the latest [`AppCore::open_str`] went: `parse`, `stand-ins`, then the
+    /// stages of the engine rebuild (`build`: engine reset and the flattened rack, `devices`:
+    /// one device inserted per rack device, `compile`: the routing, `submit`: the song and the
+    /// live settings, `sync`: the views), then `other` (the rest of the replace) and `plugins`.
+    /// Empty before the first open.
+    pub fn open_stages(&self) -> &Stages {
+        &self.open_stages
     }
 
     /// Logs each warning of a project load and tells the user how many items were ignored.
@@ -1247,6 +1266,8 @@ impl<S: EngineSink> AppCore<S> {
     /// engine loop and the metronome. The transport starts stopped; a take in progress ends
     /// without a clip.
     pub fn rebuild_engine(&mut self) {
+        let mut clock = StageClock::start();
+        let mut stages = Stages::new();
         if self.take.take().is_some() {
             self.sink.set_recording(&[]);
         }
@@ -1276,6 +1297,7 @@ impl<S: EngineSink> AppCore<S> {
         self.plugin_devices = plugins::plugin_keys(&expanded);
         self.analysers
             .set_devices(analysers::analyser_keys(&expanded));
+        clock.lap(&mut stages, "build");
         for device in &expanded.devices {
             // A frozen device keeps its place in the id order but is not built.
             if device.frozen {
@@ -1285,19 +1307,24 @@ impl<S: EngineSink> AppCore<S> {
             self.insert_flat(device);
         }
         self.plugins_after_rebuild();
+        clock.lap(&mut stages, "devices");
         // The new sink session knows no ports yet.
         self.midi_out_sent.clear();
         self.push_midi_out_ports();
         self.submit_routing_with(&expanded);
+        clock.lap(&mut stages, "compile");
         self.push_solo_silence();
         self.push_vca_feeds();
         self.push_monitor_live();
         self.push_tuner_live();
         self.submit_song(true);
         self.send_metronome();
+        clock.lap(&mut stages, "submit");
         self.show_transport();
         self.sync_io_host();
         self.after_view_change();
+        clock.lap(&mut stages, "sync");
+        self.rebuild_stages = stages;
     }
 
     /// Per-frame housekeeping: drops what the engine handed back, reads the transport state,

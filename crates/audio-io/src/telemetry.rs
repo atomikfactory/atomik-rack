@@ -1,6 +1,7 @@
 //! Stream telemetry: xrun detection and classification, DSP load, published through
 //! atomics, plus the xrun event channel (audio thread → control thread).
 
+use crate::histogram::CallbackHistogram;
 use crate::{Telemetry, XRUN_EVENT_CAPACITY, XrunEvent, XrunKind};
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -273,6 +274,8 @@ pub(crate) struct TelemetryState {
     /// A stream error said the device is gone (sticky).
     device_lost: AtomicBool,
     load: LoadMeter,
+    /// Callback time and barrier-wait histograms (totals).
+    histogram: CallbackHistogram,
     /// Input capture-to-callback delay, output callback-to-playback delay, and the frames
     /// waiting in the input ring after each render (all smoothed, in frames).
     in_capture: LatencyMeter,
@@ -320,6 +323,10 @@ impl TelemetryState {
             Some(XrunKind::StreamError) | None => 0,
         };
         self.load.record(render, frames, sample_rate);
+        self.histogram.record(
+            u64::try_from(render.as_nanos()).unwrap_or(u64::MAX),
+            barrier_spins,
+        );
         kind
     }
 
@@ -397,6 +404,7 @@ impl TelemetryState {
             output_latency_frames: self.out_playback.get(),
             input_overruns: self.input_lost.load(Ordering::Relaxed),
             device_lost: self.device_lost.load(Ordering::Relaxed),
+            callback: self.histogram.snapshot(),
             faulted: fault != 0,
             faulted_device: match fault {
                 0 | u64::MAX => None,
@@ -822,5 +830,36 @@ mod tests {
         assert_eq!(XrunKind::RenderOverrun.to_string(), "render_overrun");
         assert_eq!(XrunKind::StreamError.to_string(), "stream_error");
         assert_eq!(XrunKind::RenderOverrun.name(), "render_overrun");
+    }
+
+    #[test]
+    fn every_callback_reaches_the_histogram_and_it_does_not_reset_on_read() {
+        let state = TelemetryState::new();
+        let mut d = XrunDetector::new();
+        let t0 = origin();
+        let p = period(128, 48_000);
+        atomik_testkit::no_alloc::assert_no_alloc(|| {
+            for i in 0..100u32 {
+                let render = if i == 99 { p * 2 } else { p / 10 };
+                let spins = if i == 99 { 500 } else { 1 };
+                state.on_callback(&mut d, t0 + p * i, 128, 48_000, render, spins);
+            }
+        });
+        let s = state.snapshot();
+        assert_eq!(s.callback.callbacks(), 100);
+        let tenth = u64::try_from((p / 10).as_nanos()).unwrap();
+        let p50 = s.callback.time_percentile_ns(50.0);
+        assert!(p50 >= tenth && p50 <= tenth + tenth / 4, "{p50} vs {tenth}");
+        assert_eq!(
+            s.callback.max_ns,
+            u64::try_from((p * 2).as_nanos()).unwrap()
+        );
+        assert_eq!(s.callback.spin_percentile(50.0), 1);
+        assert_eq!(s.callback.spin_percentile(100.0), 500);
+        assert_eq!(
+            state.snapshot().callback,
+            s.callback,
+            "unlike the load and the spin maximum, the histogram keeps its totals"
+        );
     }
 }

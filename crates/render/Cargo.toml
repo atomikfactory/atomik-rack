@@ -45,6 +45,11 @@ thiserror.workspace = true
 [dev-dependencies]
 atomik-testkit.workspace = true
 sha2.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "render_batch"
+harness = false
 
 [lints]
 workspace = true

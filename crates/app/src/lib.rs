@@ -51,6 +51,7 @@ pub mod settings;
 pub mod settings_dialog;
 pub mod shell;
 pub mod sink;
+pub mod stage_timer;
 pub mod status;
 pub mod stream_source;
 pub mod stress;

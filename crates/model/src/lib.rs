@@ -57,6 +57,7 @@ mod slices;
 mod song_cmd;
 mod steps;
 mod steps_cmd;
+pub mod stress;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
