@@ -182,6 +182,10 @@ pub const LOOP_MOVE_ARGS: &[&str] = &["bar:-1", "bar:+1", "length:-1", "length:+
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `file.open_recent`: the place in the recent list, 0 the newest song.
 pub const RECENT_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7"];
+/// The values of `file.new_template`: the place in the list of the template folder, 0 the first.
+pub const TEMPLATE_ARGS: &[&str] = &[
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
+];
 /// The values of `file.new_rate` and `file.convert_rate`: the project sample rate in Hz.
 pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
 /// The values of `audio.input_channels`: the host inputs the project asks for.
@@ -687,6 +691,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     ),
     cmd(
+        "file.cancel_archive",
+        "Cancel Project Archive",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.clear_recent",
         "Clear Recent Songs",
         G::Global,
@@ -701,6 +712,27 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .arg(RATE_ARGS)
+    .menu(),
+    cmd(
+        "file.default_song_reset",
+        "Reset Default Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.default_song_set",
+        "Use Song as Default Song",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.export_archive",
+        "Export Project Archive",
+        G::Global,
+        C::Global,
+    )
     .menu(),
     cmd(
         "file.export_loop_audio",
@@ -738,6 +770,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "file.import_archive",
+        "Import Project Archive",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
     cmd("file.import_audio", "Import Audio", G::Global, C::Global).menu(),
     cmd("file.import_midi", "Import MIDI", G::Global, C::Global).menu(),
     cmd(
@@ -751,6 +790,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd("file.new_rate", "New at Sample Rate", G::Global, C::Global)
         .arg(RATE_ARGS)
         .menu(),
+    cmd(
+        "file.new_template",
+        "New from Template",
+        G::Global,
+        C::Global,
+    )
+    .arg(TEMPLATE_ARGS)
+    .menu(),
     cmd("file.open", "Open", G::Global, C::Global).menu(),
     cmd("file.open_recent", "Open Recent", G::Global, C::Global)
         .arg(RECENT_ARGS)
@@ -765,6 +812,21 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("file.save", "Save", G::Global, C::Global).menu(),
     cmd("file.save_as", "Save As", G::Global, C::Global).menu(),
+    cmd(
+        "file.save_template",
+        "Save as Template",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "file.show_templates",
+        "Show Template Folder",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd("file.song_info", "Song Information", G::Global, C::Global).menu(),
     cmd("file.stress_rack", "Stress Rack", G::Global, C::Global).menu(),
     cmd("file.stress_song", "Stress Song", G::Global, C::Global).menu(),
     cmd("files.down", "Next Item", G::Files, C::Files).rep(),
