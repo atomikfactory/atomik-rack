@@ -87,3 +87,30 @@ device/step-sequencer/256batches: median 23.255 us  p99 34.728 us
 device/stereo-delay/256batches: median 480.575 us  p99 775.217 us
 device/wavetable-synth/256batches: median 3.882 ms  p99 5.511 ms
 ```
+
+## Model commands on a growing song
+
+`cargo bench -p atomik-model --bench commands`: a command and its undo on a song of 10 tracks and
+100 clips with 10^3, 10^5 and 10^6 notes (medians of 21 samples, same machine). Before is the
+document that copies the song and every note for each command; after is the shared song and note
+lists with in-place undo.
+
+```text
+case             notes   before      after
+adddevice        10^3    185.4 us    156.5 us
+adddevice        10^5    257.5 us    173.5 us
+adddevice        10^6    7.376 ms    183.5 us
+addaudiotrack    10^3    267.5 us    216.2 us
+addaudiotrack    10^5    418.9 us    223.1 us
+addaudiotrack    10^6    15.485 ms   222.3 us
+addchannel       10^3    51.2 us     41.0 us
+addchannel       10^5    152.5 us    39.9 us
+addchannel       10^6    4.465 ms    38.3 us
+connect          10^3    79.8 us     56.2 us
+connect          10^5    146.0 us    57.3 us
+connect          10^6    4.285 ms    56.6 us
+paste            10^3    288.6 us    230.3 us
+paste            10^5    486.9 us    229.3 us
+paste            10^6    11.665 ms   225.2 us
+adddevice in a rack of 100 devices and a full container: 1.945 ms (not measured before)
+```
