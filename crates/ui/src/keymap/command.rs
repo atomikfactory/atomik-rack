@@ -277,7 +277,7 @@ pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
 /// The values of `sequencer.track_height`: the height presets.
-pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit"];
+pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit", "minimise"];
 /// The values of `sequencer.fold_lanes`.
 pub const LANE_FOLD_ARGS: &[&str] = &["fold", "unfold"];
 /// The values of `sequencer.audio_fade_shape`.
@@ -1254,6 +1254,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.delete_track_and_device",
+        "Delete Track and Device",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
     .decline(),
     cmd(
         "sequencer.fold_lanes",

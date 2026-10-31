@@ -186,8 +186,27 @@ fn duplicate_with_a_selected_track_duplicates_the_track() {
     assert_eq!(
         v.command("edit.duplicate", None, &doc, &reg),
         CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
-            WorkflowCommand::DuplicateTrack {
-                device: key("lead")
+            WorkflowCommand::DuplicateTracks {
+                devices: vec![key("lead")],
+                place: None,
+            }
+        ))])
+    );
+}
+
+#[test]
+fn duplicate_with_several_selected_tracks_copies_them_in_one_command() {
+    let (mut v, doc, reg) = setup();
+    v.set_selected_track(Some(key("lead")));
+    v.toggle_selected_track(&key("bass"));
+    let selected = v.selected_tracks();
+    assert_eq!(selected.len(), 2);
+    assert_eq!(
+        v.command("edit.duplicate", None, &doc, &reg),
+        CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
+            WorkflowCommand::DuplicateTracks {
+                devices: selected,
+                place: None,
             }
         ))])
     );

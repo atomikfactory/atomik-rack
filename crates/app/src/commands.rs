@@ -288,6 +288,8 @@ pub enum AppCommand {
     RenameTrack,
     /// Track ▸ Track Comment…: type the selected track's comment.
     TrackComment,
+    /// Track > Delete Track and Device: the selected tracks and the devices that play them.
+    DeleteTrackAndDevice,
     /// Track > Add Note Lane: one more note lane on the selected track.
     AddNoteLane,
     /// Track > Rename Note Lane...: type the name of the selected note lane.
@@ -639,6 +641,7 @@ impl AppCommand {
             AppCommand::MoveTrackDown => ("sequencer.move_track_down", None),
             AppCommand::RenameTrack => ("sequencer.rename_track", None),
             AppCommand::TrackComment => ("sequencer.track_comment", None),
+            AppCommand::DeleteTrackAndDevice => ("sequencer.delete_track_and_device", None),
             AppCommand::AddNoteLane => ("sequencer.add_note_lane", None),
             AppCommand::RenameNoteLane => ("sequencer.rename_note_lane", None),
             AppCommand::DeleteNoteLane => ("sequencer.delete_note_lane", None),
@@ -887,6 +890,7 @@ impl AppCommand {
             ("sequencer.move_track_down", None) => AppCommand::MoveTrackDown,
             ("sequencer.rename_track", None) => AppCommand::RenameTrack,
             ("sequencer.track_comment", None) => AppCommand::TrackComment,
+            ("sequencer.delete_track_and_device", None) => AppCommand::DeleteTrackAndDevice,
             ("sequencer.add_note_lane", None) => AppCommand::AddNoteLane,
             ("sequencer.rename_note_lane", None) => AppCommand::RenameNoteLane,
             ("sequencer.delete_note_lane", None) => AppCommand::DeleteNoteLane,
@@ -1977,6 +1981,11 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::TrackComment,
                     state.org.track_selected,
                 ),
+                enabled(
+                    "Delete Track and Device",
+                    AppCommand::DeleteTrackAndDevice,
+                    state.org.track_selected,
+                ),
                 MenuEntry::Separator,
                 enabled("Add Note Lane", AppCommand::AddNoteLane, state.lane.can_add),
                 enabled(
@@ -2052,6 +2061,10 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item(
                     "Track Height: Fit",
                     AppCommand::TrackHeight(HeightPreset::Fit),
+                ),
+                item(
+                    "Track Height: Minimise / Restore",
+                    AppCommand::TrackHeight(HeightPreset::Minimise),
                 ),
             ],
         },
@@ -2538,6 +2551,7 @@ mod tests {
             AppCommand::MoveTrackDown,
             AppCommand::RenameTrack,
             AppCommand::TrackComment,
+            AppCommand::DeleteTrackAndDevice,
             AppCommand::AddNoteLane,
             AppCommand::RenameNoteLane,
             AppCommand::DeleteNoteLane,
@@ -2633,6 +2647,7 @@ mod tests {
             HeightPreset::Medium,
             HeightPreset::Large,
             HeightPreset::Fit,
+            HeightPreset::Minimise,
         ] {
             v.push(AppCommand::TrackHeight(p));
         }
@@ -3156,6 +3171,7 @@ mod tests {
                 "Move Track Down",
                 "Rename Track\u{2026}",
                 "Track Comment\u{2026}",
+                "Delete Track and Device",
                 "Add Note Lane",
                 "Rename Note Lane\u{2026}",
                 "Delete Note Lane",
@@ -3173,7 +3189,8 @@ mod tests {
                 "Track Height: Small",
                 "Track Height: Medium",
                 "Track Height: Large",
-                "Track Height: Fit"
+                "Track Height: Fit",
+                "Track Height: Minimise / Restore"
             ]
         );
         assert_eq!(

@@ -140,6 +140,7 @@ sequencer.snap_toggle | editor | S
 sequencer.split_at_playhead | sequencer | Alt+X
 sequencer.toggle_mute | sequencer | M
 sequencer.track_height fit | sequencer | Alt+M
+sequencer.track_height minimise | sequencer | Alt+Shift+M
 sequencer.zoom_selection | sequencer | Z, Shift+Z
 sequencer.zoom_selection | editor | Z
 sequencer.zoom_tracks_in | sequencer | Shift+H

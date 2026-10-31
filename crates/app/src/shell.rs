@@ -4613,6 +4613,7 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::MoveTrackDown
             | AppCommand::RenameTrack
             | AppCommand::TrackComment
+            | AppCommand::DeleteTrackAndDevice
             | AppCommand::AddNoteLane
             | AppCommand::RenameNoteLane
             | AppCommand::DeleteNoteLane

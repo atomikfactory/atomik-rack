@@ -133,11 +133,12 @@ const TRACK_COLORS: [(&str, &str); 7] = [
 ];
 
 /// The height presets of the track and folder menus: the command argument and the label.
-const TRACK_HEIGHTS: [(&str, &str); 4] = [
+const TRACK_HEIGHTS: [(&str, &str); 5] = [
     ("small", "Small"),
     ("medium", "Medium"),
     ("large", "Large"),
     ("fit", "Fit the View"),
+    ("minimise", "Minimise / Restore"),
 ];
 
 /// The fade shapes of the audio clip menu: the command argument and the label.
@@ -490,6 +491,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.move_track_down", e.org.can_move_down),
                 item("sequencer.rename_track", e.org.track_selected),
                 item("sequencer.track_comment", e.org.track_selected),
+                item("sequencer.delete_track_and_device", e.org.track_selected),
                 Spec::Separator,
             ]);
             v.extend(track_submenus());
@@ -1271,6 +1273,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 Some("Fold Automation Lanes"),
                 Some("Unfold Automation Lanes")
             ]
@@ -1739,7 +1742,7 @@ mod tests {
         );
         assert_eq!(
             args("sequencer.track_height"),
-            ["small", "medium", "large", "fit"]
+            ["small", "medium", "large", "fit", "minimise"]
         );
         assert_eq!(args("sequencer.fold_lanes"), ["fold", "unfold"]);
         // The folder row has its own list, and the toggle names what it will do.

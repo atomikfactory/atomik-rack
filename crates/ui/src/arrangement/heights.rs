@@ -59,9 +59,32 @@ pub(super) struct HeightDrag {
     /// The row height in pixels when the drag started.
     start_h: f64,
     original: BTreeMap<DeviceKey, u16>,
+    /// The base heights, at the press, of the tracks the drag resizes: the grabbed track alone,
+    /// or every selected track when it is one of several.
+    starts: Vec<(DeviceKey, f64)>,
     merge: u64,
     emitted: bool,
-    last: Option<u16>,
+    last: Option<BTreeMap<DeviceKey, u16>>,
+}
+
+/// The heights of a drag whose grabbed track went from base `from` to base `to`: every track
+/// of `starts` by the same factor, or all of them to `to` when `equal`. Whole pixels, within the
+/// limits.
+fn dragged_heights(
+    starts: &[(DeviceKey, f64)],
+    from: f64,
+    to: f64,
+    equal: bool,
+) -> Vec<(DeviceKey, u16)> {
+    let limits = (f64::from(MIN_TRACK_HEIGHT), f64::from(MAX_TRACK_HEIGHT));
+    let factor = if from > 0.0 { to / from } else { 1.0 };
+    starts
+        .iter()
+        .map(|(d, base)| {
+            let h = if equal { to } else { base * factor };
+            (d.clone(), h.round().clamp(limits.0, limits.1) as u16)
+        })
+        .collect()
 }
 
 /// Vertical zoom and the height drag.
@@ -69,6 +92,8 @@ pub(super) struct HeightDrag {
 pub(super) struct HeightUi {
     pub zoom: f64,
     pub drag: Option<HeightDrag>,
+    /// What the heights of the tracks that Minimise shortened were before (`None`: the default).
+    pub before_minimise: BTreeMap<DeviceKey, Option<u16>>,
 }
 
 impl HeightUi {
@@ -83,6 +108,7 @@ impl Default for HeightUi {
         Self {
             zoom: 1.0,
             drag: None,
+            before_minimise: BTreeMap::new(),
         }
     }
 }
@@ -226,12 +252,31 @@ impl ArrangementView {
             return;
         }
         let merge = self.merge_id();
+        // Several selected tracks resize together when the grabbed one is among them.
+        let selected = self.selected_tracks();
+        let group = if selected.len() > 1 && selected.contains(&device) {
+            selected
+        } else {
+            vec![device.clone()]
+        };
+        let starts = group
+            .into_iter()
+            .map(|d| {
+                let base = self
+                    .song
+                    .track_heights
+                    .get(&d)
+                    .map_or(TRACK_HEIGHT, |h| f64::from(*h));
+                (d, base)
+            })
+            .collect();
         self.th.drag = Some(HeightDrag {
             track,
             start_h: self.track_row_height(&device),
             device,
             start_y: pos.y,
             original: self.song.track_heights.clone(),
+            starts,
             merge,
             emitted: false,
             last: None,
@@ -240,7 +285,12 @@ impl ArrangementView {
     }
 
     /// Pointer motion during a height drag.
-    pub(super) fn height_move(&mut self, pos: crate::kurbo::Point, out: &mut Vec<UiAction>) {
+    pub(super) fn height_move(
+        &mut self,
+        pos: crate::kurbo::Point,
+        equal: bool,
+        out: &mut Vec<UiAction>,
+    ) {
         let zoom = self.th.zoom;
         let Some(d) = &mut self.th.drag else {
             return;
@@ -249,13 +299,18 @@ impl ArrangementView {
         // Back to the base height the song stores (at zoom 1), whole pixels.
         let base = (wanted / zoom)
             .round()
-            .clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT) as u16;
-        if d.last == Some(base) {
+            .clamp(MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
+        let from = d
+            .starts
+            .iter()
+            .find(|(k, _)| *k == d.device)
+            .map_or(TRACK_HEIGHT, |s| s.1);
+        let mut map = d.original.clone();
+        map.extend(dragged_heights(&d.starts, from, base, equal));
+        if d.last.as_ref() == Some(&map) {
             return;
         }
-        d.last = Some(base);
-        let mut map = d.original.clone();
-        map.insert(d.device.clone(), base);
+        d.last = Some(map.clone());
         d.emitted = true;
         out.push(song_cmd(SongCommand::DragTrackHeights {
             heights: map,

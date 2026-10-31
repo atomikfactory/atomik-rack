@@ -68,6 +68,7 @@
         { "command": "sequencer.snap_toggle", "context": "sequencer", "chords": ["S"] },
         { "command": "sequencer.audio_crossfade", "arg": "toggle", "context": "sequencer", "chords": ["X"] },
         { "command": "sequencer.track_height", "arg": "fit", "context": "sequencer", "chords": ["Alt+M"] },
+        { "command": "sequencer.track_height", "arg": "minimise", "context": "sequencer", "chords": ["Alt+Shift+M"] },
         { "command": "view.toggle_editor", "context": "sequencer", "chords": ["Cmd+E"] },
         { "command": "sequencer.close_clip", "context": "sequencer", "chords": ["Escape"] },
         { "command": "transport.loop_move", "arg": "bar:-1", "context": "global", "chords": ["Alt+Shift+Left"] },

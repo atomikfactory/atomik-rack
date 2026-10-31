@@ -1327,20 +1327,39 @@ bounce.
   folder), `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack` and `MoveGroup` (one
   place up or down: a track passes its neighbour, leaves a folder at its edge and enters a folder it
   meets, a folder moves with everything in it and leaves its parent at the edge;
-  `Song::can_move_track` and `can_move_group` say whether it would), `SetTrackColor`,
+  `Song::can_move_track` and `can_move_group` say whether it would), `MoveTracks` (several tracks
+  to one place: `TrackPlace { to_index, into }` counts the places among the tracks that stay and
+  names the folder they join; a place in the middle of another folder, a frozen track and a move
+  that changes nothing are refused, and `Song::moves_tracks` and `accepts_copies_at` say whether
+  a drop would be taken), `SetTrackColor`,
   `SetTrackComment`, `SetLaneFolded` and `SetTakesOpen`. Each is one undo step on one
   `Edit::Organise` that swaps the track order and the organisation, reporting `ViewChanged`
-  (`SongChanged` when tracks changed place); `SetTrackColor` and `SetLaneFolded` can be batched.
+  (`SongChanged` when tracks changed place); `SetTrackColor`, `SetGroupCollapsed` and `SetLaneFolded` can be
+  batched (Alt on a folder chevron collapses or expands every folder in one step).
   **Mute, solo and arm on a folder** are the same flags on its tracks: the arrangement sends one
   `Command::Batch` of `SetTrackFlags` for every track of the folder (`Song::group_tracks`), so the
   engine's mute and solo rules apply unchanged and one undo step reverts them. Folders do not change
   the routing, and there is no group bus: routing the tracks of a folder to an output bus stays what
-  the console already offers per channel.
+  the console already offers per channel. `WorkflowCommand::DuplicateTracks` copies several tracks
+  (devices, channels, clips, not armed) in one step and keeps the copies together after the last
+  original, or at a `TrackPlace` (the drop of a copy drag). A track colour is the batch of
+  `SetTrackColor` and `SetColor`, so the track, its device in the rack and its console strip agree
+  and one undo restores both.
 - **File.** Project format 22: a song's `"groups"`, a track's `"group"`, `"color"` and `"comment"`,
   an automation lane's `"folded": true` and a take group's `"open": true`, each omitted when unused,
   so a project without organisation differs from its version 21 file only in the version line. The
   loader refuses an unknown or looping parent, more than 8 levels, an empty folder and a folder
   whose tracks are not one block, naming the JSON path.
+- **Dragging** ([arrangement/track_move.rs](../crates/ui/src/arrangement/track_move.rs)). A press
+  on a track header starts a drag (one of several selected tracks keeps the selection, so all of
+  them go); past the drag threshold the pointer picks an insertion place from the rows (the upper
+  half of a track's first row is before it, the rest after it, in its folder; the upper half of a
+  folder row is before the folder, the lower half its start) and an accent line, indented by the
+  folder depth, shows it. A place the model would refuse shows no line. The release sends one
+  `MoveTracks` (or, with the copy role, one `DuplicateTracks` with the place); Escape cancels. The
+  bottom edge of a header resizes every selected track by the same factor (Alt gives them all one
+  height) in one merge group, and Track Height > Minimise sets the shortest height
+  (`MIN_TRACK_HEIGHT`) and, pressed again, brings back the heights the view remembers.
 - **View** ([arrangement/organise.rs](../crates/ui/src/arrangement/organise.rs)). `rebuild` walks
   the outline: a folder row (`FOLDER_ROW_HEIGHT` 26) above its first track and no rows for the
   tracks of a collapsed folder, so `lane_rect`, `track_header_center` and the like answer `None` for
@@ -3384,7 +3403,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (351) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (352) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

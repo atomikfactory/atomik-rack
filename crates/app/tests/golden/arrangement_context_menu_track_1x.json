@@ -1,7 +1,7 @@
 {"ops":[
-{"fill":{"rrect":[102.00,1314.00,383.60,2000.00,6.00]},"brush":"#0000005a"},
-{"fill":{"rrect":[100.00,1311.00,381.60,1997.00,6.00]},"brush":"#16181bff"},
-{"stroke":{"rrect":[100.00,1311.00,381.60,1997.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
+{"fill":{"rrect":[102.00,1314.00,383.60,2024.00,6.00]},"brush":"#0000005a"},
+{"fill":{"rrect":[100.00,1311.00,381.60,2021.00,6.00]},"brush":"#16181bff"},
+{"stroke":{"rrect":[100.00,1311.00,381.60,2021.00,6.00]},"width":1.00,"cap":"round","join":"round","brush":"#ffffff1c"},
 {"text":"Cut","at":[132.00,1331.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Ctrl+X","at":[367.60,1331.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Copy","at":[132.00,1355.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
@@ -38,11 +38,12 @@
 {"text":"Ctrl+Alt+Down","at":[367.60,1832.50],"size":12.00,"weight":400,"align":"end","color":"#8f96a0ff"},
 {"text":"Rename Track...","at":[132.00,1856.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"Track Comment...","at":[132.00,1880.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"fill":{"rect":[110.00,1892.00,371.60,1893.00]},"brush":"#ffffff1c"},
-{"text":"Colour","at":[132.00,1913.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"▸","at":[367.60,1913.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
-{"text":"Height","at":[132.00,1937.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Delete Track and Device","at":[132.00,1904.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"fill":{"rect":[110.00,1916.00,371.60,1917.00]},"brush":"#ffffff1c"},
+{"text":"Colour","at":[132.00,1937.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
 {"text":"▸","at":[367.60,1937.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
-{"text":"Fold Automation Lanes","at":[132.00,1961.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
-{"text":"Unfold Automation Lanes","at":[132.00,1985.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
+{"text":"Height","at":[132.00,1961.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"▸","at":[367.60,1961.50],"size":12.00,"weight":400,"align":"end","color":"#ece8e1ff"},
+{"text":"Fold Automation Lanes","at":[132.00,1985.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"},
+{"text":"Unfold Automation Lanes","at":[132.00,2009.50],"size":13.00,"weight":400,"align":"start","color":"#ece8e1ff"}
 ]}
