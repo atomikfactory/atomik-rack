@@ -1867,8 +1867,9 @@ of one dependency level alongside the audio thread. Ownership is handed off, not
 thread moves `Box<Node>`s into per-worker `rtrb` job queues and gets them back through done queues
 (no `unsafe`, no locks). Gathering inputs and scattering outputs always happen on the audio thread,
 in plan order, so the output is bit-identical for any worker count. The audio thread waits at a
-barrier by spinning (counted as telemetry); idle workers spin, then park. A level with a single
-device is never dispatched.
+barrier (a bounded spin, then yielding its core; counted as telemetry); idle workers spin, then
+park. The app and `atomik-play` start at most `cores - 1` workers. A level with a single device is
+never dispatched.
 
 ## 4. Threading model
 

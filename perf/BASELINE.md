@@ -131,3 +131,18 @@ paint_channel, 1,920 columns           292.8 us    94.1 us
 A playhead that moves inside one pixel no longer raises a repaint in the arrangement or the piano
 roll, and `AppCore::frame` skips the shown-value pass while the revision, position and play state
 are unchanged (tests `playhead_repaint`, `app_core::autoview_tests`).
+
+## Engine scheduling
+
+Same machine, bench profile, medians (`cargo bench -p atomik-render --bench render_batch -- lanes`).
+Lanes are applied only when their value changed; a bounce renders the same samples.
+
+```text
+case                                   before        after
+render/lanes-200/workers0/block256     188.2 ms      158.6 ms
+render/lanes-200/workers2/block256     208.4 ms      173.2 ms
+render/lanes-2000/workers0/block256    1.895 s       1.720 s
+```
+
+The render workers are capped at cores - 1 and the level barrier yields its core after 2,000 empty
+spins; both only matter on a live stream (see `atomik-play --stats` for the callback percentiles).
