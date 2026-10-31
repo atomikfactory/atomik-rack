@@ -281,6 +281,7 @@ impl Cli {
         }
         if let Some(workers) = self.workers {
             s.workers = workers;
+            s.workers_auto = false;
         }
         if let Some(linger) = self.linger {
             s.worker_linger_spins = linger;

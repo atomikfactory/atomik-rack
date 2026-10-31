@@ -49,6 +49,7 @@ fn current() -> AudioSettings {
         buffer_frames: 256,
         midi_inputs: Vec::new(),
         workers: 2,
+        workers_auto: false,
         worker_linger_spins: 0,
         metronome_gain: 0.5,
         ..AudioSettings::default()
@@ -156,12 +157,12 @@ fn the_sections_cover_every_setting() {
     );
     assert_eq!(
         labels(&d, "Buffer size (frames)"),
-        ["64", "128", "256", "512", "1024", "2048"]
+        ["64", "128", "256", "512", "1024", "2048", "Type a size"]
     );
     assert_eq!(labels(&d, "MIDI inputs"), ["Example Keyboard"]);
     assert_eq!(
         labels(&d, "Worker threads"),
-        ["0", "1", "2", "3", "4", "6", "8"]
+        ["Auto", "0", "1", "2", "3", "4", "6", "8"]
     );
     assert_eq!(
         labels(&d, "Worker linger (spins)"),
@@ -267,6 +268,7 @@ fn missing_saved_values_are_still_offered_and_marked() {
             buffer_frames: 300,
             midi_inputs: vec![MidiInputSetting::enabled("Old Keys")],
             workers: 5,
+            workers_auto: false,
             worker_linger_spins: 7,
             metronome_gain: 0.5,
             ..AudioSettings::default()
@@ -506,4 +508,87 @@ fn the_device_loss_choice_is_edited_and_the_stream_notes_are_listed() {
     let notes = SettingsDialog::new(current(), with_notes).notes();
     assert!(notes.contains(&"Buffer 256 frames (5.3 ms).".to_string()));
     assert!(notes.contains(&"Warning: drift".to_string()));
+}
+
+fn type_digits(d: &mut SettingsDialog, text: &str) {
+    for c in text.chars() {
+        d.handle(&key(Key::Char(c)), VIEW);
+    }
+}
+
+#[test]
+fn a_typed_buffer_size_is_clamped_and_kept_with_enter() {
+    for (typed, want) in [("96", 96), ("1", 16), ("9000", 8192), ("333", 333)] {
+        let mut d = SettingsDialog::new(current(), lists());
+        assert_eq!(pick(&mut d, "Type a size"), DialogOutcome::Open);
+        assert!(d.is_selected(&Choice::BufferField));
+        type_digits(&mut d, typed);
+        assert!(labels(&d, "Buffer size (frames)").contains(&format!("size {typed}|")));
+        assert_eq!(d.handle(&key(Key::Enter), VIEW), DialogOutcome::Open);
+        assert_eq!(d.draft().buffer_frames, want, "typed {typed}");
+        assert!(!d.is_selected(&Choice::BufferField));
+        // The size shows as a chip of its own when it is not a standard one.
+        assert!(labels(&d, "Buffer size (frames)").contains(&want.to_string()));
+    }
+}
+
+#[test]
+fn typing_into_the_buffer_field_edits_and_escape_drops_it() {
+    let mut d = SettingsDialog::new(current(), lists());
+    pick(&mut d, "Type a size");
+    type_digits(&mut d, "7x7");
+    d.handle(&key(Key::Backspace), VIEW);
+    type_digits(&mut d, "1234567");
+    // Four digits at most; letters are ignored.
+    assert!(labels(&d, "Buffer size (frames)").contains(&"size 71234|".replace("71234", "7123")));
+    assert_eq!(d.handle(&key(Key::Escape), VIEW), DialogOutcome::Open);
+    assert_eq!(
+        d.draft().buffer_frames,
+        256,
+        "escape drops the typing, not the dialog"
+    );
+    assert_eq!(d.handle(&key(Key::Escape), VIEW), DialogOutcome::Cancel);
+}
+
+#[test]
+fn enter_in_the_field_does_not_apply_and_a_click_elsewhere_keeps_the_size() {
+    let mut d = SettingsDialog::new(current(), lists());
+    pick(&mut d, "Type a size");
+    type_digits(&mut d, "200");
+    assert_eq!(pick(&mut d, "4"), DialogOutcome::Open);
+    assert_eq!(d.draft().buffer_frames, 200);
+    assert_eq!(d.draft().workers, 4);
+    // Apply while typing keeps what was typed.
+    pick(&mut d, "Type a size");
+    type_digits(&mut d, "48");
+    let apply = d.layout(VIEW).apply.center();
+    match click(&mut d, apply) {
+        DialogOutcome::Apply(s) => assert_eq!(s.buffer_frames, 48),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn auto_and_a_fixed_count_exclude_each_other() {
+    let mut d = SettingsDialog::new(current(), lists());
+    assert!(!d.is_selected(&Choice::WorkersAuto));
+    pick(&mut d, "Auto");
+    assert!(d.is_selected(&Choice::WorkersAuto));
+    assert!(
+        !d.is_selected(&Choice::Workers(2)),
+        "no fixed chip while automatic"
+    );
+    assert!(d.draft().workers_auto);
+    pick(&mut d, "6");
+    assert!(!d.draft().workers_auto);
+    assert_eq!(d.draft().workers, 6);
+    assert!(d.is_selected(&Choice::Workers(6)));
+    // The note says what automatic means here.
+    pick(&mut d, "Auto");
+    assert!(
+        d.layout(VIEW)
+            .notes
+            .iter()
+            .any(|(_, n)| n.starts_with("Auto starts "))
+    );
 }

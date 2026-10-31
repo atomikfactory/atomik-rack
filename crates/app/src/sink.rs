@@ -112,6 +112,15 @@ pub trait EngineSink {
     ) -> Option<(usize, u64)> {
         None
     }
+    /// [`atomik_engine::timing::set_enabled`]: starts or stops timing every device's
+    /// processing (the per-device CPU readout). Without an engine it does nothing.
+    fn set_cpu_timing(&mut self, _on: bool) {}
+    /// [`atomik_engine::Meters::device_cpu`]: the processing time of a device and the audio time
+    /// rendered, as one sample; `None` while the timing is off or the device is not in the
+    /// engine. Lock-free.
+    fn read_device_cpu(&self, _id: DeviceInstanceId) -> Option<atomik_engine::timing::CpuSample> {
+        None
+    }
     /// [`atomik_engine::Meters::scope_tap`]: copies the newest frames of the scope tap of a
     /// spectrum or phase meter device into `left` and `right` (oldest first, at most their
     /// length) and returns `(frames copied, the tap's write position)`; `None` when the device
@@ -328,6 +337,10 @@ pub struct RecordingSink {
     /// What [`EngineSink::read_device_meter_values`] returns per device: the values and the
     /// publish sequence.
     pub device_values: BTreeMap<DeviceInstanceId, (Vec<f32>, u64)>,
+    /// What [`EngineSink::read_device_cpu`] returns per device while `cpu_timing` is on.
+    pub cpu: BTreeMap<DeviceInstanceId, atomik_engine::timing::CpuSample>,
+    /// What the last [`EngineSink::set_cpu_timing`] set.
+    pub cpu_timing: bool,
     /// What [`EngineSink::read_device_scope`] returns per device: the frames (left, right) and
     /// the tap's write position.
     pub device_scopes: BTreeMap<DeviceInstanceId, (Vec<f32>, Vec<f32>, u64)>,
@@ -521,6 +534,16 @@ impl EngineSink for RecordingSink {
         let n = values.len().min(out.len());
         out[..n].copy_from_slice(&values[..n]);
         Some((n, *seq))
+    }
+
+    fn set_cpu_timing(&mut self, on: bool) {
+        self.cpu_timing = on;
+    }
+
+    fn read_device_cpu(&self, id: DeviceInstanceId) -> Option<atomik_engine::timing::CpuSample> {
+        self.cpu_timing
+            .then(|| self.cpu.get(&id).copied())
+            .flatten()
     }
 
     fn read_device_scope(

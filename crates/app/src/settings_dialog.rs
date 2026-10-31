@@ -22,8 +22,8 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES, MidiInputRole,
-    PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES, WORKER_CHOICES,
+    AudioSettings, BUFFER_CHOICES, CLOCK_OFFSET_CHOICES, HostChoice, LINGER_CHOICES, MAX_BUFFER,
+    MIN_BUFFER, MidiInputRole, PRE_COUNT_CHOICES, RECORD_OFFSET_CHOICES, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
 use atomik_audio_io::HostInfo;
@@ -94,6 +94,11 @@ pub enum Choice {
     PreCount(u8),
     /// Buffer size.
     Buffer(u32),
+    /// The field beside the buffer chips: a click starts typing a size (digits, Enter keeps it,
+    /// Escape drops it), clamped to [`MIN_BUFFER`]..=[`MAX_BUFFER`].
+    BufferField,
+    /// The worker count follows the machine ([`atomik_audio_io::auto_workers`]).
+    WorkersAuto,
     /// A MIDI input port: a click switches it on or off (every enabled port is open).
     MidiInput(String),
     /// What an enabled MIDI input is for: a click switches it between playing notes (a keyboard)
@@ -258,6 +263,8 @@ pub struct SettingsDialog {
     hover: Option<Point>,
     tab: Tab,
     prefs: Option<Prefs>,
+    /// The digits typed into the buffer field, while it has the focus.
+    buffer_edit: Option<String>,
 }
 
 impl SettingsDialog {
@@ -270,6 +277,36 @@ impl SettingsDialog {
             hover: None,
             tab: Tab::Audio,
             prefs: None,
+            buffer_edit: None,
+        }
+    }
+
+    /// Ends the typing in the buffer field: a size typed so far becomes the draft's (clamped).
+    fn commit_buffer_edit(&mut self) {
+        if let Some(text) = self.buffer_edit.take()
+            && let Ok(frames) = text.parse::<u32>()
+        {
+            self.draft.buffer_frames = frames.clamp(MIN_BUFFER, MAX_BUFFER);
+        }
+    }
+
+    /// Keys while the buffer field has the focus; every press is consumed.
+    fn buffer_key(&mut self, key: &Key, modifiers: atomik_ui::Modifiers) {
+        let Some(text) = &mut self.buffer_edit else {
+            return;
+        };
+        match key {
+            Key::Char(c) if c.is_ascii_digit() && !modifiers.ctrl && !modifiers.meta => {
+                if text.len() < 4 {
+                    text.push(*c);
+                }
+            }
+            Key::Backspace => {
+                text.pop();
+            }
+            Key::Enter => self.commit_buffer_edit(),
+            Key::Escape => self.buffer_edit = None,
+            _ => {}
         }
     }
 
@@ -543,7 +580,11 @@ impl SettingsDialog {
             v
         };
         let buffers = with_current(&BUFFER_CHOICES.map(u64::from), u64::from(d.buffer_frames));
-        let workers = with_current(&WORKER_CHOICES.map(u64::from), u64::from(d.workers));
+        let workers = if d.workers_auto {
+            WORKER_CHOICES.map(u64::from).to_vec()
+        } else {
+            with_current(&WORKER_CHOICES.map(u64::from), u64::from(d.workers))
+        };
         let lingers = with_current(&LINGER_CHOICES, d.worker_linger_spins);
         let mut offsets = RECORD_OFFSET_CHOICES.to_vec();
         if !offsets.contains(&d.record_offset_frames) {
@@ -571,6 +612,13 @@ impl SettingsDialog {
                 options: buffers
                     .iter()
                     .map(|b| (b.to_string(), Choice::Buffer(*b as u32)))
+                    .chain(std::iter::once((
+                        match &self.buffer_edit {
+                            Some(text) => format!("size {text}|"),
+                            None => "Type a size".to_string(),
+                        },
+                        Choice::BufferField,
+                    )))
                     .collect(),
                 chips: true,
             },
@@ -581,9 +629,12 @@ impl SettingsDialog {
             },
             Section {
                 title: "Worker threads",
-                options: workers
-                    .iter()
-                    .map(|w| (w.to_string(), Choice::Workers(*w as u16)))
+                options: std::iter::once(("Auto".to_string(), Choice::WorkersAuto))
+                    .chain(
+                        workers
+                            .iter()
+                            .map(|w| (w.to_string(), Choice::Workers(*w as u16))),
+                    )
                     .collect(),
                 chips: true,
             },
@@ -854,7 +905,9 @@ impl SettingsDialog {
             Choice::Input(n) => d.input_device == *n,
             Choice::RecordOffset(o) => d.record_offset_frames == *o,
             Choice::PreCount(b) => d.pre_count_bars == *b,
-            Choice::Buffer(b) => d.buffer_frames == *b,
+            Choice::Buffer(b) => d.buffer_frames == *b && self.buffer_edit.is_none(),
+            Choice::BufferField => self.buffer_edit.is_some(),
+            Choice::WorkersAuto => d.workers_auto,
             Choice::MidiInput(p) => d.enabled_midi_inputs().any(|i| i.name == *p),
             Choice::MidiMappingOnly(p) => d
                 .midi_inputs
@@ -864,7 +917,7 @@ impl SettingsDialog {
             Choice::SurfaceInput(n) => d.surface.input == *n,
             Choice::SurfaceOutput(n) => d.surface.output == *n,
             Choice::MidiOutPort(n) => d.midi_out_port == *n,
-            Choice::Workers(w) => d.workers == *w,
+            Choice::Workers(w) => !d.workers_auto && d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
             Choice::LossReset(r) => d.device_loss.reset_to_default == *r,
             Choice::ClockOut(on) => d.sync.clock_out == *on,
@@ -897,7 +950,13 @@ impl SettingsDialog {
             Choice::Input(n) => self.draft.input_device = n,
             Choice::RecordOffset(o) => self.draft.record_offset_frames = o,
             Choice::PreCount(b) => self.draft.pre_count_bars = b,
-            Choice::Buffer(b) => self.draft.buffer_frames = b,
+            Choice::Buffer(b) => {
+                self.buffer_edit = None;
+                self.draft.buffer_frames = b;
+            }
+            Choice::BufferField if self.buffer_edit.is_some() => self.commit_buffer_edit(),
+            Choice::BufferField => self.buffer_edit = Some(String::new()),
+            Choice::WorkersAuto => self.draft.workers_auto = true,
             Choice::MidiInput(p) => {
                 let on = self.draft.enabled_midi_inputs().any(|i| i.name == p);
                 self.draft.set_midi_input_enabled(&p, !on);
@@ -913,7 +972,10 @@ impl SettingsDialog {
             Choice::SurfaceInput(n) => self.draft.surface.input = n,
             Choice::SurfaceOutput(n) => self.draft.surface.output = n,
             Choice::MidiOutPort(n) => self.draft.midi_out_port = n,
-            Choice::Workers(w) => self.draft.workers = w,
+            Choice::Workers(w) => {
+                self.draft.workers = w;
+                self.draft.workers_auto = false;
+            }
             Choice::Linger(l) => self.draft.worker_linger_spins = l,
             Choice::LossReset(r) => self.draft.device_loss.reset_to_default = r,
             Choice::ClockOut(on) => self.draft.sync.clock_out = on,
@@ -969,6 +1031,15 @@ impl SettingsDialog {
         ];
         notes.extend(self.lists.input_note.iter().cloned());
         notes.extend(self.lists.stream_notes.iter().cloned());
+        notes.push(format!(
+            "Buffer: click Type a size for any value from {MIN_BUFFER} to {MAX_BUFFER} frames, then press Enter."
+        ));
+        if self.draft.workers_auto {
+            notes.push(format!(
+                "Auto starts {} render workers on this machine: one per physical core, leaving the audio thread its own.",
+                atomik_audio_io::auto_workers_here()
+            ));
+        }
         notes.push(
             "Record offset: positive places recordings earlier (added to the measured latency)."
                 .to_string(),
@@ -1085,6 +1156,16 @@ impl SettingsDialog {
                 return self.handle_preferences(event, view);
             }
         }
+        if self.buffer_edit.is_some()
+            && let UiEvent::Key {
+                key,
+                modifiers,
+                pressed: true,
+            } = event
+        {
+            self.buffer_key(key, *modifiers);
+            return DialogOutcome::Open;
+        }
         match event {
             UiEvent::Key {
                 key, pressed: true, ..
@@ -1106,16 +1187,23 @@ impl SettingsDialog {
                 ..
             } => {
                 let l = self.layout(view);
+                let hit = l
+                    .options
+                    .into_iter()
+                    .find(|(r, ..)| r.contains(*pos))
+                    .map(|(_, _, choice)| choice)
+                    .filter(|_| l.content.contains(*pos));
+                // A click anywhere but on the field ends the typing and keeps the size.
+                if hit != Some(Choice::BufferField) {
+                    self.commit_buffer_edit();
+                }
                 if l.apply.contains(*pos) {
                     return DialogOutcome::Apply(self.draft.clone().sanitized());
                 }
                 if l.cancel.contains(*pos) {
                     return DialogOutcome::Cancel;
                 }
-                if l.content.contains(*pos)
-                    && let Some((_, _, choice)) =
-                        l.options.into_iter().find(|(r, ..)| r.contains(*pos))
-                {
+                if let Some(choice) = hit {
                     self.choose(choice);
                 }
             }
@@ -1239,6 +1327,8 @@ impl SettingsDialog {
                 choice,
                 Choice::Host(_)
                     | Choice::Buffer(_)
+                    | Choice::BufferField
+                    | Choice::WorkersAuto
                     | Choice::Workers(_)
                     | Choice::Linger(_)
                     | Choice::RecordOffset(_)
