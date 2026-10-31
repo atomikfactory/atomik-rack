@@ -9,6 +9,9 @@
 //! [`assert_no_alloc`] then panics (in normal test code, not inside the allocator) if the
 //! closure allocated, reallocated or freed heap memory on the current thread.
 //!
+//! [`peak_heap_of`] measures the most heap bytes a closure held at once on the current thread
+//! (for tests that bound the memory a hostile input can make a reader take).
+//!
 //! **Worker threads.** Threads the test does not drive directly (engine
 //! workers) cannot be wrapped in a closure. [`forbid_on_this_thread`] (an `fn()`, suitable for
 //! `WorkerConfig::on_thread_start`) marks the calling thread as forbidden for the rest of its
@@ -26,6 +29,8 @@ thread_local! {
     static FORBID_DEPTH: Cell<u32> = const { Cell::new(0) };
     static VIOLATIONS: Cell<u64> = const { Cell::new(0) };
     static WORKER_FORBIDDEN: Cell<bool> = const { Cell::new(false) };
+    static LIVE_BYTES: Cell<isize> = const { Cell::new(0) };
+    static PEAK_BYTES: Cell<isize> = const { Cell::new(0) };
 }
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -35,6 +40,15 @@ static WORKER_VIOLATIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Global allocator that counts heap operations performed inside [`assert_no_alloc`] sections.
 pub struct GuardAllocator;
+
+/// Adds `delta` to this thread's live heap bytes and remembers the highest value.
+#[inline]
+fn track(delta: isize) {
+    let _ = LIVE_BYTES.try_with(|live| {
+        live.set(live.get() + delta);
+        let _ = PEAK_BYTES.try_with(|peak| peak.set(peak.get().max(live.get())));
+    });
+}
 
 #[inline]
 fn record() {
@@ -55,22 +69,35 @@ unsafe impl GlobalAlloc for GuardAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record();
         // SAFETY: forwarded with the caller's layout.
-        unsafe { System.alloc(layout) }
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            track(layout.size() as isize);
+        }
+        p
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record();
         // SAFETY: forwarded with the caller's layout.
-        unsafe { System.alloc_zeroed(layout) }
+        let p = unsafe { System.alloc_zeroed(layout) };
+        if !p.is_null() {
+            track(layout.size() as isize);
+        }
+        p
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         record();
+        track(-(layout.size() as isize));
         // SAFETY: `ptr` was allocated by `System` through this allocator with `layout`.
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         record();
         // SAFETY: `ptr`/`layout` come from this allocator; `new_size` is the caller's request.
-        unsafe { System.realloc(ptr, layout, new_size) }
+        let p = unsafe { System.realloc(ptr, layout, new_size) };
+        if !p.is_null() {
+            track(new_size as isize - layout.size() as isize);
+        }
+        p
     }
 }
 
@@ -102,6 +129,22 @@ pub fn assert_no_alloc<R>(f: impl FnOnce() -> R) -> R {
         "HI-1 violated: {violations} heap operation(s) inside a no-alloc section"
     );
     result
+}
+
+/// Runs `f` and returns its result with the most heap bytes it held at once on this thread
+/// (memory other threads allocate is not counted). Panics if [`install_alloc_guard!`] was not
+/// used in this test binary.
+pub fn peak_heap_of<R>(f: impl FnOnce() -> R) -> (R, usize) {
+    drop(std::hint::black_box(Box::new(0u8))); // marks the guard as installed if it is
+    assert!(
+        INSTALLED.load(Ordering::Relaxed),
+        "atomik_testkit::install_alloc_guard!() is missing from this test binary"
+    );
+    let base = LIVE_BYTES.with(Cell::get);
+    PEAK_BYTES.with(|p| p.set(base));
+    let result = f();
+    let peak = PEAK_BYTES.with(Cell::get) - base;
+    (result, usize::try_from(peak).unwrap_or(0))
 }
 
 /// Marks the calling thread as allocation-forbidden for the rest of its life. Every

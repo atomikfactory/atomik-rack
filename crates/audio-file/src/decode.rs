@@ -27,29 +27,68 @@ use symphonia::core::meta::MetadataOptions;
 use crate::data::AudioData;
 use crate::error::{AudioFileError, Result};
 
-/// Refuse streams beyond this many samples (all channels), about 8 GiB of `f32`.
-const MAX_SAMPLES: u64 = 1 << 31;
+/// The most samples (all channels) [`decode_file`] and [`decode_bytes`] hold in memory: 4 GiB of
+/// `f32`, about 3 hours of 96 kHz stereo. A longer file is refused before it can exhaust memory
+/// (an allocation failure aborts the process, which no guard can catch); callers that really
+/// want more, such as a render that loads long assets, pass their own limit to
+/// [`decode_file_with`].
+pub const DEFAULT_MAX_SAMPLES: u64 = 1 << 30;
 
-/// Decodes a file. The extension is used as a probe hint only.
+/// A decoded file and what the decoder had to repair.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Decoded {
+    /// The audio.
+    pub audio: AudioData,
+    /// How many samples were NaN or infinite and became silence (zero for any sound file).
+    pub replaced: u64,
+}
+
+/// Decodes a file. The extension is used as a probe hint only. Refuses more than
+/// [`DEFAULT_MAX_SAMPLES`]; non-finite samples become silence (see [`decode_file_with`]).
 pub fn decode_file(path: &Path) -> Result<AudioData> {
+    decode_file_with(path, DEFAULT_MAX_SAMPLES).map(|d| d.audio)
+}
+
+/// [`decode_file`] with its own limit on the samples (all channels) it will hold, and a count
+/// of the non-finite samples it replaced.
+pub fn decode_file_with(path: &Path, max_samples: u64) -> Result<Decoded> {
     let file = File::open(path)?;
     let ext = path.extension().and_then(|e| e.to_str());
-    decode_source(Box::new(file), ext)
+    decode_source(Box::new(file), ext, max_samples)
 }
 
 /// Decodes an in-memory file. `ext_hint` is an optional extension such as `"mp3"`; a wrong
 /// hint is harmless because the probe falls back to the content.
 pub fn decode_bytes(bytes: &[u8], ext_hint: Option<&str>) -> Result<AudioData> {
-    decode_source(Box::new(Cursor::new(bytes.to_vec())), ext_hint)
+    decode_bytes_with(bytes, ext_hint, DEFAULT_MAX_SAMPLES).map(|d| d.audio)
 }
 
-fn decode_source(source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<AudioData> {
+/// [`decode_bytes`] with its own sample limit and a count of the repaired samples.
+pub fn decode_bytes_with(
+    bytes: &[u8],
+    ext_hint: Option<&str>,
+    max_samples: u64,
+) -> Result<Decoded> {
+    decode_source(Box::new(Cursor::new(bytes.to_vec())), ext_hint, max_samples)
+}
+
+fn decode_source(
+    source: Box<dyn MediaSource>,
+    ext: Option<&str>,
+    max_samples: u64,
+) -> Result<Decoded> {
     // Symphonia should never panic on bad data; if a decoder bug does, report it as an error.
-    catch_unwind(AssertUnwindSafe(|| decode_inner(source, ext))).unwrap_or_else(|_| {
+    catch_unwind(AssertUnwindSafe(|| decode_inner(source, ext, max_samples))).unwrap_or_else(|_| {
         Err(AudioFileError::Decode(
             "decoder panicked on malformed data".into(),
         ))
     })
+}
+
+fn too_long(max_samples: u64) -> AudioFileError {
+    AudioFileError::Unsupported(format!(
+        "audio too long (more than {max_samples} samples, all channels)"
+    ))
 }
 
 pub(crate) fn map_sym(e: SymError) -> AudioFileError {
@@ -98,7 +137,11 @@ pub(crate) fn precheck_wav(source: &mut dyn MediaSource) -> Result<()> {
     Ok(())
 }
 
-fn decode_inner(mut source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<AudioData> {
+fn decode_inner(
+    mut source: Box<dyn MediaSource>,
+    ext: Option<&str>,
+    max_samples: u64,
+) -> Result<Decoded> {
     precheck_wav(source.as_mut())?;
     let mss = MediaSourceStream::new(source, Default::default());
     let mut hint = Hint::new();
@@ -163,11 +206,16 @@ fn decode_inner(mut source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<A
             ));
         }
         buf.copy_to_vecs_planar::<f32>(&mut scratch);
-        for (dst, src) in channels.iter_mut().zip(&scratch) {
-            dst.extend_from_slice(src);
+        // Check the size before growing: the growth itself is what aborts on a lack of memory.
+        let wanted = (channels[0].len() as u64 + scratch.first().map_or(0, Vec::len) as u64)
+            .saturating_mul(n as u64);
+        if wanted > max_samples {
+            return Err(too_long(max_samples));
         }
-        if (channels[0].len() as u64) * (n as u64) > MAX_SAMPLES {
-            return Err(AudioFileError::Unsupported("audio too long".into()));
+        for (dst, src) in channels.iter_mut().zip(&scratch) {
+            dst.try_reserve(src.len())
+                .map_err(|_| too_long(max_samples))?;
+            dst.extend_from_slice(src);
         }
     }
 
@@ -183,7 +231,8 @@ fn decode_inner(mut source: Box<dyn MediaSource>, ext: Option<&str>) -> Result<A
             channels[0].len()
         )));
     }
-    AudioData::new(rate, channels)
+    let (audio, replaced) = AudioData::new_counted(rate, channels)?;
+    Ok(Decoded { audio, replaced })
 }
 
 #[cfg(test)]
@@ -217,7 +266,7 @@ mod panic_tests {
 
     #[test]
     fn a_panicking_decoder_returns_error() {
-        let result = decode_source(Box::new(PanickingSource), Some("wav"));
+        let result = decode_source(Box::new(PanickingSource), Some("wav"), DEFAULT_MAX_SAMPLES);
         assert!(
             matches!(result, Err(AudioFileError::Decode(_))),
             "{result:?}"

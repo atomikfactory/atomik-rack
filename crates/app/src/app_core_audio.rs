@@ -111,6 +111,8 @@ struct Batch {
     total: usize,
     done: usize,
     errors: Vec<String>,
+    /// Files that imported but had something repaired on the way (non-finite samples).
+    notes: Vec<String>,
     /// Set when the files relink missing assets instead of adding clips.
     relink: Option<relink::RelinkJob>,
     /// Track names that replace the file name (recovered recordings), by file.
@@ -574,6 +576,9 @@ impl<S: EngineSink> AppCore<S> {
                 report.push(format!("{what}: {}", batch.errors.join("; ")));
             }
             report.extend(note);
+            if !batch.notes.is_empty() {
+                report.push(format!("audio import: {}", batch.notes.join("; ")));
+            }
             if !report.is_empty() {
                 self.reject(report.join(" \u{b7} "));
             }
@@ -790,6 +795,7 @@ impl<S: EngineSink> AppCore<S> {
                 total: paths.len(),
                 done: 0,
                 errors: Vec::new(),
+                notes: Vec::new(),
                 relink,
                 names: BTreeMap::new(),
             },
@@ -819,6 +825,11 @@ impl<S: EngineSink> AppCore<S> {
 
     fn apply_imported(&mut self, batch: u64, path: &Path, result: Result<Loaded, String>) {
         let name = display_name(path);
+        let replaced = result
+            .as_ref()
+            .ok()
+            .and_then(|l| l.info.as_ref())
+            .map_or(0, |i| i.replaced_samples);
         let outcome = result.and_then(|loaded| {
             self.insert_loaded(&loaded);
             if self
@@ -850,8 +861,18 @@ impl<S: EngineSink> AppCore<S> {
         }
         if let Some(b) = self.audio.batches.get_mut(&batch) {
             b.done += 1;
-            if let Err(e) = outcome {
-                b.errors.push(format!("{name}: {e}"));
+            match outcome {
+                Err(e) => b.errors.push(format!("{name}: {e}")),
+                Ok(()) if replaced > 0 => {
+                    let samples = if replaced == 1 { "sample" } else { "samples" };
+                    log::warn!(
+                        "{name}: {replaced} NaN or infinite {samples} replaced with silence"
+                    );
+                    b.notes.push(format!(
+                        "{name}: {replaced} invalid {samples} (NaN or infinite) replaced with silence"
+                    ));
+                }
+                Ok(()) => {}
             }
         }
     }
@@ -1121,7 +1142,7 @@ impl<S: EngineSink> AppCore<S> {
     /// changes.
     pub fn open(&mut self, path: &Path) -> Result<(), AppError> {
         let file = atomik_render::bundle::resolve_project_path(path);
-        let text = std::fs::read_to_string(&file).map_err(|source| AppError::Io {
+        let text = atomik_model::read_document_text(&file).map_err(|source| AppError::Io {
             path: file.clone(),
             source,
         })?;

@@ -726,7 +726,7 @@ pub fn render_project_file(
     options: &ProjectOptions,
 ) -> Result<Rendered, RenderError> {
     let file = crate::bundle::resolve_project_path(path);
-    let text = std::fs::read_to_string(&file).map_err(|source| RenderError::Read {
+    let text = atomik_model::read_document_text(&file).map_err(|source| RenderError::Read {
         path: file.clone(),
         source,
     })?;
@@ -903,8 +903,8 @@ pub(crate) fn render_core(
     extra: &Extra<'_>,
 ) -> Result<Option<Core>, RenderError> {
     let bundle = bundle_root.and_then(|root| atomik_audio_file::Bundle::open(root).ok());
-    let assets =
-        crate::bundle::load_song_assets(doc, bundle.as_ref()).map_err(RenderError::Project)?;
+    let (assets, asset_warnings) = crate::bundle::load_song_assets_counted(doc, bundle.as_ref())
+        .map_err(RenderError::Project)?;
     // Warped clips: every buffer is rendered before the song is built, so a bounce never plays
     // a clip dry and its bits do not depend on timing.
     let warps = crate::warp::render_warps(doc, &assets);
@@ -943,6 +943,7 @@ pub(crate) fn render_core(
         atomik_engine::Topology::new(&built.config),
     );
     let mut warnings = std::mem::take(&mut built.warnings);
+    warnings.extend(asset_warnings);
     warnings.extend(sampler_warnings);
     let ids = expanded_ids(&expanded);
     let input = song_input_with_warps(doc, registry, |k| ids.get(k).copied(), &assets, &warps);

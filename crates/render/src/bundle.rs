@@ -150,6 +150,19 @@ pub fn load_song_assets(
     doc: &RackDoc,
     bundle: Option<&Bundle>,
 ) -> Result<BTreeMap<String, SongAsset>, String> {
+    load_song_assets_counted(doc, bundle).map(|(assets, _)| assets)
+}
+
+/// [`load_song_assets`] that also reports, per asset, the NaN or infinite samples that were read
+/// as silence (a file of the bundle that was not written by this program can hold them).
+///
+/// # Errors
+/// As [`load_song_assets`].
+pub fn load_song_assets_counted(
+    doc: &RackDoc,
+    bundle: Option<&Bundle>,
+) -> Result<(BTreeMap<String, SongAsset>, Vec<crate::patch::Warning>), String> {
+    let mut warnings = Vec::new();
     let wanted = doc.referenced_assets();
     let missing: Vec<String> = wanted
         .iter()
@@ -165,13 +178,23 @@ pub fn load_song_assets(
     }
     let mut out = BTreeMap::new();
     let Some(bundle) = bundle else {
-        return Ok(out);
+        return Ok((out, warnings));
     };
     for hash in wanted {
         let name = pool_name(doc, &hash);
-        let data = bundle
-            .load(&hash)
+        let decoded = bundle
+            .load_counted(&hash)
             .map_err(|e| format!("audio asset {name} ({hash}): {e}"))?;
+        if decoded.replaced > 0 {
+            warnings.push(crate::patch::Warning {
+                path: format!("assets.{hash}"),
+                message: format!(
+                    "{name}: {} NaN or infinite samples were read as silence",
+                    decoded.replaced
+                ),
+            });
+        }
+        let data = decoded.audio;
         if data.sample_rate != doc.sample_rate {
             return Err(format!(
                 "audio asset {name} ({hash}) is {} Hz but the project is {} Hz",
@@ -180,7 +203,7 @@ pub fn load_song_assets(
         }
         out.insert(hash, SongAsset::memory(Arc::from(data.channels)));
     }
-    Ok(out)
+    Ok((out, warnings))
 }
 
 #[cfg(test)]

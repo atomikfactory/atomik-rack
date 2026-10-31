@@ -1,0 +1,89 @@
+name: Fuzz
+
+# Scheduled fuzzing of everything that reads a file or a message from outside: projects and
+# patches, Standard MIDI Files, audio files and the plugin sandbox wire. It never runs on a pull
+# request and never gates one: cargo-fuzz needs a nightly toolchain, and the crate it builds
+# (fuzz/) is outside the workspace. The protection itself is also tested on stable, in the
+# normal CI (the robustness and bounded-input tests of audio-file, midi-io and model).
+#
+# Each target runs for FUZZ_SECONDS from the seed corpus (scripts/fuzz-seed.sh) plus the inputs
+# that failed before (fuzz/regressions/<target>/). A failing input is uploaded as an artifact:
+# commit it to fuzz/regressions/<target>/ with the fix, so that it is replayed from then on.
+# The large-input job runs the tests that are too big for every push (a file of 8 GB, a MIDI
+# file of 8 million events).
+on:
+  schedule:
+    - cron: "41 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds to fuzz each target"
+        type: string
+        default: "300"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  FUZZ_SECONDS: ${{ inputs.seconds || '300' }}
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [load_project, load_patch, smf_read, audio_decode, ipc_frame]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The pinned toolchain builds nothing here, but the action also installs the ALSA and
+      # fontconfig headers the workspace crates need and sets up the cargo cache.
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: fuzz
+      - name: Install the nightly toolchain
+        run: rustup toolchain install nightly --profile minimal --no-self-update
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-fuzz
+      - name: Seed the corpus
+        run: sh scripts/fuzz-seed.sh
+      - name: Fuzz ${{ matrix.target }}
+        run: |
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048 -timeout=30
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+  large:
+    name: large inputs
+    if: github.repository == 'atomikfactory/atomik-rack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: fuzz-large
+      # A WAV of three hours of 96 kHz stereo (8 GB, made sparse) streams past the 4 GiB a RIFF
+      # size field can say, and a Standard MIDI File at the event caps is refused.
+      - run: cargo test -p atomik-audio-file --test stream_large -- --ignored
+      - run: cargo test -p atomik-midi-io --test robustness -- --ignored

@@ -2002,10 +2002,11 @@ impl<S: EngineSink> AppCore<S> {
     /// Opens a recovery snapshot as an unsaved project (its name is not the user's file; saving
     /// asks for a name).
     pub fn open_recovery(&mut self, path: &Path) -> Result<(), super::AppError> {
-        let text = std::fs::read_to_string(path).map_err(|source| super::AppError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let text =
+            atomik_model::read_document_text(path).map_err(|source| super::AppError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
         self.open_str(&text, None)?;
         // Not clean: the user has not saved it anywhere.
         self.set_saved(atomik_model::empty_doc());

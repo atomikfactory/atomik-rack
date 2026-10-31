@@ -32,7 +32,7 @@ pub enum RegistryError {
     InvalidDescriptor {
         /// Offending type.
         type_id: &'static str,
-        /// Reason.
+        /// Why the descriptor is invalid.
         source: DescriptorError,
     },
     /// A static registration used the reserved `clap.` or `vst3.` prefix.

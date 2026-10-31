@@ -85,6 +85,37 @@ The guard only sees the current thread, and only code that runs inside the closu
 tests in `crates/render/tests/e2e.rs` run the CLI binary as a child process, which has no guard
 installed. The real demo patch is guarded separately by `render_slice_demo_is_allocation_free`.
 
+## Fuzzing
+
+The readers of files and messages that come from outside have two kinds of test. The ordinary one
+runs in `cargo test` on stable: truncated, corrupted and oversized inputs must give a value or an
+error and must not panic or allocate beyond what the input can account for
+(`crates/audio-file/tests/bounded.rs` runs a WAV header that claims two billion samples under a
+counting allocator; the `robustness.rs` files of `audio-file`, `midi-io` and `model` run 400 to
+1 000 cases each on committed fixtures; `crates/model/src/read_limit.rs` tests the size cap of
+project files; `crates/render/tests/audio_nan.rs` bounces a bundle whose asset holds NaN).
+
+The other is coverage-guided fuzzing with `cargo-fuzz`, in [fuzz/](../fuzz). It needs a nightly
+toolchain, so the crate is its own workspace and no normal build or test touches it. Targets, in
+[fuzz/fuzz_targets](../fuzz/fuzz_targets): [load_project](../fuzz/fuzz_targets/load_project.rs),
+[load_patch](../fuzz/fuzz_targets/load_patch.rs) (also clip files, library items, MIDI mapping
+presets and the library database), [smf_read](../fuzz/fuzz_targets/smf_read.rs),
+[audio_decode](../fuzz/fuzz_targets/audio_decode.rs) (the symphonia decoder, the WAV readers and the
+preview decoder) and [ipc_frame](../fuzz/fuzz_targets/ipc_frame.rs) (the sandbox control channel).
+To run one:
+
+```sh
+cargo install cargo-fuzz
+sh scripts/fuzz-seed.sh                     # fills fuzz/corpus from the committed fixtures
+cargo +nightly fuzz run smf_read -- -max_total_time=300
+```
+
+[fuzz.yml](../.github/workflows/fuzz.yml) runs each target for five minutes every week (and on
+demand) and uploads the failing input. Commit such an input to `fuzz/regressions/<target>/` with
+the fix, so that `scripts/fuzz-seed.sh` replays it. The same workflow runs the tests too large for
+every push, which are `#[ignore]`d: a 3-hour 96 kHz stereo WAV of 8 GB made sparse that streams
+past 4 GiB (`crates/audio-file/tests/stream_large.rs`) and a MIDI file at the event caps.
+
 ## Documentation checks
 
 A few tests keep the documents honest; each one names what to update when it fails.

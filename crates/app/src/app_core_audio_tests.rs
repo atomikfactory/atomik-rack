@@ -616,3 +616,48 @@ fn the_audio_demo_example_opens_with_its_bundle_and_plays() {
     assert_eq!(input.audio.len(), 1);
     assert_eq!(input.audio[0].regions.len(), 3);
 }
+
+#[test]
+fn a_float_file_with_non_finite_samples_imports_as_silence_and_says_so() {
+    let t = Tmp::new("nan");
+    let path = t.path("bad.wav");
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 48_000,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut w = hound::WavWriter::create(&path, spec).unwrap();
+    for s in [0.5f32, f32::NAN, 0.25, f32::INFINITY, -0.5] {
+        w.write_sample(s).unwrap();
+    }
+    w.finalize().unwrap();
+    let mut c = core();
+    import(&mut c, &[path], ImportTarget::NewTracks, 0);
+    assert_eq!(audio_clips(&c).len(), 1, "the clip is placed");
+    let message = c
+        .last_rejection()
+        .expect("the repair is reported")
+        .to_owned();
+    assert!(
+        message.contains("bad.wav") && message.contains("2 invalid samples"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_project_file_over_the_size_cap_is_refused_unread_and_nothing_changes() {
+    let t = Tmp::new("bigproject");
+    let big = t.path("big.atomik");
+    let file = std::fs::File::create(&big).unwrap();
+    file.set_len(atomik_model::MAX_DOCUMENT_BYTES + 1).unwrap();
+    drop(file);
+    let mut c = core();
+    let before = c.doc().clone();
+    let err = c.open(&big).unwrap_err().to_string();
+    assert!(
+        err.contains("big.atomik") && err.contains("256.0 MiB"),
+        "{err}"
+    );
+    assert_eq!(c.doc(), &before);
+}

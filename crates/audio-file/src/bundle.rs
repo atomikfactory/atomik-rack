@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::data::AudioData;
-use crate::decode::decode_file;
+use crate::decode::decode_file_with;
 use crate::error::{AudioFileError, Result};
 use crate::hash::content_hash;
 use crate::peaks::PeakPyramid;
@@ -37,6 +37,9 @@ pub struct AssetInfo {
     pub frames: u64,
     /// Display name: the imported file's name, or the name given to a recording.
     pub original_name: String,
+    /// Samples of the imported file that were NaN or infinite and were stored as silence (zero
+    /// for a sound file and for a recording).
+    pub replaced_samples: u64,
 }
 
 /// True for 64 lowercase hex digits, the only form accepted as an asset id.
@@ -178,14 +181,19 @@ impl Bundle {
     /// Decodes `src`, converts it to `session_rate` if its rate differs, and stores it
     /// under its content hash unless that asset is already present. Importing the same audio
     /// again changes nothing on disk and returns an equal [`AssetInfo`].
+    ///
+    /// A file of more than [`crate::DEFAULT_MAX_SAMPLES`] samples is refused, and NaN or
+    /// infinite samples are stored as silence (counted in [`AssetInfo::replaced_samples`]).
     pub fn import(&mut self, src: &Path, session_rate: u32) -> Result<AssetInfo> {
-        let decoded = decode_file(src)?;
-        let data = resample(&decoded, session_rate)?;
+        let decoded = decode_file_with(src, crate::DEFAULT_MAX_SAMPLES)?;
+        let data = resample(&decoded.audio, session_rate)?;
         let name = src.file_name().map_or_else(
             || src.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        self.store(&data, &name)
+        let mut info = self.store(&data, &name)?;
+        info.replaced_samples = decoded.replaced;
+        Ok(info)
     }
 
     /// Stores already-decoded audio (a finished recording) the same way, without decoding.
@@ -214,6 +222,7 @@ impl Bundle {
             sample_rate: data.sample_rate,
             frames: data.frames() as u64,
             original_name: name.to_owned(),
+            replaced_samples: 0,
         })
     }
 
@@ -237,9 +246,15 @@ impl Bundle {
         }
     }
 
-    /// Loads a whole asset into memory.
+    /// Loads a whole asset into memory. A NaN or infinite sample reads as silence.
     pub fn load(&self, hash: &str) -> Result<AudioData> {
         read_wav_f32(&self.require(hash)?)
+    }
+
+    /// [`Self::load`] that also counts the non-finite samples it replaced (an asset this crate
+    /// stored has none; a file placed in the bundle by hand can).
+    pub fn load_counted(&self, hash: &str) -> Result<crate::Decoded> {
+        crate::read_wav_f32_limited(&self.require(hash)?, u64::MAX)
     }
 
     /// Opens a seekable streaming reader over an asset (for assets too large for RAM).

@@ -181,7 +181,7 @@ pub fn run(args: &Args, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Resul
             source: std::io::Error::other("no project file (.atomik) in this folder or beside it"),
         });
     }
-    let text = std::fs::read_to_string(&input).map_err(|source| RenderError::Read {
+    let text = atomik_model::read_document_text(&input).map_err(|source| RenderError::Read {
         path: input.clone(),
         source,
     })?;
