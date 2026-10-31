@@ -536,7 +536,7 @@ fn joining_unlooped_automation_clips_merges_points_later_clip_wins() {
 }
 
 #[test]
-fn join_needs_two_unlooped_clips_of_one_lane_and_no_audio() {
+fn join_needs_two_clips_of_one_lane_and_no_audio() {
     let r = audio_registry();
     let mut d = arranged_audio(&r);
     let notes: Vec<ClipId> = d.doc().song.track(&key("synth")).unwrap().lanes[0]
@@ -551,22 +551,6 @@ fn join_needs_two_unlooped_clips_of_one_lane_and_no_audio() {
     // Two tracks.
     let other = d.doc().song.track(&key("pad")).unwrap().lanes[0].clips[0].id;
     let e = rejected(&mut d, &r, join(vec![notes[0], other]));
-    assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");
-    // A looped clip.
-    d.apply(
-        sc(SongCommand::SetClipGeometry {
-            id: notes[0],
-            start: BAR,
-            length: BAR,
-            offset: 0,
-            loop_length: Some(PPQ),
-            muted: false,
-            merge: None,
-        }),
-        &r,
-    )
-    .unwrap();
-    let e = rejected(&mut d, &r, join(vec![notes[0], notes[1]]));
     assert!(matches!(e, ModelError::BadSong(_)), "{e:?}");
     // Audio clips.
     let audio: Vec<ClipId> = d.doc().song.track(&key("audio-track")).unwrap().lanes[0]
@@ -1098,4 +1082,76 @@ fn a_joined_clip_is_muted_only_when_every_part_was_muted() {
         clip_of(&d, two[0]).muted,
         "all parts muted: the join is muted"
     );
+}
+
+// ---------------------------------------------------------------- paste without the source track
+
+#[test]
+fn pasting_audio_clips_whose_track_is_missing_makes_an_audio_track_in_the_same_step() {
+    let r = audio_registry();
+    let mut a = with_audio_track(&r);
+    run(
+        &mut a,
+        &r,
+        [
+            add_audio_clip("audio-track", BAR, BAR, 1),
+            add_audio_clip("audio-track", 3 * BAR, BAR, 2),
+        ],
+    );
+    let all = clip_ids(a.doc());
+    let snapshot = ClipSnapshot::capture(a.doc(), &all).unwrap();
+    // A project with the same pool and no audio track.
+    let mut b = with_assets(&r);
+    assert!(b.doc().song.tracks.is_empty());
+    let ops = one_step(&mut b, &r, paste_clips(None, 2 * BAR, &snapshot));
+    assert!(ops.contains(&SyncOp::SongChanged), "{ops:?}");
+    let song = &b.doc().song;
+    assert_eq!(song.tracks.len(), 1);
+    let lane = &song.tracks[0].lanes[0];
+    assert_eq!(
+        lane.clips.iter().map(|c| c.start).collect::<Vec<_>>(),
+        [2 * BAR, 4 * BAR]
+    );
+    b.undo(&r).unwrap();
+    assert!(b.doc().song.tracks.is_empty());
+}
+
+#[test]
+fn joining_a_looped_clip_unrolls_it_and_plays_the_same() {
+    use atomik_model::song::flatten_notes;
+    let r = registry();
+    let mut looped = notes_clip(
+        BAR,
+        2 * BAR,
+        vec![note(0, PPQ, 60, 0.8), note(PPQ, PPQ, 62, 0.7)],
+    );
+    looped.loop_length = Some(BAR / 2);
+    looped.offset = PPQ / 2;
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &r,
+        [
+            add(0, SYNTH, Some("synth")),
+            add_track("synth"),
+            add_clip("synth", 0, looped),
+            add_clip(
+                "synth",
+                0,
+                notes_clip(4 * BAR, BAR, vec![note(0, PPQ, 64, 0.5)]),
+            ),
+        ],
+    );
+    let before = flatten_notes(d.doc().song.track(&key("synth")).unwrap());
+    assert!(before.len() >= 4, "{before:?}");
+    let all: Vec<ClipId> = d.doc().song.track(&key("synth")).unwrap().lanes[0]
+        .clips
+        .iter()
+        .map(|c| c.id)
+        .collect();
+    one_step(&mut d, &r, wf(WorkflowCommand::JoinClips { ids: all }));
+    let t = d.doc().song.track(&key("synth")).unwrap();
+    assert_eq!(t.lanes[0].clips.len(), 1);
+    assert_eq!(t.lanes[0].clips[0].loop_length, None);
+    assert_eq!(flatten_notes(t), before);
 }

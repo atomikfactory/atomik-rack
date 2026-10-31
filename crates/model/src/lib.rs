@@ -12,6 +12,7 @@ mod audition;
 pub mod automation_rec;
 mod automation_view;
 mod clip_io;
+mod clip_transform;
 mod console_bus;
 mod console_cmd;
 mod console_insert;

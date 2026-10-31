@@ -582,6 +582,9 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::DeleteOutsideEvents { .. }
             | WorkflowCommand::SplitClips { .. }
             | WorkflowCommand::CutOut { .. }
+            | WorkflowCommand::ReverseClips { .. }
+            | WorkflowCommand::ScaleTempo { .. }
+            | WorkflowCommand::ChopClips { .. }
             | WorkflowCommand::InsertTime { .. }
             | WorkflowCommand::RemoveTime { .. }
             | WorkflowCommand::LayerRecording { .. }

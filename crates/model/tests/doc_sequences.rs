@@ -43,7 +43,8 @@ enum WfOp {
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
     /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick,
-    /// or insert (5) or remove (6) a bar of time there.
+    /// insert (5) or remove (6) a bar of time there, reverse (7), scale to 200 % (8) or chop to
+    /// half bars (9).
     Gesture(u8, Vec<usize>, i64),
     PasteNotes(usize, Vec<usize>, i64),
     DuplicateNotes(usize, Vec<usize>),
@@ -186,7 +187,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
-        (0u8..7, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
+        (0u8..10, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
@@ -327,6 +328,18 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 6 => WorkflowCommand::RemoveTime {
                     at: *t,
                     length: BAR,
+                },
+                7 => WorkflowCommand::ReverseClips {
+                    ids,
+                    graphical: *t % 2 == 0,
+                },
+                8 => WorkflowCommand::ScaleTempo {
+                    ids,
+                    percent: 200.0,
+                },
+                9 => WorkflowCommand::ChopClips {
+                    ids,
+                    length: BAR / 2,
                 },
                 k => WorkflowCommand::CutOut {
                     ids,
