@@ -19,6 +19,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/character_demo.rs",
     "render/character_pdc.rs",
     "render/character_qa.rs",
+    "render/combine.rs",
     "render/console.rs",
     "render/container_demo.rs",
     "render/controller_lanes.rs",
