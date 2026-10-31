@@ -601,7 +601,7 @@ fn stats_print_each_xrun_event_and_the_split_summary() {
     let summary = lines.last().unwrap();
     assert!(
         summary.ends_with(
-            " events_dropped=0 late=0 overruns=2 errors=0 max_barrier_spins=80 result=FAIL"
+            " overruns=2 errors=0 max_barrier_spins=80 cb_p50_us=0.0 cb_p99_us=0.0 cb_p999_us=0.0 cb_max_us=0.0 spins_p99=0 result=FAIL"
         ),
         "{summary}"
     );

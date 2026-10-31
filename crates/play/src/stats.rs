@@ -1,6 +1,6 @@
 //! Statistics: the once-per-second `--stats` line, the run totals and the exit-code policy.
 
-use atomik_audio_io::{Telemetry, XrunEvent};
+use atomik_audio_io::{CallbackStats, Telemetry, XrunEvent};
 
 /// Exit code of a clean run.
 pub const EXIT_OK: i32 = 0;
@@ -77,6 +77,8 @@ pub struct RunTotals {
     pub stream_errors: u64,
     /// Highest engine level-barrier wait of any callback in the run, in spins.
     pub max_barrier_spins: u64,
+    /// Latest callback time and barrier-wait histograms (totals since the stream started).
+    pub callback: CallbackStats,
 }
 
 impl RunTotals {
@@ -98,6 +100,7 @@ impl RunTotals {
         self.render_overruns = t.render_overruns;
         self.stream_errors = t.stream_errors;
         self.max_barrier_spins = self.max_barrier_spins.max(t.max_barrier_spins);
+        self.callback = t.callback;
     }
 
     /// The `--stats` line for the latest snapshot.
@@ -115,7 +118,8 @@ impl RunTotals {
     }
 
     /// The final summary printed when the run stops. The xrun split (`late`, `overruns`,
-    /// `errors`, whose sum is `xruns`) and `max_barrier_spins` come last, before `result=`.
+    /// `errors`, whose sum is `xruns`), `max_barrier_spins` and the callback-time percentiles
+    /// (`cb_p50_us` .. `cb_max_us`, `spins_p99`) come last, before `result=`.
     pub fn summary(&self, duration: Option<u64>) -> String {
         let result = match duration {
             None => "stopped",
@@ -123,7 +127,7 @@ impl RunTotals {
             Some(_) => "PASS",
         };
         format!(
-            "summary: t={}s callbacks={} buf={} xruns={} peak_dsp={:.1}% midi_dropped={} events_dropped={} late={} overruns={} errors={} max_barrier_spins={} result={result}",
+            "summary: t={}s callbacks={} buf={} xruns={} peak_dsp={:.1}% midi_dropped={} events_dropped={} late={} overruns={} errors={} max_barrier_spins={} {} result={result}",
             self.seconds,
             self.callbacks,
             self.buffer_frames,
@@ -134,7 +138,8 @@ impl RunTotals {
             self.late_callbacks,
             self.render_overruns,
             self.stream_errors,
-            self.max_barrier_spins
+            self.max_barrier_spins,
+            self.callback.summary_fields()
         )
     }
 }
@@ -253,7 +258,8 @@ mod tests {
         assert_eq!(
             s,
             "summary: t=5s callbacks=1875 buf=128 xruns=0 peak_dsp=7.9% midi_dropped=0 \
-             events_dropped=0 late=0 overruns=0 errors=0 max_barrier_spins=0 result=PASS"
+             events_dropped=0 late=0 overruns=0 errors=0 max_barrier_spins=0 \
+             cb_p50_us=0.0 cb_p99_us=0.0 cb_p999_us=0.0 cb_max_us=0.0 spins_p99=0 result=PASS"
         );
         t.record(tel(2250, 2, 0.02, 0.05), 6, 0, 0);
         let failed = t.summary(Some(6));
@@ -314,7 +320,33 @@ mod tests {
         assert_eq!(
             t.summary(Some(600)),
             "summary: t=600s callbacks=225768 buf=128 xruns=41 peak_dsp=111.9% midi_dropped=0 \
-             events_dropped=0 late=3 overruns=37 errors=1 max_barrier_spins=900 result=FAIL"
+             events_dropped=0 late=3 overruns=37 errors=1 max_barrier_spins=900 \
+             cb_p50_us=0.0 cb_p99_us=0.0 cb_p999_us=0.0 cb_max_us=0.0 spins_p99=0 result=FAIL"
+        );
+    }
+
+    #[test]
+    fn summary_prints_the_callback_percentiles_of_the_latest_snapshot() {
+        let mut callback = CallbackStats::default();
+        callback.time[atomik_audio_io::time_bucket(200_000)] = 99;
+        callback.time[atomik_audio_io::time_bucket(900_000)] = 1;
+        callback.spins[atomik_audio_io::spin_bucket(5)] = 100;
+        callback.max_ns = 900_000;
+        callback.max_spins = 5;
+        let mut t = RunTotals::default();
+        t.record(
+            Telemetry {
+                callback,
+                ..tel(100, 0, 0.1, 0.2)
+            },
+            1,
+            0,
+            0,
+        );
+        let s = t.summary(Some(1));
+        assert!(
+            s.contains(" cb_p50_us=2") && s.contains(" cb_max_us=900.0 spins_p99=5 result=PASS"),
+            "{s}"
         );
     }
 
