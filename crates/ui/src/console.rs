@@ -29,7 +29,12 @@
 //! [`ConsoleView::is_text_owner`] while editing; Enter commits, Esc or an empty name cancels);
 //! a bus plate has a right-click menu (Rename, Delete bus) and is reordered by drag among the
 //! buses (`ReorderBus`). A click on a plate selects the strip (Ctrl/Cmd toggles, Shift
-//! extends); see [`ConsoleView::selected_strips`]. Right-clicking a channel plate does nothing.
+//! extends); see [`ConsoleView::selected_strips`]. Left and Right move the selection to the
+//! adjacent strip (Shift extends the range), Select All takes every strip and Delete removes the
+//! selected ones. **Ganged edits**: a fader, a send level, a mute, a solo or a send switch of a
+//! selected strip moves on every selected strip as one `Batch` ([`crate::console_gang`]): levels
+//! by the same dB, switches to the state clicked, one undo step per drag. A right-click on a plate
+//! also offers the channel settings commands (copy, paste, reset, clear inserts).
 //!
 //! Keys: the arrows, Page Up / Down, Home and End are the `mixer.*` registry commands
 //! ([`ConsoleView::command`]); `handle` reads only Escape and F5 itself. While a strip or bus
@@ -64,6 +69,7 @@ mod help;
 
 use crate::action::UiAction;
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
+use crate::console_gang as gang;
 use crate::console_layout::{
     self as cl, CtrlKind, Folds, MASTER_W, MasterLayout, PlacedCtrl, STRIP_GAP, STRIP_W, SectionId,
     StripLayout,
@@ -301,6 +307,8 @@ enum MenuItem {
     VcaColor(u32, Option<[u8; 3]>),
     /// Select the members of this group in the console.
     SelectVca(u32),
+    /// Run this registry command (it acts on the selected strips).
+    Run(&'static str),
     /// Recall this snapshot, all of it or only the categories of the scope.
     SnapRecall(u32, SnapshotScope),
     /// Compare the mix with this snapshot.
@@ -390,6 +398,14 @@ impl Menu {
     }
 }
 
+/// A strip that follows a ganged drag: the value its control had when the drag began.
+#[derive(Debug, Clone)]
+struct GangMember {
+    key: DeviceKey,
+    p: &'static ParamDescriptor,
+    start: f32,
+}
+
 #[derive(Debug, Clone)]
 enum Drag {
     None,
@@ -401,6 +417,8 @@ enum Drag {
         last: Point,
         start: f32,
         value: f32,
+        /// The selected strips the drag moves along (empty for a drag of one strip).
+        gang: Vec<GangMember>,
     },
     Move {
         strip: usize,
@@ -704,6 +722,8 @@ pub struct ConsoleView {
     /// Selected strips (view state) and the last clicked one (the range anchor).
     selection: BTreeSet<DeviceKey>,
     anchor: Option<DeviceKey>,
+    /// The strip the arrow keys moved to last (the end of a range the Shift arrows extend).
+    cursor: Option<DeviceKey>,
     /// A strip name being edited in place.
     rename: Option<RenameState>,
     /// The last rejected command, shown in the toolbar until the next click.
@@ -781,6 +801,7 @@ impl ConsoleView {
             pointer: Point::ZERO,
             selection: BTreeSet::new(),
             anchor: None,
+            cursor: None,
             rename: None,
             notice: None,
             focus: None,
@@ -2127,12 +2148,89 @@ impl ConsoleView {
         merge: Option<u64>,
     ) -> Option<UiAction> {
         let v = self.view_of(t)?;
+        // A switch of a selected strip is set on every selected strip (one undo step).
+        if gang::is_switch(param) {
+            let members = self.gang_members(t, param);
+            if !members.is_empty() {
+                let members: Vec<GangMember> = members
+                    .into_iter()
+                    .filter(|m| {
+                        // A strip that is soloed cannot be muted by a click.
+                        param != "mute"
+                            || self
+                                .strips
+                                .iter()
+                                .find(|s| s.key == m.key)
+                                .is_none_or(|s| !s.on("solo"))
+                    })
+                    .collect();
+                let values = vec![value; members.len()];
+                return Some(Self::gang_batch(&members, &values, param, merge));
+            }
+        }
         Some(UiAction::Command(Command::SetParam {
             key: v.key.clone(),
             param: param.to_string(),
             value,
             merge,
         }))
+    }
+
+    /// The strips an edit of `param` on strip `t` also moves: the selected strips that have the
+    /// param and no macro driving it, with the value each has now. Empty when the edit is of
+    /// one strip: `t` is not a selected strip, nothing else is selected, the param is not ganged
+    /// or only `t` qualifies.
+    fn gang_members(&self, t: Target, param: &str) -> Vec<GangMember> {
+        let Target::Strip(i) = t else {
+            return Vec::new();
+        };
+        let Some(key) = self.strips.get(i).map(|s| &s.key) else {
+            return Vec::new();
+        };
+        if !gang::is_ganged(param) || self.selection.len() < 2 || !self.selection.contains(key) {
+            return Vec::new();
+        }
+        let members: Vec<GangMember> = self
+            .strips
+            .iter()
+            .filter(|s| self.selection.contains(&s.key))
+            .filter(|s| !s.driven.iter().any(|(p, _)| p == param))
+            .filter_map(|s| {
+                let p = s.desc?.params.iter().find(|p| p.key == param)?;
+                Some(GangMember {
+                    key: s.key.clone(),
+                    p,
+                    start: s.value(p),
+                })
+            })
+            .collect();
+        if members.len() > 1 && members.iter().any(|m| &m.key == key) {
+            members
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// One `Batch` setting `param` of every member to its value; with a merge id the batch is
+    /// a step of a drag (see `atomik_model::Document`).
+    fn gang_batch(
+        members: &[GangMember],
+        values: &[f32],
+        param: &str,
+        merge: Option<u64>,
+    ) -> UiAction {
+        UiAction::Command(Command::Batch(
+            members
+                .iter()
+                .zip(values)
+                .map(|(m, v)| Command::SetParam {
+                    key: m.key.clone(),
+                    param: param.to_string(),
+                    value: *v,
+                    merge,
+                })
+                .collect(),
+        ))
     }
 
     fn mute_blocked(&self, t: Target, param: &str) -> bool {
@@ -2606,6 +2704,14 @@ impl ConsoleView {
             }));
             return;
         }
+        // A registry command the shell runs on the selection.
+        if let MenuItem::Run(id) = &item {
+            out.push(UiAction::RunCommand {
+                id: (*id).to_owned(),
+                arg: None,
+            });
+            return;
+        }
         let cmd = match (&item, slot) {
             (MenuItem::Output(dest), _) => match &strip {
                 // Choosing the destination the strip already has changes nothing.
@@ -2698,11 +2804,10 @@ impl ConsoleView {
     /// each group that would take a strip, Remove from VCA when one is in a group).
     fn open_strip_menu(&mut self, i: usize, pos: Point, doc: &RackDoc) {
         let key = self.strips[i].key.clone();
-        let targets: Vec<DeviceKey> = if self.selection.contains(&key) {
-            self.selected_strips()
-        } else {
-            vec![key.clone()]
-        };
+        if !self.selection.contains(&key) {
+            self.click_select(i, Modifiers::NONE);
+        }
+        let targets: Vec<DeviceKey> = self.selected_strips();
         let mut items: Vec<(String, MenuItem)> = Vec::new();
         if i >= self.n_channels {
             items.push(("Rename".to_string(), MenuItem::RenameBus(key.clone())));
@@ -2719,6 +2824,19 @@ impl ConsoleView {
         }
         if targets.iter().any(|t| doc.console.vca_of(t).is_some()) {
             items.push(("Remove from VCA".to_string(), MenuItem::AssignVca(None)));
+        }
+        // The channel settings commands act on the selection; the strip clicked joins it first
+        // when it is not in it.
+        for (label, id) in [
+            ("Copy settings", "mixer.copy_settings"),
+            ("Copy levels", "mixer.copy_settings_levels"),
+            ("Copy sends", "mixer.copy_settings_sends"),
+            ("Copy inserts", "mixer.copy_settings_inserts"),
+            ("Paste settings", "mixer.paste_settings"),
+            ("Reset channel", "mixer.reset_strip"),
+            ("Clear inserts", "mixer.clear_inserts"),
+        ] {
+            items.push((label.to_string(), MenuItem::Run(id)));
         }
         let origin = self.menu_origin(pos, items.len());
         self.menu = Some(Menu {
@@ -3030,11 +3148,12 @@ impl ConsoleView {
             if !self.selection.remove(&key) {
                 self.selection.insert(key.clone());
             }
-            self.anchor = Some(key);
+            self.anchor = Some(key.clone());
         } else {
             self.selection = BTreeSet::from([key.clone()]);
-            self.anchor = Some(key);
+            self.anchor = Some(key.clone());
         }
+        self.cursor = Some(key);
         self.mark_selection();
     }
 
@@ -3084,7 +3203,18 @@ impl ConsoleView {
         match (kind, button) {
             (CtrlKind::Knob | CtrlKind::Slider | CtrlKind::Fader, PointerButton::Primary) => {
                 if clicks >= 2 || self.reset_click(modifiers) {
-                    out.extend(self.set_param(t, param, p.clamp(p.default), None));
+                    let gang = if gang::is_level(param) {
+                        self.gang_members(t, param)
+                    } else {
+                        Vec::new()
+                    };
+                    if gang.is_empty() {
+                        out.extend(self.set_param(t, param, p.clamp(p.default), None));
+                    } else {
+                        let values: Vec<f32> =
+                            gang.iter().map(|m| m.p.clamp(m.p.default)).collect();
+                        out.push(Self::gang_batch(&gang, &values, param, None));
+                    }
                     return;
                 }
                 let ppr = match kind {
@@ -3094,6 +3224,15 @@ impl ConsoleView {
                 };
                 let merge = self.next_merge;
                 self.next_merge += 1;
+                // A fader or a send level of a selected strip takes the other selected strips
+                // along, when the start is a level (a strip that is off has none).
+                let gang = if gang::is_level(param)
+                    && gang::level_db(p, value).is_some_and(f32::is_finite)
+                {
+                    self.gang_members(t, param)
+                } else {
+                    Vec::new()
+                };
                 self.drag = Drag::Value {
                     target: t,
                     ctrl: c,
@@ -3102,6 +3241,7 @@ impl ConsoleView {
                     last: self.pointer,
                     start: value,
                     value,
+                    gang,
                 };
             }
             (CtrlKind::Button, PointerButton::Primary) => {
@@ -3141,6 +3281,7 @@ impl ConsoleView {
                 last,
                 start,
                 value,
+                gang,
             } => {
                 let Some((pc, p, _)) = self.ctrl_of(target, ctrl) else {
                     return;
@@ -3150,9 +3291,28 @@ impl ConsoleView {
                     dy += pos.x - last.x;
                 }
                 let param = pc.param;
-                let v = drag.update(p, dy, self.fine_adjust(modifiers));
-                if v.to_bits() != value.to_bits() {
-                    out.extend(self.set_param(target, param, v, Some(merge)));
+                let mut v = drag.update(p, dy, self.fine_adjust(modifiers));
+                if gang.is_empty() {
+                    if v.to_bits() != value.to_bits() {
+                        out.extend(self.set_param(target, param, v, Some(merge)));
+                    }
+                } else if v.to_bits() != value.to_bits() {
+                    // Every member moves by the dB the dragged control moved from the start;
+                    // the dragged control shows what the gang let it reach.
+                    let delta = match (gang::level_db(p, v), gang::level_db(p, start)) {
+                        (Some(now), Some(then)) => now - then,
+                        _ => f32::NAN,
+                    };
+                    let starts: Vec<(&ParamDescriptor, f32)> =
+                        gang.iter().map(|m| (m.p, m.start)).collect();
+                    let values = gang::level_targets(&starts, delta);
+                    if let Some(me) = self
+                        .view_of(target)
+                        .and_then(|s| gang.iter().position(|m| m.key == s.key))
+                    {
+                        v = values[me];
+                    }
+                    out.push(Self::gang_batch(&gang, &values, param, Some(merge)));
                 }
                 self.drag = Drag::Value {
                     target,
@@ -3162,6 +3322,7 @@ impl ConsoleView {
                     last: pos,
                     start,
                     value: v,
+                    gang,
                 };
                 self.repaint = true;
             }
@@ -3385,11 +3546,102 @@ impl ConsoleView {
             "mixer.scroll_right" => return self.scrolled(self.scroll.x + STRIP_W + STRIP_GAP),
             "mixer.scroll_home" => return self.scrolled(0.0),
             "mixer.scroll_end" => return self.scrolled(f64::MAX),
+            "mixer.select_left" => return self.step_selection(-1, false),
+            "mixer.select_right" => return self.step_selection(1, false),
+            "mixer.extend_left" => return self.step_selection(-1, true),
+            "mixer.extend_right" => return self.step_selection(1, true),
+            "edit.select_all" => return self.select_all(),
+            "edit.delete" => return self.delete_selected(),
             _ => return CommandOutcome::Declined,
         };
         self.repaint = true;
         let action = self.focus.and_then(|(t, c)| self.step(t, c, notches, fine));
         CommandOutcome::Handled(action.into_iter().collect())
+    }
+
+    /// Left and Right: the selection moves to the strip next to the one the arrows reached last
+    /// (or the last one clicked; with nothing selected the first or the last strip), and the
+    /// strip scrolls into view. With `extend` the range from the strip clicked first grows or
+    /// shrinks instead.
+    fn step_selection(&mut self, by: isize, extend: bool) -> CommandOutcome {
+        let n = self.strips.len();
+        if n == 0 {
+            return CommandOutcome::Handled(Vec::new());
+        }
+        let position = |key: &Option<DeviceKey>| {
+            key.as_ref()
+                .filter(|k| self.selection.contains(*k))
+                .and_then(|k| self.strips.iter().position(|s| &s.key == k))
+        };
+        let at = position(&self.cursor).or_else(|| position(&self.anchor));
+        let to = match at {
+            None if by > 0 => 0,
+            None => n - 1,
+            Some(i) => i.saturating_add_signed(by).min(n - 1),
+        };
+        let key = self.strips[to].key.clone();
+        match position(&self.anchor).filter(|_| extend) {
+            Some(a) => {
+                let (lo, hi) = (a.min(to), a.max(to));
+                self.selection = self.strips[lo..=hi].iter().map(|s| s.key.clone()).collect();
+            }
+            None => {
+                self.selection = BTreeSet::from([key.clone()]);
+                self.anchor = Some(key.clone());
+            }
+        }
+        self.cursor = Some(key);
+        self.mark_selection();
+        self.reveal_strip(to);
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Scrolls sideways just enough to show strip `i` whole.
+    fn reveal_strip(&mut self, i: usize) {
+        let view = self.strips_rect();
+        let x = self.strip_x(i);
+        if x + STRIP_W > view.x1 {
+            self.set_scroll_x(self.scroll.x + (x + STRIP_W - view.x1) + STRIP_GAP);
+        }
+        // A view narrower than a strip shows its left edge.
+        let x = self.strip_x(i);
+        if x < view.x0 {
+            self.set_scroll_x(self.scroll.x - (view.x0 - x) - LEFT_PAD);
+        }
+    }
+
+    /// Select All: every channel and bus strip.
+    fn select_all(&mut self) -> CommandOutcome {
+        self.selection = self.strips.iter().map(|s| s.key.clone()).collect();
+        if self.primary_strip().is_none() {
+            self.anchor = self.strips.first().map(|s| s.key.clone());
+        }
+        self.cursor = self.strips.last().map(|s| s.key.clone());
+        self.mark_selection();
+        CommandOutcome::Handled(Vec::new())
+    }
+
+    /// Delete: the selected channels and buses are removed from the console, each its own undo
+    /// step (a channel goes with its device and cables, a bus hands its feeders on).
+    fn delete_selected(&mut self) -> CommandOutcome {
+        let commands: Vec<UiAction> = self
+            .selected_strips()
+            .into_iter()
+            .filter_map(|key| {
+                let i = self.strips.iter().position(|s| s.key == key)?;
+                Some(UiAction::Command(Command::Console(
+                    if i < self.n_channels {
+                        ConsoleCommand::RemoveChannel { channel: key }
+                    } else {
+                        ConsoleCommand::DeleteBus { bus: key }
+                    },
+                )))
+            })
+            .collect();
+        if commands.is_empty() {
+            return CommandOutcome::Declined;
+        }
+        CommandOutcome::Handled(commands)
     }
 
     fn scrolled(&mut self, x: f64) -> CommandOutcome {
@@ -3422,12 +3674,18 @@ impl ConsoleView {
                 merge,
                 start,
                 value,
+                gang,
                 ..
             } => {
                 if start.to_bits() != value.to_bits()
                     && let Some((pc, _, _)) = self.ctrl_of(target, ctrl)
                 {
-                    out.extend(self.set_param(target, pc.param, start, Some(merge)));
+                    if gang.is_empty() {
+                        out.extend(self.set_param(target, pc.param, start, Some(merge)));
+                    } else {
+                        let starts: Vec<f32> = gang.iter().map(|m| m.start).collect();
+                        out.push(Self::gang_batch(&gang, &starts, pc.param, Some(merge)));
+                    }
                 }
                 out.push(UiAction::EndMerge);
             }

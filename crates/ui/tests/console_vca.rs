@@ -388,7 +388,7 @@ fn a_channel_menu_offers_new_vca_add_to_and_remove_from() {
     let p = v.name_center(&key("ch-keys")).unwrap();
     assert!(right_click(&mut v, &doc, &reg, p).is_empty());
     assert_eq!(
-        v.menu_items(),
+        vca_items(&v),
         ["New VCA...", "Add to VCA Drums", "Remove from VCA"]
     );
     let a = pick(&mut v, &doc, &reg, "Add to VCA Drums");
@@ -428,7 +428,7 @@ fn the_menu_acts_on_the_whole_selection_when_the_strip_is_in_it() {
     shift_click_name(&mut v, &doc, &reg, "ch-lead");
     assert_eq!(v.selected_strips().len(), 2);
     right_click_name(&mut v, &doc, &reg, "ch-lead");
-    assert_eq!(v.menu_items(), ["New VCA..."], "no group to add to yet");
+    assert_eq!(vca_items(&v), ["New VCA..."], "no group to add to yet");
     let a = pick(&mut v, &doc, &reg, "New VCA...");
     assert_eq!(
         console_cmds(&a),
@@ -449,7 +449,7 @@ fn the_menu_acts_on_the_whole_selection_when_the_strip_is_in_it() {
     );
     // A bus plate has its own entries first.
     right_click_name(&mut v, &doc, &reg, "bus");
-    assert_eq!(v.menu_items(), ["Rename", "Delete bus", "New VCA..."]);
+    assert_eq!(vca_items(&v), ["Rename", "Delete bus", "New VCA..."]);
 }
 
 fn drag_name_to(
@@ -583,4 +583,25 @@ fn a_track_whose_channel_is_in_a_group_gets_the_groups_colour_bar() {
     let plain = paint(&doc);
     doc.console.vcas.clear();
     assert_eq!(paint(&doc), plain, "an empty group changes nothing");
+}
+
+/// What every strip menu ends with: the channel settings commands.
+const SETTINGS_ITEMS: [&str; 7] = [
+    "Copy settings",
+    "Copy levels",
+    "Copy sends",
+    "Copy inserts",
+    "Paste settings",
+    "Reset channel",
+    "Clear inserts",
+];
+
+/// The menu entries before the channel settings ones.
+fn vca_items(v: &ConsoleView) -> Vec<String> {
+    let items = v.menu_items();
+    assert!(
+        items.ends_with(&SETTINGS_ITEMS.map(str::to_owned)),
+        "{items:?}"
+    );
+    items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
 }

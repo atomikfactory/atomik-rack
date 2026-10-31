@@ -723,6 +723,48 @@ fn the_mixer_keys_only_run_in_the_console() {
 }
 
 #[test]
+fn the_arrows_select_strips_and_select_all_and_a_ganged_fader_is_one_undo_step() {
+    let mut s = console_with(3);
+    let strips = s.core().console().strip_keys();
+    tap(&mut s, Key::Right, Modifiers::NONE);
+    assert_eq!(s.core().console().selected_strips(), [strips[0].clone()]);
+    tap(&mut s, Key::Right, Modifiers::SHIFT);
+    assert_eq!(s.core().console().selected_strips(), strips[..2]);
+    s.execute(AppCommand::SelectAll);
+    assert_eq!(s.core().console().selected_strips().len(), strips.len());
+    // Drag the first fader: every selected fader follows, and one undo puts them all back.
+    let before: Vec<f32> = strips.iter().map(|k| param(&s, k, "fader")).collect();
+    let depth = s.core().document().undo_depth();
+    let p = s
+        .core()
+        .console()
+        .control_center(&strips[0], "fader")
+        .unwrap();
+    s.handle(&UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 1,
+    });
+    for dy in [10.0, 20.0, 30.0] {
+        s.handle(&UiEvent::PointerMove {
+            pos: Point::new(p.x, p.y + dy),
+            modifiers: Modifiers::NONE,
+        });
+    }
+    s.handle(&UiEvent::PointerUp {
+        pos: Point::new(p.x, p.y + 30.0),
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+    });
+    let after: Vec<f32> = strips.iter().map(|k| param(&s, k, "fader")).collect();
+    assert!(after.iter().zip(&before).all(|(a, b)| a < b), "{after:?}");
+    assert_eq!(s.core().document().undo_depth(), depth + 1);
+    s.execute(AppCommand::Undo);
+    let undone: Vec<f32> = strips.iter().map(|k| param(&s, k, "fader")).collect();
+    assert_eq!(undone, before);
+}
+#[test]
 fn ctrl_g_routes_the_selected_instruments_to_a_new_output_bus() {
     use atomik_model::console::OutputDest;
     let mut s = shell();
