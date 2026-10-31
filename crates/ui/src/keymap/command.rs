@@ -1628,6 +1628,21 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd("sync.clock_out", "MIDI Clock Out", G::Transport, C::Global).menu(),
+    cmd(
+        "sync.clock_while_stopped",
+        "Send Clock While Stopped",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "sync.follow_clock",
+        "Follow MIDI Clock",
+        G::Transport,
+        C::Global,
+    )
+    .menu(),
     cmd("tool.eraser", "Eraser Tool", G::Tools, C::Sequencer),
     cmd("tool.pencil", "Pencil Tool", G::Tools, C::Sequencer),
     cmd("tool.razor", "Razor Tool", G::Tools, C::Sequencer),
@@ -1973,7 +1988,7 @@ mod tests {
             let prefix = d.id.split('.').next().unwrap();
             let expected: &[&str] = match d.group {
                 Group::Global => &["file", "audio", "help"],
-                Group::Transport => &["transport"],
+                Group::Transport => &["transport", "sync"],
                 Group::View => &["view"],
                 Group::Edit => &["edit"],
                 Group::Rack => &["rack"],

@@ -127,6 +127,11 @@ pub trait EngineSink {
     /// The output port each MIDI Out device chose, by device id (`None`: the settings' port).
     /// The sink sends the device's messages there. The default does nothing (no MIDI).
     fn set_midi_out_ports(&mut self, _ports: &[(DeviceInstanceId, Option<String>)]) {}
+    /// What MIDI clock is doing: whether the clock is sent, and whether (and to what) the
+    /// transport follows an external one. The default is nothing, so the transport is the app's.
+    fn sync_status(&self) -> crate::status::SyncStatus {
+        crate::status::SyncStatus::default()
+    }
     /// What the MIDI output thread has sent so far; all zero without one.
     fn midi_out_stats(&self) -> atomik_midi_io::out::OutStats {
         atomik_midi_io::out::OutStats::default()
@@ -338,6 +343,8 @@ pub struct RecordingSink {
     pub midi_out_ports: Vec<(DeviceInstanceId, Option<String>)>,
     /// Calls of [`EngineSink::set_midi_out_ports`].
     pub midi_out_pushes: usize,
+    /// What [`EngineSink::sync_status`] returns (tests script a followed clock).
+    pub sync: crate::status::SyncStatus,
     /// What [`EngineSink::host_channels`] returns.
     pub host_channels: Option<(u16, u16)>,
     /// The preview stream the fake keeps alive (at most one: a new start replaces it, a stop
@@ -366,6 +373,10 @@ impl RecordingSink {
 }
 
 impl EngineSink for RecordingSink {
+    fn sync_status(&self) -> crate::status::SyncStatus {
+        self.sync.clone()
+    }
+
     fn set_midi_out_ports(&mut self, ports: &[(DeviceInstanceId, Option<String>)]) {
         self.midi_out_ports = ports.to_vec();
         self.midi_out_pushes += 1;

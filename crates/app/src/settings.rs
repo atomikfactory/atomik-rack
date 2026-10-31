@@ -28,6 +28,12 @@
 //!   "pre_count_bars": 0,
 //!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" },
 //!   "midi_out_port": "Example Synth",
+//!   "sync": {
+//!     "clock_out": true,
+//!     "out_ports": [{ "name": "Example Drum Machine", "offset_ms": -5 }],
+//!     "send_while_stopped": false, "send_position": true, "restart_on_locate": true,
+//!     "clock_in_port": "Example Sequencer", "follow_clock": false
+//!   },
 //!   "device_loss": {
 //!     "reset_to_default": false,
 //!     "last_good": { "host": "wasapi", "output_device": null, "input_device": null,
@@ -49,6 +55,14 @@
 //! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
 //! `midi_out_port` is the output port a MIDI Out device sends to while it has no port of its own
 //! (the Surfaces tab lists it under the surface ports); `null` is none.
+//! `sync` is MIDI clock (the Sync tab and Options > Sync): `clock_out` sends 24 clocks per quarter
+//! note, Start, Stop and Continue to every port of `out_ports` (each with an `offset_ms` that shifts
+//! what leaves that port, `-100..=100`), with `send_while_stopped` keeping the clock running while
+//! the transport is stopped, `send_position` adding Song Position Pointer and `restart_on_locate`
+//! sending Stop, the position and Continue for a locate while playing. `follow_clock` makes the
+//! transport follow the clock of `clock_in_port` (its tempo, Start, Stop, Continue and position)
+//! and the transport buttons stop working while it does. Clock settings are app settings, not part
+//! of the project, and a bounce never follows a clock.
 //! It is an app setting, not part of the project. `device_loss.reset_to_default` makes the app
 //! switch to the host's default devices on its own when the stream is lost (default off: it says
 //! so and offers Audio > Restart Audio); `device_loss.last_good` is the device configuration that
@@ -312,6 +326,104 @@ pub struct DeviceLossSettings {
     pub last_good: Option<LastGood>,
 }
 
+/// The most the clock leaving an output port may be shifted, in milliseconds (either sign).
+pub const MAX_CLOCK_OFFSET_MS: i32 = 100;
+/// Clock offsets the settings dialog offers (milliseconds).
+pub const CLOCK_OFFSET_CHOICES: [i32; 7] = [-20, -10, -5, 0, 5, 10, 20];
+
+/// An output port the MIDI clock is sent to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClockOutPort {
+    /// The port name (exact or unique substring).
+    pub name: String,
+    /// Milliseconds the clock leaves this port later (negative: earlier), for a device that
+    /// answers slower or faster than the others, `-100..=100`.
+    pub offset_ms: i32,
+}
+
+/// MIDI clock in and out (the Sync tab of the settings).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SyncSettings {
+    /// Send MIDI clock (24 per quarter note, with Start, Stop and Continue) to `out_ports`.
+    pub clock_out: bool,
+    /// The ports the clock is sent to, each with its own offset.
+    pub out_ports: Vec<ClockOutPort>,
+    /// Keep sending the clock while the transport is stopped.
+    pub send_while_stopped: bool,
+    /// Send Song Position Pointer when the position is set.
+    pub send_position: bool,
+    /// A locate while playing sends Stop, the position and Continue; off sends the position only.
+    pub restart_on_locate: bool,
+    /// The input port a clock is followed from (exact or unique substring); `None` = none.
+    pub clock_in_port: Option<String>,
+    /// Follow the clock of `clock_in_port`: its tempo, start, stop and position drive the
+    /// transport, which the transport buttons then cannot.
+    pub follow_clock: bool,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            clock_out: false,
+            out_ports: Vec::new(),
+            send_while_stopped: false,
+            send_position: true,
+            restart_on_locate: true,
+            clock_in_port: None,
+            follow_clock: false,
+        }
+    }
+}
+
+impl SyncSettings {
+    /// Whether the clock goes anywhere: it is on and has a port.
+    pub fn sends(&self) -> bool {
+        self.clock_out && !self.out_ports.is_empty()
+    }
+
+    /// Whether a clock is followed: it is on and has a port.
+    pub fn follows(&self) -> bool {
+        self.follow_clock && self.clock_in_port.is_some()
+    }
+
+    /// Switches the output port `name` on or off for the clock (new ports start at offset 0).
+    pub fn set_out_port(&mut self, name: &str, on: bool) {
+        let at = self.out_ports.iter().position(|p| p.name == name);
+        match (at, on) {
+            (None, true) => self.out_ports.push(ClockOutPort {
+                name: name.to_owned(),
+                offset_ms: 0,
+            }),
+            (Some(i), false) => {
+                self.out_ports.remove(i);
+            }
+            _ => {}
+        }
+    }
+
+    /// Without empty names, repeated ports and out-of-range offsets.
+    fn sanitized(self) -> Self {
+        let mut out_ports: Vec<ClockOutPort> = Vec::with_capacity(self.out_ports.len());
+        for port in self.out_ports {
+            if !port.name.trim().is_empty() && !out_ports.iter().any(|o| o.name == port.name) {
+                out_ports.push(ClockOutPort {
+                    offset_ms: port
+                        .offset_ms
+                        .clamp(-MAX_CLOCK_OFFSET_MS, MAX_CLOCK_OFFSET_MS),
+                    ..port
+                });
+            }
+        }
+        Self {
+            out_ports,
+            clock_in_port: self.clock_in_port.filter(|n| !n.trim().is_empty()),
+            ..self
+        }
+    }
+}
+
 /// What the app opens for live audio and MIDI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -350,6 +462,8 @@ pub struct AudioSettings {
     /// The MIDI output port a MIDI Out device uses while it has none of its own (exact or unique
     /// substring of a port name); `None` = such a device sends nothing.
     pub midi_out_port: Option<String>,
+    /// MIDI clock in and out (the Sync tab).
+    pub sync: SyncSettings,
     /// Device loss handling and the last working device configuration.
     pub device_loss: DeviceLossSettings,
 }
@@ -371,6 +485,7 @@ impl Default for AudioSettings {
             plugins: atomik_plugin_host::PluginSettings::default(),
             surface: SurfaceSettings::default(),
             midi_out_port: None,
+            sync: SyncSettings::default(),
             device_loss: DeviceLossSettings::default(),
         }
     }
@@ -418,6 +533,7 @@ impl AudioSettings {
             midi_inputs: clean_inputs(self.midi_inputs),
             input_device: name(self.input_device),
             midi_out_port: name(self.midi_out_port),
+            sync: self.sync.sanitized(),
             surface: SurfaceSettings {
                 driver: name(self.surface.driver),
                 input: name(self.surface.input),
@@ -836,6 +952,18 @@ mod tests {
                 output: Some("Example Surface Out".into()),
             },
             midi_out_port: Some("Example Synth".into()),
+            sync: SyncSettings {
+                clock_out: true,
+                out_ports: vec![ClockOutPort {
+                    name: "Example Drum Machine".into(),
+                    offset_ms: -5,
+                }],
+                send_while_stopped: true,
+                send_position: false,
+                restart_on_locate: false,
+                clock_in_port: Some("Example Sequencer".into()),
+                follow_clock: true,
+            },
             device_loss: DeviceLossSettings {
                 reset_to_default: true,
                 last_good: Some(LastGood {
@@ -872,6 +1000,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_sync_settings_are_sanitized_and_read_back() {
+        let s = AudioSettings::from_json(
+            r#"{ "sync": { "clock_out": true,
+                 "out_ports": [ { "name": "A", "offset_ms": 900 }, { "name": "  " },
+                                { "name": "A", "offset_ms": 1 }, { "name": "B", "offset_ms": -900 } ],
+                 "clock_in_port": " ", "follow_clock": true } }"#,
+        )
+        .unwrap();
+        let ports: Vec<_> = s
+            .sync
+            .out_ports
+            .iter()
+            .map(|p| (p.name.as_str(), p.offset_ms))
+            .collect();
+        assert_eq!(
+            ports,
+            vec![("A", MAX_CLOCK_OFFSET_MS), ("B", -MAX_CLOCK_OFFSET_MS)]
+        );
+        assert_eq!(s.sync.clock_in_port, None);
+        // A clock to follow needs a port, a clock to send needs one too.
+        assert!(!s.sync.follows());
+        assert!(s.sync.sends());
+        // Defaults: off, position and restart on.
+        let d = SyncSettings::default();
+        assert!(!d.sends() && !d.follows() && d.send_position && d.restart_on_locate);
+        assert_eq!(AudioSettings::from_json("{}").unwrap().sync, d);
+    }
+
+    #[test]
+    fn output_ports_are_switched_on_and_off_by_name() {
+        let mut s = SyncSettings::default();
+        s.set_out_port("A", true);
+        s.set_out_port("A", true);
+        s.set_out_port("B", true);
+        assert_eq!(s.out_ports.len(), 2);
+        s.out_ports[0].offset_ms = 7;
+        s.set_out_port("A", false);
+        s.set_out_port("C", false);
+        assert_eq!(s.out_ports.len(), 1);
+        assert_eq!(s.out_ports[0].name, "B");
+    }
     #[test]
     fn invalid_json_is_an_error() {
         assert!(AudioSettings::from_json("{ nope").is_err());

@@ -145,7 +145,13 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
     let tabs: Vec<Tab> = d.layout(VIEW).tabs.iter().map(|(_, t)| *t).collect();
     assert_eq!(
         tabs,
-        [Tab::Audio, Tab::Keyboard, Tab::Workflow, Tab::Surfaces]
+        [
+            Tab::Audio,
+            Tab::Keyboard,
+            Tab::Workflow,
+            Tab::Surfaces,
+            Tab::Sync
+        ]
     );
     assert_eq!(d.tab(), Tab::Audio);
     goto(&mut d, Tab::Keyboard);
@@ -1131,4 +1137,145 @@ fn a_remap_of_an_unlisted_role_survives_a_save_and_load() {
     assert!(user.roles.contains_key("constrain"));
     let (again, _) = UserKeymap::from_json(&user.to_json()).unwrap();
     assert_eq!(again.roles.get("constrain"), user.roles.get("constrain"));
+}
+
+// ---- The Sync tab -------------------------------------------------------------------------
+
+fn sync_dialog(current: AudioSettings) -> SettingsDialog {
+    let mut d = surfaces_dialog(current);
+    goto(&mut d, Tab::Sync);
+    d
+}
+
+#[test]
+fn the_sync_tab_lists_the_clock_out_and_in_settings() {
+    let d = sync_dialog(AudioSettings::default());
+    let titles: Vec<&str> = d.sections().iter().map(|s| s.title).collect();
+    assert_eq!(
+        titles,
+        [
+            "MIDI clock out",
+            "Clock out ports",
+            "Offset of every clock out port",
+            "While the transport is stopped",
+            "Song position",
+            "A locate while playing",
+            "MIDI clock in port",
+            "Follow the clock in",
+        ]
+    );
+    let sections = d.sections();
+    let labels =
+        |i: usize| -> Vec<String> { sections[i].options.iter().map(|(l, _)| l.clone()).collect() };
+    assert_eq!(labels(1), ["Example Surface"]);
+    assert_eq!(
+        labels(2),
+        [
+            "-20 ms", "-10 ms", "-5 ms", "0 ms", "+5 ms", "+10 ms", "+20 ms"
+        ]
+    );
+    assert_eq!(labels(6), ["None", "Example Surface", "Example Keyboard"]);
+    // Defaults: off, no port, offset 0, position and restart on.
+    for (_, label, c) in &d.layout(VIEW).options {
+        let want = matches!(
+            c,
+            Choice::ClockOut(false)
+                | Choice::ClockOffset(0)
+                | Choice::ClockWhileStopped(false)
+                | Choice::ClockPosition(true)
+                | Choice::ClockRestart(true)
+                | Choice::ClockInPort(None)
+                | Choice::ClockFollow(false)
+        );
+        assert_eq!(d.is_selected(c), want, "{label}");
+    }
+}
+
+#[test]
+fn the_clock_choices_are_applied_with_the_settings() {
+    let mut d = sync_dialog(AudioSettings::default());
+    for choice in [
+        Choice::ClockOut(true),
+        Choice::ClockPort("Example Surface".into()),
+        Choice::ClockOffset(-5),
+        Choice::ClockWhileStopped(true),
+        Choice::ClockPosition(false),
+        Choice::ClockRestart(false),
+        Choice::ClockInPort(Some("Example Keyboard".into())),
+        Choice::ClockFollow(true),
+    ] {
+        d.choose(choice);
+    }
+    let apply = d.layout(VIEW).apply.center();
+    let DialogOutcome::Apply(s) = down(&mut d, apply) else {
+        panic!("apply");
+    };
+    let y = &s.sync;
+    assert!(y.clock_out && y.send_while_stopped && y.follow_clock);
+    assert!(!y.send_position && !y.restart_on_locate);
+    assert_eq!(y.out_ports.len(), 1);
+    assert_eq!(
+        (y.out_ports[0].name.as_str(), y.out_ports[0].offset_ms),
+        ("Example Surface", -5)
+    );
+    assert_eq!(y.clock_in_port.as_deref(), Some("Example Keyboard"));
+    // The offset moves the ports that are on: choosing it again with the port on sets it.
+    let mut d = sync_dialog(s);
+    d.choose(Choice::ClockOffset(10));
+    assert_eq!(d.draft().sync.out_ports[0].offset_ms, 10);
+    assert!(d.is_selected(&Choice::ClockOffset(10)));
+    assert!(!d.is_selected(&Choice::ClockOffset(0)));
+    // A click on a port switches it off again.
+    d.choose(Choice::ClockPort("Example Surface".into()));
+    assert!(d.draft().sync.out_ports.is_empty());
+    d.choose(Choice::ClockInPort(None));
+    assert_eq!(d.draft().sync.clock_in_port, None);
+}
+
+#[test]
+fn a_saved_clock_port_that_is_not_there_stays_selectable_and_an_odd_offset_is_listed() {
+    let current = AudioSettings {
+        sync: crate::settings::SyncSettings {
+            clock_out: true,
+            out_ports: vec![crate::settings::ClockOutPort {
+                name: "Old Drum Machine".into(),
+                offset_ms: 7,
+            }],
+            clock_in_port: Some("Old Sequencer".into()),
+            follow_clock: true,
+            ..crate::settings::SyncSettings::default()
+        },
+        ..AudioSettings::default()
+    };
+    let d = sync_dialog(current);
+    let sections = d.sections();
+    assert_eq!(
+        sections[1].options.last().unwrap().0,
+        "Old Drum Machine (not found)"
+    );
+    assert!(d.is_selected(&sections[1].options.last().unwrap().1));
+    assert!(
+        sections[2]
+            .options
+            .iter()
+            .any(|(l, c)| l == "+7 ms" && d.is_selected(c))
+    );
+    assert_eq!(
+        sections[6].options.last().unwrap().0,
+        "Old Sequencer (not found)"
+    );
+    assert!(d.is_selected(&sections[6].options.last().unwrap().1));
+}
+
+#[test]
+fn the_sync_tab_paints_its_titles_and_the_other_tabs_do_not_show_its_sections() {
+    let mut d = sync_dialog(AudioSettings::default());
+    let mut list = DisplayList::new();
+    d.paint(&mut list, &Theme::dark(), VIEW);
+    let texts = list.texts();
+    for t in ["MIDI clock", "Sync", "MIDI clock out", "Clock out ports"] {
+        assert!(texts.contains(&t), "{t} in {texts:?}");
+    }
+    goto(&mut d, Tab::Audio);
+    assert!(d.sections().iter().all(|s| s.title != "MIDI clock out"));
 }

@@ -424,6 +424,10 @@ pub struct EngineHandle {
     transport: Arc<TransportCell>,
     /// The automation lanes the player leaves alone (a take is writing them).
     hold: Arc<AutomationHold>,
+    /// MIDI clock out: its settings and the queue of its messages.
+    sync: Arc<crate::SyncOut>,
+    /// The clock source the player follows when asked to.
+    external: Arc<crate::ExternalClock>,
     /// Meter bank.
     meters: Arc<Meters>,
     /// Device latencies per arena slot.
@@ -510,6 +514,8 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
     let player = Player::new(cfg.sample_rate.hz(), request_tx, Arc::clone(&stream_stats));
     let transport = player.shared();
     let hold = player.hold();
+    let sync = player.sync_out();
+    let external = player.external();
     let meters = Arc::new(Meters::new(caps.arena));
     let latencies = Arc::new(Latencies::new(caps.arena));
     let preview_active = Arc::new(AtomicBool::new(false));
@@ -556,6 +562,8 @@ pub(crate) fn new_engine_with(cfg: EngineConfig, caps: Capacities) -> (Engine, E
         mirror: Mirror::new(caps.arena),
         transport,
         hold,
+        sync,
+        external,
         meters,
         latencies,
         streams: StreamControl::new(stream_stats, request_rx),
@@ -1005,6 +1013,20 @@ impl EngineHandle {
     /// before the first batch.
     pub fn transport_state(&self) -> crate::TransportState {
         self.transport.read()
+    }
+
+    /// The MIDI clock out of the song player: set what it sends with
+    /// [`crate::SyncOut::configure`] and read its messages from [`crate::SyncOut::tap`]. Every
+    /// message is stamped with the engine host frame it belongs to, like a device's MIDI tap.
+    pub fn sync_out(&self) -> Arc<crate::SyncOut> {
+        Arc::clone(&self.sync)
+    }
+
+    /// The cell an external clock input writes. While it is [followed](crate::ExternalClock::set_following)
+    /// the player takes its tempo, start, stop and locates from it and ignores the transport
+    /// commands.
+    pub fn external_clock(&self) -> Arc<crate::ExternalClock> {
+        Arc::clone(&self.external)
     }
 
     /// Names the automation lanes the song player must not apply (`(device, param)` pairs; an

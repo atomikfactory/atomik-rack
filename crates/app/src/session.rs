@@ -16,7 +16,7 @@ use crate::midi_control::ControlHub;
 use crate::record::{RecordTap, RecordedNote};
 use crate::settings::{AudioSettings, LastGood, MidiInputRole};
 use crate::sink::EngineSink;
-use crate::status::AudioStatus;
+use crate::status::{AudioStatus, SyncStatus};
 use crate::target::{NoteTarget, Target};
 use atomik_audio_io::{
     HostInfo, IoError, Liveness, RunningStream, StreamInfo, StreamSpec, StreamState, Telemetry,
@@ -25,16 +25,16 @@ use atomik_core::{NoteKind, ParamId, Tempo};
 use atomik_device_sdk::{Device, PlayerDataRef, SampleMapRef};
 use atomik_engine::{
     DeviceInstanceId, Endpoint, Engine, EngineConfig, EngineError, EngineHandle, EngineOptions,
-    FrameClock, LiveNoteSender, MeterReading, Meters, RecordTap as EngineRecordTap, RoutingPlan,
-    SongInput, SongSnapshot, TapChannel, TapControls, Topology, TransportCommand, TransportState,
-    WorkerConfig, new_engine_with_options,
+    ExternalClock, FrameClock, LiveNoteSender, MeterReading, Meters, RecordTap as EngineRecordTap,
+    RoutingPlan, SongInput, SongSnapshot, SyncConfig, TapChannel, TapControls, Topology,
+    TransportCommand, TransportState, WorkerConfig, new_engine_with_options,
 };
 use atomik_midi_io::MidiError;
-use atomik_midi_io::out::{Opener, OutStats, OutputThread, Timeline};
+use atomik_midi_io::out::{Opener, OutStats, OutputThread, SyncPort, Timeline};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// The wall clock the liveness check runs on.
 #[allow(clippy::disallowed_methods)] // Justification: stream liveness is UI-thread bookkeeping
@@ -117,6 +117,15 @@ pub trait AudioBackend {
     fn midi_out_opener(&self) -> Opener {
         Arc::new(|name| Err(MidiError::PortNotFound(name.to_string())))
     }
+    /// Opens the MIDI input that carries the clock to follow and feeds `cell` from it. The
+    /// value keeps the port open: dropping it closes the port. The default opens nothing.
+    fn open_clock_in(
+        &self,
+        name: &str,
+        _cell: Arc<ExternalClock>,
+    ) -> Result<Box<dyn std::any::Any + Send>, MidiError> {
+        Err(MidiError::PortNotFound(name.to_string()))
+    }
 }
 
 /// The real devices (`atomik-audio-io`, midir).
@@ -180,6 +189,15 @@ impl AudioBackend for SystemBackend {
     fn midi_out_opener(&self) -> Opener {
         atomik_midi_io::out::system_opener()
     }
+
+    fn open_clock_in(
+        &self,
+        name: &str,
+        cell: Arc<ExternalClock>,
+    ) -> Result<Box<dyn std::any::Any + Send>, MidiError> {
+        let input = atomik_midi_io::clock::open_clock_in(name, cell)?;
+        Ok(Box::new(input))
+    }
 }
 
 /// No audio or MIDI at all: lists nothing and fails to start (headless tests, smoke runs).
@@ -242,9 +260,26 @@ struct Running<B: AudioBackend> {
     sample_rate: f64,
     /// The output latency in frames, as the stream reports it.
     out_latency: Arc<AtomicU64>,
-    /// The thread that sends the MIDI Out devices' messages: started with the first such device.
+    /// The thread that sends the MIDI Out devices' messages and the clock: started with the first
+    /// such device, or with the clock.
     midi_out: Option<OutputThread>,
+    /// Whether the thread has the clock's route (it then polls every millisecond).
+    sync_route: bool,
+    /// The open MIDI clock input, while the transport follows it.
+    clock_in: Option<ClockIn>,
 }
+
+/// The open clock input and the setting it was opened for.
+struct ClockIn {
+    /// The name in the settings.
+    wanted: String,
+    /// Keeps the port open.
+    _port: Box<dyn std::any::Any + Send>,
+}
+
+/// How long the clock's route stays after clock out is switched off, so the Stop it sends gets
+/// out.
+const SYNC_RELEASE_AFTER: Duration = Duration::from_millis(500);
 
 /// An open MIDI port and the setting it was opened for.
 struct OpenInput<M> {
@@ -279,6 +314,13 @@ pub struct LiveSession<B: AudioBackend> {
     /// The port each MIDI Out device chose (by engine device id); a device that has none uses
     /// the settings' `midi_out_port`.
     out_ports: BTreeMap<u32, Option<String>>,
+    /// Why the clock input did not open, if it did not.
+    clock_error: Option<String>,
+    /// The clock count at the last poll, and whether it moved since.
+    clock_seen: u64,
+    clock_receiving: bool,
+    /// When the clock's route leaves the output thread (after clock out was switched off).
+    sync_release_at: Option<Instant>,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -315,6 +357,10 @@ impl<B: AudioBackend> LiveSession<B> {
             control_stalled: 0,
             notice: None,
             out_ports: BTreeMap::new(),
+            clock_error: None,
+            clock_seen: 0,
+            clock_receiving: false,
+            sync_release_at: None,
         }
     }
 
@@ -378,11 +424,17 @@ impl<B: AudioBackend> LiveSession<B> {
         } else if old.midi_inputs != self.settings.midi_inputs {
             self.sync_midi();
             self.refresh_midi_out();
+            if old.sync != self.settings.sync {
+                self.refresh_sync();
+            }
             SettingsChange::MidiReopened
         } else if old.midi_out_port != self.settings.midi_out_port {
             self.refresh_midi_out();
             SettingsChange::None
         } else {
+            if old.sync != self.settings.sync {
+                self.refresh_sync();
+            }
             SettingsChange::None
         }
     }
@@ -432,6 +484,7 @@ impl<B: AudioBackend> LiveSession<B> {
                     .store(u64::from(t.buffer_frames), Ordering::Relaxed);
             }
         }
+        self.poll_sync(at);
         // Pushes that found the engine's queue full, and control messages (MIDI to
         // parameters, surfaces) the inbox had no room for.
         self.status.overload.control_stalled =
@@ -450,11 +503,15 @@ impl<B: AudioBackend> LiveSession<B> {
                 midi,
                 link,
                 midi_out,
+                sync_route: _,
+                clock_in,
                 clock: _,
                 sample_rate: _,
                 out_latency: _,
             } = r;
-            // The MIDI Out thread first: dropping it releases every note it started.
+            // The clock input first, so nothing more reaches the engine from it.
+            drop(clock_in);
+            // The MIDI Out thread: dropping it releases every note it started.
             drop(midi_out);
             // MIDI first (it feeds the engine), then the stream, which hands the engine back
             // so it is dropped here and not on the audio thread.
@@ -477,6 +534,10 @@ impl<B: AudioBackend> LiveSession<B> {
         self.audio_tap_overflow = None;
         self.tap_overflow_base = 0;
         self.liveness = None;
+        self.sync_release_at = None;
+        self.clock_error = None;
+        self.clock_seen = 0;
+        self.clock_receiving = false;
         self.status = AudioStatus {
             host: self.settings.host.label().to_string(),
             error: self.status.error.take(),
@@ -619,12 +680,14 @@ impl<B: AudioBackend> LiveSession<B> {
     }
 
     /// Hands the taps of the MIDI Out devices in the engine, and where each one sends, to the
-    /// output thread, starting the thread with the first device. A device without a port of its
-    /// own sends to the settings' `midi_out_port`.
+    /// output thread, starting the thread with the first device (or with the clock). A device
+    /// without a port of its own sends to the settings' `midi_out_port`. The thread also gets
+    /// where the engine's clock goes while clock out is on.
     fn refresh_midi_out(&mut self) {
         let Some(r) = &mut self.running else {
             return;
         };
+        let sync = self.settings.sync.sends();
         let taps: Vec<(u32, _)> = r
             .meters
             .midi_taps()
@@ -632,7 +695,7 @@ impl<B: AudioBackend> LiveSession<B> {
             .map(|(id, tap)| (id.0, tap))
             .collect();
         if r.midi_out.is_none() {
-            if taps.is_empty() {
+            if taps.is_empty() && !sync {
                 return;
             }
             let timeline = Timeline::new(
@@ -655,21 +718,131 @@ impl<B: AudioBackend> LiveSession<B> {
                 (*id, own.or_else(|| self.settings.midi_out_port.clone()))
             })
             .collect();
-        if let Some(thread) = &r.midi_out {
-            thread.set_routes(taps, ports);
+        let Some(thread) = &r.midi_out else {
+            return;
+        };
+        thread.set_routes(taps, ports);
+        if sync {
+            let ports = self
+                .settings
+                .sync
+                .out_ports
+                .iter()
+                .map(|p| SyncPort {
+                    name: p.name.clone(),
+                    offset_ms: p.offset_ms,
+                })
+                .collect();
+            thread.set_sync(Some(r.handle.sync_out().tap()), ports);
+            r.sync_route = true;
+            self.sync_release_at = None;
+        } else if r.sync_route && self.sync_release_at.is_none() {
+            // The engine says Stop to the receivers once; the route stays until it is out.
+            self.sync_release_at = Some(clock_now() + SYNC_RELEASE_AFTER);
         }
     }
 
+    /// Applies the sync settings: what the engine sends as clock, where it goes, and whether the
+    /// transport follows a clock input (opening or closing the port).
+    fn refresh_sync(&mut self) {
+        let Some(r) = &mut self.running else {
+            return;
+        };
+        let s = &self.settings.sync;
+        r.handle.sync_out().configure(SyncConfig {
+            enabled: s.sends(),
+            while_stopped: s.send_while_stopped,
+            song_position: s.send_position,
+            restart_on_locate: s.restart_on_locate,
+        });
+        let want = s.follows().then(|| s.clock_in_port.clone()).flatten();
+        let cell = r.handle.external_clock();
+        match want {
+            Some(name) if r.clock_in.as_ref().is_some_and(|c| c.wanted == name) => {}
+            Some(name) => {
+                r.clock_in = None;
+                match self.backend.open_clock_in(&name, Arc::clone(&cell)) {
+                    Ok(port) => {
+                        r.clock_in = Some(ClockIn {
+                            wanted: name,
+                            _port: port,
+                        });
+                        self.clock_error = None;
+                        cell.set_following(true);
+                    }
+                    Err(e) => {
+                        log::warn!("the MIDI clock input did not open: {e}");
+                        self.clock_error = Some(e.to_string());
+                        cell.set_following(false);
+                    }
+                }
+            }
+            None => {
+                r.clock_in = None;
+                self.clock_error = None;
+                cell.set_following(false);
+            }
+        }
+        self.refresh_midi_out();
+    }
+
+    /// Housekeeping of the sync state at a poll: the clock route leaves the output thread once
+    /// the Stop of a switched-off clock is out, and the status shows whether clocks arrive.
+    fn poll_sync(&mut self, at: Instant) {
+        if self.sync_release_at.is_some_and(|t| at >= t)
+            && !self.settings.sync.sends()
+            && let Some(r) = &mut self.running
+        {
+            if let Some(thread) = &r.midi_out {
+                thread.set_sync(None, Vec::new());
+            }
+            r.sync_route = false;
+            self.sync_release_at = None;
+        }
+        let Some(r) = &self.running else {
+            self.status.sync = SyncStatus::default();
+            return;
+        };
+        let cell = r.handle.external_clock();
+        let state = cell.read();
+        self.clock_receiving = state.clocks != self.clock_seen;
+        self.clock_seen = state.clocks;
+        self.status.sync = self.sync_status();
+    }
+
     /// Opens the enabled MIDI ports that are not open: a controller plugged in after start-up
-    /// (or that a failed open left out) comes up without restarting the audio.
+    /// (or that a failed open left out) comes up without restarting the audio. A clock input that
+    /// failed to open is tried again too.
     pub fn rescan_midi(&mut self) {
         self.sync_midi();
+        if self.clock_error.is_some() {
+            self.refresh_sync();
+        }
     }
 
     /// Whether every enabled MIDI port is open (nothing for [`Self::rescan_midi`] to do): the
     /// last sync left no port it could not open.
     pub fn midi_complete(&self) -> bool {
         self.running.is_none() || self.status.midi_error.is_none()
+    }
+
+    /// What MIDI clock is doing now (see [`EngineSink::sync_status`]).
+    pub fn sync_status(&self) -> SyncStatus {
+        let Some(r) = &self.running else {
+            return SyncStatus::default();
+        };
+        let cell = r.handle.external_clock();
+        let following = r.clock_in.is_some() && cell.following();
+        let state = cell.read();
+        SyncStatus {
+            clock_out: r.handle.sync_out().config().enabled,
+            clock_in_port: r.clock_in.as_ref().map(|c| c.wanted.clone()),
+            clock_in_error: self.clock_error.clone(),
+            following,
+            external_tempo: state.tempo.filter(|_| following),
+            external_running: following && state.running,
+            receiving: self.clock_receiving,
+        }
     }
 }
 
@@ -747,9 +920,11 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             sample_rate: config.sample_rate.hz(),
             out_latency: Arc::new(AtomicU64::new(0)),
             midi_out: None,
+            sync_route: false,
+            clock_in: None,
         });
         self.sync_midi();
-        self.refresh_midi_out();
+        self.refresh_sync();
     }
 
     fn insert_device(
@@ -783,6 +958,10 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
     fn set_midi_out_ports(&mut self, ports: &[(DeviceInstanceId, Option<String>)]) {
         self.out_ports = ports.iter().map(|(id, p)| (id.0, p.clone())).collect();
         self.refresh_midi_out();
+    }
+
+    fn sync_status(&self) -> SyncStatus {
+        LiveSession::sync_status(self)
     }
 
     fn midi_out_stats(&self) -> OutStats {

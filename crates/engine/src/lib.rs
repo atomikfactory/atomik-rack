@@ -19,6 +19,7 @@ mod preview;
 mod record;
 mod seq;
 mod stream;
+mod sync;
 mod workers;
 
 pub use arena::{RoutingPlan, Topology};
@@ -52,6 +53,10 @@ pub use record::{LIMIT_RELEASE_FRAMES, RecordTap, TapChannel, TapControls};
 pub use seq::{
     PreRoll, SongAutomation, SongCurve, SongError, SongInput, SongNote, SongPoint, SongPosition,
     SongSnapshot, SongTempo, SongTrack, TransportCommand, TransportState, compile_song,
+};
+pub use sync::{
+    CLOCK, CONTINUE, ExternalClock, ExternalState, SONG_POSITION, START, STOP, SyncConfig, SyncOut,
+    TICKS_PER_CLOCK, TICKS_PER_POSITION, clocks_in, song_position_bytes, song_position_ticks,
 };
 #[doc(hidden)]
 pub use workers::WORKER_SPIN_LIMIT;

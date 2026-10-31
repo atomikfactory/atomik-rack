@@ -6,8 +6,8 @@
 //! and sends every message to its port when its time comes. midir has no timestamps, so the
 //! timing is ours: a thread polls the taps every millisecond, sleeps until a message is nearly
 //! due and spins for the last stretch. It is the one place that decides *when* a MIDI message
-//! leaves the program, and everything that sends MIDI on a schedule (the MIDI Out device now,
-//! MIDI clock next) goes through it.
+//! leaves the program, and everything that sends MIDI on a schedule (the MIDI Out device, and
+//! the MIDI clock through [`Core::set_sync`]) goes through it.
 //!
 //! # Pieces
 //!
@@ -450,11 +450,43 @@ struct Route {
     port: Option<String>,
 }
 
+/// The source id the MIDI clock messages are queued under (no device has it).
+pub const SYNC_SOURCE: u32 = u32::MAX;
+
+/// An output port the MIDI clock is sent to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncPort {
+    /// The port's name.
+    pub name: String,
+    /// Milliseconds the clock leaves this port later (negative: earlier, as far as the engine
+    /// produced it ahead of time) to make up for a device that answers slower or faster than the
+    /// others.
+    pub offset_ms: i32,
+}
+
+/// The clock messages of the engine and the ports they go to.
+struct SyncRoute {
+    tap: Arc<MidiTap>,
+    ports: Vec<SyncPort>,
+}
+
+/// `due` moved by `offset_ms` milliseconds, not before `earliest`.
+fn shifted(due: Instant, offset_ms: i32, earliest: Instant) -> Instant {
+    let by = Duration::from_millis(u64::from(offset_ms.unsigned_abs()));
+    let at = if offset_ms >= 0 {
+        due.checked_add(by).unwrap_or(due)
+    } else {
+        due.checked_sub(by).unwrap_or(due)
+    };
+    at.max(earliest)
+}
+
 /// The scheduler plus the routing of device taps to ports: one pass of the output thread.
 pub struct Core {
     scheduler: Scheduler,
     timeline: Timeline,
     routes: BTreeMap<u32, Route>,
+    sync: Option<SyncRoute>,
 }
 
 impl std::fmt::Debug for Core {
@@ -473,6 +505,7 @@ impl Core {
             scheduler: Scheduler::new(opener),
             timeline,
             routes: BTreeMap::new(),
+            sync: None,
         }
     }
 
@@ -537,6 +570,24 @@ impl Core {
         self.set_ports(ports, now);
     }
 
+    /// Where the engine's MIDI clock goes: the tap it writes and the ports it is sent to, each
+    /// with its own offset. `None` (or no port) sends nothing and drops what is queued. The route
+    /// stays as long as it is given, even while the engine's clock out is off, so a Stop sent
+    /// when it is switched off still arrives.
+    pub fn set_sync(&mut self, tap: Option<Arc<MidiTap>>, ports: Vec<SyncPort>, now: Instant) {
+        let same = self
+            .sync
+            .as_ref()
+            .zip(tap.as_ref())
+            .is_some_and(|(s, t)| Arc::ptr_eq(&s.tap, t) && s.ports == ports);
+        if same {
+            return;
+        }
+        // What waits for the old ports (or for a replaced engine) is stale.
+        self.scheduler.release_source(SYNC_SOURCE, now);
+        self.sync = tap.map(|tap| SyncRoute { tap, ports });
+    }
+
     /// One pass: moves what the taps hold into the queues, sends what is due and returns the
     /// time of the next message still waiting. Messages whose frame has no wall-clock time yet
     /// (the audio clock has not published) go out at once.
@@ -562,23 +613,37 @@ impl Core {
                 self.scheduler.enqueue(port, *id, due, event.bytes());
             }
         }
+        if let Some(sync) = &self.sync {
+            for _ in 0..MAX_PER_PASS {
+                let Some(event) = sync.tap.pop() else { break };
+                let due = self.timeline.due(event.frame).unwrap_or(now);
+                for port in &sync.ports {
+                    let at = shifted(due, port.offset_ms, now.min(due));
+                    self.scheduler
+                        .enqueue(&port.name, SYNC_SOURCE, at, event.bytes());
+                }
+            }
+        }
         self.scheduler.pump(now)
     }
 
     /// Whether any tap still holds messages.
     pub fn has_backlog(&self) -> bool {
         self.routes.values().any(|r| !r.tap.is_empty())
+            || self.sync.as_ref().is_some_and(|s| !s.tap.is_empty())
     }
 
     /// Releases every source and closes the ports.
     pub fn shutdown(&mut self, now: Instant) {
         self.routes.clear();
+        self.sync = None;
         self.scheduler.shutdown(now);
     }
 }
 
 enum Control {
     Routes(Vec<(u32, Arc<MidiTap>)>, BTreeMap<u32, Option<String>>),
+    Sync(Option<Arc<MidiTap>>, Vec<SyncPort>),
     Shutdown,
 }
 
@@ -621,6 +686,12 @@ impl OutputThread {
         let _ = self.tx.send(Control::Routes(taps, ports));
     }
 
+    /// Replaces where the engine's MIDI clock goes (see [`Core::set_sync`]). While a clock route
+    /// is set the thread polls every millisecond, so give it `None` when the clock is off.
+    pub fn set_sync(&self, tap: Option<Arc<MidiTap>>, ports: Vec<SyncPort>) {
+        let _ = self.tx.send(Control::Sync(tap, ports));
+    }
+
     /// What the thread has done so far.
     pub fn stats(&self) -> OutStats {
         self.stats.lock().map(|s| *s).unwrap_or_default()
@@ -636,17 +707,33 @@ impl Drop for OutputThread {
     }
 }
 
+/// Applies one control message; `false` when the thread is to stop.
+fn apply(core: &mut Core, control: Control, now: Instant) -> bool {
+    match control {
+        Control::Routes(taps, ports) => core.set_routes(taps, &ports, now),
+        Control::Sync(tap, ports) => core.set_sync(tap, ports, now),
+        Control::Shutdown => {
+            core.shutdown(now);
+            return false;
+        }
+    }
+    true
+}
+
 fn run(mut core: Core, rx: &Receiver<Control>, stats: &Mutex<OutStats>) {
     loop {
         let now = now();
         loop {
             match rx.try_recv() {
-                Ok(Control::Routes(taps, ports)) => core.set_routes(taps, &ports, now),
-                Ok(Control::Shutdown) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    core.shutdown(now);
-                    if let Ok(mut s) = stats.lock() {
-                        *s = core.scheduler().stats();
+                Ok(control) => {
+                    if !apply(&mut core, control, now) {
+                        publish_stats(&core, stats);
+                        return;
                     }
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    core.shutdown(now);
+                    publish_stats(&core, stats);
                     return;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -656,7 +743,7 @@ fn run(mut core: Core, rx: &Receiver<Control>, stats: &Mutex<OutStats>) {
         if let Ok(mut s) = stats.try_lock() {
             *s = core.scheduler().stats();
         }
-        let wait = if core.routes.is_empty() {
+        let wait = if core.routes.is_empty() && core.sync.is_none() {
             IDLE
         } else {
             next.map_or(POLL, |t| t.saturating_duration_since(now).min(POLL))
@@ -665,14 +752,9 @@ fn run(mut core: Core, rx: &Receiver<Control>, stats: &Mutex<OutStats>) {
             // Sleep (waking early for a control message), leaving the last stretch to the spin.
             match rx.recv_timeout(wait - SPIN) {
                 Ok(control) => {
-                    // Handled at the top of the next pass.
-                    let now = self::now();
-                    match control {
-                        Control::Routes(taps, ports) => core.set_routes(taps, &ports, now),
-                        Control::Shutdown => {
-                            core.shutdown(now);
-                            return;
-                        }
+                    // The messages that follow are handled at the top of the next pass.
+                    if !apply(&mut core, control, self::now()) {
+                        return;
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -684,6 +766,12 @@ fn run(mut core: Core, rx: &Receiver<Control>, stats: &Mutex<OutStats>) {
         } else {
             std::hint::spin_loop();
         }
+    }
+}
+
+fn publish_stats(core: &Core, stats: &Mutex<OutStats>) {
+    if let Ok(mut s) = stats.lock() {
+        *s = core.scheduler().stats();
     }
 }
 

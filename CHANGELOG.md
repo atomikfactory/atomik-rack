@@ -21,7 +21,22 @@ may break APIs and the patch and project formats.
   with or without the device are identical. **Project format 37**: a MIDI Out device may carry
   `"midi_out": { "port": name }`, written only once a port is chosen; files without it differ from
   their version 36 file in the version line alone. The output scheduler and thread are shared with
-  the MIDI clock output to come.
+  the MIDI clock output (below).
+- **MIDI clock out and in, Song Position Pointer and an Options > Sync menu.** Atomik now sends
+  MIDI clock to drum machines and synths and can follow one. **Clock out** (Options > Sync > MIDI
+  Clock Out, ports in Settings > Sync) sends 24 clocks per quarter note, exact across tempo ramps,
+  with Start, Stop and Continue as the transport changes and a Song Position Pointer for a locate
+  or a loop wrap; an offset in milliseconds shifts what leaves a port (one value for every port in
+  the dialog, one per port in `settings.json`), the clock can keep running while
+  the transport is stopped, and a locate while playing can send Stop, the position and Continue or
+  the position alone. It runs on the MIDI output thread, so it works with no MIDI Out device.
+  **Clock in** (Options > Sync > Follow MIDI Clock) takes the tempo (the mean of the last beat's
+  clocks), Start, Stop, Continue and Song Position Pointer from a chosen input port: the song
+  plays at the clock's tempo, the transport buttons say they are following, and a clock that
+  stops coming stops the transport and releases every note. The status line shows the clock out
+  and the measured tempo. Settings are in `settings.json` under `"sync"`. Bounces never follow a
+  clock and are unchanged. Not yet: the phase of the incoming clock is not tracked, so a sender
+  whose tempo wanders can drift from the song, and audio clips are silent while following.
 - **Several MIDI inputs at once, master keyboard modes and Manual Rec.** Audio Settings > MIDI
   inputs lists every port with a switch: all the switched-on ports are open together (a keyboard and
   a pad controller), and a port can be set to feed mappings only so its notes play nothing. The
