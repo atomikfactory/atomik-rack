@@ -542,6 +542,35 @@ pub(crate) fn plan_input_channels(doc: &RackDoc, n: u16) -> Result<Edit, ModelEr
     Ok(Edit::Compound(edits))
 }
 
+/// Plans `Command::SetOutputChannels(n)`: the cables into outputs above `n` go in the same step.
+pub(crate) fn plan_output_channels(doc: &RackDoc, n: u16) -> Result<Edit, ModelError> {
+    if !(1..=crate::MAX_OUTPUT_CHANNELS).contains(&n) {
+        return Err(ModelError::OutOfRange(format!(
+            "{n} output channels is outside 1..={}",
+            crate::MAX_OUTPUT_CHANNELS
+        )));
+    }
+    let mut edits: Vec<Edit> = doc
+        .cables
+        .iter()
+        .filter(|c| {
+            c.to.device.0 == INTERFACE_KEY
+                && c.to
+                    .socket
+                    .strip_prefix("out_")
+                    .and_then(|k| k.parse::<u16>().ok())
+                    .is_some_and(|k| k > n)
+        })
+        .cloned()
+        .map(Edit::Disconnect)
+        .collect();
+    edits.push(Edit::OutputChannels {
+        old: doc.output_channels,
+        new: n,
+    });
+    Ok(Edit::Compound(edits))
+}
+
 /// Checks an asset id and its format.
 pub(crate) fn check_asset(hash: &str, meta: &AssetMeta) -> Result<(), ModelError> {
     if !is_valid_asset_hash(hash) {
