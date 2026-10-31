@@ -43,7 +43,10 @@ pub fn automation_value_at(points: &[(i64, f32, Curve)], tick: f64) -> f32 {
 /// The flattened points of the playing automation lanes of a document, by `(device, param key)`
 /// in song order (see [`RackDoc::automation_curves`]).
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct AutomationCurves(Vec<((DeviceKey, String), Vec<(i64, f32, Curve)>)>);
+pub struct AutomationCurves(Vec<(LaneKey, Vec<FlatPoint>)>);
+
+type LaneKey = (DeviceKey, String);
+type FlatPoint = (i64, f32, Curve);
 
 impl AutomationCurves {
     /// True when no lane plays.

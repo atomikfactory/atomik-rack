@@ -69,6 +69,25 @@ fn the_cache_stays_bounded() {
 }
 
 #[test]
+fn a_second_pass_over_the_same_labels_shapes_nothing() {
+    let texts: Vec<String> = (0..300).map(|i| format!("Parameter {i} value")).collect();
+    let mut e = TextEngine::new();
+    for pass in 0..2 {
+        for s in &texts {
+            e.shape_shared(&run(s, 0.0, Align::Start));
+        }
+        let (entries, _, hits, misses) = e.cache_stats();
+        assert_eq!((entries, hits, misses), (300, 300 * pass, 300));
+    }
+}
+
+/// `cargo test -p atomik-ui --release --test text_cache -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "wall-clock timing is the point of a benchmark"
+)]
 fn warm_shaping_is_much_cheaper_than_cold() {
     let texts: Vec<String> = (0..300).map(|i| format!("Parameter {i} value")).collect();
     let mut e = TextEngine::new();
@@ -83,6 +102,5 @@ fn warm_shaping_is_much_cheaper_than_cold() {
     }
     let warm = t.elapsed();
     eprintln!("cold {cold:?} warm {warm:?}");
-    // Loose bound (CI runners are noisy); the measured ratio is far above it.
-    assert!(warm * 4 < cold, "cold {cold:?} warm {warm:?}");
+    assert!(warm * 10 < cold, "cold {cold:?} warm {warm:?}");
 }

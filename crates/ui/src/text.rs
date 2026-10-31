@@ -8,7 +8,7 @@ use parley::{
     Alignment, AlignmentOptions, FontContext, FontData, FontFamily, FontFamilyName, FontWeight,
     GenericFamily, Layout, LayoutContext, PositionedLayoutItem, StyleProperty,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -78,7 +78,7 @@ pub struct SharedText {
 pub struct TextEngine {
     fonts: FontContext,
     layouts: LayoutContext<()>,
-    cache: HashMap<u64, CacheEntry>,
+    cache: BTreeMap<u64, CacheEntry>,
     cache_bytes: usize,
     clock: u64,
     hits: u64,
@@ -113,7 +113,7 @@ impl TextEngine {
         Self {
             fonts: FontContext::new(),
             layouts: LayoutContext::new(),
-            cache: HashMap::new(),
+            cache: BTreeMap::new(),
             cache_bytes: 0,
             clock: 0,
             hits: 0,

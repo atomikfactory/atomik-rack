@@ -400,5 +400,8 @@ fn an_unchanged_revision_and_position_asks_the_views_for_nothing() {
     playing_at(&mut c, BAR / 2);
     assert!(!c.update_shown_values(), "nothing moved");
     c.position = BAR / 2 + 480;
-    assert!(c.update_shown_values(), "a moved playhead changes the values");
+    assert!(
+        c.update_shown_values(),
+        "a moved playhead changes the values"
+    );
 }
