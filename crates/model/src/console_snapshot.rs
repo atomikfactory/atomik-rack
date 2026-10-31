@@ -91,6 +91,26 @@ impl SnapshotScope {
         })
     }
 
+    /// The other processing of a strip: EQ, dynamics, parallel compressor, polarity, latency
+    /// adjust and every param the other categories do not name.
+    pub const PROCESSING: SnapshotScope = SnapshotScope(bits::PROCESSING);
+
+    /// The categories of `self` and `other` together.
+    #[must_use]
+    pub const fn with(self, other: SnapshotScope) -> SnapshotScope {
+        SnapshotScope(self.0 | other.0)
+    }
+
+    /// Whether the category of the strip param `param` is in the scope.
+    pub fn covers_param(self, param: &str) -> bool {
+        self.has(category(param))
+    }
+
+    /// Whether the insert chains are in the scope.
+    pub fn covers_inserts(self) -> bool {
+        self.has(bits::INSERTS)
+    }
+
     fn has(self, bit: u8) -> bool {
         self.0 & bit != 0
     }
@@ -404,7 +424,7 @@ impl RackDoc {
 
 /// The descriptor params a snapshot keeps for a strip (every one but `internal.*`) or an effect
 /// (its bypass).
-fn kept_params(
+pub(crate) fn kept_params(
     desc: &'static atomik_device_sdk::DeviceDescriptor,
     strip: bool,
 ) -> impl Iterator<Item = &'static atomik_core::ParamDescriptor> {

@@ -728,6 +728,11 @@ pub(crate) fn plan(
         ConsoleCommand::MoveInsert { channel, from, to } => {
             crate::console_insert::move_insert(&mut p, &channel, from, to)?
         }
+        settings_command @ (ConsoleCommand::PasteSettings { .. }
+        | ConsoleCommand::ResetStrip { .. }
+        | ConsoleCommand::ClearInserts { .. }) => {
+            crate::console_settings::plan(&mut p, settings_command)?;
+        }
         ConsoleCommand::SetAlignReturns(on) => p.push(Edit::AlignReturns {
             old: console.align_returns,
             new: on,

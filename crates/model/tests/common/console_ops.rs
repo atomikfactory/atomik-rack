@@ -18,6 +18,11 @@ pub enum ConsoleOp {
     ClearMutes,
     /// `solo` (true) or `mute` (false) on a channel.
     Flag(usize, bool, bool),
+    /// Reset a channel (keeping or not its routing).
+    ResetStrip(usize, bool),
+    ClearInserts(usize),
+    /// Paste a fixed set of settings on a channel.
+    PasteSettings(usize),
 }
 
 pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
@@ -32,6 +37,9 @@ pub fn console_op() -> impl Strategy<Value = ConsoleOp> {
         1 => Just(ConsoleOp::ClearSolos),
         1 => Just(ConsoleOp::ClearMutes),
         3 => (i(), any::<bool>(), any::<bool>()).prop_map(|(c, s, on)| ConsoleOp::Flag(c, s, on)),
+        1 => (i(), any::<bool>()).prop_map(|(c, k)| ConsoleOp::ResetStrip(c, k)),
+        1 => i().prop_map(ConsoleOp::ClearInserts),
+        1 => i().prop_map(ConsoleOp::PasteSettings),
     ]
 }
 
@@ -62,6 +70,19 @@ pub fn resolve_console(op: &ConsoleOp, doc: &RackDoc) -> Option<Command> {
         ConsoleOp::AlignReturns(on) => c(ConsoleCommand::SetAlignReturns(*on)),
         ConsoleOp::ClearSolos => c(ConsoleCommand::ClearSolos),
         ConsoleOp::ClearMutes => c(ConsoleCommand::ClearMutes),
+        ConsoleOp::ResetStrip(ch, keep_routing) => c(ConsoleCommand::ResetStrip {
+            strip: chan(*ch)?,
+            keep_routing: *keep_routing,
+        }),
+        ConsoleOp::ClearInserts(ch) => c(ConsoleCommand::ClearInserts { strip: chan(*ch)? }),
+        ConsoleOp::PasteSettings(ch) => c(ConsoleCommand::PasteSettings {
+            strips: vec![chan(*ch)?],
+            clip: atomik_model::ChannelSettingsClip {
+                sections: atomik_model::SnapshotScope::ALL,
+                params: [("pan".to_owned(), 0.25), ("mute".to_owned(), 1.0)].into(),
+                inserts: Vec::new(),
+            },
+        }),
         ConsoleOp::Flag(ch, solo, on) => Command::SetParam {
             key: chan(*ch)?,
             param: if *solo { "solo" } else { "mute" }.into(),
