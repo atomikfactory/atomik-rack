@@ -31,6 +31,11 @@ pub(super) fn load_take_groups(
                 song,
                 clip_first,
             )?;
+            if clip.loop_length.is_some() && clip.content.is_audio() {
+                return Err(tp
+                    .field("loop_length")
+                    .error("an audio take cannot loop (convert the loop to clips first)"));
+            }
             clip_first.insert(clip.id.0, tp.field("id"));
             takes.push(clip);
         }
@@ -107,20 +112,19 @@ pub(super) fn load_clip(
     let start = tick(&obj["start"], &path.field("start"))?;
     let (length, offset, loop_length) = clip_span(obj, path)?;
     let loop_path = path.field("loop_length");
-    if kind.is_audio() {
-        if offset != 0 {
-            return Err(path
-                .field("offset")
-                .error("an audio clip has no content offset (use audio.offset)"));
-        }
-        if loop_length.is_some() {
-            return Err(loop_path.error("an audio clip cannot loop"));
-        }
+    if kind.is_audio() && offset != 0 {
+        return Err(path
+            .field("offset")
+            .error("an audio clip has no content offset (use audio.offset)"));
     }
     let muted = flag(obj, path, "muted")?;
+    let (name, color) = load_clip_meta(obj, path)?;
     let content_path = path.field(content_field);
     if kind.is_audio() {
         let audio = load_audio(&obj["audio"], &content_path, doc, version)?;
+        if loop_length.is_some() && audio.reverse {
+            return Err(loop_path.error("a reversed audio clip cannot loop"));
+        }
         return Ok(Clip {
             id: ClipId(id),
             start,
@@ -131,6 +135,8 @@ pub(super) fn load_clip(
             grid: None,
             scale: None,
             controllers: Vec::new(),
+            name,
+            color,
             content: ClipContent::Audio(audio),
         });
     }
@@ -182,6 +188,8 @@ pub(super) fn load_clip(
         offset,
         loop_length,
         muted,
+        name,
+        color,
         grid: match obj.get("grid") {
             Some(g) => Some(load_grid(g, &path.field("grid"))?),
             None => None,
@@ -540,4 +548,37 @@ pub(super) fn load_warp(v: &Value, path: &JsonPath) -> Result<WarpSettings, Mode
     };
     settings.validate().map_err(|e| path.error(e))?;
     Ok(settings)
+}
+
+/// A clip's optional `"name"` (see [`crate::clip_name_ok`]) and `"color"` (`"#rrggbb"`). Shared by
+/// the project and clip file loaders.
+pub(crate) fn load_clip_meta(
+    obj: &serde_json::Map<String, Value>,
+    path: &JsonPath,
+) -> Result<(Option<String>, Option<[u8; 3]>), ModelError> {
+    let name = match obj.get("name") {
+        Some(v) => {
+            let p = path.field("name");
+            let text = string(v, &p)?;
+            if !crate::clip_name_ok(text) {
+                return Err(p.error(format!(
+                    "the clip name must be trimmed and non-empty, at most {} characters, without control characters",
+                    crate::MAX_CLIP_NAME_CHARS
+                )));
+            }
+            Some(text.to_owned())
+        }
+        None => None,
+    };
+    let color = match obj.get("color") {
+        Some(v) => {
+            let p = path.field("color");
+            match parse_color(v, &p)? {
+                Some(c) => Some(c),
+                None => return Err(p.error("expected a colour \"#rrggbb\"")),
+            }
+        }
+        None => None,
+    };
+    Ok((name, color))
 }

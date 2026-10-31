@@ -45,8 +45,9 @@ use crate::paint::{fit_label, tooltip};
 use crate::seq_paint as sp;
 use crate::theme::mix;
 use atomik_model::{
-    Command, DeviceKey, MAX_GROUP_NAME, MAX_LANE_NAME_CHARS, MAX_TRACK_COMMENT, MAX_TRACK_HEIGHT,
-    MIN_TRACK_HEIGHT, RackDoc, SongCommand, WorkflowCommand,
+    ClipId, Command, DeviceKey, MAX_CLIP_NAME_CHARS, MAX_GROUP_NAME, MAX_LANE_NAME_CHARS,
+    MAX_TRACK_COMMENT, MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, MetaChange, RackDoc, SongCommand,
+    WorkflowCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{BezPath, Point, Rect, RoundedRect};
@@ -154,6 +155,8 @@ pub(super) enum EditTarget {
     Lane(DeviceKey, usize),
     /// The name of a track's device (a channel or a bus: the console's rename).
     Track(DeviceKey),
+    /// The name of a clip, typed over its label.
+    Clip(ClipId),
 }
 
 /// A text being typed: one line, Enter commits, Escape cancels.
@@ -352,6 +355,7 @@ impl ArrangementView {
             Some(EditTarget::Folder(g)) => song.org.group(*g).is_none(),
             Some(EditTarget::Comment(d) | EditTarget::Track(d)) => song.track(d).is_none(),
             Some(EditTarget::Lane(d, lane)) => song.track(d).is_none_or(|t| !t.is_note_lane(*lane)),
+            Some(EditTarget::Clip(id)) => song.clip(*id).is_none(),
             None => false,
         };
         if gone {
@@ -546,6 +550,20 @@ impl ArrangementView {
                     name.y0 - 1.0,
                     hr.x0 + TRACK_LIST_WIDTH - 6.0,
                     name.y1 + 1.0,
+                ))
+            }
+            EditTarget::Clip(id) => {
+                let (track, lane, clip) = self.find_clip(*id)?;
+                let rr = self.row_rect(self.row_of(track, lane)?);
+                let r = self.clip_rect_in(rr, clip);
+                // Over the label: the header strip of the visible part of the clip.
+                let x0 = r.x0.max(self.axis.x0) + 2.0;
+                let x1 = r.x1.min(self.bounds.x1 - 4.0).max(x0 + 90.0);
+                Some(Rect::new(
+                    x0,
+                    r.y0 + 1.0,
+                    x1,
+                    r.y0 + super::CLIP_HEADER + 9.0,
                 ))
             }
             EditTarget::Comment(d) => {
@@ -857,6 +875,15 @@ impl ArrangementView {
         true
     }
 
+    /// Starts typing a clip's name (empty when it has none). False when there is no such clip.
+    pub fn begin_clip_rename(&mut self, id: ClipId) -> bool {
+        let Some(name) = self.song.clip(id).map(|(_, _, c)| c.name.clone()) else {
+            return false;
+        };
+        self.start_edit(EditTarget::Clip(id), name.unwrap_or_default());
+        true
+    }
+
     /// Starts typing the name of a note lane (`text` is what shows now).
     pub(super) fn begin_lane_edit(&mut self, device: DeviceKey, lane: usize, text: String) {
         self.start_edit(EditTarget::Lane(device, lane), text);
@@ -913,6 +940,21 @@ impl ArrangementView {
                     name: text.to_owned(),
                 }));
             }
+            EditTarget::Clip(id) => {
+                // A blank name clears it; the model trims and checks the rest.
+                let name: String = text.chars().take(MAX_CLIP_NAME_CHARS).collect();
+                let name = name.trim_end().to_owned();
+                let change = if name.is_empty() {
+                    MetaChange::Clear
+                } else {
+                    MetaChange::Set(name)
+                };
+                out.push(song_cmd(SongCommand::SetClipMeta {
+                    ids: vec![id],
+                    name: change,
+                    color: MetaChange::Keep,
+                }));
+            }
             EditTarget::Comment(device) => {
                 let comment: String = text.chars().take(MAX_TRACK_COMMENT).collect();
                 let comment = comment.trim_end().to_owned();
@@ -954,6 +996,7 @@ impl ArrangementView {
                 EditTarget::Comment(_) => MAX_TRACK_COMMENT,
                 EditTarget::Lane(..) => MAX_LANE_NAME_CHARS,
                 EditTarget::Track(_) => MAX_TRACK_NAME_CHARS,
+                EditTarget::Clip(_) => MAX_CLIP_NAME_CHARS,
             };
             if e.text.chars().count() < max {
                 e.text.push(c);

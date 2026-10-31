@@ -179,6 +179,62 @@ fn value_at(points: &[AutomationPoint], c: i64) -> (f32, Curve) {
     }
 }
 
+/// The points one piece of an automation clip emits: the piece spans the song ticks `[s, e)` and
+/// shows the content from `cs` (rules in the module docs). Never empty for non-empty `points`.
+pub(crate) fn automation_piece(
+    points: &[AutomationPoint],
+    (s, e): (i64, i64),
+    cs: i64,
+) -> Vec<(i64, f32, Curve)> {
+    let ce = cs + (e - s);
+    let (v, curve) = value_at(points, cs);
+    let mut out = vec![(s, v, curve)];
+    let from = points.partition_point(|p| p.tick <= cs);
+    for p in points[from..].iter().take_while(|p| p.tick < ce) {
+        out.push((s + (p.tick - cs), p.value, value_at(points, p.tick).1));
+    }
+    let last = out.len() - 1;
+    if out[last].2 == Curve::Linear {
+        if out[last].0 < e - 1 {
+            out.push((e - 1, value_at(points, ce - 1).0, Curve::Step));
+        } else {
+            out[last].2 = Curve::Step;
+        }
+    }
+    out
+}
+
+/// The points one piece of a controller lane emits (see [`automation_piece`] for the arguments;
+/// empty when the lane says nothing over the piece).
+pub(crate) fn controller_piece(
+    points: &[AutomationPoint],
+    (s, e): (i64, i64),
+    cs: i64,
+) -> Vec<(i64, f32, Curve)> {
+    let ce = cs + (e - s);
+    let mut out = Vec::new();
+    if let Some((v, curve)) = lane_value_at(points, cs) {
+        out.push((s, v, curve));
+    }
+    let from = points.partition_point(|p| p.tick <= cs);
+    for p in points[from..].iter().take_while(|p| p.tick < ce) {
+        out.push((s + (p.tick - cs), p.value, p.curve));
+    }
+    let Some(&(last_tick, last_value, last_curve)) = out.last() else {
+        return out;
+    };
+    if last_curve == Curve::Linear {
+        // A ramp still running at the end of the piece: close it on the last tick.
+        let at_end = lane_value_at(points, ce - 1).map_or(last_value, |(v, _)| v);
+        if last_tick < e - 1 {
+            out.push((e - 1, at_end, Curve::Step));
+        } else if let Some(last) = out.last_mut() {
+            last.2 = Curve::Step;
+        }
+    }
+    out
+}
+
 /// The automation of lane `lane` of a track as `(song tick, value, curve)` with strictly
 /// increasing ticks (rules in the module docs). Empty for the note lane or a bad index.
 pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> {
@@ -204,20 +260,7 @@ pub fn flatten_automation(track: &Track, lane: usize) -> Vec<(i64, f32, Curve)> 
         {
             out.push((end, v, Curve::Step));
         }
-        let ce = cs + (e - s);
-        out.push((s, value_at(points, cs).0, value_at(points, cs).1));
-        let from = points.partition_point(|p| p.tick <= cs);
-        for p in points[from..].iter().take_while(|p| p.tick < ce) {
-            out.push((s + (p.tick - cs), p.value, value_at(points, p.tick).1));
-        }
-        let last = out.len() - 1;
-        if out[last].2 == Curve::Linear {
-            if out[last].0 < e - 1 {
-                out.push((e - 1, value_at(points, ce - 1).0, Curve::Step));
-            } else {
-                out[last].2 = Curve::Step;
-            }
-        }
+        out.extend(automation_piece(points, (s, e), cs));
         open_end = Some(e);
     }
     if let Some(v) = lane.static_value {
@@ -278,31 +321,11 @@ pub fn flatten_controllers(track: &Track) -> Vec<FlatController> {
 fn lane_controllers(lane: &Lane) -> BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> {
     let mut by_kind: BTreeMap<ControllerKind, Vec<(i64, f32, Curve)>> = BTreeMap::new();
     for (clip, s, e, cs) in audible_pieces(lane) {
-        let ce = cs + (e - s);
         for ctl in &clip.controllers {
-            let points = &ctl.points;
-            let out = by_kind.entry(ctl.kind).or_default();
-            let before = out.len();
-            if let Some((v, curve)) = lane_value_at(points, cs) {
-                out.push((s, v, curve));
-            }
-            let from = points.partition_point(|p| p.tick <= cs);
-            for p in points[from..].iter().take_while(|p| p.tick < ce) {
-                out.push((s + (p.tick - cs), p.value, p.curve));
-            }
-            if out.len() == before {
-                continue;
-            }
-            let last = out.len() - 1;
-            if out[last].2 == Curve::Linear {
-                // A ramp still running at the end of the piece: close it on the last tick.
-                let at_end = lane_value_at(points, ce - 1).map_or(out[last].1, |(v, _)| v);
-                if out[last].0 < e - 1 {
-                    out.push((e - 1, at_end, Curve::Step));
-                } else {
-                    out[last].2 = Curve::Step;
-                }
-            }
+            by_kind
+                .entry(ctl.kind)
+                .or_default()
+                .extend(controller_piece(&ctl.points, (s, e), cs));
         }
     }
     by_kind
@@ -466,11 +489,17 @@ pub fn crossfades(lane: &Lane) -> Vec<Crossfade> {
         let Some(prev) = by_id.get(&pid) else {
             continue;
         };
+        // A looped clip crossfades only inside its first repetition, and never as the clip
+        // that fades out (its tail would span several repetitions).
         if pend == a
             && prev.content.is_audio()
+            && prev.loop_length.is_none()
             && prev.end() > a
             && prev.end() <= clip.end()
             && prev.end().min(b) > a
+            && clip
+                .loop_length
+                .is_none_or(|n| prev.end().min(b) <= clip.start + n)
         {
             out.push(Crossfade {
                 later: id,
@@ -510,6 +539,16 @@ pub fn crossfades(lane: &Lane) -> Vec<Crossfade> {
 ///   of `P`, covers the overlap). With the equal-power curve the two gains square-sum to 1. A
 ///   clip that lies wholly inside an earlier one hides it with hard edges, as does a clip with
 ///   `xfade: None`. `P`'s and `B`'s own fades and gains apply on top of the crossfade.
+///
+/// - **Loops.** A looped audio clip (`loop_length: Some(n)`) plays as one clip per repetition:
+///   repetition `k` covers `[start + k * n, min(start + (k + 1) * n, end))` and plays the
+///   source from `source_offset` again, with its own fades, gain envelope and warp (all
+///   measured from the repetition's start, as if it were a clip of its own), so a loop turned
+///   into separate clips plays exactly the same. The loop is computed in ticks before the
+///   frame conversion, so each repetition is the frames between its two boundary ticks. A
+///   repetition is cut by a later clip like any span: it gives several regions. A looped clip
+///   crossfades with the clip before it only when the whole overlap lies inside its first
+///   repetition, and a looped clip never fades out under a later clip's crossfade (hard cut).
 pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioRegion> {
     if !effective_tracks(song)
         .iter()
@@ -526,10 +565,11 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
     let sr = f64::from(sample_rate);
     let spans = audible_spans(lane);
     let mut out = Vec::new();
-    // The region of `clip` over the song frames `[start, end)`, `start` at or after the clip's.
-    let region = |clip: &Clip, audio: &AudioClipContent, start: u64, end: u64| {
-        let clip_start = map.song_frame(clip.start, sr);
-        let clip_frames = map.song_frame(clip.end(), sr) - clip_start;
+    // The region of `clip` over the song frames `[start, end)`, `start` at or after the start of
+    // `pass`, the ticks `(start, end)` of the clip or of the repetition the region lies in.
+    let region = |audio: &AudioClipContent, pass: (i64, i64), start: u64, end: u64| {
+        let clip_start = map.song_frame(pass.0, sr);
+        let clip_frames = map.song_frame(pass.1, sr) - clip_start;
         let clip_pos = start - clip_start;
         let source_offset = if audio.reverse {
             audio.source_offset + clip_frames.saturating_sub(1 + clip_pos)
@@ -555,7 +595,7 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
             warp: if audio.reverse {
                 None
             } else {
-                warp_job(song, sample_rate, clip.start, clip.length, audio).map(Arc::new)
+                warp_job(song, sample_rate, pass.0, pass.1 - pass.0, audio).map(Arc::new)
             },
         }
     };
@@ -565,27 +605,48 @@ pub fn flatten_audio(track: &Track, song: &Song, sample_rate: u32) -> Vec<AudioR
         let ClipContent::Audio(audio) = &clip.content else {
             continue;
         };
-        let (start, end) = (map.song_frame(a, sr), map.song_frame(b, sr));
-        if end <= start {
-            continue;
-        }
-        let mut here = region(clip, audio, start, end);
-        if let Some(x) = zones.iter().find(|x| x.later == id && x.start == a) {
-            let prev = by_id[&x.earlier];
-            if let ClipContent::Audio(prev_audio) = &prev.content {
-                let zone_end = map.song_frame(x.end, sr);
-                if zone_end > start {
-                    let z = zone_end - start;
-                    let mut tail = region(prev, prev_audio, start, zone_end);
-                    tail.x_out = z;
-                    tail.x_curve = x.curve;
-                    here.x_in = z;
-                    here.x_curve = x.curve;
-                    out.push(tail);
+        for (s, e, pass) in audio_passes(clip, a, b) {
+            let (start, end) = (map.song_frame(s, sr), map.song_frame(e, sr));
+            if end <= start {
+                continue;
+            }
+            let mut here = region(audio, pass, start, end);
+            if let Some(x) = zones.iter().find(|x| x.later == id && x.start == s) {
+                let prev = by_id[&x.earlier];
+                if let ClipContent::Audio(prev_audio) = &prev.content {
+                    let zone_end = map.song_frame(x.end, sr);
+                    if zone_end > start {
+                        let z = zone_end - start;
+                        let mut tail =
+                            region(prev_audio, (prev.start, prev.end()), start, zone_end);
+                        tail.x_out = z;
+                        tail.x_curve = x.curve;
+                        here.x_in = z;
+                        here.x_curve = x.curve;
+                        out.push(tail);
+                    }
                 }
             }
+            out.push(here);
         }
-        out.push(here);
+    }
+    out
+}
+
+/// The repetitions of audio clip `c` over its audible span `[a, b)`: `(song start, song end,
+/// (repetition start, repetition end))` per piece, the repetition's ticks being the clip's own
+/// start and end when the clip does not loop (one piece).
+fn audio_passes(c: &Clip, a: i64, b: i64) -> Vec<(i64, i64, (i64, i64))> {
+    let Some(n) = c.loop_length else {
+        return vec![(a, b, (c.start, c.end()))];
+    };
+    let mut out = Vec::new();
+    let mut s = a;
+    while s < b {
+        let pass_start = c.start + (s - c.start).div_euclid(n) * n;
+        let pass_end = (pass_start + n).min(c.end());
+        out.push((s, pass_end.min(b), (pass_start, pass_end)));
+        s = pass_end;
     }
     out
 }

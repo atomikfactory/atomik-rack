@@ -276,6 +276,13 @@ pub const STRUM_DIRECTION_ARGS: &[&str] = &["up", "down"];
 /// The values of `sequencer.marker_color`: the palette names and `none`.
 pub const MARKER_COLOR_ARGS: &[&str] =
     &["none", "red", "orange", "yellow", "green", "blue", "purple"];
+/// The values of `sequencer.clip_color`: the palette names, and `track` for the colour of the
+/// clip's track.
+pub const CLIP_COLOR_ARGS: &[&str] = &[
+    "track", "red", "orange", "yellow", "green", "blue", "purple",
+];
+/// The values of `sequencer.convert_loop`: one clip, or one clip per repetition.
+pub const CONVERT_LOOP_ARGS: &[&str] = &["single", "separate"];
 /// The values of `sequencer.track_height`: the height presets.
 pub const TRACK_HEIGHT_ARGS: &[&str] = &["small", "medium", "large", "fit", "minimise"];
 /// The values of `sequencer.fold_lanes`.
@@ -1228,11 +1235,27 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "sequencer.clip_color",
+        "Clip Colour",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CLIP_COLOR_ARGS)
+    .decline(),
+    cmd(
         "sequencer.close_clip",
         "Close Clip",
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.convert_loop",
+        "Convert Loop",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CONVERT_LOOP_ARGS)
     .decline(),
     cmd(
         "sequencer.delete_automation_lane",
@@ -1337,6 +1360,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.locator_right_here",
         "Set Right Locator Here",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .decline(),
+    cmd(
+        "sequencer.loop_instance",
+        "Make Loop Instance Independent",
         G::Sequencer,
         C::Sequencer,
     )
@@ -1513,6 +1543,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .menu()
+    .decline(),
+    cmd(
+        "sequencer.rename_clip",
+        "Rename Clip...",
+        G::Sequencer,
+        C::Sequencer,
+    )
     .decline(),
     cmd(
         "sequencer.rename_folder",

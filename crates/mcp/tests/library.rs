@@ -100,6 +100,8 @@ fn clip(bars: i64, notes: i64) -> String {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: atomik_model::ClipContent::Notes(notes),
     };
     save_clip_file(&ClipFile {

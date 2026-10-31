@@ -239,6 +239,8 @@ pub fn stress_song_doc(registry: &Registry) -> RackDoc {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content,
     };
@@ -383,6 +385,8 @@ pub fn large_song_doc(registry: &Registry, tracks: usize, clips: usize, notes: u
                     muted: false,
                     scale: None,
                     controllers: Vec::new(),
+                    name: None,
+                    color: None,
                     grid: None,
                     content: ClipContent::Notes(list.into()),
                 },
@@ -478,6 +482,8 @@ pub fn lanes_song_doc(registry: &Registry, lanes: usize) -> RackDoc {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Automation(points),
             };

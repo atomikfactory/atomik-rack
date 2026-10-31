@@ -856,6 +856,8 @@ fn the_song_sent_to_the_engine_enters_at_the_player() {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content: atomik_model::ClipContent::Notes(
                 vec![atomik_model::Note::new(0, atomik_core::PPQ, 60, 0.8)].into(),

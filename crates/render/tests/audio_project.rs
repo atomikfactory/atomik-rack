@@ -316,3 +316,98 @@ fn a_project_file_bounces_with_its_bundle_and_a_missing_asset_is_named() {
     assert!(err.contains("fixture.wav"), "{err}");
     assert!(!wav.exists(), "no partial output");
 }
+
+/// The project of `looped_bounce` with the clip looping every beat, as a document.
+fn looped_doc(t: &TempDir, convert: bool) -> (RackDoc, Bundle) {
+    // A ramp: frame `i` holds `i / 24000` in the first beat and keeps rising after it, so a
+    // repetition that did not restart the source would show.
+    let ramp: Vec<f32> = (0..96_000).map(|i| i as f32 / 100_000.0).collect();
+    let asset = AudioData::new(48_000, vec![ramp.clone(), ramp]).unwrap();
+    // 120 BPM: a beat is 24 000 frames. Five and a half beats of a one-beat loop, 2 400 frames
+    // in, with a short fade on each repetition.
+    let (doc, bundle) = project(
+        &t.0.join("song"),
+        &asset,
+        &[(PPQ, 11 * PPQ / 2, 2_400, 0.0, 240, 480)],
+    );
+    let registry = default_registry();
+    let mut d = Document::new(doc);
+    let id = d.doc().song.tracks[0].lanes[0].clips[0].id;
+    d.apply(
+        Command::Song(SongCommand::SetClipGeometry {
+            id,
+            start: PPQ,
+            length: 11 * PPQ / 2,
+            offset: 0,
+            loop_length: Some(PPQ),
+            muted: false,
+            merge: None,
+        }),
+        &registry,
+    )
+    .unwrap();
+    if convert {
+        d.apply(
+            Command::Workflow(atomik_model::WorkflowCommand::ConvertLoop {
+                ids: vec![id],
+                mode: atomik_model::LoopConvert::Separate,
+            }),
+            &registry,
+        )
+        .unwrap();
+    }
+    (d.doc().clone(), bundle)
+}
+
+#[test]
+fn a_looped_audio_clip_restarts_its_source_every_repetition_frame_exactly() {
+    let t = TempDir::new("loop");
+    let (doc, bundle) = looped_doc(&t, false);
+    let c = console_gain();
+    let r = render(&doc, &bundle, 512, 0);
+    let left = &r.channels[0];
+    // Beat 1 starts at frame 24 000; every repetition plays the ramp from frame 2 400 again.
+    // The fades are 240 and 480 frames per repetition, so probe the middle of each one.
+    for k in 0..5u64 {
+        for probe in [2_000u64, 12_000, 20_000] {
+            let at = (24_000 + k * 24_000 + probe) as usize;
+            let want = c * ((2_400 + probe) as f32 / 100_000.0);
+            assert!(
+                (left[at] - want).abs() < 2e-5,
+                "repetition {k}, frame {probe}: {} vs {want}",
+                left[at]
+            );
+        }
+    }
+    // The last repetition is half a beat: the clip ends at 5.5 beats after the start.
+    assert!(left[(24_000 + 5 * 24_000 + 11_000) as usize].abs() > 0.0);
+    assert!(left[(24_000 + 5 * 24_000 + 13_000) as usize].abs() < 1e-6);
+    // The fades restart with every repetition: its first frames rise from silence.
+    let first = (24_000 + 2 * 24_000) as usize;
+    assert!(left[first].abs() < 1e-6);
+    assert!(left[first + 120].abs() < left[first + 2_000].abs());
+}
+
+#[test]
+fn a_looped_audio_bounce_is_bit_identical_across_blocks_workers_and_a_converted_loop() {
+    let t = TempDir::new("loop-identical");
+    let (doc, bundle) = looped_doc(&t, false);
+    let reference = bits(&render(&doc, &bundle, 64, 0));
+    assert!(reference.iter().any(|b| f32::from_bits(*b) != 0.0));
+    for block in [1, 64, 4096] {
+        for workers in [0, 4] {
+            assert!(
+                bits(&render(&doc, &bundle, block, workers)) == reference,
+                "block {block}, workers {workers}"
+            );
+        }
+    }
+    // The loop turned into clips of its own plays the very same samples.
+    let t2 = TempDir::new("loop-converted");
+    let (converted, bundle2) = looped_doc(&t2, true);
+    assert!(
+        converted.song.tracks[0].lanes[0].clips.len() > 1,
+        "the loop became several clips"
+    );
+    assert!(bits(&render(&converted, &bundle2, 512, 0)) == reference);
+}

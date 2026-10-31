@@ -36,6 +36,8 @@ fn song(tails: bool) -> RackDoc {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, 4 * PPQ, 69, 1.0)].into()),
             },

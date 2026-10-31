@@ -167,6 +167,8 @@ fn pdc_clicks_doc() -> RackDoc {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(notes),
             },

@@ -133,6 +133,8 @@ fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(vec![Note::new(0, ppq, key, 0.8)].into()),
     };
     d.apply(
@@ -1008,4 +1010,57 @@ fn project_inspect_lists_a_muted_automation_lane_and_its_static_value() {
         .expect("the channel's track");
     assert_eq!(t["lanes"][0]["muted"], json!(true));
     assert_eq!(t["lanes"][0]["static"], json!(0.5));
+}
+
+#[test]
+fn project_inspect_lists_clip_names_colours_and_loops_of_a_lane() {
+    let mut s = server();
+    // The demo project with a name and a colour on its first note clip, and a loop on it.
+    let text = std::fs::read_to_string(repo().join("examples/projects/demo.atomik")).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let id = {
+        let clip = &mut v["song"]["tracks"][0]["lanes"][0]["clips"][0];
+        clip["name"] = json!("Verse hook");
+        clip["color"] = json!("#e05a4f");
+        clip["loop_length"] = json!(61440);
+        clip["id"].clone()
+    };
+    let path = tmp("clip-meta.atomik");
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r = call(&mut s, "project_inspect", json!({"path": path}));
+    assert!(!r.is_error, "{}", r.first_text());
+    let lane = &r.parsed()["song"]["tracks"][0]["lanes"][0];
+    assert_eq!(
+        lane["named_clips"],
+        json!([{"id": id, "name": "Verse hook", "color": "#e05a4f", "loop_length": 61440}])
+    );
+    // The plain demo names and colours no clip; its looped clips are listed with their loop only.
+    let plain = call(
+        &mut s,
+        "project_inspect",
+        json!({"path": "examples/projects/demo.atomik"}),
+    )
+    .parsed();
+    for track in plain["song"]["tracks"].as_array().unwrap() {
+        for lane in track["lanes"].as_array().unwrap() {
+            for clip in lane["named_clips"].as_array().into_iter().flatten() {
+                assert!(
+                    clip.get("name").is_none() && clip.get("color").is_none(),
+                    "{clip}"
+                );
+                assert!(clip.get("loop_length").is_some(), "{clip}");
+            }
+        }
+    }
+    // A bad name names its path.
+    v["song"]["tracks"][0]["lanes"][0]["clips"][0]["name"] = json!(" padded");
+    let bad = tmp("clip-meta-bad.atomik");
+    std::fs::write(&bad, v.to_string()).unwrap();
+    let e = call(&mut s, "project_inspect", json!({"path": bad}));
+    assert!(e.is_error);
+    assert!(
+        e.first_text().contains("clips[0].name"),
+        "{}",
+        e.first_text()
+    );
 }

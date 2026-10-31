@@ -30,6 +30,12 @@ pub struct MenuEnable {
     pub has_track: bool,
     /// Arrangement: two or more clips are selected (Join).
     pub join: bool,
+    /// Arrangement: exactly one clip is selected (Rename Clip).
+    pub clip_one: bool,
+    /// Arrangement: a selected clip loops (Convert Loop).
+    pub clip_looped: bool,
+    /// Arrangement: exactly one clip is selected and it loops (Make Loop Instance Independent).
+    pub loop_instance: bool,
     /// Arrangement: a selected clip is a note clip (Open in the editor).
     pub open_clip: bool,
     /// Arrangement: exactly one clip is selected and it is a note clip (Save Clip to Library).
@@ -120,6 +126,17 @@ fn marker_colors() -> impl Iterator<Item = Spec> {
         .iter()
         .map(|(arg, label)| meter_item("sequencer.marker_color", arg, label))
 }
+
+/// The colours of the clip menu: the command argument and the label.
+const CLIP_COLORS: [(&str, &str); 7] = [
+    ("track", "Use Track Colour"),
+    ("red", "Red"),
+    ("orange", "Orange"),
+    ("yellow", "Yellow"),
+    ("green", "Green"),
+    ("blue", "Blue"),
+    ("purple", "Purple"),
+];
 
 /// The colours of the track and folder menus: the command argument and the label.
 const TRACK_COLORS: [(&str, &str); 7] = [
@@ -531,6 +548,26 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.open_clip", e.open_clip),
                 item("sequencer.split_at_playhead", true),
                 item("sequencer.join", e.join),
+                item("sequencer.rename_clip", e.clip_one),
+                Spec::submenu(
+                    "Clip Colour",
+                    CLIP_COLORS
+                        .iter()
+                        .map(|(arg, label)| {
+                            meter_item("sequencer.clip_color", arg, label).enabled(e.selection)
+                        })
+                        .collect(),
+                ),
+                Spec::submenu(
+                    "Convert Loop",
+                    vec![
+                        meter_item("sequencer.convert_loop", "single", "To a Single Clip")
+                            .enabled(e.clip_looped),
+                        meter_item("sequencer.convert_loop", "separate", "To Separate Clips")
+                            .enabled(e.clip_looped),
+                    ],
+                ),
+                item("sequencer.loop_instance", e.loop_instance),
                 meter_item("sequencer.reverse_clips", "bars", "Reverse Clips").enabled(e.selection),
                 Spec::submenu(
                     "Scale Tempo",

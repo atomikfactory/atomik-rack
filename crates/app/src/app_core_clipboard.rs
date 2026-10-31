@@ -554,6 +554,25 @@ impl<S: EngineSink> AppCore<S> {
                     self.after_view_change();
                 }
             }
+            WorkflowCommand::ConvertLoop { ids, .. } => {
+                // The clips and the repetitions that became clips of their own.
+                let now = self.doc().song.next_clip_id;
+                let mut all = ids.clone();
+                all.extend((pre.next_clip..now).map(ClipId));
+                self.after_view_change();
+                self.arrangement.set_selected_clips(&all);
+            }
+            WorkflowCommand::DuplicateLoopInstance { id, index } => {
+                // The instance keeps the id when it is the first, else it took the last new one.
+                let now = self.doc().song.next_clip_id;
+                let instance = if *index == 0 {
+                    *id
+                } else {
+                    ClipId(now.saturating_sub(1))
+                };
+                self.after_view_change();
+                self.arrangement.set_selected_clips(&[instance]);
+            }
             WorkflowCommand::PasteDevices { .. }
             | WorkflowCommand::PasteDevicesAt { .. }
             | WorkflowCommand::DuplicateDevices { .. }

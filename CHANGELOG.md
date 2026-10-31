@@ -9,6 +9,25 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Looped clips, and clip names and colours.** Every clip has a loop handle in the upper right
+  corner of its body (it shows while the clip loops, is selected or is under the pointer):
+  dragging it to the right repeats what the clip shows, starting a loop of its current content
+  when it had none, and dragging back shortens it. The repetitions are marked by bevelled seams.
+  Audio clips loop too: each repetition plays the audio from the clip's source offset again, with
+  its own fades, gain envelope and warp, cut at the repetition's boundary ticks so it is
+  frame-exact whatever the tempo map does; a reversed clip and a take cannot loop, a looped
+  clip crossfades with the clip before it only inside its first repetition, and it splits only
+  where a repetition starts. The inspector's Loop Length works on audio clips. The clip menu
+  gains Convert Loop > To a Single Clip / To Separate Clips (the lane plays exactly what it
+  played), Make Loop Instance Independent (the repetition under the playhead becomes a clip of
+  its own), Rename Clip... (also a double-click on the clip's header strip) and Clip Colour with
+  Use Track Colour. A clip's name and colour replace the generated label and the track's colour,
+  follow duplicate, copy and paste, the clip library, a split and a join, and are saved with the
+  project and the clip file; the one-clip MIDI export is named after the clip, and
+  `project_inspect` lists them and the loops under `named_clips`. Project format 37 gains the
+  clip fields `"name"` and `"color"` (cosmetic, an older reader may drop them) and reads audio
+  loops, which older readers refuse; no version bump (37 is unreleased). Not yet: looping an
+  audio take, and converting an audio loop into one clip.
 - **Track management.** A track header can be dragged: the selected tracks (a press on one of
   several keeps the selection) move together to a place of the track list, into or out of a
   folder, in one undo step, with an accent line showing the place (indented by the folder depth)

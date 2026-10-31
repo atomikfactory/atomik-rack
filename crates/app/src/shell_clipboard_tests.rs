@@ -621,6 +621,8 @@ fn with_clips() -> Shell<NullBackend> {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: atomik_model::ClipContent::Notes(
                     vec![atomik_model::Note::new(0, 15_360, 60, 0.8)].into(),
@@ -706,6 +708,8 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.rename_clip",
+            "sequencer.loop_instance",
             "sequencer.reverse_clips",
             "sequencer.save_clip_to_library",
             "sequencer.toggle_mute",

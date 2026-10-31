@@ -263,6 +263,8 @@ impl Builder {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(notes.into()),
             },
@@ -537,6 +539,8 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: Some(StepGrid {
                     resolution: StepResolution::Sixteenth,
                     steps: 16,

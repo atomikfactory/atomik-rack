@@ -44,6 +44,8 @@
 //!                                      "take_groups"? (v20, notes and audio lanes, after "clips"),
 //!                                      "clips": [{ "id", "start", "length", "offset",
 //!                                                  "loop_length" (int or null), "muted",
+//!                                                  "name"? (v37, a trimmed text of 1 to 64
+//!                                                      characters), "color"? (v37, "#rrggbb"),
 //!                                                  "grid"? (v5, note clips only, see below),
 //!                                                  "controllers"? (v19, note clips only, see below),
 //!                                                  "notes": [[tick, length, key, velocity]…]
@@ -59,10 +61,17 @@
 //! ```
 //!
 //! An audio track (a track on an `atomik.audio-track` device, v3 only) has exactly one lane,
-//! `"audio"`, whose clips carry `"audio"` content, with `offset` 0 and `loop_length` null; every
+//! `"audio"`, whose clips carry `"audio"` content, with `offset` 0; every
 //! `"audio"."asset"` must be a key of `"assets"`, and its `offset` at most that asset's
 //! `frames`. In `"audio"` only `asset` and `offset` are required (`gain_db` 0, fades 0 and
-//! `"linear"` otherwise); saving writes all of them.
+//! `"linear"` otherwise); saving writes all of them. An audio clip may loop (`loop_length` an
+//! int, a file of version 37 or later; an older reader refuses it) unless it is `"reverse"`d or
+//! a take: each repetition plays the asset from `offset` again with its own fades and envelope
+//! (see `flatten_audio`).
+//!
+//! A clip's `"name"` and `"color"` (v37) are the clip's own label and colour, written only when
+//! set, right after `"muted"`. Both are cosmetic, so a reader older than 37 that is told it may
+//! (see `schema`) drops them.
 //!
 //! A sampler's `"zones"` (v4) is an array, in list order, of
 //! `{ "asset", "key_lo", "key_hi", "vel_lo", "vel_hi", "root_key", "transpose", "tune_cents",
@@ -403,10 +412,12 @@ use schema::Obj;
 use write_clip::*;
 use write_console::*;
 
-pub(crate) use read_clip::{clip_span, load_controllers, load_grid, load_notes, load_scale};
+pub(crate) use read_clip::{
+    clip_span, load_clip_meta, load_controllers, load_grid, load_notes, load_scale,
+};
 pub(crate) use read_devices::{load_curves, load_drums, load_steps, load_zones};
 pub(crate) use write::save;
-pub(crate) use write_clip::write_note_clip_tail;
+pub(crate) use write_clip::{clip_meta_text, write_note_clip_tail};
 pub(crate) use write_devices::{write_curves, write_drums, write_steps, write_zones};
 
 /// The `format` tag of a project file.

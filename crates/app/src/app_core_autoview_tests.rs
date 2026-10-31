@@ -34,6 +34,8 @@ fn clip(bars: i64, points: &[(i64, f32)]) -> Clip {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Automation(
             points

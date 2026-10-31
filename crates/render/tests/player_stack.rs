@@ -80,6 +80,8 @@ fn project(notes: &[(i64, i64, u8, f32)], stack: Option<f32>) -> RackDoc {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content,
     };
@@ -312,6 +314,8 @@ fn two_tracks_that_enter_at_one_player_share_its_engine_track() {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(BAR / 2, PPQ, 64, 0.5)].into()),
             },

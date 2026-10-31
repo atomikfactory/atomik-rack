@@ -331,6 +331,8 @@ fn overwrite_replaces_the_whole_pass_from_the_value_it_started_with() {
             grid: None,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             content: ClipContent::Automation(vec![AutomationPoint {
                 tick: 0,
                 value: 500.0,
@@ -671,6 +673,8 @@ fn step_clip(start: i64, length: i64, value: f32) -> atomik_model::Clip {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Automation(vec![AutomationPoint {
             tick: 0,
