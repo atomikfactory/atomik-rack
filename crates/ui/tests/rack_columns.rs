@@ -205,6 +205,7 @@ fn dragging_a_device_into_another_column_moves_it_to_the_slot_under_the_pointer(
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("synth")],
             slot: RackSlot {
                 column: 1,
@@ -224,6 +225,7 @@ fn the_slot_index_counts_the_devices_above_the_pointer_in_that_column() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("synth")],
             slot: RackSlot {
                 column: 1,
@@ -244,6 +246,7 @@ fn a_reorder_inside_one_column_is_a_slot_move_and_a_no_op_sends_nothing() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("delay")],
             slot: RackSlot {
                 column: 0,
@@ -285,6 +288,7 @@ fn a_group_moves_between_columns_in_one_command() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("synth"), key("delay")],
             slot: RackSlot {
                 column: 1,
@@ -303,6 +307,7 @@ fn dropping_right_of_the_last_column_creates_a_column() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("synth")],
             slot: RackSlot {
                 column: 2,
@@ -354,6 +359,7 @@ fn the_master_stays_locked_in_column_zero() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("bass")],
             slot: RackSlot {
                 column: 0,
@@ -762,6 +768,7 @@ fn the_new_column_zone_is_on_screen_while_a_device_is_dragged_whatever_the_windo
             assert_eq!(
                 commands(&a),
                 vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+                    route: true,
                     keys: vec![key("synth")],
                     slot: RackSlot {
                         column: 1,

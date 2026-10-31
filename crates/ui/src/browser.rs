@@ -65,6 +65,8 @@ pub enum CreateKind {
     Instrument,
     /// An effect or utility (Create Effect).
     Effect,
+    /// A note player (Create Player): it is cabled into the stack of the selected device.
+    Player,
 }
 
 impl CreateKind {
@@ -73,6 +75,7 @@ impl CreateKind {
         match self {
             CreateKind::Instrument => "CREATE INSTRUMENT",
             CreateKind::Effect => "CREATE EFFECT",
+            CreateKind::Player => "CREATE PLAYER",
         }
     }
 
@@ -81,6 +84,7 @@ impl CreateKind {
         match self {
             CreateKind::Instrument => desc.kind == DeviceKind::Instrument,
             CreateKind::Effect => matches!(desc.kind, DeviceKind::Effect | DeviceKind::Utility),
+            CreateKind::Player => is_player(desc.type_id),
         }
     }
 
@@ -89,6 +93,7 @@ impl CreateKind {
         match self {
             CreateKind::Instrument => hint == PluginKindHint::Instrument,
             CreateKind::Effect => hint == PluginKindHint::Effect,
+            CreateKind::Player => false,
         }
     }
 }

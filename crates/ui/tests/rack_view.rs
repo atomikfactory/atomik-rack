@@ -543,6 +543,7 @@ fn dragging_a_plate_reorders_devices() {
         commands(&a),
         vec![Command::Workflow(
             atomik_model::WorkflowCommand::MoveDevicesToSlot {
+                route: true,
                 keys: vec![key("mixer")],
                 slot: atomik_model::RackSlot {
                     column: 0,

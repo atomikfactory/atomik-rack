@@ -259,6 +259,7 @@ fn duplicate_copies_the_selection_with_its_cables() {
         v.command("edit.duplicate", None, &doc, &reg),
         CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
             WorkflowCommand::DuplicateDevices {
+                route: true,
                 keys: vec![key("synth")]
             }
         ))])
@@ -268,6 +269,7 @@ fn duplicate_copies_the_selection_with_its_cables() {
         v.command("edit.duplicate", None, &doc, &reg),
         CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
             WorkflowCommand::DuplicateDevices {
+                route: true,
                 keys: vec![key("synth"), key("delay")]
             }
         ))])
@@ -381,6 +383,7 @@ fn dragging_a_selected_device_moves_the_group_in_one_command() {
     assert_eq!(
         commands(&a),
         vec![Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("synth"), key("delay")],
             slot: atomik_model::RackSlot {
                 column: 0,

@@ -317,7 +317,10 @@ impl RackView {
                             container: one.clone(),
                         })
                     }
-                    _ => Command::Workflow(WorkflowCommand::DuplicateDevices { keys }),
+                    _ => Command::Workflow(WorkflowCommand::DuplicateDevices {
+                        keys,
+                        route: self.auto_route,
+                    }),
                 };
                 out.push(UiAction::Command(action));
             }

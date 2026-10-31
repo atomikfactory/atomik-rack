@@ -77,6 +77,12 @@ pub struct Theme {
     pub cable_cv: Color,
     /// Note cable colour.
     pub cable_notes: Color,
+    /// Insert loop cable colour.
+    pub cable_insert: Color,
+    /// Send and return cable colour.
+    pub cable_send: Color,
+    /// Sidechain cable colour.
+    pub cable_sidechain: Color,
     /// Cable drop shadow.
     pub cable_shadow: Color,
     /// Highlight ring (hover, compatible sockets).
@@ -245,6 +251,9 @@ impl Theme {
             cable_audio: c(0xe8, 0x5d, 0x3f),
             cable_cv: c(0x4f, 0xa8, 0xe0),
             cable_notes: c(0x9c, 0xd3, 0x5b),
+            cable_insert: c(0xe6, 0xb4, 0x3c),
+            cable_send: c(0xb4, 0x80, 0xe8),
+            cable_sidechain: c(0x3c, 0xc8, 0xb4),
             cable_shadow: ca(0x00, 0x00, 0x00, 0x66),
             highlight: c(0xff, 0xe0, 0x8a),
             dim: ca(0x0a, 0x0b, 0x0d, 0xb0),
@@ -315,6 +324,9 @@ impl Theme {
             cable_audio: c(0xc4, 0x3e, 0x1f),
             cable_cv: c(0x1f, 0x7b, 0xc0),
             cable_notes: c(0x4f, 0x8f, 0x14),
+            cable_insert: c(0xa8, 0x76, 0x00),
+            cable_send: c(0x7a, 0x44, 0xc0),
+            cable_sidechain: c(0x0e, 0x80, 0x70),
             cable_shadow: ca(0x00, 0x00, 0x00, 0x40),
             highlight: c(0xaa, 0x66, 0x00),
             dim: ca(0xf0, 0xf1, 0xf3, 0xb0),
@@ -387,6 +399,19 @@ impl Theme {
             SocketKind::Audio => self.cable_audio,
             SocketKind::Cv => self.cable_cv,
             SocketKind::Notes => self.cable_notes,
+        }
+    }
+
+    /// Cable colour by role.
+    pub fn cable_role_color(&self, role: crate::cables::CableRole) -> Color {
+        use crate::cables::CableRole;
+        match role {
+            CableRole::Audio => self.cable_audio,
+            CableRole::Cv => self.cable_cv,
+            CableRole::Notes => self.cable_notes,
+            CableRole::Insert => self.cable_insert,
+            CableRole::Send => self.cable_send,
+            CableRole::Sidechain => self.cable_sidechain,
         }
     }
 }

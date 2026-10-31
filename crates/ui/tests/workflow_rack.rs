@@ -139,6 +139,7 @@ fn delete_and_duplicate_are_commands_on_the_selected_device() {
         v.command("edit.duplicate", None, &doc, &reg),
         CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
             atomik_model::WorkflowCommand::DuplicateDevices {
+                route: false,
                 keys: vec![key("synth")]
             }
         ))]),
