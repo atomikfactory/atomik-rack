@@ -130,6 +130,7 @@ fn a_device_that_took_a_patch_bounces_like_one_created_from_it() {
     apply(
         &mut created,
         Command::Workflow(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: patch,
             container: None,
             at: 0,

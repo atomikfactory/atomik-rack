@@ -8,7 +8,7 @@ use crate::browser::{BrowserRow, CreateKind};
 use crate::canvas::{Align, Canvas, CanvasExt, TextRun, pt};
 use crate::event::Modifiers;
 use crate::paint;
-use atomik_device_sdk::{PluginKindHint, RACK_WIDTH};
+use atomik_device_sdk::{PluginKindHint, RACK_WIDTH, Registry};
 use atomik_model::{
     Command, CreateOptions, CreateSource, DeviceKey, PluginCommand, RackDoc, RackSlot,
     WorkflowCommand,
@@ -113,7 +113,13 @@ impl RackView {
     /// The release of a device move: one command that puts the dragged device, or the whole
     /// selection it belongs to, at the slot under the pointer. Inside a container (one
     /// column) it is the flat move command.
-    pub(super) fn move_drop(&mut self, dev: usize, doc: &RackDoc, out: &mut Vec<UiAction>) {
+    pub(super) fn move_drop(
+        &mut self,
+        dev: usize,
+        doc: &RackDoc,
+        modifiers: Modifiers,
+        out: &mut Vec<UiAction>,
+    ) {
         let key = self.devices[dev].key.clone();
         // The dragged device, or the whole selection when it is part of one.
         let moving: Vec<DeviceKey> = if self.drags_as_group(dev) {
@@ -147,7 +153,11 @@ impl RackView {
         };
         if move_changes(doc, &moving, slot, self.locked.as_ref()) {
             out.push(UiAction::Command(Command::Workflow(
-                WorkflowCommand::MoveDevicesToSlot { keys: moving, slot },
+                WorkflowCommand::MoveDevicesToSlot {
+                    keys: moving,
+                    slot,
+                    route: self.auto_route != modifiers.shift,
+                },
             )));
         }
     }
@@ -160,10 +170,22 @@ impl RackView {
         &mut self,
         row: &BrowserRow,
         doc: &RackDoc,
+        registry: &Registry,
         modifiers: Modifiers,
         out: &mut Vec<UiAction>,
     ) {
         if !self.rack_area().contains(self.pointer) {
+            return;
+        }
+        // Over the middle of a device of the same kind the row replaces it; a replacement the
+        // model refuses is an ordinary drop at the slot.
+        if let Some(target) = self.replace_target(row, self.view_to_rack(self.pointer))
+            && let Some(action) = self.replace_action(row, target, doc, registry)
+        {
+            out.push(action);
+            if self.browser.create.is_some() && !self.browser.keep_open {
+                self.set_browser_visible(false);
+            }
             return;
         }
         let none = vec![false; self.devices.len()];
@@ -289,7 +311,7 @@ impl RackView {
                 key: None,
                 options,
             },
-            CreateKind::Effect => WorkflowCommand::CreateEffectAt {
+            CreateKind::Effect | CreateKind::Player => WorkflowCommand::CreateEffectAt {
                 slot,
                 source,
                 key: None,
@@ -305,6 +327,78 @@ impl RackView {
             BrowserRow::Plugin(n) => self.plugin_catalog.get(*n).map(|e| e.title()),
             _ => None,
         }
+    }
+
+    // ------------------------------------------------------------------ replace by drop
+
+    /// What kind of device a browser row is, for replacing: instrument, effect or note player.
+    fn row_family(&self, row: &BrowserRow) -> Option<&'static str> {
+        match row {
+            BrowserRow::Device(d) => replace_family(d),
+            BrowserRow::Plugin(n) => match self.plugin_catalog.get(*n)?.kind {
+                PluginKindHint::Instrument => Some("instrument"),
+                PluginKindHint::Effect => Some("effect"),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// What dropping `row` creates, for [`WorkflowCommand::ReplaceDevice`].
+    fn row_source(&self, row: &BrowserRow) -> Option<CreateSource> {
+        match row {
+            BrowserRow::Device(d) => Some(CreateSource::Type(d.type_id.to_string())),
+            BrowserRow::Plugin(n) => {
+                let e = self.plugin_catalog.get(*n)?;
+                Some(CreateSource::Plugin {
+                    plugin: e.plugin.clone(),
+                    layout: e.layout.clone(),
+                    path_hint: e.path.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The device a browser row replaces when dropped at rack position `rp`: the pointer is over
+    /// the middle of the panel of a top-level device of the same kind (the edges of a panel are
+    /// the gaps between devices, which insert). Only the top level, never the interface strip.
+    pub(super) fn replace_target(&self, row: &BrowserRow, rp: Point) -> Option<usize> {
+        if !self.scope.is_empty() {
+            return None;
+        }
+        let family = self.row_family(row)?;
+        self.inner_range().find(|&i| {
+            let d = &self.devices[i];
+            let r = d.rect();
+            let band = r.height() / 4.0;
+            r.x0 <= rp.x
+                && rp.x <= r.x1
+                && r.y0 + band <= rp.y
+                && rp.y <= r.y1 - band
+                && d.desc.as_ref().and_then(replace_family) == Some(family)
+        })
+    }
+
+    /// The replace command of dropping `row` on device `target`, when the model accepts it.
+    fn replace_action(
+        &self,
+        row: &BrowserRow,
+        target: usize,
+        doc: &RackDoc,
+        registry: &Registry,
+    ) -> Option<UiAction> {
+        let source = self.row_source(row)?;
+        let key = self.devices[target].key.clone();
+        if atomik_model::replace_reason(doc, registry, &key, &source).is_some() {
+            return None;
+        }
+        Some(UiAction::Command(Command::Workflow(
+            WorkflowCommand::ReplaceDevice {
+                target: key,
+                source,
+            },
+        )))
     }
 
     // ------------------------------------------------------------------ painting
@@ -340,6 +434,16 @@ impl RackView {
             return;
         }
         if self.paint_container_drop(c, &moving) {
+            return;
+        }
+        // A row over the middle of a device of its kind replaces it: the device is outlined
+        // instead of the drop line.
+        if let Drag::Browser { row, .. } = &self.drag
+            && let Some(i) = self.replace_target(row, self.view_to_rack(self.pointer))
+        {
+            let outline = RoundedRect::from_rect(self.devices[i].rect(), 6.0);
+            c.fill_with(outline, theme.highlight.with_alpha(0.12));
+            c.stroke(&outline.into(), &Stroke::new(3.0), &theme.highlight.into());
             return;
         }
         let dp = self.drop_point(self.view_to_rack(self.pointer), &moving);
@@ -419,7 +523,11 @@ fn flat_move(
         let now: Vec<&DeviceKey> = doc.devices.iter().map(|d| &d.key).collect();
         if target != now {
             out.push(UiAction::Command(Command::Workflow(
-                WorkflowCommand::MoveDevices { keys: moving, to },
+                WorkflowCommand::MoveDevices {
+                    keys: moving,
+                    to,
+                    route: false,
+                },
             )));
         }
     } else if doc.devices.iter().position(|d| d.key == key) != Some(to) {
@@ -460,4 +568,21 @@ fn move_changes(
     };
     rest.splice(at..at, group);
     rest != now
+}
+
+/// The kind of device `desc` is for replacing: only an instrument, an effect and a note player
+/// can replace or be replaced, and the console devices never.
+fn replace_family(desc: &atomik_device_sdk::DeviceDescriptor) -> Option<&'static str> {
+    use atomik_device_sdk::DeviceKind;
+    if atomik_model::console::is_console_type(desc.type_id) {
+        return None;
+    }
+    if atomik_model::is_note_player(desc) {
+        return Some("player");
+    }
+    match desc.kind {
+        DeviceKind::Instrument => Some("instrument"),
+        DeviceKind::Effect => Some("effect"),
+        _ => None,
+    }
 }

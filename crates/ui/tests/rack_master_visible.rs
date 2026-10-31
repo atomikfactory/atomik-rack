@@ -127,6 +127,7 @@ fn the_master_plate_cannot_be_dragged_and_nothing_goes_above_it() {
     assert_eq!(
         commands(&out),
         [Command::Workflow(WorkflowCommand::MoveDevicesToSlot {
+            route: true,
             keys: vec![key("bass")],
             slot: atomik_model::RackSlot {
                 column: 0,

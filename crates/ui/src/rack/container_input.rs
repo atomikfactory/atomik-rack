@@ -1052,12 +1052,18 @@ impl RackView {
             W::RemoveDevices { keys } => W::RemoveDevices {
                 keys: keys.into_iter().map(k).collect(),
             },
-            W::DuplicateDevices { keys } => W::DuplicateDevices {
+            W::DuplicateDevices { keys, route } => W::DuplicateDevices {
                 keys: keys.into_iter().map(k).collect(),
+                route,
             },
-            W::MoveDevices { keys, to } => W::MoveDevices {
+            W::MoveDevices { keys, to, route } => W::MoveDevices {
                 keys: keys.into_iter().map(k).collect(),
                 to,
+                route,
+            },
+            W::SetFoldedMany { keys, folded } => W::SetFoldedMany {
+                keys: keys.into_iter().map(k).collect(),
+                folded,
             },
             W::DeleteDevices { keys } => W::DeleteDevices {
                 keys: keys.into_iter().map(k).collect(),

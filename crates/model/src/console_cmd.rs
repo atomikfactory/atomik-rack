@@ -465,7 +465,7 @@ pub(crate) fn add_channel(p: &mut Planner<'_>, source: &DeviceKey) -> Result<(),
 
 /// The default name of a channel for output `out_l` of `source_name`: `"<name> <stem>"`, the
 /// stem being the socket key without its `_l` and `_out` ends, spaced (`pad2_out_l` → `Pad 2`).
-fn default_channel_name(source_name: &str, out_l: &str) -> String {
+pub(crate) fn default_channel_name(source_name: &str, out_l: &str) -> String {
     let stem = out_l.strip_suffix("_l").unwrap_or(out_l);
     let stem = stem.strip_suffix("_out").unwrap_or(stem);
     let mut text = String::new();

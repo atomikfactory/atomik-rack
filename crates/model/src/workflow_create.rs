@@ -380,16 +380,169 @@ pub(crate) fn create_effect(
     let routed = match classify(doc, target) {
         // The send/return slot rule comes first: the master is a device with audio outputs, so
         // the generic rule below must never see it.
-        Dest::Master => route_to_send(doc, registry, source, &key),
+        Dest::Master => route_to_send(doc, registry, Some(source), &key),
         Dest::Nothing => None,
-        Dest::Channel(channel) => route_to_insert(doc, registry, source, &key, &channel),
-        Dest::Return(effect, slot) => route_on_return(doc, registry, source, &key, &effect, slot),
-        Dest::Device(device) => route_after_device(doc, registry, source, &key, &device),
+        Dest::Channel(channel) => route_to_insert(doc, registry, Some(source), &key, &channel),
+        Dest::Return(effect, slot) => {
+            route_on_return(doc, registry, Some(source), &key, &effect, slot)
+        }
+        Dest::Device(device) => route_after_device(doc, registry, Some(source), &key, &device),
     };
     match routed {
         Some(edit) => Ok(edit),
         None => plain(fallback),
     }
+}
+
+/// Adds the new device `key` of `source` on `p` at `index`; without a source the device exists
+/// already (a moved or pasted one) and only gets routed.
+fn add_new(
+    p: &mut Planner<'_>,
+    source: Option<&CreateSource>,
+    index: usize,
+    key: &DeviceKey,
+) -> Option<()> {
+    if let Some(source) = source {
+        let add = add_edit(p, source, index, key.clone()).ok()?;
+        p.push(add);
+    }
+    Some(())
+}
+
+/// The console channel, bus or master whose insert chain holds `effect`.
+fn chain_owner(doc: &RackDoc, registry: &Registry, effect: &DeviceKey) -> Option<DeviceKey> {
+    let console = &doc.console;
+    console
+        .channels
+        .iter()
+        .map(|c| &c.channel)
+        .chain(console.buses.iter().map(|b| &b.bus))
+        .chain(console.master.iter())
+        .find(|c| insert_chain(doc, registry, c).contains(effect))
+        .cloned()
+}
+
+/// True when `key` is a top-level device whose routing the move and paste commands may redo: a
+/// stereo effect or a note player that is no console device, feeds no channel and whose cables
+/// all sit on the sockets the creation rules wire (`in_l`, `in_r`, `out_l`, `out_r`, `notes_in`,
+/// `notes_out`), so a hand-made patch is never taken apart.
+pub(crate) fn reroutable(doc: &RackDoc, registry: &Registry, key: &DeviceKey) -> bool {
+    if key.0.contains('/') || doc.console.channel_of(key).is_some() {
+        return false;
+    }
+    let Some(desc) = doc
+        .device(key)
+        .and_then(|d| registry.descriptor(&d.type_id))
+    else {
+        return false;
+    };
+    if is_console_type(desc.type_id) {
+        return false;
+    }
+    let kind_ok = if is_note_player(desc) {
+        true
+    } else {
+        desc.kind == DeviceKind::Effect && stereo_effect_type(desc)
+    };
+    let own = |end: &SocketRef| {
+        end.device != *key
+            || matches!(
+                end.socket.as_str(),
+                "in_l" | "in_r" | "out_l" | "out_r" | "notes_in" | "notes_out"
+            )
+    };
+    kind_ok
+        && doc
+            .cables
+            .iter()
+            .all(|c| (c.from.device != *key && c.to.device != *key) || (own(&c.from) && own(&c.to)))
+}
+
+/// Takes the routing off `key` (see [`reroutable`]) so it can be routed again at another slot:
+/// the signal path through it is bridged, its send/return slot and its cables go, and the tracks
+/// that entered at a player enter at the player's successor. One scratch step; the device
+/// stays where it is.
+pub(crate) fn unroute(p: &mut Planner<'_>, key: &DeviceKey) {
+    let registry = p.registry;
+    let bridge = bridge_cables(p.doc(), registry, key);
+    if is_player_device(p.doc(), registry, key) {
+        let next = notes_successor(p.doc(), registry, key);
+        let entering: Vec<DeviceKey> = p
+            .doc()
+            .song
+            .tracks
+            .iter()
+            .filter(|t| t.notes_to.as_ref() == Some(key))
+            .map(|t| t.device.clone())
+            .collect();
+        for device in entering {
+            let new = next.clone().filter(|n| *n != device);
+            p.push(Edit::TrackEntry {
+                device,
+                old: Some(key.clone()),
+                new,
+            });
+        }
+    }
+    if let Some(slot) = p.doc().console.return_slot(key) {
+        p.push(Edit::ConsoleReturn {
+            slot,
+            old: Some(key.clone()),
+            new: None,
+        });
+    }
+    p.disconnect_where(|c| &c.from.device == key || &c.to.device == key);
+    connect_bridge(p, &bridge);
+}
+
+/// Routes the effect `key`, already at its slot, as creating it there does: as if the device
+/// above it in its column were selected. An effect right below one of a channel's inserts
+/// joins that chain. `None` when nothing applies (the top of a column, outputs already cabled,
+/// a full chain or no free send).
+pub(crate) fn route_effect_in_place(
+    doc: &RackDoc,
+    registry: &Registry,
+    key: &DeviceKey,
+) -> Option<Edit> {
+    let slot = doc.slot_of(key)?;
+    if slot.index == 0 {
+        return None;
+    }
+    let at = doc.column_range(slot.column).start + slot.index;
+    let above = doc.devices.get(at.checked_sub(1)?)?.key.clone();
+    match classify(doc, &CreateTarget::Selected(above)) {
+        Dest::Master => route_to_send(doc, registry, None, key),
+        Dest::Nothing => None,
+        Dest::Channel(channel) => route_to_insert(doc, registry, None, key, &channel),
+        Dest::Return(effect, slot) => route_on_return(doc, registry, None, key, &effect, slot),
+        Dest::Device(device) => match chain_owner(doc, registry, &device) {
+            Some(channel) => route_to_insert(doc, registry, None, key, &channel),
+            None => route_after_device(doc, registry, None, key, &device),
+        },
+    }
+}
+
+/// Routes the note player `key`, already at its slot, as creating it there does: it feeds the
+/// device right below it in its column when that has a Notes input (an instrument or another
+/// player), taking over the cable that fed it and the entry of every track that entered there.
+pub(crate) fn route_player_in_place(
+    doc: &RackDoc,
+    registry: &Registry,
+    key: &DeviceKey,
+) -> Option<Edit> {
+    let slot = doc.slot_of(key)?;
+    let at = doc.column_range(slot.column).start + slot.index;
+    let below = doc
+        .devices
+        .get(at + 1)
+        .filter(|d| d.column == slot.column)?;
+    let head = below.key.clone();
+    let head_desc = registry.descriptor(&below.type_id)?;
+    let head_in = notes_socket(head_desc, Direction::Input)?;
+    let desc = registry.descriptor(&doc.device(key)?.type_id)?;
+    let mut p = Planner::new(doc, registry);
+    wire_player(&mut p, (desc, key), (&head, head_in))?;
+    Some(p.finish())
 }
 
 /// `CreateEffectAt`: the effect goes exactly to `slot`, routed as if the device above the slot
@@ -444,14 +597,13 @@ fn send_effect_index(doc: &RackDoc, master: &DeviceKey) -> Option<usize> {
 fn route_to_send(
     doc: &RackDoc,
     registry: &Registry,
-    source: &CreateSource,
+    source: Option<&CreateSource>,
     key: &DeviceKey,
 ) -> Option<Edit> {
     let slot = first_free_send_slot(doc)?;
     let index = send_effect_index(doc, doc.console.master.as_ref()?)?;
     let mut p = Planner::new(doc, registry);
-    let add = add_edit(&p, source, index, key.clone()).ok()?;
-    p.push(add);
+    add_new(&mut p, source, index, key)?;
     let set = console_cmd::plan(
         p.doc(),
         registry,
@@ -531,7 +683,7 @@ pub(crate) fn assign_send(
 fn route_to_insert(
     doc: &RackDoc,
     registry: &Registry,
-    source: &CreateSource,
+    source: Option<&CreateSource>,
     key: &DeviceKey,
     channel: &DeviceKey,
 ) -> Option<Edit> {
@@ -542,8 +694,7 @@ fn route_to_insert(
     let after = chain.last().unwrap_or(channel);
     let index = rules::index_of(doc, after).ok()? + 1;
     let mut p = Planner::new(doc, registry);
-    let add = add_edit(&p, source, index, key.clone()).ok()?;
-    p.push(add);
+    add_new(&mut p, source, index, key)?;
     set_insert(
         &mut p,
         channel,
@@ -558,7 +709,7 @@ fn route_to_insert(
 fn route_on_return(
     doc: &RackDoc,
     registry: &Registry,
-    source: &CreateSource,
+    source: Option<&CreateSource>,
     key: &DeviceKey,
     effect: &DeviceKey,
     slot: usize,
@@ -567,8 +718,7 @@ fn route_on_return(
     let k = slot + 1;
     let index = rules::index_of(doc, effect).ok()? + 1;
     let mut p = Planner::new(doc, registry);
-    let add = add_edit(&p, source, index, key.clone()).ok()?;
-    p.push(add);
+    add_new(&mut p, source, index, key)?;
     for side in ["l", "r"] {
         let out = console_cmd::at(effect, format!("out_{side}"));
         let ret = console_cmd::at(&master, sockets::master_return(k, side));
@@ -602,7 +752,7 @@ fn output_cabled(doc: &RackDoc, device: &DeviceKey, socket: &str) -> bool {
 fn route_after_device(
     doc: &RackDoc,
     registry: &Registry,
-    source: &CreateSource,
+    source: Option<&CreateSource>,
     key: &DeviceKey,
     device: &DeviceKey,
 ) -> Option<Edit> {
@@ -612,8 +762,7 @@ fn route_after_device(
     }
     let index = rules::index_of(doc, device).ok()? + 1;
     let mut p = Planner::new(doc, registry);
-    let add = add_edit(&p, source, index, key.clone()).ok()?;
-    p.push(add);
+    add_new(&mut p, source, index, key)?;
     p.connect(console_cmd::wire(
         console_cmd::at(device, out_l),
         console_cmd::at(key, "in_l"),
@@ -858,8 +1007,6 @@ fn route_player(
     (desc, key): (&DeviceDescriptor, &DeviceKey),
     (head, head_in): (&DeviceKey, &str),
 ) -> Option<Edit> {
-    let new_in = notes_socket(desc, Direction::Input)?;
-    let new_out = notes_socket(desc, Direction::Output)?;
     let at = doc.resolve_slot(doc.slot_of(head)?).ok()?;
     let mut p = Planner::new(doc, registry);
     let add = add_edit(
@@ -870,24 +1017,44 @@ fn route_player(
     )
     .ok()?;
     p.push(add);
+    wire_player(&mut p, (desc, key), (head, head_in))?;
+    Some(rack_columns::place_new_device(doc, at, p.finish()))
+}
+
+/// Cables player `key` (already on `p`) into `head_in` of `head`, taking over the cable that fed
+/// it, and moves the entry of every track that entered at the head to the player.
+fn wire_player(
+    p: &mut Planner<'_>,
+    (desc, key): (&DeviceDescriptor, &DeviceKey),
+    (head, head_in): (&DeviceKey, &str),
+) -> Option<()> {
+    let new_in = notes_socket(desc, Direction::Input)?;
+    let new_out = notes_socket(desc, Direction::Output)?;
     let head_input = console_cmd::at(head, head_in);
-    if let Some(old) = doc.cables.iter().find(|c| c.to == head_input).cloned() {
+    let old = p.doc().cables.iter().find(|c| c.to == head_input).cloned();
+    if let Some(old) = old {
         p.push(Edit::Disconnect(old.clone()));
         p.connect(console_cmd::wire(old.from, console_cmd::at(key, new_in)))
             .ok()?;
     }
     p.connect(console_cmd::wire(console_cmd::at(key, new_out), head_input))
         .ok()?;
-    for track in &doc.song.tracks {
-        if doc.notes_entry(track) == head {
-            p.push(Edit::TrackEntry {
-                device: track.device.clone(),
-                old: track.notes_to.clone(),
-                new: Some(key.clone()),
-            });
-        }
+    let entering: Vec<(DeviceKey, Option<DeviceKey>)> = p
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .filter(|t| p.doc().notes_entry(t) == head)
+        .map(|t| (t.device.clone(), t.notes_to.clone()))
+        .collect();
+    for (device, old) in entering {
+        p.push(Edit::TrackEntry {
+            device,
+            old,
+            new: Some(key.clone()),
+        });
     }
-    Some(rack_columns::place_new_device(doc, at, p.finish()))
+    Some(())
 }
 
 // ------------------------------------------------------------------------------ auto-route

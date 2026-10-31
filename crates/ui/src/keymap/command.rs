@@ -165,7 +165,7 @@ pub const KEYS_NOTE_ARGS: &[&str] = &[
 /// The values of `keys.velocity`: the number keys `1` to `0` (10 is the `0` key).
 pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 /// The values of `view.cables`.
-pub const CABLE_ARGS: &[&str] = &["show", "hover", "hide"];
+pub const CABLE_ARGS: &[&str] = &["show", "hover", "selected", "auto", "hide"];
 /// The values of `view.theme`.
 pub const THEME_ARGS: &[&str] = &["dark", "light", "system"];
 /// The values of `view.app_zoom`: the zoom of every window in percent, or a step.
@@ -396,6 +396,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("create.player", "Create Player", G::Create, C::Global).menu(),
     cmd("edit.copy", "Copy", G::Edit, C::Global)
         .decline()
         .menu(),

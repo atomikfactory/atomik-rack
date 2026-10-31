@@ -748,17 +748,17 @@ fn the_rack_flag_is_saved_in_workflow_json_and_restored() {
 fn k_cycles_the_cables_and_the_browser_search_key_opens_the_browser() {
     let mut s = shell();
     let before = s.core().view().cable_visibility();
-    keys(&mut s).tap("K");
-    let a = s.core().view().cable_visibility();
-    keys(&mut s).tap("K");
-    let b = s.core().view().cable_visibility();
-    keys(&mut s).tap("K");
-    assert_eq!(
-        s.core().view().cable_visibility(),
-        before,
-        "three presses cycle back"
-    );
-    assert!(a != before && b != a);
+    // Every press gives another mode; five presses of the five modes cycle back.
+    let mut seen = vec![before];
+    for _ in 0..5 {
+        keys(&mut s).tap("K");
+        seen.push(s.core().view().cable_visibility());
+    }
+    assert_eq!(seen[5], seen[0], "five presses cycle back");
+    seen.pop();
+    seen.sort_by_key(|m| format!("{m:?}"));
+    seen.dedup();
+    assert_eq!(seen.len(), 5, "the five presses visit five different modes");
     keys(&mut s).tap("Cmd+Shift+F");
     assert!(s.core().view().browser_visible() && s.core().view().is_text_owner());
 }

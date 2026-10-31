@@ -170,7 +170,10 @@ impl NativeMenus {
                 continue;
             };
             match item {
-                Item::Plain(i) => i.set_enabled(m.enabled),
+                Item::Plain(i) => {
+                    i.set_enabled(m.enabled);
+                    i.set_text(m.label.as_ref());
+                }
                 Item::Check(c) => {
                     c.set_enabled(m.enabled);
                     c.set_checked(m.checked == Some(true));

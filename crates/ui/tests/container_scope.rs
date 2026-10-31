@@ -976,6 +976,7 @@ fn ctrl_d_duplicates_the_selected_container_at_every_level() {
         commands(&ctrl_d(&mut v, d.doc())),
         vec![Command::Workflow(
             atomik_model::WorkflowCommand::DuplicateDevices {
+                route: true,
                 keys: vec![key("lead")]
             }
         )]

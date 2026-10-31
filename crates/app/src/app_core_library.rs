@@ -244,6 +244,7 @@ impl<S: EngineSink> AppCore<S> {
                 snapshot,
                 container: None,
                 slot,
+                route: self.view.auto_route(),
             }),
             LoadTarget::Rack {
                 container: Some(container),
@@ -252,6 +253,7 @@ impl<S: EngineSink> AppCore<S> {
                 snapshot,
                 container: Some(container),
                 at: slot.index,
+                route: false,
             }),
             _ => self.paste_devices(snapshot, Pane::Rack),
         }?;

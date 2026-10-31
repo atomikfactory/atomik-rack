@@ -677,6 +677,7 @@ fn moving_a_device_past_hidden_ones_uses_document_indices() {
         commands(&a),
         [Command::Workflow(
             atomik_model::WorkflowCommand::MoveDevicesToSlot {
+                route: true,
                 keys: vec![key("bass")],
                 slot: atomik_model::RackSlot {
                     column: 0,

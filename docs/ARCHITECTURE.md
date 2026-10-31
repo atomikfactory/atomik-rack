@@ -3384,7 +3384,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (350) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (351) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -3787,6 +3787,23 @@ creation chain in the **Creation chain** bullet.
   `keymap::tests::every_legacy_key_is_unchanged_in_standard_or_a_listed_move` (a legacy binding the
   standard map loses must be in a reviewed constant of moved keys) and
   `shell::workflow_tests::auto_route_does_nothing_without_a_selected_device_or_in_a_time_view`.
+- **Moving, pasting and replacing.** `MoveDevices`, `MoveDevicesToSlot`, `PasteDevices(At)` and
+  `DuplicateDevices` carry `route` (the same setting, inverted by Shift in `move_drop`). With it
+  the plan runs on a scratch `Planner`: `workflow_create::unroute` bridges the old place (the
+  delete bridging, the send/return slot, the entry of the tracks a player fed), the plain move or
+  paste is pushed, then `route_effect_in_place` / `route_player_in_place` apply the creation
+  rules at the new slot (the device above it for an effect, the device below for a player; an
+  effect right below an insert joins that chain). `reroutable` limits it to stereo effects and
+  note players whose cables sit on the sockets the rules wire, a route the document refuses
+  leaves the plain move, and the whole plan is one undo step.
+  [replace_device.rs](../crates/model/src/replace_device.rs) plans `ReplaceDevice`: remove and
+  insert under the same key, so the track, channel, sends, note entries and chain place stay, the
+  cables whose sockets the new descriptor has are reconnected and the automation lanes of missing
+  params go (`replace_lost_lanes`; `replace_reason` is what a drop target asks first). Undo steps
+  carry a name from `Command::label` ([labels.rs](../crates/model/src/labels.rs)), kept per step
+  in the `Document` and read by `undo_label` / `redo_label` for the Edit menu and `session_status`.
+  Cables are coloured by `cables::role_of`, and `CableVisibility` has `SelectedOnly` and
+  `HideAutoRouted` besides the earlier three.
 
 ## 6h. The master section and Audio I/O
 

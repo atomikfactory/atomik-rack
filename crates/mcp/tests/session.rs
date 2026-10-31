@@ -223,6 +223,8 @@ fn an_edit_is_undone_by_command_and_by_chord_and_new_asks_before_discarding() {
     let after = ok(&mut s, "session_status", json!({}));
     assert_eq!(after["dirty"], true);
     assert_eq!(after["can_undo"], true);
+    assert_eq!(after["undo_label"], "Edit Markers");
+    assert!(before["undo_label"].is_null());
     assert_eq!(
         after["document"]["song"]["markers"]
             .as_array()

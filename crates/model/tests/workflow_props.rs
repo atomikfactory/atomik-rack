@@ -159,12 +159,13 @@ fn resolve(op: &Op, d: &Document) -> Option<Command> {
             if keys.is_empty() {
                 return None;
             }
-            wf(WorkflowCommand::DuplicateDevices { keys })
+            wf(WorkflowCommand::DuplicateDevices { keys, route: false })
         }
         Op::Remove(s) => wf(WorkflowCommand::RemoveDevices {
             keys: chosen(&top, s),
         }),
         Op::Move(s, to) => wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: chosen(&top, s),
             to: *to,
         }),
@@ -189,6 +190,7 @@ fn resolve(op: &Op, d: &Document) -> Option<Command> {
             let snapshot = DeviceSnapshot::capture(d.doc(), &keys, !*inner && at % 2 == 0).ok()?;
             let container = (*inner).then(|| key("c"));
             wf(WorkflowCommand::PasteDevices {
+                route: false,
                 snapshot,
                 container,
                 at: *at,

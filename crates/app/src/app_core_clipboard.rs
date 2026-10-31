@@ -327,6 +327,7 @@ impl<S: EngineSink> AppCore<S> {
                             snapshot,
                             container: None,
                             slot,
+                            route: self.view.auto_route(),
                         });
                     }
                 }
@@ -338,6 +339,7 @@ impl<S: EngineSink> AppCore<S> {
             snapshot,
             container,
             at,
+            route: self.view.auto_route(),
         })
     }
 
@@ -437,7 +439,7 @@ impl<S: EngineSink> AppCore<S> {
         match command {
             WorkflowCommand::PasteDevices { container, .. }
             | WorkflowCommand::PasteDevicesAt { container, .. } => pre.scope = container.clone(),
-            WorkflowCommand::DuplicateDevices { keys } => {
+            WorkflowCommand::DuplicateDevices { keys, .. } => {
                 pre.scope = keys.first().and_then(scope_of);
             }
             _ => {}
@@ -595,6 +597,8 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::SetPatchName { .. }
             | WorkflowCommand::SetMidiOutPort { .. }
             | WorkflowCommand::AssignSend { .. }
+            | WorkflowCommand::ReplaceDevice { .. }
+            | WorkflowCommand::SetFoldedMany { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}
         }
     }

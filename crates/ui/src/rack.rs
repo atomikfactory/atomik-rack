@@ -5,7 +5,7 @@ use crate::autolayout::{self, PanelSpec};
 use crate::breadcrumb::{self, CrumbHit};
 use crate::browser::{BROWSER_WIDTH, Browser, CreateKind};
 use crate::cables::{self, SocketEnd};
-use crate::canvas::Canvas;
+use crate::canvas::{Canvas, CanvasExt};
 use crate::container_panel::{self, ContainerButton, ContainerInfo};
 use crate::display_list::DisplayList;
 use crate::drum_gen_panel::DrumButton;
@@ -91,8 +91,27 @@ pub enum CableVisibility {
     Show,
     /// Only cables attached to the device under the pointer.
     HoverOnly,
+    /// Only cables attached to the selected devices.
+    SelectedOnly,
+    /// Every cable except the ones the creation rules make: the console's insert, send and
+    /// return cables and every cable of a console device. A dot on each jack of a hidden cable
+    /// shows that it is there.
+    HideAutoRouted,
     /// Never (except the one being dragged).
     Hide,
+}
+
+impl CableVisibility {
+    /// The mode after this one in the order K cycles through.
+    pub fn next(self) -> Self {
+        match self {
+            CableVisibility::Show => CableVisibility::HoverOnly,
+            CableVisibility::HoverOnly => CableVisibility::SelectedOnly,
+            CableVisibility::SelectedOnly => CableVisibility::HideAutoRouted,
+            CableVisibility::HideAutoRouted => CableVisibility::Hide,
+            CableVisibility::Hide => CableVisibility::Show,
+        }
+    }
 }
 
 /// The highlight state of a socket.
@@ -2452,27 +2471,59 @@ impl RackView {
         if self.flip != Flip::Back {
             return Vec::new();
         }
-        let hovered = self.hover_device().map(|i| self.devices[i].socket_key());
-        let cables: &[Cable] = if self.scope.is_empty() {
-            &doc.cables
-        } else {
-            &self.cables
-        };
-        cables
+        self.cables_in_scope(doc)
             .iter()
             .filter(|c| self.sockets.contains_key(&c.from) && self.sockets.contains_key(&c.to))
             .filter(|c| self.show_links || !self.links.contains(c))
             .filter(|c| !self.is_detached(c))
-            .filter(|c| match self.cable_visibility {
-                CableVisibility::Show => true,
-                CableVisibility::Hide => false,
-                CableVisibility::HoverOnly => {
-                    hovered.is_some_and(|k| &c.from.device == k || &c.to.device == k)
-                        || self.hover_cable.as_ref() == Some(*c)
-                }
-            })
+            .filter(|c| self.mode_shows(c) || self.hover_cable.as_ref() == Some(*c))
             .cloned()
             .collect()
+    }
+
+    /// The cables of the open scope (the document's at the top level).
+    fn cables_in_scope<'a>(&'a self, doc: &'a RackDoc) -> &'a [Cable] {
+        if self.scope.is_empty() {
+            &doc.cables
+        } else {
+            &self.cables
+        }
+    }
+
+    /// Whether the cable display mode draws `cable` (a hovered cable is drawn in every mode).
+    fn mode_shows(&self, cable: &Cable) -> bool {
+        let on = |k: &DeviceKey| cable.from.device == *k || cable.to.device == *k;
+        match self.cable_visibility {
+            CableVisibility::Show => true,
+            CableVisibility::Hide => false,
+            CableVisibility::HoverOnly => self
+                .hover_device()
+                .is_some_and(|i| on(self.devices[i].socket_key())),
+            CableVisibility::SelectedOnly => self
+                .devices
+                .iter()
+                .filter(|d| {
+                    self.selection.contains(&d.key) || self.selected.as_ref() == Some(&d.key)
+                })
+                .any(|d| on(d.socket_key())),
+            CableVisibility::HideAutoRouted => {
+                let console = |k: &DeviceKey| {
+                    self.devices.iter().any(|d| {
+                        d.socket_key() == k
+                            && d.desc
+                                .as_ref()
+                                .is_some_and(|x| atomik_model::console::is_console_type(x.type_id))
+                    })
+                };
+                let kind = self.sockets.get(&cable.from).map(|g| g.end.kind);
+                let role = kind.map(|k| cables::role_of(cable, k));
+                !matches!(
+                    role,
+                    Some(cables::CableRole::Insert | cables::CableRole::Send)
+                ) && !console(&cable.from.device)
+                    && !console(&cable.to.device)
+            }
+        }
     }
 
     /// The highlight of a socket (drag compatibility or cable hover).
@@ -2702,7 +2753,7 @@ impl RackView {
                 clicks,
             } => self.pointer_down(*pos, *button, *modifiers, *clicks, doc, registry, &mut out),
             UiEvent::PointerUp { pos, modifiers, .. } => {
-                self.pointer_up(*pos, *modifiers, doc, &mut out)
+                self.pointer_up(*pos, *modifiers, doc, registry, &mut out)
             }
             UiEvent::PointerLeave => {
                 self.nav_hover = false;
@@ -2879,15 +2930,7 @@ impl RackView {
             let tol = cables::HIT_TOLERANCE / self.zoom.min(1.0);
             let candidates: Vec<Cable> = self.cables.clone();
             for c in candidates.iter().rev() {
-                let shown = match self.cable_visibility {
-                    CableVisibility::Show => true,
-                    CableVisibility::Hide => false,
-                    CableVisibility::HoverOnly => self.hover_device().is_some_and(|i| {
-                        self.devices[i].socket_key() == &c.from.device
-                            || self.devices[i].socket_key() == &c.to.device
-                    }),
-                };
-                if shown
+                if self.mode_shows(c)
                     && (self.show_links || !self.links.contains(c))
                     && let Some(curve) = self.cable_curve(c)
                     && cables::hits_curve(&curve, rp, tol)
@@ -3073,6 +3116,20 @@ impl RackView {
         let Some(hit) = self.hit(pos) else { return };
         let rp = self.view_to_rack(pos);
         match (hit, button) {
+            (Hit::Fold(i), PointerButton::Primary) if modifiers.alt => {
+                // Alt folds or unfolds the whole column the device is in, to the state the
+                // click would give this device.
+                let (column, folded) = (self.devices[i].column, !self.devices[i].folded);
+                let keys: Vec<DeviceKey> = self
+                    .inner_range()
+                    .map(|j| &self.devices[j])
+                    .filter(|d| d.column == column && self.locked.as_ref() != Some(&d.key))
+                    .map(|d| d.key.clone())
+                    .collect();
+                out.push(UiAction::Command(Command::Workflow(
+                    WorkflowCommand::SetFoldedMany { keys, folded },
+                )));
+            }
             (Hit::Fold(i), PointerButton::Primary) => {
                 let d = &self.devices[i];
                 out.push(UiAction::Command(Command::SetFolded {
@@ -3437,6 +3494,7 @@ impl RackView {
         pos: Point,
         modifiers: Modifiers,
         doc: &RackDoc,
+        registry: &Registry,
         out: &mut Vec<UiAction>,
     ) {
         self.pointer = pos;
@@ -3478,14 +3536,14 @@ impl RackView {
             } => {
                 // Released over the navigator the move is dropped, not applied.
                 if (at - start).hypot() > MOVE_THRESHOLD && !self.in_navigator(pos) {
-                    self.move_drop(dev, doc, out);
+                    self.move_drop(dev, doc, modifiers, out);
                 } else if collapse {
                     self.collapse_to(dev, out);
                 }
             }
             Drag::Browser {
                 row, active: true, ..
-            } => self.browser_drop(&row, doc, modifiers, out),
+            } => self.browser_drop(&row, doc, registry, modifiers, out),
             Drag::Browser { .. } => {}
         }
         self.drag = Drag::None;
@@ -3661,6 +3719,17 @@ impl RackView {
                 source,
                 key: None,
                 options,
+            },
+            CreateKind::Player => match &source {
+                CreateSource::Type(type_id) => {
+                    return self.create_player_action(type_id, modifiers);
+                }
+                CreateSource::Plugin { .. } => WorkflowCommand::CreateEffect {
+                    source,
+                    target: CreateTarget::Nothing,
+                    key: None,
+                    options,
+                },
             },
             CreateKind::Effect => WorkflowCommand::CreateEffect {
                 source,
@@ -4193,7 +4262,9 @@ impl RackView {
                     continue;
                 }
                 let kind = self.sockets.get(&cable.from).map(|g| g.end.kind);
-                let color = kind.map_or(theme.cable_audio, |k| theme.cable_color(k));
+                let color = kind.map_or(theme.cable_audio, |k| {
+                    theme.cable_role_color(cables::role_of(&cable, k))
+                });
                 let look = if self.hover_cable.as_ref() == Some(&cable) {
                     CableLook::Hovered
                 } else {
@@ -4203,6 +4274,33 @@ impl RackView {
                 let step = self.cv_activity_step(&cable);
                 if step > 0 {
                     paint::cable_activity(c, curve, color, step);
+                }
+            }
+            // A dot on both jacks of a cable the display mode hides, in its role colour.
+            if matches!(
+                self.cable_visibility,
+                CableVisibility::HoverOnly
+                    | CableVisibility::SelectedOnly
+                    | CableVisibility::HideAutoRouted
+            ) {
+                for cable in self.cables_in_scope(doc) {
+                    let (Some(a), Some(b)) =
+                        (self.sockets.get(&cable.from), self.sockets.get(&cable.to))
+                    else {
+                        continue;
+                    };
+                    if (!self.show_links && self.links.contains(cable))
+                        || self.is_detached(cable)
+                        || self.mode_shows(cable)
+                    {
+                        continue;
+                    }
+                    let color = theme.cable_role_color(cables::role_of(cable, a.end.kind));
+                    for g in [a, b] {
+                        if g.visible && g.pos.y >= top - 20.0 && g.pos.y <= bottom + 20.0 {
+                            c.fill_with(Circle::new(g.pos, 3.5), color.with_alpha(0.85));
+                        }
+                    }
                 }
             }
             if let Some(hc) = &self.hover_cable {

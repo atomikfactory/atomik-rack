@@ -707,6 +707,7 @@ fn the_workflow_commands_are_the_only_way_in() {
         other => panic!("{other:?}"),
     };
     c.apply_command(Command::Workflow(WorkflowCommand::PasteDevices {
+        route: false,
         snapshot,
         container: None,
         at: usize::MAX,

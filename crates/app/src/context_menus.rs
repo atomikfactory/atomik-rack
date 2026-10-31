@@ -405,6 +405,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 Spec::Separator,
                 item("create.instrument", true),
                 item("create.effect", true),
+                item("create.player", true),
                 item("rack.auto_route", e.selection),
                 item("rack.assign_send", e.assign_send),
                 item("rack.disconnect", e.selection),
@@ -436,6 +437,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             Spec::Separator,
             item("create.instrument", true),
             item("create.effect", true),
+            item("create.player", true),
             Spec::Separator,
             item(
                 "rack.add_column",
@@ -1059,6 +1061,7 @@ mod tests {
                 "edit.delete",
                 "create.instrument",
                 "create.effect",
+                "create.player",
                 "rack.auto_route",
                 "rack.assign_send",
                 "rack.disconnect",
@@ -1202,6 +1205,7 @@ mod tests {
                 "edit.paste",
                 "create.instrument",
                 "create.effect",
+                "create.player",
                 "rack.add_column",
                 "rack.remove_column",
                 "edit.select_all"

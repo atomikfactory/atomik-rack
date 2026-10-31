@@ -205,6 +205,7 @@ fn a_player_is_created_in_the_column_of_the_chain_head() {
             add(1, SYNTH, Some("synth")),
             add_track("synth"),
             wf(WorkflowCommand::MoveDevicesToSlot {
+                route: false,
                 keys: keys_of(&["synth"]),
                 slot: atomik_model::RackSlot {
                     column: 1,
@@ -333,6 +334,7 @@ fn pasting_a_track_keeps_its_entry_only_when_the_player_is_copied_too() {
             atomik_model::DeviceSnapshot::capture(d.doc(), &keys_of(devices), true).unwrap();
         d.apply(
             wf(WorkflowCommand::PasteDevices {
+                route: false,
                 snapshot,
                 container: None,
                 at: 0,

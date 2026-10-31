@@ -69,6 +69,44 @@ pub fn orient(a: &SocketEnd, b: &SocketEnd) -> Cable {
     }
 }
 
+/// What a cable is for, which decides its colour: the signal kind, and for audio the console
+/// routing it belongs to (an insert loop, a send or return, a sidechain key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CableRole {
+    /// Plain audio.
+    Audio,
+    /// A control signal.
+    Cv,
+    /// Notes.
+    Notes,
+    /// A channel's insert loop (`insert_send`, `insert_return`).
+    Insert,
+    /// A send or return of the master section (`fx_send1_l`, `return1_l`) or a channel send.
+    Send,
+    /// A sidechain key input (`sc_in_l`).
+    Sidechain,
+}
+
+/// The role of `cable`, whose signal is of `kind`.
+pub fn role_of(cable: &Cable, kind: SocketKind) -> CableRole {
+    match kind {
+        SocketKind::Cv => CableRole::Cv,
+        SocketKind::Notes => CableRole::Notes,
+        SocketKind::Audio => {
+            let on = |f: fn(&str) -> bool| f(&cable.from.socket) || f(&cable.to.socket);
+            if on(|s| s.starts_with("insert_send") || s.starts_with("insert_return")) {
+                CableRole::Insert
+            } else if on(|s| s.starts_with("fx_send") || s.starts_with("return")) {
+                CableRole::Send
+            } else if on(|s| s.starts_with("sc_in")) {
+                CableRole::Sidechain
+            } else {
+                CableRole::Audio
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +142,43 @@ mod tests {
             &out,
             &end("a", "in", SocketKind::Audio, Direction::Input)
         ));
+    }
+
+    fn cable(from: &str, to: &str) -> Cable {
+        let at = |s: &str| {
+            let (d, k) = s.split_once(':').unwrap();
+            SocketRef {
+                device: DeviceKey(d.into()),
+                socket: k.into(),
+            }
+        };
+        Cable {
+            from: at(from),
+            to: at(to),
+        }
+    }
+
+    #[test]
+    fn roles_follow_the_kind_and_the_console_socket_names() {
+        let audio = SocketKind::Audio;
+        let role = |a: &str, b: &str, kind| role_of(&cable(a, b), kind);
+        assert_eq!(role("s:out_l", "ch:in_l", audio), CableRole::Audio);
+        assert_eq!(
+            role("ch:insert_send_l", "fx:in_l", audio),
+            CableRole::Insert
+        );
+        assert_eq!(
+            role("fx:out_l", "ch:insert_return_l", audio),
+            CableRole::Insert
+        );
+        assert_eq!(role("m:fx_send1_l", "fx:in_l", audio), CableRole::Send);
+        assert_eq!(role("fx:out_l", "m:return1_l", audio), CableRole::Send);
+        assert_eq!(role("s:out_l", "c:sc_in_l", audio), CableRole::Sidechain);
+        assert_eq!(role("a:cv_out", "b:cv_in", SocketKind::Cv), CableRole::Cv);
+        assert_eq!(
+            role("a:notes_out", "b:notes_in", SocketKind::Notes),
+            CableRole::Notes
+        );
     }
 
     #[test]

@@ -88,6 +88,7 @@ fn paste(d: &mut Document, r: &atomik_device_sdk::Registry, s: DeviceSnapshot) {
         d,
         r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,

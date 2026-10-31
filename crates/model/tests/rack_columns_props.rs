@@ -111,10 +111,12 @@ fn command(d: &Document, op: &Op) -> Option<Command> {
             to: *to,
         },
         Op::MoveSlot(k, c, i) => wf_cmd(WorkflowCommand::MoveDevicesToSlot {
+            route: false,
             keys: top_keys(d, k),
             slot: slot(*c, *i),
         }),
         Op::MoveFlatGroup(k, to) => wf_cmd(WorkflowCommand::MoveDevices {
+            route: false,
             keys: top_keys(d, k),
             to: *to,
         }),
@@ -126,6 +128,7 @@ fn command(d: &Document, op: &Op) -> Option<Command> {
         Op::PasteAt(k, c, i) => {
             let s = DeviceSnapshot::capture(d.doc(), &top_keys(d, k), false).ok()?;
             wf_cmd(WorkflowCommand::PasteDevicesAt {
+                route: false,
                 snapshot: s,
                 container: None,
                 slot: slot(*c, *i),
@@ -134,12 +137,14 @@ fn command(d: &Document, op: &Op) -> Option<Command> {
         Op::PasteFlat(k, at) => {
             let s = DeviceSnapshot::capture(d.doc(), &top_keys(d, k), false).ok()?;
             wf_cmd(WorkflowCommand::PasteDevices {
+                route: false,
                 snapshot: s,
                 container: None,
                 at: *at,
             })
         }
         Op::Duplicate(k) => wf_cmd(WorkflowCommand::DuplicateDevices {
+            route: false,
             keys: top_keys(d, k),
         }),
         Op::EffectAt(c, i) => wf_cmd(WorkflowCommand::CreateEffectAt {
@@ -155,6 +160,7 @@ fn command(d: &Document, op: &Op) -> Option<Command> {
             options: CreateOptions::default(),
         }),
         Op::InnerMove(a, b) => wf_cmd(WorkflowCommand::MoveDevicesToSlot {
+            route: false,
             keys: vec![key(["c/ix", "c/iy"][a % 2])],
             slot: slot(3, *b),
         }),

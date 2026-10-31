@@ -214,6 +214,8 @@ impl Session {
                 .collect::<Vec<_>>(),
             "can_undo": state.can_undo,
             "can_redo": state.can_redo,
+            "undo_label": state.undo_label,
+            "redo_label": state.redo_label,
             "settings_dialog_open": self.shell.dialog_open(),
             "context_menu_open": self.shell.context_menu().is_some(),
             "window": {

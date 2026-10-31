@@ -162,6 +162,7 @@ fn pasting_devices_with_their_tracks_past_the_end_moves_the_end_out() {
     let before = d.doc().clone();
     d.apply(
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot,
             container: None,
             at: usize::MAX,

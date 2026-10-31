@@ -1948,6 +1948,8 @@ impl<B: AudioBackend> Shell<B> {
             piano_keys: self.piano_keys_visible,
             can_undo: self.core.document().can_undo(),
             can_redo: self.core.document().can_redo(),
+            undo_label: self.core.document().undo_label(),
+            redo_label: self.core.document().redo_label(),
             can_edit: self.core.has_selection(self.live_pane(self.focus)),
             can_paste: self.core.can_paste(self.live_pane(self.focus)),
             can_combine,
@@ -3477,11 +3479,7 @@ impl<B: AudioBackend> Shell<B> {
             ("sequencer.save_clip_to_library", None) => self.core.save_clip_to_library(),
             ("view.cables_cycle", None) => {
                 let view = self.core.view_mut();
-                let next = match view.cable_visibility() {
-                    atomik_ui::CableVisibility::Show => atomik_ui::CableVisibility::HoverOnly,
-                    atomik_ui::CableVisibility::HoverOnly => atomik_ui::CableVisibility::Hide,
-                    atomik_ui::CableVisibility::Hide => atomik_ui::CableVisibility::Show,
-                };
+                let next = view.cable_visibility().next();
                 view.set_cable_visibility(next);
             }
             (files, None) if files.starts_with("files.") => {
@@ -4804,6 +4802,10 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::CreateInstrument => {
                 self.open_create(CreateKind::Instrument);
+                Vec::new()
+            }
+            AppCommand::CreatePlayer => {
+                self.open_create(CreateKind::Player);
                 Vec::new()
             }
             AppCommand::CreateEffect => {

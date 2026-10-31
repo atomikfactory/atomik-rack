@@ -113,6 +113,7 @@ fn family(r: &Registry, type_id: &str, mut setup: Vec<Command>) -> Vec<SyncOp> {
         &mut pasted,
         r,
         [wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: snapshot.clone(),
             container: None,
             at: 0,

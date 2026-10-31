@@ -704,6 +704,7 @@ fn a_duplicated_instrument_gets_a_master_channel_and_the_bus_keeps_its_feeders()
     let before = d.doc().console.channels.len();
     d.apply(
         wf(WorkflowCommand::DuplicateDevices {
+            route: false,
             keys: vec![key("a")],
         }),
         &r,
@@ -722,6 +723,7 @@ fn a_bus_is_not_duplicated() {
     let (mut d, r) = project();
     d.apply(create("G", OutputDest::Master), &r).unwrap();
     let c = wf(WorkflowCommand::DuplicateDevices {
+        route: false,
         keys: vec![key("bus")],
     });
     let before = d.doc().clone();
