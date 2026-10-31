@@ -292,7 +292,7 @@ pub fn input_note(s: &AudioStatus) -> Option<String> {
     let (open, wanted) = (s.input_channels_open, s.input_channels_wanted);
     Some(match (&s.input_error, open, wanted) {
         (_, _, 0) => {
-            "Input: the document has no input channels (see Rack > Input channels).".into()
+            "Input: the document has no input channels (see Audio > Input Channels).".into()
         }
         (Some(e), _, _) => format!("Input off ({e}); recording reads silence."),
         (None, 0, _) => "Input off; recording reads silence.".into(),

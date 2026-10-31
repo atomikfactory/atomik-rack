@@ -174,6 +174,12 @@ pub const LOOP_MOVE_ARGS: &[&str] = &["bar:-1", "bar:+1", "length:-1", "length:+
 pub const LOCATOR_ARGS: &[&str] = &["left", "right"];
 /// The values of `file.open_recent`: the place in the recent list, 0 the newest song.
 pub const RECENT_ARGS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7"];
+/// The values of `file.new_rate` and `file.convert_rate`: the project sample rate in Hz.
+pub const RATE_ARGS: &[&str] = &["44100", "48000", "96000"];
+/// The values of `audio.input_channels`: the host inputs the project asks for.
+pub const INPUT_CHANNEL_ARGS: &[&str] = &["0", "1", "2", "4", "8", "16", "32"];
+/// The values of `audio.output_channels`: the host outputs the project asks for.
+pub const OUTPUT_CHANNEL_ARGS: &[&str] = &["1", "2", "4", "8", "16", "32"];
 /// The values of `sequencer.set_snap_mode`.
 pub const SNAP_MODE_ARGS: &[&str] = &["absolute", "relative"];
 /// The values of `sequencer.set_snap`.
@@ -295,6 +301,22 @@ use Group as G;
 
 /// Every command, sorted by id.
 const COMMANDS: &[CommandDef] = &[
+    cmd(
+        "audio.input_channels",
+        "Input Channels",
+        G::Global,
+        C::Global,
+    )
+    .arg(INPUT_CHANNEL_ARGS)
+    .menu(),
+    cmd(
+        "audio.output_channels",
+        "Output Channels",
+        G::Global,
+        C::Global,
+    )
+    .arg(OUTPUT_CHANNEL_ARGS)
+    .menu(),
     cmd("audio.plugins", "Plugins", G::Global, C::Global).menu(),
     cmd(
         "audio.rescan_midi",
@@ -623,6 +645,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("file.close", "Close", G::Global, C::Global).menu(),
     cmd(
+        "file.convert_rate",
+        "Convert Sample Rate",
+        G::Global,
+        C::Global,
+    )
+    .arg(RATE_ARGS)
+    .menu(),
+    cmd(
         "file.export_loop_audio",
         "Export Loop as Audio File",
         G::Global,
@@ -668,6 +698,9 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("file.new", "New", G::Global, C::Global).menu(),
+    cmd("file.new_rate", "New at Sample Rate", G::Global, C::Global)
+        .arg(RATE_ARGS)
+        .menu(),
     cmd("file.open", "Open", G::Global, C::Global).menu(),
     cmd("file.open_recent", "Open Recent", G::Global, C::Global)
         .arg(RECENT_ARGS)
