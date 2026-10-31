@@ -141,20 +141,6 @@ fn release(d: &Document, reg: &Registry, v: &mut ArrangementView, at: Point) -> 
     run(d, reg, v, &[up(at)])
 }
 
-fn copy_role() -> Modifiers {
-    if cfg!(target_os = "macos") {
-        Modifiers {
-            alt: true,
-            ..Modifiers::NONE
-        }
-    } else {
-        Modifiers {
-            ctrl: true,
-            ..Modifiers::NONE
-        }
-    }
-}
-
 /// The top of the first and the bottom of the last row of a track that has `lanes` lanes.
 fn block(v: &ArrangementView, device: &str, lanes: usize) -> (f64, f64) {
     let first = v.lane_rect(&key(device), 0).unwrap();
@@ -295,10 +281,17 @@ fn escape_cancels_a_track_drag_and_a_place_that_changes_nothing_shows_no_line() 
 
 #[test]
 fn a_track_drag_with_the_copy_role_duplicates_the_tracks_to_the_place() {
+    use atomik_ui::keymap::{Os, Roles};
     let (d, reg, mut v) = setup();
+    // The same roles on every host, so the copy modifier is the same one everywhere.
+    v.set_roles(Roles::defaults(Os::Windows));
     let (top, _) = block(&v, "bass", 2);
     let to = Point::new(100.0, top + 4.0);
-    drag_header(&d, &reg, &mut v, "keys", to, copy_role());
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    drag_header(&d, &reg, &mut v, "keys", to, ctrl);
     assert!(v.track_drop().is_some());
     let actions = release(&d, &reg, &mut v, to);
     assert_eq!(
