@@ -3618,8 +3618,13 @@ creation chain in the **Creation chain** bullet.
   the step editor `editor.toggle_note_mute`, and the sequencer and container editors have no command
   of their own (every one is declined, so the global bindings run); the console answers the
   `mixer.*` view commands (`ConsoleView::command`: `mixer.value_up/down` and the page and `_fine`
-  variants step the focused control, `mixer.scroll_left/right/home/end` move the strips; Up, Down,
-  Page Up and Down, the arrows, Home and End with and without Shift in the `Mixer` context,
+  variants step the focused control, `mixer.scroll_left/right/home/end` move the strips,
+  `mixer.select_left/right` and `mixer.extend_left/right` move or grow the strip selection,
+  `edit.select_all` and `edit.delete` select and remove strips; a fader, send level, mute, solo or
+  send switch of a selected strip is applied to every selected strip as one `Command::Batch`
+  (`console_gang.rs`; a drag's batches share one merge id and merge into one undo step, see
+  `MergeKey::Gang`); Up, Down, Page Up and Down, the arrows, Home and End with and without Shift in
+  the `Mixer` context,
   repeatable, rebindable, conflict-checked, in the cheat sheet), so its `key()` keeps only Escape
   and the F5 shortcuts and a chord no binding took does nothing; **the console text owner**: one
   owner for every console name edit: `ConsoleView::is_text_owner()` is true while a strip or bus
