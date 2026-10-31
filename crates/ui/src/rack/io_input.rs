@@ -62,6 +62,7 @@ impl RackView {
     /// when something changed, and repaints only when it is on screen. Allocation-free after
     /// the first call.
     pub fn set_io_peaks(&mut self, peaks: &[f32]) {
+        self.big_meter_feed(peaks);
         if self.io_index().is_none() {
             return;
         }

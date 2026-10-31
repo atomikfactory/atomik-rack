@@ -26,25 +26,6 @@ pub(super) struct CpuMeters {
     load: BTreeMap<DeviceKey, f32>,
 }
 
-/// The load of `key`: its own plus every device inside it (`key/...`); `None` when neither has
-/// a reading.
-fn load_of(loads: &BTreeMap<DeviceKey, f32>, key: &DeviceKey) -> Option<f32> {
-    let inside = format!("{}/", key.0);
-    let mut sum = None;
-    for (k, v) in loads.range(key.clone()..) {
-        if *k != *key && !k.0.starts_with(&inside) {
-            // Keys sort by bytes; `key/..` is not contiguous with `key` (`key-2` sorts between),
-            // so keep scanning only while the prefix could still match.
-            if !k.0.starts_with(&key.0) {
-                break;
-            }
-            continue;
-        }
-        sum = Some(sum.unwrap_or(0.0) + v);
-    }
-    sum
-}
-
 impl<S: EngineSink> AppCore<S> {
     /// Switches the readout on or off (View > CPU Meters). Off, the engine stops timing and the
     /// figures go.
@@ -56,6 +37,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.set_cpu_timing(on);
         self.cpu.last.clear();
         self.cpu.load.clear();
+        self.view.set_cpu_loads(None);
     }
 
     /// Whether the readout is on.
@@ -70,7 +52,7 @@ impl<S: EngineSink> AppCore<S> {
         if !self.cpu.on {
             return None;
         }
-        load_of(&self.cpu.load, key)
+        atomik_ui::rack::load_under(&self.cpu.load, key)
     }
 
     /// The load of every device the readout has a figure for (flat keys), for the plates.
@@ -114,38 +96,7 @@ impl<S: EngineSink> AppCore<S> {
         let ids = &self.ids;
         cpu.load.retain(|k, _| ids.contains_key(k));
         cpu.last.retain(|k, _| ids.contains_key(k));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn key(k: &str) -> DeviceKey {
-        DeviceKey(k.to_string())
-    }
-
-    #[test]
-    fn a_container_shows_the_sum_of_what_is_inside() {
-        let mut loads = BTreeMap::new();
-        loads.insert(key("synth"), 4.0);
-        loads.insert(key("group/a"), 1.5);
-        loads.insert(key("group/inner/b"), 2.5);
-        loads.insert(key("group-2/c"), 40.0);
-        loads.insert(key("group2"), 30.0);
-        assert_eq!(load_of(&loads, &key("synth")), Some(4.0));
-        assert_eq!(load_of(&loads, &key("group")), Some(4.0));
-        assert_eq!(load_of(&loads, &key("group/inner")), Some(2.5));
-        assert_eq!(load_of(&loads, &key("group-2")), Some(40.0));
-        assert_eq!(load_of(&loads, &key("nothing")), None);
-    }
-
-    #[test]
-    fn a_device_and_the_devices_inside_it_add_up() {
-        let mut loads = BTreeMap::new();
-        loads.insert(key("group"), 1.0);
-        loads.insert(key("group/a"), 2.0);
-        assert_eq!(load_of(&loads, &key("group")), Some(3.0));
+        self.view.set_cpu_loads(Some(&self.cpu.load));
     }
 }
 

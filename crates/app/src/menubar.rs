@@ -652,6 +652,8 @@ mod tests {
             align_returns: true,
             console_devices: false,
             console_links: false,
+            cpu_meters: false,
+            big_meter: false,
             tempo_lane: false,
             marker_strip: false,
             inspector: false,

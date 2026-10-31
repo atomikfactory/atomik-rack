@@ -2116,6 +2116,8 @@ impl<B: AudioBackend> Shell<B> {
             align_returns: self.core.doc().console.align_returns,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
+            cpu_meters: self.core.cpu_meters_on(),
+            big_meter: view.big_meter_visible(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
             marker_strip: self.core.arrangement().marker_strip_visible(),
             inspector: self.core.arrangement().inspector_visible(),
@@ -5157,6 +5159,17 @@ impl<B: AudioBackend> Shell<B> {
                 view.set_show_console_links(show);
                 self.ui.show_console_links = show;
                 self.save_ui_state();
+                Vec::new()
+            }
+            AppCommand::ToggleBigMeter => {
+                let view = self.core.view_mut();
+                let show = !view.big_meter_visible();
+                view.set_big_meter_visible(show);
+                Vec::new()
+            }
+            AppCommand::ToggleCpuMeters => {
+                let on = !self.core.cpu_meters_on();
+                self.core.set_cpu_meters(on);
                 Vec::new()
             }
             AppCommand::ToggleTempoLane => {

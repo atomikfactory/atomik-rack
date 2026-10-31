@@ -1268,3 +1268,42 @@ fn the_audio_track_meters_are_fed_every_frame_without_the_console_and_idle_ones_
     );
     assert!(s.needs_repaint_in(WindowKind::Main));
 }
+
+#[test]
+fn the_view_menu_switches_the_cpu_meters_on_and_off() {
+    let mut s = shell();
+    let view: Vec<_> = s.menu_model()[2]
+        .items()
+        .map(|i| i.label.as_ref().to_string())
+        .collect();
+    assert!(view.contains(&"CPU Meters".to_string()), "{view:?}");
+    // Off at start; the command id is the one the menu, the keymap and the QA server share.
+    assert!(!s.menu_state().cpu_meters);
+    assert_eq!(
+        AppCommand::ToggleCpuMeters.command_id(),
+        Some(("view.toggle_cpu_meters", None))
+    );
+    s.execute(AppCommand::ToggleCpuMeters);
+    assert!(s.menu_state().cpu_meters && s.core().cpu_meters_on());
+    s.execute(AppCommand::ToggleCpuMeters);
+    assert!(!s.menu_state().cpu_meters && !s.core().cpu_meters_on());
+}
+
+#[test]
+fn the_view_menu_shows_and_hides_the_big_meter() {
+    let mut s = shell();
+    let view: Vec<_> = s.menu_model()[2]
+        .items()
+        .map(|i| i.label.as_ref().to_string())
+        .collect();
+    assert!(view.contains(&"Big Meter".to_string()), "{view:?}");
+    assert!(!s.menu_state().big_meter && !s.core().view().big_meter_visible());
+    assert_eq!(
+        AppCommand::ToggleBigMeter.command_id(),
+        Some(("view.toggle_big_meter", None))
+    );
+    s.execute(AppCommand::ToggleBigMeter);
+    assert!(s.menu_state().big_meter && s.core().view().big_meter_visible());
+    s.execute(AppCommand::ToggleBigMeter);
+    assert!(!s.menu_state().big_meter);
+}

@@ -293,6 +293,7 @@ pub mod arrangement;
 pub mod audio;
 pub mod audio_editor;
 pub mod autolayout;
+pub mod big_meter;
 pub mod breadcrumb;
 pub mod browser;
 pub mod cables;
