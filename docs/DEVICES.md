@@ -2731,11 +2731,12 @@ linear `min + (max - min) * m`, then clamp and rounding of discrete and choice p
   one). The latency of the flattened inside is the sum along the paths of the inner devices,
   compensated at summing inputs by the ordinary delay compensation (tested with a hand-built flat
   graph in `crates/engine/tests/flat_container.rs`).
-- **Latency limit (as at the rack level):** only cables into **summing** inputs are delay
-  compensated. Two inner paths with different latencies that meet in a plain input (for example the
-  inputs of a line mixer inside) stay apart by the difference; align them yourself or end them in a
-  console channel. The engine latency itself is the fixed batch FIFO; device latency is not trimmed
-  from the output.
+- **Latency limit (as at the rack level):** with return alignment off (the project flag, see the
+  architecture notes) only cables into **summing** inputs are delay compensated, so
+  two inner paths with different latencies that meet in a plain input (for example the inputs
+  of a line mixer inside) stay apart by the difference; align them yourself, turn the flag on, or
+  end them in a console channel. The engine latency itself is the fixed batch FIFO; device latency
+  is not trimmed from the output.
 
 ## Note split: `atomik.note-split` (Utility, internal)
 
@@ -3208,6 +3209,8 @@ both device types run). The console creates buses; you do not add one from the b
 - **Stages and latency.** The same two stages as the channel (`bus_l`, `bus_r`, `key_in` and
   `insert_send_*` in stage 0, everything else in stage 1). A negative `latency.adjust` is reported
   as latency exactly as on a channel, so delay compensation treats buses like channels.
+  The range is up to 480,000 samples (10 s at 48 kHz) either way; a strip holds 4,800 samples of
+  history and a larger positive value puts a reserve to use, starting from silence.
 - **Browser.** Not listed in the device browser.
 
 ## Audio I/O: the `interface` pseudo-device

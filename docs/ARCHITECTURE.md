@@ -223,7 +223,9 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
 - **Project files** are `.atomik` JSON, format version 37 (older versions still load; version 37
-  adds a MIDI Out device's `"midi_out": { "port": name }`, the output port it sends to, written only
+  adds the console's `"align_returns": true` (return alignment, written only when on; a file
+  without it loads with it off; refused in a version 36 file; see 5, "Plugin delay compensation"),
+  and a MIDI Out device's `"midi_out": { "port": name }`, the output port it sends to, written only
   once a port is chosen and refused on any other device type and in a version 36 file (see 4,
   "MIDI output"); version 36
   also adds a device's `"patch"` after its `"name"`, the name of the patch it took its sound from
@@ -2022,6 +2024,16 @@ of this is saved in the project.
   exactly, owned by the routing plan and dropped off the RT thread; a routing swap keeps the line of
   a cable whose delay did not change. If a delay would exceed 10 s, compensation is disabled for the
   plan and `PdcReport::limit_exceeded` says so. `set_compensation(false)` makes every delay 0.
+  **Return alignment** (the console's `align_returns` project flag, `Graph::set_align_inputs`; off
+  for a project saved before format 37, on in a new one) extends the rule to every audio cable of a
+  stage: plain inputs too (FX returns, sidechain keys, the inputs of a device that two paths of
+  different latency feed), so each lands with the slowest cable of its stage and the dry strips are
+  delayed to meet a latent send's return. The delay lines are allocated at compile like the others.
+  With the flag off the plan is the one it always was, and `PdcReport::misaligned` lists each audio
+  cable that reaches its device earlier than a sibling and is not delayed to match, with the frames
+  it is early by (the status line shows the count); `PdcReport::output_latency` is the latency of
+  the slowest signal reaching the outputs, and with the flag on the metronome goes through a delay
+  line of that length (`ConsoleRouting::click_delay`) so the click lands with the audio.
 - **Meters.** `Meters` is a fixed bank of atomics. After each batch the engine publishes peak and
   RMS per metered endpoint; the UI reads them once per frame.
 - **Device meter values.** A device that answers `Device::has_meter_values()` with true when it is
@@ -3030,7 +3042,8 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
 - **Console.** A container has no channel at creation; TO CH adds one, and an effect container works
   in an insert chain or on a return (`console_insert` accepts `DeviceKind::Container`). Inner
   latency (a compressor look-ahead) is compensated by the existing PDC on the flat graph at summing
-  inputs; parallel inner paths that meet in a plain input are not compensated, as at the rack level.
+  inputs; parallel inner paths that meet in a plain input are compensated only with return
+  alignment on, as at the rack level.
 - **Tests as proof.** The expansion theorem (`render/tests/container_demo.rs`): the container bounce
   is bit-identical to a hand-built flat twin across host blocks and worker counts;
   `engine/tests/flat_container.rs` does the same for hand-built flat graphs with PDC and 264
@@ -3305,7 +3318,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (330) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (331) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
