@@ -326,6 +326,18 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
 Messages carry a generation number, so work for a document that was replaced is dropped. A
 `DoneGuard` always sends the completion message, even if a worker panics.
 
+**The project's sample rate and channel counts** are document fields with commands.
+`Command::SetInputChannels` and `SetOutputChannels` change a count (cables to the channels that go
+away leave in the same step). File > New at Sample Rate starts a project at 44.1, 48 or 96 kHz.
+File > Convert Sample Rate (`AppCore::convert_sample_rate`, `app_core_rate.rs`) resamples every
+asset the project uses on a worker (`Bundle::convert_rate`, the sinc resampler; the originals
+stay), registers the copies and applies one `Command::ConvertSampleRate { rate, assets }` step: the
+rate changes, every clip, take, frozen render and zone points at its copy, and the positions that
+count frames (source offsets, fades, gain envelope points, warp marker sources, zone ranges) scale
+by the rate ratio while positions in ticks stay. Undo restores the rate and the originals, which
+stay loaded. A rate or channel change restarts the engine (`rebuild_engine_in_place`): the
+transport returns to the tick it was at and keeps playing, but effect tails do not survive.
+
 **Relinking missing audio** goes through the same worker. `AppCore::relink_asset(from, path)`
 imports the picked file as a batch whose job names the missing asset it stands for; when the file
 lands (`app_core_relink.rs`) there are two cases. If its content hash **is** `from` (the file was
@@ -2675,6 +2687,8 @@ and the native menu. Audio adds:
   [`audio_relink.rs`](../crates/app/src/audio_relink.rs): relinking missing audio (the core logic,
   and the pure bounded folder scan); the panel is
   [`ui/src/relink_panel.rs`](../crates/ui/src/relink_panel.rs).
+- [`app_core_rate.rs`](../crates/app/src/app_core_rate.rs): a new project at a rate, the sample
+  rate conversion with its audio, and the channel counts.
 - [`stream_source.rs`](../crates/app/src/stream_source.rs): the 64 MiB streaming threshold and the
   engine's `StreamSource` over a WAV reader (a read error plays as silence and is counted).
 - [`audio_record.rs`](../crates/app/src/audio_record.rs): the pure recording rules (compensation, laps, placement).
@@ -3357,7 +3371,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (334) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (338) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
