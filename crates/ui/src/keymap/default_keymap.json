@@ -55,6 +55,8 @@
         { "command": "transport.bar_forward", "context": "global", "chords": ["Numpad8"] },
         { "command": "transport.go_locator", "arg": "left", "context": "global", "chords": ["Numpad1", "Alt+Left"] },
         { "command": "transport.go_locator", "arg": "right", "context": "global", "chords": ["Numpad2", "Alt+Right"] },
+        { "command": "transport.dub", "context": "global", "chords": ["Numpad3"] },
+        { "command": "transport.alt", "context": "global", "chords": ["Numpad6"] },
         { "command": "transport.loop", "context": "global", "chords": ["L", "NumpadDiv"] },
         { "command": "transport.metronome", "context": "global", "chords": ["C", "Numpad9"] },
         { "command": "transport.pre_count", "context": "global", "chords": ["Cmd+P"] },

@@ -1873,3 +1873,106 @@ fn explode_notes_selects_the_new_clips_and_extract_moves_notes() {
     assert_eq!(played_by_a(&c), before);
     assert_eq!(c.arrangement().selected_clips(), vec![ClipId(2)]);
 }
+
+// ---- dub and alt -----------------------------------------------------------------------------
+
+fn armed_track() -> AppCore<RecordingSink> {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c
+}
+
+fn lanes_of_a(c: &AppCore<RecordingSink>) -> usize {
+    c.doc().song.tracks[0].note_lane_count()
+}
+
+#[test]
+fn dub_adds_a_lane_per_armed_note_track_selects_it_and_is_one_undo_step() {
+    let mut c = armed_track();
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(lanes_of_a(&c), 2);
+    assert_eq!(c.arrangement().record_lane(&key("a")), 1);
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(
+        (lanes_of_a(&c), c.arrangement().record_lane(&key("a"))),
+        (3, 2)
+    );
+    assert!(c.undo());
+    assert_eq!(lanes_of_a(&c), 2);
+    assert!(c.undo());
+    assert_eq!(lanes_of_a(&c), 1);
+}
+
+#[test]
+fn dub_without_an_armed_note_track_is_refused_with_a_message() {
+    let mut c = with_track();
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(lanes_of_a(&c), 1);
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("armed note track"))
+    );
+}
+
+#[test]
+fn alt_mutes_the_lane_of_the_last_pass_in_the_same_undo_step() {
+    let mut c = armed_track();
+    transport(&mut c, TransportAction::Alt);
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 2);
+    assert!(track.lanes[0].muted && !track.lanes[1].muted);
+    assert!(c.undo());
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 1);
+    assert!(!track.lanes[0].muted);
+    // Dub leaves the layers sounding.
+    transport(&mut c, TransportAction::Dub);
+    assert!(c.doc().song.tracks[0].lanes.iter().all(|l| !l.muted));
+}
+
+#[test]
+fn dub_in_the_middle_of_a_take_splits_it_between_the_layers_without_losing_notes() {
+    let mut c = armed_track();
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    record_a_note(&mut c, |c| {
+        // The note of the first half was fed by the frame before; the dub ends that take and
+        // starts the next on the new lane, which takes the note played after the key press.
+        c.sink_mut().state = TransportState {
+            tick: 2 * PPQ,
+            engine_frame: frame(2 * PPQ),
+            song_frame: frame(2 * PPQ) - 1000,
+            playing: true,
+            ..TransportState::default()
+        };
+        transport(c, TransportAction::Dub);
+        c.sink_mut().recorded = vec![
+            RecordedNote {
+                device: id(1),
+                kind: NoteKind::On {
+                    key: 52,
+                    velocity: 0.9,
+                },
+                frame: frame(3 * PPQ),
+            },
+            RecordedNote {
+                device: id(1),
+                kind: NoteKind::Off { key: 52 },
+                frame: frame(3 * PPQ + PPQ / 2),
+            },
+        ];
+        c.frame();
+    });
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 2);
+    let keys = |lane: usize| -> Vec<u8> {
+        track.lanes[lane]
+            .clips
+            .iter()
+            .flat_map(|c| match &c.content {
+                ClipContent::Notes(n) => n.iter().map(|n| n.key).collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect()
+    };
+    assert_eq!((keys(0), keys(1)), (vec![45], vec![52]));
+}

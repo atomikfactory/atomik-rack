@@ -348,9 +348,13 @@ fn a_numpad_chord_is_learned_as_a_numpad_chord_not_as_a_digit() {
     let dir = config("numpad");
     let mut s = shell_in(&dir, Os::Windows, Some(Profile::Standard));
     open_tab(&mut s, Tab::Keyboard);
-    learn_loop(&mut s, Os::Windows, "Numpad6");
+    learn_loop(&mut s, Os::Windows, "Shift+Numpad6");
     let user = s.dialog().unwrap().preferences().unwrap().0;
-    assert!(user.to_json().contains("Numpad6"), "{}", user.to_json());
+    assert!(
+        user.to_json().contains("Shift+Numpad6"),
+        "{}",
+        user.to_json()
+    );
 }
 
 #[test]

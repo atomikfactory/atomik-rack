@@ -1955,6 +1955,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     ),
     cmd(
+        "transport.alt",
+        "Alt: New Layer, Mute the Last",
+        G::Transport,
+        C::Global,
+    ),
+    cmd(
         "transport.auto_create_lanes",
         "Auto-create Lanes",
         G::Transport,
@@ -1981,6 +1987,7 @@ const COMMANDS: &[CommandDef] = &[
         G::Transport,
         C::Global,
     ),
+    cmd("transport.dub", "Dub: New Layer", G::Transport, C::Global),
     cmd(
         "transport.forward_bar",
         "Fast Forward One Bar",
