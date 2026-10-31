@@ -380,3 +380,45 @@ fn the_drop_target_outline_matches_golden() {
         &paint_rack(&mut v, d.doc()).to_json(),
     );
 }
+
+// ------------------------------------------------------------------ refused moves are not offered
+
+#[test]
+fn a_device_with_a_track_dropped_on_a_container_is_placed_not_moved_inside() {
+    // `lead` has a song track and a console channel: the model would refuse it, so the panel is
+    // no target for it (no command, no outline) and the drop places it as any other move.
+    let d = with_tail();
+    let reg = registry();
+    let mut v = plain_view(d.doc(), &reg);
+    let from = v.plate_center(&key("lead")).unwrap();
+    let to = on_panel(&v, "layer", 60.0);
+    let a = drag(&mut v, d.doc(), &reg, from, to);
+    assert!(
+        commands(&a)
+            .iter()
+            .all(|c| !matches!(c, Command::Container(_))),
+        "{a:?}"
+    );
+    // Held over the panel it draws the ordinary drop line, not the container's outline.
+    let _ = v.handle(&down(from), d.doc(), &reg);
+    let _ = v.handle(&mv(to), d.doc(), &reg);
+    let held = paint_rack(&mut v, d.doc()).to_json();
+    assert!(!held.contains("Move into container"));
+}
+
+#[test]
+fn every_move_a_drop_emits_is_one_the_model_takes() {
+    let d = with_tail();
+    let reg = registry();
+    for from_key in ["lead", "tail", "layer"] {
+        let mut v = plain_view(d.doc(), &reg);
+        let from = v.plate_center(&key(from_key)).unwrap();
+        let to = on_panel(&v, "layer", 60.0);
+        let a = drag(&mut v, d.doc(), &reg, from, to);
+        for c in commands(&a) {
+            Document::new(d.doc().clone())
+                .apply(c.clone(), &reg)
+                .unwrap_or_else(|e| panic!("{from_key}: {c:?} refused: {e}"));
+        }
+    }
+}
