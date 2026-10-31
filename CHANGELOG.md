@@ -9,6 +9,17 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Note lane workflows.** Drag a note lane by its label to another place among a track's lanes or
+  onto another track's lanes (a line shows where it will land; hold Ctrl, or Alt on macOS, to
+  copy it instead). Merge Note Lanes (Ctrl+R, also in the Track menu and the track header menu)
+  puts everything a track plays on its top lane, one clip per stretch of sound, and removes the
+  other lanes; the track sounds exactly as before, and it is one undo step. Explode Notes to Lanes
+  (Track menu, clip menu) gives each pitch of the selected note clip a lane of its own, named after
+  the pitch, and Extract Notes to a New Lane (the piano roll's Notes menu) does the same for the
+  selected notes; the source clip keeps its controllers. Dub (Numpad3) adds a new lane to every
+  armed note track and records the next pass on it, even while a take is running, from that tick
+  on; Alt (Numpad6) does the same and mutes the lane of the last pass. The project format is
+  unchanged.
 - **Drawing and cleaning up automation, recording tempo.** With the pencil, a drag across an
   automation clip writes a point per snap step that follows the pointer, thinned as you draw so a
   long stroke does not leave hundreds of points; a press without a drag still places one point.
