@@ -265,7 +265,7 @@ fn the_grid_survives_content_and_geometry_edits_split_and_duplicate() {
     d.apply(
         sc(SongCommand::SetClipContent {
             id,
-            content: ClipContent::Notes(vec![note(5, 5, 40, 1.0)]),
+            content: ClipContent::Notes(vec![note(5, 5, 40, 1.0)].into()),
             merge: None,
         }),
         &reg,

@@ -186,7 +186,7 @@ fn load_clip_body(v: &Value, path: &JsonPath) -> Result<Clip, ModelError> {
             Some(c) => load_controllers(c, &path.field("controllers"))?,
             None => Vec::new(),
         },
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     })
 }
 
@@ -208,7 +208,7 @@ mod tests {
             grid: None,
             scale: None,
             controllers: Vec::new(),
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
         }
     }
 

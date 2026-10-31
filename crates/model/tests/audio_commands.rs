@@ -570,7 +570,7 @@ fn set_clip_content_replaces_audio_content_and_validates() {
         ModelError::MissingAsset(_)
     ));
     assert!(matches!(
-        rejects(&mut d, set(ClipContent::Notes(vec![])), &reg),
+        rejects(&mut d, set(ClipContent::Notes(vec![].into())), &reg),
         ModelError::BadSong(_)
     ));
 }

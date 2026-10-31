@@ -20,7 +20,7 @@ fn doc(reg: &Registry) -> Document {
 }
 
 fn add(d: &mut Document, reg: &Registry, start: i64, length: i64) {
-    let c = clip(start, length, ClipContent::Notes(Vec::new()));
+    let c = clip(start, length, ClipContent::Notes(Vec::new().into()));
     d.apply(add_clip("lead", 0, c), reg).unwrap();
 }
 
@@ -180,7 +180,7 @@ fn a_clip_whose_bar_line_would_pass_the_last_tick_stops_the_end_at_the_clip() {
     let reg = registry();
     let mut d = doc(&reg);
     let last = atomik_model::MAX_TICK;
-    let c = clip(0, last, ClipContent::Notes(Vec::new()));
+    let c = clip(0, last, ClipContent::Notes(Vec::new().into()));
     d.apply(add_clip("lead", 0, c), &reg).unwrap();
     assert_eq!(d.doc().song.end_tick(), last, "the End covers the clip");
     d.doc().validate().unwrap();

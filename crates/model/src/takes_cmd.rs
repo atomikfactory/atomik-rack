@@ -152,7 +152,7 @@ pub(crate) fn plan(
             };
             // Reserve the take ids first, then let `build` allocate the compiled clips after them.
             let mut scratch = doc.clone();
-            scratch.song.next_clip_id = next;
+            scratch.song_mut().next_clip_id = next;
             let edit = build(&scratch, &device, lane, None, Some(group), Clips::Recompile)?;
             Ok(Edit::Compound(vec![
                 Edit::NextClipId {
@@ -226,7 +226,7 @@ pub(crate) fn plan(
                 clips: Vec::new(),
             };
             let mut scratch = doc.clone();
-            scratch.song.next_clip_id = next;
+            scratch.song_mut().next_clip_id = next;
             edits.insert(
                 0,
                 Edit::NextClipId {
@@ -263,7 +263,7 @@ pub(crate) fn plan(
             let top = new.takes.len() - 1;
             set_segment(&mut new.comp, top, start, end);
             let mut scratch = doc.clone();
-            scratch.song.next_clip_id = next;
+            scratch.song_mut().next_clip_id = next;
             let edit = build(
                 &scratch,
                 &device,

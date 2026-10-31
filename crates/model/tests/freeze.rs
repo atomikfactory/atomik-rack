@@ -148,7 +148,7 @@ fn freeze_and_unfreeze_are_one_undo_step_each_and_restore_the_document() {
     assert_eq!(frozen_of(&d).unwrap().effects, fx);
     // Nothing else of the track changed.
     let mut thawed = d.doc().clone();
-    thawed.song.tracks[0].frozen = None;
+    thawed.song_mut().tracks[0].frozen = None;
     assert_eq!(thawed.song, before.song);
     assert_eq!(thawed.devices, before.devices);
     assert_eq!(thawed.cables, before.cables);

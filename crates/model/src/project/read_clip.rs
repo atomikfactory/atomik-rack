@@ -137,7 +137,7 @@ pub(super) fn load_clip(
     let items = array(&obj[content_field], &content_path)?;
     let content = match kind {
         LaneKind::Audio => unreachable!("audio clips return above"),
-        LaneKind::Notes => ClipContent::Notes(load_notes(items, &content_path, version)?),
+        LaneKind::Notes => ClipContent::Notes(load_notes(items, &content_path, version)?.into()),
         LaneKind::Automation(param) => {
             // `None`: a dead plugin param, whose values are kept as they are.
             let pd = desc.param_by_key(param);

@@ -62,7 +62,7 @@ mod tests {
     const RATE: u32 = 48_000;
 
     fn song() -> Song {
-        crate::new_project_doc().song
+        (*crate::new_project_doc().song).clone()
     }
 
     fn clip(offset: u64, reverse: bool) -> AudioClipContent {

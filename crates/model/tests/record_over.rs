@@ -480,7 +480,10 @@ fn group_as_takes_rejects_a_clip_off_the_lane_a_compiled_clip_and_nothing() {
     rejected(
         &mut d,
         &reg,
-        cmd(vec![], vec![clip(0, BAR, ClipContent::Notes(vec![]))]),
+        cmd(
+            vec![],
+            vec![clip(0, BAR, ClipContent::Notes(vec![].into()))],
+        ),
     );
 }
 
@@ -509,7 +512,7 @@ fn tail_doc(reg: &atomik_device_sdk::Registry, tails: bool) -> Document {
     )
     .unwrap();
     let mut doc = d.doc().clone();
-    doc.song.tails = tails;
+    doc.song_mut().tails = tails;
     Document::new(doc)
 }
 
@@ -533,11 +536,9 @@ fn a_note_is_cut_at_its_piece_end_without_tails_and_rings_out_with_them() {
     );
     // Only starts are masked: a note that starts under a later clip is still dropped.
     let mut under = tail_doc(&reg, true).doc().clone();
-    under.song.tracks[0].lanes[0].clips[0].length = 2 * BAR;
-    under.song.tracks[0].lanes[0].clips[0].content = ClipContent::Notes(vec![
-        note(0, 100, 60, 0.8),
-        note(BAR + BAR / 2, 100, 62, 0.8),
-    ]);
+    under.song_mut().tracks[0].lanes[0].clips[0].length = 2 * BAR;
+    under.song_mut().tracks[0].lanes[0].clips[0].content =
+        ClipContent::Notes(vec![note(0, 100, 60, 0.8), note(BAR + BAR / 2, 100, 62, 0.8)].into());
     let flat = flatten_notes_with(&under.song.tracks[0], true);
     assert!(
         flat.iter().all(|n| n.2 != 62),
@@ -555,7 +556,7 @@ fn tails_are_saved_only_when_on_and_a_new_project_has_them() {
     let off = save_project(&empty_doc());
     assert!(!off.contains("\"tails\""));
     let mut doc = empty_doc();
-    doc.song.tails = true;
+    doc.song_mut().tails = true;
     let on = save_project(&doc);
     assert!(on.contains("\"tails\": true,"), "{on}");
     assert!(on.contains(&format!("\"version\": {PROJECT_VERSION}")));
@@ -582,7 +583,7 @@ fn a_version_34_file_loads_without_tails_and_resaves_as_35_with_the_version_line
 fn tails_need_version_35_and_must_be_true() {
     let reg = registry();
     let mut doc = empty_doc();
-    doc.song.tails = true;
+    doc.song_mut().tails = true;
     let text = save_project(&doc);
     let v34 = text.replacen(
         &format!("\"version\": {PROJECT_VERSION}"),
@@ -612,7 +613,7 @@ fn apply_joined_folds_a_follow_up_into_the_step_before_it() {
     d.apply(
         sc(SongCommand::SetClipContent {
             id,
-            content: ClipContent::Notes(vec![note(0, 10, 60, 0.5), note(BAR, 10, 61, 0.5)]),
+            content: ClipContent::Notes(vec![note(0, 10, 60, 0.5), note(BAR, 10, 61, 0.5)].into()),
             merge: None,
         }),
         &reg,

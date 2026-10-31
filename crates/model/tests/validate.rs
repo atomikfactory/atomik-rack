@@ -52,11 +52,11 @@ fn a_nan_in_a_stored_param_is_refused_before_the_file_is_written() {
 fn an_infinite_tempo_or_a_nan_note_velocity_is_refused() {
     let mut doc = song_doc();
     doc.tempo_bpm = f64::INFINITY;
-    doc.song.tempo[0].bpm = f64::INFINITY;
+    doc.song_mut().tempo[0].bpm = f64::INFINITY;
     assert!(first_violation(&doc).contains("finite"));
 
     let mut doc = song_doc();
-    let lane = &mut doc.song.tracks[0].lanes[0];
+    let lane = &mut doc.song_mut().tracks[0].lanes[0];
     if let atomik_model::ClipContent::Notes(notes) = &mut lane.clips[0].content {
         notes[0].velocity = f32::NAN;
     }
@@ -66,21 +66,21 @@ fn an_infinite_tempo_or_a_nan_note_velocity_is_refused() {
 #[test]
 fn the_tempo_mirror_is_checked() {
     let mut doc = song_doc();
-    doc.song.tempo[0].bpm += 1.0;
+    doc.song_mut().tempo[0].bpm += 1.0;
     assert!(first_violation(&doc).contains("rack tempo"));
-    doc.song.tempo.clear();
+    doc.song_mut().tempo.clear();
     assert!(first_violation(&doc).contains("no event"));
 }
 
 #[test]
 fn a_clip_or_note_past_the_last_tick_is_refused() {
     let mut doc = song_doc();
-    doc.song.tracks[0].lanes[0].clips[0].length = atomik_model::MAX_TICK + 1;
+    doc.song_mut().tracks[0].lanes[0].clips[0].length = atomik_model::MAX_TICK + 1;
     assert!(first_violation(&doc).contains("clips[0]"));
 
     let mut doc = song_doc();
     if let atomik_model::ClipContent::Notes(notes) =
-        &mut doc.song.tracks[0].lanes[0].clips[0].content
+        &mut doc.song_mut().tracks[0].lanes[0].clips[0].content
     {
         notes[1].tick = atomik_model::MAX_TICK + 1;
     }
@@ -100,7 +100,7 @@ fn a_lane_out_of_order_is_refused() {
         .unwrap();
     }
     let mut doc = d.doc().clone();
-    doc.song.tracks[0].lanes[0].clips.reverse();
+    doc.song_mut().tracks[0].lanes[0].clips.reverse();
     assert!(first_violation(&doc).contains("sorted"));
 }
 

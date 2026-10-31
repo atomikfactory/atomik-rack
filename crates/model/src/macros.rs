@@ -357,7 +357,7 @@ impl RackDoc {
             devices,
             columns: self.columns,
             cables: self.cables.clone(),
-            song: crate::empty_song(self.tempo_bpm),
+            song: std::sync::Arc::new(crate::empty_song(self.tempo_bpm)),
             console: self.console.clone(),
             midi_maps: Vec::new(),
             macros: self.macros.clone(),

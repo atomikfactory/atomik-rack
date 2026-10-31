@@ -39,7 +39,7 @@ pub fn clip(start: i64, length: i64, content: ClipContent) -> Clip {
 }
 
 pub fn notes_clip(start: i64, length: i64, notes: Vec<Note>) -> Clip {
-    clip(start, length, ClipContent::Notes(notes))
+    clip(start, length, ClipContent::Notes(notes.into()))
 }
 
 pub fn auto_clip(start: i64, length: i64, points: Vec<AutomationPoint>) -> Clip {
@@ -188,7 +188,7 @@ pub fn content(kind: &LaneKind, seed: u64, bad: bool) -> ClipContent {
             if bad {
                 notes.push(note(3 * BAR, 10, 200, 0.5));
             }
-            ClipContent::Notes(notes)
+            ClipContent::Notes(notes.into())
         }
         LaneKind::Automation(_) => {
             let mut pts: Vec<AutomationPoint> = (0..n)

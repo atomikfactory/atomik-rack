@@ -17,6 +17,7 @@ use crate::song::{effective_tracks, flatten_automation};
 use crate::{Curve, DeviceKey, LaneKind, RackDoc};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// Values some controls show instead of the stored ones, by `(device, param key)`.
 pub type ShownValues = BTreeMap<(DeviceKey, String), f32>;
@@ -107,7 +108,7 @@ impl RackDoc {
             devices,
             columns: self.columns,
             cables: self.cables.clone(),
-            song: crate::empty_song(self.tempo_bpm),
+            song: Arc::new(crate::empty_song(self.tempo_bpm)),
             console: self.console.clone(),
             midi_maps: Vec::new(),
             macros: self.macros.clone(),

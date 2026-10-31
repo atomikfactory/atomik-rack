@@ -282,7 +282,7 @@ fn patch_v1_and_v2_load_as_song_less_projects() {
         let project = load_project(&text, &reg).unwrap();
         let patch = load_patch(&text, &reg).unwrap();
         assert_eq!(project, patch, "{name}");
-        assert_eq!(project.song, empty_song(project.tempo_bpm));
+        assert_eq!(project.song, empty_song(project.tempo_bpm).into());
     }
     let fast = edited(&read("examples/patches/minimal.json"), |v| {
         v["tempo_bpm"] = json!(133.5);
@@ -312,10 +312,13 @@ fn ac_s6_save_load_is_bit_exact_for_awkward_floats() {
     d.apply(
         sc(SongCommand::SetClipContent {
             id: ClipId(1),
-            content: ClipContent::Notes(vec![
-                note(0, 1, 0, f32::MIN_POSITIVE),
-                note(i64::from(u32::MAX) * 7, 3, 127, 0.1 + 0.2),
-            ]),
+            content: ClipContent::Notes(
+                vec![
+                    note(0, 1, 0, f32::MIN_POSITIVE),
+                    note(i64::from(u32::MAX) * 7, 3, 127, 0.1 + 0.2),
+                ]
+                .into(),
+            ),
             merge: None,
         }),
         &reg,
