@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Stems, AIFF export and a dry clip bounce.** File > Export Stems as Audio Files writes one
+  file per mixer strip (every channel, bus, FX return and the master) into a `Bounced <song>`
+  folder, numbered in mixer order, with the same range and tail as Export Song, the same depth,
+  dither and rate choices, and a progress bar with Cancel; a stopped export removes what it wrote.
+  The stems are rendered in one deterministic pass of the same engine (a few strips per pass, so a
+  long song with many strips does not need the memory of all of them), each strip is delayed by
+  what the slowest path to the outputs adds on top of its own latency, so the files line up with
+  each other and with the mix (and the channel stems add up to the master when nothing is sent
+  to an effect), and CHANNELS can take the channels before their strips (the source's own sound,
+  no fader, pan, insert or send). Every export has a FILE FORMAT choice, WAV or AIFF (AIFF-C for
+  32-bit float), kept in `export.json`; the file takes the extension of the container. Track >
+  Bounce Clips to New Track (Dry) renders the selected clips as the instrument plays them, before
+  its effects and channel strip, into a new audio track. The MCP `session_export` has `container`,
+  `stems` and `stems_dry`.
 - **Templates, song information, project archives and a scratch folder.** File > New from
   Template lists the projects of the new Templates folder (next to the library folder, shown with
   Show Template Folder; a project put there appears in the menu within a second). A template opens
