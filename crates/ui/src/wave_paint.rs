@@ -118,6 +118,13 @@ pub struct WaveChannel<'a> {
     pub frames_per_pixel: f64,
 }
 
+thread_local! {
+    /// Min/max of the columns of the channel being painted (see [`paint_channel`]).
+    static COLUMN_SCRATCH: std::cell::RefCell<Vec<(f32, f32)>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
 /// Paints one channel: the zero line, then the min/max polygon of the columns, or at deep zoom
 /// the line through the samples. `source(x)` is the source frame under logical x and
 /// `frame_x(frame)` the logical x of a source frame (the line path places every sample with it).
@@ -168,45 +175,59 @@ pub fn paint_channel(
         return;
     }
     // A reversed clip reads its source downwards: the column's frames run from `source(x + 1)`
-    // up to `source(x)`.
-    let peak = |i: usize| {
-        let x = w.x_start + i as f64;
-        let (a, b) = (source(x), source(x + 1.0));
-        w.detail.column(w.ch, a.min(b), a.max(b), w.limit)
-    };
+    // up to `source(x)`. Each column is read once, and `source` once per column edge (a
+    // column's right edge is the next one's left), into a scratch buffer reused across calls.
     let columns = w.columns.min(MAX_COLUMNS);
-    // The audio is silent past the asset end: at the right of a forward clip, at the left of a
-    // reversed one, which starts above the last frame and plays down into the asset.
-    let first = (0..columns).find(|i| peak(*i).is_some()).unwrap_or(columns);
-    let n = (first..columns).take_while(|i| peak(*i).is_some()).count();
-    if n == 0 {
-        return;
-    }
-    let (first, last) = (first, first + n);
-    sp::line(
-        c,
-        w.line_x.0,
-        zero,
-        w.line_x.1,
-        zero,
-        w.color.with_alpha(0.22),
-    );
-    let mut path = BezPath::new();
-    for i in first..last {
-        let (_, hi) = peak(i).unwrap_or((0.0, 0.0));
-        let p = pt(w.x_start + i as f64 + 0.5, y_of(hi));
-        if i == first {
-            path.move_to(p);
-        } else {
-            path.line_to(p);
+    COLUMN_SCRATCH.with_borrow_mut(|cols| {
+        cols.clear();
+        // The audio is silent past the asset end: at the right of a forward clip, at the left
+        // of a reversed one, which starts above the last frame and plays down into the asset.
+        // The run of columns that have audio is `first..first + cols.len()`.
+        let mut first = columns;
+        let mut edge = source(w.x_start);
+        for i in 0..columns {
+            let next = source(w.x_start + (i + 1) as f64);
+            let col = w
+                .detail
+                .column(w.ch, edge.min(next), edge.max(next), w.limit);
+            edge = next;
+            match col {
+                Some(col) => {
+                    if cols.is_empty() {
+                        first = i;
+                    }
+                    cols.push(col);
+                }
+                None if cols.is_empty() => {}
+                None => break,
+            }
         }
-    }
-    for i in (first..last).rev() {
-        let (lo, _) = peak(i).unwrap_or((0.0, 0.0));
-        path.line_to(pt(w.x_start + i as f64 + 0.5, y_of(lo)));
-    }
-    path.close_path();
-    c.fill_with(path, w.color);
+        if cols.is_empty() {
+            return;
+        }
+        sp::line(
+            c,
+            w.line_x.0,
+            zero,
+            w.line_x.1,
+            zero,
+            w.color.with_alpha(0.22),
+        );
+        let mut path = BezPath::new();
+        for (k, &(_, hi)) in cols.iter().enumerate() {
+            let p = pt(w.x_start + (first + k) as f64 + 0.5, y_of(hi));
+            if k == 0 {
+                path.move_to(p);
+            } else {
+                path.line_to(p);
+            }
+        }
+        for (k, &(lo, _)) in cols.iter().enumerate().rev() {
+            path.line_to(pt(w.x_start + (first + k) as f64 + 0.5, y_of(lo)));
+        }
+        path.close_path();
+        c.fill_with(path, w.color);
+    });
 }
 
 /// The most the wave zoom of the sample and slice editors may reach for an asset of `frames`
