@@ -224,6 +224,12 @@ pub struct TransportBar {
 }
 
 impl TransportBar {
+    /// Switches to `theme`: the colours are derived again and the bar repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// A bar; call [`Self::set_bounds`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         Self {
@@ -926,7 +932,7 @@ impl TransportBar {
                 _ => None,
             };
             sp::button(c, st, r, "", lit, self.hover == Some(btn));
-            let icon = if lit.is_some() { t.plate } else { t.text };
+            let icon = if lit.is_some() { t.on_accent } else { t.text };
             let icon = if btn == TransportButton::Record && lit.is_none() {
                 mix(st.record, t.text, 0.15)
             } else {

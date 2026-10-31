@@ -273,6 +273,12 @@ pub struct QuantizeView {
 }
 
 impl QuantizeView {
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// A panel with these settings; call [`Self::set_bounds`], [`Self::set_target`] and
     /// [`Self::set_grooves`].
     pub fn new(theme: Theme, values: QuantizeValues) -> Self {

@@ -324,7 +324,7 @@ fn paint_display<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let held = arp_display(meters).filter(|(held, _)| *held > 0);
     let Some((held, notes)) = held else {

@@ -430,7 +430,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(panel.info.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let x = panel.info.x0 + 6.0;
     let w = panel.info.width() - 12.0;

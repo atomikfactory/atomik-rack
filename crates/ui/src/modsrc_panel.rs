@@ -420,7 +420,7 @@ fn window<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
 }
 

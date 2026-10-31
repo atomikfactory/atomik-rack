@@ -12,7 +12,6 @@ use atomik_core::ParamDescriptor;
 use atomik_device_sdk::{RACK_WIDTH, Registry};
 use atomik_model::{DeviceKey, RackDoc};
 use vello::kurbo::{Point, Rect, RoundedRect};
-use vello::peniko::Color;
 
 impl RackView {
     // ------------------------------------------------------------------ meter feed
@@ -530,7 +529,7 @@ impl RackView {
         c.stroke_with(
             RoundedRect::from_rect(m.rect, 4.0),
             1.0,
-            Color::WHITE.with_alpha(0.14),
+            theme.ink.with_alpha(0.14),
         );
         for (k, e) in m.entries.iter().take(SC_MAX_ROWS).enumerate() {
             let r = row_rect(m.rect, k);

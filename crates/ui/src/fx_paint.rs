@@ -54,7 +54,7 @@ pub(crate) fn lcd<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect) {
     c.stroke_with(
         RoundedRect::from_rect(r.inset(0.5), 3.5),
         1.0,
-        alpha(Color::WHITE, 0.07),
+        alpha(theme.ink, 0.07),
     );
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn bar<C: Canvas + ?Sized>(c: &mut C, r: Rect, norm: f64, color: Colo
     );
 }
 
-/// Peak bars (dB, -60..0) with labels under them, laid out left to right inside `m`.
+///Peak bars (dB, -60..0) with labels under them, laid out left to right inside `m`.
 fn level_bars<C: Canvas + ?Sized>(
     c: &mut C,
     theme: &Theme,
@@ -229,7 +229,7 @@ fn reverb<C: Canvas + ?Sized>(
     c.stroke_with(
         Line::new(pt(inner.x0, mid), pt(inner.x1, mid)),
         1.0,
-        alpha(Color::WHITE, 0.08),
+        alpha(theme.ink, 0.08),
     );
     if sketch.pre > 0.0 {
         c.fill_with(
@@ -351,15 +351,15 @@ fn compressor<C: Canvas + ?Sized>(
     for db in [-48.0f32, -36.0, -24.0, -12.0] {
         let a = transfer_point(r, db, -60.0);
         let b = transfer_point(r, db, 0.0);
-        c.stroke_with(Line::new(a, b), 1.0, alpha(Color::WHITE, 0.05));
+        c.stroke_with(Line::new(a, b), 1.0, alpha(theme.ink, 0.05));
         let a = transfer_point(r, -60.0, db);
         let b = transfer_point(r, 0.0, db);
-        c.stroke_with(Line::new(a, b), 1.0, alpha(Color::WHITE, 0.05));
+        c.stroke_with(Line::new(a, b), 1.0, alpha(theme.ink, 0.05));
     }
     c.stroke_with(
         Line::new(transfer_point(r, -60.0, -60.0), transfer_point(r, 0.0, 0.0)),
         1.0,
-        alpha(Color::WHITE, 0.14),
+        alpha(theme.ink, 0.14),
     );
     let tx = transfer_point(r, thr, -60.0).x;
     c.stroke_with(
@@ -481,7 +481,7 @@ fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInf
         c.stroke_with(
             Line::new(pt(r.x0, y), pt(r.x1, y)),
             1.0,
-            alpha(Color::WHITE, a),
+            alpha(theme.ink, a),
         );
     }
     for f in [
@@ -495,7 +495,7 @@ fn eq<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, fx: FxPanel, info: &PanelInf
         c.stroke_with(
             Line::new(pt(x, r.y0), pt(x, r.y1)),
             1.0,
-            alpha(Color::WHITE, a),
+            alpha(theme.ink, a),
         );
     }
     // Analyser bars.
@@ -631,17 +631,17 @@ fn distortion<C: Canvas + ?Sized>(
     c.stroke_with(
         Line::new(at(-1.0, 0.0), at(1.0, 0.0)),
         1.0,
-        alpha(Color::WHITE, 0.12),
+        alpha(theme.ink, 0.12),
     );
     c.stroke_with(
         Line::new(at(0.0, -1.0), at(0.0, 1.0)),
         1.0,
-        alpha(Color::WHITE, 0.12),
+        alpha(theme.ink, 0.12),
     );
     c.stroke_with(
         Line::new(at(-1.0, -1.0), at(1.0, 1.0)),
         1.0,
-        alpha(Color::WHITE, 0.07),
+        alpha(theme.ink, 0.07),
     );
     let n = 160;
     let path = polyline((0..=n).map(|k| {
@@ -699,7 +699,7 @@ fn modulation<C: Canvas + ?Sized>(
     c.stroke_with(
         Line::new(pt(inner.x0, mid), pt(inner.x1, mid)),
         1.0,
-        alpha(Color::WHITE, 0.1),
+        alpha(theme.ink, 0.1),
     );
     let cycles = 2.0f32;
     let n = 160;
@@ -819,7 +819,7 @@ fn mastering<C: Canvas + ?Sized>(
         c.stroke_with(
             Line::new(pt(x.round() + 0.5, r.y0), pt(x.round() + 0.5, r.y1)),
             1.0,
-            alpha(Color::WHITE, 0.4),
+            alpha(theme.ink, 0.4),
         );
         let text = if f >= 1000.0 {
             format!("{:.1}k", f / 1000.0)
@@ -917,7 +917,7 @@ fn guitar_amp<C: Canvas + ?Sized>(
         c.stroke_with(
             Line::new(pt(x, inner.y1), pt(x + inner.height(), inner.y0)),
             1.0,
-            alpha(Color::WHITE, 0.035),
+            alpha(theme.ink, 0.035),
         );
         x += 5.0;
     }
@@ -943,11 +943,11 @@ fn guitar_amp<C: Canvas + ?Sized>(
             square.y0 + fy * square.height(),
         );
         c.fill_with(Circle::new(ctr, rad + 2.0), alpha(Color::BLACK, 0.5));
-        c.stroke_with(Circle::new(ctr, rad), 1.5, alpha(Color::WHITE, 0.22));
+        c.stroke_with(Circle::new(ctr, rad), 1.5, alpha(theme.ink, 0.22));
         for k in [0.72, 0.46] {
-            c.stroke_with(Circle::new(ctr, rad * k), 1.0, alpha(Color::WHITE, 0.1));
+            c.stroke_with(Circle::new(ctr, rad * k), 1.0, alpha(theme.ink, 0.1));
         }
-        c.fill_with(Circle::new(ctr, rad * 0.24), alpha(Color::WHITE, 0.12));
+        c.fill_with(Circle::new(ctr, rad * 0.24), alpha(theme.ink, 0.12));
         if i == 0 {
             first = Some(ctr);
         }

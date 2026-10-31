@@ -172,7 +172,7 @@ fn paint_scale<C: Canvas + ?Sized>(
         let color = if k == 0 {
             alpha(hsl(140.0, 0.6, 0.52), 0.8)
         } else {
-            alpha(Color::WHITE, if major { 0.3 } else { 0.16 })
+            alpha(theme.ink, if major { 0.3 } else { 0.16 })
         };
         c.stroke_with(Line::new(pt(x, y0), pt(x, y1)), 1.0, color);
         if major {
@@ -295,6 +295,6 @@ fn paint_readout<C: Canvas + ?Sized>(
     if lit {
         c.fill_with(lamp, needle_color(0.0));
     } else {
-        c.fill_with(lamp, alpha(Color::WHITE, 0.1));
+        c.fill_with(lamp, alpha(theme.ink, 0.1));
     }
 }

@@ -525,7 +525,7 @@ fn plate<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, info: &PanelInfo<'_>) {
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        with_alpha(Color::WHITE, 0.06),
+        with_alpha(theme.ink, 0.06),
     );
     // Accent bar.
     if info.folded {
@@ -1134,7 +1134,7 @@ fn sample_strip<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(lcd.inset(-0.5), 3.5),
         1.0,
-        with_alpha(Color::WHITE, 0.07),
+        with_alpha(theme.ink, 0.07),
     );
     let n = device.zones.len();
     let samples = device
@@ -1293,7 +1293,7 @@ fn drum_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(lcd.inset(-0.5), 3.5),
         1.0,
-        with_alpha(Color::WHITE, 0.07),
+        with_alpha(theme.ink, 0.07),
     );
     let key = atomik_model::pad_key(info.pad);
     c.text(
@@ -1345,7 +1345,7 @@ fn slicer_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(lcd.inset(-0.5), 3.5),
         1.0,
-        with_alpha(Color::WHITE, 0.07),
+        with_alpha(theme.ink, 0.07),
     );
     let total = slices.iter().map(|z| z.end).max().unwrap_or(0);
     if slices.is_empty() || total == 0 {
@@ -1562,7 +1562,7 @@ pub fn control_labelled<C: Canvas + ?Sized>(
             c.stroke_with(
                 RoundedRect::from_rect(lcd.inset(-0.5), 3.5),
                 1.0,
-                with_alpha(Color::WHITE, 0.07),
+                with_alpha(theme.ink, 0.07),
             );
             let text = fit_label(&format_value(p, value), lcd.width() - 14.0, 8.5);
             c.text(
@@ -1662,7 +1662,7 @@ pub fn knob<C: Canvas + ?Sized>(
     c.stroke_with(
         Circle::new(center, KNOB_R - 0.5),
         1.0,
-        with_alpha(Color::WHITE, 0.07),
+        with_alpha(theme.ink, 0.07),
     );
     let angle = KNOB_START + n * KNOB_SWEEP;
     let dir = Vec2::new(angle.cos(), angle.sin());
@@ -1757,7 +1757,7 @@ pub fn jack<C: Canvas + ?Sized>(
     c.stroke(
         &arc_path(center, 3.2, 1.1 * PI, 0.5 * PI).into(),
         &Stroke::new(0.8),
-        &solid(with_alpha(Color::WHITE, 0.18)),
+        &solid(with_alpha(theme.ink, 0.18)),
     );
     let label = fit_label(name, ps.rect.width() + 4.0, 7.5);
     c.text(
@@ -1937,7 +1937,7 @@ pub fn tooltip<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, at: Point, text: &s
     c.stroke_with(
         RoundedRect::from_rect(r, 4.0),
         1.0,
-        with_alpha(Color::WHITE, 0.1),
+        with_alpha(theme.ink, 0.1),
     );
     c.text(&TextRun::new(text, pt(r.x0 + 7.0, r.y1 - 6.5), 10.0, theme.text).weight(600));
 }
@@ -1953,7 +1953,7 @@ pub fn toast<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, width: f64, height: f
     );
     c.fill_with(RoundedRect::from_rect(r, 6.0), theme.error_bg);
     c.text(
-        &TextRun::new(text, pt(r.center().x, r.y1 - 10.5), 11.0, Color::WHITE)
+        &TextRun::new(text, pt(r.center().x, r.y1 - 10.5), 11.0, theme.on_error)
             .weight(600)
             .align(Align::Center),
     );

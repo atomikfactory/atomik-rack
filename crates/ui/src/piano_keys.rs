@@ -145,6 +145,11 @@ pub struct PianoKeysView {
 }
 
 impl PianoKeysView {
+    /// Switches to `theme` (the next paint uses it).
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+    }
+
     /// A strip in Keys mode on [`DEFAULT_OCTAVE`] at [`DEFAULT_VELOCITY`].
     pub fn new(theme: Theme) -> Self {
         Self {
@@ -744,7 +749,7 @@ impl PianoKeysView {
                     None
                 };
                 if let Some(text) = label {
-                    let color: Color = if black { t.text } else { t.plate };
+                    let color: Color = if black { t.on_dark } else { t.on_accent };
                     c.text(
                         &TextRun::new(
                             text.to_uppercase(),

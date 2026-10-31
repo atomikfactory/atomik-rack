@@ -258,7 +258,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(panel.summary.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let x = panel.summary.x0 + 7.0;
     let mut y = panel.summary.y0 + 14.0;
@@ -306,7 +306,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
             let at = pt(r.center().x + 19.0, r.y0 - 36.0);
             c.fill_with(Circle::new(at, 5.5), accent.with_alpha(0.85));
             c.text(
-                &TextRun::new(n.to_string(), pt(at.x, at.y + 3.0), 7.5, theme.plate)
+                &TextRun::new(n.to_string(), pt(at.x, at.y + 3.0), 7.5, theme.on_accent)
                     .align(Align::Center)
                     .weight(700),
             );
@@ -326,7 +326,7 @@ fn paint_split_map<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, splits
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let inner = r.inset(-4.0);
     let w = inner.width() / 128.0;
@@ -335,7 +335,7 @@ fn paint_split_map<C: Canvas + ?Sized>(c: &mut C, theme: &Theme, r: Rect, splits
         c.stroke_with(
             vello::kurbo::Line::new(pt(x.round() + 0.5, inner.y0), pt(x.round() + 0.5, inner.y1)),
             1.0,
-            Color::WHITE.with_alpha(if oct == 5 { 0.16 } else { 0.06 }),
+            theme.ink.with_alpha(if oct == 5 { 0.16 } else { 0.06 }),
         );
     }
     if splits.is_empty() {

@@ -228,6 +228,12 @@ fn nudge(value: f32, by: f32, a: &MacroAssignRow) -> f32 {
 }
 
 impl MacrosView {
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// An empty panel; call [`Self::set_bounds`] and [`Self::set_banks`].
     pub fn new(theme: Theme) -> Self {
         Self {

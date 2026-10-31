@@ -11,7 +11,6 @@ use crate::widget::format_value;
 use crate::zone_edit::note_name;
 use atomik_model::MACRO_COUNT;
 use vello::kurbo::{Affine, Line, Rect, RoundedRect};
-use vello::peniko::Color;
 
 pub(super) fn paint(v: &ContainerEditorView, c: &mut dyn Canvas) {
     let b = v.bounds;
@@ -119,7 +118,9 @@ fn splits(v: &ContainerEditorView, c: &mut dyn Canvas) {
             y,
             m.x1,
             y,
-            Color::WHITE.with_alpha(if vel == 64 { 0.10 } else { 0.05 }),
+            v.st.base
+                .ink
+                .with_alpha(if vel == 64 { 0.10 } else { 0.05 }),
         );
         sp::label(
             c,
@@ -140,7 +141,7 @@ fn splits(v: &ContainerEditorView, c: &mut dyn Canvas) {
             m.y0,
             x,
             m.y1,
-            Color::WHITE.with_alpha(if oct == 5 { 0.16 } else { 0.07 }),
+            v.st.base.ink.with_alpha(if oct == 5 { 0.16 } else { 0.07 }),
         );
     }
     // Bars.
