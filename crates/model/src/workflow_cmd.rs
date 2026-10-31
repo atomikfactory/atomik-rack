@@ -198,7 +198,9 @@ pub enum WorkflowCommand {
     /// Joins unlooped note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
     /// window, notes cut at the window end); where two notes or points coincide the later
-    /// clip wins. Audio and looped clips and clips of different lanes are rejected.
+    /// clip wins. Audio and looped clips and clips of different lanes are rejected. Muted
+    /// clips of a mixed selection are left alone (their notes must not become audible); muted
+    /// clips alone join into a muted clip.
     JoinClips {
         /// At least two clips.
         ids: Vec<ClipId>,
@@ -1451,6 +1453,18 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
             c.id.0
         )));
     }
+    // A muted clip is silent: folding its content into an audible clip would make it heard, so
+    // a mixed selection joins only the audible clips and leaves the muted ones where they are.
+    // Muted clips alone join into a muted clip.
+    if clips.iter().any(|(_, _, c)| !c.muted) {
+        clips.retain(|(_, _, c)| !c.muted);
+        if clips.len() < 2 {
+            return Err(bad_song(
+                "joining needs at least two clips that are not muted",
+            ));
+        }
+    }
+    let (device, lane, _) = clips[0].clone();
     let start = clips[0].2.start;
     let end = clips.iter().map(|(_, _, c)| c.end()).max().unwrap_or(start);
     let content = match kind {
