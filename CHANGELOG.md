@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Transport bar: tap tempo, Rewind and Forward, locators, click level and Q Rec.** The bar has
+  a second cluster right of the readouts. **Rewind** and **Forward** move by bars and repeat while
+  held, faster the longer they are held. **TAP** sets the tempo at the playhead from the average of
+  your last 2 to 16 taps (a pause of 2 seconds starts over; one undo step per sequence; also the
+  command Tap Tempo). **POS**, **TIME** and the new **L** and **R** locator readouts can be typed
+  into with a double-click (`5.1.0`, `00:12.500`; a locator is one undo step), and a go-to button
+  sits by each locator. A **click level** slider sets the metronome volume and is remembered.
+  **Q Rec** snaps recorded notes to any grid of the quantize panel (1/4 to 1/32 and triplets; old
+  `off`, `1/8` and `1/16` settings still load), and **QUANT** applies the quantize panel's last
+  settings to the selection. When the bar is too narrow for all of it (the recording-input strip
+  and the clip inspector keep their room) the controls that do not fit move into a `...` menu.
+  The new Workflow preference **Return to start on stop** makes Stop go back to where playback
+  started and a second Stop go to the start. The tempo nudge keys now edit the tempo in effect at
+  the playhead, like the tempo readout. While recording, a translucent red clip grows with the
+  playhead on each armed track, showing the notes played so far, and **Delete** throws away what
+  was captured so far while recording goes on. The project format is unchanged.
 - **MIDI Out device: play hardware synths from the sequencer.** A new utility device, **MIDI Out**
   (`atomik.midi-out`), sends the notes of a track (or of a note player) and eight CV inputs, mapped to
   controllers with a number, scale and offset, to a MIDI output port. It has a channel, transpose,

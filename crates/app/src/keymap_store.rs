@@ -69,6 +69,9 @@ pub struct WorkflowPrefs {
     /// Start with the song that was open last time, when no project is named on the command
     /// line (default off).
     pub open_last_project: bool,
+    /// Stop returns the playhead to where playback started; a second Stop goes to the start
+    /// (default off).
+    pub return_to_start_on_stop: bool,
     /// What a finished MIDI take does with the clips already on its lane (default Replace).
     pub record_mode: RecordMode,
     /// What a note edit does with notes that start past their clip's end (default Keep).
@@ -94,6 +97,7 @@ impl Default for WorkflowPrefs {
             library_folder: None,
             autosave_minutes: 5,
             open_last_project: false,
+            return_to_start_on_stop: false,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
             warp_imports: WarpImports::default(),
@@ -135,6 +139,10 @@ impl WorkflowPrefs {
                 .and_then(Value::as_u64)
                 .map_or(defaults.autosave_minutes, |m| m.min(240) as u32),
             open_last_project: flag("open_last_project", defaults.open_last_project),
+            return_to_start_on_stop: flag(
+                "return_to_start_on_stop",
+                defaults.return_to_start_on_stop,
+            ),
             record_mode: obj
                 .get("record_mode")
                 .and_then(Value::as_str)
@@ -170,6 +178,7 @@ impl WorkflowPrefs {
                             | "library_folder"
                             | "autosave_minutes"
                             | "open_last_project"
+                            | "return_to_start_on_stop"
                             | "record_mode"
                             | "keep_events"
                             | "warp_imports"
@@ -207,6 +216,10 @@ impl WorkflowPrefs {
         map.insert(
             "open_last_project".into(),
             Value::Bool(self.open_last_project),
+        );
+        map.insert(
+            "return_to_start_on_stop".into(),
+            Value::Bool(self.return_to_start_on_stop),
         );
         map.insert(
             "record_mode".into(),

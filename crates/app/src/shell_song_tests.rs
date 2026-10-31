@@ -387,9 +387,9 @@ fn transport_menu_lists_the_transport_and_quantize_choices() {
         assert!(labels.contains(&want), "{want} missing in {labels:?}");
     }
     assert!(model[3].entries.contains(&MenuEntry::Separator));
-    s.execute(AppCommand::Quantize(InputQuantize::Sixteenth));
-    assert_eq!(s.core().input_quantize(), InputQuantize::Sixteenth);
-    assert_eq!(s.menu_state().quantize, InputQuantize::Sixteenth);
+    s.execute(AppCommand::Quantize(InputQuantize::SIXTEENTH));
+    assert_eq!(s.core().input_quantize(), InputQuantize::SIXTEENTH);
+    assert_eq!(s.menu_state().quantize, InputQuantize::SIXTEENTH);
 }
 
 /// Presses on `from`, moves to each offset (up is negative) and releases at the last.

@@ -1796,6 +1796,7 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("transport.stop", "Stop", G::Transport, C::Global),
+    cmd("transport.tap_tempo", "Tap Tempo", G::Transport, C::Global),
     cmd(
         "transport.tempo_down",
         "Tempo Down",

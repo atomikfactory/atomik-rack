@@ -8,8 +8,8 @@ use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::{Align, Canvas, CanvasExt, Key, PointerButton, TextRun, Theme, UiEvent};
 use std::path::PathBuf;
 
-const ROW: f64 = 48.0;
-const GAP: f64 = 8.0;
+const ROW: f64 = 44.0;
+const GAP: f64 = 6.0;
 const BUTTON_W: f64 = 84.0;
 
 /// `text` with its head cut when longer than [`PATH_CHARS`] characters.
@@ -37,6 +37,8 @@ pub enum Pref {
     ShowTooltips,
     /// Start with the song that was open last time.
     OpenLastProject,
+    /// Stop returns to where playback started.
+    ReturnToStart,
 }
 
 /// One switch.
@@ -168,6 +170,7 @@ impl WorkflowTab {
             Pref::FollowSelection => self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips,
             Pref::OpenLastProject => self.prefs.open_last_project,
+            Pref::ReturnToStart => self.prefs.return_to_start_on_stop,
         }
     }
 
@@ -180,6 +183,9 @@ impl WorkflowTab {
             Pref::FollowSong => self.prefs.follow_song = !self.prefs.follow_song,
             Pref::FollowSelection => self.prefs.follow_selection = !self.prefs.follow_selection,
             Pref::ShowTooltips => self.prefs.show_tooltips = !self.prefs.show_tooltips,
+            Pref::ReturnToStart => {
+                self.prefs.return_to_start_on_stop = !self.prefs.return_to_start_on_stop;
+            }
             Pref::OpenLastProject => {
                 self.prefs.open_last_project = !self.prefs.open_last_project;
             }
@@ -223,6 +229,11 @@ impl WorkflowTab {
                 "Open last project at start-up",
                 "Start with the song that was open last time (a project named on the command line wins).",
             ),
+            (
+                Pref::ReturnToStart,
+                "Return to start on stop",
+                "Stop goes back to where playback started; a second Stop goes to the start of the song.",
+            ),
         ] {
             toggles.push(Toggle {
                 rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -239,12 +250,12 @@ impl WorkflowTab {
                 || "the default folder (Documents/Atomik Rack/Library)".to_string(),
                 |p| shorten(&p.to_string_lossy()),
             ),
-            default: Rect::new(x0 + inner - BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+            default: Rect::new(x0 + inner - BUTTON_W, y + 8.0, x0 + inner, y + 36.0),
             choose: Rect::new(
                 x0 + inner - 2.0 * BUTTON_W - GAP,
-                y + 10.0,
+                y + 8.0,
                 x0 + inner - BUTTON_W - GAP,
-                y + 38.0,
+                y + 36.0,
             ),
         };
         y += ROW + GAP;
@@ -254,7 +265,7 @@ impl WorkflowTab {
                 0 => "Off".to_string(),
                 m => format!("{m} min"),
             },
-            button: Rect::new(x0 + inner - BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+            button: Rect::new(x0 + inner - BUTTON_W, y + 8.0, x0 + inner, y + 36.0),
         };
         y += ROW + GAP;
         let mut cycles = Vec::new();
@@ -290,7 +301,7 @@ impl WorkflowTab {
                 label,
                 description,
                 value: value.to_string(),
-                button: Rect::new(x0 + inner - 2.0 * BUTTON_W, y + 10.0, x0 + inner, y + 38.0),
+                button: Rect::new(x0 + inner - 2.0 * BUTTON_W, y + 8.0, x0 + inner, y + 36.0),
             });
             y += ROW + GAP;
         }
@@ -370,9 +381,9 @@ impl WorkflowTab {
             }
             let boxr = Rect::new(
                 t.rect.x0 + 8.0,
-                t.rect.y0 + 8.0,
+                t.rect.y0 + 6.0,
                 t.rect.x0 + 24.0,
-                t.rect.y0 + 24.0,
+                t.rect.y0 + 22.0,
             );
             let shape = RoundedRect::from_rect(boxr, 3.0);
             if t.on {
@@ -381,13 +392,13 @@ impl WorkflowTab {
             canvas.stroke_with(shape, 1.2, theme.text_muted);
             canvas.text(&TextRun::new(
                 t.label,
-                Point::new(t.rect.x0 + 36.0, t.rect.y0 + 20.0),
+                Point::new(t.rect.x0 + 36.0, t.rect.y0 + 18.0),
                 13.0,
                 theme.text,
             ));
             canvas.text(&TextRun::new(
                 t.description,
-                Point::new(t.rect.x0 + 36.0, t.rect.y0 + 38.0),
+                Point::new(t.rect.x0 + 36.0, t.rect.y0 + 36.0),
                 11.0,
                 theme.text_muted,
             ));
@@ -395,13 +406,13 @@ impl WorkflowTab {
         let lib = &l.library;
         canvas.text(&TextRun::new(
             "Library folder",
-            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 20.0),
+            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 18.0),
             13.0,
             theme.text,
         ));
         canvas.text(&TextRun::new(
             lib.path.clone(),
-            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 38.0),
+            Point::new(lib.rect.x0 + 36.0, lib.rect.y0 + 36.0),
             11.0,
             theme.text_muted,
         ));
@@ -419,7 +430,7 @@ impl WorkflowTab {
             canvas.text(
                 &TextRun::new(
                     label,
-                    Point::new(r.center().x, r.y0 + 18.5),
+                    Point::new(r.center().x, r.y0 + 16.5),
                     12.0,
                     theme.text,
                 )
@@ -429,13 +440,13 @@ impl WorkflowTab {
         let auto = &l.autosave;
         canvas.text(&TextRun::new(
             "Autosave",
-            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 20.0),
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 18.0),
             13.0,
             theme.text,
         ));
         canvas.text(&TextRun::new(
             "A changed project is copied to the recovery folder this often; the next start offers it after a crash.",
-            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 38.0),
+            Point::new(auto.rect.x0 + 36.0, auto.rect.y0 + 36.0),
             11.0,
             theme.text_muted,
         ));
@@ -453,7 +464,7 @@ impl WorkflowTab {
             canvas.text(
                 &TextRun::new(
                     auto.value.clone(),
-                    Point::new(r.center().x, r.y0 + 18.5),
+                    Point::new(r.center().x, r.y0 + 16.5),
                     12.0,
                     theme.text,
                 )
@@ -463,13 +474,13 @@ impl WorkflowTab {
         for row in &l.cycles {
             canvas.text(&TextRun::new(
                 row.label,
-                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 20.0),
+                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 18.0),
                 13.0,
                 theme.text,
             ));
             canvas.text(&TextRun::new(
                 row.description,
-                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 38.0),
+                Point::new(row.rect.x0 + 36.0, row.rect.y0 + 36.0),
                 11.0,
                 theme.text_muted,
             ));
@@ -486,7 +497,7 @@ impl WorkflowTab {
             canvas.text(
                 &TextRun::new(
                     row.value.clone(),
-                    Point::new(r.center().x, r.y0 + 18.5),
+                    Point::new(r.center().x, r.y0 + 16.5),
                     12.0,
                     theme.text,
                 )

@@ -577,6 +577,35 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
             Spec::Separator,
             item("sequencer.tempo_delete_point", e.tempo_can_delete),
         ],
+        // The transport bar's overflow button: the controls that did not fit, as commands.
+        ContextTarget::TransportMore => {
+            let go = |arg: &'static str, label: &'static str| Spec::Item {
+                command: "transport.go_locator",
+                arg: Some(arg),
+                label: Some(label),
+                enabled: true,
+                checked: None,
+            };
+            let quantize = |arg: &'static str, label: &'static str| Spec::Item {
+                command: "transport.input_quantize",
+                arg: Some(arg),
+                label: Some(label),
+                enabled: true,
+                checked: None,
+            };
+            vec![
+                item("transport.tap_tempo", true),
+                item("transport.rewind_bar", true),
+                item("transport.forward_bar", true),
+                Spec::Separator,
+                go("left", "Go to Left Locator"),
+                go("right", "Go to Right Locator"),
+                Spec::Separator,
+                quantize("off", "Input Quantize: Off"),
+                quantize("eighth", "Input Quantize: 1/8"),
+                quantize("sixteenth", "Input Quantize: 1/16"),
+            ]
+        }
         ContextTarget::TempoLane => vec![item("sequencer.tempo_add_point", true)],
         ContextTarget::RulerMeter => {
             let mut v = vec![

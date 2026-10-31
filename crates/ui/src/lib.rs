@@ -426,8 +426,8 @@ pub use text::{ShapedGlyph, ShapedRun, TextEngine};
 pub use theme::Theme;
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use transport::{
-    InspClip, InspectorField, InspectorSource, RecInput, RecInputPart, TransportBar,
-    TransportButton, TransportState, transport_shortcut,
+    ClusterPart, InspClip, InspectorField, InspectorSource, REPEAT_DELAY, REPEAT_EVERY, RecInput,
+    RecInputPart, TransportBar, TransportButton, TransportState, transport_shortcut,
 };
 pub use vello;
 pub use vello::{kurbo, peniko};

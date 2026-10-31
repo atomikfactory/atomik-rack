@@ -440,6 +440,30 @@ runs through the count (it is not started at the end of it, because the compensa
 earlier than the song's first frame). The transport bar's POS readout shows `COUNT` and the beat
 while the count runs, and `PRE n` while the pre-count is on.
 
+**Transport bar controls.** Right of the four readouts the bar has a second cluster (`cluster.rs`
+beside `transport.rs`): Rewind and Forward, tap tempo, the left and right locator readouts with
+go-to buttons, a click-level slider, and Q Rec with its grid and a QUANT button. Space is shared
+with the clip inspector and the recording-input strip, which need about 998 px: the cluster is four
+groups in priority order that take what those two leave, and the groups that do not fit drop out
+from the end, replaced by a `...` button whose menu (`ContextTarget::TransportMore`) lists the same
+controls as commands. At 1000 px only that button fits. The bar has no clock: a held Rewind or
+Forward repeats from `TransportBar::tick(now)` (the app calls it through
+`AppCore::transport_frame`), after 20 bars moved the step grows to 4 and then 16
+(`repeat_step`), and the repeat is not started while a MIDI clock is followed, the same gate that
+refuses the transport buttons. POS, TIME, L and R are typed with a double-click: `5.1.0` is bar,
+beat and tick, `00:12.500` is `h:m:s.ms` through the tempo map, and a locator is one `SetLoop`
+(one undo step; a locator never crosses the other). Tap tempo is `TapTempo`: the average
+of the last 2 to 16 taps with a 2 second timeout, set on the tempo event in effect at the playhead,
+the taps of one sequence merging into one undo step. The click slider sends
+`UiAction::SetMetronomeGain` and `settings.json` is rewritten once the pointer lets go. Q Rec is
+`InputQuantize { grid_ticks }`, any grid of the quantize panel (the saved names `off`, `1/8` and
+`1/16` still load); the QUANT button applies the panel's last settings. The workflow preference
+`return_to_start_on_stop` makes Stop go back to where playback started (`AppCore::last_start`) and
+a second Stop to bar 1. While recording, `Take::preview` feeds a translucent red clip that grows
+with the playhead on each armed track (`TakeGhost`, drawn only: not saved, not undoable; an audio
+take draws its span), and `edit.delete` calls `Take::discard_notes`: the notes captured so far
+are dropped and the take and the transport run on. Nothing here changes the project format.
+
 **Input gain, clip-safe and the input meter.** Each armed audio track has two stored params on its
 device, `rec_gain` (dB, -60 is off, up to +24, default 0) and `rec_clip_safe` (off). They are plain
 `SetParam`s, so they are undoable, merge while dragged and need no project format change (a project
@@ -3281,7 +3305,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (329) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (330) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

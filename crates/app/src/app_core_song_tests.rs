@@ -506,7 +506,7 @@ fn armed_tracks_receive_live_notes() {
 fn recording_turns_live_notes_into_a_clip_on_stop() {
     let mut c = with_track();
     arm(&mut c, "a", true);
-    c.set_input_quantize(InputQuantize::Sixteenth);
+    c.set_input_quantize(InputQuantize::SIXTEENTH);
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
     assert!(c.is_recording() && c.is_playing());
@@ -722,7 +722,7 @@ fn recording_through_a_player_stack_records_the_input_notes() {
         .unwrap();
     let entry = c.device_id(&arp).unwrap();
     assert_ne!(entry, id(1));
-    c.set_input_quantize(InputQuantize::Sixteenth);
+    c.set_input_quantize(InputQuantize::SIXTEENTH);
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
     assert_eq!(calls[0], SinkCall::Recording(vec![entry]));
@@ -1625,4 +1625,175 @@ fn all_notes_off_reaches_every_device_that_takes_notes() {
         .collect();
     assert_eq!(offs.len(), 2, "{calls:?}");
     assert_ne!(offs[0], offs[1]);
+}
+
+// ------------------------------------------------------------------ transport bar controls
+
+#[test]
+fn stop_returns_to_where_playback_started_and_a_second_stop_goes_to_the_start() {
+    let mut c = with_track();
+    // Off by default: Stop leaves the playhead where it ran to.
+    transport(&mut c, TransportAction::Locate(4 * BAR));
+    transport(&mut c, TransportAction::Play);
+    transport(&mut c, TransportAction::Stop);
+    assert_eq!(c.position(), 4 * BAR);
+    c.set_return_to_start_on_stop(true);
+    transport(&mut c, TransportAction::Play);
+    assert_eq!(c.last_start(), Some(4 * BAR));
+    c.sink_mut().state = TransportState {
+        playing: true,
+        tick: 6 * BAR,
+        engine_frame: 5000,
+        ..TransportState::default()
+    };
+    c.frame();
+    assert_eq!(c.position(), 6 * BAR);
+    transport(&mut c, TransportAction::Stop);
+    assert_eq!(c.position(), 4 * BAR, "back to where it started");
+    transport(&mut c, TransportAction::Stop);
+    assert_eq!(c.position(), 0, "the second Stop goes to the start");
+}
+
+#[test]
+fn tap_tempo_sets_the_tempo_at_the_playhead_in_one_undo_step() {
+    let mut c = with_track();
+    let before = c.doc().song.tempo[0].bpm;
+    for t in [10.0, 10.6, 11.2, 11.8] {
+        c.transport_frame(t);
+        transport(&mut c, TransportAction::TapTempo);
+    }
+    let bpm = c.doc().song.tempo[0].bpm;
+    assert!((bpm - 100.0).abs() < 0.5, "{bpm}");
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tempo[0].bpm, before, "one step for the taps");
+    // A pause of two seconds starts a new sequence: the first tap alone changes nothing.
+    c.transport_frame(20.0);
+    transport(&mut c, TransportAction::TapTempo);
+    assert_eq!(c.doc().song.tempo[0].bpm, before);
+}
+
+#[test]
+fn nudging_and_typing_a_tempo_edit_the_event_at_the_playhead() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::SetTempoMap(vec![
+            TempoEvent::step(0, 120.0),
+            TempoEvent::step(BAR, 90.0),
+        ])),
+    );
+    transport(&mut c, TransportAction::Locate(BAR + 10));
+    c.nudge_tempo(1.0);
+    let tempo = &c.doc().song.tempo;
+    assert_eq!((tempo[0].bpm, tempo[1].bpm), (120.0, 91.0));
+    transport(&mut c, TransportAction::Locate(0));
+    c.nudge_tempo(-1.0);
+    assert_eq!(c.doc().song.tempo[0].bpm, 119.0);
+}
+
+#[test]
+fn the_click_slider_and_q_rec_reach_the_core() {
+    let mut c = with_track();
+    c.sink_mut().take();
+    c.handle_action(UiAction::SetMetronomeGain(0.25));
+    assert!((c.metronome_gain() - 0.25).abs() < 1e-6);
+    assert!(!c.sink_mut().take().is_empty(), "the engine hears it");
+    c.handle_action(UiAction::SetInputQuantize(Some(PPQ / 6)));
+    assert_eq!(c.input_quantize(), InputQuantize::on(PPQ / 6));
+    c.handle_action(UiAction::SetInputQuantize(None));
+    assert_eq!(c.input_quantize(), InputQuantize::OFF);
+}
+
+#[test]
+fn bars_and_locators_move_the_playhead() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::SetLoop {
+            range: (2 * BAR, 5 * BAR),
+            enabled: false,
+        }),
+    );
+    transport(&mut c, TransportAction::Bars(3));
+    assert_eq!(c.position(), 3 * BAR);
+    transport(&mut c, TransportAction::GoLocator(true));
+    assert_eq!(c.position(), 5 * BAR);
+    transport(&mut c, TransportAction::GoLocator(false));
+    assert_eq!(c.position(), 2 * BAR);
+}
+
+/// A recording shows its notes as they are played, Delete throws them away while it runs on,
+/// and the clip holds only what came after.
+#[test]
+fn recording_previews_the_take_and_delete_discards_the_notes_so_far() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    transport(&mut c, TransportAction::ToggleRecord);
+    let start = TransportState {
+        playing: true,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    let note = |key: u8, at: i64, on: bool| RecordedNote {
+        device: id(1),
+        kind: if on {
+            NoteKind::On { key, velocity: 0.8 }
+        } else {
+            NoteKind::Off { key }
+        },
+        frame: frame(at),
+    };
+    c.sink_mut().state = TransportState {
+        tick: 2 * PPQ,
+        engine_frame: frame(2 * PPQ),
+        song_frame: frame(2 * PPQ) - 1000,
+        ..start
+    };
+    c.sink_mut().recorded = vec![note(45, PPQ, true), note(45, PPQ + PPQ / 2, false)];
+    c.frame();
+    let ghosts = c.take_preview().expect("recording");
+    assert_eq!(ghosts.len(), 1);
+    assert_eq!(ghosts[0].device, key("a"));
+    assert_eq!(ghosts[0].notes.len(), 1);
+    assert_eq!(c.arrangement().take_ghosts(), ghosts.as_slice());
+    // Delete: the notes so far are gone, the take and the transport run on.
+    let handled = c.pane_command(Pane::Arrangement, "edit.delete", None);
+    assert!(handled.is_some());
+    assert!(c.is_recording() && c.is_playing());
+    assert!(c.take_preview().unwrap()[0].notes.is_empty());
+    c.sink_mut().state = TransportState {
+        tick: 4 * PPQ,
+        engine_frame: frame(4 * PPQ),
+        song_frame: frame(4 * PPQ) - 1000,
+        ..start
+    };
+    c.sink_mut().recorded = vec![note(50, 3 * PPQ, true), note(50, 3 * PPQ + PPQ / 2, false)];
+    c.frame();
+    transport(&mut c, TransportAction::Stop);
+    let clips = &c.doc().song.tracks[0].lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    let ClipContent::Notes(notes) = &clips[0].content else {
+        panic!("note clip")
+    };
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].key, 50);
+    // No ghost once the take is over.
+    assert!(c.arrangement().take_ghosts().is_empty());
+}
+
+#[test]
+fn stopping_a_take_with_nothing_captured_makes_no_clip() {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    transport(&mut c, TransportAction::ToggleRecord);
+    c.sink_mut().state = TransportState {
+        playing: true,
+        tick: BAR,
+        engine_frame: 1000,
+        ..TransportState::default()
+    };
+    c.frame();
+    transport(&mut c, TransportAction::Stop);
+    assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }

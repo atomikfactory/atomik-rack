@@ -109,7 +109,7 @@ impl Default for UiState {
         Self {
             rack_split: DEFAULT_RACK_SPLIT,
             show_song: true,
-            input_quantize: InputQuantize::Off,
+            input_quantize: InputQuantize::OFF,
             show_console: false,
             console_maximised: false,
             show_console_devices: true,
@@ -242,7 +242,7 @@ mod tests {
         let s = UiState {
             rack_split: 0.3,
             show_song: false,
-            input_quantize: InputQuantize::Eighth,
+            input_quantize: InputQuantize::EIGHTH,
             show_console: true,
             console_maximised: true,
             show_console_devices: false,

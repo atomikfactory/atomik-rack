@@ -51,6 +51,7 @@ use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
 mod audio_edit;
+mod ghost;
 mod heights;
 mod help;
 mod inspector;
@@ -65,6 +66,7 @@ mod takes;
 mod tempo;
 
 pub use audio_edit::AudioMenu;
+pub use ghost::TakeGhost;
 pub use heights::{
     COMPACT_BELOW, MAX_ROW_HEIGHT, MAX_TRACK_ZOOM, MIN_ROW_HEIGHT, MIN_TRACK_ZOOM, TRACK_ZOOM_STEP,
     clamp_track_zoom, scaled_height,
@@ -731,6 +733,8 @@ pub struct ArrangementView {
     next_merge: u64,
     playhead: i64,
     recording: bool,
+    /// The takes in progress, drawn as growing red clips.
+    ghosts: Vec<TakeGhost>,
     /// The automation lanes armed for recording (device, param), fed by the app.
     armed_lanes: BTreeSet<(DeviceKey, String)>,
     focused: bool,
@@ -832,6 +836,7 @@ impl ArrangementView {
             next_merge: MERGE_BASE,
             playhead: 0,
             recording: false,
+            ghosts: Vec::new(),
             armed_lanes: BTreeSet::new(),
             focused: false,
             repaint: true,
@@ -5038,6 +5043,7 @@ impl ArrangementView {
         self.paint_drop_hint(c, doc, tl);
         self.paint_clip_drop_hint(c, doc, tl);
         self.paint_marker_lines(c, tl);
+        self.paint_ghosts(c);
         let col = if self.recording {
             st.record
         } else {

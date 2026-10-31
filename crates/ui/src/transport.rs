@@ -21,8 +21,12 @@ use atomik_model::{Command, MeterEvent, RackDoc, SongCommand, TEMPO_MAX, TEMPO_M
 use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
+mod cluster;
 mod inspector;
+mod readout;
 mod rec_input;
+pub use cluster::{ClusterPart, REPEAT_DELAY, REPEAT_EVERY, repeat_step};
+use cluster::{ClusterState, Readout};
 use inspector::Inspector;
 pub use inspector::{InspClip, InspectorField, InspectorSource};
 use rec_input::RecInputState;
@@ -133,6 +137,10 @@ pub struct TransportState {
     pub auto_lanes: bool,
     /// How many lanes hold a value moved by hand while the song plays (0: no OVERRIDE lamp).
     pub overrides: u8,
+    /// Recorded note starts snap to a grid of this many ticks (Q Rec on); `None` when off.
+    pub quantize: Option<i64>,
+    /// The transport follows an external MIDI clock: the position controls do not repeat.
+    pub following: bool,
 }
 
 /// A transport bar button.
@@ -191,6 +199,12 @@ pub struct TransportBar {
     meter: Vec<MeterEvent>,
     bars: Bars,
     loop_enabled: bool,
+    /// The song's loop range (the locators).
+    loop_range: (i64, i64),
+    /// The metronome level the click slider shows.
+    click_gain: f32,
+    /// The second cluster: wind buttons, locators, click level, Q Rec.
+    cl: ClusterState,
     editing: Option<(String, bool)>,
     /// The tempo event the typed value goes to (fixed when the entry starts).
     edit_event: usize,
@@ -225,6 +239,9 @@ impl TransportBar {
             }],
             bars: Bars::default(),
             loop_enabled: false,
+            loop_range: (0, 0),
+            click_gain: 0.5,
+            cl: ClusterState::new(),
             editing: None,
             edit_event: 0,
             meter_editing: None,
@@ -306,7 +323,10 @@ impl TransportBar {
 
     /// True while a drag on the tempo or the signature is held.
     pub fn is_dragging(&self) -> bool {
-        self.drag.is_some() || self.is_dragging_inspector() || self.is_dragging_rec_input()
+        self.drag.is_some()
+            || self.is_dragging_inspector()
+            || self.is_dragging_rec_input()
+            || self.is_dragging_cluster()
     }
 
     /// Centre of a button.
@@ -363,7 +383,9 @@ impl TransportBar {
             || self.meter != doc.song.meter
             || self.bars != bars
             || self.loop_enabled != doc.song.loop_enabled
+            || self.loop_range != doc.song.loop_range
         {
+            self.loop_range = doc.song.loop_range;
             self.tempo.clone_from(&doc.song.tempo);
             self.meter.clone_from(&doc.song.meter);
             self.bars = bars;
@@ -447,15 +469,20 @@ impl TransportBar {
 
     /// Position (bbt), time, tempo and meter readouts.
     fn lcd_rects(&self) -> [Rect; 4] {
-        let x0 = self.button_rect(TransportButton::Metronome).x1 + 18.0;
+        let x0 = self.button_rect(TransportButton::Metronome).x1 + 8.0;
         let y0 = self.bounds.center().y - 14.0;
         let mut x = x0;
         let mut out = [Rect::ZERO; 4];
         for (i, w) in [124.0, 104.0, 92.0, 46.0].into_iter().enumerate() {
             out[i] = Rect::new(x, y0, x + w, y0 + 28.0);
-            x += w + 8.0;
+            x += w + 6.0;
         }
         out
+    }
+
+    /// The right end of the four readouts.
+    fn lcd_end(&self) -> f64 {
+        self.lcd_rects()[3].x1
     }
 
     /// The OVERRIDE lamp: in the top right corner of the time readout, shown only while some
@@ -648,6 +675,8 @@ impl TransportBar {
                 self.drag_to(pos.y, modifiers.shift, &mut out);
                 self.inspector_drag_to(pos.y, modifiers.shift, &mut out);
                 self.rec_drag_to(pos.y, modifiers.shift, &mut out);
+                self.cluster_drag_to(*pos, &mut out);
+                self.cluster_hover(*pos);
                 let h = BUTTONS
                     .into_iter()
                     .find(|b| self.button_rect(*b).contains(*pos));
@@ -657,6 +686,7 @@ impl TransportBar {
                 }
             }
             UiEvent::PointerLeave => {
+                self.cluster_leave();
                 if self.hover.take().is_some() {
                     self.repaint = true;
                 }
@@ -672,6 +702,9 @@ impl TransportBar {
                 }
                 if self.meter_editing.is_some() {
                     self.commit_meter(&mut out);
+                }
+                if self.cl.edit.is_some() {
+                    self.commit_readout(&mut out);
                 }
                 if self.insp.is_editing() {
                     self.inspector_commit(&mut out);
@@ -691,6 +724,12 @@ impl TransportBar {
                     }));
                 } else if self.override_rect().is_some_and(|r| r.contains(*pos)) {
                     out.push(UiAction::Transport(TransportAction::ClearOverride));
+                } else if let Some(part) = self.cluster_hit(*pos) {
+                    self.cluster_press(part, *pos, *clicks, &mut out);
+                } else if *clicks >= 2
+                    && let Some(which) = self.readout_at(*pos)
+                {
+                    self.begin_readout_edit(which);
                 } else if *clicks >= 2 && self.lcd_rects()[2].contains(*pos) {
                     self.begin_tempo_edit(None);
                 } else if *clicks >= 2 && self.lcd_rects()[3].contains(*pos) {
@@ -716,6 +755,7 @@ impl TransportBar {
                 }
                 self.inspector_release(&mut out);
                 self.rec_release(&mut out);
+                self.cluster_release(&mut out);
             }
             UiEvent::Wheel {
                 delta,
@@ -726,12 +766,15 @@ impl TransportBar {
                 && self.drag.is_none()
                 && !self.insp.is_editing()
                 && !self.is_dragging_inspector()
-                && !self.is_dragging_rec_input() =>
+                && !self.is_dragging_rec_input()
+                && !self.is_dragging_cluster()
+                && self.cl.edit.is_none() =>
             {
                 if let Some(field) = self.field_at(*pos) {
                     self.wheel_field(field, wheel_steps(delta.y), modifiers.shift, &mut out);
                 } else if let Some(part) = self.rec_hit(*pos) {
                     self.rec_wheel(part, wheel_steps(delta.y), modifiers.shift, &mut out);
+                } else if self.cluster_wheel(*pos, wheel_steps(delta.y), &mut out) {
                 } else if let Some(field) = self.inspector_field_at(*pos) {
                     self.inspector_wheel(field, wheel_steps(delta.y), modifiers.shift, &mut out);
                 }
@@ -778,7 +821,9 @@ impl TransportBar {
                 "Time signature: drag or scroll a number, double-click to type",
             ));
         }
-        self.rec_help(pos).or_else(|| self.inspector_help(pos))
+        self.cluster_help(pos)
+            .or_else(|| self.rec_help(pos))
+            .or_else(|| self.inspector_help(pos))
     }
 
     fn button_help(b: TransportButton, rect: Rect) -> Help {
@@ -799,6 +844,10 @@ impl TransportBar {
     }
 
     fn key(&mut self, key: &Key, modifiers: Modifiers, out: &mut Vec<UiAction>) {
+        if self.cl.edit.is_some() {
+            self.readout_key(key, out);
+            return;
+        }
         if self.insp.is_editing() {
             self.inspector_key(key, out);
             return;
@@ -913,6 +962,8 @@ impl TransportBar {
         // While the count-in runs the readout shows its beat; the position holds.
         let bbt = if counting {
             self.state.count_in.to_string()
+        } else if let Some(s) = self.readout_typing(Readout::Pos) {
+            format!("{s}_")
         } else {
             bbt
         };
@@ -944,6 +995,10 @@ impl TransportBar {
                 Align::Center,
             );
         }
+        let time = match self.readout_typing(Readout::Time) {
+            Some(s) => format!("{s}_"),
+            None => time,
+        };
         c.text(
             &TextRun::new(time, pt(time_r.x1 - 8.0, time_r.y1 - 7.0), 12.0, lcd_text)
                 .weight(600)
@@ -990,6 +1045,7 @@ impl TransportBar {
             .weight(600)
             .align(Align::Center),
         );
+        self.paint_cluster(c);
         self.paint_inspector(c, doc);
         self.paint_rec_input(c);
         if self.focused {

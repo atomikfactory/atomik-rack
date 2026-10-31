@@ -47,6 +47,7 @@ use atomik_model::{
     AutomationPoint, Clip, ClipContent, ClipId, ControllerKind, ControllerLane, Curve, DeviceKey,
     Note,
 };
+use atomik_ui::quantize_panel::GRIDS;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,42 +67,82 @@ pub struct RecordedNote {
     pub frame: u64,
 }
 
-/// Input quantize applied to recorded note starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum InputQuantize {
-    /// Notes keep their played position.
-    #[default]
-    Off,
-    /// Starts snap to 1/8 notes.
-    #[serde(rename = "1/8")]
-    Eighth,
-    /// Starts snap to 1/16 notes.
-    #[serde(rename = "1/16")]
-    Sixteenth,
+/// Input quantize applied to recorded note starts: a grid in ticks, or none.
+///
+/// Saved as the grid's name from the quantize panel (`1/8`, `1/16 triplet`, ...) or `off`; the
+/// older `off`, `1/8` and `1/16` values load unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InputQuantize {
+    /// The grid in ticks, `None` when off.
+    pub grid_ticks: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum QuantizeRepr {
+    Name(String),
+    Ticks(i64),
+}
+
+impl Serialize for InputQuantize {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.grid_ticks {
+            None => s.serialize_str("off"),
+            Some(t) => match GRIDS.iter().find(|g| g.1 == t) {
+                Some(g) => s.serialize_str(g.0),
+                None => s.serialize_i64(t),
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for InputQuantize {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match QuantizeRepr::deserialize(d)? {
+            QuantizeRepr::Ticks(t) if t > 0 => Ok(Self::on(t)),
+            QuantizeRepr::Ticks(_) => Ok(Self::OFF),
+            QuantizeRepr::Name(n) => {
+                let n = n.trim().to_ascii_lowercase();
+                if n == "off" {
+                    return Ok(Self::OFF);
+                }
+                GRIDS
+                    .iter()
+                    .find(|g| g.0 == n)
+                    .map(|g| Self::on(g.1))
+                    .ok_or_else(|| serde::de::Error::custom(format!("unknown quantize `{n}`")))
+            }
+        }
+    }
 }
 
 impl InputQuantize {
+    /// Notes keep their played position.
+    pub const OFF: Self = Self { grid_ticks: None };
+    /// Starts snap to 1/8 notes.
+    pub const EIGHTH: Self = Self::on(PPQ / 2);
+    /// Starts snap to 1/16 notes.
+    pub const SIXTEENTH: Self = Self::on(PPQ / 4);
+
+    /// Starts snap to a grid of `ticks` (off when not positive).
+    pub const fn on(ticks: i64) -> Self {
+        Self {
+            grid_ticks: if ticks > 0 { Some(ticks) } else { None },
+        }
+    }
+
     /// The grid in ticks, `None` when off.
     pub fn grid(self) -> Option<i64> {
-        match self {
-            Self::Off => None,
-            Self::Eighth => Some(PPQ / 2),
-            Self::Sixteenth => Some(PPQ / 4),
-        }
+        self.grid_ticks
     }
 
     /// Display label.
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Off => "Off",
-            Self::Eighth => "1/8",
-            Self::Sixteenth => "1/16",
+        match self.grid_ticks {
+            None => "Off",
+            Some(t) => GRIDS.iter().find(|g| g.1 == t).map_or("Custom", |g| g.0),
         }
     }
-
-    /// Every choice, in menu order.
-    pub const ALL: [Self; 3] = [Self::Off, Self::Eighth, Self::Sixteenth];
 }
 
 #[derive(Debug, Default)]
@@ -220,6 +261,26 @@ struct TakeNote {
     velocity: f32,
 }
 
+/// A note of a running take, for display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewNote {
+    /// Song tick the note starts at.
+    pub tick: i64,
+    /// Length in ticks (a held note: up to the playhead).
+    pub length: i64,
+    /// Key.
+    pub key: u8,
+}
+
+/// A running take as shown while recording: where it started and the notes so far.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TakePreview {
+    /// Song tick the take started at, once the transport reported playing.
+    pub start: Option<i64>,
+    /// The captured notes, in time order.
+    pub notes: Vec<PreviewNote>,
+}
+
 /// One recording pass over the armed tracks (module docs).
 #[derive(Debug, Clone)]
 pub struct Take {
@@ -319,6 +380,61 @@ impl Take {
             let pos = position(state, ev.frame);
             self.event(ev.device, ev.kind, pos);
         }
+    }
+
+    /// Drops every note and controller point captured so far (and the notes still held), so the
+    /// take goes on with what is played from now on. The take keeps running and its start
+    /// stays; events still waiting for the transport are dropped too.
+    pub fn discard_notes(&mut self) {
+        self.held.clear();
+        self.notes.clear();
+        self.controllers.clear();
+        self.pending.clear();
+    }
+
+    /// What the take shows while it runs: its start and the notes captured so far, held ones
+    /// ending at `now` (song ticks). Not a clip: nothing here is saved or undoable.
+    pub fn preview(&self, now: i64) -> TakePreview {
+        TakePreview {
+            start: self.origin.map(|o| o.0),
+            notes: self.preview_notes(None, now),
+        }
+    }
+
+    /// The preview of each armed track: its device, the note lane it records to and the notes
+    /// captured on it so far.
+    pub fn track_previews(&self, now: i64) -> Vec<(DeviceKey, usize, Vec<PreviewNote>)> {
+        self.tracks
+            .iter()
+            .map(|(id, key)| {
+                let lane = self.lanes.get(key).copied().unwrap_or(0);
+                (key.clone(), lane, self.preview_notes(Some(*id), now))
+            })
+            .collect()
+    }
+
+    fn preview_notes(&self, only: Option<DeviceInstanceId>, now: i64) -> Vec<PreviewNote> {
+        let wanted = |d: DeviceInstanceId| only.is_none_or(|o| o == d);
+        let mut notes: Vec<PreviewNote> = self
+            .notes
+            .iter()
+            .filter(|((d, _), _)| wanted(*d))
+            .flat_map(|(_, v)| v)
+            .map(|n| PreviewNote {
+                tick: n.tick,
+                length: n.length,
+                key: n.key,
+            })
+            .collect();
+        notes.extend(self.held.iter().filter(|((d, _), _)| wanted(*d)).map(
+            |((_, key), &(_, tick, _))| PreviewNote {
+                tick,
+                length: (now - tick).max(1),
+                key: *key,
+            },
+        ));
+        notes.sort_by_key(|n| (n.tick, n.key));
+        notes
     }
 
     fn lap(&self, loop_count: u64) -> u64 {

@@ -55,6 +55,7 @@ pub mod status;
 pub mod stream_source;
 pub mod stress;
 pub mod surface;
+pub mod tap_tempo;
 pub mod target;
 pub mod translate;
 pub mod ui_state;

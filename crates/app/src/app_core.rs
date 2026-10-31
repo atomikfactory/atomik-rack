@@ -270,6 +270,16 @@ pub struct AppCore<S: EngineSink> {
     /// The length the pre-count toggle returns to (1 to 4).
     pre_count_resume: u8,
     quantize: InputQuantize,
+    /// The seconds of the latest frame (the clock of the taps).
+    now_seconds: f64,
+    /// The merge group of the tempo taps of the sequence in progress.
+    tap_merge: u64,
+    /// The taps of the tap-tempo button.
+    tap: crate::tap_tempo::TapTempo,
+    /// Stop returns the playhead to where playback started (the second Stop goes to the start).
+    return_to_start_on_stop: bool,
+    /// Where playback last started from.
+    last_start: Option<i64>,
     /// What a finished MIDI take does with the clips already on its lane.
     record_mode: RecordMode,
     /// What a note edit does with notes that start past their clip's end.
@@ -497,7 +507,12 @@ impl<S: EngineSink> AppCore<S> {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             pre_count_bars: 0,
             pre_count_resume: 1,
-            quantize: InputQuantize::Off,
+            quantize: InputQuantize::OFF,
+            now_seconds: 0.0,
+            tap_merge: 0,
+            tap: crate::tap_tempo::TapTempo::default(),
+            return_to_start_on_stop: false,
+            last_start: None,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
             warp_imports: crate::import_warp::WarpImports::default(),
@@ -819,6 +834,10 @@ impl<S: EngineSink> AppCore<S> {
                 if !self.learn_swallows_transport(t) {
                     self.transport_action(t);
                 }
+            }
+            UiAction::SetMetronomeGain(gain) => self.set_metronome_gain(gain),
+            UiAction::SetInputQuantize(grid) => {
+                self.set_input_quantize(grid.map_or(InputQuantize::OFF, InputQuantize::on));
             }
             UiAction::Browse(b) => self.browse(b),
             UiAction::Audition { device, key, on } => self.audition(&device, key, on),
@@ -2524,6 +2543,9 @@ impl<S: EngineSink> AppCore<S> {
                 | TransportAction::TogglePlay
                 | TransportAction::ReturnToZero
                 | TransportAction::Locate(_)
+                | TransportAction::Bars(_)
+                | TransportAction::GoLocator(_)
+                | TransportAction::TapTempo
                 | TransportAction::ToggleRecord
         ) && self.sink.sync_status().following
         {
@@ -2540,6 +2562,9 @@ impl<S: EngineSink> AppCore<S> {
             TransportAction::TogglePlay => self.play(),
             TransportAction::ReturnToZero => self.locate(0),
             TransportAction::Locate(tick) => self.locate(tick.max(0)),
+            TransportAction::Bars(bars) => self.locate_bars(bars),
+            TransportAction::GoLocator(right) => self.go_locator(right),
+            TransportAction::TapTempo => self.tap_tempo(),
             TransportAction::ToggleLoop => {
                 let song = &self.doc().song;
                 let command = SongCommand::SetLoop {
@@ -2586,6 +2611,9 @@ impl<S: EngineSink> AppCore<S> {
     /// Starts playback, after `count_in` when there is one (the transport holds its position
     /// while the click counts).
     fn play_from(&mut self, count_in: Option<PreRoll>) {
+        if !self.playing {
+            self.last_start = Some(self.position);
+        }
         // Streamed audio is prefetched only while the engine renders: wait for the read-ahead
         // (a few UI frames), so playback does not start with an underrun.
         if self.sink.stream_primed() {
@@ -2611,6 +2639,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn stop(&mut self) {
+        let was_active = self.playing || self.take.is_some();
         self.pending_play = None;
         self.pending_pre_roll = None;
         let state = self.sink.transport_state();
@@ -2618,6 +2647,13 @@ impl<S: EngineSink> AppCore<S> {
         self.playing = false;
         self.finish_take(&state);
         self.clear_override();
+        if self.return_to_start_on_stop {
+            // Stop goes back to where playback started; a second Stop goes to the start.
+            let target = if was_active { self.last_start } else { Some(0) };
+            if let Some(tick) = target {
+                self.locate(tick);
+            }
+        }
     }
 
     fn locate(&mut self, tick: i64) {
@@ -2743,6 +2779,9 @@ impl<S: EngineSink> AppCore<S> {
         self.piano_roll.set_playing(self.playing);
         self.arrangement.set_playhead(self.position);
         self.arrangement.set_recording(recording);
+        self.arrangement
+            .set_take_ghosts(self.take_preview().unwrap_or_default());
+        self.transport_bar.set_click_gain(self.metronome_gain);
         self.arrangement.set_armed_lanes(&self.autorec.armed);
         self.piano_roll.set_playhead(self.position);
         self.transport_bar.set_state(atomik_ui::TransportState {
@@ -2754,6 +2793,8 @@ impl<S: EngineSink> AppCore<S> {
             count_in: self.sink.transport_state().pre_roll_beat,
             auto_lanes: self.autorec.auto_create,
             overrides: self.autorec.overridden.len().min(usize::from(u8::MAX)) as u8,
+            quantize: self.quantize.grid(),
+            following: self.sink.sync_status().following,
         });
     }
 

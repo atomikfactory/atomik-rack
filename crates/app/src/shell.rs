@@ -1611,6 +1611,8 @@ impl<B: AudioBackend> Shell<B> {
             .set_master_keyboard_mode(self.workflow.master_keyboard);
         self.core.set_follow(self.workflow.follow_song);
         self.core
+            .set_return_to_start_on_stop(self.workflow.return_to_start_on_stop);
+        self.core
             .set_follow_selection(self.workflow.follow_selection);
         self.core
             .view_mut()
@@ -3010,6 +3012,7 @@ impl<B: AudioBackend> Shell<B> {
             }
             if self.core.transport_bar().is_editing_tempo()
                 || self.core.transport_bar().is_editing_meter()
+                || self.core.transport_bar().is_editing_readout()
                 || self.core.transport_bar().is_editing_inspector()
             {
                 self.forward(Pane::Transport, &text_form(event));
@@ -4032,9 +4035,25 @@ impl<B: AudioBackend> Shell<B> {
                 }
                 // The piano roll's QUANT button: the panel's last settings, on the roll.
                 UiAction::Quantize(QuantizeAction::ApplyLast) => {
-                    self.apply_last_quantize(Pane::PianoRoll);
+                    // From the transport bar too: the open roll, else the arrangement's selection.
+                    let pane = if self.core.piano_roll_clip().is_some() {
+                        Pane::PianoRoll
+                    } else {
+                        Pane::Arrangement
+                    };
+                    self.apply_last_quantize(pane);
                 }
                 UiAction::Quantize(QuantizeAction::Options) => self.open_quantize(),
+                // Q Rec on the transport bar: the same choice as the Input Quantize menu.
+                UiAction::SetInputQuantize(grid) => {
+                    let q = grid.map_or(
+                        crate::record::InputQuantize::OFF,
+                        crate::record::InputQuantize::on,
+                    );
+                    self.core.set_input_quantize(q);
+                    self.ui.input_quantize = q;
+                    self.save_ui_state();
+                }
                 UiAction::OpenSampleEditor(_) => self.show_sample_editor(),
                 UiAction::CloseSampleEditor => {
                     if self.focus == Pane::SampleEditor {
@@ -5212,6 +5231,8 @@ impl<B: AudioBackend> Shell<B> {
         if self.core.view_mut().tick(now_seconds) {
             self.repaint = true;
         }
+        self.core.transport_frame(now_seconds);
+        self.save_click_level();
         self.core.plugin_tick(now_seconds);
         self.core.piano_roll_tick(now_seconds);
         self.tick_tooltip(now_seconds);
@@ -5270,6 +5291,21 @@ impl<B: AudioBackend> Shell<B> {
         } else {
             self.core.set_surface(None);
         }
+    }
+
+    /// The click-level slider changed the metronome level: keep it in `settings.json` once the
+    /// pointer lets go of the slider (not on every step of a drag).
+    fn save_click_level(&mut self) {
+        if self.core.transport_bar().is_dragging() {
+            return;
+        }
+        let gain = self.core.metronome_gain();
+        if (gain - self.core.sink().settings().metronome_gain).abs() <= f32::EPSILON {
+            return;
+        }
+        let mut settings = self.core.sink().settings().clone();
+        settings.metronome_gain = gain;
+        self.apply_settings(settings);
     }
 
     fn apply_settings(&mut self, settings: AudioSettings) {
