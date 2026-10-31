@@ -40,6 +40,27 @@ pub fn automation_value_at(points: &[(i64, f32, Curve)], tick: f64) -> f32 {
     }
 }
 
+/// The flattened points of the playing automation lanes of a document, by `(device, param key)`
+/// in song order (see [`RackDoc::automation_curves`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AutomationCurves(Vec<((DeviceKey, String), Vec<(i64, f32, Curve)>)>);
+
+impl AutomationCurves {
+    /// True when no lane plays.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// What each lane gives its param at the fractional song tick `tick`.
+    pub fn values_at(&self, tick: f64) -> ShownValues {
+        let mut out = ShownValues::new();
+        for (key, points) in &self.0 {
+            out.insert(key.clone(), automation_value_at(points, tick));
+        }
+        out
+    }
+}
+
 impl RackDoc {
     /// The params that have an automation lane, by `(device, param key)`, whether or not the
     /// lane has clips or its track plays. What a control marks as automated.
@@ -60,7 +81,15 @@ impl RackDoc {
     /// clips, one of a muted track (or of an unsoloed one while another is soloed) or of a frozen
     /// track, and one on a param a macro bank drives, gives nothing.
     pub fn automation_values_at(&self, tick: f64) -> ShownValues {
-        let mut out = ShownValues::new();
+        self.automation_curves().values_at(tick)
+    }
+
+    /// The flattened points of every playing automation lane (see
+    /// [`Self::automation_values_at`] for which play). They depend on the document alone, so a
+    /// caller that asks for many positions flattens once per document revision and evaluates
+    /// with [`AutomationCurves::values_at`].
+    pub fn automation_curves(&self) -> AutomationCurves {
+        let mut out = Vec::new();
         for track in effective_tracks(&self.song) {
             if track.frozen.is_some() {
                 continue;
@@ -76,13 +105,10 @@ impl RackDoc {
                 if points.is_empty() {
                     continue;
                 }
-                out.insert(
-                    (track.device.clone(), key.clone()),
-                    automation_value_at(&points, tick),
-                );
+                out.push(((track.device.clone(), key.clone()), points));
             }
         }
-        out
+        AutomationCurves(out)
     }
 
     /// The document as the views show it: `shown` replaces the stored value of each param it
