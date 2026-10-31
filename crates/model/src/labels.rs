@@ -5,7 +5,8 @@
 //! drag that merges, a follow-up joined to the step before) keeps the name of the first.
 
 use crate::{
-    Command, ConsoleCommand, ContainerCommand, PluginCommand, SongCommand, WorkflowCommand,
+    Command, ConsoleCommand, ContainerCommand, MetaChange, PluginCommand, SongCommand,
+    WorkflowCommand,
 };
 use std::collections::VecDeque;
 
@@ -78,6 +79,11 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::SetClipContent { .. } => "Edit Clip",
         SongCommand::SplitClip { .. } => "Split Clip",
         SongCommand::DuplicateClip { .. } => "Duplicate Clip",
+        SongCommand::SetClipMeta {
+            name: MetaChange::Keep,
+            ..
+        } => "Colour Clips",
+        SongCommand::SetClipMeta { .. } => "Rename Clip",
         SongCommand::SetTempoMap(_) | SongCommand::DragTempoMap { .. } => "Edit Tempo Map",
         SongCommand::SetMarkers(_) | SongCommand::DragMarkers { .. } => "Edit Markers",
         SongCommand::SetLoop { .. } => "Set Loop",
@@ -153,6 +159,8 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
         WorkflowCommand::RemoveClips { .. } => "Delete Clips",
         WorkflowCommand::SplitClips { .. } => "Split Clips",
         WorkflowCommand::JoinClips { .. } => "Join Clips",
+        WorkflowCommand::ConvertLoop { .. } => "Convert Loop",
+        WorkflowCommand::DuplicateLoopInstance { .. } => "Make Loop Instance Independent",
         WorkflowCommand::TrimClips { .. } => "Trim Clips",
         WorkflowCommand::ReverseClips { .. } => "Reverse Clips",
         WorkflowCommand::ScaleTempo { .. } => "Scale Tempo",

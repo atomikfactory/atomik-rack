@@ -142,6 +142,12 @@ pub(crate) fn reverse_clips(
             }
             ClipContent::Audio(a) => {
                 if a.reverse != to_reverse {
+                    if to_reverse && c.loop_length.is_some() {
+                        return Err(bad(format!(
+                            "clip {} loops and cannot play backwards: convert the loop to separate clips first",
+                            c.id.0
+                        )));
+                    }
                     // A reversed clip cannot be warped or transposed, so reversing a warped
                     // clip switches the warp off (its mode, tempo and markers stay).
                     let mut warp = a.warp.clone();

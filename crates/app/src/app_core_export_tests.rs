@@ -64,6 +64,8 @@ fn core() -> AppCore<RecordingSink> {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content: ClipContent::Notes(
                 vec![Note::new(0, PPQ, 64, 0.8), Note::new(PPQ, PPQ, 67, 0.8)].into(),

@@ -62,6 +62,8 @@ fn synth_doc(notes: Vec<Note>) -> Document {
                 grid: None,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 content: ClipContent::Notes(notes.into()),
             },
         }),

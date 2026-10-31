@@ -144,8 +144,14 @@ pub(super) fn write_clip(w: &mut String, c: &Clip, sep: &str) {
     let loop_length = c.loop_length.map_or("null".to_owned(), |n| n.to_string());
     let _ = write!(
         w,
-        "{sep}\n              {{\n                \"id\": {}, \"start\": {}, \"length\": {}, \"offset\": {}, \"loop_length\": {}, \"muted\": {},\n",
-        c.id.0, c.start, c.length, c.offset, loop_length, c.muted
+        "{sep}\n              {{\n                \"id\": {}, \"start\": {}, \"length\": {}, \"offset\": {}, \"loop_length\": {}, \"muted\": {}{},\n",
+        c.id.0,
+        c.start,
+        c.length,
+        c.offset,
+        loop_length,
+        c.muted,
+        clip_meta_text(c)
     );
     let indent = "                ";
     match &c.content {
@@ -226,4 +232,17 @@ pub(crate) fn list(w: &mut String, indent: &str, items: impl IntoIterator<Item =
             "[]".into()
         }
     );
+}
+
+/// The `, "name": …, "color": …` text a clip adds after its `"muted"` field (empty when it has
+/// neither). Shared by the project and clip file writers.
+pub(crate) fn clip_meta_text(c: &Clip) -> String {
+    let mut out = String::new();
+    if let Some(name) = &c.name {
+        let _ = write!(out, ", \"name\": {}", json_str(name));
+    }
+    if let Some([r, g, b]) = c.color {
+        let _ = write!(out, ", \"color\": \"#{r:02x}{g:02x}{b:02x}\"");
+    }
+    out
 }

@@ -58,6 +58,8 @@ pub fn audio_clip(
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Audio(AudioClipContent {
             asset: asset.to_string(),

@@ -239,6 +239,8 @@ fn the_note_strip_shows_with_the_same_switch_and_edits_two_notes_in_one_undo_ste
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(
                     vec![Note::new(0, PPQ, 60, 0.8), Note::new(PPQ, PPQ, 64, 0.8)].into(),

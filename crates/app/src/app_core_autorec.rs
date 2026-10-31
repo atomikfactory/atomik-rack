@@ -762,6 +762,8 @@ fn automation_clip(start: i64, length: i64, points: Vec<AutomationPoint>) -> Cli
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Automation(points),
     }
 }

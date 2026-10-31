@@ -313,6 +313,8 @@ fn lead_with_a_clip<S: EngineSink>(c: &mut AppCore<S>) {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content: ClipContent::Notes(
                 [(0, 60u8), (PPQ / 2, 64), (PPQ, 67)]

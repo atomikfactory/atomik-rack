@@ -102,6 +102,8 @@ fn audio_take(asset: &str) -> Clip {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Audio(atomik_model::AudioClipContent {
             asset: asset.to_owned(),
             source_offset: 0,
@@ -311,6 +313,8 @@ fn notes_project() -> (Document, [u8; 3]) {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(
             (0..3)
                 .map(|b| Note::new(b * BAR, BAR - PPQ, key, 1.0))

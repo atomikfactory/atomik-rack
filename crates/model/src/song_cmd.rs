@@ -8,8 +8,9 @@ use crate::history::Edit;
 use crate::song::{
     AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN, AUDIO_TRACK_TYPE, AudioClipContent, BEAT_UNITS, Clip,
     ClipContent, ClipId, FadeCurve, GainPoint, Lane, LaneKind, MAX_AUDIO_FRAMES, MAX_BEATS_PER_BAR,
-    MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_LOOP_REPEATS, MAX_MARKER_NAME, MAX_NOTE_LANES,
-    MAX_TICK, Marker, MeterEvent, RangeMarker, SongCommand, TempoEvent, Track,
+    MAX_CLIP_NAME_CHARS, MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_LOOP_REPEATS, MAX_MARKER_NAME,
+    MAX_NOTE_LANES, MAX_TICK, Marker, MetaChange, MeterEvent, RangeMarker, SongCommand, TempoEvent,
+    Track,
 };
 use crate::{
     Cable, DeviceKey, INTERFACE_KEY, ModelError, RackDevice, RackDoc, SocketRef, TEMPO_MAX,
@@ -339,12 +340,20 @@ pub(crate) fn check_envelope(points: &[GainPoint]) -> Result<(), ModelError> {
     Ok(())
 }
 
-/// Audio clips keep their position in ticks only: no content offset, no loop.
-fn check_audio_shape(offset: i64, loop_length: Option<i64>) -> Result<(), ModelError> {
-    if offset != 0 || loop_length.is_some() {
+/// Audio clips keep their position in ticks only: no content offset (its source offset is in its
+/// content). A loop is allowed, but a reversed clip cannot loop.
+pub(crate) fn check_audio_shape(
+    offset: i64,
+    loop_length: Option<i64>,
+    reverse: bool,
+) -> Result<(), ModelError> {
+    if offset != 0 {
         return Err(range(
-            "an audio clip has no content offset and no loop (its source offset is in its content)",
+            "an audio clip has no content offset (its source offset is in its content)",
         ));
+    }
+    if reverse && loop_length.is_some() {
+        return Err(range("a reversed audio clip cannot loop"));
     }
     Ok(())
 }
@@ -635,8 +644,10 @@ pub(crate) fn check_new_clip(
     }
     let controllers = canonical(clip.controllers.clone());
     check_lanes(&controllers, MAX_TICK).map_err(range)?;
-    if kind.is_audio() {
-        check_audio_shape(clip.offset, clip.loop_length)?;
+    if let ClipContent::Audio(a) = &clip.content
+        && kind.is_audio()
+    {
+        check_audio_shape(clip.offset, clip.loop_length, a.reverse)?;
     }
     let content = check_content(doc, clip.content, kind, desc)?;
     let scale = clip.scale.filter(|s| !s.is_chromatic());
@@ -672,7 +683,17 @@ pub(crate) fn split_pair(doc: &RackDoc, c: &Clip, at: i64) -> Result<(Clip, Clip
         length: at - c.start,
         ..c.clone()
     };
-    if let ClipContent::Audio(a) = &c.content {
+    if let (ClipContent::Audio(_), Some(n)) = (&c.content, c.loop_length) {
+        // Every pass of a looped audio clip restarts at the same source frame and carries its
+        // own fades and envelope, so a cut on a pass boundary leaves two looped clips that play
+        // what the one did; a cut inside a pass has no such clip.
+        if (at - c.start).rem_euclid(n) != 0 {
+            return Err(range(format!(
+                "a looped audio clip splits only where a repetition starts (every {n} ticks from the clip start): convert the loop to separate clips first"
+            )));
+        }
+        right.offset = 0;
+    } else if let ClipContent::Audio(a) = &c.content {
         // The right half starts the frames between the two ticks later in the asset
         // (tempo map and document sample rate), at most at the asset end. No fade is
         // invented at the cut: the left half keeps the fade in, the right the fade out.
@@ -748,6 +769,12 @@ fn strip_silence_edit(
     let ClipContent::Audio(a) = &c.content else {
         return Err(bad(format!("clip {} is not an audio clip", id.0)));
     };
+    if c.loop_length.is_some() {
+        return Err(bad(format!(
+            "clip {} loops: convert the loop to separate clips before stripping silence",
+            id.0
+        )));
+    }
     let sr = doc.sample_rate;
     let clip_start = song.frame_at(c.start, sr);
     let clip_frames = song.frame_at(c.end(), sr) - clip_start;
@@ -1183,8 +1210,8 @@ pub(crate) fn plan(
         } => {
             let (device, lane, c) = find_clip(doc, id)?;
             check_geometry(start, length, offset, loop_length).map_err(range)?;
-            if c.content.is_audio() {
-                check_audio_shape(offset, loop_length)?;
+            if let ClipContent::Audio(a) = &c.content {
+                check_audio_shape(offset, loop_length, a.reverse)?;
             }
             Edit::Clip {
                 device,
@@ -1205,6 +1232,9 @@ pub(crate) fn plan(
             let desc = device_descriptor(doc, registry, &device)?;
             let kind = &song.tracks[track_index(doc, &device)?].lanes[lane].kind;
             let content = check_content(doc, content, kind, desc)?;
+            if let ClipContent::Audio(a) = &content {
+                check_audio_shape(c.offset, c.loop_length, a.reverse)?;
+            }
             Edit::Clip {
                 device,
                 lane,
@@ -1271,6 +1301,53 @@ pub(crate) fn plan(
                 }),
             }
         }
+        SongCommand::SetClipMeta { ids, name, color } => {
+            let name = match name {
+                MetaChange::Set(text) => {
+                    let text = text.trim();
+                    if text.chars().count() > MAX_CLIP_NAME_CHARS {
+                        return Err(range(format!(
+                            "a clip name has at most {MAX_CLIP_NAME_CHARS} characters"
+                        )));
+                    }
+                    if text.chars().any(char::is_control) {
+                        return Err(bad("a clip name cannot contain control characters"));
+                    }
+                    // A blank name is no name.
+                    if text.is_empty() {
+                        MetaChange::Clear
+                    } else {
+                        MetaChange::Set(text.to_owned())
+                    }
+                }
+                other => other,
+            };
+            let wanted: std::collections::BTreeSet<ClipId> = ids.iter().copied().collect();
+            if wanted.is_empty() {
+                return Err(bad("no clips are selected"));
+            }
+            let mut edits = Vec::new();
+            for id in &wanted {
+                let (device, lane, c) = find_clip(doc, *id)?;
+                let (new_name, new_color) = (name.apply(&c.name), color.apply(&c.color));
+                if new_name != c.name || new_color != c.color {
+                    edits.push(Edit::Clip {
+                        device,
+                        lane,
+                        old: Some(c.clone()),
+                        new: Some(Clip {
+                            name: new_name,
+                            color: new_color,
+                            ..c.clone()
+                        }),
+                    });
+                }
+            }
+            if edits.is_empty() {
+                return Err(bad("the clips already have that name and colour"));
+            }
+            Edit::Compound(edits)
+        }
         SongCommand::SplitClip { id, at } => {
             let (device, lane, c) = find_clip(doc, id)?;
             let (left, right) = split_pair(doc, c, at)?;
@@ -1330,6 +1407,8 @@ pub(crate) fn plan(
                 grid: None,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 content: ClipContent::Audio(content),
             };
             let (edit, id) = insert_new(doc, device, lane, clip)?;
@@ -1388,7 +1467,8 @@ pub(crate) fn plan(
             if !c.content.is_audio() {
                 return Err(bad(format!("clip {} is not an audio clip", id.0)));
             }
-            check_geometry(start, length, 0, None).map_err(range)?;
+            check_geometry(start, length, 0, c.loop_length).map_err(range)?;
+            check_audio_shape(0, c.loop_length, content.reverse)?;
             check_audio(doc, &content)?;
             Edit::Clip {
                 device,

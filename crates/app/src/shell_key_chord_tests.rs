@@ -61,6 +61,8 @@ fn setup() -> Shell<NullBackend> {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Notes(vec![Note::new(0, PPQ, 60, 0.8)].into()),
     };

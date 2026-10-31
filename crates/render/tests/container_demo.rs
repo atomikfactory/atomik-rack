@@ -286,6 +286,8 @@ pub fn demo_doc() -> RackDoc {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content: ClipContent::Notes(notes.into()),
         },
@@ -306,6 +308,8 @@ pub fn demo_doc() -> RackDoc {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content: ClipContent::Automation(vec![
                 AutomationPoint {
@@ -690,6 +694,8 @@ fn a_macro_automation_lane_equals_lanes_written_on_each_target() {
                     muted: false,
                     scale: None,
                     controllers: Vec::new(),
+                    name: None,
+                    color: None,
                     grid: None,
                     content: ClipContent::Automation(mapped),
                 },

@@ -45,6 +45,8 @@ fn notes_clip(length: i64, notes: Vec<Note>) -> Clip {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Notes(notes.into()),
     }

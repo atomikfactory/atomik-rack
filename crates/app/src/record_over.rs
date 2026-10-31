@@ -250,6 +250,8 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
                         grid: clip.grid,
                         scale: clip.scale,
                         controllers: Vec::new(),
+                        name: None,
+                        color: None,
                         content: ClipContent::Notes(moved.into()),
                     },
                 }),

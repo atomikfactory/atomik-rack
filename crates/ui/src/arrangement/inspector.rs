@@ -9,8 +9,8 @@
 //!   **relative**: the change of the first clip's value is added to every selected clip, each
 //!   clamped to its range (a clip starts at tick zero or later, a length is at least one tick).
 //!   **Match** gives every selected clip the first clip's length, offset and loop.
-//! * An audio clip has no offset and no loop (its source offset lives in its content), so those
-//!   fields leave audio clips alone.
+//! * An audio clip has no loop offset (its source offset lives in its content), so that field
+//!   leaves audio clips alone; its **Loop** length works unless the clip plays backwards.
 //! * One typed value, wheel notch, arrow key or Match is one undo step (one batch); a drag is
 //!   one merge group.
 //!
@@ -88,11 +88,13 @@ impl ClipField {
         }
     }
 
-    /// Offset and loop do not exist on an audio clip.
+    /// An audio clip has no loop offset, and a reversed one cannot loop.
     fn applies(self, c: &Clip) -> bool {
-        match self {
-            ClipField::Position | ClipField::Length => true,
-            ClipField::Offset | ClipField::Loop => !c.content.is_audio(),
+        match (self, &c.content) {
+            (ClipField::Position | ClipField::Length, _) => true,
+            (ClipField::Offset, content) => !content.is_audio(),
+            (ClipField::Loop, ClipContent::Audio(a)) => !a.reverse,
+            (ClipField::Loop, _) => true,
         }
     }
 }
@@ -293,7 +295,8 @@ impl ArrangementView {
             ClipField::Loop => (c.start, c.length, c.offset, (value > 0).then_some(value)),
         };
         Some(Command::Song(match &c.content {
-            ClipContent::Audio(content) => SongCommand::SetAudioClip {
+            // The loop is not part of the audio command: it goes with the geometry.
+            ClipContent::Audio(content) if field != ClipField::Loop => SongCommand::SetAudioClip {
                 id: c.id,
                 start,
                 length,
@@ -705,7 +708,7 @@ impl ArrangementView {
                 "Where in its content the clip starts (note and automation clips; an audio clip keeps its source offset in its content)"
             }
             ClipField::Loop => {
-                "Length of the loop that repeats inside the clip; zero turns the loop off (note and automation clips)"
+                "Length of the loop that repeats inside the clip; zero turns the loop off (an audio clip that plays backwards cannot loop)"
             }
         };
         Some(crate::tooltip::Help::new(r, text))

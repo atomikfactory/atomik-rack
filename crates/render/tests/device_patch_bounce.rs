@@ -64,6 +64,8 @@ fn with_track(d: &mut Document) -> DeviceKey {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(
                     vec![Note::new(0, PPQ, 60, 0.8), Note::new(2 * PPQ, PPQ, 67, 0.6)].into(),

@@ -243,6 +243,8 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Notes(content),
     };

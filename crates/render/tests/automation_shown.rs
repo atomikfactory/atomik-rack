@@ -43,6 +43,8 @@ fn the_overlay_equals_the_lane_value_the_engine_applies() {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Automation(vec![
                     p(0, 300.0, Curve::Linear),
@@ -106,6 +108,8 @@ fn a_static_lane_plays_its_value_around_a_clip_and_a_muted_lane_plays_nothing() 
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Automation(vec![
                     p(0, 900.0, Curve::Step),

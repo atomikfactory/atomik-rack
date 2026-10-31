@@ -411,3 +411,224 @@ fn frame_at_follows_the_tempo_map() {
     d.apply(Command::SetTempo(60.0), &reg).unwrap();
     assert_eq!(d.doc().song.frame_at(PPQ, SR), 2 * BEAT_F);
 }
+
+/// Adds an audio clip of `a` and makes it loop every `lp` ticks.
+fn looped_clip(
+    d: &mut Document,
+    reg: &atomik_device_sdk::Registry,
+    (start, len, lp): (i64, i64, i64),
+    a: AudioClipContent,
+) -> atomik_model::ClipId {
+    d.apply(
+        add_audio_clip_with("audio-track", start, len, a.clone()),
+        reg,
+    )
+    .unwrap();
+    let id = last(d);
+    // The envelope and the warp settings are not part of AddAudioClip.
+    d.apply(
+        sc(SongCommand::SetAudioClip {
+            id,
+            start,
+            length: len,
+            muted: false,
+            content: a,
+            merge: None,
+        }),
+        reg,
+    )
+    .unwrap();
+    d.apply(
+        sc(SongCommand::SetClipGeometry {
+            id,
+            start,
+            length: len,
+            offset: 0,
+            loop_length: Some(lp),
+            muted: false,
+            merge: None,
+        }),
+        reg,
+    )
+    .unwrap();
+    id
+}
+
+#[test]
+fn a_looped_clip_is_one_region_per_repetition_each_with_its_own_fades() {
+    let (reg, mut d) = setup();
+    let a = AudioClipContent {
+        source_offset: 500,
+        fade_in: 100,
+        fade_out: 200,
+        envelope: vec![atomik_model::GainPoint {
+            frame: 10,
+            gain_db: -6.0,
+        }],
+        ..audio(1)
+    };
+    // Three and a half repetitions of one bar.
+    looped_clip(&mut d, &reg, (BAR, 3 * BAR + BAR / 2, BAR), a);
+    let r = flat(&d, "audio-track");
+    assert_eq!(r.len(), 4);
+    for (k, x) in r.iter().enumerate() {
+        let frames = if k == 3 { BAR_F / 2 } else { BAR_F };
+        assert_eq!(x.song_start_frame, BAR_F * (1 + k as u64));
+        assert_eq!(x.frames, frames);
+        // Every repetition restarts the source and measures its fades from its own start.
+        assert_eq!(
+            (x.source_offset, x.clip_pos, x.clip_frames),
+            (500, 0, frames)
+        );
+        assert_eq!((x.fade_in, x.fade_out), (100, 200));
+        assert_eq!(x.envelope.len(), 1);
+        assert_eq!((x.x_in, x.x_out), (0, 0));
+    }
+    // Frame-exact: no frame lost or doubled across the repetitions.
+    let total: u64 = r.iter().map(|x| x.frames).sum();
+    assert_eq!(total, 3 * BAR_F + BAR_F / 2);
+    for w in r.windows(2) {
+        assert_eq!(w[0].song_start_frame + w[0].frames, w[1].song_start_frame);
+    }
+}
+
+#[test]
+fn a_looped_clip_without_a_loop_change_leaves_plain_clips_alone() {
+    // The same clip with and without a loop as long as the clip: the same region.
+    let (reg, mut d) = setup();
+    clip_at(&mut d, &reg, 0, 2 * BAR, 1);
+    let plain = flat(&d, "audio-track");
+    let (reg2, mut d2) = setup();
+    looped_clip(&mut d2, &reg2, (0, 2 * BAR, 2 * BAR), audio(1));
+    assert_eq!(flat(&d2, "audio-track"), plain);
+}
+
+#[test]
+fn a_later_clip_cuts_a_repetition_into_regions_that_keep_its_clock() {
+    let (reg, mut d) = setup();
+    let a = AudioClipContent {
+        source_offset: 1000,
+        fade_in: 24_000,
+        ..audio(1)
+    };
+    looped_clip(&mut d, &reg, (0, 3 * BAR, BAR), a);
+    // The second repetition is covered from its middle to the middle of the third.
+    clip_at(&mut d, &reg, BAR + BAR / 2, BAR, 2);
+    cut_all(&mut d, &reg);
+    let r: Vec<_> = flat(&d, "audio-track")
+        .into_iter()
+        .filter(|x| x.asset == hash(1))
+        .collect();
+    let shape: Vec<_> = r
+        .iter()
+        .map(|x| (x.song_start_frame, x.frames, x.source_offset, x.clip_pos))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (0, BAR_F, 1000, 0),
+            (BAR_F, BAR_F / 2, 1000, 0),
+            (
+                2 * BAR_F + BAR_F / 2,
+                BAR_F / 2,
+                1000 + BAR_F / 2,
+                BAR_F / 2
+            ),
+        ]
+    );
+    assert!(r.iter().all(|x| x.clip_frames == BAR_F));
+}
+
+#[test]
+fn repetitions_follow_the_tempo_map_at_their_own_boundary_ticks() {
+    let (reg, mut d) = setup();
+    d.apply(
+        sc(SongCommand::SetTempoMap(vec![
+            TempoEvent::step(0, 120.0),
+            TempoEvent::step(BAR, 60.0),
+        ])),
+        &reg,
+    )
+    .unwrap();
+    looped_clip(&mut d, &reg, (0, 2 * BAR, BAR), audio(1));
+    let r = flat(&d, "audio-track");
+    // The first bar is at 120 BPM, the second at 60: the repetition is as long as its ticks.
+    assert_eq!(
+        r.iter()
+            .map(|x| (x.song_start_frame, x.frames))
+            .collect::<Vec<_>>(),
+        [(0, BAR_F), (BAR_F, 2 * BAR_F)]
+    );
+    assert_eq!(r[1].clip_frames, 2 * BAR_F);
+}
+
+#[test]
+fn warped_repetitions_carry_their_own_job_and_share_a_key_when_alike() {
+    let (reg, mut d) = setup();
+    let a = AudioClipContent {
+        warp: atomik_model::WarpSettings {
+            enabled: true,
+            source_bpm: 100.0,
+            ..Default::default()
+        },
+        ..audio(1)
+    };
+    looped_clip(&mut d, &reg, (0, 2 * BAR + BAR / 2, BAR), a);
+    let r = flat(&d, "audio-track");
+    assert_eq!(r.len(), 3);
+    let jobs: Vec<_> = r.iter().map(|x| x.warp.clone().expect("warped")).collect();
+    // The job covers one repetition, so the player reads it from frame 0 each time.
+    assert!(r.iter().all(|x| x.clip_pos == 0));
+    assert_eq!(jobs[0].frames, BAR_F);
+    assert_eq!(jobs[0].key(), jobs[1].key());
+    assert_eq!(jobs[2].frames, BAR_F / 2);
+    assert_ne!(jobs[0].key(), jobs[2].key());
+}
+
+#[test]
+fn a_looped_clip_crossfades_only_inside_its_first_repetition() {
+    let (reg, mut d) = setup();
+    // An earlier clip ends half a bar into the looped clip.
+    clip_at(&mut d, &reg, 0, BAR + BAR / 2, 2);
+    looped_clip(&mut d, &reg, (BAR, 3 * BAR, 2 * BAR), audio(1));
+    let r = flat(&d, "audio-track");
+    let xf: Vec<_> = r.iter().filter(|x| x.x_in > 0 || x.x_out > 0).collect();
+    assert_eq!(
+        xf.len(),
+        2,
+        "the tail of the first clip and the fade-in of the loop"
+    );
+    assert_eq!(xf[0].x_out, BAR_F / 2);
+    assert_eq!(xf[1].x_in, BAR_F / 2);
+    // The overlap passes the end of the first repetition: a hard cut instead.
+    let (reg, mut d) = setup();
+    clip_at(&mut d, &reg, 0, BAR + BAR / 2, 2);
+    looped_clip(&mut d, &reg, (BAR, 3 * BAR, BAR / 4), audio(1));
+    assert!(
+        flat(&d, "audio-track")
+            .iter()
+            .all(|x| x.x_in == 0 && x.x_out == 0)
+    );
+}
+
+#[test]
+fn a_thousand_repetitions_are_a_thousand_regions_that_share_one_warp_buffer_key() {
+    let (reg, mut d) = setup();
+    let a = AudioClipContent {
+        warp: atomik_model::WarpSettings {
+            enabled: true,
+            source_bpm: 100.0,
+            ..Default::default()
+        },
+        ..audio(1)
+    };
+    looped_clip(&mut d, &reg, (0, 1000 * PPQ, PPQ), a);
+    let r = flat(&d, "audio-track");
+    assert_eq!(r.len(), 1000);
+    let keys: std::collections::BTreeSet<u64> =
+        r.iter().map(|x| x.warp.as_ref().unwrap().key()).collect();
+    assert_eq!(keys.len(), 1, "alike repetitions render one buffer");
+    for w in r.windows(2) {
+        assert_eq!(w[0].song_start_frame + w[0].frames, w[1].song_start_frame);
+    }
+}

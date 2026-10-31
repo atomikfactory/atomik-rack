@@ -50,6 +50,8 @@ fn project(inserts: &[&str]) -> Document {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, 2 * BAR, 57, 0.8)].into()),
             },

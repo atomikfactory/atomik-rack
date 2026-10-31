@@ -707,6 +707,8 @@ impl MidiTrack {
             offset: 0,
             loop_length: None,
             muted: false,
+            name: None,
+            color: None,
             grid: None,
             scale: None,
             controllers: self.controllers,

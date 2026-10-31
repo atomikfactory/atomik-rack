@@ -4,6 +4,7 @@
 //! { "format": "atomik-clip", "version": 1, "ppq": 15360,
 //!   "tempo_bpm": 120.0, "meter": {"num": 4, "den": 4},
 //!   "clip": { "length": 61440, "offset": 0, "loop_length": null, "muted": false,
+//!             "name": "Verse", "color": "#aa3366",
 //!             "notes": [[tick, length, key, velocity], [tick, length, key, velocity, true] …],
 //!             "grid": {…}, "scale": {…}, "controllers": […] } }
 //! ```
@@ -21,7 +22,8 @@
 
 use crate::patch::{JsonPath, array, f64_text, number, object, string, uint};
 use crate::project::{
-    clip_span, flag, load_controllers, load_grid, load_notes, load_scale, write_note_clip_tail,
+    clip_meta_text, clip_span, flag, load_clip_meta, load_controllers, load_grid, load_notes,
+    load_scale, write_note_clip_tail,
 };
 use crate::song::{Clip, ClipContent, ClipId};
 use crate::song_cmd::check_meter;
@@ -43,6 +45,8 @@ const CLIP_FIELDS: &[&str] = &[
     "offset",
     "loop_length",
     "muted",
+    "name",
+    "color",
     "grid",
     "scale",
     "controllers",
@@ -84,8 +88,11 @@ pub fn save_clip_file(file: &ClipFile) -> Result<String, ModelError> {
     let _ = writeln!(w, "  \"clip\": {{");
     let _ = writeln!(
         w,
-        "    \"length\": {}, \"offset\": {}, \"loop_length\": {loop_length}, \"muted\": {},",
-        c.length, c.offset, c.muted
+        "    \"length\": {}, \"offset\": {}, \"loop_length\": {loop_length}, \"muted\": {}{},",
+        c.length,
+        c.offset,
+        c.muted,
+        clip_meta_text(c)
     );
     write_note_clip_tail(&mut w, c, notes, "    ");
     let _ = writeln!(w, "\n  }}\n}}");
@@ -165,6 +172,7 @@ fn load_clip_body(v: &Value, path: &JsonPath) -> Result<Clip, ModelError> {
     let obj = object(v, path, CLIP_FIELDS, CLIP_REQUIRED)?;
     let (length, offset, loop_length) = clip_span(obj, path)?;
     let muted = flag(obj, path, "muted")?;
+    let (name, color) = load_clip_meta(obj, path)?;
     let notes_path = path.field("notes");
     let notes = load_notes(array(&obj["notes"], &notes_path)?, &notes_path, 30)?;
     Ok(Clip {
@@ -174,6 +182,8 @@ fn load_clip_body(v: &Value, path: &JsonPath) -> Result<Clip, ModelError> {
         offset,
         loop_length,
         muted,
+        name,
+        color,
         grid: match obj.get("grid") {
             Some(g) => Some(load_grid(g, &path.field("grid"))?),
             None => None,
@@ -208,6 +218,8 @@ mod tests {
             grid: None,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             content: ClipContent::Notes(notes.into()),
         }
     }

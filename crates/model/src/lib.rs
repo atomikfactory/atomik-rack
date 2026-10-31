@@ -36,6 +36,7 @@ mod history;
 mod history_size;
 mod labels;
 mod library_io;
+mod loop_convert;
 mod macros;
 mod macros_io;
 mod midi_import;
@@ -97,6 +98,7 @@ pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
     ticks_for_frames, track_chain,
 };
+pub use loop_convert::LoopConvert;
 pub use macros::{
     MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MacroAssign, MacroCommand, MacroName, MacroSet,
     assign_position, assign_value, expand_bank_lane, macro_index_of, macro_key,
@@ -181,10 +183,11 @@ pub use slice_edit::SliceError;
 pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
-    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_GAIN_POINTS,
-    MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK, MAX_TRACK_HEIGHT,
-    MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, NoteList, RangeMarker, Song, SongCommand, StepGrid,
-    StepResolution, TempoEvent, Track, empty_song,
+    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_CLIP_NAME_CHARS,
+    MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK,
+    MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MetaChange, MeterEvent, Note, NoteList,
+    RangeMarker, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track, clip_name_ok,
+    empty_song,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -1649,6 +1652,7 @@ impl Document {
                                 SongCommand::AddTrack { .. }
                                     | SongCommand::AddClip { .. }
                                     | SongCommand::SetClipGrid { .. }
+                                    | SongCommand::SetClipMeta { .. }
                                     | SongCommand::SetClipControllers { .. }
                                     | SongCommand::SetTrackFlags { .. }
                                     | SongCommand::SetClipGeometry { .. }
@@ -1667,7 +1671,7 @@ impl Document {
                             )
                     ) {
                         return Err(ModelError::BadBatch(format!(
-                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
+                            "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipMeta, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetColor, SetGroupCollapsed, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
                         )));
                     }
                     let (edit, clip) = Self::plan(&scratch, command, registry)?;

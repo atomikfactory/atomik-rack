@@ -911,6 +911,8 @@ fn a_detached_rack_repaints_when_the_automation_moves_a_control() {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Automation(
                     [(0, 300.0), (bar, 3000.0)]

@@ -97,6 +97,8 @@ fn project(dir: &Path) -> (String, u64) {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, 3_840, 60, 0.8)].into()),
             },

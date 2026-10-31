@@ -91,6 +91,8 @@ fn core() -> AppCore<OfflineSink> {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(notes),
             },
