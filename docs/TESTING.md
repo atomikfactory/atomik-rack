@@ -1382,6 +1382,18 @@ the panel through `session_command`; `crates/render/tests/groove.rs` bounces swu
 humanized songs (closed-form onset frames, the same bytes as hand-placed notes, any block and any
 worker count).
 
+Checks of the plugin sandbox that need a real plugin and a real kill, by hand:
+
+- Open the PARAMS pane of a plugin while it loads a large sample or rebuilds its editor: the plugin
+  stays alive, the pane keeps its last texts, and a warning in the plugin log says it is slow.
+- Kill the app from the task manager (or `kill -9`) with several plugins loaded: no
+  `atomik-plugin-host` process remains within five seconds, on Windows, Linux and macOS.
+- Close a project that holds forty plugins, a few of them slow to quit: the window comes back in
+  seconds, not a minute.
+- Play a project whose plugin you then freeze in a debugger for several seconds: the plugin turns
+  CRASHED with a reason that says it stopped answering, then comes back by itself with its last
+  state; a bounce of the same project is not affected.
+
 ## Autosave and crash recovery
 
 `crates/app/src/recovery_tests.rs` covers the plumbing: a torn write leaves the original file (and

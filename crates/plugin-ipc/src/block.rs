@@ -64,11 +64,16 @@ impl std::fmt::Debug for SharedBlock {
 }
 
 impl SharedBlock {
-    /// Parent: creates (or truncates) the file, sizes it, maps it, and writes the magic and
-    /// the version. The rest of the block is zero.
+    /// Parent: creates the file (it must not exist: `O_EXCL`, mode `0600` on Unix), sizes it,
+    /// maps it, and writes the magic and the version. The rest of the block is zero.
     pub fn create(path: &Path) -> io::Result<Self> {
         let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(true);
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::fs::OpenOptionsExt;
@@ -257,9 +262,66 @@ fn writable(dir: &Path) -> bool {
 }
 
 /// The file name of the block of one instance: the parent's pid keeps two apps apart, the
-/// instance number two plugins of one app.
+/// instance number two plugins of one app, and a random suffix makes the name impossible to
+/// guess (the file is also created exclusively, so a planted file or link is refused).
 pub fn block_file_name(parent_pid: u32, instance: u64) -> String {
-    format!("atomik-sandbox-{parent_pid}-{instance}.blk")
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(parent_pid);
+    hasher.write_u64(instance);
+    format!(
+        "atomik-sandbox-{parent_pid}-{instance}-{:016x}.blk",
+        hasher.finish()
+    )
+}
+
+/// The pid in the name of a block file made by [`block_file_name`].
+#[cfg_attr(not(unix), allow(dead_code))]
+fn block_file_owner(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("atomik-sandbox-")?;
+    if !name.ends_with(".blk") {
+        return None;
+    }
+    rest.split('-').next()?.parse().ok()
+}
+
+/// Removes the block files of apps that are no longer running (a crash leaves its files in
+/// `dir` on Unix; Windows removes them by itself). Returns how many were removed. Files of a
+/// live process, and files that are not block files, are left alone.
+pub fn sweep_stale_blocks(dir: &Path) -> usize {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(pid) = name.to_str().and_then(block_file_owner) else {
+                continue;
+            };
+            if !process_alive(pid) && std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        0
+    }
+}
+
+/// True when the process `pid` exists.
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: signal 0 only checks that the process exists.
+    let r = unsafe { libc::kill(pid, 0) };
+    r == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
 #[cfg(test)]
@@ -386,5 +448,54 @@ mod tests {
     #[test]
     fn the_default_block_dir_exists() {
         assert!(default_block_dir().is_dir());
+    }
+
+    #[test]
+    fn the_file_name_cannot_be_guessed_from_the_pid_and_the_instance() {
+        let a = block_file_name(1234, 56);
+        let b = block_file_name(1234, 56);
+        assert_ne!(a, b, "two names for the same instance differ");
+        assert_eq!(block_file_owner(&a), Some(1234));
+        assert_eq!(block_file_owner("atomik-sandbox-x-1.blk"), None);
+        assert_eq!(block_file_owner("atomik-sandbox-12-1.txt"), None);
+        assert_eq!(block_file_owner("other-12-1.blk"), None);
+    }
+
+    #[test]
+    fn a_path_that_exists_is_refused_and_left_untouched() {
+        let path = temp_path("exclusive");
+        std::fs::write(&path, b"planted").unwrap();
+        let err = SharedBlock::create(&path).err().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).unwrap(), b"planted");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_block_file_is_private_to_its_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_path("mode");
+        let block = SharedBlock::create(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+        drop(block);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_removes_the_files_of_dead_processes_and_only_those() {
+        let dir = std::env::temp_dir().join(format!("atomik-sweep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A pid that cannot be alive: above the kernel's limit.
+        let dead = dir.join("atomik-sandbox-2147483646-1-00ff.blk");
+        let live = dir.join(block_file_name(std::process::id(), 1));
+        let other = dir.join("notes.txt");
+        for p in [&dead, &live, &other] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        assert_eq!(sweep_stale_blocks(&dir), 1);
+        assert!(!dead.exists() && live.exists() && other.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -314,3 +314,60 @@ fn a_plugin_without_an_editor_asks_for_no_window_and_no_external_open() {
     assert_eq!(core.take_plugin_window_requests(), vec![]);
     assert!(core.last_rejection().is_some());
 }
+
+// ------------------------------------------------------------------ a hung plugin
+
+/// What the manager posts when the app ended a process that stopped answering audio.
+fn hang(core: &mut AppCore<OfflineSink>, device: &DeviceKey) {
+    post(
+        core,
+        device,
+        PluginMessage::ProcessExited {
+            reason: format!("{} and was stopped", atomik_plugin_host::HUNG),
+        },
+    );
+    core.frame();
+}
+
+#[test]
+fn a_hung_plugin_is_reloaded_by_itself_from_its_last_state() {
+    let (mut core, stats, dev) = lost_core();
+    let before = core.plugin_instance(&dev).unwrap();
+    stats.set_lost(true);
+    hang(&mut core, &dev);
+    core.wait_plugins();
+    assert_eq!(stats.created(), 2, "a new instance was asked for");
+    assert_ne!(core.plugin_instance(&dev), Some(before));
+}
+
+#[test]
+fn a_plugin_that_keeps_hanging_is_left_crashed_after_two_reloads_until_the_user_decides() {
+    let (mut core, stats, dev) = lost_core();
+    stats.set_lost(true);
+    for _ in 0..4 {
+        hang(&mut core, &dev);
+        core.wait_plugins();
+    }
+    assert_eq!(stats.created(), 3, "the original and two reloads");
+    assert!(
+        core.plugin_crash(&dev)
+            .is_some_and(|r| r.contains("answering"))
+    );
+    core.handle_action(UiAction::ReloadPlugin {
+        device: dev.clone(),
+    });
+    core.wait_plugins();
+    assert_eq!(stats.created(), 4, "RELOAD still works");
+    hang(&mut core, &dev);
+    core.wait_plugins();
+    assert_eq!(stats.created(), 5, "and the count starts again");
+}
+
+#[test]
+fn a_plugin_that_ended_for_another_reason_is_not_reloaded_by_itself() {
+    let (mut core, stats, dev) = lost_core();
+    lose(&mut core, &stats, &dev, "exited with code 3");
+    core.wait_plugins();
+    assert_eq!(stats.created(), 1);
+    assert!(core.plugin_crash(&dev).is_some());
+}

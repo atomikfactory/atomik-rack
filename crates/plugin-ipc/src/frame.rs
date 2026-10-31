@@ -68,12 +68,25 @@ pub fn write_frame(
 /// `UnexpectedEof` (at a frame boundary that is the peer closing the channel); a frame over
 /// [`MAX_FRAME_BYTES`], malformed JSON or JSON that is not a `T` is `InvalidData`.
 pub fn read_frame<T: DeserializeOwned>(r: &mut impl Read) -> io::Result<(T, Option<Vec<u8>>)> {
+    read_frame_with(r, MAX_FRAME_BYTES, |_| MAX_FRAME_BYTES)
+}
+
+/// Reads one frame with tighter limits: the JSON may be at most `json_limit` bytes, and
+/// `blob_limit` says, from the decoded message, how long its blob may be (0: none). Both are
+/// checked before the bytes are allocated, so a hostile peer cannot make the reader grow past
+/// what its message kind may carry.
+pub fn read_frame_with<T: DeserializeOwned>(
+    r: &mut impl Read,
+    json_limit: usize,
+    blob_limit: impl FnOnce(&T) -> usize,
+) -> io::Result<(T, Option<Vec<u8>>)> {
+    let json_limit = json_limit.min(MAX_FRAME_BYTES);
     let mut len = [0u8; 4];
     r.read_exact(&mut len)?;
     let len = u32::from_le_bytes(len) as usize;
-    if len > MAX_FRAME_BYTES {
+    if len > json_limit {
         return Err(invalid_data(format!(
-            "a frame of {len} bytes is over the limit of {MAX_FRAME_BYTES}"
+            "a frame of {len} bytes is over the limit of {json_limit}"
         )));
     }
     let mut json = vec![0u8; len];
@@ -88,16 +101,21 @@ pub fn read_frame<T: DeserializeOwned>(r: &mut impl Read) -> io::Result<(T, Opti
         ),
         _ => None,
     };
+    if blob_len.is_some()
+        && let Some(object) = value.as_object_mut()
+    {
+        object.remove("blob");
+    }
+    let msg: T =
+        serde_json::from_value(value).map_err(|e| invalid_data(format!("bad frame: {e}")))?;
     let blob = match blob_len {
         None => None,
         Some(n) => {
-            if n > MAX_FRAME_BYTES as u64 {
+            let limit = blob_limit(&msg).min(MAX_FRAME_BYTES);
+            if n > limit as u64 {
                 return Err(invalid_data(format!(
-                    "a frame blob of {n} bytes is over the limit of {MAX_FRAME_BYTES}"
+                    "a frame blob of {n} bytes is over the limit of {limit}"
                 )));
-            }
-            if let Some(object) = value.as_object_mut() {
-                object.remove("blob");
             }
             // `take` grows the buffer as bytes arrive, so a lying length cannot make us
             // allocate the whole limit for a stream that ends early.
@@ -112,7 +130,6 @@ pub fn read_frame<T: DeserializeOwned>(r: &mut impl Read) -> io::Result<(T, Opti
             Some(buf)
         }
     };
-    let msg = serde_json::from_value(value).map_err(|e| invalid_data(format!("bad frame: {e}")))?;
     Ok((msg, blob))
 }
 
@@ -267,5 +284,36 @@ mod tests {
         let (m, blob): (Msg, _) = read_frame(&mut Cursor::new(bytes)).unwrap();
         assert_eq!(m.id, 1);
         assert_eq!(blob, None);
+    }
+
+    #[test]
+    fn a_json_over_the_tighter_limit_is_refused_before_it_is_read() {
+        let bytes = write(&msg(1), None);
+        let len = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        let err =
+            read_frame_with::<Msg>(&mut Cursor::new(bytes.clone()), len - 1, |_| 0).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        // Only the four length bytes were needed to refuse it.
+        let mut r = Cursor::new(bytes);
+        let _ = read_frame_with::<Msg>(&mut r, len - 1, |_| 0);
+        assert_eq!(r.position(), 4);
+        let (ok, _) =
+            read_frame_with::<Msg>(&mut Cursor::new(write(&msg(1), None)), len, |_| 0).unwrap();
+        assert_eq!(ok, msg(1));
+    }
+
+    #[test]
+    fn the_blob_limit_comes_from_the_message_and_is_checked_before_the_blob_is_read() {
+        let bytes = write(&msg(1), Some(&[0u8; 100]));
+        let mut r = Cursor::new(bytes.clone());
+        let err =
+            read_frame_with::<Msg>(&mut r, 1 << 20, |m| usize::from(m.id == 2) * 1000).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(
+            (r.position() as usize) < bytes.len() - 99,
+            "the blob was not read"
+        );
+        let (_, blob) = read_frame_with::<Msg>(&mut Cursor::new(bytes), 1 << 20, |_| 100).unwrap();
+        assert_eq!(blob.map(|b| b.len()), Some(100));
     }
 }

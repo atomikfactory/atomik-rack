@@ -3037,8 +3037,13 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     `HostMessenger` on a reader thread. The child sends every pending notification before each
     reply, and a bounce asks for a `Flush` after every batch, so a callback reaches the host before
     the next batch exactly as in process (a bounce counts in batches, never in time). Main-thread
-    calls have timeouts (10 s create, activate and state; 2 s otherwise; 250 ms param text); a
-    timeout kills the child. The child takes a private handle to its real stdout for frames and
+    calls have timeouts. The ones that matter (10 s create, activate and state; 2 s deactivate and
+    flush) kill the child when they are not answered. The cosmetic ones (param text, default pins,
+    layout changes, closing the editor; 250 ms) only drop the request: the last text stays up, the
+    instance counts as slow after three misses in a row and is then asked once a second (a
+    warning says so), and the child is stopped after twelve. A reply that comes late is ignored,
+    except a layout change, which the child says only once and the instance keeps. The child
+    takes a private handle to its real stdout for frames and
     points its stdout at stderr (`take_frame_stdout`), so a plugin that prints cannot corrupt the
     stream.
   - *Audio.* One shared block per instance (a mapped file of 50 944 bytes: header, one request area,
@@ -3057,6 +3062,25 @@ take the app down; Settings > Plugins can switch back to running plugins inside 
     emits `ManagerEvent::Crashed`. A lost instance fails every call at once; `restart` and `reload`
     refuse it, and the app's RELOAD creates a new instance from the document's last captured state
     and the rack's params.
+  - *Supervision.* A child never outlives the app. On Windows it joins a job object that ends
+    its processes when the app's last handle to the job closes, whatever ends the app; every
+    child also runs a watchdog thread that ends it a second after its parent's process is gone,
+    and three seconds after the control channel closes, even when its main thread is stuck inside
+    a plugin call (a stuck child is how an orphan used to survive). Live, `RemoteProcessor` counts
+    late batches in a row (plain integers on the audio thread, no lock): after three seconds' worth
+    the block is marked dead and the main thread ends the process with a reason that begins `HUNG`;
+    the app reloads such a plugin from its last captured state, twice in a row, then leaves it
+    CRASHED for the user (a bounce never counts: it waits for the watchdog). When instances are
+    dropped (closing a project, quitting) the manager asks every child to end first and waits for
+    them on one shared deadline, so slow children cost one second together, not each. Everything a
+    child sends is bounded before it is allocated: replies and notifications at 1 MiB of JSON,
+    blobs only on the state, log lines at 4 KiB and editor sizes at 16 384 pixels (others are
+    refused and counted). A burst of parameter edits reaches the app as the last value per
+    parameter, in order with the gesture's begin and end. The block file has a random name, is
+    created exclusively with mode `0600` on Unix, and files of apps that crashed are swept at the
+    next start. The scanner's output is read to its end whatever its length, and over the cap the
+    scan fails at once as too large. A hostile app process that shares the user account is out of
+    scope: the block is validated by the child, not protected from its own parent.
   - *Editors.* A sandboxed instance has an `EditorKind::External` editor: the child opens a
     top-level window, owned by the app's main window on Windows, and reports `GuiClosed`. The app
     creates no window for it.

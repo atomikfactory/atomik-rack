@@ -1,5 +1,5 @@
-//! RPC: replies are routed by id, errors keep their kind, and a call that is not answered in
-//! time kills the child.
+//! RPC: replies are routed by id, errors keep their kind, and a call that matters that is not
+//! answered in time kills the child.
 
 use super::*;
 use crate::clock::now;
@@ -260,7 +260,7 @@ fn a_sixteen_mebibyte_state_round_trips() {
 // ----- timeouts ---------------------------------------------------------------------------------
 
 #[test]
-fn param_text_that_is_not_answered_kills_the_child_and_loses_the_instance() {
+fn param_text_that_is_not_answered_does_not_kill_the_child() {
     let mut r = rig(FakeOptions::default()
         .script(|req, _| matches!(req, ToChild::ParamText { .. }).then_some(Action::Silent)));
     let started = now();
@@ -268,17 +268,8 @@ fn param_text_that_is_not_answered_kills_the_child_and_loses_the_instance() {
     let took = now().saturating_duration_since(started);
     assert!(took >= test_timeouts().text, "{took:?}");
     assert!(took < Duration::from_secs(3), "{took:?}");
-    assert!(r.instance.is_lost());
-    assert!(r.fake.ctl.was_killed());
-    let reason = loop {
-        if let PluginMessage::ProcessExited { reason } = next_message(&r.manager) {
-            break reason;
-        }
-    };
-    assert!(reason.contains("did not answer ParamText"), "{reason}");
-    eventually("the child to be counted gone", || {
-        r.live.load(Ordering::SeqCst) == 0
-    });
+    assert!(!r.instance.is_lost());
+    assert!(!r.fake.ctl.was_killed());
 }
 
 #[test]
@@ -334,18 +325,23 @@ fn the_other_calls_use_the_call_timeout() {
     timeouts.call = Duration::from_millis(150);
     let started = start_with(
         FakeOptions::default()
-            .script(|req, _| matches!(req, ToChild::DefaultPins { .. }).then_some(Action::Silent)),
+            .script(|req, _| matches!(req, ToChild::Deactivate { .. }).then_some(Action::Silent)),
         timeouts,
     );
     let mut instance = started.instance.map_err(|e| e.to_string()).unwrap();
+    let processor = instance
+        .activate(&cfg(48_000.0, RunMode::Realtime))
+        .map_err(|e| e.to_string())
+        .unwrap();
     let t = now();
-    assert!(instance.default_pins().is_empty());
+    instance.deactivate(processor);
     let took = now().saturating_duration_since(t);
     assert!(
         took >= Duration::from_millis(150) && took < Duration::from_secs(3),
         "{took:?}"
     );
     assert!(instance.is_lost());
+    assert!(started.fake.ctl.was_killed());
 }
 
 #[test]

@@ -5,6 +5,7 @@
 use crate::control::{Control, Event};
 use crate::editor::{NewWindow, WindowSystem};
 use atomik_plugin_host::NativeParent;
+use atomik_plugin_ipc::lifetime::exit_after;
 use atomik_plugin_ipc::{ToChild, read_frame};
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -14,6 +15,10 @@ use std::time::Duration;
 
 /// How often the plugin is polled and its messages are forwarded.
 pub const TICK: Duration = Duration::from_millis(16);
+
+/// How long the main thread has to end the process after the control channel closed, before a
+/// watchdog thread ends it anyway.
+pub const EOF_GRACE: Duration = Duration::from_secs(3);
 
 /// Where the helper threads deliver events.
 pub trait Post: Clone + Send + 'static {
@@ -45,6 +50,9 @@ pub fn spawn_reader<P: Post>(post: P) {
                             eprintln!("atomik-plugin-host: the control channel broke: {e}");
                         }
                         post.post(Event::Eof);
+                        // The main thread ends the process on `Eof`; when it is stuck inside a
+                        // plugin call it cannot, and this does.
+                        exit_after(EOF_GRACE);
                         return;
                     }
                 }

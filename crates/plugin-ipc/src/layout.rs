@@ -41,6 +41,13 @@ pub const MAX_EVENTS_IN: usize = 1024;
 pub const MAX_EVENTS_OUT: usize = 512;
 /// Largest control-channel frame (the JSON, and separately the blob), in bytes.
 pub const MAX_FRAME_BYTES: usize = 64 << 20;
+/// Largest JSON of a message from the child: replies and notifications are small; only the
+/// state travels as a blob, beside its JSON.
+pub const MAX_REPLY_JSON_BYTES: usize = 1 << 20;
+/// Longest log line the parent accepts from the child, in bytes.
+pub const MAX_LOG_BYTES: usize = 4096;
+/// Largest editor width or height the parent accepts from the child, in pixels.
+pub const MAX_GUI_DIMENSION: u32 = 16_384;
 /// Size of the shared block, in bytes.
 pub const BLOCK_SIZE: usize = size_of::<Block>();
 

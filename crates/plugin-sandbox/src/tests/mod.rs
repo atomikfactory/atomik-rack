@@ -3,6 +3,7 @@
 mod lost;
 mod no_alloc;
 mod notifications;
+mod policy;
 mod processor;
 mod rpc;
 mod supervision;

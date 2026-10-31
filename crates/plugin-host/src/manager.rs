@@ -32,6 +32,10 @@ use std::collections::BTreeMap;
 /// The error text of a call on an instance whose process is gone.
 pub const LOST: &str = "the plugin process stopped";
 
+/// How the reason of a plugin process that stopped answering audio batches begins (the app
+/// reloads such a plugin from its last captured state).
+pub const HUNG: &str = "the plugin process stopped answering audio batches";
+
 /// What to create.
 #[derive(Debug, Clone)]
 pub struct InstantiateRequest {
@@ -226,8 +230,11 @@ impl PluginManager {
     /// A manager with no backends.
     pub fn new() -> Self {
         Self {
+            backends: Vec::new(),
+            instances: BTreeMap::new(),
+            reaper: ReaperQueue::default(),
+            queued: Vec::new(),
             next_id: 1,
-            ..Self::default()
         }
     }
 
@@ -655,9 +662,13 @@ impl PluginManager {
             let entry = left.entry(item.slot.id()).or_default();
             entry.extend(item.processor);
         }
+        // The instances that end now are shut down together, so that a project with dozens of
+        // plugins does not wait for its slow ones one after the other.
+        let mut doomed = Vec::new();
         for (id, processors) in left {
-            self.reap(id, processors, &mut events);
+            self.reap(id, processors, &mut events, &mut doomed);
         }
+        shut_down_together(doomed);
         let ids: Vec<InstanceId> = self.instances.keys().copied().collect();
         for id in ids {
             self.poll_one(id, &mut events);
@@ -670,6 +681,7 @@ impl PluginManager {
         id: InstanceId,
         mut processors: Vec<Box<dyn PluginProcessor>>,
         events: &mut Vec<ManagerEvent>,
+        doomed: &mut Vec<Managed>,
     ) {
         let Some(m) = self.instances.get_mut(&id) else {
             return;
@@ -687,7 +699,7 @@ impl PluginManager {
             m.phase = Phase::Inactive;
             return;
         }
-        self.instances.remove(&id);
+        doomed.extend(self.instances.remove(&id));
         events.push(ManagerEvent::Destroyed(id));
     }
 
@@ -759,6 +771,21 @@ impl PluginManager {
             m.instance.deactivate(processor);
             Self::activate_and_resume(id, m, events);
         }
+    }
+}
+
+/// Starts the end of every instance, then drops them: whatever each one waits for (a child
+/// process that must exit) is waited for once, on a shared deadline.
+fn shut_down_together(mut doomed: Vec<Managed>) {
+    for m in &mut doomed {
+        m.instance.begin_shutdown();
+    }
+    drop(doomed);
+}
+
+impl Drop for PluginManager {
+    fn drop(&mut self) {
+        shut_down_together(std::mem::take(&mut self.instances).into_values().collect());
     }
 }
 

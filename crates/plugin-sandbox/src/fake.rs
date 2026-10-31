@@ -32,6 +32,9 @@ pub(crate) enum Action {
     Reply(Vec<(FromChild, Option<Vec<u8>>)>),
     /// Never answer: the child hangs until it is killed.
     Silent,
+    /// Answer with these frames after this long: a plugin that is busy, not hung. The fake
+    /// serves no other request meanwhile.
+    Delayed(Duration, Vec<(FromChild, Option<Vec<u8>>)>),
     /// The process ends with this exit description.
     Exit(String),
 }
@@ -304,6 +307,18 @@ fn run_control(ctl: &Control, mut stdin: PipeReader, mut script: Script, protoco
                 }
                 return;
             }
+            Action::Delayed(delay, frames) => {
+                let until = crate::clock::now() + delay;
+                while crate::clock::now() < until {
+                    if ctl.killed.load(Ordering::SeqCst) || ctl.stop.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                for (msg, blob) in frames {
+                    ctl.send(&msg, blob.as_deref());
+                }
+            }
             Action::Exit(description) => {
                 ctl.exit(&description);
                 return;
@@ -437,6 +452,8 @@ pub(crate) fn test_timeouts() -> Timeouts {
         call: Duration::from_millis(600),
         text: Duration::from_millis(200),
         watchdog: Duration::from_millis(400),
+        hung: Duration::ZERO,
+        slow_retry: Duration::from_millis(20),
         bounce: false,
     }
 }

@@ -2,7 +2,19 @@
 //! parent: one notification frame per message, in the order the plugin posted them.
 
 use atomik_plugin_host::PluginMessage;
-use atomik_plugin_ipc::{FromChild, WireLevel};
+use atomik_plugin_ipc::{FromChild, MAX_LOG_BYTES, WireLevel};
+
+/// `text` cut to what the parent accepts in a log line, at a character boundary.
+fn truncated(mut text: String) -> String {
+    if text.len() > MAX_LOG_BYTES {
+        let mut end = MAX_LOG_BYTES;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
 
 /// The notification for a message, `None` for a message the parent has no use for.
 pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
@@ -24,11 +36,11 @@ pub fn to_wire(message: PluginMessage) -> Option<FromChild> {
         PluginMessage::GuiRequestHide => FromChild::GuiRequestHide,
         PluginMessage::Log { level, text } => FromChild::Log {
             level: level.into(),
-            text,
+            text: truncated(text),
         },
         PluginMessage::Failed { reason } => FromChild::Log {
             level: WireLevel::Error,
-            text: reason.to_string(),
+            text: truncated(reason.to_string()),
         },
         // The tick polls the plugin anyway; the process exit is the parent's own business.
         PluginMessage::RequestCallback | PluginMessage::ProcessExited { .. } => return None,
@@ -40,6 +52,19 @@ mod tests {
     use super::*;
     use atomik_plugin_host::{LogLevel, ParamPhase};
     use atomik_plugin_ipc::WirePhase;
+
+    #[test]
+    fn a_long_log_line_is_cut_to_what_the_parent_accepts() {
+        let long = "é".repeat(MAX_LOG_BYTES);
+        let Some(FromChild::Log { text, .. }) = to_wire(PluginMessage::Log {
+            level: LogLevel::Info,
+            text: long,
+        }) else {
+            panic!("a log line is forwarded");
+        };
+        assert!(text.len() <= MAX_LOG_BYTES && !text.is_empty());
+        assert!(text.chars().all(|c| c == 'é'));
+    }
 
     #[test]
     fn a_param_edit_keeps_its_id_value_and_phase() {

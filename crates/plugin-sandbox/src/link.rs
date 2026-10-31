@@ -3,8 +3,9 @@
 //! main thread's calls.
 //!
 //! Only the main thread makes calls and only one is in flight at a time, so a single slot is
-//! enough; replies are matched by request id and anything else is ignored. A call that is not
-//! answered in time kills the child: from then on the link is lost, and every call fails at
+//! enough; replies are matched by request id and anything else is ignored. A call that matters
+//! and is not answered in time kills the child; a cosmetic one (see [`Link::soft_call`]) only
+//! drops its request. Once the child is killed the link is lost, and every call fails at
 //! once without any I/O. The reader thread is the one that learns that the child ended: it
 //! reaps the exit status, reads the stderr tail, marks the audio block dead (so the engine
 //! side sees [`atomik_plugin_host::ProcessStatus::Lost`]) and posts
@@ -12,12 +13,17 @@
 
 use crate::clock::now;
 use crate::transport::{ChildProcess, Transport};
-use atomik_plugin_host::{BackendError, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage};
-use atomik_plugin_ipc::{
-    DeathHandle, FromChild, PROTOCOL_VERSION, ToChild, into_backend_error, read_frame, write_frame,
+use atomik_plugin_host::{
+    BackendError, HUNG, HostMessenger, LOST, LogLevel, ParamPhase, PluginMessage,
 };
+use atomik_plugin_ipc::{
+    DeathHandle, FromChild, MAX_FRAME_BYTES, MAX_GUI_DIMENSION, MAX_LOG_BYTES,
+    MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION, ToChild, WireLayout, into_backend_error,
+    read_frame_with, write_frame,
+};
+use std::collections::BTreeMap;
 use std::io::{ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
@@ -35,17 +41,34 @@ const STDERR_GRACE: Duration = Duration::from_millis(300);
 /// How long a dropped link waits for the child to end after `Shutdown`.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
+/// How many cosmetic calls in a row may go unanswered before the instance counts as slow (the
+/// app then asks less often and says so).
+const MISSES_TO_SLOW: u32 = 3;
+
+/// How many cosmetic calls in a row may go unanswered before the child is stopped: a plugin
+/// that is merely busy answers sooner or later, one that never does is wedged.
+const MISSES_TO_KILL: u32 = 12;
+
+/// The most parameter edits held back for the main thread at once.
+const MAX_HELD_EDITS: usize = 4096;
+
 /// The timeouts of the main-thread calls.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Timeouts {
-    /// Hello, instantiate, activate, capture and restore state.
+    /// Hello, instantiate, activate, capture and restore state: a call that is not answered in
+    /// time kills the child.
     pub create: Duration,
-    /// Every other call.
+    /// Every other call that matters (deactivate, flush): killing as well.
     pub call: Duration,
-    /// Param text.
+    /// Cosmetic calls (param text, pins, layout, closing the editor): an answer that is late is
+    /// dropped and the child is left alone; see [`Link::soft_call`].
     pub text: Duration,
     /// Offline audio batches.
     pub watchdog: Duration,
+    /// Live audio: how long a child may answer no batch at all before it counts as hung.
+    pub hung: Duration,
+    /// How long a slow instance is left alone between two cosmetic calls.
+    pub slow_retry: Duration,
     /// A bounce: every batch waits for the child whatever mode the plugin is told.
     pub bounce: bool,
 }
@@ -117,6 +140,16 @@ pub(crate) struct Shared {
     stderr_done: AtomicBool,
     pid: AtomicU32,
     messenger: HostMessenger,
+    /// The audio side saw the child answer no batch for too long (shared with the processor,
+    /// which only sets it).
+    hung: Arc<AtomicBool>,
+    /// A layout change whose call had given up before the child answered it.
+    late_layout: Mutex<Option<WireLayout>>,
+    /// The newest value of each param the plugin edited since the main thread last looked: a
+    /// burst of edits is handed on as one per param, in order with the gesture's begin and end.
+    edits: Mutex<BTreeMap<u32, f64>>,
+    /// Notifications refused because they were out of bounds.
+    rejected: AtomicU64,
 }
 
 impl Shared {
@@ -169,12 +202,80 @@ impl Shared {
         }
     }
 
-    fn deliver(&self, reply: Reply, wanted: Expect) {
+    /// Hands `reply` to the call that waits for it; false when nobody does (it gave up).
+    fn deliver(&self, reply: Reply, wanted: Expect) -> bool {
         let mut mb = lock(&self.mailbox);
         if mb.expect == wanted {
             mb.reply = Some(reply);
             self.cv.notify_all();
+            true
+        } else {
+            false
         }
+    }
+
+    /// The flag the audio side sets when the child answers no batch.
+    pub fn hung_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.hung)
+    }
+
+    /// A layout change that arrived after its call had given up (taken once).
+    pub fn take_late_layout(&self) -> Option<WireLayout> {
+        lock(&self.late_layout).take()
+    }
+
+    /// Notifications refused so far for being out of bounds.
+    #[cfg(test)]
+    pub fn rejected(&self) -> u64 {
+        self.rejected.load(Ordering::Relaxed)
+    }
+
+    /// Hands the held param edits on to the main thread's message ring.
+    pub fn flush_edits(&self) {
+        let mut edits = lock(&self.edits);
+        self.post_edits(&mut edits);
+    }
+
+    fn post_edits(&self, edits: &mut BTreeMap<u32, f64>) {
+        for (id, value) in std::mem::take(edits) {
+            self.messenger.post(PluginMessage::ParamEdit {
+                id,
+                value,
+                phase: ParamPhase::Change,
+            });
+        }
+    }
+
+    fn param_edit(&self, param: u32, value: f64, phase: ParamPhase) {
+        let mut edits = lock(&self.edits);
+        if phase == ParamPhase::Change {
+            if edits.len() >= MAX_HELD_EDITS && !edits.contains_key(&param) {
+                self.post_edits(&mut edits);
+            }
+            edits.insert(param, value);
+            return;
+        }
+        // A gesture's begin and end keep their place around its last change.
+        if let Some(held) = edits.remove(&param) {
+            self.messenger.post(PluginMessage::ParamEdit {
+                id: param,
+                value: held,
+                phase: ParamPhase::Change,
+            });
+        }
+        self.messenger.post(PluginMessage::ParamEdit {
+            id: param,
+            value,
+            phase,
+        });
+    }
+
+    /// Posts a log line of the app's own about this child.
+    fn warn(&self, text: String) {
+        self.messenger.post(PluginMessage::Log {
+            level: LogLevel::Warning,
+            text,
+        });
     }
 
     /// Condemns the child: remembers `reason` (the first one wins), makes every later call
@@ -200,9 +301,14 @@ impl Shared {
     /// finishes the job here by killing the child, once.
     pub fn finish_audio_death(&self) {
         if self.death.is_dead() && !self.lost.load(Ordering::SeqCst) {
-            self.kill(
-                "the plugin process stopped answering audio requests and was stopped".to_string(),
-            );
+            if self.hung.load(Ordering::Acquire) {
+                self.kill(format!("{HUNG} and was stopped"));
+            } else {
+                self.kill(
+                    "the plugin process stopped answering audio requests and was stopped"
+                        .to_string(),
+                );
+            }
         }
     }
 
@@ -281,37 +387,60 @@ impl Shared {
                 param,
                 value,
                 phase,
-            } => {
-                return post(PluginMessage::ParamEdit {
-                    id: *param,
-                    value: *value,
-                    phase: ParamPhase::from(*phase),
-                });
-            }
+            } => return self.param_edit(*param, *value, ParamPhase::from(*phase)),
             FromChild::StateDirty => return post(PluginMessage::StateDirty),
             FromChild::LatencyChanged => return post(PluginMessage::LatencyChanged),
             FromChild::RescanParams => return post(PluginMessage::RescanParams),
             FromChild::RequestRestart => return post(PluginMessage::RequestRestart),
             FromChild::GuiResize { w, h } => {
+                if *w > MAX_GUI_DIMENSION || *h > MAX_GUI_DIMENSION {
+                    self.rejected.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
                 return post(PluginMessage::GuiResize { w: *w, h: *h });
             }
             FromChild::GuiClosed => return post(PluginMessage::GuiClosed),
             FromChild::GuiRequestShow => return post(PluginMessage::GuiRequestShow),
             FromChild::GuiRequestHide => return post(PluginMessage::GuiRequestHide),
             FromChild::Log { level, text } => {
+                if text.len() > MAX_LOG_BYTES {
+                    self.rejected.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
                 return post(PluginMessage::Log {
                     level: LogLevel::from(*level),
                     text: text.clone(),
                 });
             }
         };
-        self.deliver(Reply { msg, blob }, Expect::Id(id));
+        let late_layout = match &msg {
+            FromChild::LayoutChanged {
+                layout: Some(layout),
+                ..
+            } => Some(layout.clone()),
+            _ => None,
+        };
+        if !self.deliver(Reply { msg, blob }, Expect::Id(id))
+            && let Some(layout) = late_layout
+        {
+            // The call that asked has given up, and the child will not say it again.
+            *lock(&self.late_layout) = Some(layout);
+        }
     }
 }
 
 fn run_reader(shared: &Shared, mut reader: Box<dyn Read + Send>, live: LiveGuard) {
     let bad = loop {
-        match read_frame::<FromChild>(&mut reader) {
+        // Replies are small and only the state has a blob: both limits are checked before
+        // anything is allocated, so a hostile child cannot make the app grow.
+        let read = read_frame_with::<FromChild>(&mut reader, MAX_REPLY_JSON_BYTES, |m| {
+            if matches!(m, FromChild::State { .. }) {
+                MAX_FRAME_BYTES
+            } else {
+                0
+            }
+        });
+        match read {
             Ok((msg, blob)) => shared.route(msg, blob),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => break None,
             Err(e) => break Some(e),
@@ -382,6 +511,12 @@ pub(crate) struct Link {
     writer: Option<JoinHandle<()>>,
     next_id: u64,
     timeouts: Timeouts,
+    /// Cosmetic calls in a row that were not answered in time.
+    misses: u32,
+    /// When the last cosmetic call went unanswered.
+    last_miss: Option<std::time::Instant>,
+    /// When the child was asked to end (set once; the drop waits from then on).
+    shutdown_at: Option<std::time::Instant>,
 }
 
 impl Link {
@@ -420,6 +555,10 @@ impl Link {
             stderr_done: AtomicBool::new(stderr.is_none()),
             pid: AtomicU32::new(0),
             messenger,
+            hung: Arc::new(AtomicBool::new(false)),
+            late_layout: Mutex::new(None),
+            edits: Mutex::new(BTreeMap::new()),
+            rejected: AtomicU64::new(0),
         });
         let (tx, rx) = channel();
         let reader_handle = {
@@ -445,6 +584,9 @@ impl Link {
             writer: writer_handle.ok(),
             next_id: 0,
             timeouts,
+            misses: 0,
+            last_miss: None,
+            shutdown_at: None,
         };
         if link.reader.is_none() || link.writer.is_none() {
             link.shared
@@ -562,6 +704,86 @@ impl Link {
         self.await_reply(what, timeout)
     }
 
+    /// Like [`Link::call`] for a request that only polishes the interface (param text, pins,
+    /// the layout, closing the editor): when it is not answered in `timeout` the request is
+    /// dropped and the child is left alone, because a plugin that is busy on its main thread
+    /// (loading a sample, rebuilding its editor) answers none of them and is not at fault.
+    /// After a few misses in a row the instance counts as slow and is asked at most once a
+    /// second; after many the child is stopped, since it is wedged. An answer that arrives later
+    /// is ignored.
+    pub fn soft_call(
+        &mut self,
+        what: &str,
+        timeout: Duration,
+        make: impl FnOnce(u64) -> ToChild,
+    ) -> Result<Reply, BackendError> {
+        if self.shared.is_lost() {
+            return Err(lost());
+        }
+        if self.is_slow()
+            && self
+                .last_miss
+                .is_some_and(|t| now().saturating_duration_since(t) < self.timeouts.slow_retry)
+        {
+            return Err(BackendError::Failed(format!(
+                "the plugin is slow to answer {what}"
+            )));
+        }
+        self.next_id += 1;
+        let id = self.next_id;
+        self.shared.expect(Expect::Id(id));
+        self.send(&make(id), None)?;
+        match self.shared.wait(timeout) {
+            Waited::Reply(reply) => {
+                self.misses = 0;
+                match reply.msg {
+                    FromChild::Err { kind, text, .. } => Err(into_backend_error(kind, text)),
+                    _ => Ok(reply),
+                }
+            }
+            Waited::Ended => Err(lost()),
+            Waited::TimedOut => {
+                self.misses += 1;
+                self.last_miss = Some(now());
+                let ms = timeout.as_millis();
+                if self.misses == MISSES_TO_SLOW {
+                    self.shared.warn(format!(
+                        "the plugin is slow to answer {what}; the app asks less often until it does"
+                    ));
+                }
+                if self.misses >= MISSES_TO_KILL {
+                    let n = self.misses;
+                    self.shared.kill(format!(
+                        "the plugin process did not answer {what} {n} times in a row and was stopped"
+                    ));
+                }
+                Err(BackendError::Failed(format!(
+                    "the plugin did not answer {what} within {ms} ms"
+                )))
+            }
+        }
+    }
+
+    /// True while the child misses cosmetic calls (see [`Link::soft_call`]).
+    pub fn is_slow(&self) -> bool {
+        self.misses >= MISSES_TO_SLOW
+    }
+
+    /// Asks the child to end and returns at once; the drop then waits for it, together with the
+    /// children that were asked at the same time.
+    pub fn begin_shutdown(&mut self) {
+        if self.shutdown_at.is_some() {
+            return;
+        }
+        self.shared.closing.store(true, Ordering::SeqCst);
+        if !self.shared.is_lost() {
+            let _ = self.send(&ToChild::Shutdown, None);
+        }
+        // Closing the channel ends the writer, which closes the child's stdin.
+        self.tx = None;
+        self.shutdown_at = Some(now());
+    }
+
     /// The error for a reply of the wrong kind: the child breaks the protocol.
     pub fn unexpected(&self, what: &str, got: &FromChild) -> BackendError {
         let text = format!("the plugin process answered {what} with {got:?}");
@@ -571,16 +793,18 @@ impl Link {
 }
 
 impl Drop for Link {
-    /// Asks the child to end, gives it a second, then kills it; leaves no thread behind that
-    /// can end.
+    /// Asks the child to end (unless that was done already), gives it what is left of a
+    /// second, then kills it; leaves no thread behind that can end.
     fn drop(&mut self) {
-        self.shared.closing.store(true, Ordering::SeqCst);
-        if !self.shared.is_lost() {
-            let _ = self.send(&ToChild::Shutdown, None);
-        }
-        // Closing the channel ends the writer, which closes the child's stdin.
-        self.tx = None;
-        if self.shared.wait_reason(SHUTDOWN_GRACE).is_none() {
+        self.begin_shutdown();
+        let waited = self
+            .shutdown_at
+            .map_or(Duration::ZERO, |t| now().saturating_duration_since(t));
+        if self
+            .shared
+            .wait_reason(SHUTDOWN_GRACE.saturating_sub(waited))
+            .is_none()
+        {
             self.shared
                 .kill("the plugin process did not end when asked and was stopped".to_string());
             let _ = self.shared.wait_reason(EXIT_GRACE + STDERR_GRACE * 2);

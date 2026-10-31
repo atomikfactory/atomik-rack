@@ -431,6 +431,10 @@ pub trait PluginInstance {
     fn is_lost(&self) -> bool {
         false
     }
+    /// The instance is about to be dropped: starts ending whatever outlives a call (a child
+    /// process) without waiting for it, so that the manager can start every instance's end
+    /// first and then wait for all of them at once. Dropping still works without this call.
+    fn begin_shutdown(&mut self) {}
 }
 
 /// One plugin found in a file.

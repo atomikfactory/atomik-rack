@@ -17,19 +17,20 @@ pub mod deadline;
 pub mod doorbell;
 pub mod frame;
 pub mod layout;
+pub mod lifetime;
 pub mod message;
 pub mod parent;
 pub mod stdio;
 
-pub use block::{SharedBlock, block_file_name, default_block_dir};
+pub use block::{SharedBlock, block_file_name, default_block_dir, sweep_stale_blocks};
 pub use child::{ChildPort, Request};
 pub use codec::AudioOp;
 pub use deadline::Deadline;
 pub use doorbell::{Doorbell, DoorbellName};
-pub use frame::{read_frame, write_frame};
+pub use frame::{read_frame, read_frame_with, write_frame};
 pub use layout::{
     BLOCK_SIZE, MAGIC, MAX_CHANNELS, MAX_EVENTS_IN, MAX_EVENTS_OUT, MAX_FRAME_BYTES,
-    PROTOCOL_VERSION,
+    MAX_GUI_DIMENSION, MAX_LOG_BYTES, MAX_REPLY_JSON_BYTES, PROTOCOL_VERSION,
 };
 pub use message::{
     FromChild, ToChild, WireChannels, WireErrorKind, WireKind, WireLayout, WireLevel, WireParam,

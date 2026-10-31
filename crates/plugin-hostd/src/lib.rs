@@ -24,6 +24,10 @@ use std::process::ExitCode;
 /// Usage line.
 pub const USAGE: &str = "usage: atomik-plugin-host clap|vst3|null <plugin-file> <plugin-id> --block <path> --doorbell <name> --parent-pid <pid>";
 
+/// How long a child lives on after its parent is gone: enough for the main loop to see the
+/// closed channel and end cleanly, which it does first when it is not stuck.
+const PARENT_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Runs the child with its arguments (without the program name).
 pub fn run(args: Vec<OsString>) -> ExitCode {
     let args = match args::parse(&args) {
@@ -44,6 +48,8 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
             return ExitCode::from(control::EXIT_MISMATCH);
         }
     };
+    // An orphan ends itself even when its main thread is stuck in a plugin call.
+    atomik_plugin_ipc::lifetime::watch_parent(args.parent_pid, PARENT_GRACE);
     // Every backend call asserts that it runs on the plugin main thread: this one.
     mark_main_thread();
     let block = match SharedBlock::open(&args.block) {

@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Plugin processes that never outlive the app, and hung ones are replaced.** A sandboxed plugin's
+  process now ends with the app however the app ends (a job object on Windows, a watchdog thread
+  in every child that also covers a child stuck inside a plugin call and a closed control
+  channel). A plugin that answers no audio batch for three seconds while playing is stopped and
+  reloaded from its last state by itself, twice in a row, then left CRASHED for you to decide;
+  bounces are not affected. A plugin that is too busy to answer the interface (the parameter text
+  of the PARAMS pane, pins, editor close) is no longer stopped: the last text stays up, a warning
+  says it is slow, and only a plugin that stays silent for twelve requests in a row is stopped.
 - **Fuzzing of the readers of untrusted files.** `fuzz/` holds `cargo-fuzz` targets for project
   files, patches, clip files, library items and the library database, Standard MIDI Files, audio
   files (the whole-file decoder, the WAV readers and the preview decoder) and the control channel
@@ -284,6 +292,17 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Closing a project with many sandboxed plugins is quick.** The plugin processes are asked to
+  end together and waited for on one shared deadline, so slow ones cost about a second in total
+  instead of up to three and a half seconds each.
+- **A misbehaving plugin process cannot exhaust the app's memory.** Replies and notifications from
+  a plugin process are bounded before they are read (1 MiB of JSON, state blobs only on the
+  state, 4 KiB log lines, editor sizes up to 16 384 pixels), a burst of parameter edits reaches
+  the app as the last value per parameter, and the scanner's output is read to its end, so a
+  file that makes the scanner print more than 16 MiB fails at once as "too large" instead of
+  after the scan timeout.
+- **The plugin audio block is private.** Its file has a random name, is created exclusively with
+  mode `0600` on Unix, and files left by an app that crashed are removed at the next start.
 - **A hostile or corrupt file can no longer make the program run out of memory.** A WAV header that
   claims billions of samples no longer sizes an allocation (a 44-byte file that said so used to be
   asked for gigabytes, and running out of memory aborts the program with unsaved work); an audio

@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -73,8 +74,19 @@ fn failure(kind: FailureKind, reason: impl Into<String>) -> ScanFailure {
     }
 }
 
-fn reader(mut source: impl Read + Send + 'static, keep: usize) -> mpsc::Receiver<Vec<u8>> {
+/// What a reader thread keeps of a stream, and whether the stream was longer.
+struct Captured {
+    bytes: mpsc::Receiver<Vec<u8>>,
+    /// Set as soon as the stream is known to be longer than the cap.
+    over: Arc<AtomicBool>,
+}
+
+/// Keeps the first `keep` bytes of `source` and reads (and drops) the rest to its end, so that
+/// a chatty child never blocks on a full pipe; `over` tells the caller that there was more.
+fn reader(mut source: impl Read + Send + 'static, keep: usize) -> Captured {
     let (tx, rx) = mpsc::channel();
+    let over = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&over);
     std::thread::spawn(move || {
         let mut kept = Vec::new();
         let mut buf = [0u8; 8192];
@@ -83,21 +95,20 @@ fn reader(mut source: impl Read + Send + 'static, keep: usize) -> mpsc::Receiver
             match source.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    total += n;
+                    total = total.saturating_add(n);
                     if kept.len() < keep {
                         let room = keep - kept.len();
                         kept.extend_from_slice(&buf[..n.min(room)]);
                     }
                     if total > keep {
-                        // Over the cap: stop reading, the caller treats a full buffer as garbage.
-                        break;
+                        flag.store(true, Ordering::Release);
                     }
                 }
             }
         }
         let _ = tx.send(kept);
     });
-    rx
+    Captured { bytes: rx, over }
 }
 
 fn describe_exit(status: ExitStatus) -> String {
@@ -114,8 +125,11 @@ fn describe_exit(status: ExitStatus) -> String {
     }
 }
 
-fn stderr_text(rx: &mpsc::Receiver<Vec<u8>>) -> String {
-    let bytes = rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+fn stderr_text(rx: &Captured) -> String {
+    let bytes = rx
+        .bytes
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
     let text = String::from_utf8_lossy(&bytes[..bytes.len().min(STDERR_REASON_BYTES)]);
     text.trim().to_string()
 }
@@ -174,6 +188,15 @@ impl ScanRunner for ChildScanner {
                         let _ = child.wait();
                         return Err(failure(FailureKind::Cancelled, "cancelled"));
                     }
+                    if out_rx.over.load(Ordering::Acquire) {
+                        // Whatever it goes on to print is garbage: do not wait for it.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(failure(
+                            FailureKind::BadOutput,
+                            "the scan output is too large",
+                        ));
+                    }
                     if started.elapsed() >= timeout {
                         let _ = child.kill();
                         let _ = child.wait();
@@ -204,6 +227,7 @@ impl ScanRunner for ChildScanner {
             return Err(failure(FailureKind::Crash, reason));
         }
         let stdout = out_rx
+            .bytes
             .recv_timeout(Duration::from_secs(2))
             .unwrap_or_default();
         if stdout.len() >= MAX_SCAN_OUTPUT {
