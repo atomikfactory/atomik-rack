@@ -104,6 +104,8 @@ pub enum Choice {
     SurfaceInput(Option<String>),
     /// The control surface's output port (`None` = none).
     SurfaceOutput(Option<String>),
+    /// The output port a MIDI Out device uses while it has none of its own (`None` = none).
+    MidiOutPort(Option<String>),
     /// Worker threads.
     Workers(u16),
     /// Worker linger spins.
@@ -623,6 +625,15 @@ impl SettingsDialog {
                 options: ports(&self.lists.midi_outputs, &s.output, Choice::SurfaceOutput),
                 chips: false,
             },
+            Section {
+                title: "MIDI Out device port",
+                options: ports(
+                    &self.lists.midi_outputs,
+                    &self.draft.midi_out_port,
+                    Choice::MidiOutPort,
+                ),
+                chips: false,
+            },
         ]
     }
 
@@ -666,6 +677,7 @@ impl SettingsDialog {
             Choice::SurfaceDriver(n) => d.surface.driver == *n,
             Choice::SurfaceInput(n) => d.surface.input == *n,
             Choice::SurfaceOutput(n) => d.surface.output == *n,
+            Choice::MidiOutPort(n) => d.midi_out_port == *n,
             Choice::Workers(w) => d.workers == *w,
             Choice::Linger(l) => d.worker_linger_spins == *l,
             Choice::LossReset(r) => d.device_loss.reset_to_default == *r,
@@ -705,6 +717,7 @@ impl SettingsDialog {
             Choice::SurfaceDriver(n) => self.draft.surface.driver = n,
             Choice::SurfaceInput(n) => self.draft.surface.input = n,
             Choice::SurfaceOutput(n) => self.draft.surface.output = n,
+            Choice::MidiOutPort(n) => self.draft.midi_out_port = n,
             Choice::Workers(w) => self.draft.workers = w,
             Choice::Linger(l) => self.draft.worker_linger_spins = l,
             Choice::LossReset(r) => self.draft.device_loss.reset_to_default = r,
@@ -717,6 +730,8 @@ impl SettingsDialog {
                 "A surface shows the console: its faders, V-pots, keys and displays follow it."
                     .to_string(),
                 "Pick the ports of the surface itself, not the port the keyboard plays through."
+                    .to_string(),
+                "A MIDI Out device without a port of its own sends to the MIDI Out device port."
                     .to_string(),
             ];
             notes.extend(self.lists.errors.iter().cloned());

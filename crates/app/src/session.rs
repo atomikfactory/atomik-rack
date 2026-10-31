@@ -30,6 +30,8 @@ use atomik_engine::{
     WorkerConfig, new_engine_with_options,
 };
 use atomik_midi_io::MidiError;
+use atomik_midi_io::out::{Opener, OutStats, OutputThread, Timeline};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -109,6 +111,12 @@ pub trait AudioBackend {
     /// Opens a MIDI input that feeds the engine through `link` (shared with the other open
     /// ports).
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<Self::Midi, MidiError>;
+    /// How the MIDI output thread opens the ports of the MIDI Out devices. The default opens
+    /// nothing (every port is reported as not found), so a backend that has no MIDI never
+    /// touches a real port.
+    fn midi_out_opener(&self) -> Opener {
+        Arc::new(|name| Err(MidiError::PortNotFound(name.to_string())))
+    }
 }
 
 /// The real devices (`atomik-audio-io`, midir).
@@ -168,6 +176,10 @@ impl AudioBackend for SystemBackend {
     fn open_midi(&self, name: &str, link: MidiLink) -> Result<MidiConnection, MidiError> {
         MidiConnection::open(name, link)
     }
+
+    fn midi_out_opener(&self) -> Opener {
+        atomik_midi_io::out::system_opener()
+    }
 }
 
 /// No audio or MIDI at all: lists nothing and fails to start (headless tests, smoke runs).
@@ -225,6 +237,13 @@ struct Running<B: AudioBackend> {
     /// The live link every port shares (also the audition and Piano Keys path); `None` when the
     /// engine gave no live sender.
     link: Option<MidiLink>,
+    /// The stream's frame clock (the output thread times messages on it).
+    clock: Arc<FrameClock>,
+    sample_rate: f64,
+    /// The output latency in frames, as the stream reports it.
+    out_latency: Arc<AtomicU64>,
+    /// The thread that sends the MIDI Out devices' messages: started with the first such device.
+    midi_out: Option<OutputThread>,
 }
 
 /// An open MIDI port and the setting it was opened for.
@@ -257,6 +276,9 @@ pub struct LiveSession<B: AudioBackend> {
     control_stalled: u64,
     /// A message for the user that the next [`Self::take_notice`] hands out.
     notice: Option<String>,
+    /// The port each MIDI Out device chose (by engine device id); a device that has none uses
+    /// the settings' `midi_out_port`.
+    out_ports: BTreeMap<u32, Option<String>>,
 }
 
 impl<B: AudioBackend> std::fmt::Debug for LiveSession<B> {
@@ -292,6 +314,7 @@ impl<B: AudioBackend> LiveSession<B> {
             liveness: None,
             control_stalled: 0,
             notice: None,
+            out_ports: BTreeMap::new(),
         }
     }
 
@@ -354,7 +377,11 @@ impl<B: AudioBackend> LiveSession<B> {
             SettingsChange::RestartAudio
         } else if old.midi_inputs != self.settings.midi_inputs {
             self.sync_midi();
+            self.refresh_midi_out();
             SettingsChange::MidiReopened
+        } else if old.midi_out_port != self.settings.midi_out_port {
+            self.refresh_midi_out();
+            SettingsChange::None
         } else {
             SettingsChange::None
         }
@@ -383,6 +410,8 @@ impl<B: AudioBackend> LiveSession<B> {
                     _ => 0,
                 };
             }
+            r.out_latency
+                .store(u64::from(t.output_latency_frames), Ordering::Relaxed);
             self.status.dsp_load = t.dsp_load_avg;
             self.status.dsp_peak = t.dsp_load_peak;
             self.status.xruns = t.xruns;
@@ -420,7 +449,13 @@ impl<B: AudioBackend> LiveSession<B> {
                 stream,
                 midi,
                 link,
+                midi_out,
+                clock: _,
+                sample_rate: _,
+                out_latency: _,
             } = r;
+            // The MIDI Out thread first: dropping it releases every note it started.
+            drop(midi_out);
             // MIDI first (it feeds the engine), then the stream, which hands the engine back
             // so it is dropped here and not on the audio thread.
             for open in midi {
@@ -583,6 +618,48 @@ impl<B: AudioBackend> LiveSession<B> {
         self.status.midi_error = (!errors.is_empty()).then(|| errors.join("; "));
     }
 
+    /// Hands the taps of the MIDI Out devices in the engine, and where each one sends, to the
+    /// output thread, starting the thread with the first device. A device without a port of its
+    /// own sends to the settings' `midi_out_port`.
+    fn refresh_midi_out(&mut self) {
+        let Some(r) = &mut self.running else {
+            return;
+        };
+        let taps: Vec<(u32, _)> = r
+            .meters
+            .midi_taps()
+            .into_iter()
+            .map(|(id, tap)| (id.0, tap))
+            .collect();
+        if r.midi_out.is_none() {
+            if taps.is_empty() {
+                return;
+            }
+            let timeline = Timeline::new(
+                Arc::clone(&r.clock),
+                r.sample_rate,
+                Arc::clone(&r.out_latency),
+            );
+            match OutputThread::spawn(self.backend.midi_out_opener(), timeline) {
+                Ok(thread) => r.midi_out = Some(thread),
+                Err(e) => {
+                    log::warn!("the MIDI output thread did not start: {e}");
+                    return;
+                }
+            }
+        }
+        let ports: BTreeMap<u32, Option<String>> = taps
+            .iter()
+            .map(|(id, _)| {
+                let own = self.out_ports.get(id).cloned().flatten();
+                (*id, own.or_else(|| self.settings.midi_out_port.clone()))
+            })
+            .collect();
+        if let Some(thread) = &r.midi_out {
+            thread.set_routes(taps, ports);
+        }
+    }
+
     /// Opens the enabled MIDI ports that are not open: a controller plugged in after start-up
     /// (or that a failed open left out) comes up without restarting the audio.
     pub fn rescan_midi(&mut self) {
@@ -647,6 +724,7 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             stream_state: StreamState::Starting,
             ..AudioStatus::default()
         };
+        let out_clock = Arc::clone(&clock);
         let link = sender.map(|sender| {
             MidiLink::new(
                 sender,
@@ -665,8 +743,13 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
             stream,
             midi: Vec::new(),
             link,
+            clock: out_clock,
+            sample_rate: config.sample_rate.hz(),
+            out_latency: Arc::new(AtomicU64::new(0)),
+            midi_out: None,
         });
         self.sync_midi();
+        self.refresh_midi_out();
     }
 
     fn insert_device(
@@ -675,20 +758,39 @@ impl<B: AudioBackend> EngineSink for LiveSession<B> {
         device: Box<dyn Device>,
         params: &[(ParamId, f32)],
     ) -> Result<(), EngineError> {
-        match &mut self.running {
+        let result = match &mut self.running {
             Some(r) => counted(
                 &mut self.control_stalled,
                 r.handle.insert_device(id, device, params),
             ),
             None => Ok(()),
-        }
+        };
+        // A MIDI Out device brings its tap with it.
+        self.refresh_midi_out();
+        result
     }
 
     fn remove_device(&mut self, id: DeviceInstanceId) -> Result<(), EngineError> {
-        match &mut self.running {
+        let result = match &mut self.running {
             Some(r) => counted(&mut self.control_stalled, r.handle.remove_device(id)),
             None => Ok(()),
-        }
+        };
+        // The device's notes are released and its tap forgotten.
+        self.refresh_midi_out();
+        result
+    }
+
+    fn set_midi_out_ports(&mut self, ports: &[(DeviceInstanceId, Option<String>)]) {
+        self.out_ports = ports.iter().map(|(id, p)| (id.0, p.clone())).collect();
+        self.refresh_midi_out();
+    }
+
+    fn midi_out_stats(&self) -> OutStats {
+        self.running
+            .as_ref()
+            .and_then(|r| r.midi_out.as_ref())
+            .map(OutputThread::stats)
+            .unwrap_or_default()
     }
 
     fn submit_routing(&mut self, plan: RoutingPlan) -> Result<(), EngineError> {

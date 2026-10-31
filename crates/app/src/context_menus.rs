@@ -43,6 +43,8 @@ pub struct MenuEnable {
     pub master_only: bool,
     /// Rack: "Use as Send Effect" can work on the selection (the model would accept it).
     pub assign_send: bool,
+    /// Rack: the primary device is a MIDI Out device (Choose MIDI Out Port works).
+    pub midi_out: bool,
     /// Rack: how many columns the rack has (Remove Column needs two, Add Column room).
     pub columns: u16,
     /// Track header: the track has a note lane, so "Chase Notes" can be switched.
@@ -408,6 +410,8 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.browse_patch", e.selection && !e.master_only),
                 item("rack.patch_prev", e.selection && !e.master_only),
                 item("rack.patch_next", e.selection && !e.master_only),
+                Spec::Separator,
+                item("rack.midi_out_port", e.midi_out),
             ]);
             v
         }
@@ -783,6 +787,37 @@ pub fn jack_entries(menu: &JackMenu) -> Vec<Entry> {
     rows
 }
 
+/// The rows of the pop-up that chooses a MIDI Out device's port: "Default (settings)" first,
+/// then one check item per output port the system lists (the chosen one checked), then the chosen
+/// port itself when it is not plugged in (marked). Each runs `rack.midi_out_pick`; the argument
+/// is the port name, empty for the default.
+pub fn midi_out_entries(ports: &[String], current: Option<&str>) -> Vec<Entry> {
+    let item = |label: String, arg: &str, on: bool| {
+        Entry::Item(MenuItemDef {
+            command: "rack.midi_out_pick".to_string(),
+            arg: Some(arg.to_string()),
+            label,
+            shortcut: None,
+            enabled: true,
+            checked: Some(on),
+        })
+    };
+    let mut rows = vec![item(
+        "Default (port of the settings)".to_string(),
+        "",
+        current.is_none(),
+    )];
+    rows.extend(
+        ports
+            .iter()
+            .map(|p| item(p.clone(), p, current == Some(p.as_str()))),
+    );
+    if let Some(missing) = current.filter(|c| !ports.iter().any(|p| p == c)) {
+        rows.push(item(format!("{missing} (not found)"), missing, true));
+    }
+    rows
+}
+
 /// The rows of the pop-up on a patch name: one check item per patch (the current one checked)
 /// that runs `rack.patch_pick` with the patch file as its argument.
 pub fn patch_entries(items: &[(String, std::path::PathBuf)], current: Option<usize>) -> Vec<Entry> {
@@ -970,7 +1005,72 @@ mod tests {
                 "rack.browse_patch",
                 "rack.patch_prev",
                 "rack.patch_next",
+                "rack.midi_out_port",
             ]
+        );
+    }
+
+    #[test]
+    fn choosing_the_midi_out_port_needs_a_midi_out_device() {
+        let enabled = |e: &MenuEnable| {
+            ids(ContextTarget::Device, e)
+                .into_iter()
+                .find(|(c, _)| *c == "rack.midi_out_port")
+                .unwrap()
+                .1
+        };
+        let some = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        assert!(!enabled(&some));
+        assert!(enabled(&MenuEnable {
+            midi_out: true,
+            ..some
+        }));
+    }
+
+    #[test]
+    fn the_midi_out_pop_up_lists_the_default_the_ports_and_a_missing_choice() {
+        let ports = vec!["Example Synth".to_string(), "Example Hub 1".to_string()];
+        let rows = |current: Option<&str>| -> Vec<(String, String, Option<bool>)> {
+            midi_out_entries(&ports, current)
+                .into_iter()
+                .map(|e| match e {
+                    Entry::Item(i) => {
+                        assert_eq!(i.command, "rack.midi_out_pick");
+                        (i.label, i.arg.unwrap(), i.checked)
+                    }
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        let none = rows(None);
+        assert_eq!(none.len(), 3);
+        assert_eq!(
+            none[0],
+            (
+                "Default (port of the settings)".into(),
+                String::new(),
+                Some(true)
+            )
+        );
+        assert_eq!(
+            none[1],
+            ("Example Synth".into(), "Example Synth".into(), Some(false))
+        );
+        let chosen = rows(Some("Example Hub 1"));
+        assert_eq!(chosen[0].2, Some(false));
+        assert_eq!(chosen[2].2, Some(true));
+        let missing = rows(Some("Old Synth"));
+        assert_eq!(missing.len(), 4);
+        assert_eq!(
+            missing[3],
+            (
+                "Old Synth (not found)".into(),
+                "Old Synth".into(),
+                Some(true)
+            )
         );
     }
 

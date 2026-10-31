@@ -75,6 +75,12 @@ pub(crate) enum Edit {
         old: String,
         new: String,
     },
+    /// The MIDI port a MIDI Out device sends to (`None` is the settings' fallback port).
+    MidiOutPort {
+        key: DeviceKey,
+        old: Option<String>,
+        new: Option<String>,
+    },
     Connect(Cable),
     Disconnect(Cable),
     /// Set (`Some`) or reset to the default (`None`) a param; `default` is the descriptor
@@ -523,6 +529,11 @@ impl Edit {
                 old: new,
                 new: old,
             },
+            Edit::MidiOutPort { key, old, new } => Edit::MidiOutPort {
+                key,
+                old: new,
+                new: old,
+            },
             Edit::Connect(c) => Edit::Disconnect(c),
             Edit::Disconnect(c) => Edit::Connect(c),
             Edit::Param {
@@ -867,6 +878,10 @@ impl Edit {
             }
             Edit::PatchName { key, new, .. } => {
                 device_mut(doc, key)?.patch_name.clone_from(new);
+                vec![SyncOp::ViewChanged]
+            }
+            Edit::MidiOutPort { key, new, .. } => {
+                device_mut(doc, key)?.midi_out = new.as_deref().map(crate::MidiOutDoc::new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Connect(c) => {
@@ -1657,6 +1672,7 @@ mod tests {
             plugin: None,
             column: 0,
             patch_name: String::new(),
+            midi_out: None,
         }
     }
 

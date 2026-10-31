@@ -2,12 +2,13 @@
 //! patch v2 rack fields) and the song.
 //!
 //! ```text
-//! { "format": "atomik-project", "version": 36,
+//! { "format": "atomik-project", "version": 37,
 //!   "sample_rate", "tempo_bpm", "seed", "output_channels", "devices", "cables"  (as patch v2;
 //!       a device may also have "zones", v4, written only when non-empty, "steps", v7,
 //!       written only when present, "inner", v8, a container's inside, see below, and
 //!       "plugin", v9, a plugin device's document, see below, and "patch", v36, the name of
-//!       the patch the device took its sound from, written only when non-empty)
+//!       the patch the device took its sound from, written only when non-empty, and
+//!       "midi_out", v37, a MIDI Out device's port: { "port": string }, written only when set)
 //!   "input_channels": 0..=32,                                   (v3; optional, default 0)
 //!   "console": { "channels": [{ "channel": key, "source": key | null }…],
 //!                "buses"?: [{ "bus": key, "name": string }…]     (v12; written only when non-empty),
@@ -323,8 +324,13 @@
 //! version 36 a device may carry `"patch"` after its `"name"` (the name of the patch it last took
 //! its sound from, trimmed, 1 to 64 characters, without control characters; display only),
 //! omitted when empty (`""` is refused), so a project whose devices have none differs from its
-//! version 35 file in the version line alone, and plays and bounces bit for bit as it did. Saving
-//! always writes version 36.
+//! version 35 file in the version line alone, and plays and bounces bit for bit as it did.
+//! From version 37 a MIDI Out device (`atomik.midi-out`) may carry
+//! `"midi_out": { "port": name }` after its `"plugin"` position (the output port it sends to:
+//! trimmed, 1 to 128 characters, without control characters), omitted while the device uses the
+//! fallback port of the app settings; the field is refused on any other device type and in a
+//! version 36 file, so a project without a MIDI Out device differs from its version 36 file in the
+//! version line alone, and plays and bounces bit for bit as it did. Saving always writes version 37.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -413,8 +419,8 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// editing) and 23 (no warp) and 24 (no frozen tracks) and 25 (no VCA groups) and 26 (no mixer
 /// snapshots) and 27 (no MIDI mappings) and 28 (no macros) and 29 (one note lane per track) and
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
-/// 34 (no note tails) and 35 (no lane holds).
-pub const PROJECT_VERSION: u32 = 36;
+/// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port).
+pub const PROJECT_VERSION: u32 = 37;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()

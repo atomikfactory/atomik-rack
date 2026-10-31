@@ -343,6 +343,7 @@ mod tests {
                 plugin: None,
                 column: i % columns,
                 patch_name: String::new(),
+                midi_out: None,
             })
             .collect::<Vec<_>>();
         let mut devices = devices;

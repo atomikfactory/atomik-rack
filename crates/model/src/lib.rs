@@ -37,6 +37,7 @@ mod macros_io;
 mod midi_import;
 mod midi_map;
 mod midi_map_io;
+mod midi_out;
 pub mod organise;
 mod organise_cmd;
 mod param_search;
@@ -97,6 +98,7 @@ pub use midi_map::{
     PICKUP_WINDOW, PresetMap, PresetTarget, RelativeKind, SourceKind, TransportTarget, note_name,
 };
 pub use midi_map_io::{MIDI_PRESET_FORMAT, load_midi_preset, save_midi_preset};
+pub use midi_out::{MAX_MIDI_OUT_PORT_CHARS, MIDI_OUT_TYPE, MidiOutDoc};
 pub use param_search::{MAX_RESULTS, ParamEntry, ParamIndex, SearchTarget, unit_label};
 pub use plugin::{
     MAX_LAYOUT_PARAMS, MAX_PINNED_PARAMS, MAX_PLUGIN_STATE_BYTES, MAX_PROJECT_PLUGIN_STATE_BYTES,
@@ -278,6 +280,10 @@ pub struct RackDevice {
     /// empty when it has none. Display only: it plays nothing, and it is stored only when
     /// non-empty (project format 36).
     pub patch_name: String,
+    /// A MIDI Out device's destination port: `Some` once the user chose one, `None` while the
+    /// device uses the fallback port of the app settings; always `None` on every other device
+    /// type. Stored only when `Some` (project format 37). See [`MidiOutDoc`].
+    pub midi_out: Option<MidiOutDoc>,
 }
 
 /// The rack document.
@@ -698,6 +704,7 @@ pub enum Command {
 /// | `SyncState`, `SyncLayout` | none (not undo steps) |
 /// | `ApplyPatch`, `ResetDevice` (also undo/redo) | `ParamChanged` per changed param, `ZonesChanged`, `PatternsChanged`, `PluginStateChanged`, `ViewChanged` (the patch name); a container's inside: `DeviceRemoved` and `DeviceAdded` for the container |
 /// | `SetPatchName` (also undo/redo) | `ViewChanged` |
+/// | `SetMidiOutPort` (also undo/redo) | `ViewChanged` (the app re-routes the device's output) |
 /// | `Workflow` (paste, duplicate, remove, move, disconnect devices; clip, note and point pastes) | the compound order below: `DeviceAdded` with stored params, `RoutingChanged`, `ViewChanged`, `ConsoleChanged`, `SongChanged`, then the removals; a move reports `ViewChanged` only |
 ///
 /// A step with several parts (e.g. `AddDevice` of an instrument with its channel and

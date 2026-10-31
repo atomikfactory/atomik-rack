@@ -15,10 +15,13 @@
 //!   one input never decrease.
 //! - [`parse_message`] is the parser of the control path (mappings and control surfaces): the
 //!   channel and the raw values of notes, controllers and pitch bend.
+//! - [`out`] schedules MIDI output: a time-ordered queue per port and the thread that sends the
+//!   messages the devices queue (the MIDI Out device now, MIDI clock next).
 //! - [`ports`] opens raw input (SysEx included) and output ports for control surfaces.
 //! - [`surface`] holds the control-surface drivers (pure: bytes in, actions out, bytes out).
 //! - [`smf`] reads and writes Standard MIDI Files (format 0 and 1), pure bytes in and out.
 
+pub mod out;
 pub mod ports;
 pub mod smf;
 pub mod surface;

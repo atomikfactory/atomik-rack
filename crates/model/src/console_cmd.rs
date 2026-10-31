@@ -362,6 +362,7 @@ fn master_device(key: DeviceKey, name: String) -> RackDevice {
         plugin: None,
         column: 0,
         patch_name: String::new(),
+        midi_out: None,
     }
 }
 

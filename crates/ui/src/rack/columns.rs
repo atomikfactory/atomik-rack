@@ -273,6 +273,7 @@ mod tests {
             plugin: None,
             column,
             patch_name: String::new(),
+            midi_out: None,
         }
     }
 

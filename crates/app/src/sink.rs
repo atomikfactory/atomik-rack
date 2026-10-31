@@ -124,6 +124,13 @@ pub trait EngineSink {
     ) -> Option<(usize, u64)> {
         None
     }
+    /// The output port each MIDI Out device chose, by device id (`None`: the settings' port).
+    /// The sink sends the device's messages there. The default does nothing (no MIDI).
+    fn set_midi_out_ports(&mut self, _ports: &[(DeviceInstanceId, Option<String>)]) {}
+    /// What the MIDI output thread has sent so far; all zero without one.
+    fn midi_out_stats(&self) -> atomik_midi_io::out::OutStats {
+        atomik_midi_io::out::OutStats::default()
+    }
     /// [`atomik_engine::EngineHandle::record_tap_gained`]: starts copying the host input
     /// `channels` into a ring of `capacity_frames` for the audio recorder, each through its
     /// strip of `controls` (the track's input gain and clip-safe switch). `None` when no engine
@@ -327,6 +334,10 @@ pub struct RecordingSink {
     pub unprimed: bool,
     /// When set, [`EngineSink::has_engine`] reports false (audio off).
     pub no_engine: bool,
+    /// The ports last given to [`EngineSink::set_midi_out_ports`], and how many times it was called.
+    pub midi_out_ports: Vec<(DeviceInstanceId, Option<String>)>,
+    /// Calls of [`EngineSink::set_midi_out_ports`].
+    pub midi_out_pushes: usize,
     /// What [`EngineSink::host_channels`] returns.
     pub host_channels: Option<(u16, u16)>,
     /// The preview stream the fake keeps alive (at most one: a new start replaces it, a stop
@@ -355,6 +366,11 @@ impl RecordingSink {
 }
 
 impl EngineSink for RecordingSink {
+    fn set_midi_out_ports(&mut self, ports: &[(DeviceInstanceId, Option<String>)]) {
+        self.midi_out_ports = ports.to_vec();
+        self.midi_out_pushes += 1;
+    }
+
     fn reset(&mut self, config: &EngineConfig) {
         self.calls.push(SinkCall::Reset {
             sample_rate: config.sample_rate.hz(),

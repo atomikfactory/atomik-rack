@@ -232,6 +232,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Device, "drums", 33),
     field(Device, "inner", 8),
     field(Device, "plugin", 9),
+    field(Device, "midi_out", 37),
     // A sampler zone.
     field(Zone, "asset", 1).req(),
     field(Zone, "key_lo", 1).req(),
@@ -688,6 +689,8 @@ mod tests {
     fn a_field_is_listed_from_the_version_that_added_it() {
         assert!(!fields(Obj::Device, 35).contains(&"patch"));
         assert!(fields(Obj::Device, 36).contains(&"patch"));
+        assert!(!fields(Obj::Device, 36).contains(&"midi_out"));
+        assert!(fields(Obj::Device, 37).contains(&"midi_out"));
         assert!(!fields(Obj::Root, 27).contains(&"midi_maps"));
         assert!(fields(Obj::Root, 28).contains(&"midi_maps"));
         assert!(!required(Obj::Root, 1).contains(&"console"));

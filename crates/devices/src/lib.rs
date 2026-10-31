@@ -35,6 +35,7 @@ pub mod loop_slicer;
 pub mod macro_bank;
 pub mod master;
 pub mod mastering;
+pub mod midi_out;
 pub mod mod_source;
 pub mod modulation;
 mod note_clock;
@@ -131,6 +132,7 @@ pub fn register_all(registry: &mut Registry) -> Result<(), RegistryError> {
     registry.register(guitar_amp::factory())?;
     registry.register(macro_bank::factory())?;
     registry.register(mastering::factory())?;
+    registry.register(midi_out::factory())?;
     registry.register(mod_source::factory())?;
     registry.register(modulation::factory())?;
     registry.register(note_delay::factory())?;
@@ -155,7 +157,7 @@ mod tests {
     use atomik_testkit::harness::DeviceHarness;
     use atomik_testkit::no_alloc::assert_no_alloc;
 
-    const TYPE_IDS: [&str; 35] = [
+    const TYPE_IDS: [&str; 36] = [
         "atomik.arpeggiator",
         "atomik.audio-track",
         "atomik.bus",
@@ -177,6 +179,7 @@ mod tests {
         "atomik.macro-bank",
         "atomik.master",
         "atomik.mastering",
+        "atomik.midi-out",
         "atomik.mod-source",
         "atomik.modulation",
         "atomik.note-delay",
@@ -194,7 +197,7 @@ mod tests {
     ];
 
     #[test]
-    // Name kept; it now covers all twenty-five devices.
+    // Name kept; it now covers all thirty-six devices.
     fn register_all_registers_nine_devices_in_sorted_order() {
         let mut r = Registry::new();
         register_all(&mut r).unwrap();

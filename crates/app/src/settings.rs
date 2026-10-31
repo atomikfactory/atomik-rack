@@ -27,6 +27,7 @@
 //!   "record_offset_frames": 0,
 //!   "pre_count_bars": 0,
 //!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" },
+//!   "midi_out_port": "Example Synth",
 //!   "device_loss": {
 //!     "reset_to_default": false,
 //!     "last_good": { "host": "wasapi", "output_device": null, "input_device": null,
@@ -46,6 +47,8 @@
 //! counts that many bars before the song starts, and nothing is recorded during them.
 //! `surface` is the control surface (the Surfaces tab of the settings): a driver id (`"mcu"`, the
 //! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
+//! `midi_out_port` is the output port a MIDI Out device sends to while it has no port of its own
+//! (the Surfaces tab lists it under the surface ports); `null` is none.
 //! It is an app setting, not part of the project. `device_loss.reset_to_default` makes the app
 //! switch to the host's default devices on its own when the stream is lost (default off: it says
 //! so and offers Audio > Restart Audio); `device_loss.last_good` is the device configuration that
@@ -344,6 +347,9 @@ pub struct AudioSettings {
     pub plugins: atomik_plugin_host::PluginSettings,
     /// The control surface (the Surfaces tab).
     pub surface: SurfaceSettings,
+    /// The MIDI output port a MIDI Out device uses while it has none of its own (exact or unique
+    /// substring of a port name); `None` = such a device sends nothing.
+    pub midi_out_port: Option<String>,
     /// Device loss handling and the last working device configuration.
     pub device_loss: DeviceLossSettings,
 }
@@ -364,6 +370,7 @@ impl Default for AudioSettings {
             stream_threshold_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
             surface: SurfaceSettings::default(),
+            midi_out_port: None,
             device_loss: DeviceLossSettings::default(),
         }
     }
@@ -410,6 +417,7 @@ impl AudioSettings {
             output_device: name(self.output_device),
             midi_inputs: clean_inputs(self.midi_inputs),
             input_device: name(self.input_device),
+            midi_out_port: name(self.midi_out_port),
             surface: SurfaceSettings {
                 driver: name(self.surface.driver),
                 input: name(self.surface.input),
@@ -827,6 +835,7 @@ mod tests {
                 input: Some("Example Surface".into()),
                 output: Some("Example Surface Out".into()),
             },
+            midi_out_port: Some("Example Synth".into()),
             device_loss: DeviceLossSettings {
                 reset_to_default: true,
                 last_good: Some(LastGood {

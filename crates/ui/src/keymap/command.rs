@@ -947,6 +947,13 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.extend_prev", "Extend Selection Up", G::Rack, C::Rack).rep(),
     cmd("rack.go_to_track", "Go to Track", G::Rack, C::Rack),
     cmd("rack.jack", "Patch Jack", G::Rack, C::Rack),
+    cmd("rack.midi_out_pick", "Pick MIDI Out Port", G::Rack, C::Rack),
+    cmd(
+        "rack.midi_out_port",
+        "Choose MIDI Out Port",
+        G::Rack,
+        C::Rack,
+    ),
     cmd("rack.patch_next", "Next Patch", G::Rack, C::Rack).rep(),
     cmd("rack.patch_pick", "Pick Patch", G::Rack, C::Rack),
     cmd("rack.patch_prev", "Previous Patch", G::Rack, C::Rack).rep(),

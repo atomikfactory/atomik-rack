@@ -415,6 +415,22 @@ pub(crate) fn load_device(
         }
         None => None,
     };
+    let midi_out = match obj.get("midi_out") {
+        Some(v) if type_id == crate::MIDI_OUT_TYPE => {
+            let out_path = path.field("midi_out");
+            let out = object(v, &out_path, &["port"], &["port"])?;
+            let port_path = out_path.field("port");
+            let port = string(&out["port"], &port_path)?;
+            crate::midi_out::check_port_name(port).map_err(|m| port_path.error(m))?;
+            Some(crate::MidiOutDoc::new(port))
+        }
+        Some(_) => {
+            return Err(path
+                .field("midi_out")
+                .error(format!("{type_id} is not a MIDI Out device")));
+        }
+        None => None,
+    };
     let column = match obj.get("column") {
         Some(v) => {
             let column_path = path.field("column");
@@ -494,6 +510,7 @@ pub(crate) fn load_device(
         plugin,
         column,
         patch_name,
+        midi_out,
     })
 }
 
@@ -704,6 +721,13 @@ pub(crate) fn write_device(
     if let Some(plugin) = d.plugin.as_ref().filter(|_| project) {
         let _ = write!(w, ",\n{p}\"plugin\": ");
         plugin_io::write_plugin(w, plugin, &p, used.0.get(path));
+    }
+    if let Some(out) = d.midi_out.as_ref().filter(|_| project) {
+        let _ = write!(
+            w,
+            ",\n{p}\"midi_out\": {{ \"port\": {} }}",
+            json_str(&out.port)
+        );
     }
     let _ = write!(w, "\n{ind}}}");
 }

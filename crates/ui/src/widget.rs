@@ -262,6 +262,7 @@ mod tests {
             plugin: None,
             column: 0,
             patch_name: String::new(),
+            midi_out: None,
         };
         assert!(close(current_value(&dev, &LIN), 0.25));
         dev.params.insert("a.lin".into(), 7.0);

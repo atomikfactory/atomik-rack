@@ -1491,3 +1491,45 @@ Hand checks, not automated (they need two MIDI controllers):
   tracks: the keyboard keeps playing the first. Click the arrow again to hand it back.
 - Click MAN REC in the arrangement corner: selecting tracks no longer arms them. M and S clear all
   mutes and solos; Edit > Undo takes each back in one step.
+
+## MIDI Out
+
+`crates/device-sdk/src/midi_tap.rs` tests the queue (order, wrap-around, the slots kept for note
+offs, a reader on another thread). `crates/devices/src/midi_out/tests.rs` drives the device through
+the harness: channel, transpose, retriggers, the release on `AllOff` and on `reset`, controllers
+from CV with number, scale, offset and the 100-per-second limit, program and bank, the latency
+offset, silence in an offline run, and a full queue; the allocation guard runs over every message
+(`process_is_allocation_free_for_every_registered_device` includes the device). `crates/engine/tests/midi_tap.rs`
+registers and forgets the taps with an inserted device, a plan and a removal, and checks the
+messages carry the engine host frame of their notes. `crates/midi-io/src/out/tests.rs` tests the
+scheduler with synthetic instants and a fake port (time order, lateness, releasing a source, a port
+that will not open, a refused send, tap and port changes, shutdown) and one real thread.
+`crates/midi-io/tests/midi_out_loopback.rs` is the loopback: a song track plays into the real
+device inside a real engine, the output logic sends to a fake cable, and the cable carries exactly
+the notes of the track on the channel, in order and at the time of their frames, shifted by the
+latency offset; seeded runs of stops, locates, loop wraps and a dense passage never leave a note
+sounding, and neither does deleting the device or flooding the queue. `session_tests.rs` checks the
+output thread through `LiveSession` (the device's port, the settings' fallback, a removed device,
+the end of the session), `app_core_midi_out_tests.rs` the ports the core hands the sink, and
+`crates/model/tests/midi_out.rs` the command, the saved field and format 37 (with the fixtures
+`demo-v37.atomik` and `midi-out-v37.atomik`).
+
+Hand checks, not automated (they need a MIDI device and your ears):
+
+- With a hardware synth on a MIDI interface, add a MIDI Out device, right-click it, Choose MIDI
+  Out Port, pick the interface; create a track on it and play a pattern: the synth plays the notes
+  on the channel set on the device. Change the channel and transpose while a note is held: the
+  held note still stops.
+- Loop a dense passage and press Stop and Locate at random: no note hangs. Delete the device while
+  a long note sounds: the note stops. Change the port in the pop-up while it sounds: it stops on
+  the old port.
+- Record the synth's audio on an audio track along with the click and check the offset to the song
+  at several buffer sizes; move `latency_ms` until they line up and note the value. Jitter to
+  expect is under 2 ms on a USB interface; with a 5-pin interface notes of a chord are spread by
+  the wire (about 1 ms per message).
+- Unplug the interface while playing: the song keeps playing and nothing hangs or crashes; plug it
+  back in and the notes resume within a second.
+- Wire CV 1 from a Mod Source LFO: the synth's mod wheel (CC 1) follows it without flooding the
+  port at a fast rate.
+- Bounce the project: it contains no MIDI and renders as without the device
+  (`crates/render/tests/midi_out_bounce.rs` checks the bits for several block sizes and workers).

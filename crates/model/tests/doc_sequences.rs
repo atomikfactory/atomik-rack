@@ -53,6 +53,8 @@ enum WfOp {
     NotesCable(usize, usize),
     /// Warp markers of a clip from tick and frame gaps (0), or a split at them (1), or the name of an asset (2).
     Warp(u8, usize, Vec<(i64, u64)>),
+    /// The port of a MIDI Out device (the second value picks none or one of two names).
+    MidiPort(usize, u8),
     Take(TakeOp),
 }
 
@@ -181,7 +183,8 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0u8..5, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
-        (0usize..4).prop_map(WfOp::AddDevice),
+        (0usize..5).prop_map(WfOp::AddDevice),
+        (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
@@ -328,7 +331,25 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             clip: pick(&ids, *c)?,
             indices: n.clone(),
         }),
-        WfOp::AddDevice(t) => add(usize::MAX, [SYNTH, DELAY, CONTAINER, SAMPLER][*t], None),
+        WfOp::AddDevice(t) => add(
+            usize::MAX,
+            [SYNTH, DELAY, CONTAINER, SAMPLER, "atomik.midi-out"][*t],
+            None,
+        ),
+        WfOp::MidiPort(i, p) => {
+            let outs: Vec<DeviceKey> = top
+                .iter()
+                .filter(|k| {
+                    doc.device(k)
+                        .is_some_and(|d| d.type_id == "atomik.midi-out")
+                })
+                .cloned()
+                .collect();
+            wf(WorkflowCommand::SetMidiOutPort {
+                device: pick(&outs, *i)?,
+                port: [None, Some("Port A"), Some("Port B")][usize::from(*p)].map(str::to_owned),
+            })
+        }
         WfOp::Connect(a, b) => {
             let (from, to) = (pick(&top, *a)?, pick(&top, *b)?);
             Command::Connect(cable(&format!("{from}:out_l"), &format!("{to}:in_l")))

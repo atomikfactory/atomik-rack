@@ -588,6 +588,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ApplyPatch { .. }
             | WorkflowCommand::ResetDevice { .. }
             | WorkflowCommand::SetPatchName { .. }
+            | WorkflowCommand::SetMidiOutPort { .. }
             | WorkflowCommand::AssignSend { .. }
             | WorkflowCommand::DisconnectDevices { .. } => {}
         }
