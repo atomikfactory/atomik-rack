@@ -368,6 +368,7 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "edit.delete",
             "create.instrument",
             "create.effect",
+            "create.player",
             "rack.auto_route",
             "rack.assign_send",
             "rack.disconnect",
@@ -501,6 +502,7 @@ fn right_click_on_the_empty_rack_offers_paste_create_columns_and_select_all() {
             "edit.paste",
             "create.instrument",
             "create.effect",
+            "create.player",
             "rack.add_column",
             "rack.remove_column",
             "edit.select_all"

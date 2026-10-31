@@ -622,6 +622,8 @@ mod tests {
             piano_keys: false,
             can_undo: false,
             can_redo: false,
+            undo_label: None,
+            redo_label: None,
             can_edit: false,
             can_paste: false,
             can_combine: false,

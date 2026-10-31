@@ -252,6 +252,9 @@ pub enum AppCommand {
     CreateInstrument,
     /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
     CreateEffect,
+    /// Create ▸ Create Player: the device browser in create mode, note players only; the
+    /// player is cabled into the stack of the selected device.
+    CreatePlayer,
     /// Create ▸ Create Audio Track (Ctrl+T).
     CreateAudioTrack,
     /// Create ▸ Create Mixer Channel (Ctrl+Shift+M): the console's add-channel picker.
@@ -520,6 +523,8 @@ impl AppCommand {
             AppCommand::ToggleFlip => ("view.toggle_flip", None),
             AppCommand::Cables(CableVisibility::Show) => ("view.cables", Some("show")),
             AppCommand::Cables(CableVisibility::HoverOnly) => ("view.cables", Some("hover")),
+            AppCommand::Cables(CableVisibility::SelectedOnly) => ("view.cables", Some("selected")),
+            AppCommand::Cables(CableVisibility::HideAutoRouted) => ("view.cables", Some("auto")),
             AppCommand::Cables(CableVisibility::Hide) => ("view.cables", Some("hide")),
             AppCommand::ZoomIn => ("view.zoom_in", None),
             AppCommand::ZoomOut => ("view.zoom_out", None),
@@ -617,6 +622,7 @@ impl AppCommand {
             AppCommand::ShowParamLane => ("view.show_param_lane", None),
             AppCommand::CreateInstrument => ("create.instrument", None),
             AppCommand::CreateEffect => ("create.effect", None),
+            AppCommand::CreatePlayer => ("create.player", None),
             AppCommand::CreateAudioTrack => ("create.audio_track", None),
             AppCommand::CreateMixerChannel => ("create.mixer_channel", None),
             AppCommand::ToggleRack => ("view.toggle_rack", None),
@@ -747,6 +753,8 @@ impl AppCommand {
             ("view.toggle_flip", None) => AppCommand::ToggleFlip,
             ("view.cables", Some("show")) => AppCommand::Cables(CableVisibility::Show),
             ("view.cables", Some("hover")) => AppCommand::Cables(CableVisibility::HoverOnly),
+            ("view.cables", Some("selected")) => AppCommand::Cables(CableVisibility::SelectedOnly),
+            ("view.cables", Some("auto")) => AppCommand::Cables(CableVisibility::HideAutoRouted),
             ("view.cables", Some("hide")) => AppCommand::Cables(CableVisibility::Hide),
             ("view.zoom_in", None) => AppCommand::ZoomIn,
             ("view.zoom_out", None) => AppCommand::ZoomOut,
@@ -862,6 +870,7 @@ impl AppCommand {
             ("view.show_param_lane", None) => AppCommand::ShowParamLane,
             ("create.instrument", None) => AppCommand::CreateInstrument,
             ("create.effect", None) => AppCommand::CreateEffect,
+            ("create.player", None) => AppCommand::CreatePlayer,
             ("create.audio_track", None) => AppCommand::CreateAudioTrack,
             ("create.mixer_channel", None) => AppCommand::CreateMixerChannel,
             ("view.toggle_rack", None) => AppCommand::ToggleRack,
@@ -1168,6 +1177,10 @@ pub struct MenuState {
     pub can_undo: bool,
     /// Redo possible.
     pub can_redo: bool,
+    /// The name of the step Undo runs (`"Move Device"`), when there is one.
+    pub undo_label: Option<&'static str>,
+    /// The name of the step Redo runs.
+    pub redo_label: Option<&'static str>,
     /// The focused pane has a selection Cut, Copy, Duplicate and Delete can work on.
     pub can_edit: bool,
     /// The clipboard holds something the focused pane can paste.
@@ -1438,6 +1451,20 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
             enabled,
         })
     };
+    // Undo and Redo name the step they run ("Undo Move Device").
+    let step = |verb: &'static str, label: Option<&'static str>, command: AppCommand, enabled| {
+        let text = match label {
+            Some(l) if enabled => Cow::Owned(format!("{verb} {l}")),
+            _ => Cow::Borrowed(verb),
+        };
+        MenuEntry::Item(MenuItem {
+            label: text,
+            command,
+            shortcut: command.shortcut_text(keymap),
+            checked: None,
+            enabled,
+        })
+    };
     let item = |label, command| make(label, command, None, true);
     let check = |label, command, checked| make(label, command, Some(checked), true);
     let enabled = |label, command, enabled| make(label, command, None, enabled);
@@ -1548,8 +1575,8 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
         Menu {
             title: "Edit",
             entries: vec![
-                enabled("Undo", AppCommand::Undo, state.can_undo),
-                enabled("Redo", AppCommand::Redo, state.can_redo),
+                step("Undo", state.undo_label, AppCommand::Undo, state.can_undo),
+                step("Redo", state.redo_label, AppCommand::Redo, state.can_redo),
                 MenuEntry::Separator,
                 enabled("Cut", AppCommand::Cut, state.can_edit),
                 enabled("Copy", AppCommand::Copy, state.can_edit),
@@ -1618,6 +1645,8 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 MenuEntry::Separator,
                 cables("Cables: Show", CableVisibility::Show),
                 cables("Cables: Hover", CableVisibility::HoverOnly),
+                cables("Cables: Selected", CableVisibility::SelectedOnly),
+                cables("Cables: Hide Auto-routed", CableVisibility::HideAutoRouted),
                 cables("Cables: Hide", CableVisibility::Hide),
                 MenuEntry::Separator,
                 item("Zoom In", AppCommand::ZoomIn),
@@ -1900,6 +1929,7 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
             entries: vec![
                 item("Create Instrument\u{2026}", AppCommand::CreateInstrument),
                 item("Create Effect\u{2026}", AppCommand::CreateEffect),
+                item("Create Player\u{2026}", AppCommand::CreatePlayer),
                 item("Create Audio Track", AppCommand::CreateAudioTrack),
                 item(
                     "Create Mixer Channel\u{2026}",
@@ -2338,6 +2368,8 @@ mod tests {
             piano_keys: false,
             can_undo: true,
             can_redo: false,
+            undo_label: None,
+            redo_label: None,
             can_edit: false,
             can_paste: false,
             can_combine: false,
@@ -2489,6 +2521,7 @@ mod tests {
             AppCommand::NewMacroBank,
             AppCommand::CreateInstrument,
             AppCommand::CreateEffect,
+            AppCommand::CreatePlayer,
             AppCommand::CreateAudioTrack,
             AppCommand::CreateMixerChannel,
             AppCommand::ToggleRack,
@@ -2606,6 +2639,8 @@ mod tests {
         for c in [
             CableVisibility::Show,
             CableVisibility::HoverOnly,
+            CableVisibility::SelectedOnly,
+            CableVisibility::HideAutoRouted,
             CableVisibility::Hide,
         ] {
             v.push(AppCommand::Cables(c));
@@ -3027,6 +3062,8 @@ mod tests {
                 "Back of Rack",
                 "Cables: Show",
                 "Cables: Hover",
+                "Cables: Selected",
+                "Cables: Hide Auto-routed",
                 "Cables: Hide",
                 "Zoom In",
                 "Zoom Out",
@@ -3103,6 +3140,7 @@ mod tests {
             [
                 "Create Instrument\u{2026}",
                 "Create Effect\u{2026}",
+                "Create Player\u{2026}",
                 "Create Audio Track",
                 "Create Mixer Channel\u{2026}"
             ]
@@ -3241,6 +3279,27 @@ mod tests {
     }
 
     #[test]
+    fn the_edit_menu_names_the_steps_undo_and_redo_run() {
+        let mut s = state();
+        s.can_undo = true;
+        s.can_redo = true;
+        s.undo_label = Some("Move Device");
+        s.redo_label = Some("Add Clip");
+        let m = menus(&s, &legacy(Os::Windows));
+        let edit = m.iter().find(|m| m.title == "Edit").unwrap();
+        let labels: Vec<&str> = edit.items().take(2).map(|i| i.label.as_ref()).collect();
+        assert_eq!(labels, ["Undo Move Device", "Redo Add Clip"]);
+        // Disabled, or without a name, the plain verbs stay.
+        s.can_undo = false;
+        s.redo_label = None;
+        let m = menus(&s, &legacy(Os::Windows));
+        let edit = m.iter().find(|m| m.title == "Edit").unwrap();
+        let labels: Vec<&str> = edit.items().take(2).map(|i| i.label.as_ref()).collect();
+        assert_eq!(labels, ["Undo", "Redo"]);
+        assert_eq!(edit.items().next().unwrap().command, AppCommand::Undo);
+    }
+
+    #[test]
     fn the_view_menu_checks_the_theme_and_the_zoom_in_use() {
         let mut s = state();
         s.theme = ThemeChoice::Light;
@@ -3366,6 +3425,8 @@ mod tests {
                 piano_keys: false,
                 can_undo: false,
                 can_redo: true,
+                undo_label: None,
+                redo_label: None,
                 can_edit: true,
                 can_paste: false,
                 can_combine: false,
