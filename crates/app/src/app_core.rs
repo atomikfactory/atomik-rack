@@ -497,7 +497,7 @@ impl<S: EngineSink> AppCore<S> {
             metronome_gain: DEFAULT_METRONOME_GAIN,
             pre_count_bars: 0,
             pre_count_resume: 1,
-            quantize: InputQuantize::Off,
+            quantize: InputQuantize::OFF,
             record_mode: RecordMode::default(),
             keep_events: KeepEvents::default(),
             warp_imports: crate::import_warp::WarpImports::default(),

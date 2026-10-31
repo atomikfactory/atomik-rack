@@ -111,7 +111,7 @@ fn ac_s5_notes_land_at_their_ticks_without_quantize() {
     feed(&mut t, &snap, &st, &events);
     let clips = t.finish(
         stop(&snap, &st, frame_at(&snap, 2 * BAR - 100, 0, 0)),
-        InputQuantize::Off,
+        InputQuantize::OFF,
     );
     assert_eq!(clips.len(), 1);
     let (key, clip) = &clips[0];
@@ -136,8 +136,8 @@ fn ac_s5_input_quantize_snaps_starts_to_the_grid() {
     let snap = snapshot(97.0);
     let st = state(None);
     for (q, grid) in [
-        (InputQuantize::Sixteenth, PPQ / 4),
-        (InputQuantize::Eighth, PPQ / 2),
+        (InputQuantize::SIXTEENTH, PPQ / 4),
+        (InputQuantize::EIGHTH, PPQ / 2),
     ] {
         let mut t = take(None);
         let played = [3 * grid + 700, 5 * grid - 900, 9 * grid + grid / 2 - 10];
@@ -177,7 +177,7 @@ fn ac_s5_a_loop_wrap_starts_a_new_lap_clip_and_cuts_held_notes() {
     feed(&mut t, &snap, &st, &events);
     let end = stop(&snap, &st, frame_at(&snap, BAR + 10, 1, lap));
     assert_eq!(end.loop_count, 1);
-    let clips = t.finish(end, InputQuantize::Off);
+    let clips = t.finish(end, InputQuantize::OFF);
     assert_eq!(clips.len(), 2, "one clip per pass");
     let (first, second) = (&clips[0].1, &clips[1].1);
     assert_eq!((first.start, first.length), (0, lap));
@@ -209,7 +209,7 @@ fn notes_held_at_stop_are_closed_at_the_stop_position() {
     );
     let clips = t.finish(
         stop(&snap, &st, frame_at(&snap, BAR + 3 * PPQ, 0, 0)),
-        InputQuantize::Off,
+        InputQuantize::OFF,
     );
     let n = notes(&clips[0].1);
     assert!(near(n[0].length, 2 * PPQ), "{}", n[0].length);
@@ -230,7 +230,7 @@ fn a_take_starting_mid_song_starts_its_clip_on_the_bar() {
         &st,
         &[on(60, f(3 * BAR + 2 * PPQ)), off(60, f(3 * BAR + 3 * PPQ))],
     );
-    let clips = t.finish(stop(&snap, &st, f(4 * BAR + PPQ)), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, f(4 * BAR + PPQ)), InputQuantize::OFF);
     let clip = &clips[0].1;
     assert_eq!((clip.start, clip.length), (3 * BAR, 2 * BAR));
     assert!(near(notes(clip)[0].tick, 2 * PPQ));
@@ -258,7 +258,7 @@ fn events_before_the_engine_plays_wait_for_the_first_playing_state() {
     assert_eq!(t.origin(), Some((0, 0)));
     let clips = t.finish(
         stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
-        InputQuantize::Off,
+        InputQuantize::OFF,
     );
     let n = notes(&clips[0].1);
     assert!(near(n[0].tick, PPQ) && near(n[0].length, PPQ));
@@ -285,7 +285,7 @@ fn unarmed_devices_retriggers_and_quantize_duplicates_are_handled() {
     );
     let clips = t.finish(
         stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
-        InputQuantize::Off,
+        InputQuantize::OFF,
     );
     assert_eq!(clips.len(), 1, "only the armed device");
     let n = notes(&clips[0].1);
@@ -306,7 +306,7 @@ fn unarmed_devices_retriggers_and_quantize_duplicates_are_handled() {
     );
     let clips = t.finish(
         stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
-        InputQuantize::Eighth,
+        InputQuantize::EIGHTH,
     );
     assert_eq!(notes(&clips[0].1).len(), 1);
 }
@@ -318,7 +318,7 @@ fn a_take_without_notes_makes_no_clip() {
     let mut t = take(None);
     feed(&mut t, &snap, &st, &[]);
     assert!(
-        t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::Off)
+        t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::OFF)
             .is_empty()
     );
 }
@@ -364,7 +364,7 @@ fn controller_events_become_step_lanes_next_to_the_notes() {
         off(60, at(3 * PPQ)),
     ];
     feed(&mut t, &snap, &st, &events);
-    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::OFF);
     assert_eq!(clips.len(), 1);
     let clip = &clips[0].1;
     let kinds: Vec<_> = clip.controllers.iter().map(|l| l.kind).collect();
@@ -405,7 +405,7 @@ fn a_burst_keeps_its_last_value_and_repeats_are_dropped() {
     events.push(ctl(cc(11, 0.9), at(2 * PPQ)));
     events.push(ctl(cc(11, 0.2), at(3 * PPQ)));
     feed(&mut t, &snap, &st, &events);
-    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, at(BAR - 100)), InputQuantize::OFF);
     let pts = &lane(&clips[0].1, ControllerKind::Cc(11)).points;
     let values: Vec<f32> = pts.iter().map(|p| p.value).collect();
     assert_eq!(
@@ -423,7 +423,7 @@ fn a_take_with_only_controllers_makes_a_clip_without_notes() {
     let mut t = take(None);
     let at = |tick| frame_at(&snap, tick, 0, 0);
     feed(&mut t, &snap, &st, &[ctl(cc(64, 1.0), at(BAR + PPQ))]);
-    let clips = t.finish(stop(&snap, &st, at(BAR + 2 * PPQ)), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, at(BAR + 2 * PPQ)), InputQuantize::OFF);
     assert_eq!(clips.len(), 1);
     let clip = &clips[0].1;
     assert!(notes(clip).is_empty());
@@ -448,7 +448,7 @@ fn controllers_follow_the_loop_laps_and_other_devices_are_ignored() {
     ];
     feed(&mut t, &snap, &st, &events);
     let end = stop(&snap, &st, frame_at(&snap, BAR, 1, lap));
-    let clips = t.finish(end, InputQuantize::Off);
+    let clips = t.finish(end, InputQuantize::OFF);
     assert_eq!(clips.len(), 2, "one clip per pass");
     let v = |i: usize| lane(&clips[i].1, ControllerKind::Cc(1)).points[0].value;
     assert_eq!((v(0), v(1)), (0.5, 0.75));
@@ -466,7 +466,7 @@ fn recorded_clips_pass_the_models_validation() {
         ctl(cc(7, -2.0), at(2 * PPQ)),
     ];
     feed(&mut t, &snap, &st, &events);
-    let clips = t.finish(stop(&snap, &st, at(BAR)), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, at(BAR)), InputQuantize::OFF);
     let clip = &clips[0].1;
     assert_eq!(lane(clip, ControllerKind::PitchBend).points[0].value, 1.0);
     assert_eq!(lane(clip, ControllerKind::Cc(7)).points[0].value, 0.0);
@@ -517,16 +517,109 @@ fn the_tap_keeps_armed_devices_only_and_never_grows() {
 
 #[test]
 fn quantize_settings_have_labels_and_grids() {
-    assert_eq!(InputQuantize::default(), InputQuantize::Off);
-    assert_eq!(InputQuantize::Off.grid(), None);
-    assert_eq!(InputQuantize::Eighth.grid(), Some(PPQ / 2));
-    assert_eq!(InputQuantize::Sixteenth.grid(), Some(PPQ / 4));
-    let labels: Vec<_> = InputQuantize::ALL.iter().map(|q| q.label()).collect();
-    assert_eq!(labels, ["Off", "1/8", "1/16"]);
+    assert_eq!(InputQuantize::default(), InputQuantize::OFF);
+    assert_eq!(InputQuantize::OFF.grid(), None);
+    assert_eq!(InputQuantize::EIGHTH.grid(), Some(PPQ / 2));
+    assert_eq!(InputQuantize::SIXTEENTH.grid(), Some(PPQ / 4));
+    let labels: Vec<_> = [
+        InputQuantize::OFF,
+        InputQuantize::EIGHTH,
+        InputQuantize::SIXTEENTH,
+        InputQuantize::on(PPQ / 6),
+    ]
+    .iter()
+    .map(|q| q.label())
+    .collect();
+    assert_eq!(labels, ["Off", "1/8", "1/16", "1/16 triplet"]);
     assert_eq!(
-        serde_json::to_string(&InputQuantize::Sixteenth).unwrap(),
+        serde_json::to_string(&InputQuantize::SIXTEENTH).unwrap(),
         "\"1/16\""
     );
+}
+
+#[test]
+fn old_quantize_values_still_load() {
+    let load = |s: &str| serde_json::from_str::<InputQuantize>(s).unwrap();
+    assert_eq!(load("\"off\""), InputQuantize::OFF);
+    assert_eq!(load("\"1/8\""), InputQuantize::EIGHTH);
+    assert_eq!(load("\"1/16\""), InputQuantize::SIXTEENTH);
+    assert_eq!(load("\"1/16 triplet\""), InputQuantize::on(PPQ / 6));
+    assert!(serde_json::from_str::<InputQuantize>("\"nonsense\"").is_err());
+    let triplet = InputQuantize::on(PPQ / 6);
+    assert_eq!(load(&serde_json::to_string(&triplet).unwrap()), triplet);
+}
+
+#[test]
+fn a_triplet_grid_quantizes_recorded_starts() {
+    let snap = snapshot(97.0);
+    let st = state(None);
+    let grid = PPQ / 6;
+    let mut t = take(None);
+    let played = [3 * grid + 20, 5 * grid - 30];
+    let mut events = Vec::new();
+    for (i, &tick) in played.iter().enumerate() {
+        let key = 60 + i as u8;
+        events.push(on(key, frame_at(&snap, tick, 0, 0)));
+        events.push(off(key, frame_at(&snap, tick + 100, 0, 0)));
+    }
+    feed(&mut t, &snap, &st, &events);
+    let clips = t.finish(
+        stop(&snap, &st, frame_at(&snap, BAR, 0, 0)),
+        InputQuantize::on(grid),
+    );
+    let starts: Vec<i64> = notes(&clips[0].1).iter().map(|n| n.tick).collect();
+    assert_eq!(starts, vec![3 * grid, 5 * grid]);
+}
+
+#[test]
+fn a_take_preview_grows_and_discarding_keeps_only_later_notes() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let mut t = take(None);
+    feed(
+        &mut t,
+        &snap,
+        &st,
+        &[
+            on(60, frame_at(&snap, PPQ, 0, 0)),
+            off(60, frame_at(&snap, 2 * PPQ, 0, 0)),
+            on(62, frame_at(&snap, 3 * PPQ, 0, 0)),
+        ],
+    );
+    let p = t.preview(4 * PPQ);
+    assert_eq!(p.notes.len(), 2, "a held note shows up to the playhead");
+    assert!(p.notes.iter().any(|n| n.key == 62 && n.length >= PPQ - 2));
+    t.discard_notes();
+    assert!(t.preview(4 * PPQ).notes.is_empty());
+    feed(
+        &mut t,
+        &snap,
+        &st,
+        &[
+            off(62, frame_at(&snap, 4 * PPQ, 0, 0)),
+            on(64, frame_at(&snap, 5 * PPQ, 0, 0)),
+            off(64, frame_at(&snap, 6 * PPQ, 0, 0)),
+        ],
+    );
+    let clips = t.finish(
+        stop(&snap, &st, frame_at(&snap, 7 * PPQ, 0, 0)),
+        InputQuantize::OFF,
+    );
+    let n = notes(&clips[0].1);
+    assert_eq!(n.len(), 1);
+    assert_eq!(n[0].key, 64);
+}
+
+#[test]
+fn a_take_with_nothing_captured_makes_no_clip() {
+    let snap = snapshot(120.0);
+    let st = state(None);
+    let t = take(None);
+    let clips = t.finish(
+        stop(&snap, &st, frame_at(&snap, 2 * BAR, 0, 0)),
+        InputQuantize::OFF,
+    );
+    assert!(clips.is_empty());
 }
 
 #[test]
@@ -567,7 +660,7 @@ fn a_take_that_counts_in_records_nothing_before_the_song_starts() {
     feed(&mut t, &snap, &st, &[on(41, note), off(41, note + 2000)]);
     let origin = t.origin().expect("the song started");
     assert_eq!(origin.0, 0, "the take starts where the song does");
-    let clips = t.finish(stop(&snap, &st, note + 4000), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, note + 4000), InputQuantize::OFF);
     assert_eq!(clips.len(), 1);
     let n = notes(&clips[0].1);
     assert_eq!(n.len(), 1, "only the note played after the count");
@@ -582,6 +675,6 @@ fn a_take_without_a_count_in_keeps_events_that_precede_the_first_playing_state()
     let st = state(None);
     let mut t = take(None);
     feed(&mut t, &snap, &st, &[on(40, E0 - 10), off(40, E0 + 500)]);
-    let clips = t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::Off);
+    let clips = t.finish(stop(&snap, &st, E0 + 1000), InputQuantize::OFF);
     assert_eq!(notes(&clips[0].1).len(), 1);
 }

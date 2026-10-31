@@ -638,7 +638,7 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
-            quantize: crate::record::InputQuantize::Off,
+            quantize: crate::record::InputQuantize::OFF,
             console: false,
             console_maximised: false,
             compensation: true,

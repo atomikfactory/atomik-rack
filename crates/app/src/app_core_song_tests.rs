@@ -506,7 +506,7 @@ fn armed_tracks_receive_live_notes() {
 fn recording_turns_live_notes_into_a_clip_on_stop() {
     let mut c = with_track();
     arm(&mut c, "a", true);
-    c.set_input_quantize(InputQuantize::Sixteenth);
+    c.set_input_quantize(InputQuantize::SIXTEENTH);
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
     assert!(c.is_recording() && c.is_playing());
@@ -722,7 +722,7 @@ fn recording_through_a_player_stack_records_the_input_notes() {
         .unwrap();
     let entry = c.device_id(&arp).unwrap();
     assert_ne!(entry, id(1));
-    c.set_input_quantize(InputQuantize::Sixteenth);
+    c.set_input_quantize(InputQuantize::SIXTEENTH);
     c.sink_mut().take();
     let calls = transport(&mut c, TransportAction::ToggleRecord);
     assert_eq!(calls[0], SinkCall::Recording(vec![entry]));

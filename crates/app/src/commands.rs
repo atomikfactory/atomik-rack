@@ -425,13 +425,15 @@ impl AppCommand {
             AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
             AppCommand::ToggleClockIn => ("sync.follow_clock", None),
             AppCommand::ToggleChase => ("sequencer.toggle_chase", None),
-            AppCommand::Quantize(InputQuantize::Off) => ("transport.input_quantize", Some("off")),
-            AppCommand::Quantize(InputQuantize::Eighth) => {
+            AppCommand::Quantize(InputQuantize::OFF) => ("transport.input_quantize", Some("off")),
+            AppCommand::Quantize(InputQuantize::EIGHTH) => {
                 ("transport.input_quantize", Some("eighth"))
             }
-            AppCommand::Quantize(InputQuantize::Sixteenth) => {
+            AppCommand::Quantize(InputQuantize::SIXTEENTH) => {
                 ("transport.input_quantize", Some("sixteenth"))
             }
+            // A grid the bar picked has no menu entry: it names the command without a value.
+            AppCommand::Quantize(_) => ("transport.input_quantize", None),
             AppCommand::ToggleConsoleDevices => ("view.toggle_console_devices", None),
             AppCommand::ToggleConsoleLinks => ("view.toggle_console_links", None),
             AppCommand::ToggleTempoLane => ("view.toggle_tempo_lane", None),
@@ -620,12 +622,12 @@ impl AppCommand {
             ("sync.clock_while_stopped", None) => AppCommand::ToggleClockWhileStopped,
             ("sync.follow_clock", None) => AppCommand::ToggleClockIn,
             ("sequencer.toggle_chase", None) => AppCommand::ToggleChase,
-            ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::Off),
+            ("transport.input_quantize", Some("off")) => AppCommand::Quantize(InputQuantize::OFF),
             ("transport.input_quantize", Some("eighth")) => {
-                AppCommand::Quantize(InputQuantize::Eighth)
+                AppCommand::Quantize(InputQuantize::EIGHTH)
             }
             ("transport.input_quantize", Some("sixteenth")) => {
-                AppCommand::Quantize(InputQuantize::Sixteenth)
+                AppCommand::Quantize(InputQuantize::SIXTEENTH)
             }
             ("view.toggle_console_devices", None) => AppCommand::ToggleConsoleDevices,
             ("view.toggle_console_links", None) => AppCommand::ToggleConsoleLinks,
@@ -1387,9 +1389,9 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Previous Marker", AppCommand::PreviousMarker),
                 item("Next Marker", AppCommand::NextMarker),
                 MenuEntry::Separator,
-                quantize("Input Quantize: Off", InputQuantize::Off),
-                quantize("Input Quantize: 1/8", InputQuantize::Eighth),
-                quantize("Input Quantize: 1/16", InputQuantize::Sixteenth),
+                quantize("Input Quantize: Off", InputQuantize::OFF),
+                quantize("Input Quantize: 1/8", InputQuantize::EIGHTH),
+                quantize("Input Quantize: 1/16", InputQuantize::SIXTEENTH),
             ],
         },
         Menu {
@@ -1811,9 +1813,9 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 ),
                 check("Pre-count", AppCommand::TogglePreCount, state.pre_count),
                 MenuEntry::Separator,
-                quantize("Input Quantize: Off", InputQuantize::Off),
-                quantize("Input Quantize: 1/8", InputQuantize::Eighth),
-                quantize("Input Quantize: 1/16", InputQuantize::Sixteenth),
+                quantize("Input Quantize: Off", InputQuantize::OFF),
+                quantize("Input Quantize: 1/8", InputQuantize::EIGHTH),
+                quantize("Input Quantize: 1/16", InputQuantize::SIXTEENTH),
                 MenuEntry::Separator,
                 item("Chase Notes", AppCommand::ToggleChase),
                 check(
@@ -1890,7 +1892,7 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
-            quantize: InputQuantize::Off,
+            quantize: InputQuantize::OFF,
             console: false,
             console_maximised: false,
             compensation: true,
@@ -2118,9 +2120,9 @@ mod tests {
         v.push(AppCommand::ToggleClockIn);
         v.push(AppCommand::ToggleChase);
         for q in [
-            InputQuantize::Off,
-            InputQuantize::Eighth,
-            InputQuantize::Sixteenth,
+            InputQuantize::OFF,
+            InputQuantize::EIGHTH,
+            InputQuantize::SIXTEENTH,
         ] {
             v.push(AppCommand::Quantize(q));
         }
@@ -2717,7 +2719,7 @@ mod tests {
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,
-                quantize: InputQuantize::Eighth,
+                quantize: InputQuantize::EIGHTH,
                 console: true,
                 console_maximised: false,
                 compensation: false,
