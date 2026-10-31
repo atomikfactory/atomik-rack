@@ -14,6 +14,7 @@
 use crate::import_warp::WarpImports;
 use crate::master_keyboard::MasterKeyboard;
 use crate::record_over::{KeepEvents, RecordMode};
+use atomik_model::ThinLevel;
 use atomik_ui::ThemeChoice;
 use atomik_ui::keymap::UserKeymap;
 use atomik_ui::widget::KnobRange;
@@ -91,6 +92,8 @@ pub struct WorkflowPrefs {
     /// Hovering any control shows its name and value (default off: only an automated or driven
     /// control says so).
     pub value_tooltips: bool,
+    /// How hard recorded and drawn automation is thinned (default Normal, 0.5 % of the range).
+    pub automation_thinning: ThinLevel,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -128,6 +131,7 @@ impl Default for WorkflowPrefs {
             app_zoom: 100,
             knob_range: KnobRange::default(),
             value_tooltips: false,
+            automation_thinning: ThinLevel::default(),
             extra: BTreeMap::new(),
         }
     }
@@ -204,6 +208,11 @@ impl WorkflowPrefs {
                 .and_then(KnobRange::from_id)
                 .unwrap_or(defaults.knob_range),
             value_tooltips: flag("value_tooltips", defaults.value_tooltips),
+            automation_thinning: obj
+                .get("automation_thinning")
+                .and_then(Value::as_str)
+                .and_then(ThinLevel::from_id)
+                .unwrap_or(defaults.automation_thinning),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -228,6 +237,7 @@ impl WorkflowPrefs {
                             | "app_zoom"
                             | "knob_range"
                             | "value_tooltips"
+                            | "automation_thinning"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -289,6 +299,10 @@ impl WorkflowPrefs {
             Value::String(self.knob_range.id().into()),
         );
         map.insert("value_tooltips".into(), Value::Bool(self.value_tooltips));
+        map.insert(
+            "automation_thinning".into(),
+            Value::String(self.automation_thinning.id().into()),
+        );
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -579,6 +593,24 @@ mod tests {
         assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
         // Saving again is byte-identical.
         assert_eq!(WorkflowPrefs::from_json(&text).unwrap().to_json(), text);
+    }
+
+    #[test]
+    fn the_automation_thinning_preference_round_trips_and_falls_back_to_normal() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(d.automation_thinning, ThinLevel::Normal);
+        let w = WorkflowPrefs {
+            automation_thinning: ThinLevel::Heavy,
+            ..d
+        };
+        let text = w.to_json();
+        assert!(
+            text.contains("\"automation_thinning\": \"heavy\""),
+            "{text}"
+        );
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        let bad = WorkflowPrefs::from_json(r#"{"automation_thinning": "extreme"}"#).unwrap();
+        assert_eq!(bad.automation_thinning, ThinLevel::Normal);
     }
 
     #[test]

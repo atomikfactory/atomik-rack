@@ -6,6 +6,7 @@
 
 use crate::keyboard_tab::{PAD, TITLE, TabOutcome};
 use crate::keymap_store::{WorkflowPrefs, ZOOM_STEPS};
+use atomik_model::ThinLevel;
 use atomik_ui::kurbo::{Point, Rect, RoundedRect};
 use atomik_ui::widget::KnobRange;
 use atomik_ui::{
@@ -27,6 +28,8 @@ pub struct UiPrefs {
     pub knob_range: KnobRange,
     /// Hovering a control shows its value.
     pub value_tooltips: bool,
+    /// How hard recorded and drawn automation is thinned.
+    pub automation_thinning: ThinLevel,
 }
 
 impl UiPrefs {
@@ -37,6 +40,7 @@ impl UiPrefs {
             app_zoom: prefs.app_zoom,
             knob_range: prefs.knob_range,
             value_tooltips: prefs.value_tooltips,
+            automation_thinning: prefs.automation_thinning,
         }
     }
 
@@ -46,6 +50,7 @@ impl UiPrefs {
         prefs.app_zoom = self.app_zoom;
         prefs.knob_range = self.knob_range;
         prefs.value_tooltips = self.value_tooltips;
+        prefs.automation_thinning = self.automation_thinning;
     }
 }
 
@@ -60,6 +65,8 @@ pub enum UiRow {
     KnobRange,
     /// The value tooltips (a switch).
     ValueTooltips,
+    /// How hard recorded and drawn automation is thinned (steps through the levels).
+    AutomationThinning,
 }
 
 /// One row of the tab.
@@ -150,6 +157,13 @@ impl InterfaceTab {
                 String::new(),
                 self.prefs.value_tooltips,
             ),
+            (
+                UiRow::AutomationThinning,
+                "Automation thinning",
+                "How many points recorded takes and the pencil keep: Normal, Heavy or Maximum.",
+                self.prefs.automation_thinning.label().to_string(),
+                false,
+            ),
         ] {
             let rect = Rect::new(x0, y, x0 + inner, y + ROW);
             let button = if which == UiRow::ValueTooltips {
@@ -197,6 +211,16 @@ impl InterfaceTab {
                 };
             }
             UiRow::ValueTooltips => self.prefs.value_tooltips = !self.prefs.value_tooltips,
+            UiRow::AutomationThinning => {
+                let all = ThinLevel::ALL;
+                let at = all
+                    .iter()
+                    .position(|l| *l == self.prefs.automation_thinning)
+                    .unwrap_or(0);
+                let n = all.len();
+                self.prefs.automation_thinning =
+                    all[if back { (at + n - 1) % n } else { (at + 1) % n }];
+            }
         }
     }
 

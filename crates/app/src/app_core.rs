@@ -2793,7 +2793,7 @@ impl<S: EngineSink> AppCore<S> {
     fn start_recording(&mut self) {
         if !self.doc().song.tracks.iter().any(|t| t.armed) && !self.has_armed_lanes() {
             self.reject(
-                "recording needs an armed track or automation lane: arm one with its R button in the arrangement, or turn on Auto-create lanes"
+                "recording needs an armed track, automation lane or the tempo lane: arm one with its R button in the arrangement, or turn on Auto-create lanes"
                     .to_string(),
             );
             return;
