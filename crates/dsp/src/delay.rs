@@ -1,7 +1,8 @@
 //! Circular delay line with fractional (linear-interpolated) reads.
 //!
-//! The buffer is allocated only by [`DelayLine::new`] and [`DelayLine::resize`] (non-real-time).
-//! [`DelayLine::read`], [`DelayLine::write`] and [`DelayLine::clear`] never allocate.
+//! The buffer is allocated only by [`DelayLine::new`], [`DelayLine::with_reserve`] and
+//! [`DelayLine::resize`] (non-real-time). [`DelayLine::read`], [`DelayLine::write`],
+//! [`DelayLine::clear`] and [`DelayLine::grow`] never allocate.
 //!
 //! Convention: per sample, call `read(d)` first, then `write(x)`. `read(d)` returns the input
 //! from `d` samples ago (`d = 1` is the most recent write). Values written with magnitude below
@@ -10,15 +11,27 @@
 /// Fractional delay line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DelayLine {
+    /// The whole allocation (zeroed, so the operating system commits its pages when first
+    /// written).
     buf: Vec<f32>,
+    /// Length of the ring in use (`<= buf.len()`); the rest is a reserve for [`DelayLine::grow`].
+    active: usize,
     write: usize,
 }
 
 impl DelayLine {
     /// Allocates a line able to delay up to `max_delay` samples (at least 1). Non-RT.
     pub fn new(max_delay: usize) -> Self {
+        Self::with_reserve(max_delay, max_delay)
+    }
+
+    /// Allocates room for delays up to `reserve` samples but starts as a line of `max_delay`
+    /// (the reserve is only touched once [`DelayLine::grow`] puts it to use). Non-RT.
+    pub fn with_reserve(max_delay: usize, reserve: usize) -> Self {
+        let len = max_delay.max(1) + 2;
         Self {
-            buf: vec![0.0; max_delay.max(1) + 2],
+            buf: vec![0.0; len.max(reserve.max(1) + 2)],
+            active: len,
             write: 0,
         }
     }
@@ -28,16 +41,32 @@ impl DelayLine {
         *self = Self::new(max_delay);
     }
 
-    /// Longest supported delay in samples.
+    /// Longest supported delay in samples (of the part in use).
     #[inline]
     pub fn max_delay(&self) -> usize {
+        self.active - 2
+    }
+
+    /// Longest delay [`DelayLine::grow`] can reach.
+    pub fn reserve(&self) -> usize {
         self.buf.len() - 2
+    }
+
+    /// Puts the reserve to use for delays up to `max_delay` (clamped to the reserve) and
+    /// clears the content, so the history starts silent. Never allocates; does nothing when the
+    /// line already reaches `max_delay`.
+    pub fn grow(&mut self, max_delay: usize) {
+        let len = max_delay.min(self.reserve()).max(1) + 2;
+        if len > self.active {
+            self.active = len;
+            self.clear();
+        }
     }
 
     /// Zeroes the content without allocating.
     #[inline]
     pub fn clear(&mut self) {
-        self.buf.fill(0.0);
+        self.buf[..self.active].fill(0.0);
         self.write = 0;
     }
 
@@ -52,7 +81,7 @@ impl DelayLine {
         };
         let whole = d.floor();
         let frac = d - whole;
-        let len = self.buf.len();
+        let len = self.active;
         // `whole + 1 <= max + 1 < len`, so the subtraction below never underflows.
         let i0 = (self.write + len - whole as usize) % len;
         let i1 = if i0 == 0 { len - 1 } else { i0 - 1 };
@@ -65,7 +94,7 @@ impl DelayLine {
     pub fn write(&mut self, x: f32) {
         self.buf[self.write] = if x.abs() < 1e-20 { 0.0 } else { x };
         self.write += 1;
-        if self.write == self.buf.len() {
+        if self.write == self.active {
             self.write = 0;
         }
     }
@@ -130,5 +159,28 @@ mod tests {
         assert_eq!(d.max_delay(), 1_000);
         d.write(1e-30);
         assert_eq!(d.read(1.0).to_bits(), 0.0f32.to_bits(), "denormal flush");
+    }
+
+    #[test]
+    fn a_reserve_is_put_to_use_by_grow_without_changing_the_part_in_use() {
+        let mut a = DelayLine::new(16);
+        let mut b = DelayLine::with_reserve(16, 1_000);
+        assert_eq!((b.max_delay(), b.reserve()), (16, 1_000));
+        for i in 0..40 {
+            a.write(i as f32);
+            b.write(i as f32);
+        }
+        assert!((1..=16).all(|k| a.read(k as f32).to_bits() == b.read(k as f32).to_bits()));
+        // Growing clears the line and reaches the reserve; asking for less does nothing.
+        b.grow(8);
+        assert_eq!(b.max_delay(), 16);
+        b.grow(5_000);
+        assert_eq!(b.max_delay(), 1_000);
+        assert!((1..=1_000).all(|k| b.read(k as f32).to_bits() == 0));
+        b.write(1.0);
+        for _ in 0..999 {
+            b.write(0.0);
+        }
+        assert_eq!(b.read(1_000.0).to_bits(), 1.0f32.to_bits());
     }
 }

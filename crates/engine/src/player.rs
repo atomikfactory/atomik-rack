@@ -91,6 +91,7 @@
 
 use crate::arena::Arena;
 use crate::audio::{AudioRt, CompiledAudio, Renderer};
+use crate::console::DelayLine;
 use crate::graph::DeviceInstanceId;
 use crate::seq::{
     ChaseNote, CompiledTrack, PreRoll, SongCurve, SongPoint, SongSnapshot, TrackCursor,
@@ -1215,8 +1216,29 @@ impl Player {
         time
     }
 
-    /// Adds the metronome to interface outputs 1/2 (after the routing wrote them).
-    pub(crate) fn mix_metronome(&mut self, out: &mut [Batch]) {
+    /// Adds the metronome to interface outputs 1/2 (after the routing wrote them). With a
+    /// `delay` line (return alignment on) the click is held back by the output latency, so it
+    /// lands with the audio it was timed against.
+    pub(crate) fn mix_metronome(&mut self, out: &mut [Batch], delay: Option<&mut DelayLine>) {
+        let Some(line) = delay else {
+            self.mix_click(out);
+            return;
+        };
+        // The click goes through the line even while silent, so a click in flight at a stop
+        // still sounds out.
+        let mut click = [[0.0; BATCH]];
+        self.mix_click(&mut click);
+        let mut late = [0.0; BATCH];
+        line.process(&click[0], &mut late);
+        for ch in out.iter_mut().take(2) {
+            for (o, x) in ch.iter_mut().zip(&late) {
+                *o += *x;
+            }
+        }
+    }
+
+    /// Adds the click of this batch to the first two of `out`.
+    fn mix_click(&mut self, out: &mut [Batch]) {
         if !self.counting && (!self.playing || !self.metronome) {
             self.click = None;
             return;

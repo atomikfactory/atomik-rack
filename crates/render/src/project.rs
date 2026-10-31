@@ -611,6 +611,7 @@ pub fn console_options(doc: &RackDoc, registry: &Registry) -> BuildOptions {
     BuildOptions {
         input_channels: doc.input_channels,
         compensation: doc.console.compensation,
+        align_inputs: doc.console.align_returns,
         params: doc
             .solo_silence(registry)
             .into_iter()

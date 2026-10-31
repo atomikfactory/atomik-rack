@@ -314,6 +314,9 @@ pub struct AppCore<S: EngineSink> {
     readouts: Vec<(DeviceKey, u32)>,
     /// The current routing hit the 10 s compensation limit.
     pdc_limit: bool,
+    /// Audio cables of the current routing that arrive later than a sibling cable and are not
+    /// delayed to match: how many, and the most frames any is early by.
+    pdc_misaligned: (usize, u32),
     /// The Audio I/O panel's metered endpoints.
     io_meters: io_ops::IoMeters,
     /// The CV cables shown with an activity indicator on the back.
@@ -482,6 +485,7 @@ impl<S: EngineSink> AppCore<S> {
             latency_epoch: 0,
             readouts: Vec::new(),
             pdc_limit: false,
+            pdc_misaligned: (0, 0),
             io_meters: io_ops::IoMeters::default(),
             cv_taps: io_ops::CvTaps::default(),
             meter_capacity: atomik_engine::METER_CAPACITY,
@@ -1488,7 +1492,9 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 SyncOp::MidiMapsChanged => self.midi_maps_changed(),
                 SyncOp::ConsoleChanged => {
-                    if self.topology.compensation() != self.doc().console.compensation {
+                    if self.topology.compensation() != self.doc().console.compensation
+                        || self.topology.align_inputs() != self.doc().console.align_returns
+                    {
                         self.submit_routing();
                     }
                     self.push_solo_silence();
@@ -1725,6 +1731,7 @@ impl<S: EngineSink> AppCore<S> {
         let config = engine_config(doc);
         let mut topology = Topology::new(&config);
         topology.set_compensation(doc.console.compensation);
+        topology.set_align_inputs(doc.console.align_returns);
         let mut problems = Vec::new();
         for device in &expanded.devices {
             let (Some(id), Some(f)) = (
@@ -1837,6 +1844,10 @@ impl<S: EngineSink> AppCore<S> {
             .map(|(k, ends)| (k.clone(), latency_of(ends[0]).unwrap_or(0)))
             .collect();
         self.pdc_limit = report.limit_exceeded;
+        self.pdc_misaligned = (
+            report.misaligned.len(),
+            report.misaligned.iter().map(|m| m.2).max().unwrap_or(0),
+        );
         self.console.set_latency_readouts(&self.readouts);
         self.console.set_pdc_warning(self.pdc_limit);
     }
@@ -1852,10 +1863,18 @@ impl<S: EngineSink> AppCore<S> {
         self.pdc_limit
     }
 
-    /// The alert for the status bar while compensation is disabled by the limit.
+    /// The alert for the status bar while compensation is disabled by the limit, or while some
+    /// cables reach a device out of step with their siblings and return alignment is off.
     pub fn pdc_alert(&self) -> Option<String> {
-        self.pdc_limit.then(|| {
-            format!("delay compensation off: a delay would exceed {MAX_COMPENSATION_SECONDS:.0} s")
+        if self.pdc_limit {
+            return Some(format!(
+                "delay compensation off: a delay would exceed {MAX_COMPENSATION_SECONDS:.0} s"
+            ));
+        }
+        let (count, frames) = self.pdc_misaligned;
+        (count > 0).then(|| {
+            let cables = if count == 1 { "cable" } else { "cables" };
+            format!("{count} {cables} out of step by up to {frames} frames (Mixer > Align Returns)")
         })
     }
 

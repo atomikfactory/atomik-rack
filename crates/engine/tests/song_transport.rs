@@ -501,3 +501,54 @@ fn recording_conversion_is_exact_across_loop_wraps() {
     assert_eq!(at(56_007).tick, Ticks(20_484));
     assert_eq!(at(80_007).loop_count, 2);
 }
+
+/// A silent source through a 1,000-frame effect into output 1; the metronome is on and the
+/// transport plays from the start. Returns output 1.
+fn latent_click_render(align: bool, block: usize) -> Vec<f32> {
+    use atomik_testkit::fakes::{ConstantSource, LatencyPassthrough};
+    let c = cfg(0, 2);
+    let mut g = Graph::new(&c);
+    let src = g.add_device(ConstantSource::boxed(0.0));
+    let fx = g.add_device(LatencyPassthrough::boxed(1_000));
+    g.connect(
+        ep(src, ConstantSource::AUDIO_OUT),
+        ep(fx, LatencyPassthrough::AUDIO_IN),
+    )
+    .unwrap();
+    g.connect(ep(fx, LatencyPassthrough::AUDIO_OUT), iface(&g, "out_1"))
+        .unwrap();
+    g.set_align_inputs(align);
+    let (mut e, mut h) = new_engine(c);
+    h.submit_plan(g.compile().unwrap()).unwrap();
+    h.submit_song(song(Vec::new(), &[(0, 120.0)])).unwrap();
+    h.transport(TransportCommand::Metronome {
+        enabled: true,
+        gain: 0.5,
+    })
+    .unwrap();
+    render_blocks(&mut e, &[], 2, 256, block);
+    h.transport(PLAY).unwrap();
+    render_blocks(&mut e, &[], 2, 6_000, block).swap_remove(0)
+}
+
+fn first_sound(x: &[f32]) -> usize {
+    x.iter().position(|s| s.abs() > 1e-6).unwrap()
+}
+
+#[test]
+fn the_click_waits_for_the_latency_of_the_audio_when_inputs_are_aligned() {
+    let straight = first_sound(&latent_click_render(false, 64));
+    let held = first_sound(&latent_click_render(true, 64));
+    assert_eq!(
+        held,
+        straight + 1_000,
+        "the click lands with the delayed audio"
+    );
+    for block in [1, 333] {
+        assert_eq!(
+            bits(&[latent_click_render(true, block)]),
+            bits(&[latent_click_render(true, 64)]),
+            "block {block}"
+        );
+    }
+}

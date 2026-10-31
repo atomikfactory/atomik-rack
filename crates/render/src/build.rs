@@ -91,6 +91,9 @@ pub struct BuildOptions {
     pub input_channels: u16,
     /// Delay compensation for the compile ([`Graph::set_compensation`]; on by default).
     pub compensation: bool,
+    /// Align plain audio inputs (FX returns, sidechain keys, split paths) like summing inputs
+    /// ([`Graph::set_align_inputs`]; off by default).
+    pub align_inputs: bool,
     /// Params set after the patch's own, as `(device id, param key, plain value)` (clamped by
     /// the engine, no warnings): e.g. the app-only `internal.solo_silence`.
     pub params: Vec<(String, String, f32)>,
@@ -112,6 +115,7 @@ impl Default for BuildOptions {
         Self {
             input_channels: 0,
             compensation: true,
+            align_inputs: false,
             params: Vec::new(),
             samples: Vec::new(),
             player_data: Vec::new(),
@@ -179,6 +183,7 @@ pub fn build_with_devices(
         ..
     } = b;
     graph.set_compensation(options.compensation);
+    graph.set_align_inputs(options.align_inputs);
     let topology = graph.topology();
     let plan = graph
         .compile()
