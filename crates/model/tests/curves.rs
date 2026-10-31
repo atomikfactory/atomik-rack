@@ -87,7 +87,7 @@ fn curves_round_trip() {
     let d = project(&r);
     let text = save_project(d.doc());
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["version"], 37);
+    assert_eq!(v["version"], 38);
     let devices = v["devices"].as_array().unwrap();
     assert!(devices[0].get("curves").is_none(), "the synth has none");
     assert!(devices[2].get("curves").is_none(), "nor the step sequencer");
@@ -157,7 +157,7 @@ fn old_projects_load_without_curves() {
         plain.apply(add(i, t, Some(k)), &r).unwrap();
     }
     let text = save_project(plain.doc());
-    let old = text.replacen("\"version\": 37", "\"version\": 31", 1);
+    let old = text.replacen("\"version\": 38", "\"version\": 31", 1);
     assert_ne!(old, text);
     let doc = load_project(&old, &r).unwrap();
     assert_eq!(device(&doc, "c").curves, None);

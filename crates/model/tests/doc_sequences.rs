@@ -78,6 +78,8 @@ enum WfOp {
     Warp(u8, usize, Vec<(i64, u64)>),
     /// The port of a MIDI Out device (the second value picks none or one of two names).
     MidiPort(usize, u8),
+    /// The song information: which of its texts changes and to which of three values.
+    SongInfo(u8, u8),
     Take(TakeOp),
     /// Combine devices into a container, dissolve one, or move a device into or out of one.
     Combine(Vec<usize>),
@@ -220,6 +222,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
+        (0u8..5, 0u8..3).prop_map(|(f, v)| WfOp::SongInfo(f, v)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
@@ -535,6 +538,24 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 device: pick(&outs, *i)?,
                 port: [None, Some("Port A"), Some("Port B")][usize::from(*p)].map(str::to_owned),
             })
+        }
+        WfOp::SongInfo(field, value) => {
+            let mut info = doc.info.clone();
+            let text = ["", "Example", "two\nlines\tand a tab"][usize::from(*value)];
+            let slot = match field {
+                0 => &mut info.title,
+                1 => &mut info.author,
+                2 => &mut info.email,
+                3 => &mut info.url,
+                _ => &mut info.notes,
+            };
+            // A one-line field keeps to one line.
+            *slot = if *field == 4 {
+                text.to_owned()
+            } else {
+                text.replace(['\n', '\t'], " ")
+            };
+            Command::SetSongInfo(info)
         }
         WfOp::Connect(a, b) => {
             let (from, to) = (pick(&top, *a)?, pick(&top, *b)?);

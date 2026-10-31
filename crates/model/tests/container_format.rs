@@ -142,7 +142,7 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 #[test]
 fn the_format_is_version_11() {
-    assert_eq!(PROJECT_VERSION, 37);
+    assert_eq!(PROJECT_VERSION, 38);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn inner_is_written_inside_the_container_after_steps() {
     let r = registry();
     let t = text(&r);
     let v: Value = serde_json::from_str(&t).unwrap();
-    assert_eq!(v["version"], 37);
+    assert_eq!(v["version"], 38);
     let devices = v["devices"].as_array().unwrap();
     assert!(
         devices[0].get("inner").is_none(),
@@ -227,7 +227,7 @@ fn a_document_without_containers_has_no_inner_anywhere() {
     );
     let t = save_project(d.doc());
     assert!(!t.contains("inner"));
-    assert!(t.contains("\"version\": 37"));
+    assert!(t.contains("\"version\": 38"));
     assert_eq!(load_project(&t, &r).unwrap(), *d.doc());
 }
 
@@ -264,7 +264,7 @@ fn versions_one_to_seven_still_load_and_resave_as_v11() {
         let t = fixture(name);
         let doc = load_project(&t, reg).unwrap_or_else(|e| panic!("{name}: {e}"));
         let again = save_project(&doc);
-        assert!(again.contains("\"version\": 37"), "{name}");
+        assert!(again.contains("\"version\": 38"), "{name}");
         assert_eq!(load_project(&again, reg).unwrap(), doc, "{name}");
         assert_eq!(save_project(&load_project(&again, reg).unwrap()), again);
         if from >= 6 {

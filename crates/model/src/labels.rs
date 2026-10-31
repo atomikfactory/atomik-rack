@@ -43,6 +43,7 @@ impl Command {
             Command::RelinkAsset { .. } => "Relink Sample",
             Command::RenameAsset { .. } => "Rename Sample",
             Command::SetInputChannels(_) | Command::SetOutputChannels(_) => "Set Channels",
+            Command::SetSongInfo(_) => "Edit Song Information",
             Command::ConvertSampleRate { .. } => "Convert Sample Rate",
             Command::Console(c) => console_label(c),
             Command::Container(c) => container_label(c),

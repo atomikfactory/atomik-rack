@@ -64,6 +64,7 @@ mod rules;
 pub mod slice_edit;
 mod slices;
 mod song_cmd;
+mod song_info;
 mod steps;
 mod steps_cmd;
 pub mod stress;
@@ -131,6 +132,10 @@ pub use replace_device::{lost_lanes as replace_lost_lanes, replace_reason};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
     to_track_notes,
+};
+pub use song_info::{
+    MAX_INFO_AUTHOR_CHARS, MAX_INFO_EMAIL_CHARS, MAX_INFO_NOTES_CHARS, MAX_INFO_TITLE_CHARS,
+    MAX_INFO_URL_CHARS, SongInfo,
 };
 pub use steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
@@ -349,6 +354,9 @@ pub struct RackDoc {
     /// The macro assignments and names (see [`crate::macros`]). Project data: a driven param is
     /// set to the macro's value wherever the rack is expanded.
     pub macros: MacroSet,
+    /// What the user wrote about the song: title, author, notes, address and e-mail (empty for a
+    /// new project). Project data with no part in the sound: see [`crate::song_info`].
+    pub info: SongInfo,
 }
 
 /// An edit. Every command is undoable.
@@ -506,6 +514,11 @@ pub enum Command {
     /// outputs above the new count are removed in the same step. Reports
     /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
     SetOutputChannels(u16),
+    /// Sets the song information (title, author, notes, address, e-mail), one undo step. Every
+    /// text must be within its limit and hold no control character (see [`SongInfo::check`]); an
+    /// info equal to the current one is rejected. Reports [`SyncOp::ViewChanged`]. Not accepted
+    /// by [`Command::Batch`].
+    SetSongInfo(SongInfo),
     /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
     /// in one undo step. The app has already resampled the assets the song uses and registered
     /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
@@ -725,6 +738,7 @@ pub enum Command {
 /// | move, fold, rename, colour | `ViewChanged` |
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
 /// | `SetInputChannels`, `SetOutputChannels` | `RoutingChanged` |
+/// | `SetSongInfo` (also undo/redo) | `ViewChanged` |
 /// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
@@ -1951,6 +1965,7 @@ impl Document {
             Command::RenameAsset { asset, name } => rules::plan_rename_asset(doc, &asset, &name)?,
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
             Command::SetOutputChannels(n) => rules::plan_output_channels(doc, n)?,
+            Command::SetSongInfo(info) => song_info::plan_set(doc, &info)?,
             Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
@@ -2125,6 +2140,7 @@ pub fn empty_doc() -> RackDoc {
         console: Console::default(),
         midi_maps: Vec::new(),
         macros: MacroSet::default(),
+        info: SongInfo::default(),
     }
 }
 

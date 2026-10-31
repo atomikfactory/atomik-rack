@@ -76,6 +76,9 @@ impl RackDoc {
         if let Err(message) = self.check_columns() {
             found.add("devices", message);
         }
+        if let Err(e) = self.info.check() {
+            found.add("info", e.to_string());
+        }
         self.validate_tempo(&mut found);
         self.validate_console(&mut found);
         self.validate_song(&mut found);

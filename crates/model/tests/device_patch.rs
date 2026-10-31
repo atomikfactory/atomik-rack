@@ -566,7 +566,7 @@ fn a_version_35_file_refuses_the_patch_name_and_36_refuses_a_bad_one() {
         })],
     );
     let named = save_project(d.doc());
-    let old = named.replacen("\"version\": 37", "\"version\": 35", 1);
+    let old = named.replacen("\"version\": 38", "\"version\": 35", 1);
     let e = load_project(&old, &r).unwrap_err().to_string();
     assert!(e.contains("patch"), "{e}");
     for bad in ["\"\"", "\" Pad\"", "\"a\\nb\"", "7"] {

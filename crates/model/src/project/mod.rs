@@ -22,6 +22,7 @@
 //!   "midi_maps"?: [{ "id", "source", "target", options… }…]       (v28; written only when non-empty),
 //!   "macros"?: { "assigns"?: [{ "id", "bank", "macro", "device", "param", "min", "max", "invert"? }…], "names"?: [{ "bank", "macro", "name" }…] }
 //!                                                               (v29; written only when non-empty),
+//!   "info"?: { "title"?, "author"?, "email"?, "url"?, "notes"? }  (v38; written only when set),
 //!   "assets": { "<64 hex digits>": { "channels", "sample_rate", "frames", "name" }… },
 //!                                                               (v3; optional, default {})
 //!   "song": { "tempo": [{"tick", "bpm", "ramp"? (v13; written only when true)}…],
@@ -339,7 +340,13 @@
 //! trimmed, 1 to 128 characters, without control characters), omitted while the device uses the
 //! fallback port of the app settings; the field is refused on any other device type and in a
 //! version 36 file, so a project without a MIDI Out device differs from its version 36 file in the
-//! version line alone, and plays and bounces bit for bit as it did. Saving always writes version 37.
+//! version line alone, and plays and bounces bit for bit as it did.
+//! From version 38 the root may carry `"info"` after `"macros"` (see [`crate::SongInfo`]):
+//! `{"title"?, "author"?, "email"?, "url"?, "notes"?}`, each a string within its limit (120, 120,
+//! 254, 500 and 10 000 characters) without control characters (the notes may have new lines and
+//! tabs), stored as typed and written only when not empty, the whole object only when something is
+//! set. A project without information differs from its version 37 file in the version line
+//! alone, and plays and bounces bit for bit as it did. Saving always writes version 38.
 
 use crate::console::{
     BUS_TYPE, CHANNEL_TYPE, Console, ConsoleBus, ConsoleChannel, FX_SLOTS, MASTER_TYPE,
@@ -431,8 +438,9 @@ pub const PROJECT_FORMAT: &str = "atomik-project";
 /// editing) and 23 (no warp) and 24 (no frozen tracks) and 25 (no VCA groups) and 26 (no mixer
 /// snapshots) and 27 (no MIDI mappings) and 28 (no macros) and 29 (one note lane per track) and
 /// 30 (no player stacks) and 31 (no CV sequencer curves) and 32 (no drum generator patterns) and
-/// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port).
-pub const PROJECT_VERSION: u32 = 37;
+/// 34 (no note tails) and 35 (no lane holds) and 36 (no MIDI Out port) and 37 (no song
+/// information).
+pub const PROJECT_VERSION: u32 = 38;
 
 fn int(v: &Value, path: &JsonPath) -> Result<i64, ModelError> {
     v.as_i64()
@@ -618,6 +626,9 @@ fn load_value(
     }
     if let Some(macros) = obj.get("macros") {
         doc.macros = crate::macros_io::load_macros(macros, &root.field("macros"))?;
+    }
+    if let Some(info) = obj.get("info") {
+        doc.info = crate::song_info::load_info(info, &root.field("info"))?;
     }
     check_frozen_tracks(&doc, registry, &root.field("song").field("tracks"))?;
     Ok(doc)
