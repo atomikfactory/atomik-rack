@@ -624,6 +624,8 @@ mod tests {
             can_redo: false,
             can_edit: false,
             can_paste: false,
+            can_combine: false,
+            can_uncombine: false,
             song_visible: true,
             piano_roll: false,
             sample_editor: false,

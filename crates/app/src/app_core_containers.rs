@@ -310,6 +310,46 @@ impl<S: EngineSink> AppCore<S> {
         true
     }
 
+    /// Rack > Move Out of Container: the selected device of the open container goes back to the
+    /// rack, right after the container, in one undo step (see
+    /// [`atomik_model::ContainerCommand::MoveOutOfContainer`]). False, with the reason, when no
+    /// single inner device is selected or the model refuses.
+    pub fn move_out_selection(&mut self) -> bool {
+        let inner: Vec<DeviceKey> = self
+            .view
+            .selection()
+            .into_iter()
+            .filter(|k| k.0.contains('/'))
+            .collect();
+        let [key] = inner.as_slice() else {
+            self.reject(if inner.is_empty() {
+                "Select the device to move out of the container first".into()
+            } else {
+                "Move devices out of a container one at a time".into()
+            });
+            return false;
+        };
+        let command = Command::Container(ContainerCommand::MoveOutOfContainer {
+            key: key.clone(),
+            index: self.view.move_out_index(),
+        });
+        self.apply_command(command).is_ok()
+    }
+
+    /// What the Edit menu offers on the rack's selection: whether Combine and Uncombine can be
+    /// tried. A cheap check of the selection's shape (the model's refusal, with the offending
+    /// cables, comes when the command runs; the context menu asks the model beforehand).
+    pub fn combine_menu(&self) -> (bool, bool) {
+        if self.view.scope_depth() != 0 {
+            return (false, false);
+        }
+        let doc = self.doc();
+        let selection = self.view.selection();
+        let combine = !selection.is_empty();
+        let uncombine = selection.iter().any(|k| is_container(doc, k));
+        (combine, uncombine)
+    }
+
     // ------------------------------------------------------------------ macros and splits
 
     /// One `set_param` per macro target whose value moved: a target the engine already

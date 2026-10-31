@@ -75,6 +75,10 @@ pub enum AppCommand {
     Delete,
     /// Edit ▸ Select All.
     SelectAll,
+    /// Edit ▸ Combine: the selected devices of the rack go into a new container.
+    Combine,
+    /// Edit ▸ Uncombine: the selected container is dissolved, its devices come back to the rack.
+    Uncombine,
     /// Edit ▸ Quantize: quantize the selected notes or clips with the quantize panel's last
     /// settings, without opening the panel.
     QuantizeApply,
@@ -390,6 +394,8 @@ impl AppCommand {
             AppCommand::Duplicate => ("edit.duplicate", None),
             AppCommand::Delete => ("edit.delete", None),
             AppCommand::SelectAll => ("edit.select_all", None),
+            AppCommand::Combine => ("rack.combine", None),
+            AppCommand::Uncombine => ("rack.uncombine", None),
             AppCommand::QuantizeApply => ("editor.quantize", None),
             AppCommand::QuantizeOptions => ("edit.quantize_options", None),
             AppCommand::ToggleFlip => ("view.toggle_flip", None),
@@ -594,6 +600,8 @@ impl AppCommand {
             ("edit.duplicate", None) => AppCommand::Duplicate,
             ("edit.delete", None) => AppCommand::Delete,
             ("edit.select_all", None) => AppCommand::SelectAll,
+            ("rack.combine", None) => AppCommand::Combine,
+            ("rack.uncombine", None) => AppCommand::Uncombine,
             ("editor.quantize", None) => AppCommand::QuantizeApply,
             ("edit.quantize_options", None) => AppCommand::QuantizeOptions,
             ("view.toggle_flip", None) => AppCommand::ToggleFlip,
@@ -899,6 +907,10 @@ pub struct MenuState {
     pub can_edit: bool,
     /// The clipboard holds something the focused pane can paste.
     pub can_paste: bool,
+    /// The rack's selection can be combined into a container.
+    pub can_combine: bool,
+    /// The rack's selection holds a container that can be uncombined.
+    pub can_uncombine: bool,
     /// The arrangement area is shown.
     pub song_visible: bool,
     /// The piano roll is open.
@@ -1243,6 +1255,9 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 enabled("Delete", AppCommand::Delete, state.can_edit),
                 MenuEntry::Separator,
                 item("Select All", AppCommand::SelectAll),
+                MenuEntry::Separator,
+                enabled("Combine", AppCommand::Combine, state.can_combine),
+                enabled("Uncombine", AppCommand::Uncombine, state.can_uncombine),
                 MenuEntry::Separator,
                 enabled("Quantize", AppCommand::QuantizeApply, state.can_edit),
                 item("Quantize Options\u{2026}", AppCommand::QuantizeOptions),
@@ -1901,6 +1916,8 @@ mod tests {
             can_redo: false,
             can_edit: false,
             can_paste: false,
+            can_combine: false,
+            can_uncombine: false,
             song_visible: true,
             piano_roll: false,
             sample_editor: false,
@@ -1982,6 +1999,8 @@ mod tests {
             AppCommand::Duplicate,
             AppCommand::Delete,
             AppCommand::SelectAll,
+            AppCommand::Combine,
+            AppCommand::Uncombine,
             AppCommand::QuantizeApply,
             AppCommand::QuantizeOptions,
             AppCommand::ToggleFlip,
@@ -2499,6 +2518,8 @@ mod tests {
                 "Duplicate",
                 "Delete",
                 "Select All",
+                "Combine",
+                "Uncombine",
                 "Quantize",
                 "Quantize Options\u{2026}",
                 "Reverse Audio",
@@ -2733,6 +2754,8 @@ mod tests {
                 can_redo: true,
                 can_edit: true,
                 can_paste: false,
+                can_combine: false,
+                can_uncombine: false,
                 song_visible: false,
                 piano_roll: true,
                 sample_editor: false,

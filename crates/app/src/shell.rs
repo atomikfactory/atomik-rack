@@ -1828,6 +1828,7 @@ impl<B: AudioBackend> Shell<B> {
     pub fn menu_state(&self) -> MenuState {
         let view = self.core.view();
         let song = &self.core.doc().song;
+        let (can_combine, can_uncombine) = self.core.combine_menu();
         MenuState {
             flip: view.flip(),
             cables: view.cable_visibility(),
@@ -1838,6 +1839,8 @@ impl<B: AudioBackend> Shell<B> {
             can_redo: self.core.document().can_redo(),
             can_edit: self.core.has_selection(self.live_pane(self.focus)),
             can_paste: self.core.can_paste(self.live_pane(self.focus)),
+            can_combine,
+            can_uncombine,
             song_visible: self.ui.show_song,
             piano_roll: self.core.piano_roll_clip().is_some(),
             sample_editor: self.core.sample_editor_device().is_some(),
@@ -3317,6 +3320,9 @@ impl<B: AudioBackend> Shell<B> {
             ("rack.uncombine", None) => {
                 self.core.uncombine_selection();
             }
+            ("rack.move_out", None) => {
+                self.core.move_out_selection();
+            }
             ("rack.browse_patch", None) => match self.core.view().primary() {
                 Some(device) => self.browse_patches(&device),
                 None => self.core.report("Select a device first"),
@@ -3827,6 +3833,13 @@ impl<B: AudioBackend> Shell<B> {
                     .view()
                     .assign_send_reason(doc, core.registry())
                     .is_none(),
+            combine: pane == Pane::Rack
+                && core.view().combine_reason(doc, core.registry()).is_none(),
+            uncombine: pane == Pane::Rack
+                && core.view().uncombine_reason(doc, core.registry()).is_none(),
+            move_out: pane == Pane::Rack
+                && core.view().move_out_reason(doc, core.registry()).is_none(),
+            in_container: pane == Pane::Rack && core.view().scope_depth() > 0,
             columns: doc.columns,
             track_can_chase: core.arrangement().chase_menu().0,
             track_chase: core.arrangement().chase_menu().1,
@@ -4525,6 +4538,15 @@ impl<B: AudioBackend> Shell<B> {
             }
             AppCommand::Redo => {
                 self.core.redo();
+                Vec::new()
+            }
+            // Edit > Combine and Uncombine work on the rack's selection, whichever pane has the
+            // focus; a refusal is the toast the key gives.
+            AppCommand::Combine | AppCommand::Uncombine => {
+                if let Some((id, arg)) = command.command_id() {
+                    self.run_shell_command(id, arg);
+                }
+                self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
             // The Edit menu: the same commands the keys run, offered to the focused pane.
