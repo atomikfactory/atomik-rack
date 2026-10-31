@@ -14,7 +14,7 @@ use atomik_engine::{
 };
 use atomik_model::console::{
     BUS_TYPE, CHANNEL_TYPE, MASTER_TYPE, SOLO_SILENCE_PARAM, VCA_DB_PARAM, VCA_MUTE_PARAM,
-    VCA_SOLO_PARAM, VcaFeed, is_console_type,
+    VCA_SOLO_PARAM, VcaFeed,
 };
 use atomik_model::{
     ClipContent, ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY,
@@ -372,19 +372,7 @@ pub fn default_registry() -> Registry {
     registry
 }
 
-/// `registry` without the console devices (`atomik.channel`, `atomik.master`): documents
-/// built with it get no automatic channels. The stress rack (a rack stress test, not a
-/// console one) and the sync tests use it.
-pub fn without_console(registry: &Registry) -> Registry {
-    let mut out = Registry::new();
-    for type_id in registry.type_ids().filter(|t| !is_console_type(t)) {
-        if let Some(f) = registry.get(type_id) {
-            // Already validated by `registry`, and the ids are unique there.
-            let _ = out.register(*f);
-        }
-    }
-    out
-}
+pub use atomik_model::stress::without_console;
 
 /// The engine configuration for a document (host inputs as the document's `input_channels`).
 pub fn engine_config(doc: &RackDoc) -> EngineConfig {
