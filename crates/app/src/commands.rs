@@ -248,6 +248,15 @@ pub enum AppCommand {
     /// Mixer > Bypass All Inserts: bypasses the insert effects of the selected strips (all
     /// bypassed switch back in, otherwise all are bypassed); each effect keeps its latency.
     BypassAllInserts,
+    /// Mixer > Copy Channel Settings: the settings of the first selected strip, all of them or
+    /// one section (`mixer.copy_settings`, `mixer.copy_settings_levels`, ...).
+    CopySettings(SettingsSection),
+    /// Mixer > Paste Channel Settings: the copied settings onto the selected strips.
+    PasteSettings,
+    /// Mixer > Reset Channel: the selected strips back to fresh ones, their routing kept.
+    ResetStrip,
+    /// Mixer > Clear Inserts: the insert chains of the selected strips emptied.
+    ClearInserts,
     /// Create ▸ Create Instrument (Ctrl+I): the device browser in create mode, instruments only.
     CreateInstrument,
     /// Create ▸ Create Effect (Ctrl+E): the device browser in create mode, effects only.
@@ -610,6 +619,10 @@ impl AppCommand {
             | AppCommand::DeleteSnapshot(Some(_)) => return None,
             AppCommand::TogglePolarity => ("mixer.toggle_polarity", None),
             AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
+            AppCommand::CopySettings(s) => (s.command_id(), None),
+            AppCommand::PasteSettings => ("mixer.paste_settings", None),
+            AppCommand::ResetStrip => ("mixer.reset_strip", None),
+            AppCommand::ClearInserts => ("mixer.clear_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
             AppCommand::ToggleReturnAlignment => ("mixer.toggle_return_alignment", None),
             AppCommand::MidiLearn => ("midi.learn", None),
@@ -855,6 +868,12 @@ impl AppCommand {
             }
             ("mixer.toggle_polarity", None) => AppCommand::TogglePolarity,
             ("mixer.bypass_all_inserts", None) => AppCommand::BypassAllInserts,
+            (id, None) if SettingsSection::from_command_id(id).is_some() => {
+                return SettingsSection::from_command_id(id).map(AppCommand::CopySettings);
+            }
+            ("mixer.paste_settings", None) => AppCommand::PasteSettings,
+            ("mixer.reset_strip", None) => AppCommand::ResetStrip,
+            ("mixer.clear_inserts", None) => AppCommand::ClearInserts,
             ("mixer.delete_vca", None) => AppCommand::DeleteVca(None),
             ("mixer.delete_vca", Some(id)) => {
                 return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
@@ -1334,6 +1353,67 @@ pub struct StripMenu {
     pub can_polarity: bool,
     /// A selected strip has an insert effect that can be bypassed: Bypass All Inserts works.
     pub can_bypass: bool,
+    /// Some channel or bus is selected: Copy Channel Settings works.
+    pub can_copy_settings: bool,
+    /// Settings were copied and a strip is selected: Paste Channel Settings works.
+    pub can_paste_settings: bool,
+    /// Some channel or bus is selected: Reset Channel works.
+    pub can_reset: bool,
+    /// A selected strip has an insert chain: Clear Inserts works.
+    pub can_clear_inserts: bool,
+}
+
+/// What a Copy Channel Settings takes from the strip: everything, or one section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    /// Every section.
+    All,
+    /// Fader, pan, width and input trim.
+    Levels,
+    /// Mute and solo.
+    Mutes,
+    /// The sends.
+    Sends,
+    /// The insert chain and the strip's insert switches.
+    Inserts,
+}
+
+impl SettingsSection {
+    /// The model scope of the section.
+    pub fn scope(self) -> atomik_model::SnapshotScope {
+        use atomik_model::SnapshotScope as S;
+        match self {
+            Self::All => S::ALL,
+            Self::Levels => S::LEVELS,
+            Self::Mutes => S::MUTES,
+            Self::Sends => S::SENDS,
+            Self::Inserts => S::INSERTS,
+        }
+    }
+
+    /// The registry id of the command that copies the section.
+    pub fn command_id(self) -> &'static str {
+        match self {
+            Self::All => "mixer.copy_settings",
+            Self::Levels => "mixer.copy_settings_levels",
+            Self::Mutes => "mixer.copy_settings_mutes",
+            Self::Sends => "mixer.copy_settings_sends",
+            Self::Inserts => "mixer.copy_settings_inserts",
+        }
+    }
+
+    /// The section a registry id copies.
+    pub fn from_command_id(id: &str) -> Option<Self> {
+        [
+            Self::All,
+            Self::Levels,
+            Self::Mutes,
+            Self::Sends,
+            Self::Inserts,
+        ]
+        .into_iter()
+        .find(|s| s.command_id() == id)
+    }
 }
 
 /// What the Mixer menu needs to know to make, fill, empty and delete VCA groups.
@@ -1852,6 +1932,27 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     "Bypass All Inserts",
                     AppCommand::BypassAllInserts,
                     state.strip.can_bypass,
+                ),
+                enabled(
+                    "Clear Inserts",
+                    AppCommand::ClearInserts,
+                    state.strip.can_clear_inserts,
+                ),
+                MenuEntry::Separator,
+                enabled(
+                    "Copy Channel Settings",
+                    AppCommand::CopySettings(SettingsSection::All),
+                    state.strip.can_copy_settings,
+                ),
+                enabled(
+                    "Paste Channel Settings",
+                    AppCommand::PasteSettings,
+                    state.strip.can_paste_settings,
+                ),
+                enabled(
+                    "Reset Channel",
+                    AppCommand::ResetStrip,
+                    state.strip.can_reset,
                 ),
                 MenuEntry::Separator,
                 enabled(
@@ -2515,6 +2616,14 @@ mod tests {
             AppCommand::DeleteVca(None),
             AppCommand::TogglePolarity,
             AppCommand::BypassAllInserts,
+            AppCommand::CopySettings(SettingsSection::All),
+            AppCommand::CopySettings(SettingsSection::Levels),
+            AppCommand::CopySettings(SettingsSection::Mutes),
+            AppCommand::CopySettings(SettingsSection::Sends),
+            AppCommand::CopySettings(SettingsSection::Inserts),
+            AppCommand::PasteSettings,
+            AppCommand::ResetStrip,
+            AppCommand::ClearInserts,
             AppCommand::StoreSnapshot,
             AppCommand::UpdateSnapshot(None),
             AppCommand::RecallSnapshot(None),
@@ -3131,6 +3240,10 @@ mod tests {
                 "Delete VCA",
                 "Toggle Polarity",
                 "Bypass All Inserts",
+                "Clear Inserts",
+                "Copy Channel Settings",
+                "Paste Channel Settings",
+                "Reset Channel",
                 "Store Snapshot",
                 "Update Snapshot",
                 "Recall Snapshot",

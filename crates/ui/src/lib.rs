@@ -299,6 +299,7 @@ pub mod character_panel;
 pub mod character_screen;
 pub mod chord_edit;
 pub mod console;
+mod console_gang;
 pub mod console_layout;
 pub mod console_meter;
 mod console_snapshots;

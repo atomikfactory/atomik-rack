@@ -851,6 +851,86 @@ fn bypass_all_inserts_needs_a_strip_with_inserts() {
     assert_eq!(bypass_of(&c, "fx1"), 1.0);
 }
 
+// ------------------------------------------------------------------ channel settings
+
+fn fader_of(c: &AppCore<RecordingSink>, strip: &DeviceKey) -> Option<f32> {
+    c.doc()
+        .device(strip)
+        .and_then(|d| d.params.get("fader").copied())
+}
+
+#[test]
+fn copied_channel_settings_paste_onto_every_selected_strip_in_one_undo_step() {
+    let (mut c, ka) = with_two_inserts();
+    let kb = channel_of(&c, "b");
+    c.apply_command(Command::SetParam {
+        key: ka.clone(),
+        param: "fader".into(),
+        value: 0.5,
+        merge: None,
+    })
+    .unwrap();
+    // Nothing copied yet: the menu item is off and the command says why.
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    assert!(!c.strip_menu(Pane::Rack).can_paste_settings);
+    assert!(!c.paste_strip_settings(Pane::Rack));
+    assert!(c.last_rejection().unwrap().contains("Copy"));
+    c.view_mut().set_selection(&[key("a")], Some(&key("a")));
+    assert!(c.copy_strip_settings(Pane::Rack, crate::commands::SettingsSection::All));
+    c.view_mut().set_selection(&[key("b")], Some(&key("b")));
+    assert!(c.strip_menu(Pane::Rack).can_paste_settings);
+    let depth = c.document().undo_depth();
+    assert!(c.paste_strip_settings(Pane::Rack));
+    assert_eq!(c.document().undo_depth(), depth + 1);
+    assert_eq!(fader_of(&c, &kb), fader_of(&c, &ka));
+    assert_eq!(
+        atomik_model::insert_chain(c.doc(), c.registry(), &kb).len(),
+        2
+    );
+    assert!(c.undo());
+    assert_eq!(fader_of(&c, &kb), None);
+    assert!(atomik_model::insert_chain(c.doc(), c.registry(), &kb).is_empty());
+}
+
+#[test]
+fn reset_and_clear_inserts_work_on_every_selected_strip_as_one_undo_step() {
+    let (mut c, ka) = with_two_inserts();
+    let kb = channel_of(&c, "b");
+    for strip in [&ka, &kb] {
+        c.apply_command(Command::SetParam {
+            key: strip.clone(),
+            param: "fader".into(),
+            value: 0.5,
+            merge: None,
+        })
+        .unwrap();
+    }
+    c.view_mut()
+        .set_selection(&[key("a"), key("b")], Some(&key("a")));
+    assert!(c.strip_menu(Pane::Rack).can_clear_inserts);
+    let depth = c.document().undo_depth();
+    assert!(c.clear_inserts(Pane::Rack));
+    assert_eq!(c.document().undo_depth(), depth + 1);
+    assert!(atomik_model::insert_chain(c.doc(), c.registry(), &ka).is_empty());
+    assert_eq!(fader_of(&c, &ka), Some(0.5), "only the inserts went");
+    assert!(c.undo());
+    assert_eq!(
+        atomik_model::insert_chain(c.doc(), c.registry(), &ka).len(),
+        2
+    );
+    let routed = atomik_model::output_dest(c.doc(), &ka);
+    let depth = c.document().undo_depth();
+    assert!(c.reset_strips(Pane::Rack));
+    assert_eq!(c.document().undo_depth(), depth + 1, "two strips, one step");
+    assert_eq!((fader_of(&c, &ka), fader_of(&c, &kb)), (None, None));
+    assert_eq!(atomik_model::output_dest(c.doc(), &ka), routed);
+    assert!(c.undo());
+    assert_eq!(
+        (fader_of(&c, &ka), fader_of(&c, &kb)),
+        (Some(0.5), Some(0.5))
+    );
+}
+
 // ---------------------------------------------------------------- the meters in the track headers
 
 /// An audio track with its automatic channel, and the channel's `out_l` / `out_r` endpoints.

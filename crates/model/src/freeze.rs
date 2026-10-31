@@ -496,6 +496,19 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
                     Some(InsertEffect::Existing(key)) => device_frozen(key),
                     _ => None,
                 }),
+            // The inserts a freeze rendered stay as they are.
+            ConsoleCommand::ClearInserts { strip } | ConsoleCommand::ResetStrip { strip, .. } => {
+                frozen_channel(strip)
+                    .filter(|(_, frozen)| *frozen > 0)
+                    .map(|(t, _)| frozen_error(doc, &t.device))
+            }
+            ConsoleCommand::PasteSettings { strips, clip } if clip.sections.covers_inserts() => {
+                strips
+                    .iter()
+                    .filter_map(&frozen_channel)
+                    .find(|(_, frozen)| *frozen > 0)
+                    .map(|(t, _)| frozen_error(doc, &t.device))
+            }
             ConsoleCommand::MoveInsert {
                 channel, from, to, ..
             } => frozen_channel(channel)

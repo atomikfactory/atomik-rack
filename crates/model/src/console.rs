@@ -31,6 +31,7 @@
 //! moving a channel changes no audio (summing is deterministic either way).
 
 pub use crate::console_bus::{OutputAvail, OutputOption, output_options};
+use crate::console_settings::ChannelSettingsClip;
 pub use crate::console_snapshot::{
     CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
     SnapshotVca,
@@ -465,6 +466,33 @@ pub enum ConsoleCommand {
         from: usize,
         /// New slot (final index).
         to: usize,
+    },
+    /// Paste a copied strip (see [`crate::RackDoc::copy_channel_settings`]) onto `strips`
+    /// (channels and buses; one undo step): the params of the clip's sections are set to the
+    /// clip's values (a param the clip does not hold goes to its default), a param the target
+    /// does not have is skipped, and when the clip holds the inserts the target's chain is
+    /// replaced by new effects with the clip's params. The routing, the name, the sources and
+    /// the VCA membership stay. Rejected for an empty `strips`, a device that is no channel or
+    /// bus, or a strip whose inserts are frozen.
+    PasteSettings {
+        /// The strips that take the settings.
+        strips: Vec<DeviceKey>,
+        /// The copied settings.
+        clip: ChannelSettingsClip,
+    },
+    /// Put a channel or bus back to a fresh strip: every param at its default, the insert chain
+    /// cleared (the effects stay in the rack). With `keep_routing` false the output goes to the
+    /// master too; the VCA membership and the name stay either way.
+    ResetStrip {
+        /// Channel or bus device key.
+        strip: DeviceKey,
+        /// Whether the output routing stays as it is.
+        keep_routing: bool,
+    },
+    /// Empty the insert chain of a channel or bus (the effects stay in the rack, uncabled).
+    ClearInserts {
+        /// Channel or bus device key.
+        strip: DeviceKey,
     },
     /// Enable/disable delay compensation.
     SetCompensation(bool),

@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Console editing.** The strips of the console can be selected and edited together. Left and
+  Right select the next strip (Shift grows the range, the strip scrolls into view), Edit > Select
+  All takes every channel and bus, and Delete removes the selected ones. A fader, a send level, a
+  mute, a solo or a send switch of a selected strip moves on every selected strip: levels by the
+  same number of dB (the offsets between the strips stay, and the whole group stops where the
+  highest one reaches the top), switches to the state you clicked, a double-click resets them all.
+  A drag of several faders is one undo step, and Escape puts them all back. Mixer > Copy Channel
+  Settings takes the settings of the first selected strip (the strip menu also copies only the
+  levels, the sends or the inserts) and Paste Channel Settings gives them to every selected strip
+  in one undo step: the params of the copied sections, and an insert chain of new effects with the
+  same settings (plugins are not copied). Reset Channel puts the selected strips back to fresh
+  ones, keeping their output, and Clear Inserts empties their insert chains (the effects stay in
+  the rack). The right-click menu of a name plate lists them. Left and Right used to scroll the
+  strips: that is now Ctrl+Left and Ctrl+Right (Cmd on macOS). The project format is unchanged.
+  Not yet: cut, copy, paste and duplicate of strips from the console, more than four inserts in
+  the console, the RACK and SEQ jump buttons, and the strip and master additions in the roadmap.
 - **Looped clips, and clip names and colours.** Every clip has a loop handle in the upper right
   corner of its body (it shows while the clip loops, is selected or is under the pointer):
   dragging it to the right repeats what the clip shows, starting a loop of its current content

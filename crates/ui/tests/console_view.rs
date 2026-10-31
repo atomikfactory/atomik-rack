@@ -383,7 +383,7 @@ fn right_click_on_a_name_does_not_remove_the_channel() {
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
     assert!(a.is_empty(), "{a:?}");
     // It opens the VCA menu, which only acts when an entry is picked.
-    assert_eq!(v.menu_items(), ["New VCA..."]);
+    assert_eq!(v.menu_items()[0], "New VCA...");
 }
 
 #[test]
@@ -1066,4 +1066,230 @@ fn a_click_with_the_reset_role_held_resets_a_control() {
         set_params(&click(&mut v)).is_empty(),
         "Ctrl no longer resets"
     );
+}
+
+// ---------------------------------------------------------------- selection and ganged edits
+
+fn selected(v: &ConsoleView) -> Vec<String> {
+    v.selected_strips().into_iter().map(|k| k.0).collect()
+}
+
+type Step = Vec<(String, String, f32, Option<u64>)>;
+
+fn batches(actions: &[UiAction]) -> Vec<Step> {
+    commands(actions)
+        .into_iter()
+        .filter_map(|c| match c {
+            Command::Batch(list) => Some(
+                list.into_iter()
+                    .filter_map(|c| match c {
+                        Command::SetParam {
+                            key,
+                            param,
+                            value,
+                            merge,
+                        } => Some((key.0, param, value, merge)),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+fn all_selected(v: &mut ConsoleView, doc: &RackDoc, reg: &atomik_device_sdk::Registry) {
+    v.set_selected_strips(&[key("ch-bass"), key("ch-lead"), key("ch-keys")]);
+    v.sync(doc, reg);
+}
+
+fn db_of(pos: f32) -> f32 {
+    60.0 * (pos / 0.75).log10()
+}
+
+#[test]
+fn left_and_right_select_the_adjacent_strips_and_shift_extends_the_range() {
+    let (doc, reg, mut v) = setup();
+    // With nothing selected Right starts at the first strip and Left at the last.
+    run(&mut v, &doc, &reg, "mixer.select_right");
+    assert_eq!(selected(&v), ["ch-bass"]);
+    run(&mut v, &doc, &reg, "mixer.select_right");
+    assert_eq!(selected(&v), ["ch-lead"]);
+    run(&mut v, &doc, &reg, "mixer.extend_right");
+    assert_eq!(selected(&v), ["ch-lead", "ch-keys"]);
+    run(&mut v, &doc, &reg, "mixer.extend_left");
+    assert_eq!(selected(&v), ["ch-lead"]);
+    run(&mut v, &doc, &reg, "mixer.select_left");
+    run(&mut v, &doc, &reg, "mixer.select_left");
+    assert_eq!(selected(&v), ["ch-bass"], "it stops at the first strip");
+    v.set_selected_strips(&[]);
+    run(&mut v, &doc, &reg, "mixer.select_left");
+    assert_eq!(
+        v.selected_strips().last().map(|k| k.0.as_str()),
+        Some("ch-keys")
+    );
+}
+
+#[test]
+fn the_selection_scrolls_into_view() {
+    let (doc, reg, mut v) = setup();
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 560.0, 420.0));
+    v.sync(&doc, &reg);
+    run(&mut v, &doc, &reg, "mixer.scroll_end");
+    assert!(v.scroll_x() > 0.0);
+    assert!(
+        v.strip_rect(&key("ch-bass")).unwrap().x1 <= 0.0,
+        "scrolled out"
+    );
+    run(&mut v, &doc, &reg, "mixer.select_right");
+    let r = v.strip_rect(&key("ch-bass")).unwrap();
+    assert!(r.x0 >= -1e-6, "the first strip is back in view: {r:?}");
+}
+
+#[test]
+fn select_all_selects_every_strip() {
+    let (doc, reg, mut v) = setup();
+    run(&mut v, &doc, &reg, "edit.select_all");
+    assert_eq!(selected(&v), ["ch-bass", "ch-lead", "ch-keys"]);
+}
+
+#[test]
+fn delete_removes_the_selected_channels() {
+    let (doc, reg, mut v) = setup();
+    assert!(matches!(
+        v.command("edit.delete", None, &doc, &reg),
+        CommandOutcome::Declined
+    ));
+    v.set_selected_strips(&[key("ch-bass"), key("ch-keys")]);
+    let a = run(&mut v, &doc, &reg, "edit.delete");
+    assert_eq!(
+        console_cmds(&a),
+        [
+            ConsoleCommand::RemoveChannel {
+                channel: key("ch-bass")
+            },
+            ConsoleCommand::RemoveChannel {
+                channel: key("ch-keys")
+            }
+        ]
+    );
+}
+
+#[test]
+fn a_fader_drag_of_a_selected_strip_moves_every_selected_fader_by_the_same_db() {
+    let (doc, reg, mut v) = setup();
+    all_selected(&mut v, &doc, &reg);
+    let l = v.strip_layout().unwrap().clone();
+    let fader = l.controls.iter().find(|c| c.param == "fader").unwrap();
+    let travel = fader.rect.height() - 16.0;
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    v.handle(&down(p), &doc, &reg);
+    let a = v.handle(&mv(p + Vec2::new(0.0, travel * 0.1)), &doc, &reg);
+    let b = v.handle(&mv(p + Vec2::new(0.0, travel * 0.15)), &doc, &reg);
+    let (a, b) = (batches(&a), batches(&b));
+    assert_eq!((a.len(), b.len()), (1, 1), "one batch per step");
+    let (a, b) = (&a[0], &b[0]);
+    assert_eq!(
+        a.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+        ["ch-bass", "ch-lead", "ch-keys"]
+    );
+    assert!(a.iter().all(|s| s.1 == "fader" && s.3.is_some()));
+    assert!(
+        a.iter().all(|s| s.3 == a[0].3 && s.3 == b[0].3),
+        "one merge id"
+    );
+    let starts = [0.62, 0.75, 0.9];
+    let moved = |step: &Step| -> Vec<f32> {
+        step.iter()
+            .zip(starts)
+            .map(|(s, st)| db_of(s.2) - db_of(st))
+            .collect()
+    };
+    let (m, n) = (moved(a), moved(b));
+    assert!(m.iter().all(|d| (d - m[0]).abs() < 1e-3), "{m:?}");
+    assert!(m[0] < -1.0, "dragging down lowers them: {m:?}");
+    assert!(n.iter().all(|d| (d - n[0]).abs() < 1e-3 && *d < m[0]));
+    let end = v.handle(&up(p), &doc, &reg);
+    assert!(end.iter().any(|a| matches!(a, UiAction::EndMerge)));
+}
+
+#[test]
+fn a_ganged_drag_stops_at_the_top_for_every_strip() {
+    let (doc, reg, mut v) = setup();
+    all_selected(&mut v, &doc, &reg);
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    v.handle(&down(p), &doc, &reg);
+    let a = v.handle(&mv(p - Vec2::new(0.0, 400.0)), &doc, &reg);
+    let a = &batches(&a)[0];
+    // ch-keys started at 0.9: it reaches 1.0 and the others keep their offset to it.
+    assert!(close(a[2].2, 1.0), "{a:?}");
+    let offsets = [db_of(a[0].2) - db_of(0.62), db_of(a[1].2) - db_of(0.75)];
+    assert!((offsets[0] - offsets[1]).abs() < 1e-3, "{offsets:?}");
+}
+
+#[test]
+fn escape_puts_every_ganged_fader_back() {
+    let (doc, reg, mut v) = setup();
+    all_selected(&mut v, &doc, &reg);
+    let p = v.control_center(&key("ch-lead"), "fader").unwrap();
+    v.handle(&down(p), &doc, &reg);
+    v.handle(&mv(p + Vec2::new(0.0, 20.0)), &doc, &reg);
+    let a = v.handle(&key_event(Key::Escape, Modifiers::NONE), &doc, &reg);
+    let b = &batches(&a)[0];
+    assert_eq!(b.iter().map(|s| s.2).collect::<Vec<_>>(), [0.62, 0.75, 0.9]);
+    assert!(a.iter().any(|a| matches!(a, UiAction::EndMerge)));
+}
+
+#[test]
+fn a_mute_click_on_a_selected_strip_mutes_every_selected_strip() {
+    let (doc, reg, mut v) = setup();
+    all_selected(&mut v, &doc, &reg);
+    v.scroll_to_control(&key("ch-lead"), "mute");
+    let m = v.control_center(&key("ch-lead"), "mute").unwrap();
+    let a = click(&mut v, &doc, &reg, m);
+    let b = &batches(&a)[0];
+    // ch-keys is soloed, and a soloed strip cannot be muted by a click.
+    assert_eq!(
+        b.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+        ["ch-bass", "ch-lead"]
+    );
+    assert!(
+        b.iter()
+            .all(|s| s.1 == "mute" && s.2.to_bits() == b[0].2.to_bits() && s.3.is_none())
+    );
+    // A strip that is not selected is clicked alone.
+    v.set_selected_strips(&[key("ch-bass"), key("ch-keys")]);
+    v.sync(&doc, &reg);
+    let a = click(&mut v, &doc, &reg, m);
+    assert!(batches(&a).is_empty());
+    assert_eq!(set_params(&a).len(), 1);
+}
+
+#[test]
+fn a_double_click_on_a_ganged_fader_resets_every_selected_fader() {
+    let (doc, reg, mut v) = setup();
+    all_selected(&mut v, &doc, &reg);
+    let p = v.control_center(&key("ch-bass"), "fader").unwrap();
+    let mut a = v.handle(&down_with(p, PointerButton::Primary, 2), &doc, &reg);
+    a.extend(v.handle(&up(p), &doc, &reg));
+    let b = &batches(&a)[0];
+    assert!(b.iter().all(|s| close(s.2, 0.75)), "{b:?}");
+}
+
+#[test]
+fn the_strip_menu_runs_the_channel_settings_commands_on_the_selection() {
+    let (doc, reg, mut v) = setup();
+    v.set_selected_strips(&[key("ch-bass")]);
+    let p = v.name_center(&key("ch-lead")).unwrap();
+    v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
+    assert_eq!(selected(&v), ["ch-lead"], "the strip clicked is selected");
+    let items = v.menu_items();
+    for label in [
+        "Copy settings",
+        "Paste settings",
+        "Reset channel",
+        "Clear inserts",
+    ] {
+        assert!(items.iter().any(|i| i == label), "{items:?}");
+    }
 }

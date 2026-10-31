@@ -836,7 +836,39 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("mixer.clear_inserts", "Clear Inserts", G::Mixer, C::Global).menu(),
     cmd("mixer.compare_snapshot", "Compare A/B", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.copy_settings",
+        "Copy Channel Settings",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
+        "mixer.copy_settings_inserts",
+        "Copy Channel Inserts",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "mixer.copy_settings_levels",
+        "Copy Channel Levels",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "mixer.copy_settings_mutes",
+        "Copy Channel Mute and Solo",
+        G::Mixer,
+        C::Global,
+    ),
+    cmd(
+        "mixer.copy_settings_sends",
+        "Copy Channel Sends",
+        G::Mixer,
+        C::Global,
+    ),
     cmd(
         "mixer.create_vca",
         "Create VCA from Selection",
@@ -853,6 +885,25 @@ const COMMANDS: &[CommandDef] = &[
     .menu(),
     cmd("mixer.delete_vca", "Delete VCA", G::Mixer, C::Global).menu(),
     cmd("mixer.end_compare", "End Compare", G::Mixer, C::Global).menu(),
+    cmd(
+        "mixer.extend_left",
+        "Extend Selection Left",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.extend_right",
+        "Extend Selection Right",
+        G::Mixer,
+        C::Mixer,
+    ),
+    cmd(
+        "mixer.paste_settings",
+        "Paste Channel Settings",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
     cmd(
         "mixer.recall_next_snapshot",
         "Recall Next Snapshot",
@@ -881,6 +932,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("mixer.reset_strip", "Reset Channel", G::Mixer, C::Global).menu(),
     cmd(
         "mixer.route_to_new_bus",
         "Route to New Output Bus",
@@ -910,6 +962,20 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "mixer.scroll_right",
         "Scroll Channels Right",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.select_left",
+        "Select Previous Channel",
+        G::Mixer,
+        C::Mixer,
+    )
+    .rep(),
+    cmd(
+        "mixer.select_right",
+        "Select Next Channel",
         G::Mixer,
         C::Mixer,
     )

@@ -403,6 +403,28 @@ pub(crate) enum Edit {
 }
 
 impl Edit {
+    /// Folds the param edits `latest` of a ganged drag into `parts`, the step of the drag so
+    /// far: each keeps its first old value and takes the latest new one. False (nothing
+    /// changed) when the two are not the same run of param edits.
+    pub(crate) fn merge_gang(parts: &mut [Edit], latest: &[Edit]) -> bool {
+        let same = parts.len() == latest.len()
+            && parts.iter().zip(latest).all(|(a, b)| {
+                matches!((a, b), (
+                    Edit::Param { key: k, param: p, .. },
+                    Edit::Param { key: k2, param: p2, .. },
+                ) if k == k2 && p == p2)
+            });
+        if !same {
+            return false;
+        }
+        for (a, b) in parts.iter_mut().zip(latest) {
+            if let (Edit::Param { new, .. }, Edit::Param { new: n, .. }) = (a, b) {
+                *new = *n;
+            }
+        }
+        true
+    }
+
     /// Folds `next`, the next clip edit of a drag-merge group, into this one (the last undo
     /// step of the group), so the group stays one step. A clip edit on the lane of an earlier
     /// edit of the same clip updates it in place (a drag keeps one edit per clip, not one per

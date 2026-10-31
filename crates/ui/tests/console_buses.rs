@@ -540,7 +540,7 @@ fn the_bus_context_menu_offers_rename_and_delete() {
         a.is_empty(),
         "a bus is not removed by the click itself: {a:?}"
     );
-    assert_eq!(v.menu_items(), ["Rename", "Delete bus", "New VCA..."]);
+    assert_eq!(vca_items(&v), ["Rename", "Delete bus", "New VCA..."]);
     let a = pick(&mut v, &doc, &reg, "Delete bus");
     assert_eq!(
         console_cmds(&a),
@@ -560,7 +560,7 @@ fn right_click_on_a_channel_name_opens_only_the_vca_menu() {
     let p = name_at(&v, "ch-lead");
     let a = v.handle(&down_with(p, PointerButton::Secondary, 1), &doc, &reg);
     assert!(a.is_empty(), "{a:?}");
-    assert_eq!(v.menu_items(), ["New VCA..."]);
+    assert_eq!(vca_items(&v), ["New VCA..."]);
 }
 
 // ---------------------------------------------------------------- reordering
@@ -752,4 +752,25 @@ fn console_with_buses_matches_golden() {
     let mut dl = DisplayList::new();
     v.paint(&mut dl, &doc, &reg);
     starter::check_golden("console_buses_1x.json", &dl.to_json());
+}
+
+/// What every strip menu ends with: the channel settings commands.
+const SETTINGS_ITEMS: [&str; 7] = [
+    "Copy settings",
+    "Copy levels",
+    "Copy sends",
+    "Copy inserts",
+    "Paste settings",
+    "Reset channel",
+    "Clear inserts",
+];
+
+/// The menu entries before the channel settings ones.
+fn vca_items(v: &ConsoleView) -> Vec<String> {
+    let items = v.menu_items();
+    assert!(
+        items.ends_with(&SETTINGS_ITEMS.map(str::to_owned)),
+        "{items:?}"
+    );
+    items[..items.len() - SETTINGS_ITEMS.len()].to_vec()
 }

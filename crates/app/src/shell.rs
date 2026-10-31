@@ -5131,6 +5131,23 @@ impl<B: AudioBackend> Shell<B> {
                 self.core.bypass_all_inserts(self.live_pane(self.focus));
                 Vec::new()
             }
+            AppCommand::CopySettings(section) => {
+                self.core
+                    .copy_strip_settings(self.live_pane(self.focus), section);
+                Vec::new()
+            }
+            AppCommand::PasteSettings => {
+                self.core.paste_strip_settings(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::ResetStrip => {
+                self.core.reset_strips(self.live_pane(self.focus));
+                Vec::new()
+            }
+            AppCommand::ClearInserts => {
+                self.core.clear_inserts(self.live_pane(self.focus));
+                Vec::new()
+            }
             AppCommand::ToggleCompensation => {
                 let on = self.core.doc().console.compensation;
                 let command = Command::Console(ConsoleCommand::SetCompensation(!on));

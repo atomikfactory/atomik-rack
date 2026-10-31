@@ -16,6 +16,7 @@ mod clip_transform;
 mod console_bus;
 mod console_cmd;
 mod console_insert;
+mod console_settings;
 mod console_snapshot;
 mod console_vca;
 mod container;
@@ -163,6 +164,7 @@ pub use console::{LinkKind, OutputDest, link_kind, output_dest};
 pub use console_insert::{
     bypass_inserts_commands, insert_bypass_states, insert_chain, inserts_bypassed,
 };
+pub use console_settings::{ChannelSettingsClip, InsertClip};
 pub use console_snapshot::{
     CompareState, MAX_SNAPSHOT_NAME_CHARS, MAX_SNAPSHOTS, MixerSnapshot, MixerState, SnapshotScope,
     SnapshotVca,
@@ -986,6 +988,29 @@ pub const MAX_UNDO_STEPS: usize = 1000;
 /// is always kept. 512 MiB.
 pub const MAX_UNDO_BYTES: usize = 512 << 20;
 
+/// The merge key of a batch of `SetParam`s that share one merge id (several params moved by one
+/// gesture); `None` for any other batch.
+fn gang_key(commands: &[Command]) -> Option<MergeKey> {
+    let mut id = None;
+    let mut targets = Vec::with_capacity(commands.len());
+    for command in commands {
+        let Command::SetParam {
+            key,
+            param,
+            merge: Some(m),
+            ..
+        } = command
+        else {
+            return None;
+        };
+        if *id.get_or_insert(*m) != *m {
+            return None;
+        }
+        targets.push((key.clone(), param.clone()));
+    }
+    Some(MergeKey::Gang(id?, targets))
+}
+
 /// The source of document revisions: process wide, so two documents (a replaced one and the
 /// one that took its place) never share a revision.
 static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -999,6 +1024,9 @@ fn next_revision() -> u64 {
 enum MergeKey {
     /// `SetParam` on one device param.
     Param(u64, DeviceKey, String),
+    /// A `Batch` of `SetParam`s that all carry one merge id (a ganged drag): the same params
+    /// again merge, in the order of the batch.
+    Gang(u64, Vec<(DeviceKey, String)>),
     /// The clip commands of one gesture (`SetClipGeometry`, `SetClipContent`, ..., and the
     /// final `MoveClips` of a drag): a drag of several clips is one step.
     Clip(u64),
@@ -1178,6 +1206,7 @@ impl Document {
                 merge: Some(id),
                 ..
             } => Some(MergeKey::Param(*id, key.clone(), param.clone())),
+            Command::Batch(commands) => gang_key(commands),
             Command::Song(
                 SongCommand::SetClipGeometry { merge: Some(m), .. }
                 | SongCommand::SetClipContent { merge: Some(m), .. }
@@ -1293,6 +1322,16 @@ impl Document {
             if new_clip.is_some() {
                 self.last_clip = new_clip;
             }
+            return Ok(ops);
+        }
+        if merged
+            && matches!(merge, Some(MergeKey::Gang(..)))
+            && let Edit::Compound(latest) = &edit
+            && let Some(Edit::Compound(parts)) = self.undo.back_mut()
+            && Edit::merge_gang(parts, latest)
+        {
+            self.resize_last_undo(before);
+            self.merge = merge;
             return Ok(ops);
         }
         let mut pushed = false;

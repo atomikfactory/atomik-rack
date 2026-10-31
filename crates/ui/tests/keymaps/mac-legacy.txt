@@ -76,10 +76,14 @@ keys.velocity 6 | keys | 6
 keys.velocity 7 | keys | 7
 keys.velocity 8 | keys | 8
 keys.velocity 9 | keys | 9
+mixer.extend_left | mixer | Shift+Left
+mixer.extend_right | mixer | Shift+Right
 mixer.scroll_end | mixer | End, Shift+End
 mixer.scroll_home | mixer | Home, Shift+Home
-mixer.scroll_left | mixer | Left, Shift+Left
-mixer.scroll_right | mixer | Right, Shift+Right
+mixer.scroll_left | mixer | Cmd+Left, Cmd+Shift+Left
+mixer.scroll_right | mixer | Cmd+Right, Cmd+Shift+Right
+mixer.select_left | mixer | Left
+mixer.select_right | mixer | Right
 mixer.value_down | mixer | Down
 mixer.value_down_fine | mixer | Shift+Down
 mixer.value_page_down | mixer | PageDown
