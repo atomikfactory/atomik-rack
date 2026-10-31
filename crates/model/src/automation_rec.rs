@@ -17,7 +17,8 @@
 //! they overlap (the lane's flattening rule), so "replace" needs no deletion of the old points
 //! and the old clips come back in full when the take is undone.
 
-use crate::song::{AutomationPoint, Curve};
+use crate::song::{AutomationPoint, Curve, TempoEvent};
+use crate::{TEMPO_MAX, TEMPO_MIN};
 
 /// How hard Cleanup Automation thins: the tolerance is a fraction of the parameter's range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -301,4 +302,48 @@ fn thin_run(points: &[AutomationPoint], from: usize, to: usize, tolerance: f32, 
             stack.push((worst.1, b));
         }
     }
+}
+
+/// The tempo map a tempo pass leaves: `base` with the events inside each recorded stretch
+/// replaced by the stretch's points, thinned with `tolerance` in BPM (see [`thin_points`]). The
+/// points ramp into each other, the last of a stretch holds until the next event of the base
+/// map. Stretches apply in order, so a later pass lies on top of an earlier one; the events
+/// outside every stretch are the base map's own. The BPM is rounded to 0.01 and kept inside the
+/// supported range, so the result is always a valid map when `base` is.
+pub fn tempo_pass_map(
+    base: &[TempoEvent],
+    segments: &[Segment],
+    tolerance: f32,
+) -> Vec<TempoEvent> {
+    let mut map = base.to_vec();
+    for seg in segments.iter().filter(|s| !s.points.is_empty()) {
+        let points: Vec<AutomationPoint> = seg
+            .points
+            .iter()
+            .map(|&(tick, value)| AutomationPoint {
+                tick,
+                value,
+                curve: Curve::Linear,
+            })
+            .collect();
+        let kept = thin_points(&points, tolerance);
+        map.retain(|e| e.tick < seg.start || e.tick >= seg.end);
+        let n = kept.len();
+        map.extend(kept.iter().enumerate().map(|(i, p)| TempoEvent {
+            tick: p.tick,
+            bpm: ((f64::from(p.value) * 100.0).round() / 100.0).clamp(TEMPO_MIN, TEMPO_MAX),
+            ramp: i + 1 < n,
+        }));
+        map.sort_by_key(|e| e.tick);
+        // A point at tick 0 replaced the first event; the map never starts later than that.
+        if map.first().is_some_and(|e| e.tick != 0)
+            && let Some(first) = base.first()
+        {
+            map.insert(0, *first);
+        }
+        if let Some(last) = map.last_mut() {
+            last.ramp = false;
+        }
+    }
+    map
 }

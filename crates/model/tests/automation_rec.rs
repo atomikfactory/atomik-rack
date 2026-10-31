@@ -4,10 +4,12 @@
 mod common;
 
 use atomik_device_sdk::Registry;
-use atomik_model::automation_rec::{PassRecorder, Segment, WriteMode, segment_clips, thin_points};
+use atomik_model::automation_rec::{
+    PassRecorder, Segment, WriteMode, segment_clips, tempo_pass_map, thin_points,
+};
 use atomik_model::{
     AutomationPoint, ClipContent, Command, Curve, Document, PROJECT_VERSION, SongCommand, SyncOp,
-    load_project, save_project,
+    TempoEvent, load_project, save_project,
 };
 use common::song::*;
 use common::*;
@@ -496,4 +498,84 @@ fn entries_of_removed_lanes_are_not_saved() {
     assert!(!save_project(d.doc()).contains("latch"));
     d.undo(&reg).unwrap();
     assert!(save_project(d.doc()).contains("latch"));
+}
+
+// ---- tempo passes ---------------------------------------------------------------------
+
+fn pass(start: i64, end: i64, points: &[(i64, f32)]) -> Segment {
+    Segment {
+        start,
+        end,
+        points: points.to_vec(),
+    }
+}
+
+fn ramp_points(from: f32, to: f32, steps: i64, step_ticks: i64) -> Vec<(i64, f32)> {
+    (0..=steps)
+        .map(|i| (i * step_ticks, from + (to - from) * i as f32 / steps as f32))
+        .collect()
+}
+
+#[test]
+fn a_tempo_pass_replaces_the_events_it_covers_and_keeps_the_rest() {
+    let base = vec![
+        TempoEvent::step(0, 100.0),
+        TempoEvent::step(2000, 90.0),
+        TempoEvent::step(9000, 140.0),
+    ];
+    let seg = pass(1000, 5000, &[(1000, 100.0), (1500, 110.0), (4000, 130.0)]);
+    let map = tempo_pass_map(&base, &[seg], 0.0);
+    let ticks: Vec<i64> = map.iter().map(|e| e.tick).collect();
+    assert_eq!(
+        ticks,
+        [0, 1000, 1500, 4000, 9000],
+        "2000 lay inside the pass and goes"
+    );
+    assert_eq!(map[0], base[0]);
+    assert_eq!(map[4], base[2]);
+    assert!(
+        map[1].ramp && map[2].ramp && !map[3].ramp,
+        "a ramp-like series, the end holds"
+    );
+    assert_eq!(map[3].bpm, 130.0);
+}
+
+#[test]
+fn a_pass_from_the_start_that_ends_the_song_leaves_its_last_tempo_standing() {
+    let base = vec![TempoEvent::step(0, 100.0)];
+    let seg = pass(0, 15360, &ramp_points(100.0, 130.0, 64, 240));
+    let thinned = tempo_pass_map(&base, std::slice::from_ref(&seg), 1.0);
+    assert!(
+        thinned.len() < 10,
+        "a straight ramp thins to a few events: {}",
+        thinned.len()
+    );
+    assert_eq!(thinned[0].tick, 0);
+    assert_eq!(thinned.last().unwrap().bpm, 130.0);
+    // The result is a valid map the song accepts, and undo restores the old one.
+    let reg = registry();
+    let mut d = song_start(&reg);
+    d.apply(sc(SongCommand::SetTempoMap(thinned.clone())), &reg)
+        .unwrap();
+    assert_eq!(d.doc().song.tempo, thinned);
+    d.undo(&reg).unwrap();
+    assert_eq!(d.doc().song.tempo.len(), 1);
+    assert_eq!(d.doc().song.tempo[0].bpm, 120.0);
+}
+
+#[test]
+fn later_passes_lie_on_top_and_a_loop_wrap_keeps_the_map_valid() {
+    let base = vec![TempoEvent::step(0, 120.0)];
+    let first = pass(0, 1000, &[(0, 120.0), (500, 140.0)]);
+    let second = pass(0, 600, &[(0, 140.0), (300, 100.0)]);
+    let map = tempo_pass_map(&base, &[first, second], 0.0);
+    assert_eq!(map.iter().map(|e| e.tick).collect::<Vec<_>>(), [0, 300]);
+    let wild = pass(100, 200, &[(100, 5.0), (150, 5000.0)]);
+    let map = tempo_pass_map(&base, &[wild], 0.0);
+    assert!(
+        map.iter().all(|e| (20.0..=999.0).contains(&e.bpm)),
+        "{map:?}"
+    );
+    assert_eq!(map[0].tick, 0);
+    assert_eq!(tempo_pass_map(&base, &[], 1.0), base);
 }
