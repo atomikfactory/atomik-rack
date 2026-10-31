@@ -367,3 +367,25 @@ fn stream_reader_over_a_stored_asset_matches_a_full_load() {
         }
     }
 }
+
+#[test]
+fn convert_rate_stores_an_aligned_copy_and_keeps_the_original() {
+    let root = tmp_dir("convert_rate");
+    let mut b = Bundle::create(&root.join("P")).unwrap();
+    let tone = AudioData::new(48_000, vec![sine(48_000, 1_000.0, 0.5, 48_000)]).unwrap();
+    let a = b.add_recording(&tone, "tone").unwrap();
+    for rate in [44_100u32, 96_000] {
+        let c = b.convert_rate(&a.hash, rate, "tone").unwrap();
+        assert_ne!(c.hash, a.hash);
+        assert_eq!((c.sample_rate, c.channels), (rate, 1));
+        assert_eq!(c.frames, u64::from(rate));
+        let out = b.load(&c.hash).unwrap();
+        let want = sine(rate, 1_000.0, 0.5, rate as usize);
+        // Away from the edges the copy matches the ideal tone sample for sample.
+        let worst = (2_000..out.channels[0].len() - 2_000)
+            .map(|i| (out.channels[0][i] - want[i]).abs())
+            .fold(0.0_f32, f32::max);
+        assert!(worst < 2e-3, "{rate} Hz: worst error {worst}");
+    }
+    assert!(b.exists(&a.hash), "the original stays");
+}

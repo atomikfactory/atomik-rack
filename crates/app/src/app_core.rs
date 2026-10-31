@@ -331,9 +331,9 @@ pub struct AppCore<S: EngineSink> {
     meter_capacity: usize,
     /// Project bundle, imported assets, peaks and background workers.
     audio: AudioState,
-    /// Host inputs the running engine was built with (a change of the document's count
-    /// restarts the engine).
-    engine_inputs: u16,
+    /// Host inputs, host outputs and sample rate the running engine was built with (a change
+    /// of any of them in the document restarts the engine).
+    engine_shape: (u16, u16, u32),
     /// A Play waiting for the streamer's read-ahead: UI frames waited so far.
     pending_play: Option<u32>,
     /// The count-in the waiting Play starts with, if any.
@@ -485,7 +485,7 @@ impl<S: EngineSink> AppCore<S> {
             cv_taps: io_ops::CvTaps::default(),
             meter_capacity: atomik_engine::METER_CAPACITY,
             audio: AudioState::new(),
-            engine_inputs: 0,
+            engine_shape: (0, 0, 0),
             pending_play: None,
             pending_pre_roll: None,
             fx_meter_seq: BTreeMap::new(),
@@ -1261,6 +1261,26 @@ impl<S: EngineSink> AppCore<S> {
 
     // ------------------------------------------------------------------ engine
 
+    /// True when the document's channel counts or sample rate differ from the running engine's.
+    fn engine_shape_changed(&self) -> bool {
+        let d = self.doc();
+        (d.input_channels, d.output_channels, d.sample_rate) != self.engine_shape
+    }
+
+    /// [`Self::rebuild_engine`] for an edit of the document (a rate, a channel count, a freeze):
+    /// the transport comes back at the tick it was at and keeps playing if it was. Reverb and
+    /// delay tails and notes that sounded do not survive the new engine.
+    fn rebuild_engine_in_place(&mut self) {
+        let (position, was_playing) = (self.position, self.playing);
+        self.rebuild_engine();
+        if position > 0 {
+            self.locate(position);
+        }
+        if was_playing {
+            self.play();
+        }
+    }
+
     /// Starts a fresh engine from the document: reset, then every device inserted with its
     /// stored params under ids 1, 2, 3… in rack order, then one routing, the song, the
     /// engine loop and the metronome. The transport starts stopped; a take in progress ends
@@ -1277,7 +1297,11 @@ impl<S: EngineSink> AppCore<S> {
         self.pending_play = None;
         self.pending_pre_roll = None;
         let config = engine_config(self.doc());
-        self.engine_inputs = config.input_channels;
+        self.engine_shape = (
+            config.input_channels,
+            config.output_channels,
+            self.doc().sample_rate,
+        );
         self.audio.monitor_sent.clear();
         self.plugins_before_reset();
         self.sink.reset(&config);
@@ -1461,8 +1485,9 @@ impl<S: EngineSink> AppCore<S> {
                     self.audio.monitor_sent.remove(key);
                     self.vca_sent.remove(key);
                 }
-                // A new input count needs a new engine: the restart below submits it.
-                SyncOp::RoutingChanged if self.doc().input_channels != self.engine_inputs => {}
+                // A new channel count or sample rate needs a new engine: the restart below
+                // submits it.
+                SyncOp::RoutingChanged if self.engine_shape_changed() => {}
                 SyncOp::RoutingChanged => {
                     let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
                     self.submit_routing_with(exp);
@@ -1560,10 +1585,10 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.flush_song(&mut stale);
         self.push_midi_out_ports();
-        if restart || self.doc().input_channels != self.engine_inputs {
-            // The host stream opens the document's input count, or a track was frozen or
-            // unfrozen: restart the engine.
-            self.rebuild_engine();
+        if restart || self.engine_shape_changed() {
+            // The host stream opens the document's channel counts and rate, or a track was
+            // frozen or unfrozen: restart the engine where the transport was.
+            self.rebuild_engine_in_place();
             return;
         }
         self.push_monitor_live();
@@ -2941,6 +2966,9 @@ use audio::AudioState;
 #[path = "app_core_rec_audio.rs"]
 mod rec;
 
+#[path = "app_core_rate.rs"]
+mod rate;
+
 #[path = "app_core_autorec.rs"]
 mod autorec;
 
@@ -3065,6 +3093,10 @@ mod autosave_tests;
 #[cfg(test)]
 #[path = "app_core_rec_audio_tests.rs"]
 mod rec_audio_tests;
+
+#[cfg(test)]
+#[path = "app_core_rate_tests.rs"]
+mod rate_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

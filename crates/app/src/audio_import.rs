@@ -93,6 +93,13 @@ pub(crate) enum Msg {
         found: Vec<(String, PathBuf)>,
         truncated: bool,
     },
+    /// The audio of a project was resampled for a rate conversion: `(old asset id, its copy)` in
+    /// the order asked, or the first failure.
+    Converted {
+        generation: u64,
+        rate: u32,
+        result: Result<Vec<(String, Loaded)>, String>,
+    },
     /// A warp buffer was rendered (`None`: the job was cancelled): see [`crate::AppCore`]'s
     /// warp cache.
     Warped {
@@ -486,6 +493,40 @@ pub(crate) fn spawn_load(
                     result,
                 });
             }
+        })
+        .map(|_| ())
+}
+
+/// Starts a worker that resamples the assets `assets` (`(id, display name)`) of `bundle` to
+/// `rate`, stores the copies and loads them, then sends one [`Msg::Converted`].
+pub(crate) fn spawn_convert(
+    tx: Sender<Msg>,
+    generation: u64,
+    mut bundle: Bundle,
+    rate: u32,
+    threshold: u64,
+    assets: Vec<(String, String)>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-rate".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let result = assets
+                .into_iter()
+                .map(|(hash, name)| {
+                    let info = bundle
+                        .convert_rate(&hash, rate, &name)
+                        .map_err(|e| format!("{name}: {e}"))?;
+                    let mut loaded = load_asset(&bundle, &info.hash, threshold)?;
+                    loaded.info = Some(info);
+                    Ok((hash, loaded))
+                })
+                .collect();
+            let _ = tx.send(Msg::Converted {
+                generation,
+                rate,
+                result,
+            });
         })
         .map(|_| ())
 }
