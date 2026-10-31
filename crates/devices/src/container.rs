@@ -6,8 +6,10 @@
 //! registry tests) never crashes. The render patch builder rejects the type with a clear message.
 //!
 //! Sockets: `in_l`, `in_r` (Audio in), `notes_in` (Notes in), `out_l`, `out_r` (Audio out).
-//! Params: `macro1` to `macro8` (ids 0 to 7, 0..1, default 0). The macro values are applied to
-//! inner params outside the engine.
+//! Params: `macro1` to `macro8` (ids 0 to 7, 0..1, default 0) and `bypass` (id 8, a 0/1
+//! toggle). The macro values are applied to inner params outside the engine, and the model's
+//! expansion consumes `bypass`: while it is on the inside is left out and `in_l`, `in_r` go
+//! straight to `out_l`, `out_r`, so the engine never sees the switch.
 
 use atomik_core::{BATCH, ParamDescriptor, ParamId, Taper, Unit};
 use atomik_device_sdk::{
@@ -62,7 +64,10 @@ const fn macro_param(id: u32, key: &'static str, name: &'static str) -> ParamDes
     }
 }
 
-static PARAMS: [ParamDescriptor; 8] = [
+/// Key of the bypass param (the model's expansion reads it by this name).
+pub const BYPASS_KEY: &str = "bypass";
+
+static PARAMS: [ParamDescriptor; 9] = [
     macro_param(0, "macro1", "Macro 1"),
     macro_param(1, "macro2", "Macro 2"),
     macro_param(2, "macro3", "Macro 3"),
@@ -71,6 +76,17 @@ static PARAMS: [ParamDescriptor; 8] = [
     macro_param(5, "macro6", "Macro 6"),
     macro_param(6, "macro7", "Macro 7"),
     macro_param(7, "macro8", "Macro 8"),
+    ParamDescriptor {
+        id: ParamId(8),
+        key: BYPASS_KEY,
+        name: "Bypass",
+        min: 0.0,
+        max: 1.0,
+        default: 0.0,
+        taper: Taper::Linear,
+        unit: Unit::Toggle,
+        discrete: true,
+    },
 ];
 
 /// Static description of the container.
@@ -141,14 +157,19 @@ mod tests {
                 ("out_r", SocketKind::Audio, Direction::Output),
             ]
         );
-        assert_eq!(DESCRIPTOR.params.len(), 8);
-        for (i, p) in DESCRIPTOR.params.iter().enumerate() {
+        assert_eq!(DESCRIPTOR.params.len(), 9);
+        for (i, p) in DESCRIPTOR.params[..8].iter().enumerate() {
             assert_eq!(p.id, ParamId(i as u32));
             assert_eq!(p.key, format!("macro{}", i + 1));
             assert_eq!((p.min, p.max, p.default), (0.0, 1.0, 0.0));
             assert_eq!(p.unit, Unit::None);
             assert!(!p.discrete);
         }
+        let bypass = &DESCRIPTOR.params[8];
+        assert_eq!((bypass.id, bypass.key), (ParamId(8), BYPASS_KEY));
+        assert_eq!((bypass.min, bypass.max, bypass.default), (0.0, 1.0, 0.0));
+        assert_eq!(bypass.unit, Unit::Toggle);
+        assert!(bypass.discrete);
     }
 
     #[test]

@@ -46,8 +46,8 @@ use crate::song_cmd::{
 };
 use crate::workflow_cmd::WorkflowCommand;
 use crate::{
-    Cable, Command, ConsoleCommand, CreateTarget, DeviceKey, InsertEffect, ModelError, RackDoc,
-    SocketRef, insert_chain,
+    Cable, Command, ConsoleCommand, ContainerCommand, CreateTarget, DeviceKey, InsertEffect,
+    ModelError, RackDoc, SocketRef, insert_chain,
 };
 use atomik_device_sdk::Registry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -448,6 +448,24 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             }
             | WorkflowCommand::DisconnectDevice { key } => device_frozen(key),
             WorkflowCommand::DisconnectDevices { keys } => keys.iter().find_map(device_frozen),
+            _ => None,
+        },
+        // A frozen track's devices (and the track itself) stay where they are.
+        Command::Container(c) => match c {
+            ContainerCommand::Combine { keys, .. } => keys
+                .iter()
+                .find_map(|k| device_frozen(k).or_else(|| track_frozen(k))),
+            ContainerCommand::MoveIntoContainer { key, container, .. } => device_frozen(key)
+                .or_else(|| track_frozen(key))
+                .or_else(|| device_frozen(container)),
+            ContainerCommand::Uncombine { container } => {
+                device_frozen(container).or_else(|| track_frozen(container))
+            }
+            ContainerCommand::MoveOutOfContainer { key, .. } => {
+                crate::container::split_path(key).0.and_then(|container| {
+                    device_frozen(&container).or_else(|| track_frozen(&container))
+                })
+            }
             _ => None,
         },
         Command::Console(c) => match c {

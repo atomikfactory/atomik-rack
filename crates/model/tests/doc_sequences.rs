@@ -56,6 +56,11 @@ enum WfOp {
     /// The port of a MIDI Out device (the second value picks none or one of two names).
     MidiPort(usize, u8),
     Take(TakeOp),
+    /// Combine devices into a container, dissolve one, or move a device into or out of one.
+    Combine(Vec<usize>),
+    Uncombine(usize),
+    MoveIn(usize, usize, usize),
+    MoveOut(usize, usize),
 }
 
 /// A take-group command in abstract form: indices wrap around the groups and takes held.
@@ -196,6 +201,10 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )
             .prop_map(|(k, c, g)| WfOp::Warp(k, c, g)),
         take_op().prop_map(WfOp::Take),
+        sel().prop_map(WfOp::Combine),
+        (0usize..4).prop_map(WfOp::Uncombine),
+        (0usize..12, 0usize..4, 0usize..4).prop_map(|(d, c, i)| WfOp::MoveIn(d, c, i)),
+        (0usize..4, 0usize..4).prop_map(|(c, i)| WfOp::MoveOut(c, i)),
     ]
 }
 
@@ -367,6 +376,50 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             ))
         }
         WfOp::Take(op) => sc(resolve_take(op, doc)?),
+        WfOp::Combine(s) => Command::Container(atomik_model::ContainerCommand::Combine {
+            keys: chosen(&top, s),
+            name: String::new(),
+        }),
+        WfOp::Uncombine(i) => {
+            let containers: Vec<DeviceKey> = doc
+                .devices
+                .iter()
+                .filter(|x| x.inner.is_some())
+                .map(|x| x.key.clone())
+                .collect();
+            Command::Container(atomik_model::ContainerCommand::Uncombine {
+                container: pick(&containers, *i)?,
+            })
+        }
+        WfOp::MoveIn(d, c, at) => {
+            let containers: Vec<DeviceKey> = doc
+                .devices
+                .iter()
+                .filter(|x| x.inner.is_some())
+                .map(|x| x.key.clone())
+                .collect();
+            Command::Container(atomik_model::ContainerCommand::MoveIntoContainer {
+                key: pick(&top, *d)?,
+                container: pick(&containers, *c)?,
+                index: *at,
+            })
+        }
+        WfOp::MoveOut(c, at) => {
+            let inside: Vec<DeviceKey> = doc
+                .devices
+                .iter()
+                .filter_map(|x| x.inner.as_ref().map(|i| (&x.key, i)))
+                .flat_map(|(k, i)| {
+                    i.devices
+                        .iter()
+                        .map(move |d| key(&format!("{k}/{}", d.key)))
+                })
+                .collect();
+            Command::Container(atomik_model::ContainerCommand::MoveOutOfContainer {
+                key: pick(&inside, *c)?,
+                index: *at,
+            })
+        }
         WfOp::Warp(kind, c, gaps) => {
             let id = pick(&ids, *c)?;
             let (_, _, clip) = doc.song.clip(id)?;

@@ -703,6 +703,15 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             note_edit_of(&command)
         };
+        // What a combine or a move leaves behind is told once it went through.
+        let moved_notes = match &command {
+            Command::Container(c) => self
+                .document
+                .doc()
+                .container_move_notes(&self.registry, c)
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let applied = catch_unwind(AssertUnwindSafe(|| {
             if trial {
                 self.document.apply_trial(command, &self.registry)
@@ -731,6 +740,9 @@ impl<S: EngineSink> AppCore<S> {
                 self.capture_automation(&ops, merge);
                 if let Some((w, pre)) = workflow {
                     self.workflow_post(&w, pre);
+                }
+                if !moved_notes.is_empty() {
+                    self.report(moved_notes.join(" "));
                 }
                 Ok(())
             }
@@ -1416,14 +1428,7 @@ impl<S: EngineSink> AppCore<S> {
                 }
                 SyncOp::DeviceRemoved(key) => {
                     for flat in containers::flat_keys_of(&self.ids, key) {
-                        self.fx_meter_seq.remove(&flat);
-                        self.audio.monitor_sent.remove(&flat);
-                        self.split_sent.remove(&flat);
-                        self.plugins_device_removed(&flat);
-                        if let Some(id) = self.ids.remove(&flat) {
-                            let result = self.sink.remove_device(id);
-                            self.engine_result(result);
-                        }
+                        self.remove_flat(&flat);
                     }
                     self.fx_meter_seq.remove(key);
                     self.audio.monitor_sent.remove(key);
@@ -1440,6 +1445,15 @@ impl<S: EngineSink> AppCore<S> {
                     if inserted.contains(key) || self.echo_suppressed() {
                         // A device inserted by this edit already got its stored params; a
                         // value the plugin's own window made is not sent back to it.
+                    } else if param == atomik_model::BYPASS_PARAM
+                        && containers::is_container(self.doc(), key)
+                    {
+                        // A container's bypass switch changes which devices the engine has:
+                        // the inside comes or goes, the routing follows.
+                        let exp = expanded.get_or_insert_with(|| self.doc().expand(&self.registry));
+                        self.sync_bypass(exp, key, &mut inserted);
+                        // Macro automation expands per target, and a bypassed inside has none.
+                        stale.0 = true;
                     } else if self.doc().resolve(key).is_some_and(|d| {
                         d.inner.is_some() || d.type_id == atomik_model::MACRO_BANK_TYPE
                     }) {
@@ -3128,6 +3142,10 @@ mod setups_tests;
 #[cfg(test)]
 #[path = "app_core_containers_tests.rs"]
 mod containers_tests;
+
+#[cfg(test)]
+#[path = "app_core_combine_tests.rs"]
+mod combine_tests;
 
 #[cfg(test)]
 #[path = "app_core_jacks_tests.rs"]

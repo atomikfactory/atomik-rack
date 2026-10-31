@@ -264,6 +264,47 @@ fn rack_disconnect_runs_on_a_device_and_the_status_names_a_refusal() {
     assert!(s.core().last_rejection().unwrap().contains("no cables"));
 }
 
+#[test]
+fn rack_combine_and_uncombine_run_on_the_selection_in_one_undo_step_each() {
+    use atomik_ui::keymap::{BindingDef, UserKeymap};
+    let mut s = rack3();
+    let bind = |command: &str, chord: &str| BindingDef {
+        command: command.into(),
+        arg: None,
+        context: Context::Rack,
+        chords: vec![chord.into()],
+        os: None,
+    };
+    s.set_user_keymap(
+        UserKeymap {
+            bindings: vec![
+                bind("rack.combine", "Alt+K"),
+                bind("rack.uncombine", "Alt+J"),
+            ],
+            ..UserKeymap::default()
+        },
+        false,
+    );
+    let original = saved(&s);
+    let (b, c) = (plate(&s, "b"), plate(&s, "c"));
+    click(&mut s, b, Modifiers::NONE);
+    click(&mut s, c, Modifiers::SHIFT);
+    tap(&mut s, Os::Windows, "Alt+K");
+    assert!(s.core().last_rejection().is_none());
+    assert_eq!(selection(&s), ["container"]);
+    let combined = s.core().doc().inner(&key("container")).unwrap();
+    assert_eq!(combined.devices.len(), 2);
+    // Uncombine: the devices are back and selected.
+    tap(&mut s, Os::Windows, "Alt+J");
+    assert_eq!(selection(&s), ["b", "c"]);
+    assert_eq!(saved(&s), original);
+    // Each is one undo step: the first brings the container back, the second the rack.
+    assert!(s.core_mut().undo());
+    assert!(s.core().doc().has_containers());
+    assert!(s.core_mut().undo());
+    assert_eq!(saved(&s), original);
+}
+
 fn remap_disconnect(s: &mut Shell<NullBackend>) {
     use atomik_ui::keymap::{BindingDef, UserKeymap};
     let user = UserKeymap {

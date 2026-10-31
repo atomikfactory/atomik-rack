@@ -943,6 +943,7 @@ const COMMANDS: &[CommandDef] = &[
     cmd("rack.assign_send", "Use as Send Effect", G::Rack, C::Rack),
     cmd("rack.auto_route", "Auto-route", G::Rack, C::Rack),
     cmd("rack.browse_patch", "Browse Patches", G::Rack, C::Rack),
+    cmd("rack.combine", "Combine", G::Rack, C::Rack),
     cmd("rack.disconnect", "Disconnect", G::Rack, C::Rack),
     cmd(
         "rack.extend_next",
@@ -976,6 +977,7 @@ const COMMANDS: &[CommandDef] = &[
         C::Rack,
     )
     .rep(),
+    cmd("rack.uncombine", "Uncombine", G::Rack, C::Rack),
     cmd(
         "sequencer.add_note_lane",
         "Add Note Lane",

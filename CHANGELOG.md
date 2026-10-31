@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Combine and Uncombine: wrap devices in a container and unwrap them again.** The new commands
+  **Combine** and **Uncombine** (rack commands `rack.combine` and `rack.uncombine`, unbound until
+  you give them keys; menu items come next) put the selected devices into a new container, or
+  dissolve a container, in one undo step. The cables between the devices stay inside, the cables
+  to the rest of the rack go through the container's two audio inputs, two audio outputs and notes
+  input (a notes cable becomes a full-range split), and the project sounds exactly as it did,
+  bit for bit, for devices that use no random numbers. A device with a song track, a console channel
+  or an FX return passes them to the container (only one such device per container; its automation
+  lanes are dropped and a message says so). When the container has no socket for a cable
+  (CV, a third audio input or output, a notes output, a second notes source), the command is
+  refused and names each cable. A device can also be moved into and out of a container. Every
+  container gains a **Bypass** switch: while it is on the inside is left out and the input goes
+  straight to the output. Bypass cuts at once, with no crossfade. The project format is unchanged
+  (bypass is an ordinary saved param).
 - **Align Returns: latent effects on sends, sidechain keys and split paths line up.** A new project
   setting, **Mixer > Align Returns** (undoable, saved in the project), delays every audio cable of
   a device so it lands with the slowest one. A send through an effect that reports latency now
