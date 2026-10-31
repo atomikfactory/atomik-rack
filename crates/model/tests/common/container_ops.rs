@@ -85,7 +85,9 @@ pub fn assert_invariants(doc: &RackDoc, r: &Registry) {
         }
     }
     assert_eq!(order.len(), flat.devices.len(), "the flat graph is acyclic");
-    // Every container has an alias; its split is in the list.
+    // Every container has an alias; its split is in the list. A bypassed container (its own
+    // switch, or a macro of an outer container) has no inside: the containers in it are not
+    // expanded and nothing of it is in the flat list.
     fn containers(devs: &[atomik_model::RackDevice], prefix: &str, out: &mut Vec<String>) {
         for d in devs {
             if let Some(i) = &d.inner {
@@ -98,10 +100,14 @@ pub fn assert_invariants(doc: &RackDoc, r: &Registry) {
     let mut cs = Vec::new();
     containers(&doc.devices, "", &mut cs);
     for c in cs {
-        let alias = flat
-            .alias
-            .get(&key(&c))
-            .unwrap_or_else(|| panic!("alias {c}"));
+        let Some(alias) = flat.alias.get(&key(&c)) else {
+            let inside = format!("{c}/");
+            assert!(
+                flat.devices.iter().all(|d| !d.key.0.starts_with(&inside)),
+                "no alias for {c}, which is not bypassed away"
+            );
+            continue;
+        };
         assert_eq!(alias, &key(&format!("{c}/~split")));
         assert!(flat.devices.iter().any(|d| &d.key == alias));
     }

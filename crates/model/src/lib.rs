@@ -20,6 +20,7 @@ mod console_vca;
 mod container;
 mod container_cmd;
 mod container_io;
+mod container_move;
 pub mod controller;
 mod curves;
 mod curves_cmd;
@@ -1779,6 +1780,12 @@ impl std::fmt::Display for DeviceKey {
 impl std::fmt::Display for SocketRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.device.0, self.socket)
+    }
+}
+
+impl std::fmt::Display for Cable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} -> {}", self.from, self.to)
     }
 }
 

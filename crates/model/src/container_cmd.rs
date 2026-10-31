@@ -13,6 +13,7 @@ use crate::container::{
     MAX_INNER_DEVICES, MAX_PROJECT_INNER, MAX_SPLITS, MacroDoc, NoteSplit, SPLIT_TYPE, new_device,
     notes_input, scope_socket, split_path,
 };
+use crate::container_move;
 use crate::history::Edit;
 use crate::{Cable, DeviceKey, ModelError, RackDevice, RackDoc, SocketRef, rules};
 use atomik_device_sdk::Registry;
@@ -175,6 +176,21 @@ pub(crate) fn plan(
             validated(doc, registry, edit)
         }
         ContainerCommand::DuplicateContainer { container } => duplicate(doc, registry, &container),
+        ContainerCommand::Combine { keys, name } => {
+            container_move::combine(doc, registry, &keys, &name).map(|planned| planned.edit)
+        }
+        ContainerCommand::Uncombine { container } => {
+            container_move::uncombine(doc, registry, &container).map(|planned| planned.edit)
+        }
+        ContainerCommand::MoveIntoContainer {
+            key,
+            container,
+            index,
+        } => container_move::move_into(doc, registry, &key, &container, index)
+            .map(|planned| planned.edit),
+        ContainerCommand::MoveOutOfContainer { key, index } => {
+            container_move::move_out(doc, registry, &key, index).map(|planned| planned.edit)
+        }
     }
 }
 

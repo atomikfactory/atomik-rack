@@ -178,6 +178,52 @@ pub enum ContainerCommand {
         /// The container to copy (path key).
         container: DeviceKey,
     },
+    /// Wrap the top-level devices `keys` in a new container called `name` (empty: "Container"),
+    /// placed at the first device's slot, in one undo step. The cables between the devices stay
+    /// inside; every cable to a device outside goes through the container's own sockets, the
+    /// first source on `in_l`, and a cable the container has no socket for (CV, a third audio
+    /// input or output, a notes output, a second notes source) refuses the command and names
+    /// each such cable. A device with a song track, a console channel or an FX return slot
+    /// passes them to the container (at most one such device may be combined); the track's
+    /// automation lanes are dropped. See [`RackDoc::container_move_notes`] for what is dropped.
+    Combine {
+        /// The top-level devices to combine.
+        keys: Vec<DeviceKey>,
+        /// The container's name; empty for the default.
+        name: String,
+    },
+    /// Dissolve the top-level container `container`: its devices come back to the rack where it
+    /// was, the container's cables are joined to theirs, and its track, channels and FX return go
+    /// to the device that carries them (see [`ContainerCommand::Combine`]). The container's macros
+    /// and their automation are dropped. Refused when a split narrows or transposes notes that a
+    /// cable or the song sends, when the track would have to play several devices, or when no
+    /// device can take the track, channel or return.
+    Uncombine {
+        /// The container (top-level key).
+        container: DeviceKey,
+    },
+    /// Move the top-level device `key` into the top-level container `container` at position
+    /// `index` among its devices (clamped), splicing its cables through the container's sockets as
+    /// [`ContainerCommand::Combine`] does. A device with a song track, a console channel or an FX
+    /// return is refused (combine it into a new container instead).
+    MoveIntoContainer {
+        /// The device (top-level key).
+        key: DeviceKey,
+        /// The container (top-level key).
+        container: DeviceKey,
+        /// Position among the container's devices.
+        index: usize,
+    },
+    /// Move the device `key` (a path key `container/device` of a top-level container) out to the
+    /// rack at `index` (clamped; never above the master). Its cables to the container's boundary
+    /// join what the container's sockets were cabled to; a cable to a device that stays inside
+    /// refuses the command.
+    MoveOutOfContainer {
+        /// The inner device (path key).
+        key: DeviceKey,
+        /// Rack position.
+        index: usize,
+    },
 }
 
 // ------------------------------------------------------------------------- paths

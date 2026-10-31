@@ -38,7 +38,12 @@ use crate::{
 };
 use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// The container param that bypasses it: at 0.5 or more the expansion leaves the inside out (no
+/// inner device, no inner cable, no macro) and a signal into `in_l`/`in_r` goes straight to
+/// whatever `out_l`/`out_r` feed. The container's `~split` stays, with nothing behind it.
+pub const BYPASS_PARAM: &str = "bypass";
 
 /// One flat device (a device of the engine graph).
 #[derive(Debug, Clone, PartialEq)]
@@ -227,6 +232,8 @@ struct Builder<'a> {
     overrides: BTreeMap<String, BTreeMap<String, f32>>,
     /// A pure pass-through loop was found (no device on it).
     looped: bool,
+    /// The path of every bypassed container that was reached (see [`BYPASS_PARAM`]).
+    bypassed: BTreeSet<String>,
 }
 
 /// How many scope hops a signal trace may take before it is a loop.
@@ -260,6 +267,7 @@ pub(crate) fn expand_with_loops(
         macro_targets: Vec::new(),
         overrides: BTreeMap::new(),
         looped: false,
+        bypassed: BTreeSet::new(),
     };
     let top = b.build_scope(devices, cables, &[], String::new(), None);
     b.emit_devices(top);
@@ -347,8 +355,14 @@ impl<'a> Builder<'a> {
             let split_key = DeviceKey(format!("{path}/~split"));
             self.alias
                 .insert(DeviceKey(path.clone()), split_key.clone());
-            for k in 0..MACRO_COUNT {
-                self.apply_macro(&path, d, inner, k);
+            // A bypassed container has no inside: the macros have nothing to drive.
+            let bypassed = self.is_bypassed(&path, d);
+            if bypassed {
+                self.bypassed.insert(path.clone());
+            } else {
+                for k in 0..MACRO_COUNT {
+                    self.apply_macro(&path, d, inner, k);
+                }
             }
             self.devices.push(ExpandedDevice {
                 key: split_key,
@@ -361,9 +375,21 @@ impl<'a> Builder<'a> {
                 plugin: None,
                 frozen: false,
             });
-            let child = self.scopes[scope].children[&d.key];
-            self.emit_devices(child);
+            if !bypassed {
+                let child = self.scopes[scope].children[&d.key];
+                self.emit_devices(child);
+            }
         }
+    }
+
+    /// Whether the container `d` at `path` is bypassed: its `bypass` param (a macro's value of
+    /// an outer container wins) is on.
+    fn is_bypassed(&self, path: &str, d: &RackDevice) -> bool {
+        self.overrides
+            .get(path)
+            .and_then(|o| o.get(BYPASS_PARAM))
+            .or_else(|| d.params.get(BYPASS_PARAM))
+            .is_some_and(|v| *v >= 0.5)
     }
 
     /// Evaluates macro `k` of the container `d` at `path`: records the target values as
@@ -431,6 +457,25 @@ impl<'a> Builder<'a> {
             return self.source(parent, &cable.from, hops + 1);
         }
         if let Some(&child) = sc.children.get(device) {
+            if self
+                .bypassed
+                .contains(self.scopes[child].prefix.trim_end_matches('/'))
+            {
+                // A bypassed container passes `in_l`, `in_r` to `out_l`, `out_r`.
+                let input = match from.socket.as_str() {
+                    "out_l" => "in_l",
+                    "out_r" => "in_r",
+                    _ => return Ok(None),
+                };
+                let Some(cable) = sc
+                    .cables
+                    .iter()
+                    .find(|c| &c.to.device == device && c.to.socket == input)
+                else {
+                    return Ok(None);
+                };
+                return self.source(scope, &cable.from, hops + 1);
+            }
             // An output of a nested container: what its inside sends to its boundary.
             let Some(cable) = self.scopes[child]
                 .cables
@@ -528,7 +573,11 @@ impl<'a> Builder<'a> {
         let devices = self.scopes[scope].devices;
         for d in devices {
             if let Some(&child) = self.scopes[scope].children.get(&d.key) {
-                self.emit_cables(child);
+                // A bypassed container's inside is not in the flat list: no cable goes there.
+                let path = self.scopes[child].prefix.trim_end_matches('/');
+                if !self.bypassed.contains(path) {
+                    self.emit_cables(child);
+                }
             }
         }
     }
