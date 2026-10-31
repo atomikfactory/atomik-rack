@@ -41,6 +41,8 @@ pub(crate) enum TabOutcome {
     Import,
     /// Ask the platform for the library folder (the Workflow tab's Choose).
     PickLibraryFolder,
+    /// Ask the platform for the scratch folder (the Workflow tab's Choose).
+    PickScratchFolder,
 }
 
 /// One chord chip of a row.

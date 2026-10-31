@@ -132,6 +132,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(v) = &self.silence {
             return v.help_at(pos);
         }
+        if let Some(v) = &self.song_info {
+            return v.help_at(pos);
+        }
         if let Some(v) = &self.quantize {
             return v.help_at(pos);
         }

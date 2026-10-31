@@ -72,6 +72,13 @@ pub(crate) enum Msg {
     },
     /// A load worker has finished.
     LoadDone,
+    /// A project archive was written or unpacked (or failed or was stopped): see
+    /// [`crate::archive_worker`]. The project it belongs to does not matter, so there is no
+    /// generation.
+    Archived {
+        job: u64,
+        result: Box<Result<crate::archive_worker::Done, atomik_audio_file::ArchiveError>>,
+    },
     /// An asset was loaded fully into RAM for a sampler, or failed.
     Sampled {
         generation: u64,

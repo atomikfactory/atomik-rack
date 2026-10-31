@@ -94,6 +94,12 @@ pub struct WorkflowPrefs {
     pub value_tooltips: bool,
     /// How hard recorded and drawn automation is thinned (default Normal, 0.5 % of the range).
     pub automation_thinning: ThinLevel,
+    /// The project File > New opens instead of the starter project (set by File > New from
+    /// Template > Use Song as Default Song; `None`: the starter project).
+    pub default_song: Option<PathBuf>,
+    /// The folder the session scratch bundle (the audio of a song that has no folder yet) is
+    /// made in (`None`: the OS temporary folder).
+    pub scratch_folder: Option<PathBuf>,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
 }
@@ -132,9 +138,20 @@ impl Default for WorkflowPrefs {
             knob_range: KnobRange::default(),
             value_tooltips: false,
             automation_thinning: ThinLevel::default(),
+            default_song: None,
+            scratch_folder: None,
             extra: BTreeMap::new(),
         }
     }
+}
+
+/// The text field `name` of a preferences object as a path (`None` when absent, not text, or
+/// empty).
+fn path_field(obj: &Map<String, Value>, name: &str) -> Option<PathBuf> {
+    obj.get(name)
+        .and_then(Value::as_str)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
 }
 
 impl WorkflowPrefs {
@@ -213,6 +230,8 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(ThinLevel::from_id)
                 .unwrap_or(defaults.automation_thinning),
+            default_song: path_field(obj, "default_song"),
+            scratch_folder: path_field(obj, "scratch_folder"),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -238,6 +257,8 @@ impl WorkflowPrefs {
                             | "knob_range"
                             | "value_tooltips"
                             | "automation_thinning"
+                            | "default_song"
+                            | "scratch_folder"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -308,6 +329,17 @@ impl WorkflowPrefs {
                 "library_folder".into(),
                 Value::String(folder.to_string_lossy().into_owned()),
             );
+        }
+        for (name, path) in [
+            ("default_song", &self.default_song),
+            ("scratch_folder", &self.scratch_folder),
+        ] {
+            if let Some(path) = path {
+                map.insert(
+                    name.into(),
+                    Value::String(path.to_string_lossy().into_owned()),
+                );
+            }
         }
         for (k, v) in &self.extra {
             map.insert(k.clone(), v.clone());
@@ -857,5 +889,44 @@ mod master_keyboard_tests {
             back.extra.is_empty(),
             "the field is known, not kept as extra"
         );
+    }
+}
+
+#[cfg(test)]
+mod packaging_tests {
+    use super::*;
+
+    #[test]
+    fn the_default_song_and_the_scratch_folder_default_to_none_and_round_trip() {
+        let none = WorkflowPrefs::default();
+        assert_eq!(
+            (none.default_song.clone(), none.scratch_folder.clone()),
+            (None, None)
+        );
+        let text = none.to_json();
+        assert!(!text.contains("default_song") && !text.contains("scratch_folder"));
+        let set = WorkflowPrefs {
+            default_song: Some(PathBuf::from("/songs/Default Song.atomik")),
+            scratch_folder: Some(PathBuf::from("/scratch")),
+            ..WorkflowPrefs::default()
+        };
+        let text = set.to_json();
+        assert!(
+            text.contains("\"default_song\": \"/songs/Default Song.atomik\""),
+            "{text}"
+        );
+        assert!(text.contains("\"scratch_folder\": \"/scratch\""), "{text}");
+        let back = WorkflowPrefs::from_json(&text).unwrap();
+        assert_eq!(back, set);
+        assert!(back.extra.is_empty(), "known fields are not kept as extra");
+        assert_eq!(back.to_json(), text, "the text is canonical");
+    }
+
+    #[test]
+    fn an_empty_or_wrongly_typed_path_is_none() {
+        let p = WorkflowPrefs::from_json(r#"{"default_song": "", "scratch_folder": 4}"#).unwrap();
+        assert_eq!((p.default_song, p.scratch_folder), (None, None));
+        let old = WorkflowPrefs::from_json("{}").unwrap();
+        assert_eq!(old.default_song, None);
     }
 }

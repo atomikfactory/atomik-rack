@@ -168,6 +168,14 @@ pub(super) struct AudioState {
     pub(super) rx: Receiver<Msg>,
     scratch_root: PathBuf,
     scratch_count: u32,
+    /// The name of this core's folder in the scratch folder (`atomik-rack-session-<pid>-<n>`).
+    session_name: String,
+    /// The folder the session scratch bundle is made in (`None`: the OS temporary folder). A
+    /// change counts from the next import that needs a scratch bundle.
+    pub(super) scratch_base: Option<PathBuf>,
+    /// The folder of a template or an item whose audio the next opened document copies into its
+    /// session bundle (see [`AppCore::open_template`]).
+    pub(super) adopt_from: Option<PathBuf>,
     /// Unfinished recordings of a dead session already taken up this run.
     recovered: BTreeSet<PathBuf>,
     /// The `rec-*.wav` files whose audio is now in the project, deleted once it is saved.
@@ -215,9 +223,17 @@ impl AudioState {
                 std::process::id()
             )),
             scratch_count: 0,
+            session_name: format!("atomik-rack-session-{}-{session}", std::process::id()),
+            scratch_base: None,
+            adopt_from: None,
             recovered: BTreeSet::new(),
             recovered_files: Vec::new(),
         }
+    }
+
+    /// The bundle the project's audio lives in, the session scratch bundle before the first save.
+    pub(super) fn bundle_ref(&self) -> Option<&Bundle> {
+        self.bundle.as_ref().map(|b| &b.bundle)
     }
 
     /// The asset cache the engine song is built from.
@@ -263,6 +279,11 @@ impl<S: EngineSink> AppCore<S> {
     /// The project bundle (or the session scratch bundle), for workers.
     pub(super) fn bundle_clone(&self) -> Option<Bundle> {
         self.audio.bundle.as_ref().map(|b| b.bundle.clone())
+    }
+
+    /// The folder chosen for session scratch bundles (the Workflow preference), if any.
+    pub(super) fn audio_scratch_base(&self) -> Option<PathBuf> {
+        self.audio.scratch_base.clone()
     }
 
     /// The folder of the project bundle (the session scratch folder before the first save),
@@ -415,6 +436,7 @@ impl<S: EngineSink> AppCore<S> {
                 Msg::LoadDone => {
                     self.audio.pending = self.audio.pending.saturating_sub(1);
                 }
+                Msg::Archived { job, result } => self.apply_archived(job, *result),
                 Msg::Recorded { generation, result } => {
                     self.audio.rec_pending = self.audio.rec_pending.saturating_sub(1);
                     if generation == current {
@@ -601,11 +623,40 @@ impl<S: EngineSink> AppCore<S> {
     pub(super) fn import_bundle(&mut self) -> Result<Bundle, String> {
         if self.audio.bundle.is_none() {
             self.audio.scratch_count += 1;
-            let dir = self
+            // The scratch folder of the preferences, else (or when it cannot be used) the OS
+            // temporary folder. A folder left behind in another place is removed with the
+            // bundle it held, so the root that is made now is the one that goes.
+            let temporary = std::env::temp_dir().join(&self.audio.session_name);
+            let chosen = self
                 .audio
-                .scratch_root
-                .join(self.audio.scratch_count.to_string());
-            let bundle = Bundle::create(&dir).map_err(|e| format!("session bundle: {e}"))?;
+                .scratch_base
+                .as_ref()
+                .map(|base| base.join(&self.audio.session_name));
+            let mut made = None;
+            if let Some(root) = chosen {
+                let dir = root.join(self.audio.scratch_count.to_string());
+                match Bundle::create(&dir) {
+                    Ok(bundle) => made = Some((root, bundle)),
+                    Err(e) => {
+                        log::warn!(
+                            "the scratch folder cannot be used ({e}); using the temporary folder"
+                        );
+                        self.reject(format!(
+                            "The scratch folder cannot be used ({e}); the temporary folder is used"
+                        ));
+                    }
+                }
+            }
+            let (root, bundle) = match made {
+                Some(m) => m,
+                None => {
+                    let dir = temporary.join(self.audio.scratch_count.to_string());
+                    let bundle =
+                        Bundle::create(&dir).map_err(|e| format!("session bundle: {e}"))?;
+                    (temporary, bundle)
+                }
+            };
+            self.audio.scratch_root = root;
             self.audio.bundle = Some(ProjectBundle {
                 bundle,
                 scratch: true,
@@ -1075,7 +1126,16 @@ impl<S: EngineSink> AppCore<S> {
                 scratch: false,
             });
         let doc = self.doc();
-        self.audio.missing = missing_assets(doc, self.audio.bundle.as_ref().map(|b| &b.bundle));
+        // A template has no bundle of its own yet: what it lacks is what its folder lacks.
+        let template = self
+            .audio
+            .adopt_from
+            .as_deref()
+            .and_then(|root| Bundle::open(root).ok());
+        let source = template
+            .as_ref()
+            .or_else(|| self.audio.bundle.as_ref().map(|b| &b.bundle));
+        self.audio.missing = missing_assets(doc, source);
     }
 
     /// After the engine was rebuilt for a freshly opened document: reports missing assets and
@@ -1088,6 +1148,18 @@ impl<S: EngineSink> AppCore<S> {
                 names.join(", ")
             );
             self.reject(message);
+        }
+        if let Some(from) = self.audio.adopt_from.take() {
+            // A template's audio is copied into the session bundle and loaded from there.
+            let assets: BTreeMap<String, AssetMeta> = self
+                .doc()
+                .assets
+                .iter()
+                .filter(|(hash, _)| !self.audio.missing.iter().any(|m| &m.hash == *hash))
+                .map(|(hash, meta)| (hash.clone(), meta.clone()))
+                .collect();
+            self.adopt_assets(&from, &assets);
+            return;
         }
         let Some(bundle) = self.audio.bundle.as_ref().map(|b| b.bundle.clone()) else {
             return;

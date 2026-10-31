@@ -211,8 +211,9 @@ pub fn run(cli: Cli) -> Result<(), String> {
         shell.use_keymap_file(path);
     }
     // With the preference on, a start that names no project continues with the last song.
-    if cli.starts_empty() {
-        shell.restore_last_project();
+    // Otherwise the default song, when one is chosen, takes the place of the starter project.
+    if cli.starts_empty() && !shell.restore_last_project() {
+        shell.start_with_default_song();
     }
     let no_config = config
         .fallback
@@ -1071,6 +1072,50 @@ impl App {
                         self.shell.relink_search_folder(folder);
                     }
                 }
+                ShellRequest::PickRelinkProjectFolder => {
+                    let mut dialog = rfd::FileDialog::new().set_title(
+                        "Choose the folder of the project (the one with its Audio folder)",
+                    );
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.relink_project_folder(folder);
+                    }
+                }
+                ShellRequest::PickExportArchive { name } => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Export a project archive")
+                        .add_filter("Atomik project archive", &["atomikz"])
+                        .set_file_name(name);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.save_file() {
+                        self.shell.export_archive_to(&path);
+                    }
+                }
+                ShellRequest::PickImportArchive => {
+                    let mut dialog = rfd::FileDialog::new()
+                        .set_title("Import a project archive")
+                        .add_filter("Atomik project archive", &["atomikz"]);
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(path) = dialog.pick_file() {
+                        self.shell.import_archive_from(&path);
+                    }
+                }
+                ShellRequest::PickScratchFolder => {
+                    let mut dialog = rfd::FileDialog::new().set_title("Choose the scratch folder");
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(folder) = dialog.pick_folder() {
+                        self.shell.set_scratch_folder(folder);
+                    }
+                }
+                ShellRequest::ShowFolder(folder) => open_url(&folder.to_string_lossy()),
                 ShellRequest::PickPluginFolder => {
                     let mut dialog = rfd::FileDialog::new().set_title("Add a plugin folder");
                     if let Some(w) = self.parent_window() {

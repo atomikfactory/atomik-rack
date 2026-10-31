@@ -186,6 +186,7 @@ impl Session {
 
     /// The state of the session as JSON.
     pub fn status_json(&mut self, include_params: bool) -> Value {
+        self.shell.core_mut().reload_templates();
         let state = self.shell.menu_state();
         let (pw, ph) = self.shell.physical_size();
         let windows = self.windows_json();
@@ -203,6 +204,23 @@ impl Session {
                 .recent()
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            "templates_folder": self
+                .shell
+                .core()
+                .templates_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
+            "templates": self
+                .shell
+                .core()
+                .templates()
+                .iter()
+                .enumerate()
+                .map(|(i, t)| json!({
+                    "index": i,
+                    "name": t.name,
+                    "path": t.path.to_string_lossy(),
+                }))
                 .collect::<Vec<_>>(),
             "recording": self.shell.core().is_recording(),
             "armed_lanes": self
@@ -354,9 +372,19 @@ fn request_json(r: ShellRequest) -> Value {
             "pick_open_file",
             "a file dialog: use session_open with a path",
         ),
-        ShellRequest::PickRelinkFile | ShellRequest::PickRelinkFolder => (
+        ShellRequest::PickRelinkFile
+        | ShellRequest::PickRelinkFolder
+        | ShellRequest::PickRelinkProjectFolder => (
             "pick_relink_path",
             "a file or folder dialog: use session_relink with a file or a folder",
+        ),
+        ShellRequest::PickExportArchive { .. } | ShellRequest::PickImportArchive => (
+            "pick_archive",
+            "a file dialog: a headless session cannot show it (project archives are covered by the app tests)",
+        ),
+        ShellRequest::ShowFolder(_) => (
+            "show_folder",
+            "the app asked the file manager to show a folder (the template folder is in the session status under templates_folder)",
         ),
         ShellRequest::PickSaveFile | ShellRequest::PickExportFile => (
             "pick_save_file",
@@ -550,6 +578,7 @@ fn commands(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let query = args.opt_str("query")?.map(str::to_lowercase);
     let enabled_only = args.opt_bool("enabled_only")?.unwrap_or(false);
     let session = server.require_session()?;
+    session.shell_mut().core_mut().reload_templates();
     let mut out = Vec::new();
     for menu in session.shell().menu_model() {
         if menu_filter
@@ -622,6 +651,8 @@ fn command(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
     let confirm = args.opt_bool("confirm")?.unwrap_or(false);
     let wait = args.opt_bool("wait")?.unwrap_or(true);
     let session = server.require_session()?;
+    // The templates are files the user may have added since the last look.
+    session.shell_mut().core_mut().reload_templates();
     let found = session
         .shell()
         .menu_model()

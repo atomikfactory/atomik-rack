@@ -772,6 +772,23 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
     if !folders.is_empty() {
         out["song"]["folders"] = Value::Array(folders);
     }
+    // The song information, listing only the texts that are set.
+    if !doc.info.is_empty() {
+        let info = &doc.info;
+        let mut v = serde_json::Map::new();
+        for (name, text) in [
+            ("title", &info.title),
+            ("author", &info.author),
+            ("email", &info.email),
+            ("url", &info.url),
+            ("notes", &info.notes),
+        ] {
+            if !text.is_empty() {
+                v.insert(name.into(), json!(text));
+            }
+        }
+        out["info"] = Value::Object(v);
+    }
     out
 }
 

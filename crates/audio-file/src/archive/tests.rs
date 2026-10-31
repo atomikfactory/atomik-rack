@@ -170,7 +170,7 @@ fn entry_names_are_classified_by_shape() {
         "song/Audio/../x.wav",
         "/song/song.atomik",
         "C:/song/song.atomik",
-        "C:\\song\\song.atomik",
+        &format!("C:{0}song{0}song.atomik", '\\'),
         "song\\song.atomik",
         "song//song.atomik",
         "song/other.atomik",

@@ -66,6 +66,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "mcp/session_combine.rs",
     "mcp/session_library.rs",
     "mcp/session_patches.rs",
+    "mcp/session_templates.rs",
     "mcp/session_windows.rs",
     "mcp/song_end.rs",
     "mcp/stateless.rs",

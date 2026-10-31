@@ -663,6 +663,8 @@ mod tests {
             sequencer_only: false,
             editor: false,
             missing_audio: false,
+            archive_busy: false,
+            default_song: false,
             midi_clip: false,
             midi_track: false,
             midi_song: false,

@@ -11,6 +11,7 @@
 pub mod about_box;
 pub mod app_core;
 pub mod app_icon;
+pub mod archive_worker;
 pub mod audio_import;
 pub mod audio_record;
 pub mod audio_relink;
