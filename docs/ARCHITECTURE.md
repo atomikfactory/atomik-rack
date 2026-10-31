@@ -40,7 +40,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
 | `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
-| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v37), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
+| `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v38), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
 | `atomik-midi-io` | [crates/midi-io](../crates/midi-io) | core, device-sdk, engine | none | MIDI input and exact event timing, the timed MIDI output scheduler (`out`: a queue per port, the frame-to-time conversion and the output thread), the parser of the control path (`parse_message`), raw ports for control surfaces (`ports`), the control-surface drivers (`surface`: pure, bytes in, actions out, bytes out) and the Standard MIDI File reader and writer (`smf`, pure bytes) |
 | `atomik-plugin-host` | [crates/plugin-host](../crates/plugin-host) | core, device-sdk | `src/fpenv.rs`, `src/ole.rs` | Format-neutral plugin hosting: `PluginDevice`, `PluginManager`, slot and hand-shake, scan, cache, catalog, journal, settings, stand-ins |
@@ -222,7 +222,10 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   (`view.toggle_rack_navigator`, no default key) toggles it; the choice is `show_rack_navigator` in
   `ui-state.json` (default on). A new `RackView` has it off, so hosts and goldens that do not ask
   for it are unchanged.
-- **Project files** are `.atomik` JSON, format version 37 (older versions still load; version 37
+- **Project files** are `.atomik` JSON, format version 38 (older versions still load; version 38
+  adds the root's `"info"` after `"macros"`, the song information `{"title"?, "author"?, "email"?,
+  "url"?, "notes"?}` (`song_info.rs`), written only when something is set and kept as typed, and
+  refused in a version 37 file; see 6, "The app: workers and rules"; version 37
   adds the console's `"align_returns": true` (return alignment, written only when on; a file
   without it loads with it off; refused in a version 36 file; see 5, "Plugin delay compensation"),
   and a MIDI Out device's `"midi_out": { "port": name }`, the output port it sends to, written only
@@ -367,8 +370,12 @@ unmatched assets stay missing. Each finished batch toasts `relinked N, M still m
 list (`AppCore::missing_assets`) follows undo and redo: an asset a relink replaced is missing again
 once the document uses it again. In the window, File > Relink Missing Audio... (`file.relink_audio`,
 enabled while audio is missing) opens `RelinkView`, a modal list with LOCATE... per file and SEARCH
-FOLDER..., which raise `ShellRequest::PickRelinkFile` and `PickRelinkFolder`; the MCP tool
-`session_relink` answers them headlessly.
+FOLDER... and PROJECT FOLDER..., which raise `ShellRequest::PickRelinkFile`, `PickRelinkFolder` and
+`PickRelinkProjectFolder`; the MCP tool `session_relink` answers them headlessly. PROJECT FOLDER...
+(`AppCore::relink_project_folder`) is for a project whose `.atomik` file was moved without its
+folder, or unpacked from an archive: the picked folder (or its `Audio` folder, or the folder beside
+the project file that holds `<name>/Audio`) gives back each missing file by its hash, copied into the
+session bundle and loaded by the same adopt worker a library item's audio uses, with no decoding.
 
 ### 2.4 Playback, per 64-frame batch
 
@@ -2796,6 +2803,32 @@ and the native menu. Audio adds:
   [`ui/src/relink_panel.rs`](../crates/ui/src/relink_panel.rs).
 - [`app_core_rate.rs`](../crates/app/src/app_core_rate.rs): a new project at a rate, the sample
   rate conversion with its audio, and the channel counts.
+- [`app_core_templates.rs`](../crates/app/src/app_core_templates.rs): the templates folder
+  (`Templates` beside the library folder, listed by name and refreshed by the shell once a second),
+  File > New from Template (`open_template`: the project opens with no file name, so Save cannot
+  overwrite it, and its audio is copied into the session bundle by the adopt worker, so it plays at
+  once and goes into the project folder on the first save), Save as Template and the default song
+  (`write_copy` writes the saved form of the song with only the audio it uses and changes nothing of
+  the open song; File > New opens the song named by the `default_song` workflow preference, a
+  start with no project does too), the song information (`set_song_info`, one undo step; the title is
+  in the window title) and the scratch folder preference (`scratch_folder` in `workflow.json`: the
+  session scratch bundle is made there from the next import on, with a fallback to the temporary
+  folder, and the orphan-recording scan looks there too). The Song Information panel is
+  [`ui/src/song_info_panel.rs`](../crates/ui/src/song_info_panel.rs) (`SongInfoView`,
+  `UiAction::SongInfo`): one focused text, Tab between them, the model's limits applied as you type.
+- [`app_core_archive.rs`](../crates/app/src/app_core_archive.rs) and
+  [`archive_worker.rs`](../crates/app/src/archive_worker.rs): File > Export and Import Project
+  Archive. The archive is one `.atomikz` file, a stored (uncompressed) ZIP with ZIP64 fields for
+  entries and archives over 4 GiB, holding `<name>/<name>.atomik` and `<name>/Audio/<hash>.wav`
+  ([`audio-file/src/archive.rs`](../crates/audio-file/src/archive.rs)). Writing streams through a part
+  file that is renamed when complete; reading takes the central directory first and accepts only
+  those two shapes (a path that leaves the folder, a duplicate, a second project, a compressed or
+  encrypted entry, an entry or total over `ArchiveLimits` is refused before a byte is written),
+  checks every CRC, and extracts into a new folder `<destination>.part` that is renamed when whole
+  and removed on any failure or cancel. One job runs at a time on a worker thread
+  (`Msg::Archived`), with a progress counter and a cancel flag (File > Cancel Project Archive); an
+  unpacked project is handed to the shell like a library project (`take_open_request`), which asks
+  about unsaved changes before opening it.
 - [`stream_source.rs`](../crates/app/src/stream_source.rs): the 64 MiB streaming threshold and the
   engine's `StreamSource` over a WAV reader (a read error plays as silence and is counted).
 - [`audio_record.rs`](../crates/app/src/audio_record.rs): the pure recording rules (compensation, laps, placement).
@@ -3478,7 +3511,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (383) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (392) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
