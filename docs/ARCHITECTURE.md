@@ -3384,7 +3384,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (345) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (350) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -3681,7 +3681,13 @@ creation chain in the **Creation chain** bullet.
   clip), so a drag of several clips, with the final `MoveClips` carrying the same `merge`, is one
   undo step; Join, Duplicate (`DuplicateClips`, `DuplicateTrack`, `DuplicatePoints`) and Delete
   (`RemoveClips`, `RemoveTrack`, the points) are workflow commands, so each is one undo step; the
-  piano roll duplicates notes (`DuplicateNotes`). *Clipboard*
+  piano roll duplicates notes (`DuplicateNotes`). The restructuring commands are workflow
+  commands too: `InsertTime` and `RemoveTime` (the `time_edit` module of the model) move clips,
+  take groups, markers, ranges, tempo and meter events, the loop and the song End together and are
+  refused while a track is frozen; `ReverseClips`, `ScaleTempo` and `ChopClips` (`clip_transform`)
+  work on a selection, and `JoinClips` leaves muted clips out and unrolls loops. They act at the
+  loop locators and on the selection through the `sequencer.*` ids the Edit menu and the clip menu
+  use. *Clipboard*
   ([app/src/clipboard.rs](../crates/app/src/clipboard.rs),
   [app_core_clipboard.rs](../crates/app/src/app_core_clipboard.rs)): `Clipboard` holds one typed
   `ClipboardData` (`Clips`, `Notes`, `AutomationPoints`, `Devices`, `Tracks`, the snapshots of

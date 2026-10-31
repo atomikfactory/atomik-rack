@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Restructuring the arrangement.** Edit > Insert Bars at Locators opens the length of the loop
+  range at the left locator and Remove Bars at Locators cuts the range out and closes the gap, each
+  in one undo step: a clip that straddles the point is split, and the clips, take groups, markers,
+  ranges, tempo and meter changes, the loop and the song End all move together (the tempo that
+  follows a removed range carries on from its start). They are refused while a track is frozen, and
+  a take group that straddles an edge of the range is refused too. Edit > Reverse Clips mirrors the
+  notes of the selected clips as bars, Reverse Note Starts mirrors only where they start (the first
+  note stays on the downbeat), and automation, controller points and audio clips reverse with them;
+  two reverses give the clips back. Edit > Scale Tempo (also in the clip menu) plays the selected
+  clips at 200, 50, 150, 125 or 75 percent of their tempo: clip starts scale from the earliest one,
+  and lengths, loops, notes and automation scale with them. Audio clips are warped to follow, and
+  one that plays backwards is refused. Edit > Chop Clips To cuts the selected clips into pieces of a
+  bar, half a bar, a beat or 1/8 or 1/16 note from each clip's own start, playing the same.
+  Pasting audio clips into a project that lacks their track makes an audio track for them in the
+  same undo step. Not yet: the percent dialog and edge-drag scaling of Scale Tempo, a Workflow
+  preference for the reverse mode, joining audio clips and draggable crossfade zones.
 - **Light theme, application zoom and interface settings.** Settings has a new Interface tab: the
   theme (dark, light, or whichever the operating system uses; a switch repaints every view at
   once and View > Theme does the same), the application zoom (75 to 200 percent for every window,
@@ -424,6 +440,10 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Joining clips no longer makes muted notes audible.** The notes of a muted clip used to be
+  folded into the audible clip a Join made. A join now leaves muted clips where they are (muted
+  clips on their own still join into a muted clip), and a looped clip is unrolled instead of being
+  refused, so the joined clip plays what the clips played.
 - **Closing a project with many sandboxed plugins is quick.** The plugin processes are asked to
   end together and waited for on one shared deadline, so slow ones cost about a second in total
   instead of up to three and a half seconds each.
