@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc d22c125a638ea8d815a2d4e280c469a567ad03312ef157fec9ed5cbe50ea6f17 # shrinks to steps = [Wf(Take(GroupAsTakes(0, [0]))), Wf(DuplicateTrack(0))]
 cc bfd17d75868d35477c8a025f74c63a98ad95d144d20f866ca44c707a4685d022 # shrinks to steps = [Song(RemoveTrack(61)), Wf(Take(NewGroup(0, [(0, 30720)]))), Song(RemoveClip(6))]
+cc 21a1a9b7463768216b90e2959c94e5c29204e80ed3ba881aecb89f50711659d8 # ReplaceDevice dropped every lane of an automation track: a track needs a lane
