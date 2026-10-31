@@ -307,6 +307,10 @@ pub enum AppCommand {
     DeleteNoteLane,
     /// Track > Mute Lane: mute or unmute the selected note lane.
     ToggleLaneMute,
+    /// Track > Merge Note Lanes: the note lanes of the selected tracks onto their top lane.
+    MergeNoteLanes,
+    /// Track > Explode Notes to Lanes: the selected note clip, one lane per pitch.
+    ExplodeNotes,
     /// Track ▸ Fold Automation Lanes (`true`) and Unfold Automation Lanes (`false`), of the
     /// selected tracks or of every track.
     FoldLanes(bool),
@@ -662,6 +666,8 @@ impl AppCommand {
             AppCommand::RenameNoteLane => ("sequencer.rename_note_lane", None),
             AppCommand::DeleteNoteLane => ("sequencer.delete_note_lane", None),
             AppCommand::ToggleLaneMute => ("sequencer.toggle_lane_mute", None),
+            AppCommand::MergeNoteLanes => ("sequencer.merge_note_lanes", None),
+            AppCommand::ExplodeNotes => ("sequencer.explode_notes", None),
             AppCommand::FreezeTrack => ("sequencer.freeze_track", None),
             AppCommand::FreezeTrackToDevice => ("sequencer.freeze_track_to_device", None),
             AppCommand::FreezeTail => ("sequencer.freeze_tail", None),
@@ -920,6 +926,8 @@ impl AppCommand {
             ("sequencer.rename_note_lane", None) => AppCommand::RenameNoteLane,
             ("sequencer.delete_note_lane", None) => AppCommand::DeleteNoteLane,
             ("sequencer.toggle_lane_mute", None) => AppCommand::ToggleLaneMute,
+            ("sequencer.merge_note_lanes", None) => AppCommand::MergeNoteLanes,
+            ("sequencer.explode_notes", None) => AppCommand::ExplodeNotes,
             ("sequencer.freeze_track", None) => AppCommand::FreezeTrack,
             ("sequencer.freeze_track_to_device", None) => AppCommand::FreezeTrackToDevice,
             ("sequencer.freeze_tail", None) => AppCommand::FreezeTail,
@@ -2121,6 +2129,16 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     Some(state.lane.muted),
                     state.lane.can_rename,
                 ),
+                enabled(
+                    "Merge Note Lanes",
+                    AppCommand::MergeNoteLanes,
+                    state.lane.can_merge,
+                ),
+                enabled(
+                    "Explode Notes to Lanes",
+                    AppCommand::ExplodeNotes,
+                    state.lane.can_explode,
+                ),
                 MenuEntry::Separator,
                 enabled(
                     "Freeze Track",
@@ -2681,6 +2699,8 @@ mod tests {
             AppCommand::RenameNoteLane,
             AppCommand::DeleteNoteLane,
             AppCommand::ToggleLaneMute,
+            AppCommand::MergeNoteLanes,
+            AppCommand::ExplodeNotes,
             AppCommand::FreezeTrack,
             AppCommand::FreezeTrackToDevice,
             AppCommand::FreezeTail,
@@ -3311,6 +3331,8 @@ mod tests {
                 "Rename Note Lane\u{2026}",
                 "Delete Note Lane",
                 "Mute Lane",
+                "Merge Note Lanes",
+                "Explode Notes to Lanes",
                 "Freeze Track",
                 "Freeze Track up to Selected Device",
                 "Freeze with Tail",

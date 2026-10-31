@@ -4628,6 +4628,8 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RenameNoteLane
             | AppCommand::DeleteNoteLane
             | AppCommand::ToggleLaneMute
+            | AppCommand::MergeNoteLanes
+            | AppCommand::ExplodeNotes
             | AppCommand::ToggleChase
             | AppCommand::FoldLanes(_)
             | AppCommand::TrackHeight(_)

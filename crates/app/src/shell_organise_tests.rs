@@ -139,6 +139,8 @@ fn the_track_menu_follows_the_selection() {
             "Rename Note Lane\u{2026}",
             "Delete Note Lane",
             "Mute Lane",
+            "Merge Note Lanes",
+            "Explode Notes to Lanes",
             "Freeze Track",
             "Freeze Track up to Selected Device",
             "Freeze with Tail",
@@ -502,4 +504,39 @@ fn rename_track_from_the_menu_types_the_name_in_one_undo_step() {
     assert_eq!(name(&s), "low");
     assert!(s.core_mut().undo());
     assert_ne!(name(&s), "low");
+}
+
+#[test]
+fn ctrl_r_merges_the_note_lanes_of_the_selected_track_in_one_undo_step() {
+    let mut s = shell();
+    s.core_mut()
+        .apply_command(Command::Song(SongCommand::AddNoteLane {
+            device: key("a"),
+            name: None,
+        }))
+        .unwrap();
+    s.core_mut().after_view_change();
+    let at = header(&s, "a");
+    press(&mut s, at, PointerButton::Primary, Modifiers::NONE);
+    s.set_focus(Pane::Arrangement);
+    tap(&mut s, "Cmd+R");
+    assert_eq!(
+        s.core()
+            .doc()
+            .song
+            .track(&key("a"))
+            .unwrap()
+            .note_lane_count(),
+        1
+    );
+    tap(&mut s, "Cmd+Z");
+    assert_eq!(
+        s.core()
+            .doc()
+            .song
+            .track(&key("a"))
+            .unwrap()
+            .note_lane_count(),
+        2
+    );
 }

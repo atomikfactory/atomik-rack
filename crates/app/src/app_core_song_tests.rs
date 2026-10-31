@@ -1799,3 +1799,77 @@ fn stopping_a_take_with_nothing_captured_makes_no_clip() {
     transport(&mut c, TransportAction::Stop);
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }
+
+// ---- note lane workflows ---------------------------------------------------------------------
+
+fn played_by_a(c: &AppCore<RecordingSink>) -> Vec<(i64, i64, u8, f32)> {
+    atomik_model::song::flatten_notes_with(&c.doc().song.tracks[0], false)
+}
+
+#[test]
+fn merge_note_lanes_is_one_undo_step_and_the_track_plays_the_same() {
+    let mut c = with_second_lane();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60)]),
+        }),
+    );
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 1,
+            clip: note_clip(0, &[(PPQ, 64)]),
+        }),
+    );
+    let before = played_by_a(&c);
+    assert_eq!(before.len(), 2);
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    c.arrangement_mut().set_selected_lane(&key("a"), 1);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.merge_note_lanes", None);
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 1);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(c.arrangement().record_lane(&key("a")), 0);
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 2);
+    assert_eq!(played_by_a(&c), before);
+}
+
+#[test]
+fn explode_notes_selects_the_new_clips_and_extract_moves_notes() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60), (PPQ, 64), (2 * PPQ, 67)]),
+        }),
+    );
+    let before = played_by_a(&c);
+    c.arrangement_mut().set_selected_clips(&[ClipId(1)]);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.explode_notes", None);
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 4);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(
+        c.arrangement().selected_clips(),
+        vec![ClipId(2), ClipId(3), ClipId(4)]
+    );
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 1);
+    c.apply_command(Command::Workflow(
+        atomik_model::WorkflowCommand::ExtractNotes {
+            clip: ClipId(1),
+            selection: vec![1],
+            mode: atomik_model::ExtractMode::Move,
+            to: None,
+        },
+    ))
+    .unwrap();
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 2);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(c.arrangement().selected_clips(), vec![ClipId(2)]);
+}
