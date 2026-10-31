@@ -8,7 +8,7 @@
 use crate::record::InputQuantize;
 use atomik_model::{FadeCurve, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
-use atomik_ui::keymap::{Keymap, RECENT_ARGS};
+use atomik_ui::keymap::{INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS};
 use atomik_ui::{CableVisibility, Flip, TransportAction};
 use std::borrow::Cow;
 
@@ -17,6 +17,15 @@ use std::borrow::Cow;
 pub enum AppCommand {
     /// File ▸ New.
     New,
+    /// File ▸ New at Sample Rate: a new project at this rate in Hz (44100, 48000 or 96000).
+    NewAtRate(u32),
+    /// File ▸ Convert Sample Rate: moves the open project to this rate (resamples its audio, one
+    /// undo step).
+    ConvertRate(u32),
+    /// Audio ▸ Input Channels: the host inputs the project asks for (0 to 32).
+    InputChannels(u16),
+    /// Audio ▸ Output Channels: the host outputs the project asks for (1 to 32).
+    OutputChannels(u16),
     /// File ▸ Open….
     Open,
     /// File ▸ Open Recent ▸ a song: the song at this place of the recent list (0 is the newest).
@@ -358,6 +367,17 @@ pub enum AppCommand {
     ExportDiagnostics,
 }
 
+/// The entry of `args` that spells `n`.
+fn arg_of<N: ToString>(args: &'static [&'static str], n: N) -> Option<&'static str> {
+    let n = n.to_string();
+    args.iter().copied().find(|a| *a == n)
+}
+
+/// The number an entry of `args` spells (`None` for a value `args` does not list).
+fn num_arg<N: std::str::FromStr>(args: &[&str], a: &str) -> Option<N> {
+    args.contains(&a).then(|| a.parse().ok())?
+}
+
 impl AppCommand {
     /// The registry command id and argument of this command, `None` only for
     /// `Transport(Locate(_))`, a pointer action that is not a command, and for the VCA and snapshot
@@ -367,6 +387,16 @@ impl AppCommand {
     pub fn command_id(&self) -> Option<(&'static str, Option<&'static str>)> {
         Some(match self {
             AppCommand::New => ("file.new", None),
+            AppCommand::NewAtRate(r) => ("file.new_rate", Some(arg_of(RATE_ARGS, *r)?)),
+            AppCommand::ConvertRate(r) => ("file.convert_rate", Some(arg_of(RATE_ARGS, *r)?)),
+            AppCommand::InputChannels(n) => (
+                "audio.input_channels",
+                Some(arg_of(INPUT_CHANNEL_ARGS, *n)?),
+            ),
+            AppCommand::OutputChannels(n) => (
+                "audio.output_channels",
+                Some(arg_of(OUTPUT_CHANNEL_ARGS, *n)?),
+            ),
             AppCommand::Open => ("file.open", None),
             AppCommand::OpenRecent(i) => ("file.open_recent", Some(RECENT_ARGS.get(*i)?)),
             AppCommand::ClearRecent => ("file.clear_recent", None),
@@ -571,6 +601,14 @@ impl AppCommand {
     pub fn from_command(id: &str, arg: Option<&str>) -> Option<AppCommand> {
         Some(match (id, arg) {
             ("file.new", None) => AppCommand::New,
+            ("file.new_rate", Some(a)) => AppCommand::NewAtRate(num_arg(RATE_ARGS, a)?),
+            ("file.convert_rate", Some(a)) => AppCommand::ConvertRate(num_arg(RATE_ARGS, a)?),
+            ("audio.input_channels", Some(a)) => {
+                AppCommand::InputChannels(num_arg(INPUT_CHANNEL_ARGS, a)?)
+            }
+            ("audio.output_channels", Some(a)) => {
+                AppCommand::OutputChannels(num_arg(OUTPUT_CHANNEL_ARGS, a)?)
+            }
             ("file.open", None) => AppCommand::Open,
             ("file.open_recent", Some(n)) => {
                 AppCommand::OpenRecent(RECENT_ARGS.iter().position(|a| *a == n)?)
@@ -939,6 +977,12 @@ pub struct MenuState {
     pub clock_while_stopped: bool,
     /// The transport follows a MIDI clock.
     pub follow_clock: bool,
+    /// The project's sample rate in Hz.
+    pub sample_rate: u32,
+    /// The host inputs the project asks for.
+    pub input_channels: u16,
+    /// The host outputs the project asks for.
+    pub output_channels: u16,
     /// Input quantize for recording.
     pub quantize: InputQuantize,
     /// The console shows in the lower pane.
@@ -1201,6 +1245,34 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Close", AppCommand::Close),
                 item("Save", AppCommand::Save),
                 item("Save As\u{2026}", AppCommand::SaveAs),
+                MenuEntry::Submenu(Submenu {
+                    label: "New at Sample Rate",
+                    entries: vec![
+                        item("44.1 kHz", AppCommand::NewAtRate(44_100)),
+                        item("48 kHz", AppCommand::NewAtRate(48_000)),
+                        item("96 kHz", AppCommand::NewAtRate(96_000)),
+                    ],
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Convert Sample Rate",
+                    entries: vec![
+                        check(
+                            "44.1 kHz",
+                            AppCommand::ConvertRate(44_100),
+                            state.sample_rate == 44_100,
+                        ),
+                        check(
+                            "48 kHz",
+                            AppCommand::ConvertRate(48_000),
+                            state.sample_rate == 48_000,
+                        ),
+                        check(
+                            "96 kHz",
+                            AppCommand::ConvertRate(96_000),
+                            state.sample_rate == 96_000,
+                        ),
+                    ],
+                }),
                 item("Import Audio\u{2026}", AppCommand::ImportAudio),
                 item("Import MIDI\u{2026}", AppCommand::ImportMidi),
                 item("Import MIDI as Song\u{2026}", AppCommand::ImportMidiSong),
@@ -1674,6 +1746,47 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Plugins\u{2026}", AppCommand::PluginSettings),
                 item("Restart Audio", AppCommand::RestartAudio),
                 item("Rescan MIDI Ports", AppCommand::RescanMidi),
+                MenuEntry::Submenu(Submenu {
+                    label: "Input Channels",
+                    entries: [
+                        ("0 (off)", 0u16),
+                        ("1", 1),
+                        ("2", 2),
+                        ("4", 4),
+                        ("8", 8),
+                        ("16", 16),
+                        ("32", 32),
+                    ]
+                    .into_iter()
+                    .map(|(label, n)| {
+                        check(
+                            label,
+                            AppCommand::InputChannels(n),
+                            state.input_channels == n,
+                        )
+                    })
+                    .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Output Channels",
+                    entries: [
+                        ("1", 1u16),
+                        ("2", 2),
+                        ("4", 4),
+                        ("8", 8),
+                        ("16", 16),
+                        ("32", 32),
+                    ]
+                    .into_iter()
+                    .map(|(label, n)| {
+                        check(
+                            label,
+                            AppCommand::OutputChannels(n),
+                            state.output_channels == n,
+                        )
+                    })
+                    .collect(),
+                }),
                 MenuEntry::Separator,
                 enabled(
                     "Clip Gain: Up 1 dB",
@@ -1932,6 +2045,9 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
+            sample_rate: 48_000,
+            input_channels: 2,
+            output_channels: 2,
             quantize: InputQuantize::OFF,
             console: false,
             console_maximised: false,
@@ -2107,6 +2223,16 @@ mod tests {
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
         ];
+        for rate in [44_100, 48_000, 96_000] {
+            v.push(AppCommand::NewAtRate(rate));
+            v.push(AppCommand::ConvertRate(rate));
+        }
+        for n in [0, 1, 2, 4, 8, 16, 32] {
+            v.push(AppCommand::InputChannels(n));
+        }
+        for n in [1, 2, 4, 8, 16, 32] {
+            v.push(AppCommand::OutputChannels(n));
+        }
         for step in [GainStep::Up, GainStep::Down, GainStep::Reset] {
             v.push(AppCommand::AudioGain(step));
         }
@@ -2492,6 +2618,13 @@ mod tests {
                 "Close",
                 "Save",
                 "Save As\u{2026}",
+                // New at Sample Rate, then Convert Sample Rate: three rates each.
+                "44.1 kHz",
+                "48 kHz",
+                "96 kHz",
+                "44.1 kHz",
+                "48 kHz",
+                "96 kHz",
                 "Import Audio\u{2026}",
                 "Import MIDI\u{2026}",
                 "Import MIDI as Song\u{2026}",
@@ -2642,6 +2775,20 @@ mod tests {
                 "Plugins\u{2026}",
                 "Restart Audio",
                 "Rescan MIDI Ports",
+                // Input Channels (0 is off), then Output Channels.
+                "0 (off)",
+                "1",
+                "2",
+                "4",
+                "8",
+                "16",
+                "32",
+                "1",
+                "2",
+                "4",
+                "8",
+                "16",
+                "32",
                 "Clip Gain: Up 1 dB",
                 "Clip Gain: Down 1 dB",
                 "Clip Gain: Reset",
@@ -2730,6 +2877,9 @@ mod tests {
             clock_out: false,
             clock_while_stopped: false,
             follow_clock: false,
+            sample_rate: 48_000,
+            input_channels: 2,
+            output_channels: 2,
             ..state()
         };
         let m = menus(&on, &standard);
@@ -2770,6 +2920,9 @@ mod tests {
                 clock_out: false,
                 clock_while_stopped: false,
                 follow_clock: false,
+                sample_rate: 48_000,
+                input_channels: 2,
+                output_channels: 2,
                 quantize: InputQuantize::EIGHTH,
                 console: true,
                 console_maximised: false,

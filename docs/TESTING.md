@@ -538,6 +538,16 @@ read back, and a session bounce that equals the bounce of the same file and hear
 analysis maths (levels, silence, windows, spectrum, comparison) has unit tests in
 `crates/mcp/src/analysis.rs`.
 
+## Project rate and channel counts
+
+`crates/model/tests/rate_convert.rs` covers `Command::ConvertSampleRate` (ticks kept, frame positions
+scaled, one undo step with undo and redo, a saved and reloaded project, every refusal) and
+`SetOutputChannels`. `crates/audio-file/tests/bundle.rs` checks the resampled copy against an ideal
+tone at 44.1 and 96 kHz. The app side is `crates/app/src/app_core_rate_tests.rs` (a new project at
+each rate, a conversion of a project with audio, the transport tick kept across the engine restart
+of a rate change, the channel counts). Hand check: a device that lacks 48 kHz runs a 44.1 kHz
+project, and File > Convert Sample Rate during playback keeps the playhead.
+
 ## Relinking missing audio
 
 `crates/model/tests/relink.rs` covers `Command::RelinkAsset` (every reference kind swapped, a

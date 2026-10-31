@@ -144,6 +144,8 @@ pub(super) struct AudioState {
     pub(super) buffers: BTreeMap<String, Arc<SampleBuffer>>,
     /// Assets a worker is loading into RAM for samplers.
     pub(super) ram_pending: BTreeSet<String>,
+    /// The sample rate a conversion worker is resampling the project's audio to.
+    pub(super) converting: Option<u32>,
     pub(super) missing: Vec<MissingAsset>,
     /// Assets that were missing and have been relinked away: they are missing again when an
     /// undo makes the document use them (see `AppCore::refresh_missing`).
@@ -194,6 +196,7 @@ impl AudioState {
             peaks: BTreeMap::new(),
             buffers: BTreeMap::new(),
             ram_pending: BTreeSet::new(),
+            converting: None,
             missing: Vec::new(),
             relinked: Vec::new(),
             generation: 0,
@@ -495,6 +498,13 @@ impl<S: EngineSink> AppCore<S> {
                 } if generation == current => {
                     self.apply_scanned(&root, found, truncated);
                 }
+                Msg::Converted {
+                    generation,
+                    rate,
+                    result,
+                } if generation == current => {
+                    self.apply_converted(rate, result);
+                }
                 Msg::Loaded {
                     generation,
                     hash,
@@ -526,7 +536,8 @@ impl<S: EngineSink> AppCore<S> {
                 | Msg::Exported { .. }
                 | Msg::Noted { .. }
                 | Msg::Onsets { .. }
-                | Msg::Scanned { .. } => {}
+                | Msg::Scanned { .. }
+                | Msg::Converted { .. } => {}
             }
         }
         if resubmit {

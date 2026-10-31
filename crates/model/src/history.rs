@@ -315,6 +315,16 @@ pub(crate) enum Edit {
         old: u16,
         new: u16,
     },
+    /// The interface's output channel count.
+    OutputChannels {
+        old: u16,
+        new: u16,
+    },
+    /// The project's sample rate (the audio and positions follow in the same compound edit).
+    SampleRate {
+        old: u32,
+        new: u32,
+    },
     /// Insert `device` into the container at path key `container` at `index`, with its inner
     /// `cables` (local keys, all attached to it).
     InnerInsert {
@@ -702,6 +712,8 @@ impl Edit {
                 new: old,
             },
             Edit::InputChannels { old, new } => Edit::InputChannels { old: new, new: old },
+            Edit::OutputChannels { old, new } => Edit::OutputChannels { old: new, new: old },
+            Edit::SampleRate { old, new } => Edit::SampleRate { old: new, new: old },
             Edit::InnerInsert {
                 container,
                 index,
@@ -1237,6 +1249,14 @@ impl Edit {
             Edit::InputChannels { new, .. } => {
                 doc.input_channels = *new;
                 vec![SyncOp::RoutingChanged]
+            }
+            Edit::OutputChannels { new, .. } => {
+                doc.output_channels = *new;
+                vec![SyncOp::RoutingChanged]
+            }
+            Edit::SampleRate { new, .. } => {
+                doc.sample_rate = *new;
+                vec![SyncOp::RoutingChanged, SyncOp::SongChanged]
             }
             Edit::InnerInsert {
                 container,

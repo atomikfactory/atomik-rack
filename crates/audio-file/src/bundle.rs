@@ -201,6 +201,16 @@ impl Bundle {
         self.store(data, name)
     }
 
+    /// Resamples the stored asset `hash` to `rate` and stores the result as a new asset named
+    /// `name` (the original stays). The copy has `round(frames * rate / old rate)` frames and
+    /// is time-aligned with the original; a stored asset already at `rate` returns its own
+    /// info.
+    pub fn convert_rate(&mut self, hash: &str, rate: u32, name: &str) -> Result<AssetInfo> {
+        let data = self.load(hash)?;
+        let converted = resample(&data, rate)?;
+        self.store(&converted, name)
+    }
+
     fn store(&mut self, data: &AudioData, name: &str) -> Result<AssetInfo> {
         data.validate()?;
         if data.frames() == 0 {

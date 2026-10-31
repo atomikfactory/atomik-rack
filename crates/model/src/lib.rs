@@ -48,6 +48,7 @@ mod plugin_cmd;
 mod plugin_io;
 mod project;
 mod rack_columns;
+mod rate_convert;
 mod read_limit;
 mod record_over;
 mod relink;
@@ -481,6 +482,25 @@ pub enum Command {
     /// Cables from inputs above the new count are removed in the same step. Reports
     /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
     SetInputChannels(u16),
+    /// Set the interface's output channel count (1..=[`MAX_OUTPUT_CHANNELS`]). Cables into
+    /// outputs above the new count are removed in the same step. Reports
+    /// [`SyncOp::RoutingChanged`] (the app rebuilds the interface).
+    SetOutputChannels(u16),
+    /// Moves the project to another sample rate (one of [`SAMPLE_RATES`], not the current one)
+    /// in one undo step. The app has already resampled the assets the song uses and registered
+    /// the copies ([`Command::RegisterAsset`]); `assets` pairs each used asset id with its copy,
+    /// which must have the new rate and the same channel count. Every clip, take, frozen render
+    /// and zone is pointed at the copy and its frame positions (source offsets, fades, gain
+    /// envelope points, warp marker sources, zone ranges) are scaled by the rate ratio; ticks do
+    /// not change. Reports [`SyncOp::RoutingChanged`] and [`SyncOp::SongChanged`] (the app
+    /// rebuilds the engine at the new rate), then [`SyncOp::ZonesChanged`] per device with
+    /// zones. Not accepted by [`Command::Batch`].
+    ConvertSampleRate {
+        /// The new rate in Hz.
+        rate: u32,
+        /// `(used asset, its copy at the new rate)`.
+        assets: Vec<(String, String)>,
+    },
     /// A console edit.
     Console(ConsoleCommand),
     /// A MIDI mapping edit (see [`MidiMapCommand`]); reports [`SyncOp::MidiMapsChanged`].
@@ -684,7 +704,8 @@ pub enum Command {
 /// | tempo (`SetTempo`; also sets `song.tempo[0].bpm`) | `TempoChanged` |
 /// | move, fold, rename, colour | `ViewChanged` |
 /// | song edit (`Command::Song`, including `SetClipGrid`) | `SongChanged` |
-/// | `SetInputChannels` | `RoutingChanged` |
+/// | `SetInputChannels`, `SetOutputChannels` | `RoutingChanged` |
+/// | `ConvertSampleRate` | `RoutingChanged`, `SongChanged`, then `ZonesChanged` per device with zones |
 /// | `Batch` | `RoutingChanged` (once, if it holds cables), `ParamChanged` per `SetParam`, `ZonesChanged` (once per device, if it holds `SetZones`), `SongChanged` (once, if it holds track or clip edits, audio clip edits included) |
 /// | `RegisterAsset` | none (not an undo step) |
 /// | `RelinkAsset` | `ZonesChanged` per device with a swapped zone, then `SongChanged` if clips were swapped |
@@ -1741,6 +1762,8 @@ impl Document {
             Command::RelinkAsset { from, to } => relink::plan(doc, &from, &to)?,
             Command::RenameAsset { asset, name } => rules::plan_rename_asset(doc, &asset, &name)?,
             Command::SetInputChannels(n) => rules::plan_input_channels(doc, n)?,
+            Command::SetOutputChannels(n) => rules::plan_output_channels(doc, n)?,
+            Command::ConvertSampleRate { rate, assets } => rate_convert::plan(doc, rate, &assets)?,
             Command::SetTempo(bpm) => {
                 if !(TEMPO_MIN..=TEMPO_MAX).contains(&bpm) {
                     return Err(ModelError::OutOfRange(format!(

@@ -9,6 +9,14 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Project sample rate and channel counts.** File > New at Sample Rate starts a project at 44.1,
+  48 or 96 kHz, and File > Convert Sample Rate moves the open project to another rate in one undo
+  step: the audio it uses is resampled into the project folder (the originals stay, so undo brings
+  them back), clips keep their place in the song, and fades, gain envelopes, warp markers and
+  sampler zones follow the new frame counts. Audio > Input Channels and Output Channels set the
+  interface channel counts (the settings note now points at the real menu). A change of rate or
+  channel count puts the playhead back where it was and keeps playing, instead of going to the
+  start. The 88.2 and 192 kHz rates are not offered yet.
 - **Performance measurement.** Every speed claim can now be re-measured with one command per
   crate: `cargo bench -p atomik-render --bench render_batch` (bounces of a generated rack, song,
   64-strip console, 200 and 2,000 automation lanes and a 100-track song), `-p atomik-devices

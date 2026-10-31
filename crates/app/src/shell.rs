@@ -1855,6 +1855,9 @@ impl<B: AudioBackend> Shell<B> {
             clock_out: self.core.sink().settings().sync.clock_out,
             clock_while_stopped: self.core.sink().settings().sync.send_while_stopped,
             follow_clock: self.core.sink().settings().sync.follow_clock,
+            sample_rate: self.core.doc().sample_rate,
+            input_channels: self.core.doc().input_channels,
+            output_channels: self.core.doc().output_channels,
             quantize: self.core.input_quantize(),
             console: self.console_visible(),
             console_maximised: self.maximised(),
@@ -4384,6 +4387,7 @@ impl<B: AudioBackend> Shell<B> {
         self.repaint = true;
         let requests = match command {
             AppCommand::New
+            | AppCommand::NewAtRate(_)
             | AppCommand::Open
             | AppCommand::Close
             | AppCommand::Quit
@@ -4396,6 +4400,18 @@ impl<B: AudioBackend> Shell<B> {
                 } else {
                     self.confirmed(command)
                 }
+            }
+            AppCommand::ConvertRate(rate) => {
+                self.core.convert_sample_rate(rate);
+                Vec::new()
+            }
+            AppCommand::InputChannels(n) => {
+                self.core.set_input_channels(n);
+                Vec::new()
+            }
+            AppCommand::OutputChannels(n) => {
+                self.core.set_output_channels(n);
+                Vec::new()
             }
             AppCommand::OpenRecent(index) => {
                 self.open_recent(index);
@@ -5073,6 +5089,10 @@ impl<B: AudioBackend> Shell<B> {
         match command {
             AppCommand::New | AppCommand::Close => {
                 self.core.new_document();
+                Vec::new()
+            }
+            AppCommand::NewAtRate(rate) => {
+                self.core.new_document_at(rate);
                 Vec::new()
             }
             AppCommand::Open => vec![ShellRequest::PickOpenFile],
