@@ -581,6 +581,12 @@ pub struct RackView {
     /// Where the container of the scope sits among the devices of the rack (the place a device
     /// dragged out of it lands after); set on every sync inside a container.
     scope_rack_at: usize,
+    /// The project, kept for the press that may start a drag out of an open container.
+    host_doc: Option<RackDoc>,
+    /// The containers the device being dragged may be dropped into (the model accepts the move).
+    move_in_ok: Vec<DeviceKey>,
+    /// The device being dragged may be dropped on the breadcrumb (the model accepts the move out).
+    move_out_ok: bool,
     /// The open "map to macro" menu.
     macro_menu: Option<container_input::MacroMenu>,
     /// What the app knows about each plugin instance, by path key.
@@ -766,6 +772,9 @@ impl RackView {
             shown: Default::default(),
             crumb_hover: None,
             scope_rack_at: 0,
+            host_doc: None,
+            move_in_ok: Vec::new(),
+            move_out_ok: false,
             macro_menu: None,
             plugin_status: BTreeMap::new(),
             plugin_catalog: Vec::new(),
@@ -2635,6 +2644,10 @@ impl RackView {
     /// container the commands and actions carry **path keys** (`layer/synth`), and a gesture
     /// that changes the scope has already changed it when this returns.
     pub fn handle(&mut self, event: &UiEvent, doc: &RackDoc, registry: &Registry) -> Vec<UiAction> {
+        // A press inside a container may start a drag out of it, which the model plans on the
+        // whole project (the scope document has only the inside).
+        self.host_doc = (matches!(event, UiEvent::PointerDown { .. }) && self.scope.len() == 1)
+            .then(|| doc.clone());
         let view = self.prepare(doc, registry);
         let out = self.handle_in(event, &view, registry);
         self.finish(out, registry)
@@ -3075,6 +3088,7 @@ impl RackView {
                     at: rp,
                     collapse,
                 };
+                self.plan_container_drops(i, doc, registry);
             }
             (Hit::Edit(i), PointerButton::Primary) => {
                 self.select(i, out);
