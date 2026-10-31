@@ -1093,7 +1093,7 @@ fn stage_rules_apply_to_patch_and_project_loading() {
     );
     let e = atomik_model::load_project(&looped, &reg).unwrap_err();
     assert!(
-        matches!(&e, ModelError::Patch(m) if m.starts_with("cables[") && m.contains("cycle")),
+        matches!(&e, ModelError::Load { path, message } if path.starts_with("cables[") && message.contains("cycle")),
         "{e:?}"
     );
 }

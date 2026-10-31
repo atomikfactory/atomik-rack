@@ -40,9 +40,10 @@ type Edit = Box<dyn Fn(&mut Value)>;
 
 fn assert_rejects(text: &str, path: &str, needle: &str) {
     let e = load_project(text, &console_registry()).expect_err("project must be rejected");
-    let ModelError::Patch(msg) = &e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = &e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} (wanted path {path})"

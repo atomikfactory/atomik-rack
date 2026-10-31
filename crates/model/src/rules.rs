@@ -574,7 +574,7 @@ pub(crate) fn plan_rename_asset(
     let meta = doc
         .assets
         .get(asset)
-        .ok_or_else(|| ModelError::UnknownKey(format!("asset {asset}")))?;
+        .ok_or_else(|| ModelError::MissingAsset(asset.to_owned()))?;
     let name = name.trim();
     if name.is_empty()
         || name.chars().count() > crate::MAX_ASSET_NAME

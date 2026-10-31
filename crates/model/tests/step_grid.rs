@@ -351,7 +351,7 @@ fn a_batch_is_all_or_nothing_and_takes_only_cables_clip_grid_and_clip_geometry()
             Command::Batch(vec![set_grid(id, Some(sixteenth(0)), None), other]),
             &reg,
         );
-        assert!(matches!(e, ModelError::BadCable(_)), "{e:?}");
+        assert!(matches!(e, ModelError::BadBatch(_)), "{e:?}");
     }
     rejects(&mut d, Command::Batch(Vec::new()), &reg);
 }

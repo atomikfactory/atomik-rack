@@ -456,7 +456,7 @@ pub(crate) fn load_midi_maps(v: &Value, path: &JsonPath) -> Result<Vec<MidiMappi
 /// Reads a preset file.
 ///
 /// # Errors
-/// [`ModelError::Patch`] naming the JSON path of what is wrong (not a preset, a newer version,
+/// [`ModelError::Load`] naming the JSON path of what is wrong (not a preset, a newer version,
 /// a bad source, target or option).
 pub fn load_midi_preset(json: &str) -> Result<MidiPreset, ModelError> {
     let root = JsonPath::default();

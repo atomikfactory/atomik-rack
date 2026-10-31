@@ -1024,7 +1024,7 @@ fn a_batch_refuses_add_state_and_the_other_plugin_commands_and_fails_whole() {
             Command::Batch(vec![set_pinned("synth", &[10]), c]),
             &r,
         );
-        assert!(matches!(e, ModelError::BadCable(_)), "{e:?}");
+        assert!(matches!(e, ModelError::BadBatch(_)), "{e:?}");
     }
     // One bad pin fails the whole batch.
     rejects(

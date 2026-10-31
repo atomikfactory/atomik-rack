@@ -79,7 +79,7 @@ pub fn save_device_item(snapshot: &DeviceSnapshot, doc: &RackDoc) -> String {
 /// paste: its devices, cables and pool entries. Tracks, the console and the rest of the project
 /// are left out. `registry` validates the devices; a plugin device it does not know becomes a
 /// stand-in (the app registers those with [`register_stand_ins`](crate::register_stand_ins)
-/// before the paste). Errors are [`ModelError::Patch`] with `"<json path>: <what is wrong>"`.
+/// before the paste). Errors are [`ModelError::Load`] with `"<json path>: <what is wrong>"`.
 pub fn load_device_item(text: &str, registry: &Registry) -> Result<DeviceSnapshot, ModelError> {
     let doc = project::load(text, registry)?;
     Ok(DeviceSnapshot {

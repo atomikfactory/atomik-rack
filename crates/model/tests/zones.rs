@@ -421,7 +421,10 @@ fn zones_need_version_4() {
     let r = reg();
     let text = save_project(&project_doc(&r)).replace("\"version\": 36", "\"version\": 3");
     let e = load_project(&text, &r).unwrap_err();
-    let ModelError::Patch(m) = e else { panic!() };
+    let ModelError::Load { path: at, message } = e else {
+        panic!()
+    };
+    let m = format!("{at}: {message}");
     assert!(m.starts_with("devices[0].zones: unknown field"), "{m}");
 }
 
@@ -437,9 +440,10 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 fn rejects(text: &str, path: &str, needle: &str) {
     let e = load_project(text, &reg()).expect_err("project must be rejected");
-    let ModelError::Patch(msg) = &e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = &e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} (wanted {path})"

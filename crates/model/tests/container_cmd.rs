@@ -820,7 +820,7 @@ fn batch_accepts_the_four_macro_and_split_commands_only() {
         }),
     ] {
         let e = d.apply(Command::Batch(vec![refused]), &r).unwrap_err();
-        assert!(matches!(e, ModelError::BadCable(_)), "{e}");
+        assert!(matches!(e, ModelError::BadBatch(_)), "{e}");
     }
 }
 

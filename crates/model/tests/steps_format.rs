@@ -85,9 +85,10 @@ fn project(r: &atomik_device_sdk::Registry) -> RackDoc {
 
 fn reject(text: &str, path: &str, needle: &str) {
     let e = load_project(text, &registry()).expect_err("project must be rejected");
-    let ModelError::Patch(msg) = &e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = &e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} (wanted path {path})"

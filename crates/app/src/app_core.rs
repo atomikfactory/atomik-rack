@@ -19,7 +19,7 @@ use atomik_model::console::{
 use atomik_model::{
     ClipContent, ClipId, Command, DeviceKey, Document, ExpandedDevice, ExpandedRack, INTERFACE_KEY,
     ModelError, RackDevice, RackDoc, SocketRef, SongCommand, SyncOp, WorkflowCommand, empty_doc,
-    load_project, new_project_doc, register_stand_ins, save_patch,
+    load_project_with_warnings, new_project_doc, register_stand_ins, save_patch,
 };
 use atomik_render::project::song_input_with_warps;
 use atomik_ui::kurbo::Point;
@@ -1104,14 +1104,29 @@ impl<S: EngineSink> AppCore<S> {
         self.replace(new_project_doc(), None);
     }
 
-    /// Opens project or patch JSON as if read from `path`. On error nothing changes.
+    /// Opens project or patch JSON as if read from `path`. On error nothing changes. What the
+    /// file had that the document does not (see [`atomik_model::load_project_with_warnings`]) is
+    /// logged and counted in a toast.
     pub fn open_str(&mut self, json: &str, path: Option<PathBuf>) -> Result<(), AppError> {
-        let doc = load_project(json, &self.registry)?;
+        let (doc, warnings) = load_project_with_warnings(json, &self.registry)?;
         // The plugins of the file that are not installed get stand-ins built from its layouts.
         register_stand_ins(&doc, &mut self.registry)?;
         self.replace(doc, path);
         self.plugins_after_open();
+        self.report_load_warnings(&warnings);
         Ok(())
+    }
+
+    /// Logs each warning of a project load and tells the user how many items were ignored.
+    fn report_load_warnings(&mut self, warnings: &[String]) {
+        for warning in warnings {
+            log::warn!("opening the project: {warning}");
+        }
+        let n = warnings.len();
+        if n > 0 {
+            let items = if n == 1 { "item" } else { "items" };
+            self.reject(format!("{n} {items} ignored while opening (see the log)"));
+        }
     }
 
     /// Replaces the rack with `doc` (e.g. a generated stress rack), with no file name.

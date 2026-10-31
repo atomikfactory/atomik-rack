@@ -23,9 +23,10 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 fn assert_rejects(text: &str, path: &str, needle: &str) {
     let e = load_patch(text, &registry()).expect_err("patch must be rejected");
-    let ModelError::Patch(msg) = &e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = &e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} (wanted path {path})"

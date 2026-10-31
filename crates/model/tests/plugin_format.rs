@@ -93,9 +93,10 @@ fn text(r: &Registry) -> String {
 
 fn rejects(text: &str, r: &Registry, path: &str, needle: &str) {
     let e = load_project(text, r).expect_err("must be rejected");
-    let ModelError::Patch(msg) = e else {
+    let ModelError::Load { path: at, message } = e else {
         panic!("not a load error: {e}");
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} lacks path {path}"

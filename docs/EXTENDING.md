@@ -1,6 +1,6 @@
 # Writing a new device
 
-This guide explains how to add a device to Atomik Rack using `atomik-device-sdk`. It describes the contract in prose and points to the code. The three built-in devices in [crates/devices/src](../crates/devices/src) are complete, working examples. Read one of them next to this page.
+This guide explains how to add a device to Atomik Rack using `atomik-device-sdk`. It describes the contract in prose and points to the code. The built-in devices in [crates/devices/src](../crates/devices/src) are complete, working examples; the small ones (`stereo_delay.rs`, `line_mixer.rs`) are the best start. Read one of them next to this page.
 
 A device must be an original design, or based on public textbooks, papers or standards, or on compatibly licensed code (see the original work policy in [CONTRIBUTING.md](../CONTRIBUTING.md)). It must not copy another product's code, data, presets or strings.
 
@@ -64,7 +64,7 @@ The trait is in [crates/device-sdk/src/lib.rs](../crates/device-sdk/src/lib.rs).
 | `fn reset(&mut self)` | RT | no | Clears audio state (voices, delay lines, smoothers) |
 | `fn set_param(&mut self, id: ParamId, plain: f32)` | RT | no | `plain` is already clamped (and rounded if discrete) by the engine |
 | `fn process(&mut self, ctx: &mut ProcessContext<'_>)` | RT | no | Processes exactly one batch of 64 frames |
-| `fn latency_frames(&self) -> u32` | any | no | Default 0. The engine does not compensate it yet. |
+| `fn latency_frames(&self) -> u32` | any | no | Default 0. The engine reads it after `prepare` and, while the project's delay compensation is on (the console's `compensation` flag), delays the faster paths into every summing input to match the slowest one. |
 | `fn scope_tap(&self) -> Option<Arc<ScopeTap>>` | any | no | Default `None`. Opt-in to a ring of the recent stereo frames for the UI (see below). |
 
 ### `prepare` is the only allocating method

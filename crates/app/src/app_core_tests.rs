@@ -521,6 +521,23 @@ fn a_bad_file_is_rejected_and_the_document_is_kept() {
 }
 
 #[test]
+fn opening_a_file_with_dropped_items_counts_them_in_a_toast() {
+    let mut c = core();
+    c.open_str(&atomik_model::save_project(c.doc()), None)
+        .unwrap();
+    assert_eq!(c.last_rejection(), None, "a clean file says nothing");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&atomik_model::save_project(c.doc())).unwrap();
+    v["song"]["track_heights"] = serde_json::json!({ "gone": 80, "also-gone": 90 });
+    c.open_str(&v.to_string(), None).unwrap();
+    assert_eq!(
+        c.last_rejection(),
+        Some("2 items ignored while opening (see the log)")
+    );
+    assert!(c.doc().song.track_heights.is_empty());
+}
+
+#[test]
 fn opening_a_missing_file_is_an_io_error() {
     let mut c = core();
     let err = c.open(&temp_path("does-not-exist.json")).unwrap_err();

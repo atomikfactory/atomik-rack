@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Atomik Rack is pre-1.0. Only the latest release (once there is one) and the `main` branch receive fixes.
+Atomik Rack is pre-1.0. Only the latest release (a release candidate counts) and the `main` branch receive fixes.
 
 | Version | Supported |
 |---|---|
@@ -29,7 +29,23 @@ Please include:
 
 Examples of relevant issues: memory-safety bugs, crashes or hangs triggered by a crafted patch, project or audio file, path-handling problems (for example in project bundles), and vulnerable dependencies not yet caught by `cargo deny`.
 
-Third-party plugins run inside the application process and are outside the threat model: a malicious plugin can do anything the application can. Crashes caused by a buggy plugin are normal bugs, not vulnerabilities.
+## Third-party plugins
+
+Plugin hosting is off until the user enables it. When it is on, each plugin instance runs in its own
+child process by default (the sandbox, Settings > Plugins; `atomik-plugin-host` is the child), and a
+scan runs out of process too. With the sandbox option off, plugins run inside the application
+process.
+
+- A plugin is trusted with the user's privileges. The sandbox is a robustness boundary, not a
+  privilege boundary: a malicious plugin can read and write the user's files, and plugin bugs are
+  not vulnerabilities in Atomik Rack.
+- The host side of the sandbox is in scope: the crates `plugin-ipc`, `plugin-sandbox`,
+  `plugin-hostd` and `plugin-host`, including the shared-memory block and the control channel they
+  share with the child. Report a plugin that, through that channel, crashes or hangs the
+  application, corrupts its memory, or escapes the sandbox's guarantees (a hostile child must not be
+  able to take the application down).
+- A crash or hang of the plugin's own process, or of the application when the sandbox is off, caused
+  by a buggy plugin is a normal bug, not a vulnerability.
 
 ## What to expect
 

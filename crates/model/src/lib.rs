@@ -861,9 +861,21 @@ pub enum ModelError {
     /// message names the track and says to unfreeze it.
     #[error("{0}")]
     Frozen(String),
-    /// Patch file could not be parsed.
-    #[error("patch file: {0}")]
-    Patch(String),
+    /// A batch was rejected: it is empty, or holds a command that cannot be batched.
+    #[error("batch: {0}")]
+    BadBatch(String),
+    /// A command names an asset that is not in the project's pool (the hash).
+    #[error("asset {0} is not in the pool")]
+    MissingAsset(String),
+    /// A project, patch or clip file could not be read: `path` is the JSON path of what is wrong
+    /// (`$` for the whole file) and `message` says what.
+    #[error("file: {path}: {message}")]
+    Load {
+        /// The JSON path of the fault (`song.tracks[0].lanes[1]`), `$` for the file as a whole.
+        path: String,
+        /// What is wrong there.
+        message: String,
+    },
     /// An edit did not fit the document it was applied to (an internal fault: the planner and
     /// the history disagree). The document and its history are unchanged.
     #[error(transparent)]
@@ -1423,7 +1435,7 @@ impl Document {
         let edit = match command {
             Command::Batch(commands) => {
                 if commands.is_empty() {
-                    return Err(ModelError::BadCable("empty cable batch".into()));
+                    return Err(ModelError::BadBatch("an empty batch".into()));
                 }
                 let mut scratch = doc.clone();
                 let mut edits = Vec::with_capacity(commands.len());
@@ -1477,7 +1489,7 @@ impl Document {
                                     | SongCommand::SetLaneWriteMode { .. }
                             )
                     ) {
-                        return Err(ModelError::BadCable(format!(
+                        return Err(ModelError::BadBatch(format!(
                             "only cable commands, SetParam, SetZones, the pattern commands, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, SetPinned, SetPower, Relink, AddTrack, AddClip, SetClipGrid, SetClipControllers, SetClipGeometry, SetAudioClip, SetWarpMarkers, SplitClip, StripSilence, SetTrackFlags, SetTrackColor, SetLaneFolded, AddAutomationLane, RemoveAutomationLane, SetLaneMuted, SetLaneStatic and SetLaneWriteMode can be batched, not {command:?}"
                         )));
                     }
@@ -1899,15 +1911,23 @@ pub fn new_project_doc() -> RackDoc {
 /// (`"Poly Synth"`, `"Poly Synth 2"`), devices are unfolded and uncoloured. Params are
 /// clamped through their descriptors; `notes` are accepted and ignored; the song is
 /// [`empty_song`] at the file's tempo. Cables are validated
-/// with the engine's rules and sorted. Errors are [`ModelError::Patch`] with a message
+/// with the engine's rules and sorted. Errors are [`ModelError::Load`] with a message
 /// `"<json path>: <what is wrong>"`, e.g. `devices[1].params.mixx: … has no param "mixx"`.
 pub fn load_patch(json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
     patch::load(json, registry)
 }
 
-/// [`load_project`] and the load warnings: today only the rename of a device keyed `boundary`
-/// in a file older than version 8 (the key is reserved for a container's inside edge since
-/// then; the device becomes `boundary-1`, cables and references follow).
+/// [`load_project`] and the load warnings: everything the file had that the document does not.
+/// Each warning is one line, led by the JSON path it concerns:
+///
+/// - a device keyed `boundary` in a file older than version 8 was renamed (the key is reserved
+///   for a container's inside edge since then; the device becomes `boundary-1`, cables and
+///   references follow);
+/// - a version 1 instrument that cannot get a console channel was left without one;
+/// - the height of a device without a track, and a comp clip id that is not on its lane, were
+///   dropped;
+/// - a file from a newer build had fields its `"ignorable"` list allows an older reader to skip,
+///   and they were skipped.
 pub fn load_project_with_warnings(
     json: &str,
     registry: &Registry,
@@ -1927,7 +1947,7 @@ pub fn save_patch(doc: &RackDoc) -> String {
 }
 
 /// Loads an `.atomik` project file, or a patch v1/v2 file as a song-less
-/// project. Errors are [`ModelError::Patch`] with a message `"<json path>: <what is wrong>"`,
+/// project. Errors are [`ModelError::Load`] with a message `"<json path>: <what is wrong>"`,
 /// e.g. `song.tracks[0].lanes[0].clips[0].notes[1]: notes must be sorted…`. The schema is in
 /// [`save_project`] docs.
 pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelError> {
@@ -1935,8 +1955,9 @@ pub fn load_project(json: &str, registry: &Registry) -> Result<RackDoc, ModelErr
 }
 
 /// Saves a document as an `.atomik` project file, format [`PROJECT_FORMAT`] version
-/// [`PROJECT_VERSION`] (10): the patch v2 rack fields (plus each device's `"zones"` when it has
-/// any, `"steps"` and `"curves"` when present, a container's `"inner"` and a plugin device's `"plugin"`) (without `length_beats`),
+/// [`PROJECT_VERSION`]: the patch v2 rack fields (plus each device's `"zones"` when it has any,
+/// `"steps"`, `"curves"` and `"drums"` when present, a container's `"inner"`, a plugin device's
+/// `"plugin"` and the `"patch"` name) (without `length_beats`),
 /// `"input_channels"`, `"console"` (channels with their sources, master, 8 returns,
 /// compensation), `"assets"` (the sample pool) and `"song"` with every song field, clip ids
 /// and `next_clip_id`. The output is deterministic and canonical,

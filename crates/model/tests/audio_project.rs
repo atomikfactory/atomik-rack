@@ -23,9 +23,10 @@ fn edited(text: &str, edit: impl FnOnce(&mut Value)) -> String {
 
 fn assert_rejects(text: &str, path: &str, needle: &str) {
     let e = load_project(text, &audio_registry()).expect_err("project must be rejected");
-    let ModelError::Patch(msg) = &e else {
-        panic!("expected a patch error, got {e:?}")
+    let ModelError::Load { path: at, message } = &e else {
+        panic!("expected a load error, got {e:?}")
     };
+    let msg = &format!("{at}: {message}");
     assert!(
         msg.starts_with(&format!("{path}: ")),
         "{msg} (wanted path {path})"
@@ -201,7 +202,7 @@ fn patches_load_with_no_inputs_and_may_not_declare_them() {
     let with_inputs = edited(&text, |v| v["input_channels"] = json!(2));
     let e = load_patch(&with_inputs, &reg).unwrap_err();
     assert!(
-        matches!(&e, ModelError::Patch(m) if m.starts_with("input_channels: ")),
+        matches!(&e, ModelError::Load { path, .. } if path == "input_channels"),
         "{e:?}"
     );
 }
@@ -467,7 +468,7 @@ fn an_audio_track_device_without_the_real_type_cannot_have_audio_lanes() {
     let text = save_project(&audio_doc(&reg));
     let e = load_project(&text, &console_registry()).unwrap_err();
     assert!(
-        matches!(&e, ModelError::Patch(m) if m.contains("unknown device type")),
+        matches!(&e, ModelError::Load { message, .. } if message.contains("unknown device type")),
         "{e:?}"
     );
 }

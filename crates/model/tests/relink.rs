@@ -188,11 +188,11 @@ fn relink_refusals_change_nothing() {
     // Unknown source, unknown target, same asset, an asset nothing uses.
     assert!(matches!(
         rejects(&mut d, relink(9, 3), &reg),
-        ModelError::BadSong(_)
+        ModelError::MissingAsset(_)
     ));
     assert!(matches!(
         rejects(&mut d, relink(1, 9), &reg),
-        ModelError::BadSong(_)
+        ModelError::MissingAsset(_)
     ));
     assert!(matches!(
         rejects(&mut d, relink(1, 1), &reg),

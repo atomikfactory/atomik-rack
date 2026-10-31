@@ -280,7 +280,7 @@ pub(crate) fn check_audio(doc: &RackDoc, a: &AudioClipContent) -> Result<(), Mod
     let meta = doc
         .assets
         .get(&a.asset)
-        .ok_or_else(|| ModelError::UnknownKey(format!("asset {}", a.asset)))?;
+        .ok_or_else(|| ModelError::MissingAsset(a.asset.clone()))?;
     if a.source_offset > meta.frames {
         return Err(range(format!(
             "source offset {} is beyond the asset's {} frames",

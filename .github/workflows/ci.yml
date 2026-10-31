@@ -85,12 +85,19 @@ jobs:
   hygiene:
     name: public-repo hygiene
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: sh scripts/check-public.sh
+      # The documents: the long guides are hard-wrapped, every Markdown link and anchor resolves,
+      # the crate table of ARCHITECTURE.md matches the Cargo.toml files and the functions the
+      # guides cite exist.
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: hygiene
+      - run: cargo test -p atomik-testkit --test docs_hygiene --test docs_match_code --test guard_inventory
 
   coverage:
     name: coverage (llvm-cov)

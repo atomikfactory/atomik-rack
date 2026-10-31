@@ -17,12 +17,12 @@ pub(crate) fn plan(doc: &RackDoc, from: &str, to: &str) -> Result<Edit, ModelErr
         return Err(bad(format!("asset {from} cannot be relinked to itself")));
     }
     if !doc.assets.contains_key(from) {
-        return Err(bad(format!("asset {from} is not in the pool")));
+        return Err(ModelError::MissingAsset(from.to_owned()));
     }
     let target = doc
         .assets
         .get(to)
-        .ok_or_else(|| bad(format!("asset {to} is not in the pool (register it first)")))?;
+        .ok_or_else(|| ModelError::MissingAsset(to.to_owned()))?;
     let mut edits = Vec::new();
     for track in &doc.song.tracks {
         // The render of a frozen track.
