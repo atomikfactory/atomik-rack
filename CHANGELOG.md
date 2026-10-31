@@ -9,6 +9,15 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mute, Magnifier and Hand tools.** The arrangement toolbar has three more tools in a second
+  row of its corner: Mute (Y) toggles the clip you click, or all the selected clips when it is one
+  of them; Magnifier (U) zooms in around the pointer on a click, out with Shift, and to a
+  rectangle on a drag, across and down; Hand (I) scrolls the view in both directions when you
+  drag and edits nothing. Holding the alternate-tool modifier pairs Magnifier with Hand and Hand
+  with Magnifier (Select and Pencil still pair, and every other tool gives way to Select). The
+  eraser also deletes by a rubber band: drag from an empty spot over clips and they all go in one
+  undo step. The corner's M, S and MAN REC buttons were painted once per tool; they are painted
+  once now. The project format is unchanged.
 - **Console editing.** The strips of the console can be selected and edited together. Left and
   Right select the next strip (Shift grows the range, the strip scrolls into view), Edit > Select
   All takes every channel and bus, and Delete removes the selected ones. A fader, a send level, a

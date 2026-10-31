@@ -70,6 +70,11 @@ fn tool(t: Tool, rect: Rect) -> Help {
         Tool::Speaker => {
             "Speaker tool: press on an audio clip to hear it as it is in its file, release to stop"
         }
+        Tool::Mute => "Mute tool: click a clip to mute or unmute it",
+        Tool::Magnifier => {
+            "Magnifier tool: click to zoom in, Shift-click to zoom out, drag to zoom to a rectangle"
+        }
+        Tool::Hand => "Hand tool: drag to scroll the view",
     };
     Help::new(rect, text).with_command(t.command_id())
 }
