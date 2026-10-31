@@ -42,14 +42,25 @@
 //!   so the engine leaves the parameter at the value the user set. The OVERRIDE lamp of the
 //!   transport bar clears the set, and so do Stop and a locate. It is session state: nothing in
 //!   the document changes and an offline render never sets a hold.
+//! * **Tempo pass.** With the tempo lane armed (`AppCore::toggle_tempo_arm`, session state like
+//!   the lane arms) a take also records the tempo: every tempo-map command during the take (a
+//!   drag of a tempo point, a typed tempo, tap tempo) offers the tempo the map has at the
+//!   playhead to a [`PassRecorder`] in Overwrite mode. When the take ends the tempo events inside
+//!   each stretch are replaced by the thinned points (see [`tempo_pass_map`]) in one
+//!   `SetTempoMap`, joined to the last tempo edit when that was the last thing done, so one undo
+//!   puts the old map back. The take does not retime itself: the map is the one the user
+//!   dragged while it ran, and warped audio follows the map at render time.
 //! * An engine restart cancels the take without a clip, like a MIDI take.
 
 use super::*;
 use atomik_engine::HOLD_CAPACITY;
-use atomik_model::automation_rec::{PassRecorder, Segment, WriteMode, segment_clips};
+use atomik_model::automation_rec::{
+    PassRecorder, Segment, WriteMode, segment_clips, tempo_pass_map,
+};
 use atomik_model::song::{automation_value_at, flatten_automation};
 use atomik_model::{
-    AutomationPoint, Clip, ClipContent, Document, LaneKind, expand_bank_lane, expand_macro_lane,
+    AutomationPoint, Clip, ClipContent, Document, LaneKind, TEMPO_MAX, TEMPO_MIN, TempoEvent,
+    expand_bank_lane, expand_macro_lane,
 };
 use std::collections::BTreeSet;
 
@@ -65,6 +76,8 @@ pub type LaneId = (DeviceKey, String);
 pub(super) struct AutoRec {
     /// The lanes armed for writing.
     pub(super) armed: BTreeSet<LaneId>,
+    /// The tempo lane is armed: the next take records tempo changes.
+    pub(super) tempo_armed: bool,
     /// Thinning tolerance as a fraction of a parameter's range.
     thinning: f32,
     /// The running take.
@@ -81,6 +94,7 @@ impl AutoRec {
     pub(super) fn new() -> Self {
         Self {
             armed: BTreeSet::new(),
+            tempo_armed: false,
             thinning: DEFAULT_AUTOMATION_THINNING,
             take: None,
             auto_create: false,
@@ -98,6 +112,24 @@ struct AutoTake {
     loop_count: u64,
     /// Parameters without a lane that were reported as not recordable (said once each).
     refused: BTreeSet<LaneId>,
+    /// The tempo pass, when the tempo lane was armed at the start.
+    tempo: Option<TempoTake>,
+}
+
+/// The tempo part of a running take.
+#[derive(Debug)]
+struct TempoTake {
+    /// The tempo map when the take began: what lies outside the written stretches.
+    base: Vec<TempoEvent>,
+    /// The current pass (Overwrite).
+    pass: PassRecorder,
+    /// What earlier passes wrote.
+    done: Vec<Segment>,
+    /// The tempo last seen.
+    value: f32,
+    /// The latest command of the take changed the tempo map, so the result can join its undo
+    /// step.
+    joinable: bool,
 }
 
 /// One lane of a running take.
@@ -120,6 +152,17 @@ impl<S: EngineSink> AppCore<S> {
     /// The lanes armed for automation writing, in order.
     pub fn armed_automation_lanes(&self) -> &BTreeSet<LaneId> {
         &self.autorec.armed
+    }
+
+    /// Whether the tempo lane is armed: the next take records tempo changes.
+    pub fn tempo_armed(&self) -> bool {
+        self.autorec.tempo_armed
+    }
+
+    /// Arms or disarms the tempo lane (session state, applied to the next take).
+    pub fn toggle_tempo_arm(&mut self) {
+        self.autorec.tempo_armed = !self.autorec.tempo_armed;
+        self.show_transport();
     }
 
     /// Whether the automation lane of `param` on `device`'s track is armed for writing.
@@ -160,6 +203,8 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             DEFAULT_AUTOMATION_THINNING
         };
+        self.arrangement
+            .set_automation_thinning(self.autorec.thinning);
     }
 
     /// Whether the lane of `param` on `device` is being written by the running take (the
@@ -183,7 +228,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// True when a take would write automation: some lane is armed, or new lanes are created.
     pub(super) fn has_armed_lanes(&mut self) -> bool {
-        self.autorec.auto_create || !self.live_armed_lanes().is_empty()
+        self.autorec.auto_create || self.autorec.tempo_armed || !self.live_armed_lanes().is_empty()
     }
 
     /// Muting an automation lane holds what its param plays: the mute and a `SetParam` with the
@@ -390,7 +435,17 @@ impl<S: EngineSink> AppCore<S> {
                 },
             );
         }
-        if map.is_empty() && !self.autorec.auto_create {
+        let tempo = self.autorec.tempo_armed.then(|| {
+            let bpm = self.doc().song.tempo_table().map().bpm(tick as f64) as f32;
+            TempoTake {
+                base: self.doc().song.tempo.clone(),
+                pass: PassRecorder::new(WriteMode::Overwrite, tick, bpm),
+                done: Vec::new(),
+                value: bpm,
+                joinable: false,
+            }
+        });
+        if map.is_empty() && !self.autorec.auto_create && tempo.is_none() {
             return false;
         }
         let loop_count = self.sink.transport_state().loop_count;
@@ -398,6 +453,7 @@ impl<S: EngineSink> AppCore<S> {
             lanes: map,
             loop_count,
             refused: BTreeSet::new(),
+            tempo,
         });
         self.update_automation_hold();
         true
@@ -433,9 +489,17 @@ impl<S: EngineSink> AppCore<S> {
         self.advance_automation(&state);
         let tick = self.automation_tick(&state);
         let create = self.autorec.auto_create;
+        let bpm_now = self.doc().song.tempo_table().map().bpm(tick as f64) as f32;
         let Some(take) = self.autorec.take.as_mut() else {
             return;
         };
+        if let Some(t) = take.tempo.as_mut() {
+            t.joinable = ops.iter().any(|op| matches!(op, SyncOp::TempoChanged(_)));
+            if t.joinable {
+                t.pass.change(tick, bpm_now, true);
+                t.value = bpm_now;
+            }
+        }
         let mut touched = false;
         let mut fresh = Vec::new();
         for op in ops {
@@ -588,6 +652,11 @@ impl<S: EngineSink> AppCore<S> {
             let ended = std::mem::replace(&mut lane.pass, next);
             lane.done.extend(ended.finish(state.loop_end));
         }
+        if let Some(t) = take.tempo.as_mut() {
+            let next = PassRecorder::new(WriteMode::Overwrite, state.loop_start, t.value);
+            let ended = std::mem::replace(&mut t.pass, next);
+            t.done.extend(ended.finish(state.loop_end));
+        }
         self.update_automation_hold();
     }
 
@@ -681,6 +750,9 @@ impl<S: EngineSink> AppCore<S> {
         };
         self.update_automation_hold();
         let end = self.automation_tick(state);
+        if let Some(t) = take.tempo {
+            self.finish_tempo_pass(t, end);
+        }
         let doc = self.document.doc();
         // The lanes the take adds come first, then every clip: one batch, one undo step. A
         // scratch copy tells which index each new lane gets.
@@ -735,6 +807,35 @@ impl<S: EngineSink> AppCore<S> {
         // A rejection is already reported.
         let _ = self.apply_command(Command::Batch(commands));
         self.document.end_merge();
+    }
+
+    /// Writes the tempo pass of a take that ends at `end`: the base map with the written
+    /// stretches laid over it, in one `SetTempoMap` that joins the undo step of the last tempo
+    /// edit when that was the last command of the take. A take where the tempo never changed
+    /// leaves the map alone.
+    fn finish_tempo_pass(&mut self, tempo: TempoTake, end: i64) {
+        let TempoTake {
+            base,
+            pass,
+            mut done,
+            joinable,
+            ..
+        } = tempo;
+        done.extend(pass.finish(end));
+        // A stretch whose tempo never moved wrote nothing.
+        done.retain(|s| s.points.iter().any(|p| (p.1 - s.points[0].1).abs() > 1e-4));
+        if done.is_empty() {
+            return;
+        }
+        let range = (TEMPO_MAX - TEMPO_MIN) as f32;
+        let map = tempo_pass_map(&base, &done, self.autorec.thinning * range);
+        if map == self.doc().song.tempo {
+            return;
+        }
+        self.join_next = joinable;
+        // A rejection is already reported.
+        let _ = self.apply_command(Command::Song(SongCommand::SetTempoMap(map)));
+        self.join_next = false;
     }
 
     /// Throws a running automation take away without a clip, and the overrides with it (engine

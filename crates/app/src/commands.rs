@@ -7,7 +7,7 @@
 
 use crate::record::InputQuantize;
 use crate::windows::WindowKind;
-use atomik_model::{FadeCurve, WarpMode};
+use atomik_model::{FadeCurve, ThinLevel, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
 use atomik_ui::keymap::{
     APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS,
@@ -346,6 +346,9 @@ pub enum AppCommand {
     ScaleTempo(ScaleStep),
     /// Edit ▸ Chop Clips To: the selected clips are cut into pieces of this length.
     ChopClips(ChopStep),
+    /// Edit, Cleanup Automation: thins the points of the selected automation clips, or of the
+    /// automation lanes of the selected tracks.
+    CleanupAutomation(ThinLevel),
     /// Edit ▸ Normalise Audio: the clip gain that brings the peak of each selected audio clip to
     /// 0 dBFS.
     AudioNormalise,
@@ -677,6 +680,9 @@ impl AppCommand {
             AppCommand::ReverseClips(false) => ("sequencer.reverse_clips", Some("starts")),
             AppCommand::ScaleTempo(step) => ("sequencer.scale_tempo", Some(step.arg())),
             AppCommand::ChopClips(step) => ("sequencer.chop_clips", Some(step.arg())),
+            AppCommand::CleanupAutomation(level) => {
+                ("sequencer.cleanup_automation", Some(level.id()))
+            }
             AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
             AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
             AppCommand::AudioQuantize => ("sequencer.audio_quantize", None),
@@ -937,6 +943,9 @@ impl AppCommand {
             }
             ("sequencer.chop_clips", Some(arg)) => {
                 return ChopStep::from_arg(arg).map(AppCommand::ChopClips);
+            }
+            ("sequencer.cleanup_automation", Some(arg)) => {
+                return ThinLevel::from_id(arg).map(AppCommand::CleanupAutomation);
             }
             ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
             ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
@@ -1714,6 +1723,13 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     entries: ChopStep::ALL
                         .into_iter()
                         .map(|s| item(s.label(), AppCommand::ChopClips(s)))
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Cleanup Automation",
+                    entries: ThinLevel::ALL
+                        .into_iter()
+                        .map(|l| item(l.label(), AppCommand::CleanupAutomation(l)))
                         .collect(),
                 }),
             ],
@@ -2737,6 +2753,9 @@ mod tests {
         for step in ChopStep::ALL {
             v.push(AppCommand::ChopClips(step));
         }
+        for level in ThinLevel::ALL {
+            v.push(AppCommand::CleanupAutomation(level));
+        }
         for step in [
             TransposeStep::Up,
             TransposeStep::Down,
@@ -3177,7 +3196,10 @@ mod tests {
                 "Half Bar",
                 "Beat",
                 "1/8 Note",
-                "1/16 Note"
+                "1/16 Note",
+                "Normal",
+                "Heavy",
+                "Maximum"
             ]
         );
         assert_eq!(

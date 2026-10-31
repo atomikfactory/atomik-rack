@@ -1,4 +1,4 @@
-//! Whole-clip transforms of a selection: reverse, scale tempo and chop.
+//! Whole-clip transforms of a selection: reverse, scale tempo, chop and automation cleanup.
 //!
 //! * [`reverse_clips`] mirrors what each note, automation and controller clip shows inside its
 //!   content window (the loop of a looped clip), and flips the `reverse` flag of audio clips;
@@ -6,9 +6,11 @@
 //!   to the earliest start), lengths, loops, notes, controller and automation points all scale,
 //!   and audio clips are warped to follow;
 //! * [`chop_clips`] cuts every clip into pieces of one length, from its own start.
+//! * [`cleanup_automation`] thins the points of automation clips by a fraction of the range.
 //!
 //! Each is one `Edit::Compound`, so one undo step.
 
+use crate::automation_rec::{ThinLevel, thin_points};
 use crate::controller::ControllerLane;
 use crate::history::Edit;
 use crate::song::{AudioClipContent, AutomationPoint, Clip, ClipContent, GainPoint, Note};
@@ -371,4 +373,60 @@ pub(crate) fn chop_clips(
         new: next,
     });
     Ok((Edit::Compound(edits), Some(ClipId(next - 1))))
+}
+
+// ---------------------------------------------------------------------------------- cleanup
+
+/// Plans `CleanupAutomation`: every automation clip of the selection is thinned with
+/// [`thin_points`] at `level` (a fraction of its parameter's range). Other clips are left alone;
+/// a selection where nothing changes rejects.
+pub(crate) fn cleanup_automation(
+    doc: &RackDoc,
+    registry: &atomik_device_sdk::Registry,
+    ids: &[ClipId],
+    level: ThinLevel,
+) -> Result<(Edit, Option<ClipId>), ModelError> {
+    let clips = selection(doc, ids)?;
+    let mut edits = Vec::new();
+    for (device, lane, c) in clips.iter().map(|(d, l, c)| (d, *l, *c)) {
+        let ClipContent::Automation(points) = &c.content else {
+            continue;
+        };
+        let range = automation_range(doc, registry, device, lane);
+        let thinned = thin_points(points, level.fraction() * range);
+        if thinned.len() != points.len() {
+            let mut new = c.clone();
+            new.content = ClipContent::Automation(thinned);
+            edits.push(replace(device, lane, c, new));
+        }
+    }
+    if edits.is_empty() {
+        return Err(bad("no automation point can be removed at this level"));
+    }
+    Ok((Edit::Compound(edits), None))
+}
+
+/// The size of the range of the parameter an automation lane drives (1 when it is unknown, as
+/// for a plugin parameter that is gone).
+fn automation_range(
+    doc: &RackDoc,
+    registry: &atomik_device_sdk::Registry,
+    device: &DeviceKey,
+    lane: usize,
+) -> f32 {
+    let param = doc
+        .song
+        .track(device)
+        .and_then(|t| t.lanes.get(lane))
+        .and_then(|l| match &l.kind {
+            crate::song::LaneKind::Automation(p) => Some(p.clone()),
+            _ => None,
+        });
+    let desc = crate::song_cmd::device_descriptor(doc, registry, device).ok();
+    match (desc, param) {
+        (Some(d), Some(p)) => d
+            .param_by_key(&p)
+            .map_or(1.0, |p| (p.max - p.min).max(f32::EPSILON)),
+        _ => 1.0,
+    }
 }

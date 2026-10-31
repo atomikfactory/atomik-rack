@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Drawing and cleaning up automation, recording tempo.** With the pencil, a drag across an
+  automation clip writes a point per snap step that follows the pointer, thinned as you draw so a
+  long stroke does not leave hundreds of points; a press without a drag still places one point.
+  Shift puts the points exactly on the straight line from where you pressed, and Ctrl+Shift (Cmd+Shift
+  on macOS) holds the pressed value up to the pointer as a flat range. One stroke is one undo step,
+  and Escape puts the clip back. Edit, the clip menu and the track menu have Cleanup Automation with
+  Normal, Heavy and Maximum (0.5 %, 2 % and 5 % of the parameter's range): it thins the selected
+  automation clips, or every automation clip of the selected tracks, in one undo step. Interface
+  settings has a new Automation thinning choice for the same three levels; it also sets how many
+  points a recorded take keeps, so that amount is now a preference. The tempo lane header has an
+  R button: with it lit, a take also records the tempo you set while it runs (dragging a tempo
+  point, typing a tempo, tap tempo), and when it stops the tempo events inside the recorded stretch
+  are replaced by a thinned, ramp-like series in one undo step. The take does not retime itself, and
+  warped audio follows the tempo map as before. The project format is unchanged.
 - **Note editing tools.** The Notes menu of the piano roll (right click on the grid) has Legato
   (the selected notes are stretched to the start of the next one, with an overlap or a gap if you
   like), Join Notes (Ctrl+J: touching or overlapping notes of one pitch become one), Chop Notes

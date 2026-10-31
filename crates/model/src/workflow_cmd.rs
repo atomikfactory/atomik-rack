@@ -373,6 +373,16 @@ pub enum WorkflowCommand {
         /// Piece length in ticks (above 0).
         length: i64,
     },
+    /// Thins the points of the listed automation clips, in one undo step: each clip keeps the
+    /// points the line between its kept neighbours does not reproduce within `level` of its
+    /// parameter's range (see `ThinLevel`; `Step` points always stay). Clips that are not
+    /// automation clips are left alone; a selection where no point can go rejects.
+    CleanupAutomation {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// How hard to thin.
+        level: crate::automation_rec::ThinLevel,
+    },
     /// Opens `length` ticks of empty time at `at`: a clip that straddles `at` is split there,
     /// and everything from `at` on moves `length` later (clips, take groups, markers, ranges,
     /// tempo and meter changes, the loop and the song End). One undo step; rejected while a
@@ -812,6 +822,9 @@ pub(crate) fn plan(
         }
         WorkflowCommand::ScaleTempo { ids, percent } => {
             crate::clip_transform::scale_clips(doc, &ids, percent)
+        }
+        WorkflowCommand::CleanupAutomation { ids, level } => {
+            crate::clip_transform::cleanup_automation(doc, registry, &ids, level)
         }
         WorkflowCommand::ChopClips { ids, length } => {
             crate::clip_transform::chop_clips(doc, &ids, length)

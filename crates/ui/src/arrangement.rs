@@ -51,6 +51,7 @@ use vello::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Stroke};
 use vello::peniko::Color;
 
 mod audio_edit;
+mod draw_series;
 mod ghost;
 mod heights;
 mod help;
@@ -319,6 +320,8 @@ enum Hit {
     TempoPoint(usize),
     /// The tempo lane away from its points.
     TempoLane,
+    /// The arm button in the tempo lane's header.
+    TempoArm,
     /// The meter tag of change `i` in the ruler.
     MeterTag(usize),
     /// The marker strip away from its markers and ranges (`true`: the row of markers).
@@ -612,6 +615,8 @@ enum Drag {
         emitted: bool,
         last: Vec<AutomationPoint>,
     },
+    /// Drawing a series of automation points with the pencil.
+    Series(Box<draw_series::SeriesDrag>),
     /// Dragging the snap selector: up steps through the resolutions, a press without a drag
     /// cycles forward on release.
     Snap {
@@ -763,6 +768,11 @@ pub struct ArrangementView {
     ghosts: Vec<TakeGhost>,
     /// The automation lanes armed for recording (device, param), fed by the app.
     armed_lanes: BTreeSet<(DeviceKey, String)>,
+    /// How much of a parameter's range the pencil's series may deviate from the line it keeps,
+    /// as a fraction (fed by the app from the thinning preference).
+    thinning: f32,
+    /// The tempo lane is armed for recording (fed by the app).
+    tempo_armed: bool,
     focused: bool,
     repaint: bool,
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
@@ -874,6 +884,8 @@ impl ArrangementView {
             recording: false,
             ghosts: Vec::new(),
             armed_lanes: BTreeSet::new(),
+            thinning: 0.005,
+            tempo_armed: false,
             focused: false,
             repaint: true,
             peaks: BTreeMap::new(),
@@ -982,6 +994,30 @@ impl ArrangementView {
             self.recording = recording;
             self.repaint = true;
         }
+    }
+
+    /// Sets the thinning of the pencil's series: a fraction of a parameter's range (0 keeps every
+    /// point).
+    pub fn set_automation_thinning(&mut self, fraction: f32) {
+        self.thinning = if fraction.is_finite() {
+            fraction.clamp(0.0, 0.25)
+        } else {
+            0.005
+        };
+    }
+
+    /// Shows whether the tempo lane is armed for recording (the app owns the state).
+    pub fn set_tempo_armed(&mut self, armed: bool) {
+        if self.tempo_armed != armed {
+            self.tempo_armed = armed;
+            self.repaint = true;
+        }
+    }
+
+    /// The rectangle of the arm button in the tempo lane's header.
+    pub fn tempo_arm_rect(&self) -> Rect {
+        let r = self.tempo_rect();
+        Rect::new(r.x0 - 30.0, r.y0 + 6.0, r.x0 - 10.0, r.y0 + 22.0)
     }
 
     /// Shows which automation lanes are armed for recording (the app owns the set): an armed
@@ -2281,7 +2317,11 @@ impl ArrangementView {
         if pos.y < self.lanes_top() {
             // The tempo lane (only when it is shown).
             if pos.x < tl.x0 {
-                return Hit::Empty;
+                return if self.tempo_lane && self.tempo_arm_rect().contains(pos) {
+                    Hit::TempoArm
+                } else {
+                    Hit::Empty
+                };
             }
             let lane_rect = self.tempo_rect();
             let range = lane::bpm_range(&self.song.tempo);
@@ -2778,6 +2818,7 @@ impl ArrangementView {
             }
             Hit::Panel(h) => self.list_down(h, pos, button, clicks, out),
             Hit::TempoPoint(i) => self.tempo_point_down(i, button, pos, tool, out),
+            Hit::TempoArm if primary => out.push(UiAction::ToggleTempoArm),
             Hit::TempoLane => self.tempo_lane_down(pos, button, modifiers, clicks, tool, out),
             Hit::MeterTag(i) => self.meter_tag_down(i, button, pos, tool, out),
             Hit::RulerLabel | Hit::RulerBand | Hit::LoopEdge(_) | Hit::EndMark
@@ -3376,6 +3417,26 @@ impl ArrangementView {
                 );
                 let merge = self.merge_id();
                 out.push(content_cmd(id, list.clone(), Some(merge)));
+                if self.vp.effective_tool(modifiers) == Tool::Pencil {
+                    // The pencil draws a series: the point just placed is where it begins.
+                    self.drag = Drag::Series(Box::new(draw_series::SeriesDrag {
+                        id,
+                        merge,
+                        base: points.clone(),
+                        path: vec![(tick, value)],
+                        shift,
+                        top,
+                        height: bottom - top,
+                        param,
+                        window: (
+                            w.content_start,
+                            w.content_start + (w.song_end - w.song_start) - 1,
+                        ),
+                        tolerance: self.thinning * (param.max - param.min),
+                        last: list,
+                    }));
+                    return;
+                }
                 self.start_point_drag(track, lane, &clip, list, index, pos, merge, true);
                 if let Drag::Point { original, .. } = &mut self.drag {
                     original.clone_from(points);
@@ -3791,6 +3852,7 @@ impl ArrangementView {
         let roles = self.vp.roles();
         let copy_role = roles.is_active(Role::CopyDrag, modifiers, GestureClass::DragItem);
         let constrain = roles.is_active(Role::Constrain, modifiers, GestureClass::DragItem);
+        let flat = roles.is_active(Role::FlatRange, modifiers, GestureClass::DragItem);
         let (tempo, assets) = (&self.tempo, &self.assets);
         match &mut self.drag {
             Drag::None
@@ -4075,6 +4137,21 @@ impl ArrangementView {
                 *m = modifiers;
                 self.repaint = true;
             }
+            Drag::Series(s) => {
+                let tick = snap_round(axis.x_to_tick(pos.x), &step) - s.shift;
+                let value = seq_edit::value_from_y(&s.param, pos.y, s.top, s.height);
+                let mode = if flat {
+                    draw_series::SeriesMode::Flat
+                } else if constrain {
+                    draw_series::SeriesMode::Line
+                } else {
+                    draw_series::SeriesMode::Freehand
+                };
+                if let Some(points) = s.sample(tick, value, mode, &step) {
+                    out.push(content_cmd(s.id, points, Some(s.merge)));
+                }
+                self.repaint = true;
+            }
             Drag::Point {
                 start,
                 id,
@@ -4348,6 +4425,7 @@ impl ArrangementView {
                     }
                 }
             }
+            Drag::Series(_) => out.push(UiAction::EndMerge),
             Drag::Resize { emitted, .. }
             | Drag::Trim { emitted, .. }
             | Drag::Point { emitted, .. }
@@ -5107,6 +5185,10 @@ impl ArrangementView {
                     content,
                     merge,
                 ));
+                out.push(UiAction::EndMerge);
+            }
+            Drag::Series(s) => {
+                out.push(content_cmd(s.id, s.base, Some(s.merge)));
                 out.push(UiAction::EndMerge);
             }
             Drag::Point {

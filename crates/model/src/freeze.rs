@@ -430,6 +430,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | WorkflowCommand::ReverseClips { ids, .. }
             | WorkflowCommand::ScaleTempo { ids, .. }
             | WorkflowCommand::ChopClips { ids, .. }
+            | WorkflowCommand::CleanupAutomation { ids, .. }
             | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
             WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
             WorkflowCommand::MoveClips { moves, .. } => moves

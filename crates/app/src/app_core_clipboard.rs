@@ -608,6 +608,7 @@ impl<S: EngineSink> AppCore<S> {
             | WorkflowCommand::ReverseClips { .. }
             | WorkflowCommand::ScaleTempo { .. }
             | WorkflowCommand::ChopClips { .. }
+            | WorkflowCommand::CleanupAutomation { .. }
             | WorkflowCommand::InsertTime { .. }
             | WorkflowCommand::RemoveTime { .. }
             | WorkflowCommand::LayerRecording { .. }

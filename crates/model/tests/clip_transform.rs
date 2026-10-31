@@ -379,3 +379,151 @@ fn chopping_audio_keeps_the_place_in_the_asset() {
         .collect();
     assert!(offsets.windows(2).all(|w| w[0] < w[1]), "{offsets:?}");
 }
+
+// ---- cleanup automation ---------------------------------------------------------------
+
+use atomik_model::ThinLevel;
+
+fn cleanup(ids: Vec<ClipId>, level: ThinLevel) -> Command {
+    wf(WorkflowCommand::CleanupAutomation { ids, level })
+}
+
+fn cutoff_doc(r: &atomik_device_sdk::Registry, points: Vec<AutomationPoint>) -> Document {
+    let mut d = synth_doc(r, notes_clip(0, BAR, vec![note(0, PPQ, 60, 0.8)]));
+    run(
+        &mut d,
+        r,
+        [
+            sc(SongCommand::AddAutomationLane {
+                device: key("synth"),
+                param: "filter.cutoff".into(),
+            }),
+            add_clip("synth", 1, auto_clip(0, 4 * BAR, points)),
+        ],
+    );
+    d
+}
+
+fn auto_points(d: &Document) -> Vec<AutomationPoint> {
+    let ClipContent::Automation(p) =
+        &d.doc().song.track(&key("synth")).unwrap().lanes[1].clips[0].content
+    else {
+        panic!("automation")
+    };
+    p.clone()
+}
+
+#[test]
+fn cleanup_removes_collinear_points_in_one_undo_step() {
+    let r = registry();
+    let pts: Vec<AutomationPoint> = (0..=16)
+        .map(|i| point(i * PPQ / 4, 100.0 + 50.0 * i as f32, Curve::Linear))
+        .collect();
+    let mut d = cutoff_doc(&r, pts.clone());
+    let id = d.doc().song.track(&key("synth")).unwrap().lanes[1].clips[0].id;
+    one_step(&mut d, &r, cleanup(vec![id], ThinLevel::Normal));
+    let kept = auto_points(&d);
+    assert_eq!(kept.len(), 2, "a ramp is its two ends");
+    assert_eq!((kept[0].tick, kept[1].tick), (0, 4 * PPQ));
+    // Nothing left to thin: the second run rejects.
+    assert!(d.apply(cleanup(vec![id], ThinLevel::Normal), &r).is_err());
+}
+
+#[test]
+fn cleanup_keeps_the_curve_within_the_tolerance_and_heavier_levels_remove_more() {
+    let r = registry();
+    // A wobble around a ramp: the range of the cutoff is large, so the levels differ.
+    let pts: Vec<AutomationPoint> = (0..=64)
+        .map(|i| {
+            let wobble = if i % 2 == 0 { 0.0 } else { 400.0 };
+            point(
+                i * PPQ / 4,
+                1000.0 + 100.0 * i as f32 + wobble,
+                Curve::Linear,
+            )
+        })
+        .collect();
+    let mut counts = Vec::new();
+    for level in ThinLevel::ALL {
+        let mut d = cutoff_doc(&r, pts.clone());
+        let id = d.doc().song.track(&key("synth")).unwrap().lanes[1].clips[0].id;
+        if d.apply(cleanup(vec![id], level), &r).is_err() {
+            counts.push(pts.len());
+            continue;
+        }
+        let kept = auto_points(&d);
+        counts.push(kept.len());
+        let p = r
+            .descriptor(SYNTH)
+            .unwrap()
+            .param_by_key("filter.cutoff")
+            .unwrap();
+        let desc = p.max - p.min;
+        let tol = level.fraction() * desc;
+        for p in &pts {
+            let tuples: Vec<(i64, f32, Curve)> =
+                kept.iter().map(|k| (k.tick, k.value, k.curve)).collect();
+            let v = atomik_model::song::automation_value_at(&tuples, p.tick as f64);
+            assert!(
+                (v - p.value).abs() <= tol * 1.001,
+                "{level:?} at {}",
+                p.tick
+            );
+        }
+    }
+    assert!(
+        counts[0] >= counts[1] && counts[1] >= counts[2],
+        "{counts:?}"
+    );
+    assert!(counts[2] < counts[0], "{counts:?}");
+}
+
+#[test]
+fn cleanup_leaves_notes_alone_and_rejects_a_selection_with_nothing_to_thin() {
+    let r = registry();
+    let mut d = cutoff_doc(
+        &r,
+        vec![
+            point(0, 100.0, Curve::Linear),
+            point(PPQ, 900.0, Curve::Linear),
+        ],
+    );
+    let note_id = d.doc().song.track(&key("synth")).unwrap().lanes[0].clips[0].id;
+    let before = d.doc().clone();
+    assert!(
+        d.apply(cleanup(vec![note_id], ThinLevel::Maximum), &r)
+            .is_err()
+    );
+    assert!(d.apply(cleanup(vec![], ThinLevel::Maximum), &r).is_err());
+    assert_eq!(d.doc(), &before);
+}
+
+proptest! {
+    /// Cleanup never moves the curve at an original point by more than the tolerance.
+    #[test]
+    fn cleanup_stays_within_the_tolerance(
+        values in proptest::collection::vec(20.0f32..18000.0, 3..60),
+        level in 0usize..3,
+    ) {
+        let r = registry();
+        let level = ThinLevel::ALL[level];
+        let pts: Vec<AutomationPoint> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| point(i as i64 * 40, *v, Curve::Linear))
+            .collect();
+        let mut d = cutoff_doc(&r, pts.clone());
+        let id = d.doc().song.track(&key("synth")).unwrap().lanes[1].clips[0].id;
+        if d.apply(cleanup(vec![id], level), &r).is_ok() {
+            let kept = auto_points(&d);
+            let p = r.descriptor(SYNTH).unwrap().param_by_key("filter.cutoff").unwrap();
+            let tol = level.fraction() * (p.max - p.min);
+            let tuples: Vec<(i64, f32, Curve)> =
+                kept.iter().map(|k| (k.tick, k.value, k.curve)).collect();
+            for q in &pts {
+                let v = atomik_model::song::automation_value_at(&tuples, q.tick as f64);
+                prop_assert!((v - q.value).abs() <= tol * 1.001 + 0.01);
+            }
+        }
+    }
+}

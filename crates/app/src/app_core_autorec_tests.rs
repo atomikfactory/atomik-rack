@@ -942,3 +942,87 @@ fn an_override_is_dropped_when_its_lane_is_removed_and_on_a_locate() {
     c.transport_action(TransportAction::Locate(0));
     assert_eq!(c.overridden_lanes(), 0);
 }
+
+// ---- tempo pass -----------------------------------------------------------------------
+
+fn tempo_drag(c: &mut AppCore<RecordingSink>, bpm: f64, merge: u64) {
+    c.apply_command(song(SongCommand::DragTempoMap {
+        map: vec![atomik_model::TempoEvent::step(0, bpm)],
+        merge,
+    }))
+    .unwrap();
+}
+
+fn tempo_map(c: &AppCore<impl EngineSink>) -> Vec<(i64, f64, bool)> {
+    c.doc()
+        .song
+        .tempo
+        .iter()
+        .map(|e| (e.tick, e.bpm, e.ramp))
+        .collect()
+}
+
+#[test]
+fn a_tempo_pass_records_the_drag_as_a_ramp_and_one_undo_restores_the_old_map() {
+    let mut c = core();
+    c.apply_command(song(SongCommand::SetTempoMap(vec![
+        atomik_model::TempoEvent::step(0, 100.0),
+    ])))
+    .unwrap();
+    c.toggle_tempo_arm();
+    assert!(c.tempo_armed());
+    at(&mut c, 0, 0);
+    record(&mut c);
+    // Eight bars of playback while the tempo is dragged from 100 to 130.
+    for step in 1..=32_i64 {
+        at(&mut c, step * BAR / 4, 0);
+        tempo_drag(&mut c, 100.0 + 30.0 * step as f64 / 32.0, 7);
+    }
+    release(&mut c);
+    at(&mut c, 8 * BAR, 0);
+    record(&mut c);
+    let map = tempo_map(&c);
+    assert!(map.len() >= 2, "a ramp-like series: {map:?}");
+    assert!(map.len() < 33, "thinned: {map:?}");
+    assert_eq!(map[0].0, 0);
+    assert!(
+        map[..map.len() - 1].iter().all(|e| e.2),
+        "ramps into the last: {map:?}"
+    );
+    assert!(
+        (map.last().unwrap().1 - 130.0).abs() < 0.01,
+        "ends at 130: {map:?}"
+    );
+    assert!(c.undo());
+    assert_eq!(
+        tempo_map(&c),
+        [(0, 100.0, false)],
+        "one undo restores the old map"
+    );
+}
+
+#[test]
+fn an_unarmed_take_leaves_a_tempo_drag_as_the_user_made_it() {
+    let mut c = core();
+    at(&mut c, 0, 0);
+    record(&mut c);
+    // Nothing is armed: the take refuses to start, the drag is a plain edit.
+    for step in 1..=8_i64 {
+        at(&mut c, step * BAR / 4, 0);
+        tempo_drag(&mut c, 100.0 + 30.0 * step as f64 / 8.0, 7);
+    }
+    release(&mut c);
+    assert_eq!(tempo_map(&c), [(0, 130.0, false)]);
+}
+
+#[test]
+fn a_tempo_take_that_never_moves_the_tempo_changes_nothing() {
+    let mut c = core();
+    let before = tempo_map(&c);
+    c.toggle_tempo_arm();
+    at(&mut c, 0, 0);
+    record(&mut c);
+    at(&mut c, 2 * BAR, 0);
+    record(&mut c);
+    assert_eq!(tempo_map(&c), before);
+}

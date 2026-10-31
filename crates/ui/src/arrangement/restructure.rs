@@ -5,7 +5,9 @@
 use super::{ArrangementView, workflow_cmd};
 use crate::action::UiAction;
 use crate::keymap::CommandOutcome;
-use atomik_model::{ClipId, Command, SongCommand, WorkflowCommand};
+use atomik_model::{
+    ClipContent, ClipId, Command, LaneKind, SongCommand, ThinLevel, WorkflowCommand,
+};
 
 impl ArrangementView {
     /// The restructuring commands; `None` for an id that is not one of them.
@@ -68,6 +70,18 @@ impl ArrangementView {
                     WorkflowCommand::ChopClips { ids, length }
                 }))
             }
+            "sequencer.cleanup_automation" => {
+                let level = ThinLevel::from_id(arg?)?;
+                let ids = self.cleanup_targets();
+                if ids.is_empty() {
+                    return Some(CommandOutcome::NotApplicable(
+                        "Select automation clips or tracks to clean up".into(),
+                    ));
+                }
+                Some(CommandOutcome::Handled(vec![workflow_cmd(
+                    WorkflowCommand::CleanupAutomation { ids, level },
+                )]))
+            }
             "sequencer.note_tool" => {
                 let Some(tool) = crate::note_tool_args::parse_note_tool(arg?, self.tool_seed)
                 else {
@@ -90,6 +104,37 @@ impl ArrangementView {
             }
             _ => None,
         }
+    }
+
+    /// The automation clips Cleanup Automation works on: the selected ones, else every one on the
+    /// automation lanes of the selected tracks.
+    fn cleanup_targets(&self) -> Vec<ClipId> {
+        let selected: Vec<ClipId> = self
+            .selected_in_order()
+            .iter()
+            .filter(|c| matches!(c.content, ClipContent::Automation(_)))
+            .map(|c| c.id)
+            .collect();
+        if !selected.is_empty() {
+            return selected;
+        }
+        let tracks = self.selected_tracks();
+        let mut ids = Vec::new();
+        for t in self
+            .song
+            .tracks
+            .iter()
+            .filter(|t| tracks.contains(&t.device))
+        {
+            for lane in t
+                .lanes
+                .iter()
+                .filter(|l| matches!(l.kind, LaneKind::Automation(_)))
+            {
+                ids.extend(lane.clips.iter().map(|c| c.id));
+            }
+        }
+        ids
     }
 
     /// `make` of the selected clips, or the message when none is selected.

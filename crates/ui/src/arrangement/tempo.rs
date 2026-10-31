@@ -486,6 +486,14 @@ impl ArrangementView {
             t.text_muted,
             Align::Start,
         );
+        sp::button(
+            c,
+            st,
+            self.tempo_arm_rect(),
+            "R",
+            self.tempo_armed.then_some(st.record),
+            self.hover == Some(Hit::TempoArm),
+        );
         let playhead_bpm = lane::tempo_at(&self.song.tempo, self.playhead);
         sp::label(
             c,

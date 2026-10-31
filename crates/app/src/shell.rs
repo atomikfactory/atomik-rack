@@ -1642,6 +1642,8 @@ impl<B: AudioBackend> Shell<B> {
         }
         self.core.set_knob_range(self.workflow.knob_range);
         self.core
+            .set_automation_thinning(self.workflow.automation_thinning.fraction());
+        self.core
             .view_mut()
             .set_value_tips(self.workflow.value_tooltips);
         self.apply_theme();
@@ -4633,7 +4635,8 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RemoveBars
             | AppCommand::ReverseClips(_)
             | AppCommand::ScaleTempo(_)
-            | AppCommand::ChopClips(_) => {
+            | AppCommand::ChopClips(_)
+            | AppCommand::CleanupAutomation(_) => {
                 self.track_command(command);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()

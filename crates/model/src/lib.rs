@@ -154,7 +154,7 @@ pub use audio_edit::{
 };
 pub use audio_notes::{FoundNote, NoteOptions, notes_clip};
 pub use audition::{AuditionSpan, audition_span};
-pub use automation_rec::WriteMode;
+pub use automation_rec::{ThinLevel, WriteMode};
 pub use automation_view::{AutomationCurves, ShownValues};
 pub use clip_io::{CLIP_FORMAT, CLIP_VERSION, ClipFile, load_clip_file, save_clip_file};
 pub use console::{
