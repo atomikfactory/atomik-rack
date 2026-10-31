@@ -83,3 +83,22 @@ fn the_stress_rack_keeps_its_counts() {
         (STRESS_DEVICES, STRESS_CABLES)
     );
 }
+
+#[test]
+fn a_lanes_song_has_exactly_the_requested_automation_lanes() {
+    use atomik_model::{LaneKind, stress::lanes_song_doc};
+    let reg = registry();
+    for want in [0, 1, 200] {
+        let doc = lanes_song_doc(&reg, want);
+        let got: usize = doc
+            .song
+            .tracks
+            .iter()
+            .flat_map(|t| &t.lanes)
+            .filter(|l| matches!(l.kind, LaneKind::Automation(_)))
+            .filter(|l| !l.clips.is_empty())
+            .count();
+        assert_eq!(got, want);
+        doc.validate().expect("valid");
+    }
+}

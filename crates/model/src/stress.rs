@@ -420,3 +420,78 @@ pub fn console_doc(registry: &Registry, strips: usize) -> RackDoc {
     }
     doc.doc().clone()
 }
+
+/// A song of poly-synth tracks (keys `t001`…) that together hold exactly `lanes` automation lanes
+/// (fewer when the poly-synth has too few parameters to automate; a lane per parameter, in
+/// descriptor order), every lane with one clip of four ramping points over a four-bar loop.
+/// Each track also plays a short note clip, so the synths are sounding while the lanes move.
+pub fn lanes_song_doc(registry: &Registry, lanes: usize) -> RackDoc {
+    const SYNTH: &str = "atomik.poly-synth";
+    let keys: Vec<&'static str> = registry
+        .get(SYNTH)
+        .map(|f| f.descriptor.params.iter().map(|p| p.key).collect())
+        .unwrap_or_default();
+    let per_track = keys.len().max(1);
+    let tracks = lanes.div_ceil(per_track);
+    let mut doc = Document::new(large_song_doc(registry, tracks, tracks, tracks * 8));
+    let bar = 4 * PPQ;
+    let mut made = 0;
+    'tracks: for i in 0..tracks {
+        let device = DeviceKey(format!("t{:03}", i + 1));
+        for param in &keys {
+            if made == lanes {
+                break 'tracks;
+            }
+            let added = doc.apply(
+                Command::Song(SongCommand::AddAutomationLane {
+                    device: device.clone(),
+                    param: (*param).into(),
+                }),
+                registry,
+            );
+            if added.is_err() {
+                // An internal or bank-driven parameter: not automatable, skip it.
+                continue;
+            }
+            let Some(lane) = doc
+                .doc()
+                .song
+                .track(&device)
+                .map(|t| t.lanes.len().saturating_sub(1))
+            else {
+                continue;
+            };
+            let points = (0..4)
+                .map(|n| AutomationPoint {
+                    tick: n * bar,
+                    // Out-of-range values are clamped to the parameter's range.
+                    value: if n % 2 == 0 { 0.25 } else { 0.75 },
+                    curve: Curve::Linear,
+                })
+                .collect();
+            let clip = Clip {
+                id: ClipId(0),
+                start: 0,
+                length: 16 * bar,
+                offset: 0,
+                loop_length: Some(4 * bar),
+                muted: false,
+                scale: None,
+                controllers: Vec::new(),
+                grid: None,
+                content: ClipContent::Automation(points),
+            };
+            let applied = doc.apply(
+                Command::Song(SongCommand::AddClip {
+                    device: device.clone(),
+                    lane,
+                    clip,
+                }),
+                registry,
+            );
+            debug_assert!(applied.is_ok(), "{applied:?}");
+            made += 1;
+        }
+    }
+    doc.doc().clone()
+}

@@ -65,7 +65,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 hound = "3.5.1"
 clap = { version = "4.6.7", features = ["derive"] }
 proptest = "1.12.0"
-criterion = "0.8.2"
+# Benchmarks only (dev-dependencies). No plotting or parallel-analysis features: the benches print
+# their own median and p99 and criterion keeps the raw samples under `target/criterion`.
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 rustfft = "6"
 sha2 = "0.11"
 
