@@ -91,7 +91,7 @@ fn project(notes: &[(i64, i64, u8, f32)], stack: Option<f32>) -> RackDoc {
         }),
     );
     for (lane, content) in [
-        (0, ClipContent::Notes(notes)),
+        (0, ClipContent::Notes(notes.into())),
         (
             1,
             ClipContent::Automation(vec![
@@ -228,7 +228,7 @@ fn a_bounce_through_a_stack_equals_the_edited_clip_and_is_bit_identical_across_b
 fn a_stale_entry_plays_the_track_device_in_a_bounce() {
     let plain = bounce(&project(&NOTES, None), 512, 0);
     let mut doc = project(&NOTES, Some(12.0));
-    doc.song
+    doc.song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("synth"))
@@ -313,7 +313,7 @@ fn two_tracks_that_enter_at_one_player_share_its_engine_track() {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(BAR / 2, PPQ, 64, 0.5)]),
+                content: ClipContent::Notes(vec![Note::new(BAR / 2, PPQ, 64, 0.5)].into()),
             },
         }),
     );

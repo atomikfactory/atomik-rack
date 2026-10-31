@@ -88,7 +88,7 @@ fn add_clip(c: &mut AppCore<RecordingSink>, k: &str, start: i64, notes: Vec<Note
             ControllerKind::Cc(1),
             vec![point(0, vel(64)), point(PPQ, 1.0)],
         )],
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     };
     c.apply_command(Command::Song(SongCommand::AddClip {
         device: key(k),
@@ -105,7 +105,7 @@ fn vel(v: u8) -> f32 {
 
 fn notes_in(c: &AppCore<RecordingSink>, id: ClipId) -> Vec<Note> {
     match &c.doc().song.clip(id).unwrap().2.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         _ => panic!("not notes"),
     }
 }
@@ -429,7 +429,7 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
         grid: None,
         scale: None,
         controllers: Vec::new(),
-        content: ClipContent::Notes(vec![Note::new(PPQ, PPQ, 64, vel(100))]),
+        content: ClipContent::Notes(vec![Note::new(PPQ, PPQ, 64, vel(100))].into()),
     };
     c.apply_command(Command::Song(SongCommand::AddClip {
         device: key("pad"),

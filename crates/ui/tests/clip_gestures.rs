@@ -194,7 +194,7 @@ fn the_constrain_role_keeps_the_start_while_a_clip_moves() {
 fn relative_snap_moves_a_clip_by_whole_steps_and_keeps_its_distance_from_the_grid() {
     let (mut doc, reg) = (song_doc(), registry());
     // Clip 5 starts 100 ticks off the grid.
-    doc.song.tracks[0].lanes[0].clips[1].start += 100;
+    doc.song_mut().tracks[0].lanes[0].clips[1].start += 100;
     let mut v = arrangement(&doc, &reg);
     v.set_roles(Roles::defaults(Os::Windows));
     v.set_snap(Snap::Beat);
@@ -410,7 +410,7 @@ fn contents(actions: &[UiAction]) -> Vec<Vec<Note>> {
                 id: ClipId(1),
                 content: ClipContent::Notes(n),
                 ..
-            } => Some(n),
+            } => Some(n.into_vec()),
             _ => None,
         })
         .collect()

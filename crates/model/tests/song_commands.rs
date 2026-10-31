@@ -418,7 +418,7 @@ fn set_clip_content_replaces_and_validates_kind() {
         .unwrap();
     let mut d = Document::new(d.doc().clone());
     let before = d.doc().clone();
-    let notes = ClipContent::Notes(vec![note(0, 5, 1, 0.25)]);
+    let notes = ClipContent::Notes(vec![note(0, 5, 1, 0.25)].into());
     let ops = d
         .apply(
             sc(SongCommand::SetClipContent {
@@ -447,9 +447,9 @@ fn set_clip_content_replaces_and_validates_kind() {
     undo_all_restores(&mut d, &before, &reg);
     for (id, content) in [
         (1, ClipContent::Automation(vec![])),
-        (2, ClipContent::Notes(vec![])),
-        (1, ClipContent::Notes(vec![note(0, 5, 200, 0.5)])),
-        (3, ClipContent::Notes(vec![])),
+        (2, ClipContent::Notes(vec![].into())),
+        (1, ClipContent::Notes(vec![note(0, 5, 200, 0.5)].into())),
+        (3, ClipContent::Notes(vec![].into())),
     ] {
         rejects(
             &mut d,
@@ -479,7 +479,7 @@ fn clip_drags_with_the_same_merge_id_merge_into_one_step() {
     d.apply(
         sc(SongCommand::SetClipContent {
             id: ClipId(1),
-            content: ClipContent::Notes(vec![note(0, 1, 1, 1.0)]),
+            content: ClipContent::Notes(vec![note(0, 1, 1, 1.0)].into()),
             merge: Some(5),
         }),
         &reg,
@@ -674,7 +674,7 @@ fn set_tempo_keeps_the_song_tempo_in_sync() {
     assert_tempo_invariant(d.doc());
     d.undo(&reg).unwrap();
     assert_tempo_invariant(d.doc());
-    assert_eq!(d.doc().song, empty_song(120.0));
+    assert_eq!(*d.doc().song, empty_song(120.0));
 }
 
 #[test]

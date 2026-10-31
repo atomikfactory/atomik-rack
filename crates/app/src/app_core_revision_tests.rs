@@ -108,7 +108,7 @@ fn step(c: &mut AppCore<RecordingSink>, rng: &mut Rng, steps: u32) {
             let key = 40 + rng.next(40) as u8;
             let command = Command::Song(SongCommand::SetClipContent {
                 id: ClipId(1),
-                content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, key, 0.7)]),
+                content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, key, 0.7)].into()),
                 merge: None,
             });
             if rng.next(2) == 0 {
@@ -232,7 +232,7 @@ fn start(c: &mut AppCore<RecordingSink>) {
 fn open_clip_notes(c: &AppCore<RecordingSink>) -> Vec<Note> {
     match c.doc().song.clip(ClipId(1)) {
         Some((_, _, clip)) => match &clip.content {
-            ClipContent::Notes(notes) => notes.clone(),
+            ClipContent::Notes(notes) => notes.to_vec(),
             _ => Vec::new(),
         },
         None => Vec::new(),

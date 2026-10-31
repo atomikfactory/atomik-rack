@@ -23,7 +23,7 @@ use support::*;
 fn doc3() -> RackDoc {
     let mut doc = song_doc();
     let keys = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("keys"))
@@ -41,7 +41,7 @@ fn doc3() -> RackDoc {
         vec![n(0, PPQ, 67, 0.7)],
     )]));
     let bass = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("bass"))
@@ -50,7 +50,7 @@ fn doc3() -> RackDoc {
         1,
         Lane::notes().with_clips(vec![notes_clip(13, 0, BAR, vec![n(0, PPQ, 40, 0.7)])]),
     );
-    doc.song.next_clip_id = 14;
+    doc.song_mut().next_clip_id = 14;
     doc
 }
 
@@ -146,7 +146,7 @@ fn rows_extra_note_lanes_stay_when_the_track_collapses_its_automation_lanes() {
 #[test]
 fn rows_a_track_height_change_applies_to_every_note_lane() {
     let (mut doc, reg, mut v) = setup();
-    doc.song.track_heights.insert(key("keys"), 90);
+    doc.song_mut().track_heights.insert(key("keys"), 90);
     v.sync(&doc, &reg);
     let h = |lane| v.lane_rect(&key("keys"), lane).unwrap().height();
     assert_eq!((h(0), h(1), h(2)), (90.0, 90.0, 90.0));
@@ -243,7 +243,7 @@ fn lane_mute_button_on_a_lane_header_mutes_that_lane() {
 #[test]
 fn lane_mute_button_on_a_muted_lane_unmutes_it() {
     let (mut doc, reg, mut v) = setup();
-    doc.song.tracks[2].lanes[1].muted = true;
+    doc.song_mut().tracks[2].lanes[1].muted = true;
     v.sync(&doc, &reg);
     let at = v
         .note_lane_button_center(&key("keys"), 1, LaneButton::Mute)
@@ -289,7 +289,7 @@ fn lane_chip_is_absent_with_one_note_lane() {
 #[test]
 fn lane_chip_is_hidden_in_a_compact_header() {
     let mut doc = doc3();
-    doc.song.track_heights.insert(key("keys"), 40);
+    doc.song_mut().track_heights.insert(key("keys"), 40);
     let reg = registry();
     let v = arrangement(&doc, &reg);
     assert!(
@@ -307,7 +307,7 @@ fn lane_chip_is_hidden_in_a_compact_header() {
 fn lane_mute_paints_the_clips_of_a_muted_lane_dimmed() {
     let (mut doc, reg, mut v) = setup();
     let before = painted(&mut v, &doc);
-    doc.song.tracks[2].lanes[1].muted = true;
+    doc.song_mut().tracks[2].lanes[1].muted = true;
     v.sync(&doc, &reg);
     let after = painted(&mut v, &doc);
     assert_ne!(before, after);
@@ -519,7 +519,7 @@ fn rename_unchanged_or_cancelled_emits_nothing() {
 #[test]
 fn rename_a_blank_name_resets_a_named_lane() {
     let (mut doc, reg, mut v) = setup();
-    doc.song.tracks[2].lanes[1].name = Some("Strings".into());
+    doc.song_mut().tracks[2].lanes[1].name = Some("Strings".into());
     v.sync(&doc, &reg);
     assert!(v.begin_lane_rename(&key("keys"), 1));
     assert_eq!(v.org_edit_text(), Some("Strings"));

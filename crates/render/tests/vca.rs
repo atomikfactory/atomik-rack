@@ -44,7 +44,7 @@ fn song() -> Document {
                     scale: None,
                     controllers: Vec::new(),
                     grid: None,
-                    content: ClipContent::Notes(vec![Note::new(0, length, midi, 0.8)]),
+                    content: ClipContent::Notes(vec![Note::new(0, length, midi, 0.8)].into()),
                 },
             }),
         ] {

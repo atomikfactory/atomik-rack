@@ -690,7 +690,7 @@ pub struct ArrangementView {
     scroll_y: f64,
     snap: Snap,
     vp: ViewportState,
-    song: Song,
+    song: Arc<Song>,
     synced: bool,
     /// The document revision [`Self::sync_at`] last synced at (`None` after a plain [`Self::sync`]).
     synced_rev: Option<u64>,
@@ -801,7 +801,7 @@ struct DropHover {
 impl ArrangementView {
     /// An empty view; call [`Self::set_bounds`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
-        let song = atomik_model::empty_song(120.0);
+        let song = Arc::new(atomik_model::empty_song(120.0));
         Self {
             st: SeqTheme::from_theme(&theme),
             bounds: Rect::new(0.0, 0.0, 800.0, 300.0),
@@ -1687,7 +1687,7 @@ impl ArrangementView {
             })
             .collect();
         if self.synced
-            && self.song == doc.song
+            && (Arc::ptr_eq(&self.song, &doc.song) || self.song == doc.song)
             && self.vca_chips == chips
             && self.device_sig == sig
             && self.assets == doc.assets
@@ -6275,7 +6275,7 @@ fn new_clip_cmd(
     let content = if automation {
         ClipContent::Automation(Vec::new())
     } else {
-        ClipContent::Notes(Vec::new())
+        ClipContent::Notes(Vec::new().into())
     };
     song_cmd(SongCommand::AddClip {
         device,

@@ -379,6 +379,7 @@ use atomik_device_sdk::{LoopMode, TriggerMode};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 mod read_clip;
 mod read_console;
@@ -590,13 +591,13 @@ fn load_value(
         doc.assets = load_assets(assets, &root.field("assets"))?;
     }
     check_device_zones(&doc, &root.field("devices"), registry)?;
-    doc.song = load_song(
+    doc.song = Arc::new(load_song(
         &obj["song"],
         &root.field("song"),
         (&doc, registry),
         version,
         warnings,
-    )?;
+    )?);
     if version == 1 {
         return Ok(migrate_v1(doc, registry, warnings));
     }

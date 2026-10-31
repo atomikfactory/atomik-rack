@@ -39,8 +39,8 @@ fn playback(device: &str, p: f32) -> TrackLevel {
 fn setup(height: Option<u16>) -> (RackDoc, ArrangementView) {
     let (mut doc, reg) = (audio_doc(), registry());
     if let Some(h) = height {
-        doc.song.track_heights.insert(key(GUITAR), h);
-        doc.song.track_heights.insert(key(VOX), h);
+        doc.song_mut().track_heights.insert(key(GUITAR), h);
+        doc.song_mut().track_heights.insert(key(VOX), h);
     }
     let v = audio_arrangement(&doc, &reg);
     (doc, v)

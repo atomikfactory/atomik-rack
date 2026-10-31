@@ -69,7 +69,7 @@ fn meter_maps(actions: &[UiAction]) -> Vec<Vec<MeterEvent>> {
 
 fn three_points() -> RackDoc {
     let mut doc = song_doc();
-    doc.song.tempo = vec![
+    doc.song_mut().tempo = vec![
         TempoEvent::step(0, 100.0),
         TempoEvent::step(2 * BAR, 140.0),
         TempoEvent::step(4 * BAR, 90.0),
@@ -118,7 +118,7 @@ fn points_sit_at_their_tick_and_bpm() {
 #[test]
 fn the_lane_paints_its_scale_and_the_ruler_the_meter_tags() {
     let mut doc = three_points();
-    doc.song.meter = vec![mev(1, 4, 4), mev(3, 3, 4), mev(5, 7, 8)];
+    doc.song_mut().meter = vec![mev(1, 4, 4), mev(3, 3, 4), mev(5, 7, 8)];
     let mut v = with_lane(&doc);
     let mut dl = DisplayList::new();
     v.paint(&mut dl, &doc, &registry());
@@ -360,7 +360,7 @@ fn the_context_menu_commands_ramp_set_and_delete() {
 #[test]
 fn the_lane_menu_adds_a_point_on_the_curve() {
     let mut doc = song_doc();
-    doc.song.tempo = vec![ramp(0, 60.0), TempoEvent::step(2 * BAR, 180.0)];
+    doc.song_mut().tempo = vec![ramp(0, 60.0), TempoEvent::step(2 * BAR, 180.0)];
     let mut v = with_lane(&doc);
     let rect = v.tempo_lane_rect();
     let p = Point::new(v.tick_to_x(BAR), rect.y0 + 5.0);
@@ -412,7 +412,7 @@ fn a_ruler_menu_inserts_a_meter_change_at_the_bar_under_the_pointer() {
 
 fn with_changes() -> RackDoc {
     let mut doc = song_doc();
-    doc.song.meter = vec![mev(1, 4, 4), mev(3, 3, 4), mev(6, 6, 8)];
+    doc.song_mut().meter = vec![mev(1, 4, 4), mev(3, 3, 4), mev(6, 6, 8)];
     doc
 }
 
@@ -470,7 +470,7 @@ fn the_first_meter_has_no_drag_and_the_commands_set_and_delete() {
 #[test]
 fn bar_one_can_be_set_through_the_ruler_menu() {
     let mut doc = song_doc();
-    doc.song.meter = vec![mev(1, 7, 8)];
+    doc.song_mut().meter = vec![mev(1, 7, 8)];
     let mut v = with_lane(&doc);
     let tag = v.meter_tag_center(0).unwrap();
     handle(&mut v, &doc, &[down_with(tag, PointerButton::Secondary, 1)]);
@@ -487,7 +487,7 @@ fn bar_one_can_be_set_through_the_ruler_menu() {
 #[test]
 fn the_snap_grid_and_new_clip_length_follow_the_meter_map() {
     let mut doc = song_doc();
-    doc.song.meter = vec![mev(1, 4, 4), mev(2, 3, 4)];
+    doc.song_mut().meter = vec![mev(1, 4, 4), mev(2, 3, 4)];
     let reg = registry();
     let mut v = arrangement(&doc, &reg);
     v.set_snap(Snap::Bar);
@@ -512,7 +512,7 @@ fn the_snap_grid_and_new_clip_length_follow_the_meter_map() {
 #[test]
 fn the_ruler_click_snaps_the_locate_to_the_meter_map() {
     let mut doc = song_doc();
-    doc.song.meter = vec![mev(1, 4, 4), mev(2, 3, 4)];
+    doc.song_mut().meter = vec![mev(1, 4, 4), mev(2, 3, 4)];
     let reg = registry();
     let mut v = arrangement(&doc, &reg);
     v.set_snap(Snap::Bar);
@@ -533,7 +533,7 @@ fn the_ruler_click_snaps_the_locate_to_the_meter_map() {
 #[test]
 fn the_transport_shows_and_edits_the_tempo_in_effect_at_the_playhead() {
     let mut doc = three_points();
-    doc.song.meter = vec![mev(1, 4, 4), mev(3, 3, 4)];
+    doc.song_mut().meter = vec![mev(1, 4, 4), mev(3, 3, 4)];
     let reg = registry();
     let mut bar = transport_bar(&doc, &reg);
     let at = |bar: &mut atomik_ui::TransportBar, position: i64| {
@@ -578,7 +578,7 @@ fn the_transport_shows_and_edits_the_tempo_in_effect_at_the_playhead() {
 #[test]
 fn begin_tempo_edit_types_into_a_chosen_event_and_a_ramp_shows_the_tempo_inside_it() {
     let mut doc = song_doc();
-    doc.song.tempo = vec![ramp(0, 60.0), TempoEvent::step(2 * BAR, 180.0)];
+    doc.song_mut().tempo = vec![ramp(0, 60.0), TempoEvent::step(2 * BAR, 180.0)];
     let reg = registry();
     let mut bar = transport_bar(&doc, &reg);
     bar.set_state(TransportState {

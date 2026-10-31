@@ -545,7 +545,7 @@ fn resolve(op: &Step, doc: &RackDoc, reg: &Registry) -> Option<Command> {
 /// The document as compared across undo and redo (see the module docs).
 fn norm(doc: &RackDoc) -> RackDoc {
     let mut d = doc.clone();
-    d.song.track_heights.clear();
+    d.song_mut().track_heights.clear();
     d
 }
 

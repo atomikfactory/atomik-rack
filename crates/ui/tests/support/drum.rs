@@ -73,10 +73,10 @@ pub fn drum_doc_with(clip: Option<Clip>) -> RackDoc {
     doc.assets
         .insert(SNARE_HARD.into(), meta("snare_hard.flac"));
     let clips = clip.into_iter().collect();
-    doc.song
+    doc.song_mut()
         .tracks
         .push(track("drums", vec![Lane::notes().with_clips(clips)]));
-    doc.song.next_clip_id = 100;
+    doc.song_mut().next_clip_id = 100;
     doc
 }
 
@@ -177,7 +177,7 @@ pub fn note_lists(actions: &[UiAction]) -> Vec<(Vec<Note>, Option<u64>)> {
                 content: atomik_model::ClipContent::Notes(n),
                 merge,
                 ..
-            })) => Some((n.clone(), *merge)),
+            })) => Some((n.to_vec(), *merge)),
             _ => None,
         })
         .collect()

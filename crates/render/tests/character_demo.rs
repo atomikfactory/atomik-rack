@@ -169,7 +169,7 @@ impl Builder {
                 clip: Clip {
                     start,
                     length,
-                    ..clip(ClipContent::Notes(notes))
+                    ..clip(ClipContent::Notes(notes.into()))
                 },
             }));
         }
@@ -560,7 +560,7 @@ fn the_preset_and_transform_lanes_change_the_sound_from_their_first_step() {
     // and its mapped Transform at the knob.
     let mut flat = doc.clone();
     let track = flat
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("lead"))
@@ -577,7 +577,7 @@ fn the_preset_and_transform_lanes_change_the_sound_from_their_first_step() {
     // preset lane's first change (bar 2, a step to `swirl`) must not be needed for that.
     let mut only_transform = doc.clone();
     let track = only_transform
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("lead"))

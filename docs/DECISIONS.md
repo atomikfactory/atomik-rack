@@ -202,9 +202,12 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Implications.** An unbounded history grows with every destructive audio edit. A byte budget bounds memory regardless of the kind of edit, and needs a visible note that older steps were dropped.
 
-**Decision.** Working assumption: a byte budget (for example 256 MiB) with a "history trimmed" note.
+**Decision.** Working assumption: both caps, whichever is hit first. 1,000 steps and an estimated
+512 MiB (`MAX_UNDO_STEPS`, `MAX_UNDO_BYTES`); the oldest steps go first, the latest step always
+stays, and the assets only dropped steps held leave the pool at the next prune. There is no
+"history trimmed" note yet.
 
-**Status.** Default (not yet confirmed). Recorded 2026-10-30 as the working assumption; awaiting the maintainer's review.
+**Status.** Default (not yet confirmed). Recorded 2026-10-30; implemented with these numbers on 2026-10-31; awaiting the maintainer's review.
 
 ## L. Format version cadence
 

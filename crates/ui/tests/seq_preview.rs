@@ -61,7 +61,8 @@ fn preview_pngs() {
 
     // The scale bar, the scale tint and the folds.
     let mut scaled = doc.clone();
-    scaled.song.tracks[0].lanes[0].clips[0].scale = Some(Scale::new(0, ScaleKind::NaturalMinor));
+    scaled.song_mut().tracks[0].lanes[0].clips[0].scale =
+        Some(Scale::new(0, ScaleKind::NaturalMinor));
     for (name, fold) in [
         ("piano_roll_scale.png", Fold::Off),
         ("piano_roll_scale_fold.png", Fold::Scale),

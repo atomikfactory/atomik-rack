@@ -710,7 +710,7 @@ impl MidiTrack {
             grid: None,
             scale: None,
             controllers: self.controllers,
-            content: ClipContent::Notes(self.notes),
+            content: ClipContent::Notes(self.notes.into()),
         }
     }
 }

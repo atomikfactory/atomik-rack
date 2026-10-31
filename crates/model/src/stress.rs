@@ -384,7 +384,7 @@ pub fn large_song_doc(registry: &Registry, tracks: usize, clips: usize, notes: u
                     scale: None,
                     controllers: Vec::new(),
                     grid: None,
-                    content: ClipContent::Notes(list),
+                    content: ClipContent::Notes(list.into()),
                 },
             }),
         );

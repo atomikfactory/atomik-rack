@@ -108,6 +108,6 @@ pub fn notes_clip(
         grid: None,
         scale: None,
         controllers: Vec::new(),
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     })
 }

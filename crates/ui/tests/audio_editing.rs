@@ -25,7 +25,7 @@ fn p(frame: u64, gain_db: f32) -> GainPoint {
 
 /// The content of clip `id` replaced by `f(content)`.
 fn edit_clip(doc: &mut RackDoc, id: u64, f: impl Fn(&mut AudioClipContent)) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(id)
@@ -330,7 +330,7 @@ fn env_at_24000() -> f32 {
 fn overlap_doc(xfade: Option<FadeCurve>) -> RackDoc {
     let mut doc = audio_doc();
     // Clip 11 moves to bar 2 and overlaps the last bar of clip 10 (bars 1..3).
-    doc.song.tracks[1].lanes[0].clips[1].start = 2 * BAR;
+    doc.song_mut().tracks[1].lanes[0].clips[1].start = 2 * BAR;
     edit_clip(&mut doc, 11, |a| a.xfade = xfade);
     doc
 }

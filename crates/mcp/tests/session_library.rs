@@ -98,7 +98,7 @@ fn project(dir: &Path) -> (String, u64) {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, 3_840, 60, 0.8)]),
+                content: ClipContent::Notes(vec![Note::new(0, 3_840, 60, 0.8)].into()),
             },
         }),
         &r,

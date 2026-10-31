@@ -284,7 +284,7 @@ fn each_automated_parameter_is_heard_in_the_bounce() {
     for lane in 1..=3usize {
         let mut cleared = doc.clone();
         let track = cleared
-            .song
+            .song_mut()
             .tracks
             .iter_mut()
             .find(|t| t.device == key("box"))

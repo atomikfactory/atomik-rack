@@ -71,7 +71,7 @@ fn clip_edit(
         lane,
         old: Some(c.clone()),
         new: Some(Clip {
-            content: ClipContent::Notes(out.notes),
+            content: ClipContent::Notes(out.notes.into()),
             ..c.clone()
         }),
     }))

@@ -304,9 +304,21 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
 - **Errors.** A file that cannot be read is `ModelError::Load { path, message }` (the JSON path
   and what is wrong there), a batch that is empty or holds a command that cannot be batched is
   `BadBatch`, and a command that names an asset the pool lacks is `MissingAsset`.
-- **The undo history has no cap.** Every undo step is kept for the life of the document, and a
-  new, opened or replaced document starts with none. A budget is an open decision
-  ([DECISIONS.md](DECISIONS.md#k-undo-history-budget)).
+- **The undo history is bounded.** A document keeps at most `MAX_UNDO_STEPS` (1,000) undo steps
+  and an estimated `MAX_UNDO_BYTES` (512 MiB) of what they hold (`Edit::approx_bytes`: clips,
+  devices and lists count by size, and the notes of a clip count in full for every step that holds
+  the clip). The oldest steps are forgotten first, the latest step is always kept, and the assets
+  only forgotten steps referenced leave the pool at the next `prune_unreferenced_assets`.
+  `Document::set_undo_limits` changes the limits. A new, opened or replaced document starts with
+  no history. The defaults are a working assumption
+  ([DECISIONS.md](DECISIONS.md#k-undo-history-budget)). Undo runs on the step itself
+  (`Edit::invert` swaps old and new in place, then back), so it copies none of the step.
+- **Copies of a document are cheap.** `RackDoc::song` is an `Arc<Song>` and the notes of a note
+  clip are a `NoteList` (shared, copied on first write), so cloning a document, a planner scratch
+  or a clip copies no note: a rack, console or workflow command costs the same on a song of a
+  million notes as on an empty one. Read the song through `Deref`; write it through
+  `RackDoc::song_mut`, which copies the song's tracks, lanes and clips (never their notes) only
+  while another copy shares it.
 
 ### 2.3 Audio import
 

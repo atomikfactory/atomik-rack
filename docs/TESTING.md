@@ -244,6 +244,7 @@ cases.
 | `cargo bench -p atomik-devices --bench process` | The cost of 256 batches of every built-in device |
 | `cargo bench -p atomik-dsp --bench blocks` | A 4096-sample block through a biquad, a state-variable filter, a chorus and a compressor |
 | `cargo bench -p atomik-model --bench document` | Save, load, validate, clone, expand, and an edit with its undo on a rack, a song and a large song |
+| `cargo bench -p atomik-model --bench commands` | Add a device, an audio track, a channel, a cable and a paste, each with its undo, on songs of 10^3, 10^5 and 10^6 notes (the curves must stay flat), and an add in a rack with a full container |
 
 The documents come from `atomik_model::stress` (`stress_doc`, `stress_song_doc`, `large_song_doc`,
 `lanes_song_doc`, `console_doc`), which the `--stress` options of the app use too, so a bench and a

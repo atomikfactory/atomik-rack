@@ -115,7 +115,7 @@ fn play(d: &mut Document) {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }),
     );

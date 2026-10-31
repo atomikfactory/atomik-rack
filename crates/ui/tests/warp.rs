@@ -15,7 +15,7 @@ use support::audio::*;
 use support::*;
 
 fn edit_clip(doc: &mut RackDoc, id: u64, f: impl Fn(&mut AudioClipContent)) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(id)

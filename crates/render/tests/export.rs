@@ -146,7 +146,7 @@ fn a_song_without_anything_after_the_end_gets_no_tail() {
     // keeping the End: the output is silence, so no frame is above the floor and the file is
     // cut to the End.
     let mut doc = demo();
-    for track in &mut doc.song.tracks {
+    for track in &mut doc.song_mut().tracks {
         track.muted = true;
     }
     let export = render(&doc, &song(DEFAULT_TAIL_SECONDS));
@@ -157,9 +157,9 @@ fn a_song_without_anything_after_the_end_gets_no_tail() {
 #[test]
 fn a_loop_export_is_exactly_the_frames_between_the_locators_and_has_no_tail() {
     let mut doc = demo();
-    doc.song.loop_range = (BAR, 3 * BAR + BAR / 4);
+    doc.song_mut().loop_range = (BAR, 3 * BAR + BAR / 4);
     // Whether the loop is on does not matter.
-    doc.song.loop_enabled = false;
+    doc.song_mut().loop_enabled = false;
     let export = render(
         &doc,
         &ExportRequest {
@@ -201,7 +201,7 @@ fn an_empty_loop_or_song_is_refused_and_a_bad_tail_too() {
         )
     };
     let mut doc = demo();
-    doc.song.loop_range = (BAR, BAR);
+    doc.song_mut().loop_range = (BAR, BAR);
     let err = run(
         &doc,
         &ExportRequest {
@@ -276,7 +276,7 @@ fn the_same_project_exports_the_same_bytes_and_the_dither_choice_changes_them() 
 #[test]
 fn another_sample_rate_converts_the_loop_to_the_rounded_frame_count() {
     let mut doc = demo();
-    doc.song.loop_range = (0, BAR);
+    doc.song_mut().loop_range = (0, BAR);
     let export = render(
         &doc,
         &ExportRequest {

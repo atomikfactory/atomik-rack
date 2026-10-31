@@ -115,7 +115,7 @@ fn only() -> RackDoc {
     let mut doc = rack_doc(false);
     doc.devices.retain(|d| d.key == key("gen"));
     doc.cables.clear();
-    doc.song.tracks.clear();
+    doc.song_mut().tracks.clear();
     doc
 }
 

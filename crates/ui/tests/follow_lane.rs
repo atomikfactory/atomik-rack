@@ -14,7 +14,7 @@ const CUTOFF: &str = "filter.cutoff";
 
 fn folded_doc() -> RackDoc {
     let mut doc = song_doc();
-    doc.song
+    doc.song_mut()
         .org
         .folded_lanes
         .insert((key("bass"), CUTOFF.to_owned()));
@@ -31,7 +31,7 @@ fn tall_doc() -> RackDoc {
         if n == 11 {
             lanes.push(Lane::automation(CUTOFF));
         }
-        doc.song.tracks.push(track(&k, lanes));
+        doc.song_mut().tracks.push(track(&k, lanes));
     }
     doc
 }

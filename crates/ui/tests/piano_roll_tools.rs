@@ -31,7 +31,7 @@ fn lists(actions: &[UiAction]) -> Vec<(Vec<Note>, Option<u64>)> {
                 id: ClipId(1),
                 content: ClipContent::Notes(n),
                 merge,
-            } => Some((n, merge)),
+            } => Some((n.into_vec(), merge)),
             _ => None,
         })
         .collect()

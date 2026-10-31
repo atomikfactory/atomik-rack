@@ -201,7 +201,7 @@ impl RackView {
             devices: container.devices.clone(),
             columns: 1,
             cables: container.cables.clone(),
-            song: atomik_model::empty_song(doc.tempo_bpm),
+            song: atomik_model::empty_song(doc.tempo_bpm).into(),
             console: Console::default(),
             midi_maps: Vec::new(),
             macros: Default::default(),

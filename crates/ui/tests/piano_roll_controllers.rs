@@ -22,7 +22,7 @@ fn pt(tick: i64, value: f32, curve: Curve) -> AutomationPoint {
 fn setup(lanes: Vec<ControllerLane>) -> (PianoRollView, Document, Registry) {
     let reg = registry();
     let mut doc = song_doc();
-    doc.song.tracks[0].lanes[0].clips[0].controllers = lanes;
+    doc.song_mut().tracks[0].lanes[0].clips[0].controllers = lanes;
     let d = Document::new(doc);
     let mut v = piano_roll(d.doc(), &reg);
     v.set_controllers_open(true);

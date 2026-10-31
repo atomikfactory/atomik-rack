@@ -38,7 +38,7 @@
 
 use crate::song::{MAX_TICK, Note, StepResolution};
 use atomik_core::PPQ;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Most grooves a song may hold (the built-in ones are not counted).
 pub const MAX_GROOVES: usize = 64;
@@ -404,12 +404,25 @@ pub fn quantize_notes(
 
 /// Claims the first free `(tick, key)` at or after `tick`, or, when everything up to the last tick
 /// is taken, the nearest free one before it: a note never leaves `0..=MAX_TICK`.
-fn free_tick(taken: &mut BTreeSet<(i64, u8)>, tick: i64, key: u8) -> i64 {
-    let at = (tick..=MAX_TICK)
-        .chain((0..tick).rev())
+///
+/// `resume` remembers, per `(key, tick)` asked for, where the last search ended: the ticks from
+/// there back to the one asked for are all taken (the set only grows), so a pile of notes that
+/// land on one tick costs one step each instead of a walk over the whole pile.
+fn free_tick(
+    taken: &mut BTreeSet<(i64, u8)>,
+    resume: &mut BTreeMap<(u8, i64), i64>,
+    tick: i64,
+    key: u8,
+) -> i64 {
+    let from = resume.get(&(key, tick)).copied().unwrap_or(tick);
+    let at = (from..=MAX_TICK)
         .find(|t| !taken.contains(&(*t, key)))
+        .or_else(|| (0..tick).rev().find(|t| !taken.contains(&(*t, key))))
         .unwrap_or(tick);
     taken.insert((at, key));
+    if at >= tick {
+        resume.insert((key, tick), at + 1);
+    }
     at
 }
 
@@ -418,13 +431,14 @@ fn free_tick(taken: &mut BTreeSet<(i64, u8)>, tick: i64, key: u8) -> i64 {
 fn resolve(old: &[Note], selected: Option<&BTreeSet<usize>>, moved: Vec<Note>) -> Quantized {
     let is_moved = |i: usize| selected.is_none_or(|s| s.contains(&i));
     let mut taken: BTreeSet<(i64, u8)> = BTreeSet::new();
+    let mut resume: BTreeMap<(u8, i64), i64> = BTreeMap::new();
     let mut placed: Vec<(Note, usize)> = Vec::with_capacity(moved.len());
     for pass in [false, true] {
         for (i, mut n) in moved.iter().copied().enumerate() {
             if is_moved(i) != pass {
                 continue;
             }
-            n.tick = free_tick(&mut taken, n.tick, n.key);
+            n.tick = free_tick(&mut taken, &mut resume, n.tick, n.key);
             placed.push((n, i));
         }
     }
@@ -521,6 +535,25 @@ mod tests {
     fn hash64_matches_the_dsp_crate_pinned_value() {
         assert_eq!(hash64(0, 0, 0), 0x2382_75BC_38FC_BE91);
         assert_ne!(hash64(1, 0, 0), hash64(0, 1, 0));
+    }
+
+    #[test]
+    fn a_pile_of_notes_on_one_tick_takes_the_following_ticks_in_input_order() {
+        // 3 000 notes of one key all snap to tick 0: each takes the next free tick, the way a
+        // walk from tick 0 for every note would find them.
+        let notes: Vec<Note> = (0..3000).map(|_| note(10, 60)).collect();
+        let out = q(&notes, &params(), None);
+        let ticks: Vec<i64> = out.iter().map(|n| n.tick).collect();
+        assert_eq!(ticks, (0..3000).collect::<Vec<i64>>());
+        // A note of another key on the same tick is not pushed by the pile.
+        let mut mixed = notes.clone();
+        mixed.push(note(10, 61));
+        let out = quantize_notes(&mixed, None, 0, 1, &params(), None);
+        assert_eq!(out.notes.iter().filter(|n| n.key == 61).count(), 1);
+        assert_eq!(
+            out.notes.iter().find(|n| n.key == 61).map(|n| n.tick),
+            Some(0)
+        );
     }
 
     #[test]

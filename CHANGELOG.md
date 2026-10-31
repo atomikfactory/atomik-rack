@@ -468,6 +468,18 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Rack, console and workflow commands no longer slow down with the size of the song.** A copy
+  of the document, which every command makes to plan its undo step, shares the song and the notes
+  of its clips instead of copying them: adding a device, an audio track or a channel, connecting a
+  cable or pasting devices took 7 to 15 ms on a song of a million notes and now takes 40 to 230
+  microseconds whatever the song holds (`cargo bench -p atomik-model --bench commands`). Undo
+  works on the step itself instead of a copy of it, and names for new devices are found without
+  scanning the rack once per candidate. Quantizing a pile of notes on one tick no longer walks the
+  pile for each note.
+- **The undo history is bounded.** A project keeps the latest 1,000 undo steps and about 512 MiB of
+  what they hold; older steps are forgotten, the latest is always kept, and the audio only
+  forgotten steps used leaves the project folder at the next save. Saved files, undo results and
+  bounces are unchanged.
 - **A clip made by a click is one snap step long.** A double-click on an empty lane and a pencil
   click create a clip as long as the snap step (a bar with snap off or at Bar) where they made a
   bar. The Constrain role is wired (arrangement and piano roll) and listed in Settings, Keyboard.

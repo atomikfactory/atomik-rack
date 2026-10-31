@@ -335,7 +335,7 @@ impl<S: EngineSink> AppCore<S> {
             return self.reject(format!("{}: no slices to write", dev.name));
         }
         let length = length as i64;
-        let content = ClipContent::Notes(notes);
+        let content = ClipContent::Notes(notes.into());
         let song = &doc.song;
         let selected = self
             .arrangement

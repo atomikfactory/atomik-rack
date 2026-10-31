@@ -20,15 +20,15 @@ const FIRST_ARROW: Point = Point::new(180.0, 56.0);
 
 fn flagged(muted: &[usize], soloed: &[usize]) -> (atomik_model::RackDoc, ArrangementView) {
     let (mut doc, reg) = (song_doc(), registry());
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         t.muted = false;
         t.solo = false;
     }
     for i in muted {
-        doc.song.tracks[*i].muted = true;
+        doc.song_mut().tracks[*i].muted = true;
     }
     for i in soloed {
-        doc.song.tracks[*i].solo = true;
+        doc.song_mut().tracks[*i].solo = true;
     }
     let v = arrangement(&doc, &reg);
     (doc, v)

@@ -37,7 +37,7 @@ use std::time::Duration;
 const BARS: i64 = 2;
 
 fn short(mut doc: RackDoc) -> RackDoc {
-    doc.song.end = BARS * 4 * PPQ;
+    doc.song_mut().end = BARS * 4 * PPQ;
     doc
 }
 

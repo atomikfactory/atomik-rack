@@ -19,6 +19,7 @@ use crate::warp::WarpSettings;
 pub use atomik_core::{BEAT_UNITS, MAX_BEATS_PER_BAR, MeterEvent};
 use atomik_core::{MeterTable, Tempo, TempoPoint, TempoTable};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Stable, unique id of a clip within a song (never reused while the song lives).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -241,11 +242,114 @@ pub fn envelope_gain(points: &[(u64, f32)], n: u64) -> Option<f32> {
     Some((f64::from(a.1) + (f64::from(b.1) - f64::from(a.1)) * t) as f32)
 }
 
+/// The notes of a note clip, shared between copies of the clip: cloning a `NoteList` (and so a
+/// [`Clip`], a [`Song`] and the document) copies no note. It reads as a `Vec<Note>`; the first
+/// write through a shared list copies it, so a copy is never changed by an edit of another.
+#[derive(Clone, Default)]
+pub struct NoteList(Arc<Vec<Note>>);
+
+impl NoteList {
+    /// An empty list.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The notes as an owned `Vec` (without a copy when the list is not shared).
+    pub fn into_vec(self) -> Vec<Note> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+
+    /// Whether two lists are the very same allocation (a clone of one another).
+    pub fn ptr_eq(a: &Self, b: &Self) -> bool {
+        Arc::ptr_eq(&a.0, &b.0)
+    }
+}
+
+impl std::ops::Deref for NoteList {
+    type Target = Vec<Note>;
+
+    fn deref(&self) -> &Vec<Note> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for NoteList {
+    fn deref_mut(&mut self) -> &mut Vec<Note> {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl std::fmt::Debug for NoteList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl PartialEq for NoteList {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
+
+impl PartialEq<Vec<Note>> for NoteList {
+    fn eq(&self, other: &Vec<Note>) -> bool {
+        *self.0 == *other
+    }
+}
+
+impl PartialEq<NoteList> for Vec<Note> {
+    fn eq(&self, other: &NoteList) -> bool {
+        *self == *other.0
+    }
+}
+
+impl From<Vec<Note>> for NoteList {
+    fn from(notes: Vec<Note>) -> Self {
+        Self(Arc::new(notes))
+    }
+}
+
+impl From<&[Note]> for NoteList {
+    fn from(notes: &[Note]) -> Self {
+        Self(Arc::new(notes.to_vec()))
+    }
+}
+
+impl From<NoteList> for Vec<Note> {
+    fn from(list: NoteList) -> Self {
+        list.into_vec()
+    }
+}
+
+impl FromIterator<Note> for NoteList {
+    fn from_iter<I: IntoIterator<Item = Note>>(iter: I) -> Self {
+        Self(Arc::new(iter.into_iter().collect()))
+    }
+}
+
+impl<'a> IntoIterator for &'a NoteList {
+    type Item = &'a Note;
+    type IntoIter = std::slice::Iter<'a, Note>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for NoteList {
+    type Item = Note;
+    type IntoIter = std::vec::IntoIter<Note>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_vec().into_iter()
+    }
+}
+
 /// What a clip contains.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClipContent {
     /// Notes, sorted by (tick, key).
-    Notes(Vec<Note>),
+    Notes(NoteList),
     /// Automation points, sorted by tick, for the lane's parameter.
     Automation(Vec<AutomationPoint>),
     /// Audio from the sample pool (audio lanes only).

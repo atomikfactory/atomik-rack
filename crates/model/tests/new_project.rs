@@ -66,9 +66,9 @@ fn the_starter_keeps_the_other_fields_of_the_empty_document() {
         start.song.tails,
         "a new project lets notes ring past their clip"
     );
-    let mut song = start.song.clone();
+    let mut song = (*start.song).clone();
     song.tails = false;
-    assert_eq!(song, empty.song, "one transport track as before");
+    assert_eq!(song, *empty.song, "one transport track as before");
 }
 
 #[test]

@@ -124,7 +124,7 @@ fn note_clip(start: i64, length: i64, notes: Vec<Note>) -> Clip {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     }
 }
 
@@ -927,7 +927,7 @@ fn muting_the_snare_channel_silences_only_the_snare_through_the_live_path() {
     // Only the snare is gone: the same as a song without snare notes (the mix is a sum, so
     // the two differ by float rounding at most).
     let mut no_snare = live_core().doc().clone();
-    for t in &mut no_snare.song.tracks {
+    for t in &mut no_snare.song_mut().tracks {
         for clip in &mut t.lanes[0].clips {
             if let ClipContent::Notes(n) = &mut clip.content {
                 n.retain(|n| n.key != pad_key(3));
@@ -992,7 +992,7 @@ fn the_to_channel_command_gives_a_pad_its_own_channel_and_muting_it_silences_onl
     let live = play(&mut core, frames, 512);
     assert!(same_bits(&live, &reference), "live = bounce");
     let mut no_kick = live_core().doc().clone();
-    for t in &mut no_kick.song.tracks {
+    for t in &mut no_kick.song_mut().tracks {
         for clip in &mut t.lanes[0].clips {
             if let ClipContent::Notes(n) = &mut clip.content {
                 n.retain(|n| n.key != pad_key(1));

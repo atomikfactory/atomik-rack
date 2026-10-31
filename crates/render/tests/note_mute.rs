@@ -36,10 +36,13 @@ fn song(muted: bool) -> RackDoc {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note {
-                    muted,
-                    ..Note::new(0, PPQ, 69, 1.0)
-                }]),
+                content: ClipContent::Notes(
+                    vec![Note {
+                        muted,
+                        ..Note::new(0, PPQ, 69, 1.0)
+                    }]
+                    .into(),
+                ),
             },
         }),
         Command::Song(SongCommand::SetSongEnd(length)),

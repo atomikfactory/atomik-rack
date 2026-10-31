@@ -119,7 +119,7 @@ fn take_notes(c: &AppCore<RecordingSink>) -> Vec<Note> {
     let ClipContent::Notes(notes) = &clip.content else {
         panic!("note clip");
     };
-    notes.clone()
+    notes.to_vec()
 }
 
 fn record_with(play: impl FnOnce(&mut AppCore<RecordingSink>, &dyn Fn(i64) -> u64)) -> Vec<Note> {

@@ -64,7 +64,7 @@ fn loops(actions: &[UiAction]) -> Vec<((i64, i64), bool)> {
 /// The song with the loop on bars 2 to 4, and a view on it.
 fn setup(snap: Snap) -> (RackDoc, Registry, ArrangementView) {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.loop_range = (BAR, 4 * BAR);
+    doc.song_mut().loop_range = (BAR, 4 * BAR);
     let mut v = arrangement(&doc, &reg);
     v.set_snap(snap);
     (doc, reg, v)
@@ -174,7 +174,7 @@ fn dragging_the_right_locator_sets_the_loop_on_release() {
 #[test]
 fn dragging_the_left_locator_sets_the_loop_and_keeps_the_enabled_flag() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.loop_enabled = false;
+    doc.song_mut().loop_enabled = false;
     let _ = send(&mut v, &doc, &reg, &[]);
     let y = v.loop_band_y();
     let p = Point::new(v.tick_to_x(BAR), y);

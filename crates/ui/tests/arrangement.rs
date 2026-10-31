@@ -181,7 +181,7 @@ fn dragging_on_an_empty_lane_draws_a_snapped_clip() {
     };
     assert_eq!((device, *lane), (&key("lead"), 0));
     assert_eq!((clip.start, clip.length), (5 * BAR + PPQ, BAR));
-    assert_eq!(clip.content, ClipContent::Notes(Vec::new()));
+    assert_eq!(clip.content, ClipContent::Notes(Vec::new().into()));
     assert_eq!(
         (clip.offset, clip.loop_length, clip.muted),
         (0, None, false)

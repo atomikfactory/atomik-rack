@@ -32,7 +32,7 @@ impl Mirror {
     fn from_doc(doc: &RackDoc) -> Self {
         Self {
             devices: doc.devices.iter().map(|d| d.key.clone()).collect(),
-            song: doc.song.clone(),
+            song: (*doc.song).clone(),
             tempo: doc.tempo_bpm,
         }
     }
@@ -56,7 +56,7 @@ impl Mirror {
                             t.device
                         );
                     }
-                    self.song = doc.song.clone();
+                    self.song = (*doc.song).clone();
                 }
                 SyncOp::TempoChanged(t) => {
                     self.tempo = *t;
@@ -84,7 +84,7 @@ impl Mirror {
             doc.devices.iter().map(|d| d.key.clone()).collect()
         );
         assert_eq!(self.tempo.to_bits(), doc.tempo_bpm.to_bits());
-        assert_eq!(self.song, doc.song);
+        assert_eq!(self.song, *doc.song);
         assert_tempo_invariant(doc);
         assert_console_invariants(doc);
         assert_audio_invariants(doc);

@@ -33,7 +33,7 @@ fn buttons_emit_transport_actions() {
 #[test]
 fn position_readouts_follow_the_tempo_map_and_meter() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tempo = vec![TempoEvent::step(0, 120.0), TempoEvent::step(BAR, 60.0)];
+    doc.song_mut().tempo = vec![TempoEvent::step(0, 120.0), TempoEvent::step(BAR, 60.0)];
     let mut v = transport_bar(&doc, &reg);
     v.set_state(TransportState {
         position: BAR + PPQ + PPQ / 2,
@@ -43,7 +43,7 @@ fn position_readouts_follow_the_tempo_map_and_meter() {
         v.position_text(),
         ("2.2.07680".to_string(), "00:03.500".to_string())
     );
-    doc.song.meter[0].num = 3;
+    doc.song_mut().meter[0].num = 3;
     v.sync(&doc, &reg);
     assert_eq!(v.position_text().0, "2.3.07680");
     let mut dl = DisplayList::new();
@@ -68,7 +68,7 @@ fn tempo_maps(actions: &[UiAction]) -> Vec<Vec<TempoEvent>> {
 #[test]
 fn double_click_types_a_tempo_and_keeps_later_events() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tempo.push(TempoEvent::step(8 * BAR, 90.0));
+    doc.song_mut().tempo.push(TempoEvent::step(8 * BAR, 90.0));
     let mut v = transport_bar(&doc, &reg);
     let t = v.tempo_center();
     let a = run(
@@ -160,7 +160,7 @@ fn type_meter(
 #[test]
 fn double_click_types_a_signature_and_keeps_later_changes() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.meter.push(MeterEvent {
+    doc.song_mut().meter.push(MeterEvent {
         bar: 5,
         num: 7,
         den: 8,
@@ -202,7 +202,7 @@ fn double_click_types_a_signature_and_keeps_later_changes() {
 #[test]
 fn the_signature_typed_goes_to_the_change_at_the_playhead() {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.meter.push(MeterEvent {
+    doc.song_mut().meter.push(MeterEvent {
         bar: 5,
         num: 7,
         den: 8,

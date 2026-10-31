@@ -253,8 +253,8 @@ fn typing_a_position_or_a_time_moves_the_playhead_exactly() {
 #[test]
 fn editing_a_locator_sets_the_loop_in_one_command() {
     let mut doc = song_doc();
-    doc.song.loop_range = (0, 4 * BAR);
-    doc.song.loop_enabled = true;
+    doc.song_mut().loop_range = (0, 4 * BAR);
+    doc.song_mut().loop_enabled = true;
     let mut b = bar_of(1920.0, &doc);
     double_click(&mut b, &doc, |b| b.locator_rect(false).unwrap().center());
     let a = typed(&mut b, &doc, "2.1.0");

@@ -238,7 +238,7 @@ pub fn demo_doc(hash: &str, meta: &AssetMeta, markers: &[u64]) -> RackDoc {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes.clone()),
+                content: ClipContent::Notes(notes.clone().into()),
             },
         }));
     }
@@ -391,7 +391,7 @@ fn the_demo_is_a_transient_sliced_loop_played_at_another_tempo_with_one_reversed
     for (i, clip) in clips.iter().enumerate() {
         assert_eq!(clip.start, i as i64 * length as i64);
         assert_eq!(clip.length, LOOP_BEATS as i64 * PPQ);
-        assert_eq!(clip.content, ClipContent::Notes(notes.clone()));
+        assert_eq!(clip.content, ClipContent::Notes(notes.clone().into()));
     }
 }
 

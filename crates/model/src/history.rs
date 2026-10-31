@@ -496,9 +496,23 @@ impl Edit {
         }
     }
 
-    /// The edit that undoes this one.
+    /// The edit that undoes this one (a copy; see [`Edit::invert`] for the one that copies
+    /// nothing).
     pub(crate) fn inverse(&self) -> Edit {
-        match self.clone() {
+        self.clone().into_inverse()
+    }
+
+    /// Turns this edit into the one that undoes it, in place and without copying its data: old
+    /// and new swap, a compound reverses. Doing it twice gives the edit back, so an undo is
+    /// `invert`, `perform`, `invert`.
+    pub(crate) fn invert(&mut self) {
+        let edit = std::mem::replace(self, Edit::Compound(Vec::new()));
+        *self = edit.into_inverse();
+    }
+
+    /// The edit that undoes this one, made from its own data.
+    fn into_inverse(self) -> Edit {
+        match self {
             Edit::Insert {
                 index,
                 device,
@@ -793,7 +807,7 @@ impl Edit {
                 new: old,
             },
             Edit::Compound(edits) => {
-                Edit::Compound(edits.iter().rev().map(Edit::inverse).collect())
+                Edit::Compound(edits.into_iter().rev().map(Edit::into_inverse).collect())
             }
         }
     }
@@ -947,7 +961,7 @@ impl Edit {
                 ops
             }
             Edit::Tempo { new, .. } => {
-                let Some(first) = doc.song.tempo.first_mut() else {
+                let Some(first) = doc.song_mut().tempo.first_mut() else {
                     return fail("the song has no tempo event");
                 };
                 first.bpm = *new;
@@ -955,7 +969,7 @@ impl Edit {
                 vec![SyncOp::TempoChanged(*new)]
             }
             Edit::Track { index, old, new } => {
-                let tracks = &mut doc.song.tracks;
+                let tracks = &mut doc.song_mut().tracks;
                 check_replace(
                     tracks.get(*index).map(|t| &t.device),
                     old.as_ref().map(|t| &t.device),
@@ -1009,10 +1023,10 @@ impl Edit {
                 let key = (device.clone(), param.clone());
                 match new {
                     Some(mode) => {
-                        doc.song.lane_write.insert(key, *mode);
+                        doc.song_mut().lane_write.insert(key, *mode);
                     }
                     None => {
-                        doc.song.lane_write.remove(&key);
+                        doc.song_mut().lane_write.remove(&key);
                     }
                 }
                 vec![SyncOp::ViewChanged]
@@ -1070,7 +1084,7 @@ impl Edit {
                 vec![SyncOp::ViewChanged]
             }
             Edit::NextClipId { new, .. } => {
-                doc.song.next_clip_id = *new;
+                doc.song_mut().next_clip_id = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::TempoMap { new, .. } => {
@@ -1078,32 +1092,32 @@ impl Edit {
                     return fail("a tempo map has at least one event");
                 };
                 let bpm = first.bpm;
-                doc.song.tempo.clone_from(new);
+                doc.song_mut().tempo.clone_from(new);
                 doc.tempo_bpm = bpm;
                 vec![SyncOp::TempoChanged(bpm), SyncOp::SongChanged]
             }
             Edit::MeterMap { new, .. } => {
-                doc.song.meter.clone_from(new);
+                doc.song_mut().meter.clone_from(new);
                 vec![SyncOp::SongChanged]
             }
             Edit::Markers { new, .. } => {
-                doc.song.markers.clone_from(new);
+                doc.song_mut().markers.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Grooves { new, .. } => {
-                doc.song.grooves.clone_from(new);
+                doc.song_mut().grooves.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Ranges { new, .. } => {
-                doc.song.ranges.clone_from(new);
+                doc.song_mut().ranges.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::TrackHeights { new, .. } => {
-                doc.song.track_heights.clone_from(new);
+                doc.song_mut().track_heights.clone_from(new);
                 vec![SyncOp::ViewChanged]
             }
             Edit::Organise { new, .. } => {
-                let song = &mut doc.song;
+                let song = doc.song_mut();
                 let moved = song.tracks.iter().map(|t| &t.device).ne(new.order.iter());
                 if moved {
                     song.tracks.sort_by_key(|t| {
@@ -1121,11 +1135,11 @@ impl Edit {
                 }]
             }
             Edit::Loop { new, .. } => {
-                (doc.song.loop_range, doc.song.loop_enabled) = *new;
+                (doc.song_mut().loop_range, doc.song_mut().loop_enabled) = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::SongEnd { new, .. } => {
-                doc.song.end = *new;
+                doc.song_mut().end = *new;
                 vec![SyncOp::SongChanged]
             }
             Edit::ConsoleChannel { index, old, new } => {
@@ -1592,7 +1606,12 @@ fn track_mut<'d>(
     doc: &'d mut RackDoc,
     device: &DeviceKey,
 ) -> Result<&'d mut Track, InvariantError> {
-    match doc.song.tracks.iter_mut().find(|t| &t.device == device) {
+    match doc
+        .song_mut()
+        .tracks
+        .iter_mut()
+        .find(|t| &t.device == device)
+    {
         Some(track) => Ok(track),
         None => fail(format!("there is no track {device}")),
     }
@@ -1778,7 +1797,7 @@ mod tests {
     fn an_undo_step_that_does_not_fit_is_an_error_and_stays_on_the_stack() {
         let reg = Registry::new();
         let mut d = Document::new(empty_doc());
-        d.undo.push(folded());
+        d.undo.push_back(folded());
         let before = d.doc().clone();
         let revision = d.revision();
         let err = d.try_undo(&reg).unwrap_err();

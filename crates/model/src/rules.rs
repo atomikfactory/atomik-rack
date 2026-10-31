@@ -687,13 +687,15 @@ pub(crate) fn generate_key_in(devices: &[RackDevice], type_id: &str) -> DeviceKe
 /// The first of `base`, `base-2`, `base-3`, … that is not used among `devices`; `base` must be
 /// a valid key (a plugin device is keyed after the plugin's name).
 pub(crate) fn generate_key_with_base_in(devices: &[RackDevice], base: &str) -> DeviceKey {
-    let used = |k: &str| devices.iter().any(|d| d.key.0 == k);
-    if !used(base) {
+    // One pass over the devices, then one lookup per candidate: with many devices of a type the
+    // candidates run into the hundreds.
+    let taken: BTreeSet<&str> = devices.iter().map(|d| d.key.0.as_str()).collect();
+    if !taken.contains(base) {
         return DeviceKey(base.to_owned());
     }
     (2u64..)
         .map(|n| format!("{base}-{n}"))
-        .find(|k| !used(k))
+        .find(|k| !taken.contains(k.as_str()))
         .map(DeviceKey)
         .expect("a free key exists")
 }
@@ -725,13 +727,13 @@ pub(crate) fn default_name(
 
 /// [`unique_name`] among the devices of one scope.
 pub(crate) fn unique_name_in(devices: &[RackDevice], name: &str) -> String {
-    let used = |n: &str| devices.iter().any(|d| d.name == n);
-    if !used(name) {
+    let taken: BTreeSet<&str> = devices.iter().map(|d| d.name.as_str()).collect();
+    if !taken.contains(name) {
         return name.to_owned();
     }
     (2u64..)
         .map(|n| format!("{name} {n}"))
-        .find(|n| !used(n))
+        .find(|n| !taken.contains(n.as_str()))
         .expect("a free name exists")
 }
 

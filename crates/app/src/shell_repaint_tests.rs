@@ -47,7 +47,7 @@ fn shell() -> Shell<NullBackend> {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(Vec::new()),
+            content: ClipContent::Notes(Vec::new().into()),
         },
     }))
     .unwrap();

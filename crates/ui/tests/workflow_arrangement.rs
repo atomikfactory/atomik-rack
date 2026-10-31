@@ -585,7 +585,7 @@ fn the_view_key_handler_keeps_escape_and_home_and_drops_every_command_key() {
 // ------------------------------------------------------------------ mute
 
 fn mute_clip_in_doc(doc: &mut atomik_model::RackDoc, id: u64) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(id) {
@@ -673,7 +673,7 @@ fn the_header_button_of_a_muted_clip_unmutes_it_and_wins_over_the_razor() {
 #[test]
 fn a_clip_narrower_than_three_buttons_has_no_header_button() {
     let (mut v, mut doc, reg) = setup();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(5) {

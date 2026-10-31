@@ -26,8 +26,8 @@ const NO_SNAP: Modifiers = Modifiers {
 /// The song with the End at bar 7 (tick `6 * BAR`) and the loop on bars 2 to 4.
 fn setup(snap: Snap) -> (RackDoc, Registry, ArrangementView) {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.end = 6 * BAR;
-    doc.song.loop_range = (BAR, 4 * BAR);
+    doc.song_mut().end = 6 * BAR;
+    doc.song_mut().loop_range = (BAR, 4 * BAR);
     let mut v = arrangement(&doc, &reg);
     v.set_snap(snap);
     (doc, reg, v)
@@ -159,7 +159,7 @@ fn clicking_the_flag_without_moving_changes_nothing() {
 fn the_flag_wins_over_the_line_of_a_locator_and_the_band_below_keeps_the_locator() {
     // The right locator's line is at the End: the End's flag hangs on the other side of it.
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.end = 4 * BAR;
+    doc.song_mut().end = 4 * BAR;
     v.sync(&doc, &reg);
     let x = v.tick_to_x(4 * BAR);
     let drag = |v: &mut ArrangementView, from: Point| {

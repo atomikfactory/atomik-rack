@@ -15,6 +15,7 @@ use atomik_device_sdk::{Direction, Registry};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 /// The `format` tag of a patch file.
 pub const PATCH_FORMAT: &str = "atomik-patch";
@@ -273,7 +274,7 @@ pub(crate) fn load_rack(
         devices: Vec::new(),
         columns: 1,
         cables: Vec::new(),
-        song: crate::song::empty_song(tempo_bpm),
+        song: Arc::new(crate::song::empty_song(tempo_bpm)),
         console: crate::console::Console::default(),
         midi_maps: Vec::new(),
         macros: crate::macros::MacroSet::default(),

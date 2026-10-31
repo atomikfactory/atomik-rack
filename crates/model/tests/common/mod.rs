@@ -66,7 +66,7 @@ pub fn console_registry() -> Registry {
 /// use it.
 pub fn legacy_project_doc() -> atomik_model::RackDoc {
     let mut doc = atomik_model::new_project_doc();
-    doc.song.tails = false;
+    doc.song_mut().tails = false;
     doc.console.align_returns = false;
     doc
 }

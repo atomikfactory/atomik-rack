@@ -27,8 +27,8 @@ fn c_major() -> Scale {
 fn setup(notes: Vec<Note>, scale: Option<Scale>) -> (PianoRollView, Document, Registry) {
     let reg = registry();
     let mut doc = song_doc();
-    let clip = &mut doc.song.tracks[0].lanes[0].clips[0];
-    clip.content = ClipContent::Notes(notes);
+    let clip = &mut doc.song_mut().tracks[0].lanes[0].clips[0];
+    clip.content = ClipContent::Notes(notes.into());
     clip.scale = scale;
     let d = Document::new(doc);
     let v = piano_roll(d.doc(), &reg);
@@ -37,7 +37,7 @@ fn setup(notes: Vec<Note>, scale: Option<Scale>) -> (PianoRollView, Document, Re
 
 fn notes_of(d: &Document) -> Vec<Note> {
     match &d.doc().song.clip(ClipId(1)).unwrap().2.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         other => panic!("not notes: {other:?}"),
     }
 }
@@ -80,7 +80,7 @@ fn emitted(actions: &[UiAction]) -> Vec<(Vec<Note>, Option<u64>)> {
                 id: ClipId(1),
                 content: ClipContent::Notes(n),
                 merge,
-            } => Some((n, merge)),
+            } => Some((n.into_vec(), merge)),
             _ => None,
         })
         .collect()

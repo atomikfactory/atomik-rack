@@ -32,6 +32,7 @@ pub mod freeze;
 pub mod groove;
 mod groove_cmd;
 mod history;
+mod history_size;
 mod library_io;
 mod macros;
 mod macros_io;
@@ -175,10 +176,11 @@ pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
     DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_GAIN_POINTS,
     MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK, MAX_TRACK_HEIGHT,
-    MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, RangeMarker, Song, SongCommand, StepGrid,
+    MIN_TRACK_HEIGHT, Marker, MeterEvent, Note, NoteList, RangeMarker, Song, SongCommand, StepGrid,
     StepResolution, TempoEvent, Track, empty_song,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 pub use takes::{CompSegment, TakeGroup};
 pub use validate::Violation;
 pub use warp::{
@@ -319,8 +321,10 @@ pub struct RackDoc {
     /// Cables, in canonical order (sorted).
     pub cables: Vec<Cable>,
     /// The song (tracks, clips, tempo map, loop) . Invariant, kept by every command
-    /// and loader: `song.tempo[0].bpm == tempo_bpm`.
-    pub song: Song,
+    /// and loader: `song.tempo[0].bpm == tempo_bpm`. Shared between copies of the document:
+    /// read it through `Deref`, write it through [`RackDoc::song_mut`] (the first write of a
+    /// shared song copies its structure, never its notes).
+    pub song: Arc<Song>,
     /// The console (main mixer) section.
     pub console: Console,
     /// The MIDI mappings (hardware controls bound to params, the tempo and the transport).
@@ -940,7 +944,15 @@ pub enum ModelError {
 #[derive(Debug, Clone)]
 pub struct Document {
     doc: RackDoc,
-    undo: Vec<Edit>,
+    undo: VecDeque<Edit>,
+    /// The estimated bytes the undo steps hold (see [`Edit::approx_bytes`]).
+    undo_bytes: usize,
+    /// The most undo steps and the most estimated bytes the history keeps; see
+    /// [`Document::set_undo_limits`].
+    undo_limits: (usize, usize),
+    /// Set while a trial step is applied: it is not kept yet, so it must not push an older
+    /// step out of the history.
+    hold_trim: bool,
     redo: Vec<Edit>,
     /// The open drag-merge group of the last applied command.
     merge: Option<MergeKey>,
@@ -953,6 +965,14 @@ pub struct Document {
     /// The redo history an open trial set aside.
     trial_redo: Vec<Edit>,
 }
+
+/// The most undo steps a [`Document`] keeps: with more, the oldest are forgotten.
+pub const MAX_UNDO_STEPS: usize = 1000;
+
+/// The most memory, estimated in bytes, the undo steps of a [`Document`] may hold (the clips,
+/// devices and lists they keep); the oldest steps are forgotten beyond it, but the latest step
+/// is always kept. 512 MiB.
+pub const MAX_UNDO_BYTES: usize = 512 << 20;
 
 /// The source of document revisions: process wide, so two documents (a replaced one and the
 /// one that took its place) never share a revision.
@@ -1008,13 +1028,60 @@ impl Document {
         );
         Self {
             doc,
-            undo: Vec::new(),
+            undo: VecDeque::new(),
+            undo_bytes: 0,
+            undo_limits: (MAX_UNDO_STEPS, MAX_UNDO_BYTES),
+            hold_trim: false,
             redo: Vec::new(),
             merge: None,
             last_clip: None,
             revision: next_revision(),
             trial: Vec::new(),
             trial_redo: Vec::new(),
+        }
+    }
+
+    /// Changes how much undo history the document keeps: at most `steps` steps (at least 1) and
+    /// an estimated `bytes` of memory (the latest step stays whatever its size). Older steps are
+    /// forgotten at once; the assets only they referenced leave the pool at the next
+    /// [`Document::prune_unreferenced_assets`]. The defaults are [`MAX_UNDO_STEPS`] and
+    /// [`MAX_UNDO_BYTES`].
+    pub fn set_undo_limits(&mut self, steps: usize, bytes: usize) {
+        self.undo_limits = (steps.max(1), bytes);
+        self.trim_undo();
+    }
+
+    /// Records `edit` as the latest undo step and forgets the oldest steps beyond the limits.
+    fn push_undo(&mut self, edit: Edit) {
+        self.undo_bytes += edit.approx_bytes();
+        self.undo.push_back(edit);
+        self.trim_undo();
+    }
+
+    /// Takes the latest undo step off the history.
+    fn pop_undo(&mut self) -> Option<Edit> {
+        let edit = self.undo.pop_back()?;
+        self.undo_bytes = self.undo_bytes.saturating_sub(edit.approx_bytes());
+        Some(edit)
+    }
+
+    /// Accounts for the latest undo step having changed from `before` estimated bytes (a merged
+    /// drag extends it) to what it is now.
+    fn resize_last_undo(&mut self, before: usize) {
+        let now = self.undo.back().map_or(0, Edit::approx_bytes);
+        self.undo_bytes = (self.undo_bytes + now).saturating_sub(before);
+        self.trim_undo();
+    }
+
+    fn trim_undo(&mut self) {
+        if self.hold_trim {
+            return;
+        }
+        let (steps, bytes) = self.undo_limits;
+        while self.undo.len() > 1 && (self.undo.len() > steps || self.undo_bytes > bytes) {
+            if let Some(old) = self.undo.pop_front() {
+                self.undo_bytes = self.undo_bytes.saturating_sub(old.approx_bytes());
+            }
         }
     }
 
@@ -1169,7 +1236,9 @@ impl Document {
                     Ok(more) => ops.extend(more),
                     Err(fault) => {
                         // All or nothing: the command goes back out, history untouched.
-                        edit.inverse().perform(&mut self.doc)?;
+                        let mut back = edit;
+                        back.invert();
+                        back.perform(&mut self.doc)?;
                         return Err(fault.into());
                     }
                 }
@@ -1179,18 +1248,25 @@ impl Document {
         };
         self.redo.clear();
         let merged = merge.is_some() && merge == self.merge;
+        let before = if merged {
+            self.undo.back().map_or(0, Edit::approx_bytes)
+        } else {
+            0
+        };
         if merged
             && matches!(merge, Some(MergeKey::Clip(_)))
-            && let Some(last) = self.undo.last_mut()
+            && let Some(last) = self.undo.back_mut()
         {
             last.fold_clip_edit(edit);
+            self.resize_last_undo(before);
             self.merge = merge;
             if new_clip.is_some() {
                 self.last_clip = new_clip;
             }
             return Ok(ops);
         }
-        match (self.undo.last_mut(), &edit) {
+        let mut pushed = false;
+        match (self.undo.back_mut(), &edit) {
             (Some(Edit::Param { new, .. }), Edit::Param { new: latest, .. }) if merged => {
                 *new = *latest;
             }
@@ -1234,7 +1310,13 @@ impl Document {
             {
                 new.clone_from(latest);
             }
-            _ => self.undo.push(edit),
+            _ => {
+                pushed = true;
+                self.push_undo(edit);
+            }
+        }
+        if merged && !pushed {
+            self.resize_last_undo(before);
         }
         self.merge = merge;
         if new_clip.is_some() {
@@ -1257,10 +1339,10 @@ impl Document {
         let ops = self.apply(command, registry)?;
         if depth >= 1
             && self.undo.len() == depth + 1
-            && let Some(latest) = self.undo.pop()
-            && let Some(previous) = self.undo.pop()
+            && let Some(latest) = self.pop_undo()
+            && let Some(previous) = self.pop_undo()
         {
-            self.undo.push(Edit::Compound(vec![previous, latest]));
+            self.push_undo(Edit::Compound(vec![previous, latest]));
         }
         self.merge = None;
         Ok(ops)
@@ -1282,7 +1364,10 @@ impl Document {
     ) -> Result<Vec<SyncOp>, ModelError> {
         let redo = std::mem::take(&mut self.redo);
         let depth = self.undo.len();
-        let ops = match self.apply(command, registry) {
+        self.hold_trim = true;
+        let applied = self.apply(command, registry);
+        self.hold_trim = false;
+        let ops = match applied {
             Ok(ops) => ops,
             Err(e) => {
                 self.redo = redo;
@@ -1290,7 +1375,7 @@ impl Document {
             }
         };
         if self.undo.len() > depth
-            && let Some(step) = self.undo.pop()
+            && let Some(step) = self.pop_undo()
         {
             if self.trial.is_empty() {
                 self.trial_redo = redo;
@@ -1315,10 +1400,13 @@ impl Document {
         self.trial_redo.clear();
         match self.trial.len() {
             0 => {}
-            1 => self.undo.append(&mut self.trial),
+            1 => {
+                let steps = std::mem::take(&mut self.trial);
+                steps.into_iter().for_each(|step| self.push_undo(step));
+            }
             _ => {
                 let steps = std::mem::take(&mut self.trial);
-                self.undo.push(Edit::Compound(steps));
+                self.push_undo(Edit::Compound(steps));
             }
         }
     }
@@ -1332,8 +1420,11 @@ impl Document {
     pub fn cancel_trial(&mut self) -> Result<Vec<SyncOp>, ModelError> {
         self.merge = None;
         let mut ops = Vec::new();
-        while let Some(step) = self.trial.pop() {
-            match step.inverse().perform(&mut self.doc) {
+        while let Some(mut step) = self.trial.pop() {
+            step.invert();
+            let done = step.perform(&mut self.doc);
+            step.invert();
+            match done {
                 Ok(more) => ops.extend(more),
                 Err(fault) => {
                     self.trial.push(step);
@@ -1369,17 +1460,20 @@ impl Document {
         if self.in_trial() {
             return Ok(None);
         }
-        let Some(edit) = self.undo.pop() else {
+        let Some(mut edit) = self.pop_undo() else {
             return Ok(None);
         };
-        match edit.inverse().perform(&mut self.doc) {
+        edit.invert();
+        let done = edit.perform(&mut self.doc);
+        edit.invert();
+        match done {
             Ok(ops) => {
                 self.redo.push(edit);
                 self.revision = next_revision();
                 Ok(Some(ops))
             }
             Err(fault) => {
-                self.undo.push(edit);
+                self.push_undo(edit);
                 Err(fault.into())
             }
         }
@@ -1399,7 +1493,7 @@ impl Document {
         };
         match edit.perform(&mut self.doc) {
             Ok(ops) => {
-                self.undo.push(edit);
+                self.push_undo(edit);
                 self.revision = next_revision();
                 Ok(Some(ops))
             }
@@ -1816,6 +1910,12 @@ impl std::fmt::Display for Cable {
 }
 
 impl RackDoc {
+    /// The song, for writing: the first write of a song shared with another copy of the
+    /// document copies its structure (tracks, lanes and clips), never the notes of a clip.
+    pub fn song_mut(&mut self) -> &mut Song {
+        Arc::make_mut(&mut self.song)
+    }
+
     /// The device `key`, if present.
     pub fn device(&self, key: &DeviceKey) -> Option<&RackDevice> {
         self.devices.iter().find(|d| &d.key == key)
@@ -1927,7 +2027,7 @@ pub fn empty_doc() -> RackDoc {
         devices: Vec::new(),
         columns: 1,
         cables: Vec::new(),
-        song: empty_song(120.0),
+        song: Arc::new(empty_song(120.0)),
         console: Console::default(),
         midi_maps: Vec::new(),
         macros: MacroSet::default(),
@@ -1946,7 +2046,7 @@ pub fn new_project_doc() -> RackDoc {
     let mut doc = empty_doc();
     console_cmd::install_starter_master(&mut doc);
     // A new project lets notes ring past the end of their clip; a loaded one keeps its own flag.
-    doc.song.tails = true;
+    doc.song_mut().tails = true;
     // ...and aligns FX returns and sidechain keys with the dry path; a loaded one keeps its own.
     doc.console.align_returns = true;
     doc

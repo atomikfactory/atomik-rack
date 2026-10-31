@@ -64,7 +64,7 @@ pub fn save_device_item(snapshot: &DeviceSnapshot, doc: &RackDoc) -> String {
     let mut item = empty_doc();
     item.sample_rate = doc.sample_rate;
     item.tempo_bpm = doc.tempo_bpm;
-    item.song = empty_song(doc.tempo_bpm);
+    item.song = std::sync::Arc::new(empty_song(doc.tempo_bpm));
     item.devices = snapshot.devices.clone();
     for d in &mut item.devices {
         d.column = 0;

@@ -802,7 +802,7 @@ fn a_track_that_stands_apart_from_its_folder_is_shown_outside_it() {
     let reg = registry();
     let mut d = doc(&reg);
     let g = group(&mut d, &reg, &["lead", "a"], "Keys");
-    let mut song: Song = d.doc().song.clone();
+    let mut song: Song = (*d.doc().song).clone();
     song.org.members.insert(key("c"), g);
     let shown: Vec<String> = song
         .outline()

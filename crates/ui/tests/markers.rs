@@ -41,8 +41,8 @@ fn range(id: u32, start: i64, end: i64, name: &str) -> RangeMarker {
 /// 5 to 9, ids 1 and 2).
 fn marked() -> RackDoc {
     let mut doc = song_doc();
-    doc.song.markers = vec![marker(1, BAR, "Drop"), marker(2, 4 * BAR, "Break")];
-    doc.song.ranges = vec![
+    doc.song_mut().markers = vec![marker(1, BAR, "Drop"), marker(2, 4 * BAR, "Break")];
+    doc.song_mut().ranges = vec![
         range(1, 0, 2 * BAR, "Intro"),
         range(2, 4 * BAR, 8 * BAR, "Verse"),
     ];
@@ -274,7 +274,7 @@ fn a_second_marker_is_numbered_on_and_one_per_tick() {
     let a = command(&mut v, &doc, "transport.add_marker", None);
     assert_eq!(marker_lists(a.actions())[0][1].name, "Marker 1");
     let mut doc2 = doc.clone();
-    doc2.song.markers = marker_lists(a.actions()).remove(0);
+    doc2.song_mut().markers = marker_lists(a.actions()).remove(0);
     v.sync(&doc2, &registry());
     v.set_playhead(3 * BAR);
     let b = command(&mut v, &doc2, "transport.add_marker", None);
@@ -338,7 +338,7 @@ fn a_double_click_in_the_ranges_row_adds_a_one_bar_range() {
 #[test]
 fn add_range_from_the_loop_and_from_the_selection() {
     let mut doc = song_doc();
-    doc.song.loop_range = (BAR, 3 * BAR);
+    doc.song_mut().loop_range = (BAR, 3 * BAR);
     let mut v = with_strip(&doc);
     let a = command(&mut v, &doc, "transport.add_range_from_loop", None);
     let lists = range_lists(a.actions());
@@ -687,7 +687,7 @@ fn the_menu_commands_act_on_the_marker_the_menu_opened_on() {
 #[test]
 fn colours_can_be_cleared_and_unknown_names_are_declined() {
     let mut doc = marked();
-    doc.song.markers[0].color = Some([9, 9, 9]);
+    doc.song_mut().markers[0].color = Some([9, 9, 9]);
     let mut v = with_strip(&doc);
     v.set_selected_marker(Some(MarkSel::Marker(1)));
     let a = command(&mut v, &doc, "sequencer.marker_color", Some("none"));
@@ -791,7 +791,7 @@ fn the_list_takes_its_width_off_the_timeline_and_gives_it_back() {
 fn the_list_shows_markers_and_ranges_in_order_with_bar_beat_tick_positions() {
     let mut doc = marked();
     // 3/4 from bar 3: a marker at bar 4 sits 3 beats of 3/4 further.
-    doc.song.meter = vec![
+    doc.song_mut().meter = vec![
         MeterEvent {
             bar: 1,
             num: 4,
@@ -803,7 +803,7 @@ fn the_list_shows_markers_and_ranges_in_order_with_bar_beat_tick_positions() {
             den: 4,
         },
     ];
-    doc.song
+    doc.song_mut()
         .markers
         .push(marker(3, 2 * BAR + 3 * PPQ + 5, "Pickup"));
     let mut v = with_list(&doc);
@@ -901,7 +901,7 @@ fn a_double_click_on_a_name_in_the_list_renames_in_place() {
 #[test]
 fn the_add_buttons_add_at_the_playhead_and_from_the_loop() {
     let mut doc = song_doc();
-    doc.song.loop_range = (2 * BAR, 6 * BAR);
+    doc.song_mut().loop_range = (2 * BAR, 6 * BAR);
     let mut v = with_list(&doc);
     v.set_playhead(3 * BAR);
     let p = v.list_add_marker_rect().center();
@@ -934,7 +934,7 @@ fn right_click_on_a_row_asks_for_the_marker_menu() {
 #[test]
 fn the_list_scrolls_with_the_wheel_over_it_and_the_timeline_does_not() {
     let mut doc = song_doc();
-    doc.song.markers = (0..40)
+    doc.song_mut().markers = (0..40)
         .map(|i| marker(i + 1, i64::from(i) * BAR, &format!("M{i}")))
         .collect();
     let mut v = with_list(&doc);
@@ -973,7 +973,7 @@ fn deleting_a_marker_in_the_document_drops_a_stale_selection() {
     let mut v = with_strip(&doc);
     v.set_selected_marker(Some(MarkSel::Marker(2)));
     let mut gone = doc.clone();
-    gone.song.markers.remove(1);
+    gone.song_mut().markers.remove(1);
     v.sync(&gone, &registry());
     assert_eq!(v.selected_marker(), None);
 }
@@ -988,9 +988,9 @@ fn preview_png() {
     use atomik_ui::TextEngine;
     use support::cpu::CpuCanvas;
     let mut doc = marked();
-    doc.song.markers[1].color = Some(edit::PALETTE[3].1);
-    doc.song.ranges[1].color = Some(edit::PALETTE[1].1);
-    doc.song
+    doc.song_mut().markers[1].color = Some(edit::PALETTE[3].1);
+    doc.song_mut().ranges[1].color = Some(edit::PALETTE[1].1);
+    doc.song_mut()
         .markers
         .push(marker(3, 5 * BAR + PPQ, "Last chance of the day"));
     let reg = registry();

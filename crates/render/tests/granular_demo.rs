@@ -280,7 +280,7 @@ fn project(root: &Path, position: f32, with_sample: bool) -> RackDoc {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
         },
     }));
     apply(Command::Song(SongCommand::SetSongEnd(end)));

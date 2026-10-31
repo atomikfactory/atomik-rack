@@ -38,7 +38,7 @@ fn check(name: &str, actual: &str) {
 }
 
 fn mute_notes(doc: &mut RackDoc, clip: u64, which: &[usize]) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if let ClipContent::Notes(ns) = &mut c.content
@@ -54,7 +54,7 @@ fn mute_notes(doc: &mut RackDoc, clip: u64, which: &[usize]) {
 }
 
 fn mute_clips(doc: &mut RackDoc, ids: &[u64]) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if ids.contains(&c.id.0) {
@@ -83,7 +83,7 @@ fn muted_roll() -> (PianoRollView, RackDoc) {
 
 fn muted_step() -> (StepEditorView, RackDoc) {
     let mut doc = drum_doc();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if let ClipContent::Notes(ns) = &mut c.content {
@@ -151,7 +151,7 @@ fn step_editor_m_toggles_the_notes_of_the_hovered_cell_in_one_command() {
             SongCommand::SetClipContent {
                 content: ClipContent::Notes(n),
                 ..
-            } => Some(n),
+            } => Some(n.into_vec()),
             _ => None,
         })
         .collect();

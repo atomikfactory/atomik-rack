@@ -31,8 +31,8 @@ const NO_SNAP: Modifiers = Modifiers {
 /// The song with the loop on bars 2 to 4 (on) and the End at bar 7.
 fn setup(snap: Snap) -> (RackDoc, Registry, ArrangementView) {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.end = 6 * BAR;
-    doc.song.loop_range = (BAR, 4 * BAR);
+    doc.song_mut().end = 6 * BAR;
+    doc.song_mut().loop_range = (BAR, 4 * BAR);
     let mut v = arrangement(&doc, &reg);
     v.set_snap(snap);
     (doc, reg, v)
@@ -143,7 +143,7 @@ fn the_loop_is_a_tint_between_the_flags_stronger_when_on() {
     let (x0, x1) = (v.tick_to_x(BAR), v.tick_to_x(4 * BAR));
     let mut on = DisplayList::new();
     v.paint(&mut on, &doc, &reg);
-    doc.song.loop_enabled = false;
+    doc.song_mut().loop_enabled = false;
     v.sync(&doc, &reg);
     let mut off = DisplayList::new();
     v.paint(&mut off, &doc, &reg);
@@ -197,7 +197,7 @@ fn dragging_the_left_flag_moves_the_left_locator_snapped_in_one_command() {
 #[test]
 fn dragging_the_right_flag_moves_the_right_locator_and_keeps_the_enabled_flag() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.loop_enabled = false;
+    doc.song_mut().loop_enabled = false;
     v.sync(&doc, &reg);
     let p = right_flag(&v, 4 * BAR, 0, 5.0);
     let a = drag(p, &mut v, &doc, &reg, 6 * BAR + PPQ, Modifiers::NONE);
@@ -299,7 +299,7 @@ fn the_line_below_a_flag_grabs_its_locator_too() {
 #[test]
 fn r_and_e_at_the_same_tick_hang_on_opposite_sides_and_each_is_grabbed() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.end = 4 * BAR;
+    doc.song_mut().end = 4 * BAR;
     v.sync(&doc, &reg);
     let a = drag(
         right_flag(&v, 4 * BAR, 0, 5.0),
@@ -332,7 +332,7 @@ fn r_and_e_at_the_same_tick_hang_on_opposite_sides_and_each_is_grabbed() {
 #[test]
 fn on_the_shared_line_of_r_and_e_the_locator_wins() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.end = 4 * BAR;
+    doc.song_mut().end = 4 * BAR;
     v.sync(&doc, &reg);
     // On the flag row, exactly on the line, and below the flags on the bare line.
     for y in [v.flag_row_y(0), v.flag_row_y(1) + 3.0] {
@@ -351,7 +351,7 @@ fn on_the_shared_line_of_r_and_e_the_locator_wins() {
 #[test]
 fn l_at_the_end_goes_one_row_down_so_both_flags_stay_readable() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.loop_range = (6 * BAR, 8 * BAR);
+    doc.song_mut().loop_range = (6 * BAR, 8 * BAR);
     v.sync(&doc, &reg);
     let a = drag(
         left_flag(&v, 6 * BAR, 0, 5.0),
@@ -384,7 +384,7 @@ fn l_at_the_end_goes_one_row_down_so_both_flags_stay_readable() {
 #[test]
 fn two_locators_closer_than_a_flag_do_not_cover_each_other() {
     let (mut doc, reg, mut v) = setup(Snap::Beat);
-    doc.song.loop_range = (2 * BAR, 2 * BAR + PPQ);
+    doc.song_mut().loop_range = (2 * BAR, 2 * BAR + PPQ);
     v.sync(&doc, &reg);
     let a = drag(
         right_flag(&v, 2 * BAR + PPQ, 0, 4.0),
@@ -417,7 +417,7 @@ fn two_locators_closer_than_a_flag_do_not_cover_each_other() {
 #[test]
 fn a_flag_at_the_far_left_stays_grabbable() {
     let (mut doc, reg, mut v) = setup(Snap::Bar);
-    doc.song.loop_range = (0, 2 * BAR);
+    doc.song_mut().loop_range = (0, 2 * BAR);
     v.sync(&doc, &reg);
     let a = drag(
         left_flag(&v, 0, 0, 5.0),
@@ -457,7 +457,7 @@ fn set_left_and_right_locator_at_playhead_set_one_locator_each() {
 #[test]
 fn the_playhead_commands_keep_the_minimum_length_and_the_enabled_flag() {
     let (mut doc, _, mut v) = setup(Snap::Beat);
-    doc.song.loop_enabled = false;
+    doc.song_mut().loop_enabled = false;
     v.sync(&doc, &registry());
     v.set_playhead(6 * BAR);
     let out = command(&mut v, &doc, "transport.set_left_locator");
@@ -574,9 +574,9 @@ fn golden_of_the_ruler_with_the_flags_apart_met_and_crowded() {
         ("crowded", (6 * BAR, 6 * BAR + PPQ), 6 * BAR, true),
     ] {
         let (mut doc, reg, mut v) = setup(Snap::Bar);
-        doc.song.loop_range = loop_range;
-        doc.song.end = end;
-        doc.song.loop_enabled = on;
+        doc.song_mut().loop_range = loop_range;
+        doc.song_mut().end = end;
+        doc.song_mut().loop_enabled = on;
         v.sync(&doc, &reg);
         let mut dl = DisplayList::new();
         v.paint(&mut dl, &doc, &reg);
@@ -604,9 +604,9 @@ fn preview_png() {
         ("crowded", (6 * BAR, 6 * BAR + PPQ), 6 * BAR, true),
     ] {
         let (mut doc, reg, mut v) = setup(Snap::Bar);
-        doc.song.loop_range = loop_range;
-        doc.song.end = end;
-        doc.song.loop_enabled = on;
+        doc.song_mut().loop_range = loop_range;
+        doc.song_mut().end = end;
+        doc.song_mut().loop_enabled = on;
         v.sync(&doc, &reg);
         v.set_playhead(2 * BAR + PPQ);
         let mut text = TextEngine::new();

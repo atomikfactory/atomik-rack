@@ -284,7 +284,7 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
         apply(Command::Song(SongCommand::AddClip {
             device: key(k),
             lane: 0,
-            clip: clip(notes(&steps)),
+            clip: clip(notes(&steps).into()),
         }));
     }
     apply(Command::Song(SongCommand::SetSongEnd(song_end)));
@@ -502,7 +502,7 @@ fn both_samplers_sound_and_the_demo_is_not_clipping() {
     assert!((0.02..1.0).contains(&peak), "peak {peak}");
     for (soloed, from, to) in [("keys", 0usize, 24_000usize), ("pad", 48_000, 96_000)] {
         let mut solo = doc.clone();
-        for t in &mut solo.song.tracks {
+        for t in &mut solo.song_mut().tracks {
             t.solo = t.device == key(soloed);
         }
         let r = bounce(&solo, 512, 0);
@@ -528,7 +528,7 @@ fn the_layer_zone_and_the_loop_change_the_sound() {
     // ended at one second.
     let solo_pad = |looped: bool| {
         let mut d = doc.clone();
-        for t in &mut d.song.tracks {
+        for t in &mut d.song_mut().tracks {
             t.solo = t.device == key("pad");
         }
         if !looped {

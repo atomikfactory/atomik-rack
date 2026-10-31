@@ -49,7 +49,7 @@ fn two_clips(reg: &Registry) -> Document {
 fn notes_of(d: &Document, id: u64) -> Vec<Note> {
     let (_, _, c) = d.doc().song.clip(ClipId(id)).unwrap();
     match &c.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         _ => panic!("not notes"),
     }
 }
@@ -558,7 +558,7 @@ fn a_quantize_at_the_last_tick_keeps_every_note_inside_the_song_and_the_file_sav
     d.apply(
         sc(SongCommand::SetClipContent {
             id: ClipId(1),
-            content: ClipContent::Notes(out),
+            content: ClipContent::Notes(out.into()),
             merge: None,
         }),
         &reg,

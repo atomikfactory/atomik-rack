@@ -46,7 +46,7 @@ fn notes_clip(length: i64, notes: Vec<Note>) -> Clip {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     }
 }
 

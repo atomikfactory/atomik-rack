@@ -51,7 +51,7 @@ fn project(inserts: &[&str]) -> Document {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, 2 * BAR, 57, 0.8)]),
+                content: ClipContent::Notes(vec![Note::new(0, 2 * BAR, 57, 0.8)].into()),
             },
         }),
     );

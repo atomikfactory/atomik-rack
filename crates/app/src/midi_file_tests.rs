@@ -30,7 +30,7 @@ fn clip(start: i64, length: i64, notes: Vec<Note>, controllers: Vec<ControllerLa
         grid: None,
         scale: None,
         controllers,
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     }
 }
 
