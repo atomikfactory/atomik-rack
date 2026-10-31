@@ -1856,6 +1856,7 @@ impl<B: AudioBackend> Shell<B> {
             console: self.console_visible(),
             console_maximised: self.maximised(),
             compensation: self.core.doc().console.compensation,
+            align_returns: self.core.doc().console.align_returns,
             console_devices: view.show_console_devices(),
             console_links: view.show_console_links(),
             tempo_lane: self.core.arrangement().tempo_lane_visible(),
@@ -4918,6 +4919,13 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ToggleCompensation => {
                 let on = self.core.doc().console.compensation;
                 let command = Command::Console(ConsoleCommand::SetCompensation(!on));
+                // A rejection is already reported in the view.
+                let _ = self.core.apply_command(command);
+                Vec::new()
+            }
+            AppCommand::ToggleReturnAlignment => {
+                let on = self.core.doc().console.align_returns;
+                let command = Command::Console(ConsoleCommand::SetAlignReturns(!on));
                 // A rejection is already reported in the view.
                 let _ = self.core.apply_command(command);
                 Vec::new()
