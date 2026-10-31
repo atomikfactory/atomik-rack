@@ -88,8 +88,10 @@ mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
 rack.browse_patch | rack | Cmd+Shift+B
+rack.combine | rack | Cmd+Shift+G
 rack.patch_next | rack | Cmd+Right
 rack.patch_prev | rack | Cmd+Left
+rack.uncombine | rack | Cmd+Shift+U
 sequencer.nudge_left | sequencer | Cmd+Left
 sequencer.nudge_left_beat | sequencer | Cmd+Shift+Left
 sequencer.nudge_left_tick | sequencer | Cmd+Opt+Left

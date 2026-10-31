@@ -173,6 +173,11 @@ impl RackView {
                 return Cow::Borrowed(doc);
             }
         }
+        self.scope_rack_at = doc
+            .devices
+            .iter()
+            .position(|d| d.key == self.scope[0])
+            .map_or(usize::MAX, |i| i + 1);
         self.scope_names = (1..=self.scope.len())
             .map(|n| {
                 self.path_of(n)

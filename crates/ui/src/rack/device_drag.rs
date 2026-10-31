@@ -130,6 +130,11 @@ impl RackView {
             .iter()
             .map(|d| moving.contains(&d.key))
             .collect();
+        // Over a container's panel the device goes inside, over the breadcrumb's project
+        // segment it leaves the open container.
+        if self.container_drop(&key, &moving, &flags, out) {
+            return;
+        }
         let dp = self.drop_point(self.view_to_rack(self.pointer), &flags);
         let index = self.slot_index(doc, &dp, &moving);
         if !self.scope.is_empty() {
@@ -332,6 +337,9 @@ impl RackView {
         }
         // A move released over the navigator is dropped: no line, no zone highlight.
         if self.in_navigator(self.pointer) {
+            return;
+        }
+        if self.paint_container_drop(c, &moving) {
             return;
         }
         let dp = self.drop_point(self.view_to_rack(self.pointer), &moving);

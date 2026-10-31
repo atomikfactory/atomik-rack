@@ -373,6 +373,8 @@ fn right_click_on_a_device_opens_the_menu_with_derived_shortcut_text() {
             "rack.disconnect",
             "rack.go_to_track",
             "rack.save_to_library",
+            "rack.combine",
+            "rack.uncombine",
             "edit.copy_settings",
             "edit.paste_settings",
             "rack.reset_device",
@@ -834,6 +836,122 @@ fn the_edit_menu_is_live_and_shows_the_derived_chords() {
     s.execute(AppCommand::Copy);
     assert_eq!(s.core().clipboard().kind(), Some(ClipboardKind::Devices));
     assert!(find(&s, "Paste").enabled);
+}
+
+#[test]
+fn the_edit_menu_offers_combine_and_uncombine_on_the_rack_selection() {
+    let mut s = rack3();
+    let item = |s: &Shell<NullBackend>, label: &str| {
+        s.menu_model()
+            .iter()
+            .flat_map(|m| m.items().cloned().collect::<Vec<_>>())
+            .find(|i| i.label == label)
+            .unwrap()
+    };
+    assert!(!item(&s, "Combine").enabled && !item(&s, "Uncombine").enabled);
+    assert_eq!(
+        item(&s, "Combine").shortcut.as_deref(),
+        Some("Ctrl+Shift+G")
+    );
+    assert_eq!(
+        item(&s, "Uncombine").shortcut.as_deref(),
+        Some("Ctrl+Shift+U")
+    );
+    let original = saved(&s);
+    let (b, c) = (plate(&s, "b"), plate(&s, "c"));
+    click(&mut s, b, Modifiers::NONE);
+    click(&mut s, c, Modifiers::SHIFT);
+    assert!(item(&s, "Combine").enabled && !item(&s, "Uncombine").enabled);
+    s.execute(AppCommand::Combine);
+    assert_eq!(selection(&s), ["container"]);
+    assert!(item(&s, "Uncombine").enabled, "the container is selected");
+    s.execute(AppCommand::Uncombine);
+    assert_eq!(saved(&s), original);
+}
+
+#[test]
+fn the_default_chords_combine_and_uncombine() {
+    let mut s = rack3();
+    let original = saved(&s);
+    let (b, c) = (plate(&s, "b"), plate(&s, "c"));
+    click(&mut s, b, Modifiers::NONE);
+    click(&mut s, c, Modifiers::SHIFT);
+    tap(&mut s, Os::Windows, "Cmd+Shift+G");
+    assert_eq!(selection(&s), ["container"]);
+    tap(&mut s, Os::Windows, "Cmd+Shift+U");
+    assert_eq!(selection(&s), ["b", "c"]);
+    assert_eq!(saved(&s), original);
+}
+
+#[test]
+fn the_device_menu_combines_and_uncombines_by_what_is_selected() {
+    let mut s = rack3();
+    let original = saved(&s);
+    let enabled = |items: &[(String, Option<String>, bool)], id: &str| {
+        items.iter().find(|(c, _, _)| c == id).map(|(_, _, e)| *e)
+    };
+    // One effect: it can be combined, there is no container to uncombine, and the top level has
+    // nothing to move out of.
+    let items = open_menu_on(&mut s, "b");
+    assert_eq!(enabled(&items, "rack.combine"), Some(true));
+    assert_eq!(enabled(&items, "rack.uncombine"), Some(false));
+    assert_eq!(enabled(&items, "rack.move_out"), None);
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.combine")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(selection(&s), ["container"]);
+    assert!(s.core().last_rejection().is_none());
+    // The container: uncombine is on.
+    let items = open_menu_on(&mut s, "container");
+    assert_eq!(enabled(&items, "rack.uncombine"), Some(true));
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.uncombine")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert_eq!(selection(&s), ["b"]);
+    assert_eq!(saved(&s), original);
+}
+
+#[test]
+fn the_menu_of_an_open_container_moves_a_device_out_after_it() {
+    let mut s = rack3();
+    let (b, c) = (plate(&s, "b"), plate(&s, "c"));
+    click(&mut s, b, Modifiers::NONE);
+    click(&mut s, c, Modifiers::SHIFT);
+    s.execute(AppCommand::Combine);
+    s.core_mut().view_mut().set_scope(&[key("container")]);
+    s.core_mut().after_view_change();
+    let inner = plate(&s, "b");
+    click(&mut s, inner, Modifiers::NONE);
+    let items = open_menu(&mut s, inner);
+    let on = |id: &str| items.iter().find(|(c, _, _)| c == id).map(|(_, _, e)| *e);
+    assert_eq!(on("rack.move_out"), Some(true));
+    assert_eq!(on("rack.combine"), Some(false), "the top level only");
+    let at = s
+        .context_menu()
+        .unwrap()
+        .item_center("rack.move_out")
+        .unwrap();
+    click(&mut s, at, Modifiers::NONE);
+    assert!(s.core().last_rejection().is_none());
+    assert_eq!(devices(&s), ["a", "container", "b"]);
+    assert_eq!(
+        s.core()
+            .doc()
+            .inner(&key("container"))
+            .unwrap()
+            .devices
+            .len(),
+        1
+    );
+    // One undo step puts it back.
+    assert!(s.core_mut().undo());
+    assert_eq!(devices(&s), ["a", "container"]);
 }
 
 // ------------------------------------------------------------------ goldens

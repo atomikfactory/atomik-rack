@@ -45,6 +45,14 @@ pub struct MenuEnable {
     pub assign_send: bool,
     /// Rack: the primary device is a MIDI Out device (Choose MIDI Out Port works).
     pub midi_out: bool,
+    /// Rack: Combine can work on the selection (the model would accept it).
+    pub combine: bool,
+    /// Rack: Uncombine can work on the selection (the model would accept it).
+    pub uncombine: bool,
+    /// Rack: the rack shows the inside of a container (Move Out of Container is listed).
+    pub in_container: bool,
+    /// Rack: the selected device of the open container can move out (the model would accept it).
+    pub move_out: bool,
     /// Rack: how many columns the rack has (Remove Column needs two, Add Column room).
     pub columns: u16,
     /// Track header: the track has a note lane, so "Chase Notes" can be switched.
@@ -402,6 +410,14 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("rack.disconnect", e.selection),
                 item("rack.go_to_track", e.has_track),
                 item("rack.save_to_library", e.selection && !e.master_only),
+                Spec::Separator,
+                item("rack.combine", e.combine),
+                item("rack.uncombine", e.uncombine),
+            ]);
+            if e.in_container {
+                v.push(item("rack.move_out", e.move_out));
+            }
+            v.extend([
                 Spec::Separator,
                 item("edit.copy_settings", e.selection && !e.master_only),
                 item("edit.paste_settings", e.paste_settings),
@@ -1027,6 +1043,8 @@ mod tests {
                 "rack.disconnect",
                 "rack.go_to_track",
                 "rack.save_to_library",
+                "rack.combine",
+                "rack.uncombine",
                 "edit.copy_settings",
                 "edit.paste_settings",
                 "rack.reset_device",

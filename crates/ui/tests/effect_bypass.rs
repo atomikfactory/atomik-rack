@@ -30,6 +30,9 @@ const PLAYERS: [&str; 8] = [
     "atomik.note-delay",
 ];
 
+/// The container: its inside is left out while it is bypassed.
+const CONTAINER: &str = "atomik.container";
+
 const EFFECTS: [&str; 11] = [
     "atomik.reverb",
     "atomik.compressor",
@@ -108,7 +111,7 @@ fn spec_of(desc: &DeviceDescriptor) -> PanelSpec {
 }
 
 #[test]
-fn only_the_builtin_effects_and_the_players_have_the_switch() {
+fn only_the_builtin_effects_the_players_and_the_container_have_the_switch() {
     let reg = registry();
     let mut with: Vec<&str> = Vec::new();
     for type_id in reg.type_ids() {
@@ -122,14 +125,16 @@ fn only_the_builtin_effects_and_the_players_have_the_switch() {
     with.sort_unstable();
     let mut want = EFFECTS.to_vec();
     want.extend(PLAYERS);
+    want.push(CONTAINER);
     want.sort_unstable();
     assert_eq!(with, want);
     // No instrument, mixer or other utility has one, and no plugin (effect plugins keep the BYPASS
     // button inside their panel).
     for t in reg.type_ids() {
         let desc = reg.descriptor(t).unwrap();
-        let expected =
-            (desc.kind == DeviceKind::Effect && !is_plugin_type_id(t)) || PLAYERS.contains(&t);
+        let expected = (desc.kind == DeviceKind::Effect && !is_plugin_type_id(t))
+            || PLAYERS.contains(&t)
+            || t == CONTAINER;
         assert_eq!(has_strip_bypass(desc), expected && want.contains(&t), "{t}");
     }
     let p = plugin_rack();
