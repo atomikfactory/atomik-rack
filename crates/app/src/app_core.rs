@@ -1073,6 +1073,8 @@ impl<S: EngineSink> AppCore<S> {
         self.view.sync(doc, &self.registry);
         self.arrangement.sync_at(doc, &self.registry, revision);
         self.piano_roll.sync_at(doc, &self.registry, revision);
+        self.sync_roll_labels();
+        let doc = self.document.doc();
         self.view
             .set_clip_scale(self.piano_clip.and_then(|_| self.piano_roll.scale()));
         self.sample_editor.sync(doc, &self.registry);
@@ -2440,8 +2442,37 @@ impl<S: EngineSink> AppCore<S> {
             self.piano_roll.open(id);
             self.piano_clip = Some(id);
             self.piano_roll.sync(self.document.doc(), &self.registry);
+            self.sync_roll_labels();
             self.sync_clip_scale();
         }
+    }
+
+    /// Names the keys of the piano roll after what plays on them: on a drum machine track each
+    /// pad that has a sample is named after its file, without the extension. Any other track
+    /// shows plain note names. Display only: the notes keep their keys.
+    pub fn sync_roll_labels(&mut self) {
+        let doc = self.document.doc();
+        let labels = self
+            .piano_roll
+            .track_device()
+            .and_then(|key| doc.device(key))
+            .filter(|d| d.type_id == "atomik.drum-machine")
+            .map(|d| {
+                (1..=atomik_model::PAD_COUNT)
+                    .filter_map(|pad| {
+                        let zone = atomik_model::pad_zones(&d.zones, pad).next()?;
+                        let meta = doc.assets.get(&d.zones[zone].asset)?;
+                        let name = std::path::Path::new(&meta.original_name)
+                            .file_stem()
+                            .map_or_else(
+                                || meta.original_name.clone(),
+                                |s| s.to_string_lossy().into_owned(),
+                            );
+                        Some((atomik_model::pad_key(pad), name))
+                    })
+                    .collect::<Vec<_>>()
+            });
+        self.piano_roll.set_key_labels(labels);
     }
 
     /// Tells the rack the scale of the clip open in the piano roll (the FROM CLIP button of a
