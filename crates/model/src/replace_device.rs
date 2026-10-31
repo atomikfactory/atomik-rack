@@ -254,12 +254,17 @@ pub(crate) fn plan(
                 .position(|x| &x.device == target)
                 .expect("the track exists");
             let old_track = t.clone();
-            let mut new_track = old_track.clone();
-            new_track.lanes = kept;
+            // A track needs a lane: one whose lanes all went (an automation track of params
+            // the new device lacks) goes with them.
+            let new_track = (!kept.is_empty()).then(|| {
+                let mut track = old_track.clone();
+                track.lanes = kept;
+                track
+            });
             p.push(Edit::Track {
                 index,
                 old: Some(old_track),
-                new: Some(new_track),
+                new: new_track,
             });
         }
     }
