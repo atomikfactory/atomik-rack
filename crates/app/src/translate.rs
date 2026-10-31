@@ -40,6 +40,9 @@ pub fn cursor_icon(hint: CursorHint) -> CursorIcon {
         CursorHint::Default => CursorIcon::Default,
         CursorHint::ResizeHorizontal => CursorIcon::EwResize,
         CursorHint::Move => CursorIcon::Move,
+        CursorHint::Magnifier => CursorIcon::ZoomIn,
+        CursorHint::Hand => CursorIcon::Grab,
+        CursorHint::Grabbing => CursorIcon::Grabbing,
         CursorHint::Crosshair
         | CursorHint::Pen
         | CursorHint::Eraser
