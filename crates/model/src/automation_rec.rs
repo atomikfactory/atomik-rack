@@ -19,6 +19,71 @@
 
 use crate::song::{AutomationPoint, Curve};
 
+/// How hard Cleanup Automation thins: the tolerance is a fraction of the parameter's range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThinLevel {
+    /// 0.5 % of the range: only points the line reproduces almost exactly. The default.
+    #[default]
+    Normal,
+    /// 2 % of the range.
+    Heavy,
+    /// 5 % of the range.
+    Maximum,
+}
+
+impl ThinLevel {
+    /// Every level, from the lightest.
+    pub const ALL: [ThinLevel; 3] = [ThinLevel::Normal, ThinLevel::Heavy, ThinLevel::Maximum];
+
+    /// The tolerance as a fraction of the parameter's range.
+    pub const fn fraction(self) -> f32 {
+        match self {
+            ThinLevel::Normal => 0.005,
+            ThinLevel::Heavy => 0.02,
+            ThinLevel::Maximum => 0.05,
+        }
+    }
+
+    /// The level whose fraction is nearest `fraction`.
+    pub fn nearest(fraction: f32) -> ThinLevel {
+        let f = if fraction.is_finite() {
+            fraction
+        } else {
+            0.005
+        };
+        let mut best = ThinLevel::Normal;
+        for l in ThinLevel::ALL {
+            if (l.fraction() - f).abs() < (best.fraction() - f).abs() {
+                best = l;
+            }
+        }
+        best
+    }
+
+    /// The plain label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            ThinLevel::Normal => "Normal",
+            ThinLevel::Heavy => "Heavy",
+            ThinLevel::Maximum => "Maximum",
+        }
+    }
+
+    /// The id used in command arguments.
+    pub const fn id(self) -> &'static str {
+        match self {
+            ThinLevel::Normal => "normal",
+            ThinLevel::Heavy => "heavy",
+            ThinLevel::Maximum => "maximum",
+        }
+    }
+
+    /// The level with this id.
+    pub fn from_id(id: &str) -> Option<ThinLevel> {
+        ThinLevel::ALL.into_iter().find(|l| l.id() == id)
+    }
+}
+
 /// How a recording pass writes into an automation lane (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WriteMode {
