@@ -710,3 +710,217 @@ fn rows_a_take_group_on_a_second_lane_opens_its_rows_under_that_lane() {
     // Lane 0 keeps its row directly above lane 1.
     assert!(v.lane_rect(&key("keys"), 0).unwrap().y1 <= lane1.y0 + 1e-9);
 }
+
+// ------------------------------------------------------------------ lane workflows
+
+#[test]
+fn merge_note_lanes_acts_on_the_selected_tracks_with_several_lanes() {
+    let (doc, reg, mut v) = setup();
+    assert_eq!(
+        command(&mut v, &doc, &reg, "sequencer.merge_note_lanes"),
+        None
+    );
+    select_lane(&mut v, &doc, &reg, 1);
+    assert!(v.lane_menu().can_merge);
+    assert_eq!(
+        command(&mut v, &doc, &reg, "sequencer.merge_note_lanes"),
+        Some(vec![SongCommand::MergeNoteLanes {
+            devices: vec![key("keys")]
+        }])
+    );
+    let plain = song_doc();
+    let mut one = arrangement(&plain, &reg);
+    one.set_selected_track(Some(key("keys")));
+    assert!(!one.lane_menu().can_merge);
+    assert_eq!(
+        command(&mut one, &plain, &reg, "sequencer.merge_note_lanes"),
+        None
+    );
+}
+
+#[test]
+fn explode_notes_needs_one_note_clip_with_several_pitches() {
+    let (mut doc, reg, _) = setup();
+    let c = doc
+        .song_mut()
+        .tracks
+        .iter_mut()
+        .find(|t| t.device == key("keys"))
+        .unwrap()
+        .lanes[0]
+        .clips
+        .iter_mut()
+        .find(|c| c.id == ClipId(3))
+        .unwrap();
+    c.content = ClipContent::Notes(vec![n(0, PPQ, 60, 0.5), n(PPQ, PPQ, 64, 0.5)].into());
+    let mut v = arrangement(&doc, &reg);
+    v.set_bounds(atomik_ui::kurbo::Rect::new(0.0, 0.0, 1200.0, 800.0));
+    assert!(!v.lane_menu().can_explode, "nothing is selected");
+    let at = grab(&v, 3);
+    click(&mut v, &doc, &reg, at);
+    assert!(v.lane_menu().can_explode);
+    let out = v.command("sequencer.explode_notes", None, &doc, &reg);
+    let CommandOutcome::Handled(actions) = out else {
+        panic!("{out:?}");
+    };
+    assert_eq!(
+        commands(&actions),
+        vec![Command::Workflow(WorkflowCommand::ExplodeNotes {
+            clip: ClipId(3)
+        })]
+    );
+    // A clip of one pitch has nothing to explode.
+    let at = grab(&v, 11);
+    click(&mut v, &doc, &reg, at);
+    assert!(!v.lane_menu().can_explode);
+    assert!(matches!(
+        v.command("sequencer.explode_notes", None, &doc, &reg),
+        CommandOutcome::NotApplicable(_)
+    ));
+}
+
+fn lane_commands(actions: &[UiAction]) -> Vec<SongCommand> {
+    song_commands(actions)
+        .into_iter()
+        .filter(|c| matches!(c, SongCommand::MoveNoteLane { .. }))
+        .collect()
+}
+
+/// A drag of the label of `device`'s lane `lane` to `to`, with `modifiers` held.
+fn drag_lane(
+    v: &mut ArrangementView,
+    doc: &RackDoc,
+    reg: &Reg,
+    (device, lane): (&str, usize),
+    to: Point,
+    modifiers: Modifiers,
+) -> Vec<UiAction> {
+    let from = v.note_lane_header_center(&key(device), lane).unwrap();
+    let mid = Point::new(from.x, (from.y + to.y) / 2.0);
+    run(
+        v,
+        doc,
+        reg,
+        &[
+            down(from),
+            mv_with(mid, modifiers),
+            mv_with(to, modifiers),
+            UiEvent::PointerUp {
+                pos: to,
+                button: PointerButton::Primary,
+                modifiers,
+            },
+        ],
+    )
+}
+
+/// A point in the upper (`false`) or lower half of a lane row.
+fn half(v: &ArrangementView, device: &str, lane: usize, lower: bool) -> Point {
+    let r = v.lane_rect(&key(device), lane).unwrap();
+    let h = r.height();
+    Point::new(
+        r.x0 + 40.0,
+        if lower {
+            r.y0 + h * 0.75
+        } else {
+            r.y0 + h * 0.25
+        },
+    )
+}
+
+#[test]
+fn dragging_a_lane_header_moves_the_lane_and_ctrl_copies_it() {
+    use atomik_ui::keymap::{Os, Roles};
+    let (doc, reg, mut v) = setup();
+    v.set_roles(Roles::defaults(Os::Windows));
+    let to = half(&v, "keys", 2, true);
+    let acts = drag_lane(&mut v, &doc, &reg, ("keys", 0), to, Modifiers::NONE);
+    assert_eq!(
+        lane_commands(&acts),
+        vec![SongCommand::MoveNoteLane {
+            device: key("keys"),
+            lane: 0,
+            to_device: key("keys"),
+            to_index: 2,
+            copy: false,
+        }]
+    );
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Modifiers::NONE
+    };
+    let to = half(&v, "bass", 0, false);
+    let acts = drag_lane(&mut v, &doc, &reg, ("keys", 1), to, ctrl);
+    assert_eq!(
+        lane_commands(&acts),
+        vec![SongCommand::MoveNoteLane {
+            device: key("keys"),
+            lane: 1,
+            to_device: key("bass"),
+            to_index: 0,
+            copy: true,
+        }]
+    );
+}
+
+#[test]
+fn dragging_a_lane_header_nowhere_useful_emits_nothing() {
+    let (doc, reg, mut v) = setup();
+    // Back to its own place, onto an automation lane, and a click without a drag.
+    for (lane, to) in [
+        (1, half(&v, "keys", 1, true)),
+        (1, half(&v, "keys", 0, true)),
+    ] {
+        let acts = drag_lane(&mut v, &doc, &reg, ("keys", lane), to, Modifiers::NONE);
+        assert_eq!(lane_commands(&acts), Vec::new(), "lane {lane}");
+    }
+    let cutoff = v.lane_rect(&key("bass"), 2).unwrap().center();
+    let acts = drag_lane(&mut v, &doc, &reg, ("keys", 1), cutoff, Modifiers::NONE);
+    assert_eq!(lane_commands(&acts), Vec::new());
+    let at = v.note_lane_header_center(&key("keys"), 1).unwrap();
+    assert_eq!(lane_commands(&click(&mut v, &doc, &reg, at)), Vec::new());
+}
+
+#[test]
+fn escape_cancels_a_lane_drag() {
+    let (doc, reg, mut v) = setup();
+    let from = v.note_lane_header_center(&key("keys"), 0).unwrap();
+    let to = half(&v, "keys", 2, true);
+    run(&mut v, &doc, &reg, &[down(from), mv(to)]);
+    assert!(v.lane_drop().is_some());
+    run(&mut v, &doc, &reg, &[press(Key::Escape, Modifiers::NONE)]);
+    assert!(v.lane_drop().is_none());
+    assert_eq!(
+        lane_commands(&run(&mut v, &doc, &reg, &[up(to)])),
+        Vec::new()
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+    /// Whatever lane is dragged to wherever, the emitted command is one the model accepts.
+    #[test]
+    fn lane_drags_only_emit_commands_the_model_accepts(
+        from in (0usize..2, 0usize..3),
+        y in 60.0f64..420.0,
+        copy in proptest::prelude::any::<bool>(),
+    ) {
+        use atomik_ui::keymap::{Os, Roles};
+        let (doc, reg, mut v) = setup();
+        v.set_roles(Roles::defaults(Os::Windows));
+        let (device, lane) = (["keys", "bass"][from.0], from.1);
+        let count = doc.song.track(&key(device)).unwrap().note_lane_count();
+        let Some(origin) = v.note_lane_header_center(&key(device), lane % count) else {
+            return Ok(());
+        };
+        let modifiers = Modifiers { ctrl: copy, ..Modifiers::NONE };
+        let to = Point::new(origin.x, y);
+        let acts = drag_lane(&mut v, &doc, &reg, (device, lane % count), to, modifiers);
+        let mut d = Document::new(doc);
+        for c in commands(&acts) {
+            proptest::prop_assert!(d.apply(c, &reg).is_ok());
+            d.doc().validate().unwrap();
+        }
+    }
+}

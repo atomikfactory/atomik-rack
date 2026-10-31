@@ -354,3 +354,33 @@ fn key_labels_name_the_keyboard_strip_without_touching_the_notes() {
     v.set_key_labels(None);
     assert_eq!(paint(&mut v), plain);
 }
+
+#[test]
+fn extract_notes_sends_the_selection_as_one_workflow_command() {
+    let (mut v, doc, reg) = roll();
+    assert_eq!(
+        v.command("editor.extract_notes", None, &doc, &reg),
+        CommandOutcome::Declined,
+        "nothing is selected"
+    );
+    v.set_selected_notes(&[0, 2]);
+    let out = handled(v.command("editor.extract_notes", None, &doc, &reg));
+    let sent: Vec<_> = out
+        .iter()
+        .filter_map(|a| match a {
+            UiAction::Command(atomik_model::Command::Workflow(
+                atomik_model::WorkflowCommand::ExtractNotes {
+                    selection,
+                    mode,
+                    to,
+                    ..
+                },
+            )) => Some((selection.clone(), *mode, *to)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        vec![(vec![0, 2], atomik_model::ExtractMode::Move, None)]
+    );
+}

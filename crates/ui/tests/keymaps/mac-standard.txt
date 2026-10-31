@@ -127,6 +127,7 @@ sequencer.close_clip | sequencer | Esc
 sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Cmd+Shift+T
 sequencer.join | sequencer | Cmd+J
+sequencer.merge_note_lanes | sequencer | Cmd+R
 sequencer.move_track_down | sequencer | Cmd+Opt+Down
 sequencer.move_track_up | sequencer | Cmd+Opt+Up
 sequencer.nudge_left | sequencer | Cmd+Left

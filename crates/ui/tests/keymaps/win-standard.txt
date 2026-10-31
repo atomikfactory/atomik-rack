@@ -127,6 +127,7 @@ sequencer.close_clip | sequencer | Esc
 sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Ctrl+Shift+T
 sequencer.join | sequencer | Ctrl+J
+sequencer.merge_note_lanes | sequencer | Ctrl+R
 sequencer.move_track_down | sequencer | Ctrl+Alt+Down
 sequencer.move_track_up | sequencer | Ctrl+Alt+Up
 sequencer.nudge_left | sequencer | Ctrl+Left

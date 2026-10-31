@@ -62,6 +62,7 @@ pub use points::{PointField, PointShown};
 mod lanes;
 mod loops;
 use loops::loop_handle_rect;
+mod lane_move;
 mod markers;
 mod meters;
 mod organise;
@@ -508,6 +509,8 @@ enum Drag {
     None,
     /// A track header is dragged to another place of the list (`OrgUi::mv` has the state).
     TrackMove,
+    /// A note lane header is dragged to another place among the note lanes (`OrgUi::lane_mv`).
+    LaneMove,
     /// The bottom edge of a track header is dragged (`HeightUi::drag` has the state).
     Height,
     Move {
@@ -3808,6 +3811,10 @@ impl ArrangementView {
             self.height_move(pos, modifiers.alt, out);
             return;
         }
+        if matches!(self.drag, Drag::LaneMove) {
+            self.lane_move_move(pos, modifiers);
+            return;
+        }
         if matches!(self.drag, Drag::TrackMove) {
             self.track_move_move(pos, modifiers);
             return;
@@ -3864,6 +3871,7 @@ impl ArrangementView {
             | Drag::TempoPoint { .. }
             | Drag::Height
             | Drag::TrackMove
+            | Drag::LaneMove
             | Drag::Meter { .. }
             | Drag::Audition
             | Drag::Comp { .. }
@@ -4301,6 +4309,7 @@ impl ArrangementView {
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
             Drag::TrackMove => self.track_move_up(out),
+            Drag::LaneMove => self.lane_move_up(out),
             Drag::Comp {
                 group,
                 take,
@@ -5107,6 +5116,9 @@ impl ArrangementView {
         }
         if matches!(self.drag, Drag::Height) {
             return self.height_cancel(out);
+        }
+        if matches!(self.drag, Drag::LaneMove) {
+            return self.lane_move_cancel();
         }
         if matches!(self.drag, Drag::TrackMove) {
             return self.track_move_cancel();
