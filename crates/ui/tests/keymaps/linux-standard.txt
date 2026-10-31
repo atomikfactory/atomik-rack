@@ -108,12 +108,14 @@ mixer.value_page_up_fine | mixer | Shift+PageUp
 mixer.value_up | mixer | Up
 mixer.value_up_fine | mixer | Shift+Up
 rack.browse_patch | rack | Ctrl+Shift+B
+rack.combine | rack | Ctrl+Shift+G
 rack.extend_next | rack | Shift+Down
 rack.extend_prev | rack | Shift+Up
 rack.patch_next | rack | Ctrl+Right
 rack.patch_prev | rack | Ctrl+Left
 rack.select_next | rack | Down
 rack.select_prev | rack | Up
+rack.uncombine | rack | Ctrl+Shift+U
 sequencer.audio_crossfade toggle | sequencer | X
 sequencer.close_clip | sequencer | Esc
 sequencer.follow | global | F

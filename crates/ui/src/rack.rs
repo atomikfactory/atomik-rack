@@ -40,6 +40,7 @@ use vello::peniko::Color;
 mod columns;
 mod console_links;
 mod container_input;
+mod container_move;
 mod device_drag;
 mod drum_input;
 mod fx_input;
@@ -577,6 +578,9 @@ pub struct RackView {
     shown: atomik_model::ShownValues,
     /// The breadcrumb element under the pointer.
     crumb_hover: Option<CrumbHit>,
+    /// Where the container of the scope sits among the devices of the rack (the place a device
+    /// dragged out of it lands after); set on every sync inside a container.
+    scope_rack_at: usize,
     /// The open "map to macro" menu.
     macro_menu: Option<container_input::MacroMenu>,
     /// What the app knows about each plugin instance, by path key.
@@ -761,6 +765,7 @@ impl RackView {
             automated: BTreeMap::new(),
             shown: Default::default(),
             crumb_hover: None,
+            scope_rack_at: 0,
             macro_menu: None,
             plugin_status: BTreeMap::new(),
             plugin_catalog: Vec::new(),
@@ -2530,6 +2535,22 @@ impl RackView {
                         .desc
                         .as_ref()
                         .is_some_and(|d| crate::browser::is_player(d.type_id));
+                    let container = self.devices[i]
+                        .desc
+                        .as_ref()
+                        .is_some_and(|d| d.type_id == container_panel::CONTAINER_TYPE);
+                    if container {
+                        return Some(
+                            if self.devices[i].is_bypassed() {
+                                "Bypassed: the inside is left out and the audio passes straight \
+                                 through. Click to switch the container back in"
+                            } else {
+                                "Click to bypass the container: its inside is left out and the \
+                                 audio passes straight through"
+                            }
+                            .to_string(),
+                        );
+                    }
                     Some(
                         match (player, self.devices[i].is_bypassed()) {
                             (false, true) => {
