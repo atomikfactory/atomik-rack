@@ -4,6 +4,7 @@
 //! and a menu item cannot differ.
 
 use crate::commands::{ChopStep, FreezeMenu, ScaleStep};
+use atomik_model::ThinLevel;
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
 use atomik_ui::JackMenu;
@@ -174,6 +175,17 @@ const CROSSFADES: [(&str, &str); 5] = [
     ("exponential", "Exponential"),
     ("s_curve", "S-curve"),
 ];
+
+/// The Cleanup Automation submenu of the clip and track menus.
+fn cleanup_submenu(enabled: bool) -> Spec {
+    Spec::submenu(
+        "Cleanup Automation",
+        ThinLevel::ALL
+            .into_iter()
+            .map(|l| meter_item("sequencer.cleanup_automation", l.id(), l.label()).enabled(enabled))
+            .collect(),
+    )
+}
 
 /// The organisation items shared by the track header menu and the folder menu: the two
 /// submenus.
@@ -557,6 +569,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.set_lane_static", e.lane.automation),
                 item("sequencer.clear_lane_static", e.lane.automation_static),
                 Spec::Separator,
+                cleanup_submenu(true),
                 item("sequencer.freeze_track", e.freeze.can_freeze),
                 item("sequencer.unfreeze_track", e.freeze.can_unfreeze),
                 Spec::Separator,
@@ -647,6 +660,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                         })
                         .collect(),
                 ),
+                cleanup_submenu(e.selection),
                 Spec::submenu(
                     "Note Tools",
                     note_tool_menu("sequencer.note_tool", e.selection),

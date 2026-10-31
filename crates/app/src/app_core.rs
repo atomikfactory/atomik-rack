@@ -772,6 +772,7 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ParamTouched { device, param } => self.param_touched(&device, &param),
             UiAction::SetMasterKeyboard(track) => self.set_master_keyboard_track(track),
             UiAction::ToggleManualRec => self.set_manual_rec(!self.manual_rec),
+            UiAction::ToggleTempoArm => self.toggle_tempo_arm(),
             UiAction::ToggleLaneArm { device, param } => {
                 self.toggle_automation_arm(&device, &param);
             }
@@ -2908,6 +2909,7 @@ impl<S: EngineSink> AppCore<S> {
             .set_take_ghosts(self.take_preview().unwrap_or_default());
         self.transport_bar.set_click_gain(self.metronome_gain);
         self.arrangement.set_armed_lanes(&self.autorec.armed);
+        self.arrangement.set_tempo_armed(self.autorec.tempo_armed);
         self.piano_roll.set_playhead(self.position);
         self.transport_bar.set_state(atomik_ui::TransportState {
             playing: self.playing,

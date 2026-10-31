@@ -28,11 +28,13 @@ pub enum Role {
     DisableSnap,
     /// Click: a velocity stroke edits only the selected notes.
     SelectedOnly,
+    /// Drag: the pencil on automation holds the value where the stroke began as a flat range.
+    FlatRange,
 }
 
 impl Role {
     /// Every role, in listing order.
-    pub const ALL: [Role; 10] = [
+    pub const ALL: [Role; 11] = [
         Role::AlternateTool,
         Role::DisableSnap,
         Role::CopyDrag,
@@ -43,6 +45,7 @@ impl Role {
         Role::ResetParam,
         Role::EditAutomation,
         Role::SelectedOnly,
+        Role::FlatRange,
     ];
 
     /// The source modules that act on this role. A role with none is not wired: Settings does
@@ -59,6 +62,7 @@ impl Role {
             Role::EditAutomation => &["rack/selection", "console"],
             Role::Constrain => &["arrangement", "piano_roll", "audio_editor"],
             Role::SelectedOnly => &["piano_roll"],
+            Role::FlatRange => &["arrangement"],
         }
     }
 
@@ -85,6 +89,7 @@ impl Role {
             Role::ToggleSelect => "toggle_select",
             Role::DisableSnap => "disable_snap",
             Role::SelectedOnly => "selected_only",
+            Role::FlatRange => "flat_range",
         }
     }
 }
@@ -108,6 +113,7 @@ impl Role {
             Role::ResetParam => "Reset parameter",
             Role::EditAutomation => "Edit automation",
             Role::SelectedOnly => "Selected notes only",
+            Role::FlatRange => "Flat automation range",
         }
     }
 }
@@ -191,6 +197,7 @@ impl Roles {
             b(R::SelectedOnly, m(false, false, true, false), G::ClickItem),
             b(R::RangeSelect, shift, G::ClickItem),
             b(R::Constrain, shift, G::DragItem),
+            b(R::FlatRange, m(true, false, false, true), G::DragItem),
             b(R::FineAdjust, shift, G::DragControl),
             b(R::ResetParam, cmd, G::ClickControl),
             b(

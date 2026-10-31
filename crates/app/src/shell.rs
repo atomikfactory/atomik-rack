@@ -4635,7 +4635,8 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::RemoveBars
             | AppCommand::ReverseClips(_)
             | AppCommand::ScaleTempo(_)
-            | AppCommand::ChopClips(_) => {
+            | AppCommand::ChopClips(_)
+            | AppCommand::CleanupAutomation(_) => {
                 self.track_command(command);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()

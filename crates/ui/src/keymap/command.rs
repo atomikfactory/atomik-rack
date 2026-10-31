@@ -300,6 +300,8 @@ pub const CROSSFADE_ARGS: &[&str] = &[
 ];
 /// The values of `sequencer.chop_clips`: the length of the pieces.
 pub const CHOP_ARGS: &[&str] = &["bar", "half_bar", "beat", "eighth", "sixteenth"];
+/// The values of `sequencer.cleanup_automation`: how hard the points are thinned.
+pub const CLEANUP_ARGS: &[&str] = &["normal", "heavy", "maximum"];
 /// The values of `sequencer.reverse_clips`: notes mirror as bars (the default) or by their starts.
 pub const REVERSE_ARGS: &[&str] = &["bars", "starts"];
 /// The values of `sequencer.scale_tempo`: `double` and `halve` change the tempo of the selection
@@ -1296,6 +1298,15 @@ const COMMANDS: &[CommandDef] = &[
         C::Sequencer,
     )
     .arg(CHOP_ARGS)
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.cleanup_automation",
+        "Cleanup Automation",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CLEANUP_ARGS)
     .menu()
     .decline(),
     cmd(

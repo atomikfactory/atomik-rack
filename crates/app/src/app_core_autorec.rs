@@ -203,6 +203,8 @@ impl<S: EngineSink> AppCore<S> {
         } else {
             DEFAULT_AUTOMATION_THINNING
         };
+        self.arrangement
+            .set_automation_thinning(self.autorec.thinning);
     }
 
     /// Whether the lane of `param` on `device` is being written by the running take (the

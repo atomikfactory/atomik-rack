@@ -253,8 +253,10 @@ A role is a modifier held during a pointer gesture, not a chord. Settings, Keybo
 | Range select | `Shift` | `Shift` | A click selects from the last clicked item to this one |
 | Fine adjust | `Shift` | `Shift` | A drag or a wheel notch on a knob or fader in the rack and the mixer moves a tenth as far |
 | Reset parameter | `Ctrl` | `Cmd` | A click on a knob or fader in the rack and the mixer sets its default (a double-click does too) |
+| Constrain | `Shift` | `Shift` | A drag keeps to one axis; the pencil on an automation clip puts its points on the straight line from the press |
+| Flat automation range | `Ctrl+Shift` | `Cmd+Shift` | The pencil on an automation clip holds the value where the stroke began up to the pointer |
 
-Constrain is a role in the keymap but no gesture reads it yet, so Settings does not list it; a remap of it that is already in `keymap.json` is kept. The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
+The places that take a finer step from the modifier on their own (the clip inspector, the macro and plugin panels, the container editor) still use `Shift`.
 
 Many European keyboard layouts report AltGr as `Ctrl+Alt` (the default of Disable snap outside macOS): typing a character with AltGr while dragging switches snapping off. Remap Disable snap in Settings, Keyboard if that gets in the way.
 
