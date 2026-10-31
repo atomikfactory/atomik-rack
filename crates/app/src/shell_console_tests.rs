@@ -700,14 +700,11 @@ fn the_arrows_are_mixer_commands_that_step_the_focused_control_and_scroll() {
     tap(&mut s, Key::Down, Modifiers::SHIFT);
     tap(&mut s, Key::PageUp, Modifiers::NONE);
     assert_eq!(s.core().console().scroll_x(), 0.0);
-    let command = Modifiers {
-        ctrl: !cfg!(target_os = "macos"),
-        meta: cfg!(target_os = "macos"),
-        ..Modifiers::NONE
-    };
-    tap(&mut s, Key::Right, command);
+    // The shell of these tests resolves chords as Windows does, whatever the host: the command
+    // role is Ctrl there, so Ctrl is held on every host.
+    tap(&mut s, Key::Right, Modifiers::CTRL);
     let one = s.core().console().scroll_x();
-    assert!(one > 0.0, "Cmd+Right scrolls the strips");
+    assert!(one > 0.0, "Ctrl+Right scrolls the strips");
     tap(&mut s, Key::End, Modifiers::NONE);
     assert!(s.core().console().scroll_x() > one);
     tap(&mut s, Key::Home, Modifiers::NONE);
