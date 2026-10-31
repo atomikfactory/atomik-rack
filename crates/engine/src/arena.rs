@@ -34,6 +34,8 @@ pub struct Topology {
     cables: rules::CableMap,
     /// Delay compensation for compile (on by default).
     compensation: bool,
+    /// Align plain audio inputs too (off by default).
+    align_inputs: bool,
     /// `Device::latency_frames()` per node (0 unless set).
     latencies: BTreeMap<DeviceInstanceId, u32>,
     /// Metered output endpoints.
@@ -61,6 +63,7 @@ impl Topology {
             nodes: BTreeMap::new(),
             cables: BTreeMap::new(),
             compensation: true,
+            align_inputs: false,
             latencies: BTreeMap::new(),
             meters: BTreeSet::new(),
         }
@@ -144,6 +147,7 @@ impl Topology {
             &self.cables,
             &CompileOptions {
                 compensation: self.compensation,
+                align_inputs: self.align_inputs,
                 sample_rate: self.config.sample_rate.hz(),
                 latency: &latency,
                 meters: &self.meters,
@@ -160,6 +164,17 @@ impl Topology {
     /// Whether compiles compensate latency.
     pub fn compensation(&self) -> bool {
         self.compensation
+    }
+
+    /// Aligns plain audio inputs (FX returns, sidechain keys, split paths) like summing inputs
+    /// for subsequent compiles (off by default). Needs compensation on to have any effect.
+    pub fn set_align_inputs(&mut self, enabled: bool) {
+        self.align_inputs = enabled;
+    }
+
+    /// Whether compiles align plain audio inputs.
+    pub fn align_inputs(&self) -> bool {
+        self.align_inputs
     }
 
     /// Sets the latency (`Device::latency_frames()`) compile uses for node `id`.
@@ -276,6 +291,8 @@ pub struct RoutingPlan {
 pub(crate) struct ConsoleRouting {
     /// PDC delay lines, sorted by (summing input, source).
     pub(crate) delays: Vec<DelayLine>,
+    /// Holds the metronome back by the output latency (only with aligned inputs).
+    pub(crate) click_delay: Option<DelayLine>,
     /// PDC outcome.
     pub(crate) pdc: PdcReport,
     /// Meter slot `i` meters the endpoint with key `meter_keys[i]`.
@@ -294,6 +311,11 @@ impl std::fmt::Debug for RoutingPlan {
 }
 
 impl RoutingPlan {
+    /// The metronome delay line of this routing, if it has one.
+    pub(crate) fn click_delay_mut(&mut self) -> Option<&mut DelayLine> {
+        self.console.click_delay.as_mut()
+    }
+
     /// Delay-compensation report of this routing.
     pub fn pdc_report(&self) -> &crate::PdcReport {
         &self.console.pdc

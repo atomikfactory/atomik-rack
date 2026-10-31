@@ -78,7 +78,12 @@ pub(super) fn write_console(w: &mut String, console: &Console) {
         .map(|r| key_or_null(r.as_ref()))
         .collect();
     let _ = writeln!(w, "    \"returns\": [{}],", returns.join(", "));
-    let _ = writeln!(w, "    \"compensation\": {}", console.compensation);
+    if console.align_returns {
+        let _ = writeln!(w, "    \"compensation\": {},", console.compensation);
+        let _ = writeln!(w, "    \"align_returns\": true");
+    } else {
+        let _ = writeln!(w, "    \"compensation\": {}", console.compensation);
+    }
     let _ = writeln!(w, "  }},");
 }
 

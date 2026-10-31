@@ -168,6 +168,9 @@ pub enum AppCommand {
     AddChannel,
     /// Mixer ▸ Delay Compensation (on/off, undoable).
     ToggleCompensation,
+    /// Mixer ▸ Align Returns (on/off, undoable): FX returns, sidechain keys and split paths are
+    /// delay-compensated like the summing inputs.
+    ToggleReturnAlignment,
     /// Mixer > MIDI Learn (on/off): while on, changing a control arms it for the next hardware
     /// control that moves.
     MidiLearn,
@@ -476,6 +479,7 @@ impl AppCommand {
             AppCommand::TogglePolarity => ("mixer.toggle_polarity", None),
             AppCommand::BypassAllInserts => ("mixer.bypass_all_inserts", None),
             AppCommand::ToggleCompensation => ("mixer.toggle_compensation", None),
+            AppCommand::ToggleReturnAlignment => ("mixer.toggle_return_alignment", None),
             AppCommand::MidiLearn => ("midi.learn", None),
             AppCommand::MidiMappings => ("midi.mappings", None),
             AppCommand::ExportMidiPreset => ("midi.export_preset", None),
@@ -697,6 +701,7 @@ impl AppCommand {
                 return id.parse().ok().map(|id| AppCommand::DeleteVca(Some(id)));
             }
             ("mixer.toggle_compensation", None) => AppCommand::ToggleCompensation,
+            ("mixer.toggle_return_alignment", None) => AppCommand::ToggleReturnAlignment,
             ("midi.learn", None) => AppCommand::MidiLearn,
             ("midi.mappings", None) => AppCommand::MidiMappings,
             ("midi.export_preset", None) => AppCommand::ExportMidiPreset,
@@ -930,6 +935,8 @@ pub struct MenuState {
     pub console_maximised: bool,
     /// Delay compensation is on (document switch).
     pub compensation: bool,
+    /// Return alignment is on (document switch).
+    pub align_returns: bool,
     /// Console devices are shown in the rack.
     pub console_devices: bool,
     /// The console links are drawn as cables.
@@ -1487,6 +1494,11 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::ToggleCompensation,
                     state.compensation,
                 ),
+                check(
+                    "Align Returns",
+                    AppCommand::ToggleReturnAlignment,
+                    state.align_returns,
+                ),
                 MenuEntry::Separator,
                 check("MIDI Learn", AppCommand::MidiLearn, state.midi.learning),
                 enabled("MIDI Mappings\u{2026}", AppCommand::MidiMappings, true),
@@ -1829,6 +1841,11 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::ToggleCompensation,
                     state.compensation,
                 ),
+                check(
+                    "Align Returns",
+                    AppCommand::ToggleReturnAlignment,
+                    state.align_returns,
+                ),
                 MenuEntry::Separator,
                 MenuEntry::Submenu(Submenu {
                     label: "Sync",
@@ -1902,6 +1919,7 @@ mod tests {
             console: false,
             console_maximised: false,
             compensation: true,
+            align_returns: true,
             console_devices: false,
             console_links: false,
             tempo_lane: false,
@@ -2013,6 +2031,7 @@ mod tests {
             AppCommand::EndCompare,
             AppCommand::DeleteSnapshot(None),
             AppCommand::ToggleCompensation,
+            AppCommand::ToggleReturnAlignment,
             AppCommand::MidiLearn,
             AppCommand::MidiMappings,
             AppCommand::ExportMidiPreset,
@@ -2545,6 +2564,7 @@ mod tests {
                 "End Compare",
                 "Delete Snapshot",
                 "Delay Compensation",
+                "Align Returns",
                 "MIDI Learn",
                 "MIDI Mappings\u{2026}",
                 "Export MIDI Mapping Preset\u{2026}",
@@ -2644,6 +2664,7 @@ mod tests {
                 "Input Quantize: 1/16",
                 "Chase Notes",
                 "Delay Compensation",
+                "Align Returns",
                 "MIDI Clock Out",
                 "Send Clock While Stopped",
                 "Follow MIDI Clock",
@@ -2730,6 +2751,7 @@ mod tests {
                 console: true,
                 console_maximised: false,
                 compensation: false,
+                align_returns: false,
                 console_devices: true,
                 console_links: false,
                 tempo_lane: false,

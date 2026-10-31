@@ -870,6 +870,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "mixer.toggle_return_alignment",
+        "Align Returns",
+        G::Mixer,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "mixer.update_snapshot",
         "Update Snapshot",
         G::Mixer,

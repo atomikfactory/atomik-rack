@@ -1328,7 +1328,8 @@ impl Engine {
             (None, _) => self.out_fifo.iter_mut().for_each(|b| b.fill(0.0)),
         }
         self.arena.publish_device_values(&self.meters);
-        self.player.mix_metronome(&mut self.out_fifo);
+        let click_delay = self.routing.as_mut().and_then(|r| r.click_delay_mut());
+        self.player.mix_metronome(&mut self.out_fifo, click_delay);
         self.preview.mix(&mut self.out_fifo);
         self.preview_active
             .store(self.preview.is_active(), Ordering::Relaxed);

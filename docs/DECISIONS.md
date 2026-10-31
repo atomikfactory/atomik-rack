@@ -80,6 +80,8 @@ All entries below were recorded on 2026-10-30 and decided (or deferred, or defau
 
 **Status.** Decided. Decided by: maintainer, 2026-10-30.
 
+**Implementation note, 2026-10-30.** Built as a console project flag, `align_returns` (the Mixer menu's *Align Returns*, one undo step). With it on, every audio cable of a stage, plain inputs included, is delayed to the slowest one: send returns, sidechain keys and split paths line up, and the dry strips wait for a latent send; the metronome waits for the output latency. Format 37 holds the field; a file without it (and every file before 37) loads with it off, so old bounces are unchanged bit for bit, and a new project writes it on. Still to do before this ships, as the decision requires: the hand check with a latent device on a send and with a latent sidechain key, live and bounced (result to be attached here).
+
 ## D. Device patch format
 
 **Question.** How is a single device's sound saved and applied?

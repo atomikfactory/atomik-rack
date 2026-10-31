@@ -212,6 +212,7 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("End Compare", None),
             ("Delete Snapshot", None),
             ("Delay Compensation", None),
+            ("Align Returns", None),
             ("MIDI Learn", None),
             ("MIDI Mappings\u{2026}", None),
             ("Export MIDI Mapping Preset\u{2026}", None),
@@ -378,6 +379,22 @@ fn delay_compensation_toggles_the_document_switch() {
     assert!(!s.menu_state().compensation);
     s.execute(AppCommand::Undo);
     assert!(s.core().doc().console.compensation);
+}
+
+#[test]
+fn align_returns_toggles_the_document_switch_and_reaches_the_routing() {
+    let mut s = shell();
+    add_synth(&mut s, "a");
+    // The test shell starts from a plain document: off.
+    assert!(!s.menu_state().align_returns);
+    assert!(!s.core().topology().align_inputs());
+    s.execute(AppCommand::ToggleReturnAlignment);
+    assert!(s.core().doc().console.align_returns);
+    assert!(s.core().topology().align_inputs());
+    assert!(s.menu_state().align_returns);
+    s.execute(AppCommand::Undo);
+    assert!(!s.core().doc().console.align_returns);
+    assert!(!s.core().topology().align_inputs());
 }
 
 #[test]

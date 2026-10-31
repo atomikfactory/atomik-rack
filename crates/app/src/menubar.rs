@@ -642,6 +642,7 @@ mod tests {
             console: false,
             console_maximised: false,
             compensation: true,
+            align_returns: true,
             console_devices: false,
             console_links: false,
             tempo_lane: false,

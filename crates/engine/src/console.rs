@@ -79,6 +79,11 @@ pub struct PdcReport {
     pub cable_delays: Vec<(Endpoint, Endpoint, u32)>,
     /// Output latency in frames per node output endpoint that feeds a summing input.
     pub latencies: Vec<(Endpoint, u32)>,
+    /// Audio cables that reach their device later than a sibling cable of the same stage and
+    /// are not delayed to match: (from, to, frames late). Empty when inputs are aligned.
+    pub misaligned: Vec<(Endpoint, Endpoint, u32)>,
+    /// Latency in frames of the slowest signal reaching the interface outputs.
+    pub output_latency: u32,
 }
 
 /// One meter slot: the endpoint key (0 = unused) and the published values (f32 bits).

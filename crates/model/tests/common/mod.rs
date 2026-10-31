@@ -61,11 +61,13 @@ pub fn console_registry() -> Registry {
     r
 }
 
-/// The starter document with note tails off, as a project written before format 35 loads: the
-/// tests that compare an older file's re-save with the current text use it.
+/// The starter document with note tails and return alignment off, as a project written before
+/// formats 35 and 37 loads: the tests that compare an older file's re-save with the current text
+/// use it.
 pub fn legacy_project_doc() -> atomik_model::RackDoc {
     let mut doc = atomik_model::new_project_doc();
     doc.song.tails = false;
+    doc.console.align_returns = false;
     doc
 }
 

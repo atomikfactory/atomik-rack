@@ -377,6 +377,11 @@ impl RoutingPlan {
     /// buffers are swapped, and `old` (now holding the fresh buffers) is retired.
     pub(crate) fn adopt_delays(&mut self, old: &mut RoutingPlan) {
         adopt_delay_lines(&mut self.console.delays, &mut old.console.delays);
+        if let (Some(new), Some(old)) =
+            (&mut self.console.click_delay, &mut old.console.click_delay)
+        {
+            new.adopt(old);
+        }
     }
 
     /// Processes one batch: host inputs -> slots, every routed device in order, slots -> host
@@ -590,6 +595,8 @@ impl Slots {
 pub(crate) struct CompileOptions<'a> {
     /// Delay compensation requested.
     pub(crate) compensation: bool,
+    /// Align plain audio inputs (FX returns, sidechain keys, split paths) like summing inputs.
+    pub(crate) align_inputs: bool,
     /// Session sample rate (for the compensation limit).
     pub(crate) sample_rate: f64,
     /// `Device::latency_frames()` of each device (never asked for the interface).
@@ -625,12 +632,17 @@ fn compensate(
     // (cable key, needed delay) for every cable into an Audio/Cv summing input.
     let mut needed: Vec<((Endpoint, Endpoint), u64)> = Vec::new();
     let mut feeds: BTreeMap<Endpoint, u64> = BTreeMap::new();
+    // Audio cables that reach a stage later than a sibling and are not delayed to match.
+    let mut misaligned: Vec<(Endpoint, Endpoint, u32)> = Vec::new();
     for &(id, stage) in order {
         let descriptor = lookup(id).ok_or(GraphError::UnknownDevice)?;
         let mut input_latency = match stage {
             0 => 0,
             s => node_latency.get(&(id, s - 1)).copied().unwrap_or(0),
         };
+        // Stage-wide alignment: every audio cable of the stage (summing or plain) with its
+        // source latency and the delay the per-socket rule gives it (`None` for a plain input).
+        let mut stage_cables: Vec<((Endpoint, Endpoint), u64, Option<u64>)> = Vec::new();
         for s in descriptor
             .sockets
             .iter()
@@ -645,14 +657,39 @@ fn compensate(
                 .max()
                 .unwrap_or(0);
             input_latency = input_latency.max(max);
-            if s.direction != Direction::SummingInput {
+            let summing = s.direction == Direction::SummingInput;
+            if !summing && s.kind != SocketKind::Audio {
                 continue;
             }
             for c in rules::into(cables, to) {
                 let l = source_latency(&node_latency, c.from);
-                feeds.insert(c.from, l);
+                if summing {
+                    feeds.insert(c.from, l);
+                }
                 if !is_notes(s.kind) {
-                    needed.push(((c.to, c.from), max - l));
+                    stage_cables.push(((c.to, c.from), l, summing.then_some(max - l)));
+                }
+            }
+        }
+        let target = stage_cables.iter().map(|&(_, l, _)| l).max().unwrap_or(0);
+        for &(key, l, per_socket) in &stage_cables {
+            let wanted = target - l;
+            if options.align_inputs {
+                // Every audio cable of the stage lands with the slowest one: plain inputs
+                // (returns, sidechain keys, split paths) get a delay too.
+                feeds.insert(key.1, l);
+                needed.push((key, wanted));
+            } else {
+                if let Some(d) = per_socket {
+                    needed.push((key, d));
+                }
+                let applied = per_socket.unwrap_or(0);
+                if wanted > applied {
+                    misaligned.push((
+                        key.1,
+                        key.0,
+                        u32::try_from(wanted - applied).unwrap_or(u32::MAX),
+                    ));
                 }
             }
         }
@@ -663,7 +700,15 @@ fn compensate(
         };
         node_latency.insert((id, stage), input_latency.saturating_add(own));
     }
+    // Latency of the slowest signal reaching the interface outputs (what a click must wait).
+    let output_latency = cables
+        .values()
+        .filter(|c| c.to.device == Graph::INTERFACE)
+        .map(|c| source_latency(&node_latency, c.from))
+        .max()
+        .unwrap_or(0);
     needed.sort_unstable();
+    misaligned.sort_unstable();
     let limit = (MAX_COMPENSATION_SECONDS * options.sample_rate).floor() as u64;
     let limit_exceeded = options.compensation && needed.iter().any(|(_, d)| *d > limit);
     let active = options.compensation && !limit_exceeded;
@@ -678,6 +723,8 @@ fn compensate(
                 .map(|&((to, from), d)| (from, to, applied(d)))
                 .collect(),
             latencies: feeds.into_iter().map(|(e, l)| (e, saturate(l))).collect(),
+            misaligned: if active { misaligned } else { Vec::new() },
+            output_latency: saturate(output_latency),
         },
         delays: needed
             .into_iter()
@@ -685,6 +732,19 @@ fn compensate(
             .map(|(key, d)| (key, d as u32))
             .collect(),
     })
+}
+
+/// The delay line that holds the metronome back by the output latency, when return alignment
+/// is on and compensation is active (`None` otherwise: the click is mixed straight in).
+fn click_delay(report: &PdcReport, options: &CompileOptions<'_>) -> Option<DelayLine> {
+    if !options.align_inputs || !report.active || report.output_latency == 0 {
+        return None;
+    }
+    let click = Endpoint {
+        device: Graph::INTERFACE,
+        socket: SocketId(u16::MAX),
+    };
+    Some(DelayLine::new(click, click, report.output_latency))
 }
 
 /// Compiles a validated device set and cable map into a routing (shared by [`Graph::compile`]
@@ -835,6 +895,7 @@ pub(crate) fn compile_routing(
         spare_notes: NoteBuffer::with_capacity(MAX_EVENTS_PER_BATCH),
         console: Box::new(ConsoleRouting {
             delays: delay_lines,
+            click_delay: click_delay(&report, options),
             pdc: report,
             meter_keys: metered.into_iter().map(meter_key).collect(),
             host_meters,
@@ -868,6 +929,7 @@ impl Graph {
             mut devices,
             cables,
             compensation,
+            align_inputs,
             ..
         } = self;
         // prepare once per device (in render order), then re-apply stored params.
@@ -902,6 +964,7 @@ impl Graph {
                 &cables,
                 &CompileOptions {
                     compensation,
+                    align_inputs,
                     sample_rate: config.sample_rate.hz(),
                     latency: &latency,
                     meters: &BTreeSet::new(),
@@ -1089,8 +1152,16 @@ fn build_routes(
                 if let Some(c) = rules::into(t.cables, e).next() {
                     cabled = true;
                     let route = (i, t.slot_of[&c.from]);
+                    let delay = t.delay_index.get(&(e, c.from)).copied();
                     if notes {
                         routes.notes_in.push(route);
+                    } else if delay.is_some() {
+                        // A delayed plain input is gathered like a one-cable summing input.
+                        routes.sum_in.push(SumRoute {
+                            socket: i,
+                            slot: route.1,
+                            delay,
+                        });
                     } else {
                         routes.signal_in.push(route);
                     }

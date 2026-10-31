@@ -120,6 +120,9 @@ pub struct Console {
     pub returns: [Option<DeviceKey>; FX_SLOTS],
     /// Delay compensation enabled (global switch).
     pub compensation: bool,
+    /// FX returns and sidechain keys are delay-compensated like the summing inputs (see the
+    /// engine's console docs). Off in a project saved before it existed, on in a new one.
+    pub align_returns: bool,
 }
 
 impl Default for Console {
@@ -133,6 +136,7 @@ impl Default for Console {
             master: None,
             returns: Default::default(),
             compensation: true,
+            align_returns: false,
         }
     }
 }
@@ -464,6 +468,8 @@ pub enum ConsoleCommand {
     },
     /// Enable/disable delay compensation.
     SetCompensation(bool),
+    /// Align FX returns and sidechain keys with the dry path (see [`Console::align_returns`]).
+    SetAlignReturns(bool),
     /// Clear every channel solo.
     ClearSolos,
     /// Clear every channel mute.

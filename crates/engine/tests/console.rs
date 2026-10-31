@@ -493,6 +493,78 @@ fn split_paths_into_plain_inputs_are_not_compensated() {
     assert_eq!(nonzero(&got[0]), vec![(0, 1.0), (100, 2.0)]);
 }
 
+/// click -> L100 -> bus.sum_in; click -> bus.audio_in (plain); bus -> bus2.sum_in; click ->
+/// bus2.sum_in; bus2 -> out_1. Returns the plan and the ids (click, bus).
+fn split_plan(c: &EngineConfig, align: bool) -> (RenderPlan, DeviceInstanceId, DeviceInstanceId) {
+    let mut g = Graph::new(c);
+    let click = g.add_device(ImpulseOnNote::boxed());
+    let l = g.add_device(LatencyPassthrough::boxed(100));
+    let bus = g.add_device(SummingBus::boxed());
+    let bus2 = g.add_device(SummingBus::boxed());
+    let src = ep(click, ImpulseOnNote::AUDIO_OUT);
+    g.connect(src, ep(l, LatencyPassthrough::AUDIO_IN)).unwrap();
+    g.connect(
+        ep(l, LatencyPassthrough::AUDIO_OUT),
+        ep(bus, SummingBus::SUM_IN),
+    )
+    .unwrap();
+    g.connect(src, ep(bus, SummingBus::AUDIO_IN)).unwrap();
+    g.connect(ep(bus, SummingBus::AUDIO_OUT), ep(bus2, SummingBus::SUM_IN))
+        .unwrap();
+    g.connect(src, ep(bus2, SummingBus::SUM_IN)).unwrap();
+    g.connect(ep(bus2, SummingBus::AUDIO_OUT), out(1)).unwrap();
+    g.set_align_inputs(align);
+    (g.compile().unwrap(), click, bus)
+}
+
+#[test]
+fn a_split_into_a_plain_input_is_reported_and_aligned_only_when_asked() {
+    let c = cfg(0, 1);
+    let (plan, click, bus) = split_plan(&c, false);
+    let flagged: Vec<_> = plan
+        .pdc_report()
+        .misaligned
+        .iter()
+        .map(|(f, t, d)| (f.device, t.device, t.socket, *d))
+        .collect();
+    assert_eq!(
+        flagged,
+        vec![(click, bus, SummingBus::AUDIO_IN, 100)],
+        "the early plain cable is listed with the frames it is early by"
+    );
+    let note = on(0, click, ImpulseOnNote::NOTES_IN, 60);
+    let got = render_offline(plan, c, 6 * BATCH, 64, &[note], &[]);
+    assert_eq!(nonzero(&got[0]), vec![(0, 1.0), (100, 2.0)], "unchanged");
+    // Aligned: the plain cable is delayed to meet the other branch, nothing is flagged.
+    let (plan, click, bus) = split_plan(&c, true);
+    let report = plan.pdc_report().clone();
+    assert!(report.misaligned.is_empty(), "{report:?}");
+    assert!(
+        report
+            .cable_delays
+            .iter()
+            .any(|(f, t, d)| (f.device, t.device, t.socket, *d)
+                == (click, bus, SummingBus::AUDIO_IN, 100)),
+        "{report:?}"
+    );
+    let note = on(0, click, ImpulseOnNote::NOTES_IN, 60);
+    let got = render_offline(plan, c, 6 * BATCH, 64, &[note], &[]);
+    assert_eq!(nonzero(&got[0]), vec![(100, 3.0)]);
+}
+
+#[test]
+fn aligned_plain_inputs_render_the_same_for_any_block_size() {
+    let c = cfg(0, 1);
+    let render = |block| {
+        let (plan, click, _) = split_plan(&c, true);
+        let note = on(3, click, ImpulseOnNote::NOTES_IN, 60);
+        render_offline(plan, c, 6 * BATCH, block, &[note], &[])
+    };
+    let reference = render(64);
+    for block in [1, 17, 333] {
+        assert_eq!(bits(&render(block)), bits(&reference), "block {block}");
+    }
+}
 #[test]
 fn a_delay_beyond_the_limit_disables_compensation_and_is_reported() {
     let c = EngineConfig {

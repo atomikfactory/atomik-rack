@@ -109,8 +109,11 @@ use atomik_dsp::{
 
 /// Number of effect sends.
 pub const SENDS: usize = 8;
-/// Longest `latency.adjust` delay in samples (100 ms at 48 kHz).
-pub const MAX_LATENCY_ADJUST: u32 = 4_800;
+/// Longest `latency.adjust` delay in samples (10 s at 48 kHz).
+pub const MAX_LATENCY_ADJUST: u32 = 480_000;
+/// Delay in samples a strip's `latency.adjust` line holds from the start (100 ms at 48 kHz);
+/// asking for more puts the reserve to use (the line then starts silent).
+const LATENCY_LINE_START: usize = 4_800;
 /// Ramp time of every smoothed gain.
 pub const SMOOTH_MS: f32 = 5.0;
 /// Compressor attack time constant.
@@ -874,8 +877,8 @@ impl Channel {
             sample_rate: sr,
             latency: 0,
             phantom_latency: 0,
-            delay_l: DelayLine::new(MAX_LATENCY_ADJUST as usize),
-            delay_r: DelayLine::new(MAX_LATENCY_ADJUST as usize),
+            delay_l: DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize),
+            delay_r: DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize),
             input: sm,
             hpf: PassFilter::new(PassKind::Highpass, 80.0, sr),
             lpf: PassFilter::new(PassKind::Lowpass, 12_000.0, sr),
@@ -1019,6 +1022,8 @@ impl Channel {
                 // Positive: a real delay, not reported. Negative: no delay, reported as
                 // phantom latency so the engine's PDC delays every other channel instead.
                 self.latency = n.max(0.0) as u32;
+                self.delay_l.grow(self.latency as usize);
+                self.delay_r.grow(self.latency as usize);
                 self.phantom_latency = (-n).max(0.0) as u32;
             }
             // Routing switches, key and insert bypass are read in `process`.
@@ -1366,8 +1371,8 @@ impl Device for Channel {
     fn prepare(&mut self, info: &PrepareInfo) {
         let sr = info.sample_rate.hz() as f32;
         self.sample_rate = sr;
-        self.delay_l = DelayLine::new(MAX_LATENCY_ADJUST as usize);
-        self.delay_r = DelayLine::new(MAX_LATENCY_ADJUST as usize);
+        self.delay_l = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
+        self.delay_r = DelayLine::with_reserve(LATENCY_LINE_START, MAX_LATENCY_ADJUST as usize);
         for s in self.smoothers_mut() {
             s.set_time(SMOOTH_MS, sr);
         }

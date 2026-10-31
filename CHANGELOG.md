@@ -9,6 +9,16 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Align Returns: latent effects on sends, sidechain keys and split paths line up.** A new project
+  setting, **Mixer > Align Returns** (undoable, saved in the project), delays every audio cable of
+  a device so it lands with the slowest one. A send through an effect that reports latency now
+  returns together with the dry channels (no comb filtering), a sidechain key from a latent source
+  arrives with the signal it controls, and two paths of different latency that meet in one device
+  are put back in step. The click waits for the latency of the audio, so it is heard where the
+  music is. New projects have it on; projects saved before keep it off and bounce exactly as they
+  did. When it is off, the status line says how many cables are out of step. A channel's
+  **latency adjust** now reaches 480,000 samples (10 s at 48 kHz). Project format 37 gains the
+  optional console field `align_returns`.
 - **Transport bar: tap tempo, Rewind and Forward, locators, click level and Q Rec.** The bar has
   a second cluster right of the readouts. **Rewind** and **Forward** move by bars and repeat while
   held, faster the longer they are held. **TAP** sets the tempo at the playhead from the average of

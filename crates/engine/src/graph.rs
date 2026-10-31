@@ -100,6 +100,8 @@ pub struct Graph {
     pub(crate) cables: rules::CableMap,
     /// Delay compensation for compile (on by default).
     pub(crate) compensation: bool,
+    /// Align plain audio inputs too (off by default).
+    pub(crate) align_inputs: bool,
     next_id: u32,
 }
 
@@ -127,6 +129,7 @@ impl Graph {
             devices: BTreeMap::new(),
             cables: BTreeMap::new(),
             compensation: true,
+            align_inputs: false,
             next_id: 1,
         }
     }
@@ -241,6 +244,16 @@ impl Graph {
         self.compensation
     }
 
+    /// Aligns plain audio inputs like summing inputs for [`Graph::compile`] (off by default).
+    pub fn set_align_inputs(&mut self, enabled: bool) {
+        self.align_inputs = enabled;
+    }
+
+    /// Whether [`Graph::compile`] aligns plain audio inputs.
+    pub fn align_inputs(&self) -> bool {
+        self.align_inputs
+    }
+
     /// Stores a param value (clamped through the descriptor). It is applied to the device
     /// after `prepare` when the graph is compiled.
     pub fn set_param(
@@ -305,6 +318,7 @@ impl Graph {
                 .expect("a graph's cables obey the rules the topology enforces");
         }
         topology.set_compensation(self.compensation);
+        topology.set_align_inputs(self.align_inputs);
         topology
     }
 

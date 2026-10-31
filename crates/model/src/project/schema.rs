@@ -292,6 +292,7 @@ pub(crate) static SPECS: &[FieldSpec] = &[
     field(Console, "master", 1).req(),
     field(Console, "returns", 1).req(),
     field(Console, "compensation", 1).req(),
+    field(Console, "align_returns", 37),
     field(Channel, "channel", 1).req(),
     field(Channel, "source", 1).req(),
     field(Bus, "bus", 1).req(),

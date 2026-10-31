@@ -176,7 +176,7 @@ fn descriptor_socket_kinds_and_directions() {
     let la = DESCRIPTOR.param_by_key("latency.adjust").unwrap();
     assert!(la.discrete && approx(la.max, MAX_LATENCY_ADJUST as f32, 0.0));
     assert!(approx(la.min, -(MAX_LATENCY_ADJUST as f32), 0.0) && approx(la.default, 0.0, 0.0));
-    assert_eq!(MAX_LATENCY_ADJUST, 4_800);
+    assert_eq!(MAX_LATENCY_ADJUST, 480_000);
 }
 
 #[test]
@@ -728,10 +728,42 @@ fn latency_adjust_positive_delays_without_reporting() {
         assert_eq!(h.device().latency_frames(), 0, "+{d}: not reported");
         assert_eq!(impulse_position(&mut h), d as usize, "+{d}: really delayed");
     }
+}
+
+#[test]
+fn latency_adjust_reaches_ten_seconds_and_clamps_there() {
+    let mut h = channel();
+    h.set_param("pan", -1.0);
+    for d in [4_801u32, 20_000, MAX_LATENCY_ADJUST] {
+        h.set_param("latency.adjust", d as f32);
+        h.device_mut().reset();
+        let batches = d as usize / BATCH + 4;
+        let y = run_signal(
+            &mut h,
+            &["in_l"],
+            |n| if n == 0 { 1.0 } else { 0.0 },
+            batches,
+            &["out_l"],
+        );
+        assert_eq!(h.device().latency_frames(), 0, "+{d}: not reported");
+        assert_eq!(
+            y[0].iter().position(|v| v.abs() > 0.5),
+            Some(d as usize),
+            "+{d}: really delayed"
+        );
+    }
     h.set_param("latency.adjust", 1e9);
+    h.device_mut().reset();
+    let y = run_signal(
+        &mut h,
+        &["in_l"],
+        |n| if n == 0 { 1.0 } else { 0.0 },
+        MAX_LATENCY_ADJUST as usize / BATCH + 4,
+        &["out_l"],
+    );
     assert_eq!(
-        impulse_position(&mut h),
-        MAX_LATENCY_ADJUST as usize,
+        y[0].iter().position(|v| v.abs() > 0.5),
+        Some(MAX_LATENCY_ADJUST as usize),
         "clamped"
     );
 }
@@ -740,7 +772,7 @@ fn latency_adjust_positive_delays_without_reporting() {
 fn latency_adjust_negative_reports_phantom_latency_without_delaying() {
     let mut h = channel();
     h.set_param("pan", -1.0);
-    for d in [-100i32, -1, -4_800] {
+    for d in [-100i32, -1, -4_800, -480_000] {
         h.set_param("latency.adjust", d as f32);
         assert_eq!(
             h.device().latency_frames(),
