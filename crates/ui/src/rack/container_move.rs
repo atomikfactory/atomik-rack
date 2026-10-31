@@ -97,6 +97,49 @@ impl RackView {
 
     // ------------------------------------------------------------------ the drag
 
+    /// At the press that starts a drag of device view `dev`: asks the model which moves of that
+    /// one device it would take (into each container of the rack, or out of the open container),
+    /// so a drop target is only offered where the command goes through. `doc` is the document the
+    /// view shows. A group drag has no such target.
+    pub(super) fn plan_container_drops(&mut self, dev: usize, doc: &RackDoc, registry: &Registry) {
+        self.move_in_ok.clear();
+        self.move_out_ok = false;
+        let host = self.host_doc.take();
+        if self.drags_as_group(dev) || self.devices[dev].is_interface() {
+            return;
+        }
+        let key = self.devices[dev].key.clone();
+        if self.scope.is_empty() {
+            let targets: Vec<DeviceKey> = self
+                .inner_range()
+                .filter(|&i| i != dev)
+                .filter(|&i| {
+                    self.devices[i]
+                        .desc
+                        .as_ref()
+                        .is_some_and(|x| x.type_id == CONTAINER_TYPE)
+                })
+                .map(|i| self.devices[i].key.clone())
+                .collect();
+            for container in targets {
+                let command = Command::Container(ContainerCommand::MoveIntoContainer {
+                    key: key.clone(),
+                    container: container.clone(),
+                    index: usize::MAX,
+                });
+                if plan_reason(doc, registry, command).is_none() {
+                    self.move_in_ok.push(container);
+                }
+            }
+        } else if let Some(host) = host {
+            let command = Command::Container(ContainerCommand::MoveOutOfContainer {
+                key: self.abs_key(&key),
+                index: self.scope_rack_at,
+            });
+            self.move_out_ok = plan_reason(&host, registry, command).is_none();
+        }
+    }
+
     /// The container whose panel is under the rack point `rp` while the devices flagged in
     /// `moving` are dragged: a drop there puts the device inside. Only the top level has such
     /// targets, the top and bottom edge of a panel stay free for placing a device next to it,
@@ -107,7 +150,7 @@ impl RackView {
         }
         self.inner_range().find(|&i| {
             let d = &self.devices[i];
-            let container = d.desc.as_ref().is_some_and(|x| x.type_id == CONTAINER_TYPE);
+            let container = self.move_in_ok.contains(&d.key);
             if !container || moving.get(i).copied().unwrap_or(false) {
                 return false;
             }
@@ -124,12 +167,17 @@ impl RackView {
 
     /// Whether the pointer is on the part of the breadcrumb that stands for the rack, in a
     /// container of the top level: a device dropped there leaves the container.
-    pub(super) fn crumb_drop_out(&self) -> bool {
+    pub(super) fn crumb_over(&self) -> bool {
         self.scope.len() == 1
             && matches!(
                 breadcrumb::hit(self.bar_rect(), &self.breadcrumb_labels(), self.pointer),
                 Some(CrumbHit::Back | CrumbHit::Segment(0))
             )
+    }
+
+    /// [`Self::crumb_over`] for a device the model would take out of the container.
+    pub(super) fn crumb_drop_out(&self) -> bool {
+        self.move_out_ok && self.crumb_over()
     }
 
     /// The release of a device drag over a container's panel or over the breadcrumb: the move
@@ -159,14 +207,18 @@ impl RackView {
             )));
             return true;
         }
-        if !self.crumb_drop_out() {
+        if !self.crumb_over() {
             return false;
         }
         if moving.len() > 1 {
             self.toast = Some(ONE_AT_A_TIME.to_string());
             return true;
         }
-        // The container's path is in the key already, so the command is not lifted.
+        // The container's path is in the key already, so the command is not lifted. A device the
+        // model would refuse is placed like any other move instead.
+        if !self.move_out_ok {
+            return false;
+        }
         self.direct.push(UiAction::Command(Command::Container(
             ContainerCommand::MoveOutOfContainer {
                 key: self.abs_key(key),

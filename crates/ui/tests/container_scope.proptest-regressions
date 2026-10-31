@@ -1,0 +1,6 @@
+# Seeds for failure cases proptest has generated in the past. It is automatically
+# read and these particular cases re-run before any novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0210508fdeee0e6a8816823346924c9a6a1572848cfb84ba06e19daca75df293 # shrinks to gestures = [Key(0), Drag((216.47, 325.68), (0.0, 526.72))]
