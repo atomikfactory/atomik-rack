@@ -393,6 +393,8 @@ dependencies = [
  "atomik-core",
  "atomik-device-sdk",
  "atomik-devices",
+ "atomik-testkit",
+ "criterion",
  "proptest",
  "serde",
  "serde_json",
