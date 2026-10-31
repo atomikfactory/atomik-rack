@@ -524,6 +524,20 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
             if let Some(port) = d.midi_out_port() {
                 v["midi_out_port"] = json!(port);
             }
+            if let Some(inside) = d.inner.as_deref() {
+                // What a Combine put inside (the keys are local to the container) and whether
+                // its bypass switch is on.
+                v["inside"] = Value::Array(
+                    inside
+                        .devices
+                        .iter()
+                        .map(|i| json!({"key": i.key.as_str(), "type_id": i.type_id, "name": i.name}))
+                        .collect(),
+                );
+                if doc.container_bypassed(&d.key) {
+                    v["bypassed"] = json!(true);
+                }
+            }
             if include_params {
                 let params: serde_json::Map<String, Value> = d
                     .params
