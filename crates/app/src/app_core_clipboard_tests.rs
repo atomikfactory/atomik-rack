@@ -714,3 +714,31 @@ fn the_workflow_commands_are_the_only_way_in() {
     .unwrap();
     assert_eq!(instruments(&c).len(), 2);
 }
+
+// ------------------------------------------------------------------ restructuring
+
+#[test]
+fn chop_scale_and_insert_bars_are_one_undo_step_each() {
+    let mut c = with_clip();
+    c.arrangement_mut().set_selected_clips(&[ClipId(1)]);
+    let before = clip_starts(&c);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.chop_clips", Some("half_bar"));
+    assert_eq!(clip_starts(&c).len(), 2, "{:?}", c.last_rejection());
+    assert!(c.undo());
+    assert_eq!(clip_starts(&c), before);
+    let len = |c: &AppCore<RecordingSink>| c.doc().song.clip(ClipId(1)).unwrap().2.length;
+    let was = len(&c);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.scale_tempo", Some("halve"));
+    // Half the tempo: twice as long.
+    assert_eq!(len(&c), 2 * was, "{:?}", c.last_rejection());
+    assert!(c.undo());
+    assert_eq!(len(&c), was);
+    // Insert bars at the locators moves the clip (the loop range is the first bars of the song).
+    let (a, z) = c.doc().song.loop_range;
+    let start = c.doc().song.clip(ClipId(1)).unwrap().2.start;
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.insert_bars", None);
+    let moved = c.doc().song.clip(ClipId(1)).unwrap().2.start;
+    assert_eq!(moved, if start >= a { start + (z - a) } else { start });
+    assert!(c.undo());
+    assert_eq!(c.doc().song.clip(ClipId(1)).unwrap().2.start, start);
+}

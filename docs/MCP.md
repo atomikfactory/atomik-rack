@@ -319,6 +319,17 @@ Combine and Uncombine are Edit menu items (`rack.combine`, `rack.uncombine`, key
 
 The first two steps are `crates/mcp/tests/session_combine.rs`; the bounce equalities are `crates/render/tests/combine.rs`.
 
+### Recipe: restructure the arrangement
+
+The restructuring commands are Edit menu items, so `session_commands` lists them (Insert Bars at Locators, Remove Bars at Locators, Reverse Clips, Reverse Note Starts, and the Scale Tempo and Chop Clips To submenus; their ids are `sequencer.insert_bars`, `sequencer.remove_bars`, `sequencer.reverse_clips` with `bars` or `starts`, `sequencer.scale_tempo` with `double`, `halve`, `150`, `125` or `75`, and `sequencer.chop_clips` with `bar`, `half_bar`, `beat`, `eighth` or `sixteenth`). Each one is one undo step. To check them on a project with a few note and audio clips:
+
+1. `session_pointer` `click` a clip (with `shift` for more) to select it. `session_command` `sequencer.chop_clips` with `arg` `bar` cuts every selected clip longer than a bar into bar-long pieces; `project_inspect` lists the pieces (same notes, `start` a bar apart), `edit.undo` gives the one clip back, and `session_bounce` before and after the chop is `bit_identical` under `compare_audio`.
+2. `session_command` `sequencer.reverse_clips` on a selection of note clips mirrors their notes (`project_inspect` shows the new ticks); running it a second time gives the project back exactly. An audio clip in the selection plays backwards (the `R` mark on its header) and, if it was warped, is no longer warped. `sequencer.scale_tempo` with `double` halves the length of the selection from its earliest start and warps the audio clips (`project_inspect` shows the clip lengths and the warp tempo); `halve` afterwards puts the lengths back within a tick. A selection holding an audio clip that plays backwards answers with a toast and changes nothing.
+3. Set the locators first (drag them in the ruler with `session_pointer`), then `session_command` `sequencer.insert_bars`: every clip, marker, range and tempo or meter change after the left locator moves by the length of the loop range, a clip that straddles the locator is split there, and the song End moves out by the same length. `sequencer.remove_bars` with the same locators removes them again; the result plays the same as the start (clips that were split stay two clips). With a track frozen both answer with a toast and change nothing. Compare `session_bounce` of the project with and without a silent range inserted before its first clip: the second is the first delayed by the inserted time.
+4. `session_key` `x` toggles the crossfade of the selected audio clips (`sequencer.audio_crossfade`); the zone edges of a crossfade are not draggable yet.
+
+The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.
+
 ## Limits and notes
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.

@@ -195,10 +195,13 @@ pub enum WorkflowCommand {
         /// The new mute state.
         muted: bool,
     },
-    /// Joins unlooped note or automation clips of one lane into the first of them (it keeps
+    /// Joins note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
     /// window, notes cut at the window end); where two notes or points coincide the later
-    /// clip wins. Audio and looped clips and clips of different lanes are rejected.
+    /// clip wins. A looped clip is unrolled (each repetition contributes what it plays). Audio
+    /// clips and clips of different lanes are rejected. Muted
+    /// clips of a mixed selection are left alone (their notes must not become audible); muted
+    /// clips alone join into a muted clip.
     JoinClips {
         /// At least two clips.
         ids: Vec<ClipId>,
@@ -251,6 +254,60 @@ pub enum WorkflowCommand {
         end: i64,
         /// Copy the range instead of removing it.
         copy: bool,
+    },
+    /// Reverses the listed clips in time, in one undo step. A note clip mirrors the notes that
+    /// start inside what it shows (the loop of a looped clip), and its controller points; with
+    /// `graphical` each note is mirrored as a bar (its end becomes its start), otherwise only
+    /// the starts are mirrored and every note keeps its length. An automation clip mirrors its
+    /// points. Audio clips play backwards, or forwards again when they all already do. Two
+    /// reverses give the clip back. A selection that would not change rejects.
+    ReverseClips {
+        /// The clips (any mix of notes, automation and audio).
+        ids: Vec<ClipId>,
+        /// Mirror notes as bars instead of mirroring their starts.
+        graphical: bool,
+    },
+    /// Changes the tempo of the listed clips to `percent` per cent of what it was: 200 plays them
+    /// twice as fast (half as long), 50 half as fast. Clip starts scale relative to the
+    /// earliest start of the selection, lengths, loops, notes and controller and automation
+    /// points scale with them (positions round to the nearest tick), and audio clips are warped
+    /// to follow (an audio clip that plays backwards rejects the command). The percentage is
+    /// `SCALE_PERCENT_MIN..=SCALE_PERCENT_MAX` and not 100. One undo step.
+    ScaleTempo {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// The new tempo as a percentage of the old one.
+        percent: f64,
+    },
+    /// Cuts every listed clip longer than `length` into pieces of `length` ticks from its own
+    /// start (the last piece takes what is left). The new pieces take ids from the song's next
+    /// free id in song order. One undo step; a selection with nothing to cut rejects.
+    ChopClips {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// Piece length in ticks (above 0).
+        length: i64,
+    },
+    /// Opens `length` ticks of empty time at `at`: a clip that straddles `at` is split there,
+    /// and everything from `at` on moves `length` later (clips, take groups, markers, ranges,
+    /// tempo and meter changes, the loop and the song End). One undo step; rejected while a
+    /// track is frozen. The exact rules are in the `time_edit` module docs.
+    InsertTime {
+        /// Song tick where the time opens.
+        at: i64,
+        /// Ticks to open (above 0).
+        length: i64,
+    },
+    /// Cuts `[at, at + length)` out of the whole arrangement and closes the gap: the parts of
+    /// clips inside the range go, the rest moves `length` earlier, and the tempo and meter in
+    /// effect at the end of the range carry on from `at`. The inverse of
+    /// [`WorkflowCommand::InsertTime`] for a range that holds nothing. One undo step; rejected
+    /// while a track is frozen.
+    RemoveTime {
+        /// Start of the range, in song ticks.
+        at: i64,
+        /// Length of the range in ticks (above 0).
+        length: i64,
     },
     /// Merges a recorded take into the note clip under its start (a *Layer* recording): the
     /// clip keeps its id, start and offset, grows to hold the take, keeps every old note, takes
@@ -621,6 +678,21 @@ pub(crate) fn plan(
             end,
             copy,
         } => cut_out(doc, &ids, (start, end), copy),
+        WorkflowCommand::ReverseClips { ids, graphical } => {
+            crate::clip_transform::reverse_clips(doc, &ids, graphical)
+        }
+        WorkflowCommand::ScaleTempo { ids, percent } => {
+            crate::clip_transform::scale_clips(doc, &ids, percent)
+        }
+        WorkflowCommand::ChopClips { ids, length } => {
+            crate::clip_transform::chop_clips(doc, &ids, length)
+        }
+        WorkflowCommand::InsertTime { at, length } => {
+            crate::time_edit::insert_time(doc, at, length)
+        }
+        WorkflowCommand::RemoveTime { at, length } => {
+            crate::time_edit::remove_time(doc, at, length)
+        }
         WorkflowCommand::LayerRecording { clip, take } => {
             crate::record_over::plan_layer(doc, registry, clip, &take)
         }
@@ -1214,8 +1286,24 @@ fn paste_clips(
     let mut p = Planner::new(doc, registry);
     let start = doc.song.next_clip_id;
     let mut next = start;
+    // Audio clips whose track is not in this project go on a new audio track (one per source
+    // track), made inside the same step.
+    let mut made: BTreeMap<DeviceKey, DeviceKey> = BTreeMap::new();
     for e in &snapshot.entries {
-        let device = track.unwrap_or(&e.device);
+        let mut device = track.unwrap_or(&e.device).clone();
+        if track.is_none() && e.lane.is_audio() && p.doc().song.track(&device).is_none() {
+            if let Some(new) = made.get(&e.device) {
+                device = new.clone();
+            } else {
+                let new = rules::generate_key(p.doc(), AUDIO_TRACK_TYPE);
+                let edit = crate::song_cmd::add_audio_track(p.doc(), registry, None, None)?;
+                p.push(edit);
+                made.insert(e.device.clone(), new.clone());
+                device = new;
+            }
+        }
+        let device = &device;
+        let doc = p.doc();
         let t = doc
             .song
             .track(device)
@@ -1406,17 +1494,41 @@ fn set_clips_muted(doc: &RackDoc, ids: &[ClipId], muted: bool) -> Result<Edit, M
     Ok(Edit::Compound(edits))
 }
 
+/// What a clip shows, as pieces `(song start, song end, content start)`: one piece, or with a
+/// loop one per repetition (the content range `[0, loop)` repeats from `offset mod loop`).
+fn content_pieces(c: &Clip) -> Vec<(i64, i64, i64)> {
+    let end = c.end();
+    match c.loop_length {
+        Some(n) if n > 0 => {
+            let mut out = Vec::new();
+            let mut t = c.start;
+            let mut cs = c.offset.rem_euclid(n);
+            while t < end {
+                let e = (t + n - cs).min(end);
+                out.push((t, e, cs));
+                t = e;
+                cs = 0;
+            }
+            out
+        }
+        _ => vec![(c.start, end, c.offset)],
+    }
+}
+
 /// The controller lanes of the clips of a join: each clip's window of every lane, later clips
 /// hiding the earlier points they overlap, relative to the joined clip's `start`.
 fn joined_controllers(clips: &[(DeviceKey, usize, &Clip)], start: i64) -> Vec<ControllerLane> {
     let mut by_kind: BTreeMap<ControllerKind, Vec<AutomationPoint>> = BTreeMap::new();
     for (_, _, c) in clips {
-        let shift = c.start - start;
-        for lane in &c.controllers {
-            let pts = window_points(lane, c.offset, c.offset + c.length, shift);
-            let all = by_kind.entry(lane.kind).or_default();
-            all.retain(|p| p.tick < shift);
-            all.extend(pts);
+        // A looped clip is unrolled: each repetition is a window of its own.
+        for (from, to, cs) in content_pieces(c) {
+            let shift = from - start;
+            for lane in &c.controllers {
+                let pts = window_points(lane, cs, cs + (to - from), shift);
+                let all = by_kind.entry(lane.kind).or_default();
+                all.retain(|p| p.tick < shift);
+                all.extend(pts);
+            }
         }
     }
     canonical(
@@ -1445,12 +1557,18 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
     if kind.is_audio() {
         return Err(bad_song("audio clips cannot be joined"));
     }
-    if let Some((_, _, c)) = clips.iter().find(|(_, _, c)| c.loop_length.is_some()) {
-        return Err(bad_song(format!(
-            "clip {} loops; unloop it before joining",
-            c.id.0
-        )));
+    // A muted clip is silent: folding its content into an audible clip would make it heard, so
+    // a mixed selection joins only the audible clips and leaves the muted ones where they are.
+    // Muted clips alone join into a muted clip.
+    if clips.iter().any(|(_, _, c)| !c.muted) {
+        clips.retain(|(_, _, c)| !c.muted);
+        if clips.len() < 2 {
+            return Err(bad_song(
+                "joining needs at least two clips that are not muted",
+            ));
+        }
     }
+    let (device, lane, _) = clips[0].clone();
     let start = clips[0].2.start;
     let end = clips.iter().map(|(_, _, c)| c.end()).max().unwrap_or(start);
     let content = match kind {
@@ -1460,17 +1578,19 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
                 let ClipContent::Notes(all) = &c.content else {
                     return Err(bad_song("note lane without notes"));
                 };
-                let window = c.offset..c.offset + c.length;
-                for n in all.iter().filter(|n| window.contains(&n.tick)) {
-                    let tick = c.start + (n.tick - c.offset) - start;
-                    notes.insert(
-                        (tick, n.key),
-                        Note {
-                            tick,
-                            length: n.length.min(window.end - n.tick),
-                            ..*n
-                        },
-                    );
+                for (from, to, cs) in content_pieces(c) {
+                    let window = cs..cs + (to - from);
+                    for n in all.iter().filter(|n| window.contains(&n.tick)) {
+                        let tick = from + (n.tick - cs) - start;
+                        notes.insert(
+                            (tick, n.key),
+                            Note {
+                                tick,
+                                length: n.length.min(window.end - n.tick),
+                                ..*n
+                            },
+                        );
+                    }
                 }
             }
             ClipContent::Notes(notes.into_values().collect())
@@ -1481,10 +1601,12 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
                 let ClipContent::Automation(all) = &c.content else {
                     return Err(bad_song("automation lane without points"));
                 };
-                let window = c.offset..c.offset + c.length;
-                for pt in all.iter().filter(|pt| window.contains(&pt.tick)) {
-                    let tick = c.start + (pt.tick - c.offset) - start;
-                    points.insert(tick, AutomationPoint { tick, ..*pt });
+                for (from, to, cs) in content_pieces(c) {
+                    let window = cs..cs + (to - from);
+                    for pt in all.iter().filter(|pt| window.contains(&pt.tick)) {
+                        let tick = from + (pt.tick - cs) - start;
+                        points.insert(tick, AutomationPoint { tick, ..*pt });
+                    }
                 }
             }
             ClipContent::Automation(points.into_values().collect())

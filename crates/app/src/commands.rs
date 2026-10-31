@@ -1,4 +1,4 @@
-//! App .filter(|c| !matches!(c, AppCommand::ToggleFileBrowser | AppCommand::TogglePianoKeys))ommands and the menu model shared by the in-window menu bar and the native (macOS)
+//! App commands and the menu model shared by the in-window menu bar and the native (macOS)
 //! menus.
 //!
 //! Keys are not decided here: every [`AppCommand`] maps to a command id of the registry
@@ -319,6 +319,19 @@ pub enum AppCommand {
     /// Edit ▸ Reverse Audio: the selected audio clips play backwards (forwards again when they
     /// all do).
     AudioReverse,
+    /// Edit ▸ Insert Bars at Locators: opens the loop range's length of empty time at the left
+    /// locator, moving everything after it (one undo step).
+    InsertBars,
+    /// Edit ▸ Remove Bars at Locators: cuts the loop range out of the arrangement and closes the
+    /// gap (one undo step).
+    RemoveBars,
+    /// Edit ▸ Reverse Clips (`true`: notes mirror as bars) and Reverse Note Starts (`false`): the
+    /// selected note, automation and audio clips run backwards.
+    ReverseClips(bool),
+    /// Edit ▸ Scale Tempo: the selected clips play at a percentage of their tempo.
+    ScaleTempo(ScaleStep),
+    /// Edit ▸ Chop Clips To: the selected clips are cut into pieces of this length.
+    ChopClips(ChopStep),
     /// Edit ▸ Normalise Audio: the clip gain that brings the peak of each selected audio clip to
     /// 0 dBFS.
     AudioNormalise,
@@ -636,6 +649,12 @@ impl AppCommand {
             AppCommand::FoldLanes(false) => ("sequencer.fold_lanes", Some("unfold")),
             AppCommand::TrackHeight(p) => ("sequencer.track_height", Some(p.arg())),
             AppCommand::AudioReverse => ("sequencer.audio_reverse", None),
+            AppCommand::InsertBars => ("sequencer.insert_bars", None),
+            AppCommand::RemoveBars => ("sequencer.remove_bars", None),
+            AppCommand::ReverseClips(true) => ("sequencer.reverse_clips", Some("bars")),
+            AppCommand::ReverseClips(false) => ("sequencer.reverse_clips", Some("starts")),
+            AppCommand::ScaleTempo(step) => ("sequencer.scale_tempo", Some(step.arg())),
+            AppCommand::ChopClips(step) => ("sequencer.chop_clips", Some(step.arg())),
             AppCommand::AudioNormalise => ("sequencer.audio_normalise", None),
             AppCommand::AudioStripSilence => ("sequencer.audio_strip_silence", None),
             AppCommand::AudioQuantize => ("sequencer.audio_quantize", None),
@@ -877,6 +896,16 @@ impl AppCommand {
                 return HeightPreset::from_arg(arg).map(AppCommand::TrackHeight);
             }
             ("sequencer.audio_reverse", None) => AppCommand::AudioReverse,
+            ("sequencer.insert_bars", None) => AppCommand::InsertBars,
+            ("sequencer.remove_bars", None) => AppCommand::RemoveBars,
+            ("sequencer.reverse_clips", Some("bars")) => AppCommand::ReverseClips(true),
+            ("sequencer.reverse_clips", Some("starts")) => AppCommand::ReverseClips(false),
+            ("sequencer.scale_tempo", Some(arg)) => {
+                return ScaleStep::from_arg(arg).map(AppCommand::ScaleTempo);
+            }
+            ("sequencer.chop_clips", Some(arg)) => {
+                return ChopStep::from_arg(arg).map(AppCommand::ChopClips);
+            }
             ("sequencer.audio_normalise", None) => AppCommand::AudioNormalise,
             ("sequencer.audio_strip_silence", None) => AppCommand::AudioStripSilence,
             ("sequencer.audio_quantize", None) => AppCommand::AudioQuantize,
@@ -941,6 +970,112 @@ impl AppCommand {
 pub fn native_accelerator_text(shortcut: &str) -> Option<String> {
     let rest = shortcut.strip_prefix("Cmd+")?;
     Some(format!("CmdOrCtrl+{}", rest.replace("Opt+", "Alt+")))
+}
+
+/// The tempo Edit ▸ Scale Tempo gives the selected clips, as a share of what it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleStep {
+    /// 200 %: twice as fast.
+    Double,
+    /// 50 %: half as fast.
+    Halve,
+    /// 150 %.
+    ThreeHalves,
+    /// 125 %.
+    FiveQuarters,
+    /// 75 %.
+    ThreeQuarters,
+}
+
+impl ScaleStep {
+    /// Every step, in menu order.
+    pub const ALL: [ScaleStep; 5] = [
+        ScaleStep::Double,
+        ScaleStep::Halve,
+        ScaleStep::ThreeHalves,
+        ScaleStep::FiveQuarters,
+        ScaleStep::ThreeQuarters,
+    ];
+
+    /// The registry argument of `sequencer.scale_tempo`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            ScaleStep::Double => "double",
+            ScaleStep::Halve => "halve",
+            ScaleStep::ThreeHalves => "150",
+            ScaleStep::FiveQuarters => "125",
+            ScaleStep::ThreeQuarters => "75",
+        }
+    }
+
+    /// The step of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            ScaleStep::Double => "Double (200 %)",
+            ScaleStep::Halve => "Halve (50 %)",
+            ScaleStep::ThreeHalves => "150 %",
+            ScaleStep::FiveQuarters => "125 %",
+            ScaleStep::ThreeQuarters => "75 %",
+        }
+    }
+}
+
+/// The length of the pieces Edit ▸ Chop Clips To cuts the selected clips into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChopStep {
+    /// A bar.
+    Bar,
+    /// Half a bar.
+    HalfBar,
+    /// A beat.
+    Beat,
+    /// An eighth of a whole note (half a beat in x/4).
+    Eighth,
+    /// A sixteenth of a whole note.
+    Sixteenth,
+}
+
+impl ChopStep {
+    /// Every step, in menu order.
+    pub const ALL: [ChopStep; 5] = [
+        ChopStep::Bar,
+        ChopStep::HalfBar,
+        ChopStep::Beat,
+        ChopStep::Eighth,
+        ChopStep::Sixteenth,
+    ];
+
+    /// The registry argument of `sequencer.chop_clips`.
+    pub fn arg(self) -> &'static str {
+        match self {
+            ChopStep::Bar => "bar",
+            ChopStep::HalfBar => "half_bar",
+            ChopStep::Beat => "beat",
+            ChopStep::Eighth => "eighth",
+            ChopStep::Sixteenth => "sixteenth",
+        }
+    }
+
+    /// The step of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.arg() == arg)
+    }
+
+    /// The menu text.
+    pub fn label(self) -> &'static str {
+        match self {
+            ChopStep::Bar => "Bar",
+            ChopStep::HalfBar => "Half Bar",
+            ChopStep::Beat => "Beat",
+            ChopStep::Eighth => "1/8 Note",
+            ChopStep::Sixteenth => "1/16 Note",
+        }
+    }
 }
 
 /// What Audio ▸ Clip Gain does to the gain of the selected audio clips.
@@ -1450,6 +1585,26 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                     AppCommand::AudioQuantize,
                     state.audio.can_warp,
                 ),
+                MenuEntry::Separator,
+                item("Insert Bars at Locators", AppCommand::InsertBars),
+                item("Remove Bars at Locators", AppCommand::RemoveBars),
+                MenuEntry::Separator,
+                item("Reverse Clips", AppCommand::ReverseClips(true)),
+                item("Reverse Note Starts", AppCommand::ReverseClips(false)),
+                MenuEntry::Submenu(Submenu {
+                    label: "Scale Tempo",
+                    entries: ScaleStep::ALL
+                        .into_iter()
+                        .map(|s| item(s.label(), AppCommand::ScaleTempo(s)))
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Chop Clips To",
+                    entries: ChopStep::ALL
+                        .into_iter()
+                        .map(|s| item(s.label(), AppCommand::ChopClips(s)))
+                        .collect(),
+                }),
             ],
         },
         Menu {
@@ -2365,6 +2520,10 @@ mod tests {
             AppCommand::FoldLanes(true),
             AppCommand::FoldLanes(false),
             AppCommand::AudioReverse,
+            AppCommand::InsertBars,
+            AppCommand::RemoveBars,
+            AppCommand::ReverseClips(true),
+            AppCommand::ReverseClips(false),
             AppCommand::AudioNormalise,
             AppCommand::AudioStripSilence,
             AppCommand::AudioQuantize,
@@ -2415,6 +2574,12 @@ mod tests {
         }
         for bars in [1, 2, 4, 8, 16] {
             v.push(AppCommand::AudioWarpBars(bars));
+        }
+        for step in ScaleStep::ALL {
+            v.push(AppCommand::ScaleTempo(step));
+        }
+        for step in ChopStep::ALL {
+            v.push(AppCommand::ChopClips(step));
         }
         for step in [
             TransposeStep::Up,
@@ -2839,7 +3004,21 @@ mod tests {
                 "Reverse Audio",
                 "Normalise Audio",
                 "Strip Silence\u{2026}",
-                "Quantize Audio"
+                "Quantize Audio",
+                "Insert Bars at Locators",
+                "Remove Bars at Locators",
+                "Reverse Clips",
+                "Reverse Note Starts",
+                "Double (200 %)",
+                "Halve (50 %)",
+                "150 %",
+                "125 %",
+                "75 %",
+                "Bar",
+                "Half Bar",
+                "Beat",
+                "1/8 Note",
+                "1/16 Note"
             ]
         );
         assert_eq!(

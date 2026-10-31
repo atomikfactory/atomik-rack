@@ -3,7 +3,7 @@
 //! widget takes the label from the registry and the shortcut from the active keymap, so a key
 //! and a menu item cannot differ.
 
-use crate::commands::FreezeMenu;
+use crate::commands::{ChopStep, FreezeMenu, ScaleStep};
 use atomik_model::theory::{ChordKind, DiatonicSize, PITCH_NAMES, ScaleKind};
 use atomik_ui::ContextTarget;
 use atomik_ui::JackMenu;
@@ -527,6 +527,27 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                 item("sequencer.open_clip", e.open_clip),
                 item("sequencer.split_at_playhead", true),
                 item("sequencer.join", e.join),
+                meter_item("sequencer.reverse_clips", "bars", "Reverse Clips").enabled(e.selection),
+                Spec::submenu(
+                    "Scale Tempo",
+                    ScaleStep::ALL
+                        .into_iter()
+                        .map(|s| {
+                            meter_item("sequencer.scale_tempo", s.arg(), s.label())
+                                .enabled(e.selection)
+                        })
+                        .collect(),
+                ),
+                Spec::submenu(
+                    "Chop Clips To",
+                    ChopStep::ALL
+                        .into_iter()
+                        .map(|s| {
+                            meter_item("sequencer.chop_clips", s.arg(), s.label())
+                                .enabled(e.selection)
+                        })
+                        .collect(),
+                ),
                 item("sequencer.save_clip_to_library", e.save_clip),
                 Spec::Separator,
                 item("sequencer.toggle_mute", e.selection).labelled(if e.clips_muted {

@@ -62,6 +62,7 @@ mod lanes;
 mod markers;
 mod meters;
 mod organise;
+mod restructure;
 mod takes;
 mod tempo;
 
@@ -4335,6 +4336,9 @@ impl ArrangementView {
             return outcome;
         }
         if let Some(outcome) = self.audio_command(id, arg) {
+            return outcome;
+        }
+        if let Some(outcome) = self.restructure_command(id, arg) {
             return outcome;
         }
         match id {

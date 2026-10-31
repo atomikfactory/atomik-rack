@@ -855,7 +855,11 @@ mod tests {
         m[i].entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| matches!(e, MenuEntry::Item(it) if it.enabled))
+            .filter(|(_, e)| match e {
+                MenuEntry::Item(it) => it.enabled,
+                MenuEntry::Submenu(_) => true,
+                _ => false,
+            })
             .map(|(r, _)| r)
             .collect()
     }

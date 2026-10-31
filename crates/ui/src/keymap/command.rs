@@ -291,6 +291,13 @@ pub const CROSSFADE_ARGS: &[&str] = &[
     "exponential",
     "s_curve",
 ];
+/// The values of `sequencer.chop_clips`: the length of the pieces.
+pub const CHOP_ARGS: &[&str] = &["bar", "half_bar", "beat", "eighth", "sixteenth"];
+/// The values of `sequencer.reverse_clips`: notes mirror as bars (the default) or by their starts.
+pub const REVERSE_ARGS: &[&str] = &["bars", "starts"];
+/// The values of `sequencer.scale_tempo`: `double` and `halve` change the tempo of the selection
+/// by 200 % and 50 %; a number is the new tempo in percent of the old one.
+pub const SCALE_TEMPO_ARGS: &[&str] = &["double", "halve", "150", "125", "75"];
 /// The values of `sequencer.audio_gain`.
 pub const AUDIO_GAIN_ARGS: &[&str] = &["up", "down", "reset"];
 /// The values of `sequencer.audio_transpose`.
@@ -1191,6 +1198,15 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.chop_clips",
+        "Chop Clips To",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(CHOP_ARGS)
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.clear_lane_static",
         "Clear Static Value",
         G::Sequencer,
@@ -1288,6 +1304,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.group_tracks",
         "Group Tracks",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.insert_bars",
+        "Insert Bars at Locators",
         G::Sequencer,
         C::Sequencer,
     )
@@ -1474,6 +1498,14 @@ const COMMANDS: &[CommandDef] = &[
     )
     .decline(),
     cmd(
+        "sequencer.remove_bars",
+        "Remove Bars at Locators",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.rename_folder",
         "Rename Folder...",
         G::Sequencer,
@@ -1498,11 +1530,29 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.reverse_clips",
+        "Reverse Clips",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(REVERSE_ARGS)
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.save_clip_to_library",
         "Save Clip to Library",
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.scale_tempo",
+        "Scale Tempo",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(SCALE_TEMPO_ARGS)
+    .menu()
+    .decline(),
     cmd(
         "sequencer.select_next_clip",
         "Select Next Clip",

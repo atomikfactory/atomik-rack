@@ -477,3 +477,97 @@ fn a_selection_command_with_nothing_selected_declines_and_emits_nothing() {
         );
     }
 }
+
+// ------------------------------------------------------------------ restructuring commands
+
+fn workflow(c: WorkflowCommand) -> CommandOutcome {
+    CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(c))])
+}
+
+#[test]
+fn insert_and_remove_bars_act_on_the_loop_range() {
+    let (mut v, doc, reg) = setup();
+    let (a, z) = doc.song.loop_range;
+    assert_eq!(
+        v.command("sequencer.insert_bars", None, &doc, &reg),
+        workflow(WorkflowCommand::InsertTime {
+            at: a,
+            length: z - a
+        })
+    );
+    assert_eq!(
+        v.command("sequencer.remove_bars", None, &doc, &reg),
+        workflow(WorkflowCommand::RemoveTime {
+            at: a,
+            length: z - a
+        })
+    );
+}
+
+#[test]
+fn reverse_scale_and_chop_work_on_the_selected_clips_in_time_order() {
+    let (mut v, doc, reg) = setup();
+    select(&mut v, &[5, 1]);
+    let ids = vec![ClipId(1), ClipId(5)];
+    assert_eq!(
+        v.command("sequencer.reverse_clips", Some("bars"), &doc, &reg),
+        workflow(WorkflowCommand::ReverseClips {
+            ids: ids.clone(),
+            graphical: true
+        })
+    );
+    assert_eq!(
+        v.command("sequencer.reverse_clips", Some("starts"), &doc, &reg),
+        workflow(WorkflowCommand::ReverseClips {
+            ids: ids.clone(),
+            graphical: false
+        })
+    );
+    assert_eq!(
+        v.command("sequencer.scale_tempo", Some("double"), &doc, &reg),
+        workflow(WorkflowCommand::ScaleTempo {
+            ids: ids.clone(),
+            percent: 200.0
+        })
+    );
+    assert_eq!(
+        v.command("sequencer.scale_tempo", Some("halve"), &doc, &reg),
+        workflow(WorkflowCommand::ScaleTempo {
+            ids: ids.clone(),
+            percent: 50.0
+        })
+    );
+    let first = doc.song.clip(ClipId(1)).unwrap().2.start;
+    let bar = doc.song.bar_ticks_at(first);
+    assert_eq!(
+        v.command("sequencer.chop_clips", Some("bar"), &doc, &reg),
+        workflow(WorkflowCommand::ChopClips {
+            ids: ids.clone(),
+            length: bar
+        })
+    );
+    assert_eq!(
+        v.command("sequencer.chop_clips", Some("half_bar"), &doc, &reg),
+        workflow(WorkflowCommand::ChopClips {
+            ids,
+            length: bar / 2
+        })
+    );
+    // Nothing selected: a message, not a command; an unknown argument is declined.
+    select(&mut v, &[]);
+    for (id, arg) in [
+        ("sequencer.reverse_clips", "bars"),
+        ("sequencer.scale_tempo", "double"),
+        ("sequencer.chop_clips", "bar"),
+    ] {
+        assert!(matches!(
+            v.command(id, Some(arg), &doc, &reg),
+            CommandOutcome::NotApplicable(_)
+        ));
+    }
+    select(&mut v, &[1]);
+    assert_eq!(
+        v.command("sequencer.scale_tempo", Some("nonsense"), &doc, &reg),
+        CommandOutcome::Declined
+    );
+}
