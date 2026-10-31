@@ -2263,7 +2263,7 @@ before (the golden hashes and `crates/devices/src/channel/tests.rs` prove it).
   bypassable effect is bypassed, `inserts_bypassed`), and a **B** on each filled slot sets one
   effect. Without a chain the button is the strip's own switch as before, and a project that has
   `insert.bypass` set keeps it (reads as bypassed, cleared by the next click). An effect without a
-  bypass (a container) is skipped by BYP ALL and has no B.
+  bypass is skipped by BYP ALL and has no B; a container on the chain has the switch of 6e.
 - **Commands and tools.** `mixer.toggle_polarity` and `mixer.bypass_all_inserts` are registry
   commands in the Mixer menu without default keys; they act on the strips of the focused pane like
   the VCA commands (`AppCore::strips_for_vca`), flip all inverted strips back or invert all, and
@@ -2883,9 +2883,9 @@ parameter tables are in [DEVICES.md](DEVICES.md).
   The UI places it as a BYPASS LED button in the left name strip of every such panel
   (`paint::bypass_button_rect`, hit as `Hit::Bypass` in [ui/src/rack.rs](../crates/ui/src/rack.rs),
   one `SetParam` per click, macro-driven refusal like any control) and veils the panel body while it
-  is on (`paint::bypass_veil`); `autolayout::has_strip_bypass` is the one rule (a built-in effect
-  with a `bypass` param) and the auto-layout and the hand-made layouts leave the param out of the
-  body. The console's bypass buttons set this param on the effects of a chain (Channel strip
+  is on (`paint::bypass_veil`); `autolayout::has_strip_bypass` is the one rule (a built-in effect,
+  a note player or a container with a `bypass` param) and the auto-layout and the hand-made layouts
+  leave the param out of the body. The console's bypass buttons set this param on the effects of a chain (Channel strip
   upgrades, section 5); the strip's own `insert.bypass` is a separate switch that is not delay
   compensated. See [DEVICES.md](DEVICES.md#effect-bypass).
 - **Meters.** Reduction, levels, loudness and EQ band energies reach the UI through the device meter
@@ -3064,7 +3064,18 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   with local keys, boundary drawn as two pseudo-panels) and lifts what it emits to path keys and
   `ContainerCommand`s; a breadcrumb bar, Back, Esc and Backspace go up. The 2 U panel has OPEN,
   EDIT, TO CH and eight named macro knobs; a right-click on an inner control maps it to a macro, a
-  mapped control is locked, and Ctrl/Cmd+D duplicates the selected container.
+  mapped control is locked, and Ctrl/Cmd+D duplicates the selected container. The container's name
+  strip has the BYPASS switch of the built-in effects (one `SetParam` of `bypass`, the body veiled
+  while it is on, locked while a macro drives it).
+  [rack/container_move.rs](../crates/ui/src/rack/container_move.rs) holds the rack's side of
+  Combine, Uncombine and the moves: the device menu and the Edit menu list Combine and Uncombine
+  (Ctrl/Cmd+Shift+G and U), and Move Out of Container while a container is open; the device menu
+  enables each by planning the command on a scratch copy of the document
+  (`combine_reason`, `uncombine_reason`, `move_out_reason`), so a refusal is the model's own message
+  and the key or the Edit menu shows it as a toast. Dropping one device on the body of a
+  container's panel (not its top and bottom 14 units, which still place a device next to it) sends
+  `MoveIntoContainer`; dropping one on the project part of the breadcrumb of an open container sends
+  `MoveOutOfContainer` to the slot after the container. A group is placed as any other move.
   `Pane::ContainerEditor` has a SPLITS tab (key by velocity map with draggable bars, audition) and a
   MACROS tab (name, value, targets with min and max).
 - **Console.** A container has no channel at creation; TO CH adds one, and an effect container works

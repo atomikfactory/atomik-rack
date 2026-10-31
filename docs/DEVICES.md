@@ -2743,6 +2743,23 @@ of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straig
   end them in a console channel. The engine latency itself is the fixed batch FIFO; device latency
   is not trimmed from the output.
 
+### In the rack (as built, UI half)
+
+- **BYPASS** is in the container's name strip, as on the built-in effects: one click switches
+  `bypass`, the body of the panel is veiled while it is on, and it is locked while a macro drives
+  it. A container inside a container has it too.
+- **Combine** and **Uncombine** are in the Edit menu and in the device context menu
+  (`Ctrl+Shift+G` and `Ctrl+Shift+U`, `Cmd` on macOS). Combine takes the selected top-level
+  devices, Uncombine the selected container. In the context menu an item the model would refuse
+  is dimmed; running one anyway (key or Edit menu) shows the refusal in the status toast, with
+  the cables that have no socket on the container.
+- **Move Out of Container** is in the context menu while a container is open: the selected
+  device goes back to the rack right after the container.
+- **Drag in and out.** Drop one device on the body of a container's panel to move it inside (the
+  panel is outlined while you hold it there; the top and bottom edge of the panel still place a
+  device above or below it). While a container is open, drop a device on **Project** or Back in the
+  breadcrumb to move it out. A group of devices is placed like any other move, not moved inside.
+
 ## Note split: `atomik.note-split` (Utility, internal)
 
 Routes one notes input to up to eight outputs by key and velocity range. **Internal**: listed in

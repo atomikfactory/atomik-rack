@@ -1576,3 +1576,44 @@ Hand checks, not automated (they need MIDI hardware):
   and they work again. A bounce while following is unchanged.
 - Check the DSP load meter with clock out on and with following on, at a small buffer: it should
   not move.
+
+## Combine, Uncombine and the container bypass
+
+`crates/model/tests/combine.rs` covers the commands on the document: combine then uncombine gives
+back the original (compared as saved text) for random selections of up to eight devices, every
+refusal names its cause and leaves the document unchanged, and a track, a console channel and an FX
+return follow the container. `crates/render/tests/combine.rs` bounces a project before and after a
+combine bit for bit, on instrument and effect selections and across host blocks, and bounces a
+bypassed container without its inside. `crates/app/src/app_core_combine_tests.rs` proves the live
+render equals the bounce through combine, undo, redo, uncombine and the bypass switch.
+
+The rack's side is `crates/ui/tests/rack_combine.rs` (the reasons the menus show, a drop on a
+container's panel and on the breadcrumb, the BYPASS switch of the panel, goldens
+`container_bypassed_front_1x.json` and `container_drop_target_1x.json`), the menu tests in
+`crates/app/src/shell_clipboard_tests.rs` (device menu, Edit menu, the two default keys, Move Out
+of Container in an open container) and `crates/mcp/tests/session_combine.rs` (the Edit menu
+commands through `session_command`, the inside and the bypass in `session_status`, the bypass
+surviving a save).
+
+Hand checks, not automated (they need a real window, your mouse and your ears):
+
+- Select two or three devices (click, then Shift-click) and press `Ctrl+Shift+G` (`Cmd` on macOS):
+  one container takes their place, selected, and the rack sounds as it did. `Ctrl+Z` brings the
+  devices back as they were, cables included. Do the same from the device context menu and from
+  Edit > Combine.
+- Select a container and use Uncombine from the context menu, the Edit menu and `Ctrl+Shift+U`;
+  then undo and redo.
+- Select a device whose output goes both to a mixer channel and to a CV input and choose Combine
+  in the context menu: the item is dimmed. Press `Ctrl+Shift+G` anyway: the status line names the
+  cable that has no socket on the container and nothing changes.
+- Drag an effect over the middle of a container's panel: the panel is outlined with "Move into
+  container" and the effect goes inside on release (the container's summary counts it). Drag it
+  to the top edge of the panel instead: it is placed above the container. Drag a group of devices
+  over a container: they are placed, not moved inside.
+- Open a container (double-click) and drag one inner device onto **Project** in the breadcrumb (the
+  segment lights up): it lands in the rack right after the container. Select one inner device and
+  choose Move Out of Container from its context menu: the same. Both are one undo step.
+- Click BYPASS in a container's name strip while a note plays through it: the inside drops out at
+  once (a small click is expected, the cut has no crossfade) and the input passes straight to the
+  output; the body of the panel is veiled. Click again: the inside returns. Put a macro on the
+  container's `bypass` through a macro bank and check the button is locked while it drives it.
