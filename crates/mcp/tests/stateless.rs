@@ -1034,18 +1034,24 @@ fn project_inspect_lists_clip_names_colours_and_loops_of_a_lane() {
         lane["named_clips"],
         json!([{"id": id, "name": "Verse hook", "color": "#e05a4f", "loop_length": 61440}])
     );
-    // A project without any of them has no such field.
+    // The plain demo names and colours no clip; its looped clips are listed with their loop only.
     let plain = call(
         &mut s,
         "project_inspect",
         json!({"path": "examples/projects/demo.atomik"}),
     )
     .parsed();
-    assert!(
-        plain["song"]["tracks"][0]["lanes"][0]
-            .get("named_clips")
-            .is_none()
-    );
+    for track in plain["song"]["tracks"].as_array().unwrap() {
+        for lane in track["lanes"].as_array().unwrap() {
+            for clip in lane["named_clips"].as_array().into_iter().flatten() {
+                assert!(
+                    clip.get("name").is_none() && clip.get("color").is_none(),
+                    "{clip}"
+                );
+                assert!(clip.get("loop_length").is_some(), "{clip}");
+            }
+        }
+    }
     // A bad name names its path.
     v["song"]["tracks"][0]["lanes"][0]["clips"][0]["name"] = json!(" padded");
     let bad = tmp("clip-meta-bad.atomik");
