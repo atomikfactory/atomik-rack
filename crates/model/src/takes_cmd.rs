@@ -45,6 +45,17 @@ fn build(
 ) -> Result<Edit, ModelError> {
     let track = &doc.song.tracks[track_index(doc, device)?];
     let lane_ref = &track.lanes[lane];
+    // A comp cuts a take anywhere, which a repetition of an audio loop cannot follow.
+    if let Some(group) = &new
+        && group
+            .takes
+            .iter()
+            .any(|t| t.loop_length.is_some() && t.content.is_audio())
+    {
+        return Err(bad(
+            "an audio take cannot loop: convert the loop to separate clips first",
+        ));
+    }
     let mut edits = Vec::new();
     if let Some(old) = old
         && clips != Clips::Keep

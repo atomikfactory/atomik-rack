@@ -411,7 +411,9 @@ fn load_rejects_bad_assets_and_audio_clips_with_paths() {
         ),
         (
             Box::new(|v| {
-                v["song"]["tracks"][0]["lanes"][0]["clips"][0]["loop_length"] = json!(100);
+                let clip = &mut v["song"]["tracks"][0]["lanes"][0]["clips"][0];
+                clip["loop_length"] = json!(100);
+                clip["audio"]["reverse"] = json!(true);
             }),
             format!("{clip0}.loop_length"),
             "cannot loop",

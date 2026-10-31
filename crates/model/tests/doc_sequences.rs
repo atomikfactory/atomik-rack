@@ -35,6 +35,11 @@ enum WfOp {
     Move(Vec<usize>, usize),
     Disconnect(usize),
     DuplicateTrack(usize),
+    /// Names and colours clips (the flags: a name, a colour; the number picks which).
+    ClipMeta(Vec<usize>, u8, u8),
+    /// A loop made a loop of its own: a looped clip is set on a clip, a loop converted, or a
+    /// repetition made independent (the kind), with the clip and a length or an index.
+    Loops(u8, usize, i64),
     /// Several tracks duplicated, with a place (the second value: the place among the tracks,
     /// the folder picked by the third) when the flag is set.
     DuplicateTracks(Vec<usize>, Option<(usize, usize)>),
@@ -189,6 +194,8 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), 0usize..12).prop_map(|(s, t)| WfOp::Move(s, t)),
         (0usize..12).prop_map(WfOp::Disconnect),
         (0usize..12).prop_map(WfOp::DuplicateTrack),
+        (sel(), 0u8..4, 0u8..4).prop_map(|(s, n, c)| WfOp::ClipMeta(s, n, c)),
+        (0u8..4, 0usize..12, 1i64..8).prop_map(|(k, c, n)| WfOp::Loops(k, c, n * BAR / 4)),
         (sel(), proptest::option::of((0usize..12, 0usize..4)))
             .prop_map(|(s, p)| WfOp::DuplicateTracks(s, p)),
         (sel(), 0usize..12, 0usize..4).prop_map(|(s, a, g)| WfOp::MoveTracks(s, a, g)),
@@ -395,6 +402,55 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         WfOp::DuplicateClips(s) => wf(WorkflowCommand::DuplicateClips {
             ids: s.iter().filter_map(|i| pick(&ids, *i)).collect(),
         }),
+        WfOp::ClipMeta(s, n, c) => {
+            let ids: Vec<ClipId> = s.iter().filter_map(|i| pick(&ids, *i)).collect();
+            sc(SongCommand::SetClipMeta {
+                ids,
+                name: match n {
+                    0 => atomik_model::MetaChange::Keep,
+                    1 => atomik_model::MetaChange::Clear,
+                    2 => atomik_model::MetaChange::Set("Verse".into()),
+                    _ => atomik_model::MetaChange::Set(" ".into()),
+                },
+                color: match c {
+                    0 => atomik_model::MetaChange::Keep,
+                    1 => atomik_model::MetaChange::Clear,
+                    _ => atomik_model::MetaChange::Set([*c, 30, 90]),
+                },
+            })
+        }
+        WfOp::Loops(kind, c, n) => {
+            let id = pick(&ids, *c)?;
+            let (_, _, clip) = doc.song.clip(id)?;
+            match kind {
+                // A loop of `n` ticks (an audio clip loops too).
+                0 => sc(SongCommand::SetClipGeometry {
+                    id,
+                    start: clip.start,
+                    length: clip.length,
+                    offset: if clip.content.is_audio() {
+                        0
+                    } else {
+                        clip.offset
+                    },
+                    loop_length: Some(*n),
+                    muted: clip.muted,
+                    merge: None,
+                }),
+                1 => wf(WorkflowCommand::ConvertLoop {
+                    ids: vec![id],
+                    mode: atomik_model::LoopConvert::Separate,
+                }),
+                2 => wf(WorkflowCommand::ConvertLoop {
+                    ids: vec![id],
+                    mode: atomik_model::LoopConvert::Single,
+                }),
+                _ => wf(WorkflowCommand::DuplicateLoopInstance {
+                    id,
+                    index: (*n / (BAR / 4)) as usize,
+                }),
+            }
+        }
         WfOp::Join(s) => wf(WorkflowCommand::JoinClips {
             ids: s.iter().filter_map(|i| pick(&ids, *i)).collect(),
         }),

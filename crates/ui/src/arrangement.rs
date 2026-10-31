@@ -6347,6 +6347,8 @@ fn new_clip_cmd(
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: None,
             content,
         },

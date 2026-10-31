@@ -133,6 +133,8 @@ fn project_inspect_lists_the_take_groups_of_a_lane_with_their_comp() {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(vec![Note::new(0, ppq, key, 0.8)].into()),
     };
     d.apply(

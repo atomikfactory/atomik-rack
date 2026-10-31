@@ -452,14 +452,21 @@ fn add_audio_clip_rejections() {
         rejects(&mut d, audio_on_notes, &reg),
         ModelError::BadSong(_)
     ));
-    // Audio clips have no content offset and no loop.
+    // Audio clips have no content offset, and a reversed one cannot loop.
     let mut c = clip(0, BAR, ClipContent::Audio(ok.clone()));
     c.offset = 5;
     assert!(matches!(
         rejects(&mut d, add_clip("audio-track", 0, c), &reg),
         ModelError::OutOfRange(_)
     ));
-    let mut c = clip(0, BAR, ClipContent::Audio(ok));
+    let mut c = clip(
+        0,
+        BAR,
+        ClipContent::Audio(AudioClipContent {
+            reverse: true,
+            ..ok
+        }),
+    );
     c.loop_length = Some(PPQ);
     assert!(matches!(
         rejects(&mut d, add_clip("audio-track", 0, c), &reg),
@@ -530,8 +537,27 @@ fn set_clip_geometry_moves_and_trims_audio_clips() {
         rejects(&mut d, geo(0, BAR, 3, None, false), &reg),
         ModelError::OutOfRange(_)
     ));
+    // An audio clip may loop, but not backwards, and not into more repetitions than allowed.
+    d.apply(geo(0, BAR, 0, Some(PPQ), false), &reg).unwrap();
+    assert_eq!(doc_clip(d.doc(), id).loop_length, Some(PPQ));
     assert!(matches!(
-        rejects(&mut d, geo(0, BAR, 0, Some(PPQ), false), &reg),
+        rejects(&mut d, geo(0, BAR * 4096, 0, Some(PPQ), false), &reg),
+        ModelError::OutOfRange(_)
+    ));
+    let reversed = AudioClipContent {
+        reverse: true,
+        ..audio(1)
+    };
+    assert!(matches!(
+        rejects(
+            &mut d,
+            sc(SongCommand::SetClipContent {
+                id,
+                content: ClipContent::Audio(reversed),
+                merge: None,
+            }),
+            &reg
+        ),
         ModelError::OutOfRange(_)
     ));
 }

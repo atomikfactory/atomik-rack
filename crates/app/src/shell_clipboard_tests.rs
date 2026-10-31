@@ -621,6 +621,8 @@ fn with_clips() -> Shell<NullBackend> {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: atomik_model::ClipContent::Notes(
                     vec![atomik_model::Note::new(0, 15_360, 60, 0.8)].into(),

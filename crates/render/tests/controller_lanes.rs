@@ -41,6 +41,8 @@ fn song(lanes: Vec<ControllerLane>) -> RackDoc {
                 offset: 0,
                 loop_length: None,
                 muted: false,
+                name: None,
+                color: None,
                 scale: None,
                 controllers: lanes,
                 grid: None,

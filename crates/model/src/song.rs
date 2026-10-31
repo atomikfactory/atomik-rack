@@ -371,6 +371,10 @@ pub struct Clip {
     pub loop_length: Option<i64>,
     /// Muted clips do not play.
     pub muted: bool,
+    /// The clip's own name (see [`clip_name_ok`]); `None` shows the generated label. Cosmetic.
+    pub name: Option<String>,
+    /// The clip's own colour; `None` draws it in its track's colour. Cosmetic.
+    pub color: Option<[u8; 3]>,
     /// The step grid: `Some` only on a note clip (the model rejects it
     /// on audio and automation clips). It drives swing in [`flatten_notes`] and the step
     /// editor; it never changes the clip's length or notes.
@@ -384,6 +388,41 @@ pub struct Clip {
     pub controllers: Vec<ControllerLane>,
     /// Content.
     pub content: ClipContent,
+}
+
+/// The longest clip name, in characters.
+pub const MAX_CLIP_NAME_CHARS: usize = 64;
+
+/// True for a name a clip may carry: trimmed, not empty, at most [`MAX_CLIP_NAME_CHARS`]
+/// characters, without control characters.
+pub fn clip_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name == name.trim()
+        && name.chars().count() <= MAX_CLIP_NAME_CHARS
+        && !name.chars().any(char::is_control)
+}
+
+/// One field of [`SongCommand::SetClipMeta`]: leave it, set it or clear it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum MetaChange<T> {
+    /// The clips keep what they have.
+    #[default]
+    Keep,
+    /// Every listed clip gets this value.
+    Set(T),
+    /// Every listed clip loses its own value (back to the generated label or the track colour).
+    Clear,
+}
+
+impl<T: Clone> MetaChange<T> {
+    /// The value a clip holding `old` has after the change.
+    pub fn apply(&self, old: &Option<T>) -> Option<T> {
+        match self {
+            MetaChange::Keep => old.clone(),
+            MetaChange::Set(v) => Some(v.clone()),
+            MetaChange::Clear => None,
+        }
+    }
 }
 
 /// The length of one step of a [`StepGrid`].
@@ -1026,6 +1065,20 @@ pub enum SongCommand {
         /// New scale, or `None` to clear it.
         scale: Option<Scale>,
     },
+    /// Names and colours clips: each listed clip gets the new name and colour (a field left at
+    /// [`MetaChange::Keep`] stays as it is). A name is trimmed and a blank one clears it; it has
+    /// at most [`MAX_CLIP_NAME_CHARS`] characters without control characters. One undo step
+    /// with one clip edit per clip that changes. An unknown clip rejects the command, and so
+    /// does an empty list or a change that would alter no clip. Cosmetic: the engine's view of
+    /// the song does not change. Reports [`crate::SyncOp::SongChanged`].
+    SetClipMeta {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// The new name.
+        name: MetaChange<String>,
+        /// The new colour.
+        color: MetaChange<[u8; 3]>,
+    },
     /// One undo step that adds an `atomik.audio-track` device (appended to the rack,
     /// key `audio-track`, `audio-track-2`, ...; named `name`, or the descriptor name made
     /// unique), its console channel and master as `AddDevice` does, its track with a single
@@ -1299,6 +1352,7 @@ pub use flatten::{
     AudioRegion, Crossfade, audible_spans, crossfades, effective_tracks, flatten_audio,
     flatten_automation, flatten_controllers, flatten_notes, flatten_notes_with,
 };
+pub(crate) use flatten::{automation_piece, controller_piece};
 
 /// Lowest accepted audio clip gain in dB.
 pub const AUDIO_GAIN_DB_MIN: f32 = -120.0;

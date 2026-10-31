@@ -14,6 +14,7 @@ use crate::console_cmd::{Planner, add_channel, console_available, is_instrument}
 use crate::container::{SPLIT_TYPE, split_path};
 use crate::controller::{ControllerKind, ControllerLane, canonical, window_points};
 use crate::history::Edit;
+use crate::loop_convert::{LoopConvert, content_pieces};
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
 use crate::rack_columns::{self, Placement};
 use crate::song::{AUDIO_TRACK_TYPE, AutomationPoint, Clip, ClipContent, ClipId, LaneKind, Note};
@@ -250,6 +251,34 @@ pub enum WorkflowCommand {
         ids: Vec<ClipId>,
         /// The new mute state.
         muted: bool,
+    },
+    /// Turns the loops of the listed clips into clips (one undo step; a clip that does not loop
+    /// is left alone, and so is the lane's sound). With [`LoopConvert::Separate`] each
+    /// repetition becomes a clip of its own (the first keeps the clip's id, the others take
+    /// new ids from the song's next free id in song order; the last is
+    /// [`crate::Document::last_clip_id`]); this works for note, automation and audio clips. With
+    /// [`LoopConvert::Single`] a note or automation clip becomes one clip that holds every
+    /// repetition (no loop, no offset, same id). Rejected: audio clips and note clips with swing
+    /// for `Single`, a clip another clip of its lane overlaps for `Separate`, unknown clips, an
+    /// empty list and a selection in which no clip loops.
+    ConvertLoop {
+        /// The clips.
+        ids: Vec<ClipId>,
+        /// What the loop becomes.
+        mode: LoopConvert,
+    },
+    /// Makes repetition `index` (0-based, the repetitions a looped clip shows from `offset mod
+    /// loop`) of a looped clip a clip of its own, so it can be edited alone. The repetitions
+    /// before it stay one looped clip under the clip's id, the ones after it another (a new id);
+    /// the instance is a clip without loop (it keeps the id when it is the first). The lane
+    /// plays what it did. One undo step; [`crate::Document::last_clip_id`] is the instance only
+    /// when it took a new id. Rejected: a clip that does not loop, an index past the last
+    /// repetition and a clip another clip of its lane overlaps.
+    DuplicateLoopInstance {
+        /// The looped clip.
+        id: ClipId,
+        /// The repetition.
+        index: usize,
     },
     /// Joins note or automation clips of one lane into the first of them (it keeps
     /// its id), which then spans all of them. Each clip contributes what it shows (its content
@@ -761,6 +790,12 @@ pub(crate) fn plan(
         }
         WorkflowCommand::MoveClips { moves, copy, .. } => move_clips(doc, registry, &moves, copy),
         WorkflowCommand::JoinClips { ids } => join_clips(doc, &ids),
+        WorkflowCommand::ConvertLoop { ids, mode } => {
+            crate::loop_convert::convert_loop(doc, registry, &ids, mode)
+        }
+        WorkflowCommand::DuplicateLoopInstance { id, index } => {
+            crate::loop_convert::loop_instance(doc, id, index)
+        }
         WorkflowCommand::TrimClips {
             ids, start_delta, ..
         } => plain(trim_clips(doc, registry, &ids, start_delta)),
@@ -1745,27 +1780,6 @@ fn set_clips_muted(doc: &RackDoc, ids: &[ClipId], muted: bool) -> Result<Edit, M
     Ok(Edit::Compound(edits))
 }
 
-/// What a clip shows, as pieces `(song start, song end, content start)`: one piece, or with a
-/// loop one per repetition (the content range `[0, loop)` repeats from `offset mod loop`).
-fn content_pieces(c: &Clip) -> Vec<(i64, i64, i64)> {
-    let end = c.end();
-    match c.loop_length {
-        Some(n) if n > 0 => {
-            let mut out = Vec::new();
-            let mut t = c.start;
-            let mut cs = c.offset.rem_euclid(n);
-            while t < end {
-                let e = (t + n - cs).min(end);
-                out.push((t, e, cs));
-                t = e;
-                cs = 0;
-            }
-            out
-        }
-        _ => vec![(c.start, end, c.offset)],
-    }
-}
-
 /// The controller lanes of the clips of a join: each clip's window of every lane, later clips
 /// hiding the earlier points they overlap, relative to the joined clip's `start`.
 fn joined_controllers(clips: &[(DeviceKey, usize, &Clip)], start: i64) -> Vec<ControllerLane> {
@@ -1873,6 +1887,8 @@ fn join_clips(doc: &RackDoc, ids: &[ClipId]) -> Result<(Edit, Option<ClipId>), M
         offset: 0,
         loop_length: None,
         muted: clips.iter().all(|(_, _, c)| c.muted),
+        name: first.name.clone(),
+        color: first.color,
         grid: first.grid,
         scale: first.scale,
         controllers,

@@ -58,6 +58,8 @@ fn note_clip(start: i64, notes: &[(i64, u8)]) -> Clip {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Notes(
             notes

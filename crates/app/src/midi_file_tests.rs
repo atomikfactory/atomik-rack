@@ -27,6 +27,8 @@ fn clip(start: i64, length: i64, notes: Vec<Note>, controllers: Vec<ControllerLa
         offset: 0,
         loop_length: None,
         muted: false,
+        name: None,
+        color: None,
         grid: None,
         scale: None,
         controllers,

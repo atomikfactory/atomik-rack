@@ -403,10 +403,12 @@ use schema::Obj;
 use write_clip::*;
 use write_console::*;
 
-pub(crate) use read_clip::{clip_span, load_controllers, load_grid, load_notes, load_scale};
+pub(crate) use read_clip::{
+    clip_span, load_clip_meta, load_controllers, load_grid, load_notes, load_scale,
+};
 pub(crate) use read_devices::{load_curves, load_drums, load_steps, load_zones};
 pub(crate) use write::save;
-pub(crate) use write_clip::write_note_clip_tail;
+pub(crate) use write_clip::{clip_meta_text, write_note_clip_tail};
 pub(crate) use write_devices::{write_curves, write_drums, write_steps, write_zones};
 
 /// The `format` tag of a project file.

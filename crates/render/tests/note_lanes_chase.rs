@@ -80,6 +80,8 @@ fn project(lanes: usize, lane: usize, chase: bool) -> RackDoc {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content: ClipContent::Notes(vec![Note::new(0, 3 * BAR, 69, 0.8)].into()),
             },

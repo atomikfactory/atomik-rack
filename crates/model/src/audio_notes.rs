@@ -108,6 +108,8 @@ pub fn notes_clip(
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(notes.into()),
     })
 }

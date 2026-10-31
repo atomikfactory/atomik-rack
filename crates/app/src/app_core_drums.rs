@@ -183,6 +183,8 @@ impl<S: EngineSink> AppCore<S> {
             muted: false,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             grid: Some(NEW_GRID),
             content: ClipContent::Notes(Vec::new().into()),
         };

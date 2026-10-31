@@ -361,6 +361,8 @@ fn a_double_click_on_a_drum_clip_opens_the_step_editor_and_a_synth_clip_the_pian
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content: ClipContent::Notes(vec![Note::new(0, PPQ, 36, 0.8)].into()),
     };

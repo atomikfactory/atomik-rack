@@ -509,6 +509,8 @@ impl<S: EngineSink> AppCore<S> {
                 grid: None,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 content: ClipContent::Audio(content(asset.clone(), *source_offset)),
             })
             .collect();

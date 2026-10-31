@@ -403,6 +403,8 @@ impl<S: EngineSink> AppCore<S> {
                 muted: false,
                 scale: None,
                 controllers: Vec::new(),
+                name: None,
+                color: None,
                 grid: None,
                 content,
             },

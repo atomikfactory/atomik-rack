@@ -82,6 +82,8 @@ fn add_clip(c: &mut AppCore<RecordingSink>, k: &str, start: i64, notes: Vec<Note
         offset: 0,
         loop_length: None,
         muted: false,
+        name: None,
+        color: None,
         grid: None,
         scale: None,
         controllers: vec![ControllerLane::new(
@@ -429,6 +431,8 @@ fn an_exported_track_merges_its_note_lanes_and_skips_a_muted_one() {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(vec![Note::new(PPQ, PPQ, 64, vel(100))].into()),
     };
     c.apply_command(Command::Song(SongCommand::AddClip {

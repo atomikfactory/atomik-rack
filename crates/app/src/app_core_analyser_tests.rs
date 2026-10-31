@@ -246,6 +246,8 @@ fn clip(length: i64, content: ClipContent) -> Clip {
         muted: false,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         grid: None,
         content,
     }

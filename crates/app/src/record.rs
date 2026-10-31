@@ -579,6 +579,8 @@ impl Take {
                     offset: 0,
                     loop_length: None,
                     muted: false,
+                    name: None,
+                    color: None,
                     scale: None,
                     controllers,
                     grid: None,

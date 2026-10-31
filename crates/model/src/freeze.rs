@@ -89,6 +89,8 @@ impl Frozen {
             grid: None,
             scale: None,
             controllers: Vec::new(),
+            name: None,
+            color: None,
             content: ClipContent::Audio(self.audio.clone()),
         }
     }
@@ -406,6 +408,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | SongCommand::SetClipScale { clip, .. }
             | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
             SongCommand::ApplyQuantize { clips, .. } => clips.iter().find_map(clip_frozen),
+            SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
             SongCommand::SetTempoMap(_)
             | SongCommand::DragTempoMap { .. }
             | SongCommand::SetMeter { .. }
@@ -418,6 +421,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | WorkflowCommand::DuplicateClips { ids }
             | WorkflowCommand::SetClipsMuted { ids, .. }
             | WorkflowCommand::JoinClips { ids }
+            | WorkflowCommand::ConvertLoop { ids, .. }
             | WorkflowCommand::TrimClips { ids, .. }
             | WorkflowCommand::DeleteOutsideEvents { ids }
             | WorkflowCommand::SplitClips { ids, .. }
@@ -425,6 +429,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | WorkflowCommand::ScaleTempo { ids, .. }
             | WorkflowCommand::ChopClips { ids, .. }
             | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
+            WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
             WorkflowCommand::MoveClips { moves, .. } => moves
                 .iter()
                 .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
@@ -596,6 +601,8 @@ pub(crate) fn plan_rendered_track(
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Audio(audio),
     };
     let (insert, id) = insert_new(&scratch, device, lane, clip)?;

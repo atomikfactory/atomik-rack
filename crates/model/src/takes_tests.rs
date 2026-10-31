@@ -17,6 +17,8 @@ fn notes_take(start: i64, length: i64) -> Clip {
         grid: None,
         scale: None,
         controllers: Vec::new(),
+        name: None,
+        color: None,
         content: ClipContent::Notes(vec![Note::new(0, 10, 60, 0.8)].into()),
     }
 }
