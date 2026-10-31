@@ -143,7 +143,9 @@ impl Adsr {
     /// Starts the 2 ms linear steal fade from the current level.
     #[inline]
     pub fn steal_fade(&mut self) {
-        if self.stage == AdsrStage::Idle {
+        // A fade already running keeps going: asking again (a repeated voice-limit parameter)
+        // must not stretch it.
+        if matches!(self.stage, AdsrStage::Idle | AdsrStage::Fade) {
             return;
         }
         let n = self.samples(STEAL_FADE_MS).round();

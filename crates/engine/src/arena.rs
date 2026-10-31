@@ -445,11 +445,14 @@ impl Arena {
         self.nodes.get_mut(slot).and_then(Option::take)
     }
 
-    /// Publishes every arena device's `latency_frames()` into its slot of `bank`.
-    /// One virtual call and one atomic swap per device; never allocates.
+    /// Publishes the `latency_frames()` of every arena device that can change it
+    /// (`Device::variable_latency`) into its slot of `bank`; the others were published when they
+    /// were inserted. One virtual call and one atomic swap per such device; never allocates.
     pub(crate) fn publish_latencies(&self, bank: &Latencies) {
         for &(_, slot) in &self.index {
-            if let Some(node) = self.nodes.get(slot).and_then(|n| n.as_deref()) {
+            if let Some(node) = self.nodes.get(slot).and_then(|n| n.as_deref())
+                && node.variable_latency
+            {
                 bank.publish(slot, node.device.latency_frames());
             }
         }

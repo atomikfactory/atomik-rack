@@ -597,6 +597,9 @@ pub(crate) struct Player {
     shared: Arc<TransportCell>,
     /// The lanes a take is writing; the player skips them.
     hold: Arc<AutomationHold>,
+    /// Set when something other than the lanes may have changed a device's parameters (a
+    /// control message, a transport command, a loop wrap): the next batch applies every lane.
+    lanes_dirty: bool,
     /// MIDI clock out.
     sync: ClockOut,
     /// The clock source the player follows while the cell says so.
@@ -638,6 +641,7 @@ impl Player {
             beat: click_table(sample_rate, 1320.0, 0.6),
             shared: Arc::new(TransportCell::default()),
             hold: Arc::new(AutomationHold::new()),
+            lanes_dirty: true,
             sync: ClockOut::new(),
             external: ExternalClock::new(),
             follow: None,
@@ -674,6 +678,12 @@ impl Player {
         self.events.clear();
         self.next_event = 0;
         self.seq = 0;
+    }
+
+    /// Makes the next playing batch apply every automation lane, even where the value did not
+    /// change (the engine calls it whenever it applied a parameter or any control message).
+    pub(crate) fn invalidate_lanes(&mut self) {
+        self.lanes_dirty = true;
     }
 
     /// Whether devices see `TimeInfo::playing` (always true without a song, as before).
@@ -770,6 +780,7 @@ impl Player {
         {
             return;
         }
+        self.lanes_dirty = true;
         self.apply_command(command, engine_tempo, sr, dropped);
     }
 
@@ -1022,24 +1033,25 @@ impl Player {
             stats,
             free_tick,
             hold,
+            lanes_dirty,
             pre_roll,
             counting,
             sync,
             ..
         } = self;
         let four_four = [MeterSegment::FOUR_FOUR];
-        let (map, meters, lanes, mut parts, mut aud) = match song.as_deref_mut() {
+        let (map, meters, (lanes, lane_last), mut parts, mut aud) = match song.as_deref_mut() {
             Some(s) => (
                 ext.as_ref().map_or(TempoMap(&s.tempo), |e| TempoMap(e)),
                 MeterMap(&s.meter),
-                &s.lanes[..],
+                (&s.lanes[..], &mut s.lane_last[..]),
                 Some((&s.tracks[..], &mut s.cursors[..])),
                 ext.is_none().then_some((&s.audio[..], &mut s.audio_rt[..])),
             ),
             None => (
                 ext.as_ref().map_or(TempoMap(&constant), |e| TempoMap(e)),
                 MeterMap(&four_four),
-                &[][..],
+                (&[][..], &mut [][..]),
                 None,
                 None,
             ),
@@ -1079,6 +1091,7 @@ impl Player {
             wrap(map, sr, &mut parts, &mut em, 0, ls);
             *pos = ls;
             *loop_count += 1;
+            *lanes_dirty = true;
             sync.wrapped(frame, self.loop_start, sync_cfg);
         }
         self.shared.publish(&TransportState {
@@ -1145,9 +1158,20 @@ impl Player {
         if !*playing {
             return time;
         }
-        for lane in lanes {
-            if !hold.holds(lane.device, lane.param) {
-                arena.set_param(lane.device, lane.param, lane_value(&lane.points, tick0));
+        // A lane is applied when its value changed since the last batch, or when anything else
+        // may have touched the device (`lanes_dirty`). Repeating a value is a no-op for every
+        // device, so skipping it is output-neutral. A held lane forgets its last value: the
+        // user's value replaces it while held.
+        let force = std::mem::take(lanes_dirty);
+        for (lane, last) in lanes.iter().zip(lane_last.iter_mut()) {
+            if hold.holds(lane.device, lane.param) {
+                *last = None;
+                continue;
+            }
+            let value = lane_value(&lane.points, tick0);
+            if force || *last != Some(value.to_bits()) {
+                arena.set_param(lane.device, lane.param, value);
+                *last = Some(value.to_bits());
             }
         }
         if let Some((_, rts)) = aud.as_mut() {

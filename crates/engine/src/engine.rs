@@ -1362,6 +1362,8 @@ impl Engine {
     }
 
     fn apply(&mut self, op: ControlOp) {
+        // Any message may change a device or its parameters behind the automation lanes' back.
+        self.player.invalidate_lanes();
         match op {
             ControlOp::Insert { id, slot, node } => {
                 if let Some(rejected) = self.arena.insert(id, slot, node) {
@@ -1482,6 +1484,7 @@ impl Engine {
     /// Applies every queued param message to the arena devices.
     fn apply_params(&mut self) {
         while let Ok(msg) = self.param_rx.pop() {
+            self.player.invalidate_lanes();
             self.arena.set_param(msg.device, msg.param, msg.plain);
         }
     }

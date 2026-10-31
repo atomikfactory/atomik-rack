@@ -794,4 +794,8 @@ impl Device for GuitarAmp {
     fn latency_frames(&self) -> u32 {
         LATENCY
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }

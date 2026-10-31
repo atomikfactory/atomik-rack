@@ -95,9 +95,41 @@ pub fn promote_worker_thread() {
     }
 }
 
+#[cfg(test)]
+mod cap_tests {
+    use super::cap_workers;
+
+    #[test]
+    fn workers_leave_a_core_for_the_audio_thread() {
+        assert_eq!(cap_workers(4, 8), 4);
+        assert_eq!(cap_workers(16, 4), 3);
+        assert_eq!(cap_workers(2, 2), 1);
+        assert_eq!(cap_workers(2, 1), 0);
+        assert_eq!(cap_workers(2, 0), 0);
+        assert_eq!(cap_workers(0, 8), 0);
+        assert_eq!(cap_workers(3, usize::MAX), 3);
+    }
+}
+
 /// Number of [`promote_worker_thread`] calls that failed to raise the priority.
 pub fn worker_promotion_failures() -> u64 {
     WORKER_PROMOTION_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How many render workers to start for `requested` on a machine with `cores` hardware threads:
+/// at most `cores - 1`, so the audio thread always has a core of its own and a worker never
+/// competes with it. One core (or an unknown count of zero) means no workers.
+pub fn cap_workers(requested: u16, cores: usize) -> u16 {
+    let room = cores.saturating_sub(1).min(usize::from(u16::MAX)) as u16;
+    requested.min(room)
+}
+
+/// [`cap_workers`] for this machine (`available_parallelism`; one core when unknown).
+pub fn cap_workers_here(requested: u16) -> u16 {
+    cap_workers(
+        requested,
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
+    )
 }
 
 /// Audio host API selection.

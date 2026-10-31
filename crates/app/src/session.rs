@@ -553,9 +553,17 @@ impl<B: AudioBackend> LiveSession<B> {
         settings: &AudioSettings,
         config: &EngineConfig,
     ) -> Result<(Opened<B>, Option<String>), IoError> {
+        // Never more workers than cores - 1: the audio thread keeps a core of its own.
+        let threads = atomik_audio_io::cap_workers_here(settings.workers);
+        if threads != settings.workers {
+            log::info!(
+                "render workers: {} requested, {threads} started (one core stays free)",
+                settings.workers
+            );
+        }
         let options = EngineOptions {
             workers: WorkerConfig {
-                threads: settings.workers,
+                threads,
                 // Workers render on the audio deadline too: same RT priority as the callback.
                 on_thread_start: Some(atomik_audio_io::promote_worker_thread),
             },

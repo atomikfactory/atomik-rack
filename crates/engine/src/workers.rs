@@ -25,7 +25,8 @@
 //!   `j % p`, `p = min(workers + 1, n)`; participant 0 is the audio thread. Only workers that
 //!   received work are unparked, and nothing is dispatched for levels of one device. If a job
 //!   queue is full the node simply runs on the audio thread.
-//! * **Barrier.** The audio thread counts outstanding jobs and spins (`spin_loop`) until every
+//! * **Barrier.** The audio thread counts outstanding jobs and waits (`spin_loop` for a bounded
+//!   number of empty iterations, then `yield_now`) until every
 //!   node has come back through the done queues. The queues' release/acquire handoff makes
 //!   the workers' writes to a node visible to the audio thread. Every barrier iteration that
 //!   found nothing to collect is counted (xrun diagnostics: `Engine::last_render_barrier_spins`);
@@ -57,6 +58,28 @@ use std::thread::{JoinHandle, Thread};
 /// engine costs no CPU; long enough to bridge the gap between levels of one batch.
 #[doc(hidden)]
 pub const WORKER_SPIN_LIMIT: u64 = 20_000;
+
+/// Barrier iterations without progress the audio thread busy-waits before it starts yielding
+/// its core (a worker that was preempted, or shares the core, then gets to run).
+#[doc(hidden)]
+pub const BARRIER_SPIN_LIMIT: u64 = 2_000;
+
+/// How the barrier waits for the next collected node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pause {
+    Spin,
+    Yield,
+}
+
+/// The wait policy of the level barrier: spin while the node is probably about to arrive, then
+/// yield on every iteration. Pure (no clock), so the policy is testable.
+pub(crate) fn barrier_pause(since_progress: u64) -> Pause {
+    if since_progress <= BARRIER_SPIN_LIMIT {
+        Pause::Spin
+    } else {
+        Pause::Yield
+    }
+}
 
 /// Jobs each worker queue holds; a bigger worker share falls back to the audio thread.
 const WORKER_QUEUE_CAPACITY: usize = 256;
@@ -358,6 +381,7 @@ impl RoutingPlan {
         }
         // 4. Barrier: wait until every handed-over node is back.
         let mut spins = 0u64;
+        let mut waited = 0u64;
         while outstanding > 0 {
             let mut progressed = false;
             for link in pool.links.iter_mut().filter(|l| l.pending > 0) {
@@ -388,9 +412,15 @@ impl RoutingPlan {
                     progressed = true;
                 }
             }
-            if !progressed {
+            if progressed {
+                waited = 0;
+            } else {
                 spins += 1;
-                std::hint::spin_loop();
+                waited += 1;
+                match barrier_pause(waited) {
+                    Pause::Spin => std::hint::spin_loop(),
+                    Pause::Yield => std::thread::yield_now(),
+                }
             }
         }
         // 5. Scatter in plan order.
@@ -400,5 +430,18 @@ impl RoutingPlan {
             }
         }
         spins
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_barrier_spins_a_bounded_number_of_times_then_yields() {
+        assert_eq!(barrier_pause(1), Pause::Spin);
+        assert_eq!(barrier_pause(BARRIER_SPIN_LIMIT), Pause::Spin);
+        assert_eq!(barrier_pause(BARRIER_SPIN_LIMIT + 1), Pause::Yield);
+        assert_eq!(barrier_pause(u64::MAX), Pause::Yield);
     }
 }
