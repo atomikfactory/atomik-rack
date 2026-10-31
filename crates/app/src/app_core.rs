@@ -180,6 +180,8 @@ pub struct AppCore<S: EngineSink> {
     registry: Registry,
     /// The in-process clipboard; New and Open keep it.
     clipboard: Clipboard,
+    /// The channel settings the last Copy Channel Settings took.
+    settings_clip: Option<atomik_model::ChannelSettingsClip>,
     /// Tracks the creation chain armed: the next auto-route disarms them
     /// (and only them). Session state, forgotten when a document is replaced.
     auto_armed: Vec<DeviceKey>,
@@ -424,6 +426,7 @@ impl<S: EngineSink> AppCore<S> {
         let mut core = Self {
             registry,
             clipboard: Clipboard::new(),
+            settings_clip: None,
             auto_armed: Vec::new(),
             manual_rec: false,
             mki: None,
@@ -2203,6 +2206,12 @@ impl<S: EngineSink> AppCore<S> {
             can_bypass: strips
                 .iter()
                 .any(|s| atomik_model::inserts_bypassed(doc, &self.registry, s).is_some()),
+            can_copy_settings: !strips.is_empty(),
+            can_paste_settings: !strips.is_empty() && self.has_copied_settings(),
+            can_reset: !strips.is_empty(),
+            can_clear_inserts: strips
+                .iter()
+                .any(|s| !atomik_model::insert_chain(doc, &self.registry, s).is_empty()),
         }
     }
 
@@ -3014,6 +3023,9 @@ mod workflow;
 
 #[path = "app_core_setups.rs"]
 mod setups;
+
+#[path = "app_core_settings.rs"]
+mod settings_ops;
 
 #[path = "app_core_clipboard.rs"]
 mod clipboard_ops;

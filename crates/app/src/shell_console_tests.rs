@@ -204,6 +204,10 @@ fn the_mixer_menu_and_the_console_devices_toggle() {
             ("Delete VCA", None),
             ("Toggle Polarity", None),
             ("Bypass All Inserts", None),
+            ("Clear Inserts", None),
+            ("Copy Channel Settings", None),
+            ("Paste Channel Settings", None),
+            ("Reset Channel", None),
             ("Store Snapshot", None),
             ("Update Snapshot", None),
             ("Recall Snapshot", None),
@@ -696,9 +700,14 @@ fn the_arrows_are_mixer_commands_that_step_the_focused_control_and_scroll() {
     tap(&mut s, Key::Down, Modifiers::SHIFT);
     tap(&mut s, Key::PageUp, Modifiers::NONE);
     assert_eq!(s.core().console().scroll_x(), 0.0);
-    tap(&mut s, Key::Right, Modifiers::NONE);
+    let command = Modifiers {
+        ctrl: !cfg!(target_os = "macos"),
+        meta: cfg!(target_os = "macos"),
+        ..Modifiers::NONE
+    };
+    tap(&mut s, Key::Right, command);
     let one = s.core().console().scroll_x();
-    assert!(one > 0.0, "Right scrolls the strips");
+    assert!(one > 0.0, "Cmd+Right scrolls the strips");
     tap(&mut s, Key::End, Modifiers::NONE);
     assert!(s.core().console().scroll_x() > one);
     tap(&mut s, Key::Home, Modifiers::NONE);
