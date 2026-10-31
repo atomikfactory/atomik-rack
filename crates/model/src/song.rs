@@ -800,6 +800,19 @@ pub enum SongCommand {
         /// Down (later in the list) instead of up.
         down: bool,
     },
+    /// Move several tracks to one place of the track list, in one undo step. The tracks keep
+    /// their order among themselves and end up side by side: `to_index` counts the places of the
+    /// list without them (0 puts them first, the number of the other tracks last), `into` is the
+    /// folder they join (`None` for the top level). The place must lie where the folder can hold
+    /// them (inside its block of tracks, or at either end of it) or, for the top level, outside
+    /// every folder; a place in the middle of another folder is an error, so is a move that
+    /// changes nothing. Frozen tracks are refused. See [`Song::moves_tracks`].
+    MoveTracks {
+        /// The tracks' devices.
+        devices: Vec<DeviceKey>,
+        /// Where they go.
+        place: crate::TrackPlace,
+    },
     /// Move a folder, with everything in it, one place up or down among its neighbours (a
     /// track, or a whole folder). A folder at the edge of its parent leaves it. An error at the
     /// first and last place of the top level. One undo step.

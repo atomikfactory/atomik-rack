@@ -172,6 +172,17 @@ pub enum WorkflowCommand {
         /// The device that has the track.
         device: DeviceKey,
     },
+    /// [`WorkflowCommand::DuplicateTrack`] for several devices, in one undo step: each copy
+    /// comes right after its device (and the device's channel) in the rack and the copies are
+    /// not armed. In the track list the copies stay together: right after the last duplicated
+    /// track, in its folder, or, with `place`, where [`crate::SongCommand::MoveTracks`] would
+    /// put them (the drop of a Ctrl-drag). A `place` the copies cannot take is an error.
+    DuplicateTracks {
+        /// The devices that have the tracks.
+        devices: Vec<DeviceKey>,
+        /// Where the copies go, or `None` to leave them next to their originals.
+        place: Option<crate::TrackPlace>,
+    },
     /// Folds or unfolds every listed device (any scope) in one undo step; the ones that are in
     /// that state already are left alone, and a command that changes none is rejected.
     SetFoldedMany {
@@ -726,6 +737,9 @@ pub(crate) fn plan(
         WorkflowCommand::DuplicateTrack { device } => {
             plain(duplicate_track(doc, registry, &device))
         }
+        WorkflowCommand::DuplicateTracks { devices, place } => {
+            plain(duplicate_tracks(doc, registry, &devices, place))
+        }
         WorkflowCommand::DisconnectDevice { key } => plain(
             disconnect_device(doc, &key).map(|e| workflow_create::with_entries(doc, registry, e)),
         ),
@@ -1006,14 +1020,82 @@ fn duplicate_track(
     registry: &Registry,
     device: &DeviceKey,
 ) -> Result<Edit, ModelError> {
-    rules::device(doc, device)?;
-    if doc.song.track(device).is_none() {
+    let mut p = Planner::new(doc, registry);
+    duplicate_onto(&mut p, device)?;
+    Ok(p.finish())
+}
+
+/// Plans a copy of the track of `device` on `p`; returns the copy's device.
+fn duplicate_onto(p: &mut Planner<'_>, device: &DeviceKey) -> Result<DeviceKey, ModelError> {
+    rules::device(p.doc(), device)?;
+    if p.doc().song.track(device).is_none() {
         return Err(bad_song(format!("{device} has no track")));
     }
-    let snapshot = DeviceSnapshot::capture(doc, std::slice::from_ref(device), true)?;
-    let at = after_with_channels(doc, None, device);
+    let snapshot = DeviceSnapshot::capture(p.doc(), std::slice::from_ref(device), true)?;
+    let at = after_with_channels(p.doc(), None, device);
+    let new = paste_devices(p, &snapshot, None, at, None)?;
+    new.into_iter()
+        .next()
+        .ok_or_else(|| bad_song(format!("{device} could not be copied")))
+}
+
+/// [`WorkflowCommand::DuplicateTracks`].
+fn duplicate_tracks(
+    doc: &RackDoc,
+    registry: &Registry,
+    devices: &[DeviceKey],
+    place: Option<crate::TrackPlace>,
+) -> Result<Edit, ModelError> {
+    if devices.is_empty() {
+        return Err(bad_song("there are no tracks to duplicate"));
+    }
+    for (i, d) in devices.iter().enumerate() {
+        if devices[..i].contains(d) {
+            return Err(bad_song(format!("{d} is listed twice")));
+        }
+    }
+    // In track order, so the copies come out in the order of their originals.
+    let sources: Vec<&DeviceKey> = doc
+        .song
+        .tracks
+        .iter()
+        .map(|t| &t.device)
+        .filter(|d| devices.contains(d))
+        .collect();
+    if sources.len() != devices.len() {
+        return Err(bad_song("a device has no track"));
+    }
+    let sources_last = sources.last().map(|k| (*k).clone());
     let mut p = Planner::new(doc, registry);
-    paste_devices(&mut p, &snapshot, None, at, None)?;
+    let mut copies = Vec::with_capacity(sources.len());
+    for source in sources {
+        copies.push(duplicate_onto(&mut p, source)?);
+    }
+    // The copies were appended to the track list: they go where asked, else right after the
+    // last original, in its folder.
+    let place = place.unwrap_or_else(|| {
+        let at = sources_last.as_ref().map_or(0, |k| {
+            doc.song
+                .tracks
+                .iter()
+                .position(|t| &t.device == k)
+                .map_or(0, |i| i + 1)
+        });
+        crate::TrackPlace {
+            to_index: at,
+            into: sources_last
+                .as_ref()
+                .and_then(|k| p.doc().song.track_group(k)),
+        }
+    });
+    let moved = crate::organise_cmd::moved_layout(&p.doc().song, &copies, place)?;
+    if moved.changed {
+        p.push(crate::organise_cmd::layout_edit(
+            &p.doc().song,
+            moved.order,
+            &moved.org,
+        ));
+    }
     Ok(p.finish())
 }
 

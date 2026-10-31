@@ -197,3 +197,46 @@ fn muting_every_track_of_a_folder_is_muting_each_track() {
         "one batch is one undo step"
     );
 }
+
+#[test]
+fn moving_tracks_to_a_place_does_not_change_the_bounce() {
+    use atomik_model::TrackPlace;
+    let mut d = song();
+    let plain = bounce(d.doc(), 512, 0);
+    apply(
+        &mut d,
+        SongCommand::GroupTracks {
+            devices: vec![key("pad"), key("bass")],
+            name: "Low".into(),
+        },
+    );
+    // `lead` into the folder, then two tracks together to the front, then out again.
+    for (devices, to_index, into) in [
+        (vec![key("lead")], 0, Some(1)),
+        (vec![key("bass"), key("lead")], 1, None),
+        (vec![key("pad")], 0, None),
+    ] {
+        apply(
+            &mut d,
+            SongCommand::MoveTracks {
+                devices,
+                place: TrackPlace { to_index, into },
+            },
+        );
+        for (block, workers) in [(512, 0), (333, 0), (512, 2)] {
+            assert_eq!(
+                bounce(d.doc(), block, workers),
+                plain,
+                "{block} / {workers}"
+            );
+        }
+    }
+    let order: Vec<&str> = d
+        .doc()
+        .song
+        .tracks
+        .iter()
+        .map(|t| t.device.0.as_str())
+        .collect();
+    assert_ne!(order, ["lead", "pad", "bass"], "the tracks did move");
+}

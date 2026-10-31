@@ -450,6 +450,7 @@ impl<S: EngineSink> AppCore<S> {
                 | WorkflowCommand::PasteDevicesAt { .. }
                 | WorkflowCommand::DuplicateDevices { .. }
                 | WorkflowCommand::DuplicateTrack { .. }
+                | WorkflowCommand::DuplicateTracks { .. }
                 | WorkflowCommand::CreateInstrument { .. }
                 | WorkflowCommand::CreateInstrumentAt { .. }
                 | WorkflowCommand::CreateEffect { .. }
@@ -556,7 +557,8 @@ impl<S: EngineSink> AppCore<S> {
             WorkflowCommand::PasteDevices { .. }
             | WorkflowCommand::PasteDevicesAt { .. }
             | WorkflowCommand::DuplicateDevices { .. }
-            | WorkflowCommand::DuplicateTrack { .. } => self.select_new_devices(&pre),
+            | WorkflowCommand::DuplicateTrack { .. }
+            | WorkflowCommand::DuplicateTracks { .. } => self.select_new_devices(&pre),
             WorkflowCommand::PasteNotes { .. } | WorkflowCommand::DuplicateNotes { .. } => {
                 if let Some((clip, base, notes)) = &pre.notes {
                     self.select_new_notes(*clip, *base, notes);

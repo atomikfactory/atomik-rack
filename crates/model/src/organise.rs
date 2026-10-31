@@ -44,6 +44,15 @@ pub struct TrackGroup {
     pub color: Option<[u8; 3]>,
 }
 
+/// Where moved or copied tracks go (see [`crate::SongCommand::MoveTracks`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackPlace {
+    /// The place among the tracks that stay (0 first, their number last).
+    pub to_index: usize,
+    /// The folder the tracks join (`None` for the top level).
+    pub into: Option<u32>,
+}
+
 /// Folders, colours, comments and fold state of a song's tracks (see the module documentation).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Organisation {

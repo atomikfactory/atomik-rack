@@ -35,6 +35,12 @@ enum WfOp {
     Move(Vec<usize>, usize),
     Disconnect(usize),
     DuplicateTrack(usize),
+    /// Several tracks duplicated, with a place (the second value: the place among the tracks,
+    /// the folder picked by the third) when the flag is set.
+    DuplicateTracks(Vec<usize>, Option<(usize, usize)>),
+    /// Several tracks moved to a place (the place, and the folder picked by the third value;
+    /// 0 is the top level).
+    MoveTracks(Vec<usize>, usize, usize),
     PasteDevices(Vec<usize>, usize, bool),
     /// A device is replaced by one of five types (the second value); kinds that do not match
     /// are rejected, which the sequence tolerates.
@@ -183,6 +189,9 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (sel(), 0usize..12).prop_map(|(s, t)| WfOp::Move(s, t)),
         (0usize..12).prop_map(WfOp::Disconnect),
         (0usize..12).prop_map(WfOp::DuplicateTrack),
+        (sel(), proptest::option::of((0usize..12, 0usize..4)))
+            .prop_map(|(s, p)| WfOp::DuplicateTracks(s, p)),
+        (sel(), 0usize..12, 0usize..4).prop_map(|(s, a, g)| WfOp::MoveTracks(s, a, g)),
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
         (0usize..12, 0u8..5).prop_map(|(d, t)| WfOp::Replace(d, t)),
         (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
@@ -250,6 +259,16 @@ fn copyable_keys(doc: &RackDoc, inner: bool) -> Vec<DeviceKey> {
         .collect()
 }
 
+/// The folder a track-move op picks: 0 is the top level, else the n-th folder (wrapping).
+fn folder_pick(doc: &RackDoc, n: usize) -> Option<u32> {
+    let ids: Vec<u32> = doc.song.org.groups.iter().map(|g| g.id).collect();
+    if n == 0 || ids.is_empty() {
+        None
+    } else {
+        Some(ids[(n - 1) % ids.len()])
+    }
+}
+
 fn chosen(list: &[DeviceKey], sel: &[usize]) -> Vec<DeviceKey> {
     sel.iter().filter_map(|i| pick(list, *i)).collect()
 }
@@ -283,6 +302,43 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
         WfOp::DuplicateTrack(i) => wf(WorkflowCommand::DuplicateTrack {
             device: pick(&tracks, *i)?,
         }),
+        WfOp::DuplicateTracks(s, place) => {
+            let devices = chosen(&tracks, s);
+            let mut seen = Vec::new();
+            let devices: Vec<DeviceKey> = devices
+                .into_iter()
+                .filter(|d| {
+                    let fresh = !seen.contains(d);
+                    seen.push(d.clone());
+                    fresh
+                })
+                .collect();
+            wf(WorkflowCommand::DuplicateTracks {
+                devices,
+                place: place.map(|(to_index, g)| atomik_model::TrackPlace {
+                    to_index,
+                    into: folder_pick(doc, g),
+                }),
+            })
+        }
+        WfOp::MoveTracks(s, to_index, g) => {
+            let mut seen = Vec::new();
+            let devices: Vec<DeviceKey> = chosen(&tracks, s)
+                .into_iter()
+                .filter(|d| {
+                    let fresh = !seen.contains(d);
+                    seen.push(d.clone());
+                    fresh
+                })
+                .collect();
+            sc(SongCommand::MoveTracks {
+                devices,
+                place: atomik_model::TrackPlace {
+                    to_index: *to_index,
+                    into: folder_pick(doc, *g),
+                },
+            })
+        }
         WfOp::PasteDevices(s, at, inner) => {
             let keys = chosen(&copyable_keys(doc, *inner), s);
             let snapshot = DeviceSnapshot::capture(doc, &keys, !*inner && at % 2 == 0).ok()?;

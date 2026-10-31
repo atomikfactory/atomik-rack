@@ -306,7 +306,8 @@ fn frozen_error(doc: &RackDoc, device: &DeviceKey) -> ModelError {
 /// frozen track includes (its parameters, cables, removal), or the frozen part of an insert
 /// chain, or the tempo while any track is frozen (the render is tied to the tempo map).
 ///
-/// Commands that only look at a frozen track (selection, colour, mute, a move in the list) pass.
+/// Commands that only look at a frozen track (selection, colour, mute, a one-step move in the
+/// list) pass; moving tracks to a place ([`SongCommand::MoveTracks`]) refuses a frozen one.
 /// Undo and redo never come here: they restore states that were consistent.
 pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> {
     if !doc.song.tracks.iter().any(|t| t.frozen.is_some()) {
@@ -387,6 +388,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | SongCommand::SetLaneStatic { device, .. }
             | SongCommand::RenameLane { device, .. }
             | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
+            SongCommand::MoveTracks { devices, .. } => devices.iter().find_map(track_frozen),
             SongCommand::AddTake { group, .. } => doc
                 .song
                 .take_group(*group)
@@ -434,6 +436,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | WorkflowCommand::PasteAutomationPoints { clip, .. }
             | WorkflowCommand::DuplicatePoints { clip, .. } => clip_frozen(clip),
             WorkflowCommand::DuplicateTrack { device } => track_frozen(device),
+            WorkflowCommand::DuplicateTracks { devices, .. } => {
+                devices.iter().find_map(track_frozen)
+            }
             WorkflowCommand::ApplyPatch { device, .. }
             | WorkflowCommand::ResetDevice { device } => device_frozen(device),
             WorkflowCommand::ReplaceDevice { target, .. } => device_frozen(target),

@@ -68,6 +68,8 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::RemoveTrack { .. } => "Delete Track",
         SongCommand::SetTrackFlags { .. } => "Change Track",
         SongCommand::MoveTrack { .. } => "Move Track",
+        SongCommand::MoveTracks { devices, .. } if devices.len() > 1 => "Move Tracks",
+        SongCommand::MoveTracks { .. } => "Move Track",
         SongCommand::AddAutomationLane { .. } => "Add Automation Lane",
         SongCommand::RemoveAutomationLane { .. } => "Remove Automation Lane",
         SongCommand::AddClip { .. } | SongCommand::AddAudioClip { .. } => "Add Clip",
@@ -138,6 +140,12 @@ fn workflow_label(c: &WorkflowCommand) -> &'static str {
             "Disconnect"
         }
         WorkflowCommand::DuplicateTrack { .. } => "Duplicate Track",
+        WorkflowCommand::DuplicateTracks { devices, place } => match (devices.len(), place) {
+            (1, None) => "Duplicate Track",
+            (1, Some(_)) => "Copy Track",
+            (_, None) => "Duplicate Tracks",
+            (_, Some(_)) => "Copy Tracks",
+        },
         WorkflowCommand::PasteClips { .. } => "Paste Clips",
         WorkflowCommand::DuplicateClips { .. } => "Duplicate Clips",
         WorkflowCommand::MoveClips { copy: true, .. } => "Copy Clips",

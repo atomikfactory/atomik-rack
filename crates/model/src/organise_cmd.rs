@@ -5,8 +5,8 @@
 
 use crate::history::Edit;
 use crate::organise::{
-    MAX_GROUP_DEPTH, MAX_GROUPS, Organisation, OutlineKind, TrackGroup, TrackLayout, comment_ok,
-    group_name_ok, normalise,
+    MAX_GROUP_DEPTH, MAX_GROUPS, Organisation, OutlineKind, TrackGroup, TrackLayout, TrackPlace,
+    comment_ok, group_name_ok, normalise,
 };
 use crate::song::{Song, SongCommand};
 use crate::song_cmd::{bad, track_index};
@@ -18,7 +18,7 @@ fn order_of(song: &Song) -> Vec<DeviceKey> {
 }
 
 /// The edit from the document's layout to `order` and `org` (cleaned first).
-fn layout(song: &Song, order: Vec<DeviceKey>, org: &Organisation) -> Edit {
+pub(crate) fn layout_edit(song: &Song, order: Vec<DeviceKey>, org: &Organisation) -> Edit {
     let new = TrackLayout {
         org: normalise(song, &order, org),
         order,
@@ -52,13 +52,121 @@ pub(crate) fn join_track(doc: &RackDoc, new: &DeviceKey, source: &DeviceKey) -> 
         org.colors.insert(new.clone(), color);
         changed = true;
     }
-    changed.then(|| layout(song, order_of(song), &org))
+    changed.then(|| layout_edit(song, order_of(song), &org))
 }
 
 /// The edit that gives the document the organisation `org` (cleaned first), the track order
 /// unchanged.
 pub(crate) fn org_edit(song: &Song, org: Organisation) -> Edit {
-    layout(song, order_of(song), &org)
+    layout_edit(song, order_of(song), &org)
+}
+
+/// The track order and organisation after moving `devices` to `place` (see
+/// [`SongCommand::MoveTracks`]).
+pub(crate) fn moved_layout(
+    song: &Song,
+    devices: &[DeviceKey],
+    place: TrackPlace,
+) -> Result<MovedLayout, ModelError> {
+    if devices.is_empty() {
+        return Err(bad("there are no tracks to move"));
+    }
+    let order = order_of(song);
+    let org = song.normalised_org();
+    for (i, d) in devices.iter().enumerate() {
+        if song.track(d).is_none() {
+            return Err(ModelError::UnknownKey(d.0.clone()));
+        }
+        if devices[..i].contains(d) {
+            return Err(bad(format!("{d} is listed twice")));
+        }
+    }
+    let (moved, stay): (Vec<DeviceKey>, Vec<DeviceKey>) =
+        order.iter().cloned().partition(|d| devices.contains(d));
+    place_layout(song, &order, &org, moved, stay, place)
+}
+
+/// Puts `moved` among `stay` at `place` (the common part of moving and copying tracks).
+fn place_layout(
+    song: &Song,
+    order: &[DeviceKey],
+    org: &Organisation,
+    moved: Vec<DeviceKey>,
+    stay: Vec<DeviceKey>,
+    place: TrackPlace,
+) -> Result<MovedLayout, ModelError> {
+    let TrackPlace { to_index, into } = place;
+    if let Some(g) = into
+        && org.group(g).is_none()
+    {
+        return Err(ModelError::UnknownKey(format!("folder {g}")));
+    }
+    if to_index > stay.len() {
+        return Err(crate::song_cmd::range(format!(
+            "place {to_index} is past the {} tracks that stay",
+            stay.len()
+        )));
+    }
+    let mut new_order = stay;
+    new_order.splice(to_index..to_index, moved.iter().cloned());
+    let mut asked = org.clone();
+    for d in &moved {
+        match into {
+            Some(g) => asked.members.insert(d.clone(), g),
+            None => asked.members.remove(d),
+        };
+    }
+    // The outline repairs a track that is out of its folder's block: when the repair changes
+    // where any track is shown, the place is in the middle of a folder it does not belong to.
+    let cleaned = normalise(song, &new_order, &asked);
+    let shown = |d: &DeviceKey| cleaned.members.get(d).copied();
+    let wanted = |d: &DeviceKey| {
+        if moved.contains(d) {
+            into
+        } else {
+            org.members.get(d).copied()
+        }
+    };
+    if new_order.iter().any(|d| shown(d) != wanted(d)) {
+        return Err(bad(
+            "that place is inside a folder the tracks do not belong to",
+        ));
+    }
+    let changed = new_order != order || asked.members != org.members;
+    Ok(MovedLayout {
+        order: new_order,
+        org: asked,
+        changed,
+    })
+}
+
+/// The result of [`moved_layout`].
+pub(crate) struct MovedLayout {
+    /// The new track order.
+    pub order: Vec<DeviceKey>,
+    /// The new organisation (not yet cleaned).
+    pub org: Organisation,
+    /// Whether the order or a folder link differs from the song's.
+    pub changed: bool,
+}
+
+impl Song {
+    /// Whether [`SongCommand::MoveTracks`] with these arguments would move something (it would
+    /// not be refused for the place, the tracks or because it changes nothing). Frozen tracks
+    /// are checked by the command, not here.
+    pub fn moves_tracks(&self, devices: &[DeviceKey], place: TrackPlace) -> bool {
+        moved_layout(self, devices, place).is_ok_and(|m| m.changed)
+    }
+
+    /// Whether copies of tracks (as [`crate::WorkflowCommand::DuplicateTracks`] with a place)
+    /// could go to `place`, where `to_index` counts all the tracks the song has now.
+    pub fn accepts_copies_at(&self, place: TrackPlace) -> bool {
+        let order = order_of(self);
+        let org = self.normalised_org();
+        // A track that does not exist yet stands in for the copies.
+        let copy = DeviceKey("\u{0}copy".to_owned());
+        place_layout(self, &order, &org, vec![copy], order.clone(), place).is_ok()
+    }
 }
 
 /// The folder `id` of a cleaned organisation.
@@ -139,7 +247,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             for d in moved {
                 org.members.insert(d, id);
             }
-            Ok(layout(song, new_order, &org))
+            Ok(layout_edit(song, new_order, &org))
         }
         SongCommand::Ungroup { group } => {
             let parent = group_mut(&mut org, group)?.parent;
@@ -161,7 +269,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                     None => org.members.remove(&d),
                 };
             }
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::RenameGroup { group, name } => {
             if !group_name_ok(&name) {
@@ -170,15 +278,15 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                 ));
             }
             group_mut(&mut org, group)?.name = name;
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::SetGroupCollapsed { group, collapsed } => {
             group_mut(&mut org, group)?.collapsed = collapsed;
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::SetGroupColor { group, color } => {
             group_mut(&mut org, group)?.color = color;
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::MoveTrack { device, down } => {
             let i = track_index(doc, &device)?;
@@ -219,7 +327,14 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                 }
             }
             org.members = members;
-            Ok(layout(song, new_order, &org))
+            Ok(layout_edit(song, new_order, &org))
+        }
+        SongCommand::MoveTracks { devices, place } => {
+            let moved = moved_layout(song, &devices, place)?;
+            if !moved.changed {
+                return Err(bad("the tracks are already there"));
+            }
+            Ok(layout_edit(song, moved.order, &moved.org))
         }
         SongCommand::MoveGroup { group, down } => {
             group_mut(&mut org, group)?;
@@ -284,7 +399,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             if let Some(p) = new_parent {
                 group_mut(&mut org, group)?.parent = p;
             }
-            Ok(layout(song, new_order, &org))
+            Ok(layout_edit(song, new_order, &org))
         }
         SongCommand::SetTrackColor { device, color } => {
             track_index(doc, &device)?;
@@ -292,7 +407,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                 Some(c) => org.colors.insert(device, c),
                 None => org.colors.remove(&device),
             };
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::SetTrackComment { device, comment } => {
             track_index(doc, &device)?;
@@ -305,7 +420,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                     "a comment must be trimmed and short, without control characters but newlines",
                 ));
             }
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::SetLaneFolded {
             device,
@@ -322,7 +437,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             } else {
                 org.folded_lanes.remove(&key);
             }
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         SongCommand::SetTakesOpen { take_group, open } => {
             if song.take_group(take_group).is_none() {
@@ -333,7 +448,7 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
             } else {
                 org.open_takes.remove(&take_group);
             }
-            Ok(layout(song, order, &org))
+            Ok(layout_edit(song, order, &org))
         }
         _ => unreachable!("only the organisation commands are planned here"),
     }

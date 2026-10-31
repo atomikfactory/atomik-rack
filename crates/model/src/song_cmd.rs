@@ -1105,6 +1105,7 @@ pub(crate) fn plan(
         | SongCommand::SetGroupCollapsed { .. }
         | SongCommand::SetGroupColor { .. }
         | SongCommand::MoveTrack { .. }
+        | SongCommand::MoveTracks { .. }
         | SongCommand::MoveGroup { .. }
         | SongCommand::SetTrackColor { .. }
         | SongCommand::SetTrackComment { .. }
