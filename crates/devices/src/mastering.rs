@@ -904,4 +904,8 @@ impl Device for Mastering {
     fn latency_frames(&self) -> u32 {
         self.limiter.latency()
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }

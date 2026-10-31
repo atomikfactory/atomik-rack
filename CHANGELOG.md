@@ -468,6 +468,18 @@ may break APIs and the patch and project formats.
   the defaults and says so.
 
 ### Changed
+- **Live rendering leaves a core to the audio thread.** The app and `atomik-play` start at most as
+  many render workers as the machine has cores minus one, and the audio thread, when it waits for
+  a worker, yields its core after a short spin instead of spinning on without end (a worker that
+  was preempted, or shares the core, now gets to run). Bounces are unaffected and stay
+  bit-identical at every worker count and block size.
+- **Idle automation costs nothing per batch.** A lane is sent to its device only when its value
+  changed (plateaus, the stretch before the first point and after the last), and after a locate,
+  a loop wrap, a transport change or any edit. A bounce with 200 lanes renders 16 percent faster
+  and one with 2,000 lanes 9 percent faster. A repeated Mono or Legato mode on the FM synth no
+  longer drops the keys still held, and a repeated voice limit no longer stretches a steal fade.
+  Sockets that a cable overwrites are no longer cleared first, and a device whose latency cannot
+  change (`Device::variable_latency`) is not asked for it every batch.
 - **Rack, console and workflow commands no longer slow down with the size of the song.** A copy
   of the document, which every command makes to plan its undo step, shares the song and the notes
   of its clips instead of copying them: adding a device, an audio track or a channel, connecting a

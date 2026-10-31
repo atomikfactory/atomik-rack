@@ -69,6 +69,8 @@ pub(crate) struct Node {
     pub(crate) playback_on: bool,
     /// `Device::has_meter_values()` read at construction.
     pub(crate) has_meter_values: bool,
+    /// `Device::variable_latency()` read at construction: only these are re-read every batch.
+    pub(crate) variable_latency: bool,
     /// Set when the device panicked in `process`: the node is silent and skipped from then on.
     pub(crate) faulted: bool,
 }
@@ -176,6 +178,7 @@ impl Node {
         let sockets = device.descriptor().sockets;
         Self {
             has_meter_values: device.has_meter_values(),
+            variable_latency: device.variable_latency(),
             stages: device.descriptor().stages,
             device,
             sockets,
@@ -246,7 +249,11 @@ impl Node {
             if self.stage_of(i) != stage {
                 continue;
             }
-            self.signals[i] = [0.0; BATCH];
+            // A cabled single-source input is overwritten below: only outputs, summing inputs
+            // and uncabled inputs need zeros.
+            if !routes.signal_in.iter().any(|&(socket, _)| socket == i) {
+                self.signals[i] = [0.0; BATCH];
+            }
             if s.direction == Direction::Output {
                 self.notes[i].clear();
             }

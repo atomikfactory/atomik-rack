@@ -73,7 +73,8 @@ pub fn play<B: Backend>(
     // 2. Engine with workers; take the live sender before submitting the plan.
     let options = EngineOptions {
         workers: WorkerConfig {
-            threads: args.workers,
+            // At most cores - 1: the audio thread keeps a core of its own.
+            threads: atomik_audio_io::cap_workers_here(args.workers),
             // Workers render on the audio deadline too: same RT priority as the callback.
             on_thread_start: Some(atomik_audio_io::promote_worker_thread),
         },

@@ -990,4 +990,8 @@ impl Device for ModSource {
     fn latency_frames(&self) -> u32 {
         0
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }

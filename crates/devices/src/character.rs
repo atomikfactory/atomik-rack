@@ -698,6 +698,10 @@ impl Device for Character {
             self.published_latency
         }
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }
 
 /// Feeds a chain (mono-summed in and out when its routing says so) in place.

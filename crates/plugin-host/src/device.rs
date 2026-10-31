@@ -939,6 +939,10 @@ impl Device for PluginDevice {
         self.slot.latency()
     }
 
+    fn variable_latency(&self) -> bool {
+        true
+    }
+
     fn pinned_to_audio_thread(&self) -> bool {
         self.slot.pinned()
     }

@@ -131,29 +131,35 @@ fn ac_s4_automation_matches_the_curve_at_every_batch_start() {
     }
     let a = log.applied(ParamLog::A);
     let b = log.applied(ParamLog::B);
-    assert_eq!(
-        a.len(),
-        batches as usize,
-        "one value per playing batch, none after stop"
+    // A value equal to the one already applied is not sent again (plateaus, the held ends), but
+    // the first batch and the first batch after every loop wrap always send one; none after stop.
+    assert!(a.len() < batches as usize && b.len() < batches as usize);
+    assert!(
+        a.len() > 500 && b.len() > 500,
+        "moving stretches send each batch"
     );
-    assert_eq!(b.len(), batches as usize);
+    assert!(a.iter().all(|e| e.0 >= 640 && e.0 < 640 + 64 * batches));
+    // What the device holds at each batch start: the latest value sent at or before it.
+    let held =
+        |log: &[(u64, f32)], frame: u64| log.iter().rev().find(|e| e.0 <= frame).map(|e| e.1);
     let mut wrapped = false;
     for (k, &(frame, pos)) in want.iter().enumerate() {
         let t = tick_at(pos);
         let (wa, wb) = (curve_a(t).clamp(0.0, 1.0), curve_b(t));
-        assert_eq!(a[k].0, frame);
-        assert_eq!(b[k].0, frame);
+        let (ha, hb) = (held(&a, frame).unwrap(), held(&b, frame).unwrap());
         assert!(
-            (f64::from(a[k].1) - wa).abs() <= 1e-6,
-            "a at {frame} (tick {t}): {} vs {wa}",
-            a[k].1
+            (f64::from(ha) - wa).abs() <= 1e-6,
+            "a at {frame} (tick {t}): {ha} vs {wa}",
         );
         assert!(
-            (f64::from(b[k].1) - wb).abs() <= 1e-6,
-            "b at {frame} (tick {t}): {} vs {wb}",
-            b[k].1
+            (f64::from(hb) - wb).abs() <= 1e-6,
+            "b at {frame} (tick {t}): {hb} vs {wb}",
         );
-        wrapped |= k > 0 && pos < want[k - 1].1;
+        if k > 0 && pos < want[k - 1].1 {
+            wrapped = true;
+            assert!(a.iter().any(|e| e.0 == frame), "a is sent again at a wrap");
+            assert!(b.iter().any(|e| e.0 == frame), "b is sent again at a wrap");
+        }
     }
     assert!(wrapped, "the run covers loop wraps");
     assert!(

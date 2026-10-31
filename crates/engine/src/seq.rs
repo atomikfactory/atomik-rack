@@ -169,6 +169,9 @@ pub struct SongSnapshot {
     pub(crate) by_key: Vec<(DeviceInstanceId, SocketId, usize)>,
     /// Automation lanes in input order (track order, then lane order).
     pub(crate) lanes: Vec<CompiledLane>,
+    /// RT scratch, one per lane: the bits of the value last applied to the device (`None` =
+    /// apply the next one whatever it is).
+    pub(crate) lane_last: Vec<Option<u32>>,
     /// RT scratch, one per track: playback cursor and held keys. Only the engine that owns
     /// the snapshot touches it; the compiled content above never changes.
     pub(crate) cursors: Vec<TrackCursor>,
@@ -320,6 +323,7 @@ pub fn compile_song(input: &SongInput) -> Result<SongSnapshot, SongError> {
         cursors: vec![TrackCursor::default(); tracks.len()],
         tracks,
         by_key,
+        lane_last: vec![None; lanes.len()],
         lanes,
     })
 }

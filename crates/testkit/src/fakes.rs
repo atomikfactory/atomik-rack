@@ -1157,6 +1157,9 @@ impl Device for LatencyPassthrough {
     fn latency_frames(&self) -> u32 {
         self.delay
     }
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1251,6 +1254,9 @@ impl Device for InsertLoop {
     }
     fn latency_frames(&self) -> u32 {
         self.latency
+    }
+    fn variable_latency(&self) -> bool {
+        true
     }
 }
 

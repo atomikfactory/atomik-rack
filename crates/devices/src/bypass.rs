@@ -241,6 +241,10 @@ impl<D: Device> Device for Bypassable<D> {
         self.inner.latency_frames()
     }
 
+    fn variable_latency(&self) -> bool {
+        true
+    }
+
     fn pinned_to_audio_thread(&self) -> bool {
         self.inner.pinned_to_audio_thread()
     }

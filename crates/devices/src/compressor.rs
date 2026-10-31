@@ -737,4 +737,8 @@ impl Device for Compressor {
     fn latency_frames(&self) -> u32 {
         self.lookahead_samples as u32
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }

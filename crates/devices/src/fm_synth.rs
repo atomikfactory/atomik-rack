@@ -1150,15 +1150,20 @@ impl FmSynth {
             P_LFO_INDEX => self.shared.lfo_to_index = v,
             P_WHEEL_INDEX => self.shared.wheel_to_index = v,
             P_MODE => {
-                self.shared.mode = match choice(v) {
+                let mode = match choice(v) {
                     0 => PlayMode::Poly,
                     1 => PlayMode::Mono,
                     _ => PlayMode::Legato,
                 };
-                self.held_len = 0;
-                if self.shared.mode != PlayMode::Poly {
-                    for vc in &mut self.voices[1..] {
-                        vc.release();
+                // Only a real change resets the held stack: the same value again (automation
+                // sends it every batch) must not drop the keys still held.
+                if mode != self.shared.mode {
+                    self.shared.mode = mode;
+                    self.held_len = 0;
+                    if mode != PlayMode::Poly {
+                        for vc in &mut self.voices[1..] {
+                            vc.release();
+                        }
                     }
                 }
             }

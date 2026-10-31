@@ -660,4 +660,8 @@ impl Device for Distortion {
     fn latency_frames(&self) -> u32 {
         self.factor.latency_frames()
     }
+
+    fn variable_latency(&self) -> bool {
+        true
+    }
 }

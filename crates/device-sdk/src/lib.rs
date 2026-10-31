@@ -135,6 +135,16 @@ pub trait Device: Send + 'static {
         0
     }
 
+    /// Whether [`Device::latency_frames`] may change after the device was inserted (a parameter,
+    /// a plugin reporting a new latency). The engine re-reads the latency of every device that
+    /// answers true once per batch; a device that answers false is read once, when it is
+    /// inserted, and costs nothing per batch. Read once, non-RT. Any device that overrides
+    /// `latency_frames` must also override this to say whether the answer can change; the
+    /// default (false) is for the devices that have no latency.
+    fn variable_latency(&self) -> bool {
+        false
+    }
+
     /// True when the engine must run this device on the audio callback thread and never hand it
     /// to a render worker (plugins that assume a stable thread). Read on the
     /// audio thread each time the device is about to be dispatched, so it may change at run

@@ -1367,7 +1367,9 @@ write modes, the pure `PassRecorder` and `thin_points` (a ramp, a trapezoid, a s
 tolerance, step points), the `SetLaneWriteMode` command (undo, rejections), a take as one batch
 step, and project format 18 (byte-exact round trip, version 17 files on Touch, `write` before 18,
 bad names, a note lane). `crates/engine/tests/song_automation_hold.rs` (under the counting
-allocator) holds and releases lanes while playing. `crates/app/src/app_core_autorec_tests.rs` runs
+allocator) holds and releases lanes while playing, and `song_automation_skip.rs` checks that a
+lane is sent only when its value changed, and again after an outside edit, a locate or a release.
+`crates/app/src/app_core_autorec_tests.rs` runs
 takes through the core with the recording sink and a scripted transport (the three modes, the hold
 calls, loop passes, thinning, one undo step for several lanes, cancel on an engine restart) and once
 on a real offline engine. `crates/ui/tests/automation_write.rs` drives the lane header buttons, and

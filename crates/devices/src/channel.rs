@@ -1423,6 +1423,10 @@ impl Device for Channel {
         self.phantom_latency
     }
 
+    fn variable_latency(&self) -> bool {
+        true
+    }
+
     /// Runs both stages (for hosts that do not split stages, e.g. the test harness).
     fn process(&mut self, ctx: &mut ProcessContext<'_>) {
         self.stage0(ctx);
