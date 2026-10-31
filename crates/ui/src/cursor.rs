@@ -23,13 +23,21 @@ pub enum CursorHint {
     Razor,
     /// A speaker: the speaker tool.
     Speaker,
+    /// A magnifier: the magnifier tool.
+    Magnifier,
+    /// An open hand: the hand tool.
+    Hand,
+    /// A closed hand: the view is being dragged along.
+    Grabbing,
 }
 
 impl CursorHint {
-    /// The cursor of an edit tool over the editing area: the arrow for Select.
+    /// The cursor of an edit tool over the editing area: the arrow for Select and Mute.
     pub fn of_tool(tool: crate::Tool) -> CursorHint {
         match tool {
-            crate::Tool::Select => CursorHint::Default,
+            crate::Tool::Select | crate::Tool::Mute => CursorHint::Default,
+            crate::Tool::Magnifier => CursorHint::Magnifier,
+            crate::Tool::Hand => CursorHint::Hand,
             crate::Tool::Pencil => CursorHint::Pen,
             crate::Tool::Eraser => CursorHint::Eraser,
             crate::Tool::Razor => CursorHint::Razor,

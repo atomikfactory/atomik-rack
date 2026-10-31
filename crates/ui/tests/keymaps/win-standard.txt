@@ -152,6 +152,9 @@ sequencer.zoom_tracks_out | sequencer | Shift+G
 sequencer.zoom_tracks_reset | sequencer | Alt+Z
 tool.eraser | sequencer | E
 tool.eraser | editor | E
+tool.hand | sequencer | I
+tool.magnifier | sequencer | U
+tool.mute | sequencer | Y
 tool.pencil | sequencer | W
 tool.pencil | editor | W
 tool.razor | sequencer | R

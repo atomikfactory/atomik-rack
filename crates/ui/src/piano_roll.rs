@@ -1272,7 +1272,9 @@ impl PianoRollView {
                 Tool::Pencil => "Pencil tool: click to draw a note",
                 Tool::Eraser => "Eraser tool: click a note to delete it",
                 Tool::Razor => "Razor tool: click a note to split it at the snapped position",
-                Tool::Speaker => "Speaker tool: press on an audio clip to hear it",
+                Tool::Speaker | Tool::Mute | Tool::Magnifier | Tool::Hand => {
+                    "A tool of the arrangement"
+                }
             })
             .with_command(t.command_id()),
             TopItem::ScaleRoot => help("Root note of the scale: click to choose"),

@@ -111,6 +111,8 @@ const MUTE_BUTTON: f64 = 10.0;
 const AUDIO_HANDLE_INSET: f64 = 12.0;
 const EDGE_PX: f64 = 6.0;
 const DRAG_THRESHOLD: f64 = 3.0;
+/// The smallest side of a magnifier rectangle that counts as a zoom to it.
+const ZOOM_BAND_MIN: f64 = 8.0;
 /// How far from the playhead, a marker line or a loop locator a press still grabs it.
 const LINE_GRAB: f64 = 3.0;
 /// The height of the playhead's flag at the bottom of the ruler.
@@ -531,6 +533,17 @@ enum Drag {
         /// The selection at the press, kept when the band adds (Shift or Ctrl).
         base: BTreeSet<ClipId>,
         moved: bool,
+        /// The eraser's band: the clips it touches are deleted on the release, the selection
+        /// is not touched.
+        erase: bool,
+    },
+    /// The magnifier is dragged: the rectangle fills the view on the release.
+    Zoom {
+        start: Point,
+        end: Point,
+        moved: bool,
+        /// Shift at the press: a click zooms out.
+        out: bool,
     },
     Resize {
         start: Point,
@@ -1990,11 +2003,22 @@ impl ArrangementView {
         Rect::new(x + 46.0, y + 8.0, x + 100.0, y + 26.0)
     }
 
-    /// A toolbar button in the corner, right of the snap selector.
+    /// A toolbar button in the corner: the first five right of the snap selector, the rest in a
+    /// smaller row below them, right of the corner buttons.
     fn tool_rect(&self, tool: Tool) -> Rect {
-        let i = Tool::ALL.iter().position(|t| *t == tool).unwrap_or(0) as f64;
-        let (x, y) = (self.bounds.x0 + 106.0 + i * 20.0, self.bounds.y0 + 8.0);
-        Rect::new(x, y, x + 19.0, y + 18.0)
+        let i = Tool::ALL.iter().position(|t| *t == tool).unwrap_or(0);
+        if i < 5 {
+            let (x, y) = (
+                self.bounds.x0 + 106.0 + i as f64 * 20.0,
+                self.bounds.y0 + 8.0,
+            );
+            return Rect::new(x, y, x + 19.0, y + 18.0);
+        }
+        let (x, y) = (
+            self.bounds.x0 + 130.0 + (i - 5) as f64 * 26.0,
+            self.bounds.y0 + 27.0,
+        );
+        Rect::new(x, y, x + 25.0, y + 11.0)
     }
 
     fn clamp_scroll(&mut self) {
@@ -2657,6 +2681,29 @@ impl ArrangementView {
             self.picked_lane = None;
         }
         let tool = self.vp.effective_tool(modifiers);
+        // The hand and the magnifier take every press over the lanes (a clip's mute button
+        // keeps its own).
+        if primary
+            && matches!(tool, Tool::Hand | Tool::Magnifier)
+            && self.timeline_rect().contains(pos)
+            && match hit {
+                Hit::Clip { part, .. } => part != ClipPart::Mute,
+                Hit::Lane { .. } | Hit::Empty => true,
+                _ => false,
+            }
+        {
+            self.drag = if tool == Tool::Hand {
+                Drag::Pan { last: pos }
+            } else {
+                Drag::Zoom {
+                    start: pos,
+                    end: pos,
+                    moved: false,
+                    out: modifiers.shift,
+                }
+            };
+            return;
+        }
         if !matches!(hit, Hit::TempoPoint(_) | Hit::MeterTag(_)) {
             self.tempo_sel = None;
             self.meter_sel = None;
@@ -2815,7 +2862,18 @@ impl ArrangementView {
             Hit::Lane { track, lane } if primary && tool == Tool::Razor => {
                 self.start_razor(track, lane, None, pos, modifiers);
             }
-            Hit::Lane { .. } if primary && matches!(tool, Tool::Eraser | Tool::Speaker) => {}
+            // The eraser's drag over empty lanes is a band that deletes the clips it touches.
+            Hit::Lane { .. } if primary && tool == Tool::Eraser => self.start_erase_band(pos),
+            Hit::Lane { .. } if primary && matches!(tool, Tool::Speaker | Tool::Mute) => {}
+            Hit::Empty
+                if primary
+                    && tool == Tool::Eraser
+                    && self.bounds.contains(pos)
+                    && pos.x >= self.timeline_rect().x0
+                    && pos.y >= self.lanes_top() =>
+            {
+                self.start_erase_band(pos);
+            }
             // Shift or Ctrl on an empty lane starts the rubber band (a plain drag draws).
             Hit::Lane { .. }
                 if primary
@@ -3166,6 +3224,18 @@ impl ArrangementView {
                     self.start_razor(track, lane, Some(id), pos, modifiers);
                     return;
                 }
+                // A click toggles the clip's mute, all the selected clips' when it is one of them.
+                Tool::Mute => {
+                    let ids = if self.selection.contains(&id) {
+                        self.selection.items().iter().copied().collect()
+                    } else {
+                        vec![id]
+                    };
+                    out.push(mute_cmd(ids, !clip.muted));
+                    return;
+                }
+                // The hand and the magnifier take the press before it gets here.
+                Tool::Hand | Tool::Magnifier => return,
                 Tool::Eraser => {
                     match (&part, &clip.content) {
                         (ClipPart::Point(i), ClipContent::Automation(points)) => {
@@ -3694,6 +3764,15 @@ impl ArrangementView {
             self.marquee_move(pos);
             return;
         }
+        if let Drag::Zoom {
+            start, end, moved, ..
+        } = &mut self.drag
+        {
+            *moved |= pos.distance(*start) > DRAG_THRESHOLD;
+            *end = pos;
+            self.repaint = true;
+            return;
+        }
         if matches!(self.drag, Drag::Comp { .. }) {
             self.comp_move(pos, modifiers);
             return;
@@ -3713,6 +3792,7 @@ impl ArrangementView {
         match &mut self.drag {
             Drag::None
             | Drag::Marquee { .. }
+            | Drag::Zoom { .. }
             | Drag::Pan { .. }
             | Drag::HScroll { .. }
             | Drag::Snap { .. }
@@ -4076,6 +4156,9 @@ impl ArrangementView {
             | Drag::Trim { .. } => CursorHint::ResizeHorizontal,
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
+            Drag::Pan { .. } => CursorHint::Grabbing,
+            Drag::Zoom { .. } => CursorHint::Magnifier,
+            Drag::Marquee { erase: true, .. } => CursorHint::Eraser,
             Drag::Audio {
                 grab: AudioGrab::TrimStart,
                 ..
@@ -4185,11 +4268,35 @@ impl ArrangementView {
                     self.selection.toggle(id);
                 }
             }
+            Drag::Zoom {
+                start,
+                end,
+                moved,
+                out: zoom_out,
+            } => self.zoom_release(start, if moved { end } else { pos }, moved, zoom_out),
+            Drag::Marquee {
+                start,
+                end,
+                moved,
+                erase: true,
+                ..
+            } => {
+                let ids = if moved {
+                    self.band_clips(start, end)
+                } else {
+                    Vec::new()
+                };
+                if !ids.is_empty() {
+                    self.selection.clear();
+                    out.push(workflow_cmd(WorkflowCommand::RemoveClips { ids }));
+                }
+            }
             Drag::Marquee {
                 start,
                 end,
                 base,
                 moved,
+                ..
             } => {
                 if moved {
                     self.marquee_select(start, end, &base);
@@ -4823,6 +4930,18 @@ impl ArrangementView {
             end: pos,
             base,
             moved: false,
+            erase: false,
+        };
+    }
+
+    /// Starts the eraser's band at `pos`: the clips it touches go on the release.
+    fn start_erase_band(&mut self, pos: Point) {
+        self.drag = Drag::Marquee {
+            start: pos,
+            end: pos,
+            base: self.selection.items().clone(),
+            moved: false,
+            erase: true,
         };
     }
 
@@ -4832,6 +4951,7 @@ impl ArrangementView {
             end,
             base,
             moved,
+            erase,
         } = &mut self.drag
         else {
             return;
@@ -4841,6 +4961,10 @@ impl ArrangementView {
         if !*moved {
             return;
         }
+        if *erase {
+            self.repaint = true;
+            return;
+        }
         let (a, b, base) = (*start, *end, base.clone());
         self.marquee_select(a, b, &base);
         self.repaint = true;
@@ -4848,6 +4972,12 @@ impl ArrangementView {
 
     /// Selects `base` and the clips whose rectangles touch the band `a`-`b`.
     fn marquee_select(&mut self, a: Point, b: Point, base: &BTreeSet<ClipId>) {
+        let picked = self.band_clips(a, b);
+        self.selection.set(base.iter().copied().chain(picked));
+    }
+
+    /// The clips whose rectangles touch the band `a`-`b`.
+    fn band_clips(&self, a: Point, b: Point) -> Vec<ClipId> {
         let tl = self.timeline_rect();
         let mut ids = Vec::new();
         let mut rects = Vec::new();
@@ -4860,11 +4990,34 @@ impl ArrangementView {
                 rects.push(self.clip_rect_in(rr, clip).intersect(tl));
             }
         }
-        let picked: Vec<ClipId> = seq_edit::rubber_band(a, b, &rects)
+        seq_edit::rubber_band(a, b, &rects)
             .into_iter()
             .map(|i| ids[i])
-            .collect();
-        self.selection.set(base.iter().copied().chain(picked));
+            .collect()
+    }
+
+    /// The magnifier's click or drag ends: a click zooms in around the pointer (out with
+    /// `zoom_out`), a rectangle fills the view, across and down.
+    fn zoom_release(&mut self, start: Point, end: Point, moved: bool, zoom_out: bool) {
+        self.vp.set_zoomed_to_selection(false);
+        self.vp.manual_scroll();
+        let tl = self.timeline_rect();
+        let visible = (self.bounds.y1 - self.lanes_top()).max(1.0);
+        let r = Rect::from_points(start, end).intersect(tl);
+        if !moved || r.width() < ZOOM_BAND_MIN || zoom_out {
+            let factor = if zoom_out { 0.5 } else { 2.0 };
+            self.axis.zoom_at(factor, end.x);
+            self.zoom_tracks_at(if zoom_out { 0.8 } else { 1.25 }, end.y);
+            return;
+        }
+        let (a, b) = (self.axis.x_to_tick(r.x0), self.axis.x_to_tick(r.x1));
+        self.axis.fit_span(a, b, self.bounds.x1);
+        if r.height() >= ZOOM_BAND_MIN {
+            self.zoom_tracks_at((visible / r.height()).clamp(0.25, 8.0), r.y0);
+            // The band's top row now sits where it was pressed: bring it to the top.
+            self.scroll_y += r.y0 - self.lanes_top();
+            self.clamp_scroll();
+        }
     }
 
     fn cancel_drag(&mut self, out: &mut Vec<UiAction>) {
@@ -5189,10 +5342,22 @@ impl ArrangementView {
                 start,
                 end,
                 moved: true,
+                erase,
                 ..
             } => {
                 let r = Rect::from_points(*start, *end);
-                c.fill_with(r, st.selection.with_alpha(0.15));
+                let color = if *erase { st.record } else { st.selection };
+                c.fill_with(r, color.with_alpha(0.15));
+                c.stroke_with(r, 1.0, color);
+            }
+            Drag::Zoom {
+                start,
+                end,
+                moved: true,
+                ..
+            } => {
+                let r = Rect::from_points(*start, *end);
+                c.fill_with(r, st.selection.with_alpha(0.1));
                 c.stroke_with(r, 1.0, st.selection);
             }
             Drag::Move {
@@ -6385,35 +6550,35 @@ impl ArrangementView {
                 if active { t.highlight } else { t.text_muted },
                 Align::Center,
             );
-            for button in CornerButton::ALL {
-                let r = self.corner_button_rect(button);
-                let (label, on) = match button {
-                    CornerButton::ClearMutes => ("M", self.song.tracks.iter().any(|t| t.muted)),
-                    CornerButton::ClearSolos => ("S", self.song.tracks.iter().any(|t| t.solo)),
-                    CornerButton::ManualRec => ("MAN REC", self.manual_rec),
-                };
-                let lit = match button {
-                    CornerButton::ClearMutes => st.mute,
-                    CornerButton::ClearSolos => st.solo,
-                    CornerButton::ManualRec => st.record,
-                };
-                let hover = self.hover == Some(Hit::CornerButton(button));
-                sp::lcd(
-                    c,
-                    st,
-                    r,
-                    (hover || on).then_some(if on { lit } else { t.focus }),
-                );
-                sp::label(
-                    c,
-                    label,
-                    r.center().x,
-                    r.center().y + 2.5,
-                    7.0,
-                    if on { lit } else { t.text_muted },
-                    Align::Center,
-                );
-            }
+        }
+        for button in CornerButton::ALL {
+            let r = self.corner_button_rect(button);
+            let (label, on) = match button {
+                CornerButton::ClearMutes => ("M", self.song.tracks.iter().any(|t| t.muted)),
+                CornerButton::ClearSolos => ("S", self.song.tracks.iter().any(|t| t.solo)),
+                CornerButton::ManualRec => ("MAN REC", self.manual_rec),
+            };
+            let lit = match button {
+                CornerButton::ClearMutes => st.mute,
+                CornerButton::ClearSolos => st.solo,
+                CornerButton::ManualRec => st.record,
+            };
+            let hover = self.hover == Some(Hit::CornerButton(button));
+            sp::lcd(
+                c,
+                st,
+                r,
+                (hover || on).then_some(if on { lit } else { t.focus }),
+            );
+            sp::label(
+                c,
+                label,
+                r.center().x,
+                r.center().y + 2.5,
+                7.0,
+                if on { lit } else { t.text_muted },
+                Align::Center,
+            );
         }
     }
 }

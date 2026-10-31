@@ -1867,6 +1867,9 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd("tool.eraser", "Eraser Tool", G::Tools, C::Sequencer),
+    cmd("tool.hand", "Hand Tool", G::Tools, C::Sequencer),
+    cmd("tool.magnifier", "Magnifier Tool", G::Tools, C::Sequencer),
+    cmd("tool.mute", "Mute Tool", G::Tools, C::Sequencer),
     cmd("tool.pencil", "Pencil Tool", G::Tools, C::Sequencer),
     cmd("tool.razor", "Razor Tool", G::Tools, C::Sequencer),
     cmd("tool.select", "Select Tool", G::Tools, C::Sequencer),

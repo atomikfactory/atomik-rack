@@ -23,19 +23,28 @@ pub enum Tool {
     Razor,
     /// Speaker: pressing on an audio clip plays the audio under the pointer as it is in its file, unprocessed, until the button is released. Only the arrangement uses it.
     Speaker,
+    /// Mute: a click on a clip toggles its mute. Only the arrangement uses it.
+    Mute,
+    /// Magnifier: a click zooms in around the pointer (Shift zooms out) and a drag zooms to the rectangle. Only the arrangement uses it.
+    Magnifier,
+    /// Hand: a drag scrolls the view in both directions and edits nothing. Only the arrangement uses it.
+    Hand,
 }
 
 impl Tool {
     /// Every tool, in palette order.
-    pub const ALL: [Tool; 5] = [
+    pub const ALL: [Tool; 8] = [
         Tool::Select,
         Tool::Pencil,
         Tool::Eraser,
         Tool::Razor,
         Tool::Speaker,
+        Tool::Mute,
+        Tool::Magnifier,
+        Tool::Hand,
     ];
 
-    /// The tools of a note editor, in palette order: all but the speaker.
+    /// The tools of a note editor, in palette order: the editing tools only.
     pub const NOTE: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Eraser, Tool::Razor];
 
     /// The registry command that selects this tool.
@@ -46,6 +55,9 @@ impl Tool {
             Tool::Eraser => "tool.eraser",
             Tool::Razor => "tool.razor",
             Tool::Speaker => "tool.speaker",
+            Tool::Mute => "tool.mute",
+            Tool::Magnifier => "tool.magnifier",
+            Tool::Hand => "tool.hand",
         }
     }
 
@@ -62,14 +74,19 @@ impl Tool {
             Tool::Eraser => "ERS",
             Tool::Razor => "CUT",
             Tool::Speaker => "SPK",
+            Tool::Mute => "MUT",
+            Tool::Magnifier => "MAG",
+            Tool::Hand => "HND",
         }
     }
 
-    /// The tool the alternate-tool role switches to: Pencil while Select is active, Select with
-    /// any other tool.
+    /// The tool the alternate-tool role switches to: the pairs are Select and Pencil, and
+    /// Magnifier and Hand; every other tool switches to Select.
     pub fn alternate(self) -> Tool {
         match self {
             Tool::Select => Tool::Pencil,
+            Tool::Magnifier => Tool::Hand,
+            Tool::Hand => Tool::Magnifier,
             _ => Tool::Select,
         }
     }
@@ -296,9 +313,17 @@ mod tests {
         }
         assert_eq!(Tool::from_command("tool.nope"), None);
         assert_eq!(Tool::Select.alternate(), Tool::Pencil);
-        for t in [Tool::Pencil, Tool::Eraser, Tool::Razor] {
+        for t in [
+            Tool::Pencil,
+            Tool::Eraser,
+            Tool::Razor,
+            Tool::Speaker,
+            Tool::Mute,
+        ] {
             assert_eq!(t.alternate(), Tool::Select);
         }
+        assert_eq!(Tool::Magnifier.alternate(), Tool::Hand);
+        assert_eq!(Tool::Hand.alternate(), Tool::Magnifier);
     }
 
     #[test]
