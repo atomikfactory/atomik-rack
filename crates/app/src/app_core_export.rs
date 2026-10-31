@@ -74,6 +74,7 @@ pub fn export_format(values: &ExportValues) -> ExportFormat {
         atomik_dsp::DitherMode::None
     };
     ExportFormat {
+        container: atomik_render::export::ExportContainer::Wav,
         bit_depth,
         dither,
         sample_rate: values.rate,

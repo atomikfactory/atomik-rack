@@ -2049,6 +2049,7 @@ fn export(server: &mut Server, args: &Args) -> Result<ToolOutput, String> {
         },
     };
     let format = ExportFormat {
+        container: atomik_render::export::ExportContainer::Wav,
         bit_depth,
         dither,
         sample_rate,

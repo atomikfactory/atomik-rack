@@ -54,6 +54,7 @@ const WITHOUT_GUARD: &[&str] = &[
     "render/slicer_demo.rs",
     "render/slicer_roundtrip.rs",
     "render/snapshots.rs",
+    "render/stems.rs",
     "render/takes.rs",
     "render/tempo_ramp.rs",
     "render/vca.rs",
