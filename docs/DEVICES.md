@@ -2721,9 +2721,14 @@ through the note splits).
 | Key | Id | Range | Default | Unit | Taper | Discrete |
 |---|---|---|---|---|---|---|
 | `macro1` to `macro8` | 0 to 7 | 0 to 1 | 0 | none | Linear | no |
+| `bypass` | 8 | 0 to 1 | 0 | toggle | Linear | yes |
 
 The macro values are applied to inner params outside the engine (one `set_param` per mapped target;
 linear `min + (max - min) * m`, then clamp and rounding of discrete and choice params).
+
+`bypass` is read by the model's expansion, not by the device: at 0.5 or more the inside is left out
+of the flat graph (no inner device, cable or macro) and `in_l`, `in_r` go straight to whatever
+`out_l`, `out_r` feed. The inside is cut at once, with no crossfade and no tail.
 
 ### Behaviour (as built, device half)
 

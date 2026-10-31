@@ -2987,8 +2987,8 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   interface cannot name an inner device. Commands
   ([container_cmd.rs](../crates/model/src/container_cmd.rs)):
   `ContainerCommand::{AddInner, SetSplits, SetMacro, RemoveMacroTarget, RenameMacro, DuplicateContainer}`
-  plus path keys in the existing commands; each is one undo step, drags merge (ids from 7 x 2^40),
-  and the new sync ops are `MacrosChanged` and `SplitsChanged`.
+  and the four moves below, plus path keys in the existing commands; each is one undo step, drags
+  merge (ids from 7 x 2^40), and the new sync ops are `MacrosChanged` and `SplitsChanged`.
 - **Expansion** ([model/src/expand.rs](../crates/model/src/expand.rs)).
   `RackDoc::expand(&Registry) -> ExpandedRack` gives the flat devices (path keys, macro-applied
   params, zones, steps), the spliced cables, the alias of a container to its `~split` device and the
@@ -3000,6 +3000,34 @@ so PDC, multicore levels, summing order, seeds and hot edits work on the exact f
   without containers expands to itself. The cycle check of a cable runs on the expanded graph (Kahn
   over (device, stage)) only when the document has a container, so insert and return loops through
   containers are judged as the engine judges them.
+- **Combine and uncombine** ([model/src/container_move.rs](../crates/model/src/container_move.rs)).
+  `ContainerCommand::Combine { keys, name }` wraps top-level devices in a new container at the first
+  device's slot, in one undo step; `Uncombine`, `MoveIntoContainer` and `MoveOutOfContainer` are the
+  same splice the other way. A cable between two devices that move together stays a cable; a
+  cable to a device outside goes through the container's own sockets: every distinct source that
+  enters (and every distinct moving output that leaves) takes one of the two audio sockets, `_l`
+  names first, and a notes cable becomes the notes input plus a full-range split to the device.
+  The flat graph after the move is the one the rack had, plus the container's `~split` (bit for
+  bit when no moved device draws from the project seed, which a device gets from its place in the
+  flat list). A cable the container has no socket for (CV, a third audio input or output, a notes
+  output, a second notes source) refuses the command and names each such cable, as do a frozen
+  track, a macro bank that drives a moved device, a group over the device limits and a type a
+  container cannot hold. A container has one song track, one console channel and one FX return: at
+  most one moved device may have them (its *owner*), and the track, the channels and the return then
+  name the container (the track keeps its place, folder and colour; its automation lanes are dropped,
+  because they name params of the owner, and the track's note entry becomes the splits).
+  `Uncombine` hands them to the inner device that stands out (the only instrument, else the end of
+  the track's note chain, else the only device) and drops the container's macros and macro lanes.
+  What a command dropped comes back as text from `RackDoc::container_move_notes`, which the app
+  shows after the step. The moves work on top-level devices and top-level containers.
+- **Bypass.** The container's `bypass` param (a toggle) is read by `RackDoc::expand`, so the engine
+  needs no change: a bypassed container has no inner devices, cables or macros in the flat graph,
+  and a signal into `in_l`, `in_r` goes straight to whatever `out_l`, `out_r` feed (its `~split`
+  stays, with nothing behind it). The app inserts or removes the inner engine devices on the
+  switch (`AppCore::sync_bypass`) and submits the routing between the two. The inside is cut at
+  once: there is no crossfade and no tail, unlike the effect bypass of
+  [decision J](DECISIONS.md#j-bypass-tail-policy). The param is a normal saved device param, so
+  the project format is unchanged.
 - **Split device** ([devices/src/note_split.rs](../crates/devices/src/note_split.rs)).
   `atomik.note-split` is internal (`INTERNAL_TYPE_IDS`, never in the browser): one Notes input,
   eight Notes outputs, six params per slot (`sK.on`, key and velocity ranges, transpose). A Note-On
@@ -4478,11 +4506,12 @@ schedule (see [TESTING.md](TESTING.md#fuzzing)).
   has no pattern chains or song mode (the CV sequencer chains patterns) and plays only with the
   transport; the arpeggiator has no free (Hz) rate and no note filters; neither records its output
   to a clip.
-- **Containers.** No standalone container presets, no group or ungroup, no cut and paste across
-  scopes, no container bypass, level or CPU meter, linear macros only, one split per target
-  instrument, no CV or sidechain sockets on the boundary, and `export_patch` writes a container
-  without its inside (patches are flat; the project file keeps it). The container editor has no
-  View-menu entry (EDIT on the panel opens it).
+- **Containers.** No standalone container presets, no cut and paste across scopes, no container
+  level or CPU meter, linear macros only, one split per target instrument, a combine keeps one
+  song track, channel or FX return and drops the automation lanes of the device that had them,
+  a bypassed container cuts its inside without a crossfade, no CV or sidechain sockets on the
+  boundary, and `export_patch` writes a container without its inside (patches are flat; the project
+  file keeps it). The container editor has no View-menu entry (EDIT on the panel opens it).
 - **Recordings and streaming.** A recorded lap is read back into RAM before the app decides whether
   to stream it, and the reported device latency can miss buffering that a driver does not report;
   the user offset in the settings corrects that.
