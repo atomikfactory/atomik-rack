@@ -2434,6 +2434,21 @@ impl PianoRollView {
                 let sel = self.selection_or_all();
                 self.apply_edit(Some(seq_edit::make_legato(self.notes(), &sel, overlap)))
             }
+            "editor.extract_notes" => {
+                let (Some(clip), false) = (self.clip_id, self.selection.is_empty()) else {
+                    return CommandOutcome::Declined;
+                };
+                let selection: Vec<usize> = self.selection.items().iter().copied().collect();
+                self.selection.clear();
+                CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
+                    WorkflowCommand::ExtractNotes {
+                        clip,
+                        selection,
+                        mode: atomik_model::ExtractMode::Move,
+                        to: None,
+                    },
+                ))])
+            }
             "editor.join_notes" => {
                 if self.selection.is_empty() {
                     return CommandOutcome::Declined;

@@ -1830,6 +1830,18 @@ or paste matches). `Track::lane_label` is what the headers show: the name, else 
   `PasteClips.lane` name the target note lane; without one a move keeps the source lane (same track)
   or the note-lane ordinal clamped to the target track, and a paste uses the ordinal each clip had
   when it was copied.
+- **Lane workflows** ([lane_cmd.rs](../crates/model/src/lane_cmd.rs)). `MoveNoteLane` moves a lane
+  within its track or to another note track (`to_index` counts the target's lanes without it); with
+  `copy` the clips take new ids and the take groups stay behind. `MergeNoteLanes` writes what each
+  track plays (`flatten_notes_with` in the song's tails mode, `flatten_controllers`) as one clip per
+  connected stretch of audible sound on lane 0 and removes the other lanes in one compound edit, so
+  the flattened notes and controller points are the ones before (but for one note per tick and key:
+  of two equal ones the later lane's stays). `WorkflowCommand::ExplodeNotes` and `ExtractNotes` put
+  notes on new lanes under clips of the source's place, length, offset, loop and grid; the source
+  keeps its controllers, and a clip another clip partly hides is refused. `Song::moves_note_lane`,
+  `explode_refusal` and `extract_refusal` let the views draw only what the model takes. Moving a
+  lane only reorders ties; merge, explode and extract-move keep the flattened events, which
+  `note_lane_workflows.rs` checks with proptests.
 - **Merge.** `flatten_notes` runs its usual body over each unmuted note lane in lane order and sorts
   the result by `(tick, key)`; `flatten_controllers` builds each lane's controllers per kind and
   merges them by tick. The tie rule: at an equal tick, or an equal start of the same key, the later
@@ -1851,7 +1863,15 @@ or paste matches). `Track::lane_label` is what the headers show: the name, else 
   holds `(track, lane)`; a note clip follows the change of track and of note lane, clamped), and a
   double-click on a lane's label (or `sequencer.rename_note_lane`) types its name with the
   folder-name editor. The Track menu and the track header menu have Add Note Lane, Rename Note
-  Lane..., Delete Note Lane (two lanes or more) and Mute Lane.
+  Lane..., Delete Note Lane (two lanes or more), Mute Lane, Merge Note Lanes (Ctrl+R) and Explode
+  Notes to Lanes (also in the clip menu); the piano roll's Notes menu has Extract Notes to a New
+  Lane. A press on a lane's label and a drag (`Drag::LaneMove`, [lane_move.rs](../crates/ui/src/arrangement/lane_move.rs))
+  picks an insertion line between note lane rows, also on other tracks; Ctrl (the copy role) copies.
+- **Dub and Alt** ([app_core_dub.rs](../crates/app/src/app_core_dub.rs)). `transport.dub`
+  (Numpad3) adds a note lane to each armed, unfrozen note track and selects it; with a take
+  running the take so far is finished as a locate does and a new one starts on the new lane at
+  once, so each note lands on exactly one layer. `transport.alt` (Numpad6) also mutes the lane the
+  last pass went to. The lane and the mute are one undo step. Armed audio tracks are not dubbed.
 - **App.** A take records to the lane selected when it began (`Take::new` captures it per armed
   track; a lane deleted meanwhile falls back to lane 0), and MIDI import into a track, Audio to
   Notes on an existing track and Paste use the selected lane. Drum, slicer and new-track imports use
@@ -3458,7 +3478,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (378) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (383) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

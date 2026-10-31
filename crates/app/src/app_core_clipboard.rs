@@ -562,6 +562,13 @@ impl<S: EngineSink> AppCore<S> {
                 self.after_view_change();
                 self.arrangement.set_selected_clips(&all);
             }
+            WorkflowCommand::ExtractNotes { .. } | WorkflowCommand::ExplodeNotes { .. } => {
+                // The clips on the new lanes took the next ids.
+                let now = self.doc().song.next_clip_id;
+                let new: Vec<ClipId> = (pre.next_clip..now).map(ClipId).collect();
+                self.after_view_change();
+                self.arrangement.set_selected_clips(&new);
+            }
             WorkflowCommand::DuplicateLoopInstance { id, index } => {
                 // The instance keeps the id when it is the first, else it took the last new one.
                 let now = self.doc().song.next_clip_id;

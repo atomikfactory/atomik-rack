@@ -608,6 +608,11 @@ pub enum TransportAction {
     Bars(i64),
     /// Jump to the left (`false`) or the right (`true`) locator, the ends of the loop.
     GoLocator(bool),
+    /// Dub: add a note lane to each armed note track and record the next pass on it (a take
+    /// that is running continues on the new lane from this tick).
+    Dub,
+    /// Alt: Dub, and mute the lane the last pass went to.
+    Alt,
     /// A tap of the tap-tempo button: the app times the taps and sets the tempo.
     TapTempo,
     /// Let the lanes held by a hand-moved value play again (the OVERRIDE lamp).

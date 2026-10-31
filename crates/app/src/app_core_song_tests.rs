@@ -1799,3 +1799,180 @@ fn stopping_a_take_with_nothing_captured_makes_no_clip() {
     transport(&mut c, TransportAction::Stop);
     assert!(c.doc().song.tracks[0].lanes[0].clips.is_empty());
 }
+
+// ---- note lane workflows ---------------------------------------------------------------------
+
+fn played_by_a(c: &AppCore<RecordingSink>) -> Vec<(i64, i64, u8, f32)> {
+    atomik_model::song::flatten_notes_with(&c.doc().song.tracks[0], false)
+}
+
+#[test]
+fn merge_note_lanes_is_one_undo_step_and_the_track_plays_the_same() {
+    let mut c = with_second_lane();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60)]),
+        }),
+    );
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 1,
+            clip: note_clip(0, &[(PPQ, 64)]),
+        }),
+    );
+    let before = played_by_a(&c);
+    assert_eq!(before.len(), 2);
+    c.arrangement_mut().set_selected_track(Some(key("a")));
+    c.arrangement_mut().set_selected_lane(&key("a"), 1);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.merge_note_lanes", None);
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 1);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(c.arrangement().record_lane(&key("a")), 0);
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 2);
+    assert_eq!(played_by_a(&c), before);
+}
+
+#[test]
+fn explode_notes_selects_the_new_clips_and_extract_moves_notes() {
+    let mut c = with_track();
+    apply(
+        &mut c,
+        song(SongCommand::AddClip {
+            device: key("a"),
+            lane: 0,
+            clip: note_clip(0, &[(0, 60), (PPQ, 64), (2 * PPQ, 67)]),
+        }),
+    );
+    let before = played_by_a(&c);
+    c.arrangement_mut().set_selected_clips(&[ClipId(1)]);
+    let _ = c.pane_command(Pane::Arrangement, "sequencer.explode_notes", None);
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 4);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(
+        c.arrangement().selected_clips(),
+        vec![ClipId(2), ClipId(3), ClipId(4)]
+    );
+    assert!(c.undo());
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 1);
+    c.apply_command(Command::Workflow(
+        atomik_model::WorkflowCommand::ExtractNotes {
+            clip: ClipId(1),
+            selection: vec![1],
+            mode: atomik_model::ExtractMode::Move,
+            to: None,
+        },
+    ))
+    .unwrap();
+    assert_eq!(c.doc().song.tracks[0].note_lane_count(), 2);
+    assert_eq!(played_by_a(&c), before);
+    assert_eq!(c.arrangement().selected_clips(), vec![ClipId(2)]);
+}
+
+// ---- dub and alt -----------------------------------------------------------------------------
+
+fn armed_track() -> AppCore<RecordingSink> {
+    let mut c = with_track();
+    arm(&mut c, "a", true);
+    c
+}
+
+fn lanes_of_a(c: &AppCore<RecordingSink>) -> usize {
+    c.doc().song.tracks[0].note_lane_count()
+}
+
+#[test]
+fn dub_adds_a_lane_per_armed_note_track_selects_it_and_is_one_undo_step() {
+    let mut c = armed_track();
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(lanes_of_a(&c), 2);
+    assert_eq!(c.arrangement().record_lane(&key("a")), 1);
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(
+        (lanes_of_a(&c), c.arrangement().record_lane(&key("a"))),
+        (3, 2)
+    );
+    assert!(c.undo());
+    assert_eq!(lanes_of_a(&c), 2);
+    assert!(c.undo());
+    assert_eq!(lanes_of_a(&c), 1);
+}
+
+#[test]
+fn dub_without_an_armed_note_track_is_refused_with_a_message() {
+    let mut c = with_track();
+    transport(&mut c, TransportAction::Dub);
+    assert_eq!(lanes_of_a(&c), 1);
+    assert!(
+        c.last_rejection()
+            .is_some_and(|m| m.contains("armed note track"))
+    );
+}
+
+#[test]
+fn alt_mutes_the_lane_of_the_last_pass_in_the_same_undo_step() {
+    let mut c = armed_track();
+    transport(&mut c, TransportAction::Alt);
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 2);
+    assert!(track.lanes[0].muted && !track.lanes[1].muted);
+    assert!(c.undo());
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 1);
+    assert!(!track.lanes[0].muted);
+    // Dub leaves the layers sounding.
+    transport(&mut c, TransportAction::Dub);
+    assert!(c.doc().song.tracks[0].lanes.iter().all(|l| !l.muted));
+}
+
+#[test]
+fn dub_in_the_middle_of_a_take_splits_it_between_the_layers_without_losing_notes() {
+    let mut c = armed_track();
+    let frame = |tick: i64| 1000 + (tick as f64 * 1.5625).round() as u64;
+    record_a_note(&mut c, |c| {
+        // The note of the first half was fed by the frame before; the dub ends that take and
+        // starts the next on the new lane, which takes the note played after the key press.
+        c.sink_mut().state = TransportState {
+            tick: 2 * PPQ,
+            engine_frame: frame(2 * PPQ),
+            song_frame: frame(2 * PPQ) - 1000,
+            playing: true,
+            ..TransportState::default()
+        };
+        transport(c, TransportAction::Dub);
+        c.sink_mut().recorded = vec![
+            RecordedNote {
+                device: id(1),
+                kind: NoteKind::On {
+                    key: 52,
+                    velocity: 0.9,
+                },
+                frame: frame(3 * PPQ),
+            },
+            RecordedNote {
+                device: id(1),
+                kind: NoteKind::Off { key: 52 },
+                frame: frame(3 * PPQ + PPQ / 2),
+            },
+        ];
+        c.frame();
+    });
+    let track = &c.doc().song.tracks[0];
+    assert_eq!(track.note_lane_count(), 2);
+    let keys = |lane: usize| -> Vec<u8> {
+        track.lanes[lane]
+            .clips
+            .iter()
+            .flat_map(|c| match &c.content {
+                ClipContent::Notes(n) => n.iter().map(|n| n.key).collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect()
+    };
+    assert_eq!((keys(0), keys(1)), (vec![45], vec![52]));
+}

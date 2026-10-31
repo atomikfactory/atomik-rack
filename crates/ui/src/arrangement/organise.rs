@@ -182,6 +182,8 @@ pub(super) struct OrgUi {
     pub shape: Vec<(usize, bool)>,
     /// A running track header drag.
     pub mv: Option<super::track_move::TrackMoveDrag>,
+    /// A running note lane header drag.
+    pub lane_mv: Option<super::lane_move::LaneMoveDrag>,
     /// The nesting depth of each folder.
     pub folder_depth: std::collections::BTreeMap<u32, usize>,
 }
@@ -1463,6 +1465,7 @@ impl ArrangementView {
     /// What goes over everything else: the field of the text being typed and the comment tooltip.
     pub(super) fn paint_org_overlay(&self, c: &mut dyn Canvas) {
         self.paint_track_drop(c);
+        self.paint_lane_drop(c);
         if let (Some(e), Some(r)) = (&self.og.edit, self.edit_rect()) {
             super::markers::name_field(c, &self.st, r, &e.text);
         } else if let Some(text) = self.comment_tooltip()

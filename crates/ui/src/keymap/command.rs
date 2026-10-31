@@ -524,6 +524,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .rep(),
+    cmd(
+        "editor.extract_notes",
+        "Extract Notes to a New Lane",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
     cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
     cmd("editor.join_notes", "Join Notes", G::Editor, C::Editor).decline(),
@@ -1382,6 +1389,14 @@ const COMMANDS: &[CommandDef] = &[
     .menu()
     .decline(),
     cmd(
+        "sequencer.explode_notes",
+        "Explode Notes to Lanes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
         "sequencer.fold_lanes",
         "Fold Automation Lanes",
         G::Sequencer,
@@ -1528,6 +1543,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     )
+    .decline(),
+    cmd(
+        "sequencer.merge_note_lanes",
+        "Merge Note Lanes",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
     .decline(),
     cmd(
         "sequencer.meter_delete",
@@ -1932,6 +1955,12 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     ),
     cmd(
+        "transport.alt",
+        "Alt: New Layer, Mute the Last",
+        G::Transport,
+        C::Global,
+    ),
+    cmd(
         "transport.auto_create_lanes",
         "Auto-create Lanes",
         G::Transport,
@@ -1958,6 +1987,7 @@ const COMMANDS: &[CommandDef] = &[
         G::Transport,
         C::Global,
     ),
+    cmd("transport.dub", "Dub: New Layer", G::Transport, C::Global),
     cmd(
         "transport.forward_bar",
         "Fast Forward One Bar",

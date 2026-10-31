@@ -710,6 +710,7 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.join",
             "sequencer.rename_clip",
             "sequencer.loop_instance",
+            "sequencer.explode_notes",
             "sequencer.reverse_clips",
             "sequencer.save_clip_to_library",
             "sequencer.toggle_mute",
@@ -1096,7 +1097,8 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "editor.toggle_note_mute",
             "edit.select_all",
             "editor.select_same_pitch",
-            "editor.join_notes"
+            "editor.join_notes",
+            "editor.extract_notes"
         ]
     );
     assert!(items.iter().find(|(c, _, _)| c == "edit.paste").unwrap().2);

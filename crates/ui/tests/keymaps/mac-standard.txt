@@ -127,6 +127,7 @@ sequencer.close_clip | sequencer | Esc
 sequencer.follow | global | F
 sequencer.group_tracks | sequencer | Cmd+Shift+T
 sequencer.join | sequencer | Cmd+J
+sequencer.merge_note_lanes | sequencer | Cmd+R
 sequencer.move_track_down | sequencer | Cmd+Opt+Down
 sequencer.move_track_up | sequencer | Cmd+Opt+Up
 sequencer.nudge_left | sequencer | Cmd+Left
@@ -166,8 +167,10 @@ tool.speaker | sequencer | T
 tool.speaker | editor | T
 transport.add_marker | global | Shift+M
 transport.all_notes_off | global | !, Shift+!
+transport.alt | global | Numpad6
 transport.bar_back | global | Numpad7
 transport.bar_forward | global | Numpad8
+transport.dub | global | Numpad3
 transport.forward_bar | global | Numpad5
 transport.go_locator left | global | Numpad1, Opt+Left
 transport.go_locator right | global | Numpad2, Opt+Right

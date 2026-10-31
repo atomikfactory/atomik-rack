@@ -310,12 +310,12 @@ fn a_numpad_chord_can_be_learned() {
     d.handle(
         &UiEvent::Key {
             key: Key::Numpad(atomik_ui::NumpadKey::Digit(6)),
-            modifiers: Modifiers::NONE,
+            modifiers: Modifiers::SHIFT,
             pressed: true,
         },
         VIEW,
     );
-    assert_eq!(row_chords(&d, "edit.duplicate"), ["Numpad6"]);
+    assert_eq!(row_chords(&d, "edit.duplicate"), ["Shift+Numpad6"]);
 }
 
 #[test]

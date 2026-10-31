@@ -22,7 +22,10 @@ use crate::canvas::{Align, Canvas, CanvasExt};
 use crate::keymap::CommandOutcome;
 use crate::paint::fit_label;
 use crate::seq_paint as sp;
-use atomik_model::{DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand};
+use atomik_model::{
+    ClipContent, ClipId, DeviceKey, LaneKind, MAX_LANE_NAME_CHARS, MAX_NOTE_LANES, SongCommand,
+    WorkflowCommand,
+};
 use vello::kurbo::{Point, Rect, RoundedRect};
 
 /// What the track header menu needs to know about the selected lane.
@@ -36,6 +39,10 @@ pub struct LaneMenu {
     pub can_delete: bool,
     /// The selected lane is muted (the Mute item is checked).
     pub muted: bool,
+    /// A selected track has several note lanes that can merge onto its top lane.
+    pub can_merge: bool,
+    /// One note clip with several pitches is selected, so it can explode into lanes.
+    pub can_explode: bool,
     /// An automation lane header was pressed last: the lane items below act on it.
     pub automation: bool,
     /// That automation lane is muted (the Mute Automation Lane item is checked).
@@ -185,6 +192,8 @@ impl ArrangementView {
             });
         } else if clicks >= 2 {
             self.begin_lane_rename(&device, lane);
+        } else if self.song.track(&device).is_some_and(|t| t.frozen.is_none()) {
+            self.begin_lane_move(device, lane, pos);
         }
     }
 
@@ -284,21 +293,26 @@ impl ArrangementView {
     /// What the "Add Note Lane", "Rename Note Lane...", "Delete Note Lane" and "Mute Lane"
     /// items of the track header menu need: the state of the selected track and lane.
     pub fn lane_menu(&self) -> LaneMenu {
+        let workflows = LaneMenu {
+            can_merge: !self.merge_targets().is_empty(),
+            can_explode: self.explode_target().is_some(),
+            ..self.automation_menu()
+        };
         let Some((d, lane)) = self.selected_lane() else {
-            return self.automation_menu();
+            return workflows;
         };
         let Some(t) = self.song.track(d) else {
-            return self.automation_menu();
+            return workflows;
         };
         if t.is_audio() || t.is_automation_only() || t.frozen.is_some() {
-            return self.automation_menu();
+            return workflows;
         }
         LaneMenu {
             can_add: t.note_lane_count() < MAX_NOTE_LANES,
             can_rename: true,
             can_delete: t.note_lane_count() > 1,
             muted: t.lanes.get(lane).is_some_and(|l| l.muted),
-            ..self.automation_menu()
+            ..workflows
         }
     }
 
@@ -310,6 +324,69 @@ impl ArrangementView {
             automation_muted,
             automation_static,
             ..LaneMenu::default()
+        }
+    }
+
+    /// The tracks Merge Note Lanes works on: the selected tracks (else the tracks of the
+    /// selected clips) that have several note lanes and are not frozen.
+    fn merge_targets(&self) -> Vec<DeviceKey> {
+        self.command_tracks()
+            .into_iter()
+            .filter(|d| {
+                self.song
+                    .track(d)
+                    .is_some_and(|t| t.note_lane_count() > 1 && t.frozen.is_none())
+            })
+            .collect()
+    }
+
+    /// The clip Explode Notes works on: the one selected clip when it is a note clip of more
+    /// than one pitch on an unfrozen track (the model's own checks come with the command).
+    fn explode_target(&self) -> Option<ClipId> {
+        let [c] = self.selected_in_order()[..] else {
+            return None;
+        };
+        let ClipContent::Notes(notes) = &c.content else {
+            return None;
+        };
+        self.song
+            .clip(c.id)
+            .filter(|(t, _, _)| t.frozen.is_none())?;
+        let first = notes.first()?.key;
+        notes.iter().any(|n| n.key != first).then_some(c.id)
+    }
+
+    /// Merge Note Lanes and Explode Notes to Lanes.
+    fn lane_workflow_command(&mut self, id: &str) -> Option<CommandOutcome> {
+        match id {
+            "sequencer.merge_note_lanes" => {
+                let devices = self.merge_targets();
+                if devices.is_empty() {
+                    return Some(CommandOutcome::NotApplicable(
+                        "Select tracks with more than one note lane to merge".into(),
+                    ));
+                }
+                for d in &devices {
+                    self.note_lane_sel.remove(d);
+                }
+                Some(CommandOutcome::Handled(vec![song_cmd(
+                    SongCommand::MergeNoteLanes { devices },
+                )]))
+            }
+            "sequencer.explode_notes" => {
+                let Some(clip) = self.explode_target() else {
+                    return Some(CommandOutcome::NotApplicable(
+                        "Select one note clip with more than one pitch to explode".into(),
+                    ));
+                };
+                if let Some(why) = self.song.explode_refusal(clip) {
+                    return Some(CommandOutcome::NotApplicable(why));
+                }
+                Some(CommandOutcome::Handled(vec![super::workflow_cmd(
+                    WorkflowCommand::ExplodeNotes { clip },
+                )]))
+            }
+            _ => None,
         }
     }
 
@@ -340,6 +417,9 @@ impl ArrangementView {
 
     /// The lane commands of the registry. `None` for a command that is not one of them.
     pub(super) fn lane_command(&mut self, id: &str) -> Option<CommandOutcome> {
+        if let Some(outcome) = self.lane_workflow_command(id) {
+            return Some(outcome);
+        }
         if !matches!(
             id,
             "sequencer.add_note_lane"

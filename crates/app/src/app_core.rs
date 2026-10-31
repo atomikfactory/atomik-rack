@@ -2691,6 +2691,8 @@ impl<S: EngineSink> AppCore<S> {
             TransportAction::Bars(bars) => self.locate_bars(bars),
             TransportAction::GoLocator(right) => self.go_locator(right),
             TransportAction::TapTempo => self.tap_tempo(),
+            TransportAction::Dub => self.dub(false),
+            TransportAction::Alt => self.dub(true),
             TransportAction::ToggleLoop => {
                 let song = &self.doc().song;
                 let command = SongCommand::SetLoop {
@@ -3056,6 +3058,9 @@ mod workflow;
 
 #[path = "app_core_setups.rs"]
 mod setups;
+
+#[path = "app_core_dub.rs"]
+mod dub_ops;
 
 #[path = "app_core_settings.rs"]
 mod settings_ops;

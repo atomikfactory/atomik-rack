@@ -283,6 +283,7 @@ fn note_edit_items(on: bool) -> Vec<Spec> {
                 .collect(),
         ),
         item("editor.join_notes", on),
+        item("editor.extract_notes", on),
         Spec::submenu(
             "Chop Notes",
             chop.iter()
@@ -557,6 +558,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     enabled: e.lane.can_rename,
                     checked: Some(e.lane.muted),
                 },
+                item("sequencer.merge_note_lanes", e.lane.can_merge),
                 Spec::Separator,
                 item("sequencer.delete_automation_lane", e.lane.automation),
                 Spec::Item {
@@ -639,6 +641,7 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     ],
                 ),
                 item("sequencer.loop_instance", e.loop_instance),
+                item("sequencer.explode_notes", e.lane.can_explode),
                 meter_item("sequencer.reverse_clips", "bars", "Reverse Clips").enabled(e.selection),
                 Spec::submenu(
                     "Scale Tempo",
@@ -1376,6 +1379,7 @@ mod tests {
                 None,
                 Some("Duplicate Track"),
                 Some("Delete Track"),
+                None,
                 None,
                 None,
                 None,
