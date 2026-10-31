@@ -46,7 +46,7 @@ use crate::seq_paint as sp;
 use crate::theme::mix;
 use atomik_model::{
     Command, DeviceKey, MAX_GROUP_NAME, MAX_LANE_NAME_CHARS, MAX_TRACK_COMMENT, MAX_TRACK_HEIGHT,
-    MIN_TRACK_HEIGHT, RackDoc, SongCommand,
+    MIN_TRACK_HEIGHT, RackDoc, SongCommand, WorkflowCommand,
 };
 use std::collections::BTreeSet;
 use vello::kurbo::{BezPath, Point, Rect, RoundedRect};
@@ -94,6 +94,9 @@ pub enum HeightPreset {
     Large,
     /// As tall as the view allows, the tracks sharing it.
     Fit,
+    /// The shortest track a row can be ([`MIN_TRACK_HEIGHT`]); for tracks that already are, the
+    /// heights they had before come back.
+    Minimise,
 }
 
 impl HeightPreset {
@@ -104,6 +107,7 @@ impl HeightPreset {
             "medium" => Some(Self::Medium),
             "large" => Some(Self::Large),
             "fit" => Some(Self::Fit),
+            "minimise" => Some(Self::Minimise),
             _ => None,
         }
     }
@@ -115,6 +119,7 @@ impl HeightPreset {
             Self::Medium => "medium",
             Self::Large => "large",
             Self::Fit => "fit",
+            Self::Minimise => "minimise",
         }
     }
 }
@@ -172,6 +177,8 @@ pub(super) struct OrgUi {
     /// Per track (index into `Song::tracks`): nesting depth, and whether it is hidden in a
     /// collapsed folder.
     pub shape: Vec<(usize, bool)>,
+    /// A running track header drag.
+    pub mv: Option<super::track_move::TrackMoveDrag>,
     /// The nesting depth of each folder.
     pub folder_depth: std::collections::BTreeMap<u32, usize>,
 }
@@ -669,10 +676,28 @@ impl ArrangementView {
         match hit {
             Hit::FolderToggle(g) if button == PointerButton::Primary => {
                 let collapsed = !self.song.org.collapsed(*g);
-                out.push(song_cmd(SongCommand::SetGroupCollapsed {
-                    group: *g,
-                    collapsed,
-                }));
+                if modifiers.alt {
+                    // Alt collapses or expands every folder the way this one goes, in one step.
+                    let all: Vec<Command> = self
+                        .song
+                        .org
+                        .groups
+                        .iter()
+                        .filter(|f| f.collapsed != collapsed)
+                        .map(|f| {
+                            Command::Song(SongCommand::SetGroupCollapsed {
+                                group: f.id,
+                                collapsed,
+                            })
+                        })
+                        .collect();
+                    out.push(UiAction::Command(Command::Batch(all)));
+                } else {
+                    out.push(song_cmd(SongCommand::SetGroupCollapsed {
+                        group: *g,
+                        collapsed,
+                    }));
+                }
             }
             Hit::FolderButton(g, b) if button == PointerButton::Primary => {
                 self.folder_button(*g, *b, out);
@@ -1032,12 +1057,33 @@ impl ArrangementView {
                     if tracks.is_empty() {
                         return Some(CommandOutcome::Declined);
                     }
+                    // The track and the device that plays it take the colour together, so the
+                    // rack and the console strip show it too; one undo step.
                     let commands = tracks
                         .into_iter()
-                        .map(|device| Command::Song(SongCommand::SetTrackColor { device, color }))
+                        .flat_map(|device| {
+                            [
+                                Command::Song(SongCommand::SetTrackColor {
+                                    device: device.clone(),
+                                    color,
+                                }),
+                                Command::SetColor { key: device, color },
+                            ]
+                        })
                         .collect();
                     CommandOutcome::Handled(vec![UiAction::Command(Command::Batch(commands))])
                 }
+            }
+            "sequencer.delete_track_and_device" => {
+                let keys = self.selected_tracks();
+                if keys.is_empty() || self.og.group.is_some() {
+                    return Some(CommandOutcome::Declined);
+                }
+                self.selected_track = None;
+                self.og.extra.clear();
+                CommandOutcome::Handled(vec![UiAction::Command(Command::Workflow(
+                    WorkflowCommand::DeleteDevices { keys },
+                ))])
             }
             "sequencer.fold_lanes" => {
                 let folded = match arg {
@@ -1083,7 +1129,7 @@ impl ArrangementView {
 
     /// The song command that applies a height preset to the selected tracks, or to every track
     /// when none is selected (nothing when no height would change).
-    pub fn height_preset(&self, preset: HeightPreset) -> Vec<UiAction> {
+    pub fn height_preset(&mut self, preset: HeightPreset) -> Vec<UiAction> {
         let selected = self.selected_tracks();
         let targets: Vec<usize> = self
             .song
@@ -1098,13 +1144,36 @@ impl ArrangementView {
         }
         let mut map = self.song.track_heights.clone();
         let fit = (preset == HeightPreset::Fit).then(|| self.fit_height(&targets));
-        for i in targets {
-            let device = self.song.tracks[i].device.clone();
+        let devices: Vec<DeviceKey> = targets
+            .iter()
+            .map(|i| self.song.tracks[*i].device.clone())
+            .collect();
+        // Minimise puts every target at the least height; when they all are there already it
+        // gives back the heights they had (the default for a track that was never taller).
+        let restore = preset == HeightPreset::Minimise
+            && devices
+                .iter()
+                .all(|d| map.get(d) == Some(&MIN_TRACK_HEIGHT));
+        for device in devices {
             match preset {
                 HeightPreset::Small => map.insert(device, HEIGHT_SMALL),
                 HeightPreset::Medium => map.remove(&device),
                 HeightPreset::Large => map.insert(device, HEIGHT_LARGE),
                 HeightPreset::Fit => map.insert(device, fit.unwrap_or(HEIGHT_LARGE)),
+                HeightPreset::Minimise if restore => {
+                    match self.th.before_minimise.remove(&device) {
+                        Some(Some(h)) => map.insert(device, h),
+                        _ => map.remove(&device),
+                    }
+                }
+                HeightPreset::Minimise => {
+                    if map.get(&device) != Some(&MIN_TRACK_HEIGHT) {
+                        self.th
+                            .before_minimise
+                            .insert(device.clone(), map.get(&device).copied());
+                    }
+                    map.insert(device, MIN_TRACK_HEIGHT)
+                }
             };
         }
         if map == self.song.track_heights {
@@ -1350,6 +1419,7 @@ impl ArrangementView {
 
     /// What goes over everything else: the field of the text being typed and the comment tooltip.
     pub(super) fn paint_org_overlay(&self, c: &mut dyn Canvas) {
+        self.paint_track_drop(c);
         if let (Some(e), Some(r)) = (&self.og.edit, self.edit_rect()) {
             super::markers::name_field(c, &self.st, r, &e.text);
         } else if let Some(text) = self.comment_tooltip()

@@ -65,6 +65,7 @@ mod organise;
 mod restructure;
 mod takes;
 mod tempo;
+mod track_move;
 
 pub use audio_edit::AudioMenu;
 pub use ghost::TakeGhost;
@@ -81,6 +82,7 @@ pub use organise::{
 };
 pub use takes::{TAKE_GROUP_HEIGHT, TAKE_ROW_HEIGHT, take_color};
 pub use tempo::TempoMenu;
+pub use track_move::TrackDrop;
 
 /// Width of the track list.
 pub const TRACK_LIST_WIDTH: f64 = 208.0;
@@ -495,6 +497,8 @@ impl Flag {
 #[derive(Debug, Clone)]
 enum Drag {
     None,
+    /// A track header is dragged to another place of the list (`OrgUi::mv` has the state).
+    TrackMove,
     /// The bottom edge of a track header is dragged (`HeightUi::drag` has the state).
     Height,
     Move {
@@ -2871,12 +2875,29 @@ impl ArrangementView {
             }
             _ => None,
         });
-        self.set_selected_track(Some(device));
+        // A press on one of several selected tracks keeps the selection, so the drag can take
+        // them all; a release without a drag then picks the one.
+        let selected = self.selected_tracks();
+        let keep = button == PointerButton::Primary
+            && self.og.group.is_none()
+            && selected.len() > 1
+            && selected.contains(&device);
+        if !keep {
+            self.set_selected_track(Some(device.clone()));
+        }
         if button == PointerButton::Secondary {
             out.push(UiAction::ContextMenu {
                 target: ContextTarget::TrackHeader,
                 at: pos,
             });
+        }
+        // The first row of a track is its header: a drag from it moves the track.
+        let on_header = self
+            .row_at(pos.y)
+            .is_some_and(|r| matches!(r.kind, RowKind::Lane { track: t, lane: 0 } if t == track));
+        if button == PointerButton::Primary && on_header {
+            let devices = if keep { selected } else { vec![device.clone()] };
+            self.begin_track_move(device, devices, pos);
         }
     }
 
@@ -3621,7 +3642,11 @@ impl ArrangementView {
             return;
         }
         if matches!(self.drag, Drag::Height) {
-            self.height_move(pos, out);
+            self.height_move(pos, modifiers.alt, out);
+            return;
+        }
+        if matches!(self.drag, Drag::TrackMove) {
+            self.track_move_move(pos, modifiers);
             return;
         }
         if matches!(self.drag, Drag::Mark) {
@@ -3664,6 +3689,7 @@ impl ArrangementView {
             | Drag::Snap { .. }
             | Drag::TempoPoint { .. }
             | Drag::Height
+            | Drag::TrackMove
             | Drag::Meter { .. }
             | Drag::Audition
             | Drag::Comp { .. }
@@ -4071,6 +4097,7 @@ impl ArrangementView {
             Drag::Mark => self.marker_drag_up(out),
             Drag::Audition => out.push(UiAction::StopAudition),
             Drag::Height => self.height_up(out),
+            Drag::TrackMove => self.track_move_up(out),
             Drag::Comp {
                 group,
                 take,
@@ -4364,11 +4391,16 @@ impl ArrangementView {
                         WorkflowCommand::DuplicateClips { ids },
                     )]);
                 }
-                match self.selected_track.clone() {
-                    Some(device) => CommandOutcome::Handled(vec![workflow_cmd(
-                        WorkflowCommand::DuplicateTrack { device },
-                    )]),
-                    None => CommandOutcome::Declined,
+                // Every selected track (or the tracks of the selected folder) is copied, the
+                // copies together after the last of them.
+                let devices = self.selected_tracks();
+                if devices.is_empty() {
+                    CommandOutcome::Declined
+                } else {
+                    CommandOutcome::Handled(vec![workflow_cmd(WorkflowCommand::DuplicateTracks {
+                        devices,
+                        place: None,
+                    })])
                 }
             }
             "edit.delete" => {
@@ -4798,6 +4830,9 @@ impl ArrangementView {
         }
         if matches!(self.drag, Drag::Height) {
             return self.height_cancel(out);
+        }
+        if matches!(self.drag, Drag::TrackMove) {
+            return self.track_move_cancel();
         }
         if matches!(self.drag, Drag::Mark) {
             self.drag = Drag::None;
