@@ -407,7 +407,9 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | SongCommand::SetClipControllers { clip, .. }
             | SongCommand::SetClipScale { clip, .. }
             | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
-            SongCommand::ApplyQuantize { clips, .. } => clips.iter().find_map(clip_frozen),
+            SongCommand::ApplyQuantize { clips, .. } | SongCommand::ApplyNoteTool { clips, .. } => {
+                clips.iter().find_map(clip_frozen)
+            }
             SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
             SongCommand::SetTempoMap(_)
             | SongCommand::DragTempoMap { .. }

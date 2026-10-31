@@ -1208,6 +1208,20 @@ pub enum SongCommand {
         /// What to do.
         quantize: QuantizeParams,
     },
+    /// Apply a note tool (velocity set, scale, ramp or randomize, alter, random or absolute
+    /// pitch: see [`crate::note_tools`]) to the notes of these clips, or to the notes of
+    /// `selection` (indices into the one clip's sorted note list). One undo step; audio and
+    /// automation clips are skipped, and it is an error when no note changes. The random tools
+    /// take a seed, so the same command gives the same notes. Reports
+    /// [`crate::SyncOp::SongChanged`].
+    ApplyNoteTool {
+        /// The clips, in any order.
+        clips: Vec<ClipId>,
+        /// Only these notes (needs exactly one clip); `None` is every note.
+        selection: Option<Vec<usize>>,
+        /// What to do.
+        tool: crate::NoteTool,
+    },
     /// Add a groove to the song's library, or replace the one with the same name. One undo step;
     /// reports [`crate::SyncOp::ViewChanged`] (a groove changes nothing until it is applied).
     SetGroove(Groove),
