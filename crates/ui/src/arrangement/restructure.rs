@@ -3,8 +3,9 @@
 //! step); the planning and the rules are in the model.
 
 use super::{ArrangementView, workflow_cmd};
+use crate::action::UiAction;
 use crate::keymap::CommandOutcome;
-use atomik_model::{ClipId, WorkflowCommand};
+use atomik_model::{ClipId, Command, SongCommand, WorkflowCommand};
 
 impl ArrangementView {
     /// The restructuring commands; `None` for an id that is not one of them.
@@ -66,6 +67,26 @@ impl ArrangementView {
                 Some(self.with_selection("Select the clips to chop", |ids| {
                     WorkflowCommand::ChopClips { ids, length }
                 }))
+            }
+            "sequencer.note_tool" => {
+                let Some(tool) = crate::note_tool_args::parse_note_tool(arg?, self.tool_seed)
+                else {
+                    return Some(CommandOutcome::Declined);
+                };
+                let clips: Vec<ClipId> = self.selected_in_order().iter().map(|c| c.id).collect();
+                if clips.is_empty() {
+                    return Some(CommandOutcome::NotApplicable(
+                        "Select the note clips to edit".into(),
+                    ));
+                }
+                self.tool_seed = self.tool_seed.wrapping_add(1);
+                Some(CommandOutcome::Handled(vec![UiAction::Command(
+                    Command::Song(SongCommand::ApplyNoteTool {
+                        clips,
+                        selection: None,
+                        tool,
+                    }),
+                )]))
             }
             _ => None,
         }

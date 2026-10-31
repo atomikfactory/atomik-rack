@@ -51,6 +51,8 @@ pub const SCALE_BAR_HEIGHT: f64 = 22.0;
 pub const ROLL_RULER_HEIGHT: f64 = 20.0;
 /// Width of the keyboard strip.
 pub const KEYBOARD_WIDTH: f64 = 56.0;
+/// The most characters of a key label the strip shows.
+const KEY_LABEL_CHARS: usize = 9;
 /// Height of the velocity lane.
 pub const VELOCITY_HEIGHT: f64 = 76.0;
 /// Height of one key row at the default zoom.
@@ -255,6 +257,17 @@ enum Drag {
         merge: u64,
         last: Vec<Note>,
     },
+    /// A stroke on the empty velocity lane: freehand sets every note the pointer passes, the
+    /// line role draws a straight ramp from the press. `only` limits it to the selected notes.
+    VelocityDraw {
+        originals: Vec<Note>,
+        only: Option<BTreeSet<usize>>,
+        line: bool,
+        from: (i64, f32),
+        prev: (i64, f32),
+        merge: u64,
+        last: Vec<Note>,
+    },
     Band {
         start: Point,
         pos: Point,
@@ -334,6 +347,11 @@ pub struct PianoRollView {
     ctl: LaneEditor,
     ctl_sel: Option<usize>,
     next_merge: u64,
+    /// Counts the uses of the random note tools: each run is its own take.
+    tool_seed: u32,
+    /// Names for some keys (the pads of a drum machine), shown on the keyboard strip in place of
+    /// the note names; `None` for a track that plays pitches.
+    key_labels: Option<Vec<(u8, String)>>,
     /// The anchor and the active end (note indices) of the selection built by stepping with
     /// Shift+Left/Right; only trusted while the selection still has that shape.
     step_sel: Option<(usize, usize)>,
@@ -353,6 +371,25 @@ impl PianoRollView {
         self.accent = self.st.base.highlight;
         self.clip_rev = None;
         self.repaint = true;
+    }
+
+    /// The device of the track the open clip is on.
+    pub fn track_device(&self) -> Option<&DeviceKey> {
+        self.device.as_ref()
+    }
+
+    /// Names keys on the keyboard strip (a drum machine's pads), or `None` to show note names.
+    /// Only the display changes: the keys of the notes are the same.
+    pub fn set_key_labels(&mut self, labels: Option<Vec<(u8, String)>>) {
+        if self.key_labels != labels {
+            self.key_labels = labels;
+            self.repaint = true;
+        }
+    }
+
+    /// The names shown on the keyboard strip, if any.
+    pub fn key_labels(&self) -> Option<&[(u8, String)]> {
+        self.key_labels.as_deref()
     }
 
     /// A closed piano roll; call [`Self::set_bounds`], [`Self::open`] and [`Self::sync`].
@@ -395,6 +432,8 @@ impl PianoRollView {
             ctl: LaneEditor::default(),
             ctl_sel: None,
             next_merge: MERGE_BASE,
+            tool_seed: 0,
+            key_labels: None,
             step_sel: None,
             step_note: None,
             last_length: None,
@@ -1552,6 +1591,13 @@ impl PianoRollView {
                 };
             }
             Hit::Keys(key) if primary => {
+                // A double click on the key column selects every note of that pitch.
+                if clicks >= 2 {
+                    let same: Vec<usize> = (0..self.notes().len())
+                        .filter(|&i| self.notes()[i].key == key)
+                        .collect();
+                    self.selection.set(same);
+                }
                 out.extend(self.audition(key, true));
                 self.drag = Drag::Keys { key };
             }
@@ -1621,6 +1667,31 @@ impl PianoRollView {
                     grabbed: i,
                     merge,
                     last: list,
+                };
+            }
+            // The empty lane is a pencil: drag across the bars to set them (Alt: only the
+            // selected notes; the constrain role (Shift): a straight line from the press).
+            Hit::Velocity(None) if primary => {
+                let (top, h) = self.velocity_range();
+                let here = (
+                    self.axis.x_to_tick(pos.x),
+                    seq_edit::velocity_from_y(pos.y, top, h),
+                );
+                let line =
+                    self.vp
+                        .roles()
+                        .is_active(Role::Constrain, modifiers, GestureClass::DragItem);
+                let only = (modifiers.alt && !self.selection.is_empty())
+                    .then(|| self.selection.items().clone());
+                let originals = self.notes().to_vec();
+                self.drag = Drag::VelocityDraw {
+                    last: originals.clone(),
+                    originals,
+                    only,
+                    line,
+                    from: here,
+                    prev: here,
+                    merge: self.merge_id(),
                 };
             }
             _ => {}
@@ -2161,6 +2232,31 @@ impl PianoRollView {
                     *last = list;
                 }
             }
+            Drag::VelocityDraw {
+                originals,
+                only,
+                line,
+                from,
+                prev,
+                merge,
+                last,
+            } => {
+                let here = (
+                    axis.x_to_tick(pos.x),
+                    seq_edit::velocity_from_y(pos.y, vtop, vh),
+                );
+                let list = if *line {
+                    seq_edit::velocity_stroke(originals, only.as_ref(), *from, here)
+                } else {
+                    let l = seq_edit::velocity_stroke(last, only.as_ref(), *prev, here);
+                    *prev = here;
+                    l
+                };
+                if list != *last {
+                    out.extend(content(list.clone(), *merge));
+                    *last = list;
+                }
+            }
         }
         if let Some(s) = new_sel {
             self.selection.set(s);
@@ -2207,7 +2303,7 @@ impl PianoRollView {
                     out.push(UiAction::EndMerge);
                 }
             }
-            Drag::Velocity { .. } => out.push(UiAction::EndMerge),
+            Drag::Velocity { .. } | Drag::VelocityDraw { .. } => out.push(UiAction::EndMerge),
             Drag::Ctl { moved: true, .. } => out.push(UiAction::EndMerge),
             Drag::Ctl { .. } => {}
         }
@@ -2327,6 +2423,44 @@ impl PianoRollView {
                     .collect();
                 CommandOutcome::Handled(self.content(notes, None).into_iter().collect())
             }
+            "editor.legato" => {
+                let Some(overlap) = crate::note_tool_args::legato_overlap(arg) else {
+                    return CommandOutcome::Declined;
+                };
+                let sel = self.selection_or_all();
+                self.apply_edit(Some(seq_edit::make_legato(self.notes(), &sel, overlap)))
+            }
+            "editor.join_notes" => {
+                if self.selection.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let sel = self.selection.items().clone();
+                self.apply_edit(Some(seq_edit::join_notes(self.notes(), &sel)))
+            }
+            "editor.chop" => {
+                let Some(grid) = crate::note_tool_args::chop_grid(arg, step) else {
+                    return CommandOutcome::Declined;
+                };
+                let sel = self.selection_or_all();
+                self.apply_edit(Some(seq_edit::chop_notes(self.notes(), &sel, grid)))
+            }
+            "editor.select_same_pitch" => {
+                let keys: BTreeSet<u8> = self
+                    .selection
+                    .items()
+                    .iter()
+                    .filter_map(|&i| self.notes().get(i))
+                    .map(|n| n.key)
+                    .collect();
+                if keys.is_empty() {
+                    return CommandOutcome::Declined;
+                }
+                let same = (0..self.notes().len()).filter(|&i| keys.contains(&self.notes()[i].key));
+                let same: Vec<usize> = same.collect();
+                self.selection.set(same);
+                CommandOutcome::Handled(Vec::new())
+            }
+            "editor.note_tool" => self.note_tool(arg),
             "editor.transpose_up" => self.transpose(1),
             "editor.transpose_down" => self.transpose(-1),
             "editor.octave_up" => self.move_selection(0, 12),
@@ -2771,6 +2905,49 @@ impl PianoRollView {
         }
     }
 
+    /// The selected notes, or every note of the clip when none is selected (the way a quantize
+    /// treats an empty selection).
+    fn selection_or_all(&self) -> BTreeSet<usize> {
+        if self.selection.is_empty() {
+            (0..self.notes().len()).collect()
+        } else {
+            self.selection.items().clone()
+        }
+    }
+
+    /// Runs a note tool of the Notes menu on the selected notes (every note when none is
+    /// selected) as one `ApplyNoteTool`, keeping the selection on the same notes. Nothing is
+    /// sent when the tool would change no note.
+    fn note_tool(&mut self, arg: Option<&str>) -> CommandOutcome {
+        let (Some(clip), Some(arg)) = (self.clip_id, arg) else {
+            return CommandOutcome::Declined;
+        };
+        let Some(tool) = crate::note_tool_args::parse_note_tool(arg, self.tool_seed) else {
+            return CommandOutcome::Declined;
+        };
+        let picked = (!self.selection.is_empty()).then(|| self.selection.items().clone());
+        let (out, index) = atomik_model::note_tools::apply_note_tool_indexed(
+            self.notes(),
+            picked.as_ref(),
+            clip.0,
+            tool,
+        );
+        if out == self.notes() {
+            return CommandOutcome::Handled(Vec::new());
+        }
+        self.tool_seed = self.tool_seed.wrapping_add(1);
+        if let Some(picked) = &picked {
+            self.selection.set(picked.iter().map(|&i| index[i]));
+        }
+        CommandOutcome::Handled(vec![UiAction::Command(Command::Song(
+            SongCommand::ApplyNoteTool {
+                clips: vec![clip],
+                selection: picked.map(|s| s.into_iter().collect()),
+                tool,
+            },
+        ))])
+    }
+
     /// Sends a new note list (one `SetClipContent`, so one undo step) and selects `new`;
     /// nothing is sent when the list is the clip's own.
     fn apply_edit(&mut self, result: Option<(Vec<Note>, BTreeSet<usize>)>) -> CommandOutcome {
@@ -2831,6 +3008,9 @@ impl PianoRollView {
                 self.selection.set(sel);
             }
             Drag::Velocity {
+                originals, merge, ..
+            }
+            | Drag::VelocityDraw {
                 originals, merge, ..
             } => {
                 out.extend(self.content(originals, Some(merge)));
@@ -3099,7 +3279,25 @@ impl PianoRollView {
                 );
             }
             let is_root = scale.is_some_and(|s| s.is_root(k));
-            if k.is_multiple_of(12) {
+            let pad_name = self
+                .key_labels
+                .as_ref()
+                .and_then(|l| l.iter().find(|(key, _)| *key == k))
+                .map(|(_, name)| name);
+            if let Some(name) = pad_name
+                && self.key_h >= 9.0
+            {
+                let short: String = name.chars().take(KEY_LABEL_CHARS).collect();
+                sp::label(
+                    c,
+                    &short,
+                    kb.x1 - 6.0,
+                    row.y1 - base,
+                    size as f32,
+                    self.accent,
+                    Align::End,
+                );
+            } else if k.is_multiple_of(12) {
                 sp::line(c, kb.x0, row.y1 - 0.5, kb.x1, row.y1 - 0.5, t.knob_bottom);
                 let name = format!("C{}", i32::from(k) / 12 - 1);
                 sp::label(

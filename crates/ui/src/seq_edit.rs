@@ -394,6 +394,135 @@ pub fn shift_velocity(notes: &[Note], sel: &BTreeSet<usize>, delta: f32) -> Vec<
     })
 }
 
+/// Makes the `sel` notes legato: each one is stretched (or shortened) to reach the start of the
+/// next later selected note, plus `overlap` ticks (negative leaves a gap). The last selected
+/// start keeps its length, and a note never gets shorter than one tick. Returns the notes and
+/// the tracked selection.
+pub fn make_legato(
+    notes: &[Note],
+    sel: &BTreeSet<usize>,
+    overlap: i64,
+) -> (Vec<Note>, BTreeSet<usize>) {
+    let starts: BTreeSet<i64> = sel
+        .iter()
+        .filter_map(|&i| notes.get(i))
+        .map(|n| n.tick)
+        .collect();
+    let out = map_selected(notes, sel, |n| match starts.range(n.tick + 1..).next() {
+        Some(&next) => Note {
+            length: (next - n.tick + overlap).max(1),
+            ..*n
+        },
+        None => *n,
+    });
+    normalize_notes(out, sel)
+}
+
+/// Joins the `sel` notes of one key that touch or overlap into one note from the earliest start
+/// to the latest end, keeping the first note's velocity and mute. Selected notes of one key
+/// with a gap between them stay apart. The selection becomes the joined notes.
+pub fn join_notes(notes: &[Note], sel: &BTreeSet<usize>) -> (Vec<Note>, BTreeSet<usize>) {
+    let mut chosen: Vec<(usize, Note)> = sel
+        .iter()
+        .filter_map(|&i| notes.get(i).map(|n| (i, *n)))
+        .collect();
+    chosen.sort_by_key(|(_, n)| (n.key, n.tick));
+    let mut joined: Vec<Note> = Vec::with_capacity(chosen.len());
+    for (_, n) in chosen {
+        match joined.last_mut() {
+            Some(last) if last.key == n.key && n.tick <= last.tick + last.length => {
+                last.length = last.length.max(n.tick + n.length - last.tick);
+            }
+            _ => joined.push(n),
+        }
+    }
+    let mut out: Vec<Note> = notes
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !sel.contains(i))
+        .map(|(_, n)| *n)
+        .collect();
+    let first_new = out.len();
+    out.extend(joined);
+    let tracked: BTreeSet<usize> = (first_new..out.len()).collect();
+    normalize_notes(out, &tracked)
+}
+
+/// Cuts the `sel` notes at every `grid` line (content ticks) inside them. A cut that would put
+/// a piece on a place another note of that key already holds is left out. The selection
+/// becomes every piece.
+pub fn chop_notes(
+    notes: &[Note],
+    sel: &BTreeSet<usize>,
+    grid: i64,
+) -> (Vec<Note>, BTreeSet<usize>) {
+    let grid = grid.max(1);
+    let mut taken: BTreeSet<(i64, u8)> = notes.iter().map(|n| (n.tick, n.key)).collect();
+    let mut out: Vec<Note> = Vec::with_capacity(notes.len());
+    let mut tracked_notes: Vec<Note> = Vec::new();
+    for (i, n) in notes.iter().enumerate() {
+        if !sel.contains(&i) {
+            out.push(*n);
+            continue;
+        }
+        let end = n.tick + n.length;
+        let mut from = n.tick;
+        let mut line = (n.tick.div_euclid(grid) + 1) * grid;
+        let mut piece = *n;
+        while line < end {
+            if taken.insert((line, n.key)) {
+                piece.length = line - from;
+                tracked_notes.push(piece);
+                from = line;
+                piece = Note {
+                    tick: line,
+                    length: end - line,
+                    ..*n
+                };
+            }
+            line += grid;
+        }
+        piece.length = end - from;
+        tracked_notes.push(piece);
+    }
+    let first_new = out.len();
+    out.extend(tracked_notes);
+    let tracked: BTreeSet<usize> = (first_new..out.len()).collect();
+    normalize_notes(out, &tracked)
+}
+
+/// Sets the velocity of the `sel` notes from a pencil stroke: a note whose start lies in
+/// `[t0, t1]` takes the velocity of the stroke at its tick, a straight line from `v0` at `t0`
+/// to `v1` at `t1` (a flat stroke when the two ticks are equal). `sel` limits the edit when
+/// given.
+pub fn velocity_stroke(
+    notes: &[Note],
+    only: Option<&BTreeSet<usize>>,
+    (t0, v0): (i64, f32),
+    (t1, v1): (i64, f32),
+) -> Vec<Note> {
+    let (lo, hi) = (t0.min(t1), t0.max(t1));
+    notes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| {
+            if n.tick < lo || n.tick > hi || only.is_some_and(|s| !s.contains(&i)) {
+                return *n;
+            }
+            let t = if t1 == t0 {
+                0.0
+            } else {
+                (n.tick - t0) as f64 / (t1 - t0) as f64
+            };
+            let v = f64::from(v0) + (f64::from(v1) - f64::from(v0)) * t;
+            Note {
+                velocity: (v as f32).clamp(MIN_VELOCITY, 1.0),
+                ..*n
+            }
+        })
+        .collect()
+}
+
 /// A velocity from a y position in a lane `[top, top + height]` (top = 1, bottom = min).
 pub fn velocity_from_y(y: f64, top: f64, height: f64) -> f32 {
     let v = 1.0 - (y - top) / height.max(1e-9);
@@ -858,5 +987,158 @@ mod tests {
         let t = toggle_curve(&v, 1);
         assert_eq!(t[1].curve, Curve::Step);
         assert_eq!(toggle_curve(&t, 1)[1].curve, Curve::Linear);
+    }
+
+    fn nt(tick: i64, length: i64, key: u8) -> Note {
+        Note::new(tick, length, key, 0.8)
+    }
+
+    fn one_per_place(notes: &[Note]) -> bool {
+        notes
+            .windows(2)
+            .all(|w| (w[0].tick, w[0].key) < (w[1].tick, w[1].key))
+    }
+
+    fn all_of(notes: &[Note]) -> BTreeSet<usize> {
+        (0..notes.len()).collect()
+    }
+
+    #[test]
+    fn legato_reaches_the_next_selected_start_with_every_overlap() {
+        let q = PPQ / 4;
+        let notes = [
+            nt(0, q / 2, 60),
+            nt(q, q / 2, 62),
+            nt(q, q / 4, 64),
+            nt(3 * q, q, 65),
+        ];
+        // Overlaps from a beat of gap to a beat of overlap, scaled to the resolution.
+        for overlap in [-PPQ, -PPQ / 16, 0, PPQ / 16, PPQ] {
+            let (out, sel) = make_legato(&notes, &all_of(&notes), overlap);
+            assert_eq!(out[0].length, (q + overlap).max(1), "overlap {overlap}");
+            // Two notes start together: both reach the next later start.
+            assert_eq!(out[1].length, (2 * q + overlap).max(1));
+            assert_eq!(out[2].length, (2 * q + overlap).max(1));
+            assert_eq!(out[3].length, q, "the last note keeps its length");
+            assert_eq!(sel.len(), 4);
+            assert!(one_per_place(&out));
+        }
+    }
+
+    #[test]
+    fn legato_only_touches_the_selection_and_is_idempotent() {
+        let q = PPQ / 4;
+        let notes = [nt(0, 10, 60), nt(q, 10, 60), nt(2 * q, 10, 60)];
+        let sel: BTreeSet<usize> = [0, 2].into_iter().collect();
+        let (out, tracked) = make_legato(&notes, &sel, 0);
+        assert_eq!(out[0].length, 2 * q);
+        assert_eq!(out[1].length, 10);
+        assert_eq!(out[2].length, 10);
+        assert_eq!(tracked, sel);
+        let (again, _) = make_legato(&out, &tracked, 0);
+        assert_eq!(again, out);
+    }
+
+    #[test]
+    fn join_merges_touching_and_overlapping_notes_of_one_key() {
+        let notes = [
+            nt(0, 100, 60),
+            nt(100, 50, 60),  // touches
+            nt(120, 100, 60), // overlaps the joined run
+            nt(500, 10, 60),  // gap: stays apart
+            nt(0, 100, 64),   // another key: stays
+        ];
+        let (out, sel) = join_notes(&notes, &all_of(&notes));
+        assert_eq!(
+            out.iter()
+                .map(|n| (n.tick, n.length, n.key))
+                .collect::<Vec<_>>(),
+            vec![(0, 220, 60), (0, 100, 64), (500, 10, 60)]
+        );
+        assert_eq!(sel.len(), 3);
+        assert!(one_per_place(&out));
+        // One selected note, or notes with gaps, change nothing.
+        let (same, _) = join_notes(&notes, &[3usize].into_iter().collect());
+        assert_eq!(same, normalize_notes(notes.to_vec(), &BTreeSet::new()).0);
+    }
+
+    #[test]
+    fn join_leaves_unselected_notes_alone() {
+        let notes = [nt(0, 100, 60), nt(100, 100, 60), nt(200, 100, 60)];
+        let sel: BTreeSet<usize> = [0, 1].into_iter().collect();
+        let (out, tracked) = join_notes(&notes, &sel);
+        assert_eq!(out.len(), 2);
+        assert_eq!((out[0].tick, out[0].length), (0, 200));
+        assert_eq!(out[1].tick, 200);
+        assert_eq!(tracked, [0].into_iter().collect());
+    }
+
+    #[test]
+    fn chop_cuts_at_straight_and_triplet_grids() {
+        for (grid, pieces) in [(PPQ / 4, 4), (PPQ / 2, 2), (PPQ / 3, 3), (PPQ / 6, 6)] {
+            let notes = [nt(0, PPQ, 60)];
+            let (out, sel) = chop_notes(&notes, &all_of(&notes), grid);
+            assert_eq!(out.len(), pieces, "grid {grid}");
+            assert_eq!(out.iter().map(|n| n.length).sum::<i64>(), PPQ);
+            assert!(out.windows(2).all(|w| w[0].tick + w[0].length == w[1].tick));
+            assert_eq!(sel.len(), pieces);
+            assert!(one_per_place(&out));
+        }
+    }
+
+    #[test]
+    fn chop_handles_off_grid_starts_short_notes_and_collisions() {
+        let g = PPQ / 4;
+        // Starts mid-step: the first piece runs to the next line.
+        let (out, _) = chop_notes(&[nt(g / 2, g, 60)], &[0].into_iter().collect(), g);
+        assert_eq!(
+            out.iter().map(|n| (n.tick, n.length)).collect::<Vec<_>>(),
+            vec![(g / 2, g / 2), (g, g / 2)]
+        );
+        // A note inside one step is not cut.
+        let (out, _) = chop_notes(&[nt(10, 20, 60)], &[0].into_iter().collect(), g);
+        assert_eq!(out.len(), 1);
+        // Another note of the key already sits on the line: that cut is skipped.
+        let notes = [nt(0, 2 * g, 60), nt(g, 5, 60)];
+        let (out, _) = chop_notes(&notes, &[0].into_iter().collect(), g);
+        assert_eq!(out.len(), 2);
+        assert!(one_per_place(&out));
+        // Muted state and velocity carry over.
+        let m = Note {
+            muted: true,
+            velocity: 0.3,
+            ..nt(0, 2 * g, 61)
+        };
+        let (out, _) = chop_notes(&[m], &[0].into_iter().collect(), g);
+        assert!(
+            out.iter()
+                .all(|n| n.muted && (n.velocity - 0.3).abs() < 1e-6)
+        );
+    }
+
+    #[test]
+    fn a_velocity_stroke_draws_a_line_and_respects_the_filter() {
+        let notes = [
+            nt(0, 10, 60),
+            nt(100, 10, 61),
+            nt(200, 10, 62),
+            nt(300, 10, 63),
+        ];
+        let out = velocity_stroke(&notes, None, (0, 1.0), (200, 0.5));
+        assert!((out[0].velocity - 1.0).abs() < 1e-6);
+        assert!((out[1].velocity - 0.75).abs() < 1e-6);
+        assert!((out[2].velocity - 0.5).abs() < 1e-6);
+        assert_eq!(out[3].velocity, 0.8, "outside the stroke");
+        // Drawn right to left: the same line.
+        let back = velocity_stroke(&notes, None, (200, 0.5), (0, 1.0));
+        assert_eq!(back, out);
+        // Only the selected notes change.
+        let only: BTreeSet<usize> = [1].into_iter().collect();
+        let out = velocity_stroke(&notes, Some(&only), (0, 0.2), (300, 0.2));
+        assert_eq!(out[0].velocity, 0.8);
+        assert!((out[1].velocity - 0.2).abs() < 1e-6);
+        // A flat stroke on one tick.
+        let out = velocity_stroke(&notes, None, (100, 0.4), (100, 0.9));
+        assert!((out[1].velocity - 0.4).abs() < 1e-6);
     }
 }

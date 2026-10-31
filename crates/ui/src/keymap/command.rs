@@ -318,6 +318,7 @@ pub const AUDIO_FADES_ARGS: &[&str] = &["declick", "clear"];
 /// The values of `sequencer.meter_insert` and `sequencer.meter_set`.
 pub const METER_ARGS: &[&str] = &["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"];
 
+use crate::note_tool_args::{CHOP_NOTE_ARGS, LEGATO_ARGS, NOTE_TOOL_ARGS};
 use Context as C;
 use Group as G;
 
@@ -486,6 +487,9 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .decline(),
+    cmd("editor.chop", "Chop Notes", G::Editor, C::Editor)
+        .arg(CHOP_NOTE_ARGS)
+        .decline(),
     cmd(
         "editor.chordify",
         "Chordify Selection",
@@ -520,6 +524,13 @@ const COMMANDS: &[CommandDef] = &[
     .rep(),
     cmd("editor.fold_set", "Set Fold", G::Editor, C::Editor).arg(FOLD_ARGS),
     cmd("editor.fold_toggle", "Fold", G::Editor, C::Editor),
+    cmd("editor.join_notes", "Join Notes", G::Editor, C::Editor).decline(),
+    cmd("editor.legato", "Make Legato", G::Editor, C::Editor)
+        .arg(LEGATO_ARGS)
+        .decline(),
+    cmd("editor.note_tool", "Note Tool", G::Editor, C::Editor)
+        .arg(NOTE_TOOL_ARGS)
+        .decline(),
     cmd("editor.nudge_left", "Nudge Left", G::Editor, C::Editor).rep(),
     cmd(
         "editor.nudge_left_beat",
@@ -585,6 +596,13 @@ const COMMANDS: &[CommandDef] = &[
         C::Editor,
     )
     .rep(),
+    cmd(
+        "editor.select_same_pitch",
+        "Select Notes of the Same Pitch",
+        G::Editor,
+        C::Editor,
+    )
+    .decline(),
     cmd(
         "editor.set_arp_gate",
         "Set Arpeggio Gate",
@@ -1547,6 +1565,14 @@ const COMMANDS: &[CommandDef] = &[
         G::Sequencer,
         C::Sequencer,
     ),
+    cmd(
+        "sequencer.note_tool",
+        "Note Tool on Clips",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .arg(NOTE_TOOL_ARGS)
+    .decline(),
     cmd(
         "sequencer.nudge_left",
         "Nudge Clips Left",

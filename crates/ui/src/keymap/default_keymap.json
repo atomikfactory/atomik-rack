@@ -98,6 +98,7 @@
         { "command": "sequencer.toggle_mute", "context": "sequencer", "chords": ["M"] },
         { "command": "editor.toggle_note_mute", "context": "editor", "chords": ["M"] },
         { "command": "sequencer.join", "context": "sequencer", "chords": ["Cmd+J"] },
+        { "command": "editor.join_notes", "context": "editor", "chords": ["Cmd+J"] },
         { "command": "sequencer.open_clip", "context": "sequencer", "chords": ["Return"] },
         { "command": "transport.loop_to_selection", "context": "sequencer", "chords": ["Cmd+L"] },
         { "command": "transport.loop_and_play", "context": "sequencer", "chords": ["P"] },

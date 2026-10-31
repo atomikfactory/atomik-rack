@@ -755,6 +755,8 @@ pub struct ArrangementView {
     drag: Drag,
     hover: Option<Hit>,
     next_merge: u64,
+    /// Counts the uses of the random note tools: each run is its own take.
+    tool_seed: u32,
     playhead: i64,
     recording: bool,
     /// The takes in progress, drawn as growing red clips.
@@ -867,6 +869,7 @@ impl ArrangementView {
             drag: Drag::None,
             hover: None,
             next_merge: MERGE_BASE,
+            tool_seed: 0,
             playhead: 0,
             recording: false,
             ghosts: Vec::new(),

@@ -22,6 +22,7 @@ editor.chordify | editor | Shift+C
 editor.extend_next_note | editor | Shift+Right
 editor.extend_prev_note | editor | Shift+Left
 editor.fold_toggle | editor | Shift+F
+editor.join_notes | editor | Ctrl+J
 editor.nudge_left | editor | Ctrl+Left
 editor.nudge_left_beat | editor | Ctrl+Shift+Left
 editor.nudge_left_tick | editor | Ctrl+Alt+Left

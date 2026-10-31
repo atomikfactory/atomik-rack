@@ -335,6 +335,7 @@ pub mod master_panel;
 pub mod midi_maps_panel;
 pub mod midi_marks;
 pub mod modsrc_panel;
+pub mod note_tool_args;
 pub mod notes_panel;
 pub mod paint;
 pub mod param_search_panel;
