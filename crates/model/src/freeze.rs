@@ -346,181 +346,187 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
     };
     let channel_error =
         |channel: &DeviceKey| frozen_channel(channel).map(|(t, _)| frozen_error(doc, &t.device));
-    let refused = match command {
-        Command::RemoveDevice { key } => {
-            // The instrument goes with its track; a frozen effect has to be unfrozen first.
-            let is_instrument = doc.song.track(key).is_some_and(|t| t.frozen.is_some());
-            if is_instrument {
-                None
-            } else {
-                // Nor can the channel the freeze plays through go.
-                device_frozen(key).or_else(|| channel_error(key))
+    let refused =
+        match command {
+            Command::RemoveDevice { key } => {
+                // The instrument goes with its track; a frozen effect has to be unfrozen first.
+                let is_instrument = doc.song.track(key).is_some_and(|t| t.frozen.is_some());
+                if is_instrument {
+                    None
+                } else {
+                    // Nor can the channel the freeze plays through go.
+                    device_frozen(key).or_else(|| channel_error(key))
+                }
             }
-        }
-        Command::SetParam { key, .. } => device_frozen(key),
-        Command::SetZones { device, .. }
-        | Command::SetPattern { device, .. }
-        | Command::SetCurves { device, .. }
-        | Command::SetDrumStep { device, .. }
-        | Command::SetDrumLane { device, .. }
-        | Command::SetDrumPattern { device, .. }
-        | Command::AddDrumPattern { device }
-        | Command::RemoveDrumPattern { device, .. }
-        | Command::DuplicateDrumPattern { device, .. }
-        | Command::AddPattern { device }
-        | Command::RemovePattern { device, .. }
-        | Command::DuplicatePattern { device, .. } => device_frozen(device),
-        Command::Connect(c) => {
-            device_frozen(&c.from.device).or_else(|| device_frozen(&c.to.device))
-        }
-        Command::Disconnect { to } => device_frozen(&to.device).or_else(|| {
-            doc.cable_into(to)
-                .and_then(|c| device_frozen(&c.from.device))
-        }),
-        Command::SetTempo(_) => Some(tempo()),
-        Command::Song(s) => match s {
-            SongCommand::AddClip { device, .. }
-            | SongCommand::AddAudioClip { device, .. }
-            | SongCommand::NewTakeGroup { device, .. }
-            | SongCommand::GroupAsTakes { device, .. }
-            | SongCommand::AddAutomationLane { device, .. }
-            | SongCommand::AddNoteLane { device, .. }
-            | SongCommand::RemoveNoteLane { device, .. }
-            | SongCommand::RemoveAutomationLane { device, .. }
-            | SongCommand::SetLaneStatic { device, .. }
-            | SongCommand::RenameLane { device, .. }
-            | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
-            SongCommand::MoveTracks { devices, .. } => devices.iter().find_map(track_frozen),
-            SongCommand::AddTake { group, .. } => doc
-                .song
-                .take_group(*group)
-                .and_then(|(t, _, _)| track_frozen(&t.device)),
-            SongCommand::RemoveClip { id }
-            | SongCommand::SetClipGeometry { id, .. }
-            | SongCommand::SetClipContent { id, .. }
-            | SongCommand::SplitClip { id, .. }
-            | SongCommand::DuplicateClip { id, .. }
-            | SongCommand::SetAudioClip { id, .. }
-            | SongCommand::SetWarpMarkers { id, .. }
-            | SongCommand::StripSilence { id, .. } => clip_frozen(id),
-            SongCommand::SetClipGrid { clip, .. }
-            | SongCommand::SetClipControllers { clip, .. }
-            | SongCommand::SetClipScale { clip, .. }
-            | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
-            SongCommand::ApplyQuantize { clips, .. } | SongCommand::ApplyNoteTool { clips, .. } => {
-                clips.iter().find_map(clip_frozen)
+            Command::SetParam { key, .. } => device_frozen(key),
+            Command::SetZones { device, .. }
+            | Command::SetPattern { device, .. }
+            | Command::SetCurves { device, .. }
+            | Command::SetDrumStep { device, .. }
+            | Command::SetDrumLane { device, .. }
+            | Command::SetDrumPattern { device, .. }
+            | Command::AddDrumPattern { device }
+            | Command::RemoveDrumPattern { device, .. }
+            | Command::DuplicateDrumPattern { device, .. }
+            | Command::AddPattern { device }
+            | Command::RemovePattern { device, .. }
+            | Command::DuplicatePattern { device, .. } => device_frozen(device),
+            Command::Connect(c) => {
+                device_frozen(&c.from.device).or_else(|| device_frozen(&c.to.device))
             }
-            SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
-            SongCommand::SetTempoMap(_)
-            | SongCommand::DragTempoMap { .. }
-            | SongCommand::SetMeter { .. }
-            | SongCommand::SetMeterMap(_)
-            | SongCommand::DragMeterMap { .. } => Some(tempo()),
-            _ => None,
-        },
-        Command::Workflow(w) => match w {
-            WorkflowCommand::RemoveClips { ids }
-            | WorkflowCommand::DuplicateClips { ids }
-            | WorkflowCommand::SetClipsMuted { ids, .. }
-            | WorkflowCommand::JoinClips { ids }
-            | WorkflowCommand::ConvertLoop { ids, .. }
-            | WorkflowCommand::TrimClips { ids, .. }
-            | WorkflowCommand::DeleteOutsideEvents { ids }
-            | WorkflowCommand::SplitClips { ids, .. }
-            | WorkflowCommand::ReverseClips { ids, .. }
-            | WorkflowCommand::ScaleTempo { ids, .. }
-            | WorkflowCommand::ChopClips { ids, .. }
-            | WorkflowCommand::CleanupAutomation { ids, .. }
-            | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
-            WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
-            WorkflowCommand::MoveClips { moves, .. } => moves
-                .iter()
-                .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
-            WorkflowCommand::PasteClips { track, .. } => track.as_ref().and_then(track_frozen),
-            WorkflowCommand::LayerRecording { clip, .. } => clip_frozen(clip),
-            WorkflowCommand::EngulfRecording { device, .. } => track_frozen(device),
-            WorkflowCommand::PasteNotes { clip, .. }
-            | WorkflowCommand::DuplicateNotes { clip, .. }
-            | WorkflowCommand::PasteAutomationPoints { clip, .. }
-            | WorkflowCommand::DuplicatePoints { clip, .. } => clip_frozen(clip),
-            WorkflowCommand::DuplicateTrack { device } => track_frozen(device),
-            WorkflowCommand::DuplicateTracks { devices, .. } => {
-                devices.iter().find_map(track_frozen)
-            }
-            WorkflowCommand::ApplyPatch { device, .. }
-            | WorkflowCommand::ResetDevice { device } => device_frozen(device),
-            WorkflowCommand::ReplaceDevice { target, .. } => device_frozen(target),
-            WorkflowCommand::RemoveDevices { keys } | WorkflowCommand::DeleteDevices { keys } => {
-                keys.iter().find_map(|k| {
+            Command::Disconnect { to } => device_frozen(&to.device).or_else(|| {
+                doc.cable_into(to)
+                    .and_then(|c| device_frozen(&c.from.device))
+            }),
+            Command::SetTempo(_) => Some(tempo()),
+            Command::Song(s) => match s {
+                SongCommand::AddClip { device, .. }
+                | SongCommand::AddAudioClip { device, .. }
+                | SongCommand::NewTakeGroup { device, .. }
+                | SongCommand::GroupAsTakes { device, .. }
+                | SongCommand::AddAutomationLane { device, .. }
+                | SongCommand::AddNoteLane { device, .. }
+                | SongCommand::RemoveNoteLane { device, .. }
+                | SongCommand::RemoveAutomationLane { device, .. }
+                | SongCommand::SetLaneStatic { device, .. }
+                | SongCommand::RenameLane { device, .. }
+                | SongCommand::SetLaneMuted { device, .. } => track_frozen(device),
+                SongCommand::MoveTracks { devices, .. }
+                | SongCommand::MergeNoteLanes { devices } => devices.iter().find_map(track_frozen),
+                SongCommand::MoveNoteLane {
+                    device, to_device, ..
+                } => track_frozen(device).or_else(|| track_frozen(to_device)),
+                SongCommand::AddTake { group, .. } => doc
+                    .song
+                    .take_group(*group)
+                    .and_then(|(t, _, _)| track_frozen(&t.device)),
+                SongCommand::RemoveClip { id }
+                | SongCommand::SetClipGeometry { id, .. }
+                | SongCommand::SetClipContent { id, .. }
+                | SongCommand::SplitClip { id, .. }
+                | SongCommand::DuplicateClip { id, .. }
+                | SongCommand::SetAudioClip { id, .. }
+                | SongCommand::SetWarpMarkers { id, .. }
+                | SongCommand::StripSilence { id, .. } => clip_frozen(id),
+                SongCommand::SetClipGrid { clip, .. }
+                | SongCommand::SetClipControllers { clip, .. }
+                | SongCommand::SetClipScale { clip, .. }
+                | SongCommand::QuantizeNotes { clip, .. } => clip_frozen(clip),
+                SongCommand::ApplyQuantize { clips, .. }
+                | SongCommand::ApplyNoteTool { clips, .. } => clips.iter().find_map(clip_frozen),
+                SongCommand::SetClipMeta { ids, .. } => ids.iter().find_map(clip_frozen),
+                SongCommand::SetTempoMap(_)
+                | SongCommand::DragTempoMap { .. }
+                | SongCommand::SetMeter { .. }
+                | SongCommand::SetMeterMap(_)
+                | SongCommand::DragMeterMap { .. } => Some(tempo()),
+                _ => None,
+            },
+            Command::Workflow(w) => match w {
+                WorkflowCommand::RemoveClips { ids }
+                | WorkflowCommand::DuplicateClips { ids }
+                | WorkflowCommand::SetClipsMuted { ids, .. }
+                | WorkflowCommand::JoinClips { ids }
+                | WorkflowCommand::ConvertLoop { ids, .. }
+                | WorkflowCommand::TrimClips { ids, .. }
+                | WorkflowCommand::DeleteOutsideEvents { ids }
+                | WorkflowCommand::SplitClips { ids, .. }
+                | WorkflowCommand::ReverseClips { ids, .. }
+                | WorkflowCommand::ScaleTempo { ids, .. }
+                | WorkflowCommand::ChopClips { ids, .. }
+                | WorkflowCommand::CleanupAutomation { ids, .. }
+                | WorkflowCommand::CutOut { ids, .. } => ids.iter().find_map(clip_frozen),
+                WorkflowCommand::DuplicateLoopInstance { id, .. } => clip_frozen(id),
+                WorkflowCommand::ExtractNotes { clip, .. }
+                | WorkflowCommand::ExplodeNotes { clip } => clip_frozen(clip),
+                WorkflowCommand::MoveClips { moves, .. } => moves
+                    .iter()
+                    .find_map(|m| clip_frozen(&m.id).or_else(|| track_frozen(&m.track))),
+                WorkflowCommand::PasteClips { track, .. } => track.as_ref().and_then(track_frozen),
+                WorkflowCommand::LayerRecording { clip, .. } => clip_frozen(clip),
+                WorkflowCommand::EngulfRecording { device, .. } => track_frozen(device),
+                WorkflowCommand::PasteNotes { clip, .. }
+                | WorkflowCommand::DuplicateNotes { clip, .. }
+                | WorkflowCommand::PasteAutomationPoints { clip, .. }
+                | WorkflowCommand::DuplicatePoints { clip, .. } => clip_frozen(clip),
+                WorkflowCommand::DuplicateTrack { device } => track_frozen(device),
+                WorkflowCommand::DuplicateTracks { devices, .. } => {
+                    devices.iter().find_map(track_frozen)
+                }
+                WorkflowCommand::ApplyPatch { device, .. }
+                | WorkflowCommand::ResetDevice { device } => device_frozen(device),
+                WorkflowCommand::ReplaceDevice { target, .. } => device_frozen(target),
+                WorkflowCommand::RemoveDevices { keys }
+                | WorkflowCommand::DeleteDevices { keys } => keys.iter().find_map(|k| {
                     if doc.song.track(k).is_some_and(|t| t.frozen.is_some()) {
                         None
                     } else {
                         device_frozen(k).or_else(|| channel_error(k))
                     }
-                })
-            }
-            WorkflowCommand::CreatePlayer {
-                target: CreateTarget::Selected(key),
-                ..
-            }
-            | WorkflowCommand::DisconnectDevice { key } => device_frozen(key),
-            WorkflowCommand::DisconnectDevices { keys } => keys.iter().find_map(device_frozen),
-            _ => None,
-        },
-        // A frozen track's devices (and the track itself) stay where they are.
-        Command::Container(c) => match c {
-            ContainerCommand::Combine { keys, .. } => keys
-                .iter()
-                .find_map(|k| device_frozen(k).or_else(|| track_frozen(k))),
-            ContainerCommand::MoveIntoContainer { key, container, .. } => device_frozen(key)
-                .or_else(|| track_frozen(key))
-                .or_else(|| device_frozen(container)),
-            ContainerCommand::Uncombine { container } => {
-                device_frozen(container).or_else(|| track_frozen(container))
-            }
-            ContainerCommand::MoveOutOfContainer { key, .. } => {
-                crate::container::split_path(key).0.and_then(|container| {
-                    device_frozen(&container).or_else(|| track_frozen(&container))
-                })
-            }
-            _ => None,
-        },
-        Command::Console(c) => match c {
-            ConsoleCommand::RemoveChannel { channel } => channel_error(channel),
-            ConsoleCommand::SetInsert {
-                channel,
-                slot,
-                effect,
-            } => frozen_channel(channel)
-                .filter(|(_, frozen)| *slot < *frozen)
-                .map(|(t, _)| frozen_error(doc, &t.device))
-                .or_else(|| match effect {
-                    // A frozen effect cannot be put on another insert loop.
-                    Some(InsertEffect::Existing(key)) => device_frozen(key),
-                    _ => None,
                 }),
-            // The inserts a freeze rendered stay as they are.
-            ConsoleCommand::ClearInserts { strip } | ConsoleCommand::ResetStrip { strip, .. } => {
-                frozen_channel(strip)
-                    .filter(|(_, frozen)| *frozen > 0)
-                    .map(|(t, _)| frozen_error(doc, &t.device))
-            }
-            ConsoleCommand::PasteSettings { strips, clip } if clip.sections.covers_inserts() => {
-                strips
+                WorkflowCommand::CreatePlayer {
+                    target: CreateTarget::Selected(key),
+                    ..
+                }
+                | WorkflowCommand::DisconnectDevice { key } => device_frozen(key),
+                WorkflowCommand::DisconnectDevices { keys } => keys.iter().find_map(device_frozen),
+                _ => None,
+            },
+            // A frozen track's devices (and the track itself) stay where they are.
+            Command::Container(c) => match c {
+                ContainerCommand::Combine { keys, .. } => keys
                     .iter()
-                    .filter_map(&frozen_channel)
-                    .find(|(_, frozen)| *frozen > 0)
+                    .find_map(|k| device_frozen(k).or_else(|| track_frozen(k))),
+                ContainerCommand::MoveIntoContainer { key, container, .. } => device_frozen(key)
+                    .or_else(|| track_frozen(key))
+                    .or_else(|| device_frozen(container)),
+                ContainerCommand::Uncombine { container } => {
+                    device_frozen(container).or_else(|| track_frozen(container))
+                }
+                ContainerCommand::MoveOutOfContainer { key, .. } => {
+                    crate::container::split_path(key).0.and_then(|container| {
+                        device_frozen(&container).or_else(|| track_frozen(&container))
+                    })
+                }
+                _ => None,
+            },
+            Command::Console(c) => match c {
+                ConsoleCommand::RemoveChannel { channel } => channel_error(channel),
+                ConsoleCommand::SetInsert {
+                    channel,
+                    slot,
+                    effect,
+                } => frozen_channel(channel)
+                    .filter(|(_, frozen)| *slot < *frozen)
                     .map(|(t, _)| frozen_error(doc, &t.device))
-            }
-            ConsoleCommand::MoveInsert {
-                channel, from, to, ..
-            } => frozen_channel(channel)
-                .filter(|(_, frozen)| (*from).min(*to) < *frozen)
-                .map(|(t, _)| frozen_error(doc, &t.device)),
+                    .or_else(|| match effect {
+                        // A frozen effect cannot be put on another insert loop.
+                        Some(InsertEffect::Existing(key)) => device_frozen(key),
+                        _ => None,
+                    }),
+                // The inserts a freeze rendered stay as they are.
+                ConsoleCommand::ClearInserts { strip }
+                | ConsoleCommand::ResetStrip { strip, .. } => frozen_channel(strip)
+                    .filter(|(_, frozen)| *frozen > 0)
+                    .map(|(t, _)| frozen_error(doc, &t.device)),
+                ConsoleCommand::PasteSettings { strips, clip }
+                    if clip.sections.covers_inserts() =>
+                {
+                    strips
+                        .iter()
+                        .filter_map(&frozen_channel)
+                        .find(|(_, frozen)| *frozen > 0)
+                        .map(|(t, _)| frozen_error(doc, &t.device))
+                }
+                ConsoleCommand::MoveInsert {
+                    channel, from, to, ..
+                } => frozen_channel(channel)
+                    .filter(|(_, frozen)| (*from).min(*to) < *frozen)
+                    .map(|(t, _)| frozen_error(doc, &t.device)),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    };
+        };
     refused.map_or(Ok(()), Err)
 }
 

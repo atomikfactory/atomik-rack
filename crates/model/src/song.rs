@@ -746,6 +746,37 @@ pub enum SongCommand {
         /// characters.
         name: Option<String>,
     },
+    /// Move a note lane, with its clips and take groups, to place `to_index` among the note
+    /// lanes of `to_device`'s track (counting the lanes without the moved one), which may be its
+    /// own track (a reorder) or another note track. With `copy` the lane stays and the target
+    /// gets a copy whose clips take new ids (its take groups stay behind); `to_index` then counts
+    /// the target's lanes as they are. One undo step. Rejected: audio and automation tracks, a
+    /// frozen track on either side, a move that leaves a track without a note lane, a target past
+    /// [`MAX_NOTE_LANES`] lanes, a place the lane already has. A move does not change what the
+    /// tracks play, except that the order of a track's lanes decides ties (see
+    /// [`crate::song::flatten_notes`]).
+    MoveNoteLane {
+        /// The track the lane is on.
+        device: DeviceKey,
+        /// Index of the note lane.
+        lane: usize,
+        /// The track it goes to.
+        to_device: DeviceKey,
+        /// Its place among the target's note lanes.
+        to_index: usize,
+        /// Copy the lane instead of moving it.
+        copy: bool,
+    },
+    /// Merge the note lanes of each listed track onto its top lane, in one undo step: what the
+    /// track plays (its unmuted lanes' audible notes and controller points) becomes one clip per
+    /// connected stretch of sound on lane 0 and the other lanes go, with their clips, takes and
+    /// muted content. A track with one note lane is left alone; the command is rejected when no
+    /// listed track has more. Two notes of one pitch on one tick become one (the later lane's).
+    /// What the tracks play is unchanged. The new clips take ids from the song's next free id.
+    MergeNoteLanes {
+        /// The tracks.
+        devices: Vec<DeviceKey>,
+    },
     /// Mute or unmute a note or automation lane (see [`Lane::muted`]); setting the value it has
     /// is an error. One undo step. Muting an automation lane stops it driving its param, which
     /// keeps the value it has in the document: the app sends a `SetParam` with the value the lane

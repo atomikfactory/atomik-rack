@@ -14,6 +14,7 @@ use crate::console_cmd::{Planner, add_channel, console_available, is_instrument}
 use crate::container::{SPLIT_TYPE, split_path};
 use crate::controller::{ControllerKind, ControllerLane, canonical, window_points};
 use crate::history::Edit;
+use crate::lane_cmd::ExtractMode;
 use crate::loop_convert::{LoopConvert, content_pieces};
 use crate::plugin::{MAX_PROJECT_PLUGIN_STATE_BYTES, key_base_of_name};
 use crate::rack_columns::{self, Placement};
@@ -251,6 +252,35 @@ pub enum WorkflowCommand {
         ids: Vec<ClipId>,
         /// The new mute state.
         muted: bool,
+    },
+    /// Pulls the notes at the indices `selection` of a note clip out onto a lane: a new note
+    /// lane after the track's last (named after the pitch when the notes share one) or, with
+    /// `to`, an existing note lane that has no clip where the clip is. The lane gets a clip of
+    /// the clip's place, length, offset, loop, grid and scale (it takes the next free id, which
+    /// is [`crate::Document::last_clip_id`]). With [`ExtractMode::Move`] the notes leave their
+    /// clip, so the track plays what it did; with `Copy` they stay too. Controllers stay on the
+    /// source. One undo step. Rejected: clips that are not note clips or belong to a take group,
+    /// an empty or out-of-range selection, a clip another clip of its lane partly hides, and a
+    /// track that would pass 64 note lanes.
+    ExtractNotes {
+        /// The note clip.
+        clip: ClipId,
+        /// Indices into the clip's notes.
+        selection: Vec<usize>,
+        /// Move the notes or copy them.
+        mode: ExtractMode,
+        /// An existing note lane of the track; `None` adds one.
+        to: Option<usize>,
+    },
+    /// Puts every pitch of a note clip on a lane of its own: one new note lane per pitch (named
+    /// after it, lowest pitch first, after the track's last lane), each with a clip of the
+    /// clip's place, length, offset, loop, grid and scale. The source clip stays without notes.
+    /// The track plays what it did. One undo step; [`crate::Document::last_clip_id`] is the
+    /// highest pitch's clip. Rejected like [`WorkflowCommand::ExtractNotes`], and for a clip of
+    /// one pitch.
+    ExplodeNotes {
+        /// The note clip.
+        clip: ClipId,
     },
     /// Turns the loops of the listed clips into clips (one undo step; a clip that does not loop
     /// is left alone, and so is the lane's sound). With [`LoopConvert::Separate`] each
@@ -823,6 +853,13 @@ pub(crate) fn plan(
         WorkflowCommand::ScaleTempo { ids, percent } => {
             crate::clip_transform::scale_clips(doc, &ids, percent)
         }
+        WorkflowCommand::ExtractNotes {
+            clip,
+            selection,
+            mode,
+            to,
+        } => crate::lane_cmd::extract_notes(&doc.song, clip, &selection, mode, to),
+        WorkflowCommand::ExplodeNotes { clip } => crate::lane_cmd::explode_notes(&doc.song, clip),
         WorkflowCommand::CleanupAutomation { ids, level } => {
             crate::clip_transform::cleanup_automation(doc, registry, &ids, level)
         }

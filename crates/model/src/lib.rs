@@ -36,6 +36,7 @@ mod groove_cmd;
 mod history;
 mod history_size;
 mod labels;
+mod lane_cmd;
 mod library_io;
 mod loop_convert;
 mod macros;
@@ -100,6 +101,7 @@ pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
     ticks_for_frames, track_chain,
 };
+pub use lane_cmd::ExtractMode;
 pub use loop_convert::LoopConvert;
 pub use macros::{
     MACRO_BANK_TYPE, MAX_MACRO_ASSIGNS, MacroAssign, MacroCommand, MacroName, MacroSet,

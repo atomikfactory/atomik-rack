@@ -69,6 +69,9 @@ enum WfOp {
     Quantize(usize, u8, bool),
     /// A note tool (kind 0..7) on a clip with a seed.
     NoteTool(usize, u8, u32),
+    /// A note-lane workflow (kind 0..5): move or copy a lane (tracks a, b; lanes c, d), merge a
+    /// track's lanes, explode a clip, or extract notes of a clip (copy or move).
+    Lanes(u8, usize, usize, usize, usize),
     Player(usize, usize),
     NotesCable(usize, usize),
     /// Warp markers of a clip from tick and frame gaps (0), or a split at them (1), or the name of an asset (2).
@@ -220,6 +223,8 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
         (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
+        (0u8..6, 0usize..12, 0usize..12, 0usize..6, 0usize..6)
+            .prop_map(|(k, a, b, c, d)| WfOp::Lanes(k, a, b, c, d)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::NotesCable(a, b)),
         (
@@ -664,6 +669,31 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 _ => NoteTool::SetPitch((*seed % 128) as u8),
             },
         }),
+        WfOp::Lanes(kind, a, b, c, d) => match kind {
+            0 | 1 => sc(SongCommand::MoveNoteLane {
+                device: pick(&tracks, *a)?,
+                lane: *c,
+                to_device: pick(&tracks, *b)?,
+                to_index: *d,
+                copy: *kind == 1,
+            }),
+            2 => sc(SongCommand::MergeNoteLanes {
+                devices: vec![pick(&tracks, *a)?, pick(&tracks, *b)?],
+            }),
+            3 => Command::Workflow(atomik_model::WorkflowCommand::ExplodeNotes {
+                clip: pick(&ids, *a)?,
+            }),
+            _ => Command::Workflow(atomik_model::WorkflowCommand::ExtractNotes {
+                clip: pick(&ids, *a)?,
+                selection: vec![*c, *d],
+                mode: if *kind == 4 {
+                    atomik_model::ExtractMode::Copy
+                } else {
+                    atomik_model::ExtractMode::Move
+                },
+                to: (*b % 3 == 0).then_some(*d),
+            }),
+        },
         WfOp::Quantize(c, grid, ends) => sc(SongCommand::ApplyQuantize {
             clips: vec![pick(&ids, *c)?],
             quantize: QuantizeParams {

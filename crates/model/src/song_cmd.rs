@@ -1144,6 +1144,16 @@ pub(crate) fn plan(
         | SongCommand::DeleteGroove { .. }
         | SongCommand::ExtractGroove { .. } => crate::groove_cmd::plan(doc, command)?,
         SongCommand::ApplyNoteTool { .. } => crate::note_tools::plan(doc, command)?,
+        SongCommand::MoveNoteLane {
+            device,
+            lane,
+            to_device,
+            to_index,
+            copy,
+        } => crate::lane_cmd::move_note_lane(doc, &device, lane, (&to_device, to_index), copy)?,
+        SongCommand::MergeNoteLanes { devices } => {
+            crate::lane_cmd::merge_note_lanes(doc, &devices)?
+        }
         SongCommand::AddAutomationLane { device, param } => {
             let desc = device_descriptor(doc, registry, &device)?;
             if desc.param_by_key(&param).is_none() || crate::console::is_internal_param(&param) {
