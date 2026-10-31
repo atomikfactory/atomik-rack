@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Track management.** A track header can be dragged: the selected tracks (a press on one of
+  several keeps the selection) move together to a place of the track list, into or out of a
+  folder, in one undo step, with an accent line showing the place (indented by the folder depth)
+  and no line where the place would cut another folder in two, where a track is frozen or where
+  nothing would change; Escape cancels. With the copy modifier held the drop copies the tracks
+  there instead. Edit > Duplicate copies every selected track (devices, console channels and
+  clips, not armed) in one undo step and keeps the copies together after the last original.
+  Dragging the bottom edge of a selected track's header resizes all the selected tracks by the
+  same factor (Alt gives them one height), and Track Height > Minimise / Restore (Alt+Shift+M)
+  shortens them to the least height and, pressed again, brings back the heights they had. Track >
+  Delete Track and Device removes the selected tracks with their devices (the console channel and
+  cables go with them, and one undo brings everything back). A track colour now also colours its
+  device, so the rack and the console strip show it, in the same undo step. The project format
+  is unchanged. Alt on a folder chevron collapses or expands every folder in one undo step. Not
+  yet: dragging a folder row, a folder that mutes and solos its tracks by itself, an automatic
+  colour for new tracks, a colour picker, and stacked bars for clips in tracks shorter than 32 px.
 - **Rack editing.** Moving, duplicating and pasting an effect or a note player re-routes it as if
   it had been created at its new place, in the same undo step: where it was, an insert chain
   closes up, a send/return slot is freed and the tracks that entered at a player enter at its
