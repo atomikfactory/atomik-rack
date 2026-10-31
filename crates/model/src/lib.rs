@@ -950,6 +950,9 @@ pub struct Document {
     /// The most undo steps and the most estimated bytes the history keeps; see
     /// [`Document::set_undo_limits`].
     undo_limits: (usize, usize),
+    /// Set while a trial step is applied: it is not kept yet, so it must not push an older
+    /// step out of the history.
+    hold_trim: bool,
     redo: Vec<Edit>,
     /// The open drag-merge group of the last applied command.
     merge: Option<MergeKey>,
@@ -1028,6 +1031,7 @@ impl Document {
             undo: VecDeque::new(),
             undo_bytes: 0,
             undo_limits: (MAX_UNDO_STEPS, MAX_UNDO_BYTES),
+            hold_trim: false,
             redo: Vec::new(),
             merge: None,
             last_clip: None,
@@ -1070,6 +1074,9 @@ impl Document {
     }
 
     fn trim_undo(&mut self) {
+        if self.hold_trim {
+            return;
+        }
         let (steps, bytes) = self.undo_limits;
         while self.undo.len() > 1 && (self.undo.len() > steps || self.undo_bytes > bytes) {
             if let Some(old) = self.undo.pop_front() {
@@ -1357,7 +1364,10 @@ impl Document {
     ) -> Result<Vec<SyncOp>, ModelError> {
         let redo = std::mem::take(&mut self.redo);
         let depth = self.undo.len();
-        let ops = match self.apply(command, registry) {
+        self.hold_trim = true;
+        let applied = self.apply(command, registry);
+        self.hold_trim = false;
+        let ops = match applied {
             Ok(ops) => ops,
             Err(e) => {
                 self.redo = redo;

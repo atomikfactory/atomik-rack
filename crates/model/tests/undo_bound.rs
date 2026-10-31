@@ -209,3 +209,61 @@ fn a_copy_of_a_document_shares_the_notes_until_one_copy_changes_them() {
     );
     assert_eq!(list(d.doc()).len(), 100);
 }
+
+#[test]
+fn a_cancelled_trial_does_not_push_the_oldest_step_out_of_a_full_history() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    d.apply(add(0, SYNTH, Some("lead")), &reg).unwrap();
+    d.set_undo_limits(5, MAX_UNDO_BYTES);
+    for i in 0..5 {
+        set_level(&mut d, &reg, "lead", -30.0 + i as f32);
+    }
+    assert_eq!(d.undo_depth(), 5);
+    for v in [-10.0, -11.0] {
+        d.apply_trial(
+            Command::SetParam {
+                key: key("lead"),
+                param: "master.level".into(),
+                value: v,
+                merge: None,
+            },
+            &reg,
+        )
+        .unwrap();
+    }
+    assert_eq!(d.undo_depth(), 5, "a trial step is not a kept step");
+    d.cancel_trial().unwrap();
+    assert_eq!(d.undo_depth(), 5);
+    let mut undone = 0;
+    while d.undo(&reg).is_some() {
+        undone += 1;
+    }
+    assert_eq!(undone, 5);
+    // Every one of the five steps, the oldest included, undid: the level is back to its default.
+    let lead = d.doc().device(&key("lead")).unwrap();
+    assert!(!lead.params.contains_key("master.level"));
+}
+
+#[test]
+fn a_committed_trial_is_trimmed_like_any_step() {
+    let reg = registry();
+    let mut d = Document::new(empty_doc());
+    d.apply(add(0, SYNTH, Some("lead")), &reg).unwrap();
+    d.set_undo_limits(3, MAX_UNDO_BYTES);
+    for i in 0..3 {
+        set_level(&mut d, &reg, "lead", -30.0 + i as f32);
+    }
+    d.apply_trial(
+        Command::SetParam {
+            key: key("lead"),
+            param: "master.level".into(),
+            value: -5.0,
+            merge: None,
+        },
+        &reg,
+    )
+    .unwrap();
+    d.commit_trial();
+    assert_eq!(d.undo_depth(), 3);
+}
