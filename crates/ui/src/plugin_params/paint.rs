@@ -388,7 +388,7 @@ fn menu(v: &PluginParamsView, c: &mut dyn Canvas) {
     c.stroke_with(
         RoundedRect::from_rect(m.rect, 4.0),
         1.0,
-        Color::WHITE.with_alpha(0.14),
+        t.ink.with_alpha(0.14),
     );
     for (k, (_, label)) in m.entries.iter().enumerate() {
         let r = PluginParamsView::menu_row(m.rect, k);

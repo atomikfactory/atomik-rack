@@ -799,6 +799,15 @@ struct DropHover {
 }
 
 impl ArrangementView {
+    /// Switches to `theme`: the colours are derived again, what the last sync derived from the
+    /// old ones (the VCA chips) is rebuilt, and the view repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.synced = false;
+        self.synced_rev = None;
+        self.repaint = true;
+    }
+
     /// An empty view; call [`Self::set_bounds`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         let song = Arc::new(atomik_model::empty_song(120.0));
@@ -5621,7 +5630,7 @@ impl ArrangementView {
             };
             let right = button.map_or(vis.x1, |b| b.x0);
             let text = fit_label(label, right - x - 4.0, 8.0);
-            c.text(&TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.plate).weight(700));
+            c.text(&TextRun::new(text, pt(x, vis.y0 + 9.0), 8.0, st.base.on_accent).weight(700));
         }
         if let Some(b) = button {
             let hover = matches!(
@@ -5651,7 +5660,7 @@ impl ArrangementView {
             let a = if hover { 0.45 } else { 0.22 };
             c.fill_with(shape, st.base.plate.with_alpha(a));
         }
-        let ink = if on { st.base.plate } else { st.base.text };
+        let ink = if on { st.base.on_accent } else { st.base.text };
         c.text(
             &TextRun::new(
                 "M",

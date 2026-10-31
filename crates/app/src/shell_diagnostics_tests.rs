@@ -38,7 +38,7 @@ fn the_help_menu_asks_for_a_save_dialog() {
     let menus = crate::commands::menus(&s.menu_state(), s.keymap());
     let help = menus.iter().find(|m| m.title == "Help").unwrap();
     let labels: Vec<_> = help.items().map(|i| i.label.as_ref()).collect();
-    assert_eq!(labels, ["Export Diagnostics\u{2026}"]);
+    assert!(labels.contains(&"Export Diagnostics\u{2026}"), "{labels:?}");
 }
 
 #[test]

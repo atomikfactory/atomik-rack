@@ -9,6 +9,19 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Light theme, application zoom and interface settings.** Settings has a new Interface tab: the
+  theme (dark, light, or whichever the operating system uses; a switch repaints every view at
+  once and View > Theme does the same), the application zoom (75 to 200 percent for every window,
+  also in View > Application Zoom, kept for the next start), the knob range (Normal, Precise or
+  Very precise: how far a drag has to travel to sweep a knob or fader) and value tooltips (resting
+  on any rack control shows its value). The defaults are how the app looked and felt before, and
+  an older `workflow.json` loads with them. The theme and the zoom touch neither the project nor
+  the sound.
+- **Help and Window menus.** Help > Keyboard Shortcuts (F1) opens the list of every command and
+  its keys, Documentation and Report an Issue open the project's public pages, and About shows the
+  version, the GPL-3.0-or-later notice and where the third-party licences come from. The Window
+  menu brings the main window and a detached Rack or Mixer forward. A double-click on the divider
+  between the rack and the song collapses the rack; the next one puts the split back.
 - **Project sample rate and channel counts.** File > New at Sample Rate starts a project at 44.1,
   48 or 96 kHz, and File > Convert Sample Rate moves the open project to another rate in one undo
   step: the audio it uses is resampled into the project folder (the originals stay, so undo brings

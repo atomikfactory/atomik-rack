@@ -236,10 +236,25 @@ pub struct ContainerEditorView {
     hover: Hit,
     next_merge: u64,
     focused: bool,
+    /// How far a knob has to be dragged to sweep its range.
+    knob_range: widget::KnobRange,
     repaint: bool,
 }
 
 impl ContainerEditorView {
+    /// Sets how far a knob has to be dragged to sweep its range.
+    pub fn set_knob_range(&mut self, range: widget::KnobRange) {
+        self.knob_range = range;
+    }
+
+    /// Switches to `theme`: the colours are derived again and the view repaints (the accent
+    /// follows at the next sync).
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.accent = self.st.base.highlight;
+        self.repaint = true;
+    }
+
     /// A closed editor; call [`Self::set_bounds`], [`Self::open`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         let st = SeqTheme::from_theme(&theme);
@@ -267,6 +282,7 @@ impl ContainerEditorView {
             hover: Hit::None,
             next_merge: MERGE_BASE,
             focused: false,
+            knob_range: widget::KnobRange::default(),
             repaint: true,
         }
     }
@@ -1038,7 +1054,7 @@ impl ContainerEditorView {
                     let value = self.macro_values[i];
                     self.drag = Drag::Knob(Box::new(KnobDrag {
                         index: i,
-                        drag: ValueDrag::new(&p, value, KNOB_PIXELS),
+                        drag: ValueDrag::new(&p, value, KNOB_PIXELS * self.knob_range.travel()),
                         merge,
                         last_y: pos.y,
                         start: value,

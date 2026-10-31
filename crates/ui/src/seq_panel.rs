@@ -652,8 +652,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(panel.name.inset(-0.5), 3.5),
         1.0,
-        info.rename
-            .map_or(Color::WHITE.with_alpha(0.07), |_| accent),
+        info.rename.map_or(theme.ink.with_alpha(0.07), |_| accent),
     );
     let pattern = doc.patterns.get(edit);
     let (text, col) = match (info.rename, pattern) {
@@ -725,7 +724,7 @@ pub(crate) fn paint_curve_strip<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let inner = r.inset(-3.0);
     let n = length.clamp(1, steps.len().max(1));
@@ -740,7 +739,7 @@ pub(crate) fn paint_curve_strip<C: Canvas + ?Sized>(
     c.stroke_with(
         vello::kurbo::Line::new(pt(inner.x0, mid), pt(inner.x1, mid)),
         1.0,
-        Color::WHITE.with_alpha(0.12),
+        theme.ink.with_alpha(0.12),
     );
     if let Some(k) = cursor.filter(|k| *k < n) {
         let x = inner.x0 + k as f64 * cw;
@@ -783,7 +782,7 @@ pub(crate) fn paint_preview<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let inner = r.inset(-4.0);
     let n = usize::from(p.length.max(1));
@@ -809,7 +808,7 @@ pub(crate) fn paint_preview<C: Canvas + ?Sized>(
                     pt(x.round() + 0.5, inner.y1),
                 ),
                 1.0,
-                Color::WHITE.with_alpha(if k == 0 { 0.16 } else { 0.07 }),
+                theme.ink.with_alpha(if k == 0 { 0.16 } else { 0.07 }),
             );
         }
     }

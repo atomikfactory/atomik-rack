@@ -346,6 +346,15 @@ pub struct PianoRollView {
 }
 
 impl PianoRollView {
+    /// Switches to `theme`: the colours are derived again and the view repaints (the accent
+    /// follows at the next sync).
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.accent = self.st.base.highlight;
+        self.clip_rev = None;
+        self.repaint = true;
+    }
+
     /// A closed piano roll; call [`Self::set_bounds`], [`Self::open`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         let st = SeqTheme::from_theme(&theme);

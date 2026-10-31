@@ -16,6 +16,7 @@
 //! when [`DialogOutcome::Apply`] arrives and saves `keymap.json` and `workflow.json`. Without
 //! preferences the dialog is the audio-only dialog it always was.
 
+use crate::interface_tab::{InterfaceLayout, InterfaceTab, UiPrefs};
 use crate::keyboard_tab::{FOOTER, KeyboardLayout, KeyboardTab, PAD, TITLE, TabOutcome};
 use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
@@ -151,6 +152,8 @@ pub enum Tab {
     Keyboard,
     /// Workflow preferences.
     Workflow,
+    /// Theme, zoom and how the controls feel.
+    Interface,
     /// The control surface.
     Surfaces,
     /// MIDI clock in and out.
@@ -159,10 +162,11 @@ pub enum Tab {
 
 impl Tab {
     /// Every tab, in strip order.
-    pub const ALL: [Tab; 5] = [
+    pub const ALL: [Tab; 6] = [
         Tab::Audio,
         Tab::Keyboard,
         Tab::Workflow,
+        Tab::Interface,
         Tab::Surfaces,
         Tab::Sync,
     ];
@@ -173,27 +177,31 @@ impl Tab {
             Tab::Audio => "Audio",
             Tab::Keyboard => "Keyboard",
             Tab::Workflow => "Workflow",
+            Tab::Interface => "Interface",
             Tab::Surfaces => "Surfaces",
             Tab::Sync => "Sync",
         }
     }
 
-    fn title(self) -> &'static str {
+    /// The heading shown above the tab.
+    pub fn title(self) -> &'static str {
         match self {
             Tab::Audio => "Audio settings",
             Tab::Keyboard => "Keyboard shortcuts",
             Tab::Workflow => "Workflow",
+            Tab::Interface => "User interface",
             Tab::Surfaces => "Control surfaces",
             Tab::Sync => "MIDI clock",
         }
     }
 }
 
-/// The drafts of the Keyboard and Workflow tabs.
+/// The drafts of the Keyboard, Workflow and Interface tabs.
 #[derive(Debug, Clone)]
 struct Prefs {
     keyboard: KeyboardTab,
     workflow: WorkflowTab,
+    interface: InterfaceTab,
 }
 
 /// Where everything is, for the current view size and scroll (logical units).
@@ -267,6 +275,7 @@ impl SettingsDialog {
     pub fn with_preferences(mut self, keymap: KeymapEditor, workflow: WorkflowPrefs) -> Self {
         self.prefs = Some(Prefs {
             keyboard: KeyboardTab::new(keymap),
+            interface: InterfaceTab::new(UiPrefs::of(&workflow)),
             workflow: WorkflowTab::new(workflow),
         });
         self
@@ -295,6 +304,14 @@ impl SettingsDialog {
         self.tab
     }
 
+    /// Shows `tab` (the dialog keeps its drafts); the preference tabs need a dialog that has
+    /// preferences.
+    pub fn show_tab(&mut self, tab: Tab) {
+        if self.prefs.is_some() || matches!(tab, Tab::Audio | Tab::Surfaces | Tab::Sync) {
+            self.tab = tab;
+        }
+    }
+
     /// The Keyboard tab, when the dialog has preferences.
     pub fn keyboard(&self) -> Option<&KeyboardTab> {
         self.prefs.as_ref().map(|p| &p.keyboard)
@@ -318,14 +335,23 @@ impl SettingsDialog {
             .map(|p| p.workflow.layout(self.panel(view)))
     }
 
+    /// The Interface tab layout, while that tab shows.
+    pub fn interface_layout(&self, view: Size) -> Option<InterfaceLayout> {
+        if self.tab != Tab::Interface {
+            return None;
+        }
+        self.prefs
+            .as_ref()
+            .map(|p| p.interface.layout(self.panel(view)))
+    }
+
     /// The keymap diff and the workflow preferences as edited (`None` for the audio-only
     /// dialog): what the shell saves when the dialog is applied.
     pub fn preferences(&self) -> Option<(UserKeymap, WorkflowPrefs)> {
         self.prefs.as_ref().map(|p| {
-            (
-                p.keyboard.editor().user().clone(),
-                p.workflow.prefs().clone(),
-            )
+            let mut workflow = p.workflow.prefs().clone();
+            p.interface.prefs().apply_to(&mut workflow);
+            (p.keyboard.editor().user().clone(), workflow)
         })
     }
 
@@ -371,6 +397,13 @@ impl SettingsDialog {
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
                 let height = (TITLE + 13.0 * 50.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let x0 = ((view.width - width) / 2.0).max(0.0);
+                let y0 = ((view.height - height) / 2.0).max(0.0);
+                Rect::new(x0, y0, x0 + width, y0 + height)
+            }
+            Tab::Interface => {
+                let width = (view.width - 32.0).clamp(240.0, 640.0);
+                let height = (TITLE + 4.0 * 50.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
@@ -1106,6 +1139,7 @@ impl SettingsDialog {
         let out = match tab {
             Tab::Keyboard => prefs.keyboard.handle(event, panel),
             Tab::Workflow => prefs.workflow.handle(event, panel),
+            Tab::Interface => prefs.interface.handle(event, panel),
             Tab::Audio | Tab::Surfaces | Tab::Sync => TabOutcome::Open,
         };
         match out {
@@ -1163,6 +1197,11 @@ impl SettingsDialog {
             }
             (Tab::Workflow, Some(p)) => {
                 p.workflow.paint(canvas, theme, panel_rect);
+                self.paint_buttons(canvas, theme, panel_rect);
+                return;
+            }
+            (Tab::Interface, Some(p)) => {
+                p.interface.paint(canvas, theme, panel_rect);
                 self.paint_buttons(canvas, theme, panel_rect);
                 return;
             }

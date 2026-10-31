@@ -128,6 +128,12 @@ pub struct PluginSettingsView {
 }
 
 impl PluginSettingsView {
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// A view with the default (plugins off) data; call [`Self::set_bounds`] and
     /// [`Self::set_data`].
     pub fn new(theme: Theme) -> Self {

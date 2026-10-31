@@ -13,6 +13,33 @@ use atomik_ui::keymap::{CommandOutcome, Roles};
 const TAP_MERGE_BASE: u64 = 14 << 40;
 
 impl<S: EngineSink> AppCore<S> {
+    /// Switches every view the core owns to `theme`; what was recorded with the old colours is
+    /// dropped and everything repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.view.set_theme(theme.clone());
+        self.arrangement.set_theme(theme.clone());
+        self.piano_roll.set_theme(theme.clone());
+        self.sample_editor.set_theme(theme.clone());
+        self.step_editor.set_theme(theme.clone());
+        self.slice_editor.set_theme(theme.clone());
+        self.audio_editor.set_theme(theme.clone());
+        self.seq_editor.set_theme(theme.clone());
+        self.container_editor.set_theme(theme.clone());
+        self.transport_bar.set_theme(theme.clone());
+        self.console.set_theme(theme.clone());
+        self.plugin_params.set_theme(theme.clone());
+        self.file_browser.set_theme(theme.clone());
+        self.piano_keys.set_theme(theme);
+    }
+
+    /// Sets how far a knob or fader has to be dragged to sweep its range (the rack, the mixer
+    /// and the container editor).
+    pub fn set_knob_range(&mut self, range: atomik_ui::widget::KnobRange) {
+        self.view.set_knob_range(range);
+        self.console.set_knob_range(range);
+        self.container_editor.set_knob_range(range);
+    }
+
     /// Offers a registry command to the view of `pane`. `None`: the view did not take it
     /// (the next binding runs). A taken command's actions are applied (commands, selection,
     /// transport) and returned for the shell (opening panes); a refused command

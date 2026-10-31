@@ -7,7 +7,6 @@ use crate::master_panel;
 use atomik_device_sdk::RACK_WIDTH;
 use atomik_model::DeviceKey;
 use vello::kurbo::{Point, Rect, RoundedRect};
-use vello::peniko::Color;
 
 /// Height of one row of a pick list.
 const ROW_H: f64 = 16.0;
@@ -114,7 +113,7 @@ impl RackView {
         c.stroke_with(
             RoundedRect::from_rect(m.rect, 4.0),
             1.0,
-            Color::WHITE.with_alpha(0.14),
+            theme.ink.with_alpha(0.14),
         );
         for (k, name) in m.names.iter().enumerate() {
             let r = row_rect(m.rect, k);

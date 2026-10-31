@@ -146,6 +146,12 @@ pub struct MidiMapsView {
 }
 
 impl MidiMapsView {
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// An empty panel; call [`Self::set_bounds`] and [`Self::set_rows`].
     pub fn new(theme: Theme) -> Self {
         Self {

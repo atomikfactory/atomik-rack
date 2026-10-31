@@ -24,7 +24,7 @@ The version lives in one place, `[workspace.package]` in the root `Cargo.toml`; 
    ```
 
    Signed tags are optional; annotated tags are the minimum. Tags are named `vX.Y.Z` (pre-releases `vX.Y.Z-rc.1`).
-8. The `Release` workflow builds, signs (where the secrets exist) and smoke-tests the artifacts and creates a **draft** GitHub release (it fails early if the tag does not match the `Cargo.toml` version). Download the artifacts, check that they start on real machines (the smoke test cannot open a window or play sound), that the checksums match and, for a signed release, that the signatures verify (see [Verifying a download](#verifying-a-download)), paste the changelog section into the release notes, then publish the draft.
+8. The `Release` workflow builds, signs (where the secrets exist) and smoke-tests the artifacts and creates a **draft** GitHub release (it fails early if the tag does not match the `Cargo.toml` version). Download the artifacts, check that they start on real machines (the smoke test cannot open a window or play sound), that the checksums match and, for a signed release, that the signatures verify (see [Verifying a download](#verifying-a-download)), paste the changelog section into the release notes, generate the [third-party notices](#third-party-notices) and attach them, then publish the draft.
 
 ## Binaries
 
@@ -93,6 +93,18 @@ Run on every packaged artifact of each platform, with no window opened:
 - When signing was configured for the platform the checks insist on it: Windows runs `signtool verify /pa` on the installer and the installed programs; macOS runs `spctl --assess` on the app and the disk image and `stapler validate` on both.
 
 The checks do not start the graphical application, open an audio device or scan plugins: the runners have no display, GPU or sound card.
+
+## Third-party notices
+
+Help > About Atomik Rack shows the version, the GPL-3.0-or-later notice (the `LICENSE` file that every package carries) and says that the licences of the Rust libraries a build uses are collected for each release and attached to the release page. They are generated at release time and not kept in the repository, with the `cargo-about` subcommand, which reads the licence of every crate in `Cargo.lock`:
+
+```sh
+cargo install --locked cargo-about
+cargo about init        # once, in a scratch copy: writes about.toml and about.hbs to adapt
+cargo about generate --workspace --locked about.hbs > THIRD-PARTY-NOTICES.html
+```
+
+The licences it accepts must be the ones `deny.toml` allows, so a licence that passes `cargo deny check` is never refused here. Attach `THIRD-PARTY-NOTICES.html` to the draft release by hand (`gh release upload vX.Y.Z THIRD-PARTY-NOTICES.html`); the packaging scripts do not include it yet, so the About box points to the release page and not to a file next to the program. The About text is `AboutBox::lines` in `crates/app/src/about_box.rs`: it names the project and its public repository and nothing else, so a release needs no change to it.
 
 ## Signing
 

@@ -21,6 +21,69 @@ pub const FINE_DIVISOR: f64 = 10.0;
 /// Normalized change per wheel notch for continuous params.
 pub const WHEEL_STEP: f64 = 0.02;
 
+/// How far a knob or fader has to be dragged to sweep its range (Settings > Interface). The
+/// wheel and Shift keep their own steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KnobRange {
+    /// The standard travel ([`KNOB_PIXELS_PER_RANGE`], [`FADER_PIXELS_PER_RANGE`]).
+    #[default]
+    Normal,
+    /// Twice the travel: the same drag moves the value half as far.
+    Precise,
+    /// Four times the travel.
+    VeryPrecise,
+}
+
+impl KnobRange {
+    /// Every range, in menu order.
+    pub const ALL: [KnobRange; 3] = [
+        KnobRange::Normal,
+        KnobRange::Precise,
+        KnobRange::VeryPrecise,
+    ];
+
+    /// The identifier saved in the preferences.
+    pub fn id(self) -> &'static str {
+        match self {
+            KnobRange::Normal => "normal",
+            KnobRange::Precise => "precise",
+            KnobRange::VeryPrecise => "very_precise",
+        }
+    }
+
+    /// The range of a saved identifier.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.id() == id)
+    }
+
+    /// The label shown in the settings.
+    pub fn label(self) -> &'static str {
+        match self {
+            KnobRange::Normal => "Normal",
+            KnobRange::Precise => "Precise",
+            KnobRange::VeryPrecise => "Very precise",
+        }
+    }
+
+    /// The next range, wrapping.
+    pub fn next(self) -> Self {
+        match self {
+            KnobRange::Normal => KnobRange::Precise,
+            KnobRange::Precise => KnobRange::VeryPrecise,
+            KnobRange::VeryPrecise => KnobRange::Normal,
+        }
+    }
+
+    /// The factor on the drag travel of a control.
+    pub fn travel(self) -> f64 {
+        match self {
+            KnobRange::Normal => 1.0,
+            KnobRange::Precise => 2.0,
+            KnobRange::VeryPrecise => 4.0,
+        }
+    }
+}
+
 /// The current plain value of a param on a device (descriptor default when unset; clamped).
 pub fn current_value(device: &RackDevice, p: &ParamDescriptor) -> f32 {
     let v = device.params.get(p.key).copied().unwrap_or(p.default);

@@ -6,10 +6,13 @@
 //! keymap ([`menus`]); the key router lives in `atomik_ui::keymap` and the shell.
 
 use crate::record::InputQuantize;
+use crate::windows::WindowKind;
 use atomik_model::{FadeCurve, WarpMode};
 use atomik_ui::arrangement::{AudioMenu, HeightPreset, LaneMenu, OrgMenu};
-use atomik_ui::keymap::{INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS};
-use atomik_ui::{CableVisibility, Flip, TransportAction};
+use atomik_ui::keymap::{
+    APP_ZOOM_ARGS, INPUT_CHANNEL_ARGS, Keymap, OUTPUT_CHANNEL_ARGS, RATE_ARGS, RECENT_ARGS,
+};
+use atomik_ui::{CableVisibility, Flip, ThemeChoice, TransportAction};
 use std::borrow::Cow;
 
 /// Something the user asked the app to do (menu item or shortcut).
@@ -365,6 +368,79 @@ pub enum AppCommand {
     /// Help ▸ Export Diagnostics…: one report (settings, plugin state, counters, the last crash
     /// and the log) to attach to an issue.
     ExportDiagnostics,
+    /// Help ▸ Keyboard Shortcuts (F1): the shortcut list, with search and remapping.
+    KeyboardShortcuts,
+    /// Help ▸ Documentation: the project page with the documentation, in the browser.
+    Documentation,
+    /// Help ▸ Report an Issue: the project's issue forms, in the browser.
+    ReportIssue,
+    /// Help ▸ About Atomik Rack…: the version, the licence and the notices.
+    About,
+    /// View ▸ Theme: dark, light, or the operating system's.
+    SetTheme(ThemeChoice),
+    /// View ▸ Application Zoom: the size of every window's content.
+    AppZoom(ZoomChange),
+    /// Window ▸ a window: bring it forward.
+    FocusWindow(WindowKind),
+}
+
+/// What View ▸ Application Zoom does to the zoom of every window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoomChange {
+    /// Sets the zoom to this percentage (one of [`crate::keymap_store::ZOOM_STEPS`]).
+    To(u16),
+    /// The next step up.
+    In,
+    /// The next step down.
+    Out,
+    /// Back to 100 %.
+    Reset,
+}
+
+impl ZoomChange {
+    /// The registry argument of `view.app_zoom`.
+    pub fn arg(self) -> Option<&'static str> {
+        match self {
+            ZoomChange::To(p) => arg_of(APP_ZOOM_ARGS, p),
+            ZoomChange::In => Some("in"),
+            ZoomChange::Out => Some("out"),
+            ZoomChange::Reset => Some("reset"),
+        }
+    }
+
+    /// The change of a registry argument.
+    pub fn from_arg(arg: &str) -> Option<Self> {
+        match arg {
+            "in" => Some(ZoomChange::In),
+            "out" => Some(ZoomChange::Out),
+            "reset" => Some(ZoomChange::Reset),
+            _ => num_arg(APP_ZOOM_ARGS, arg).map(ZoomChange::To),
+        }
+    }
+
+    /// The zoom this change leads to from `percent`.
+    pub fn apply(self, percent: u16) -> u16 {
+        let steps = &crate::keymap_store::ZOOM_STEPS;
+        let at = steps.iter().position(|&s| s == percent);
+        match (self, at) {
+            (ZoomChange::To(p), _) => crate::keymap_store::nearest_zoom(u64::from(p)),
+            (ZoomChange::Reset, _) => 100,
+            (ZoomChange::In, Some(i)) => steps[(i + 1).min(steps.len() - 1)],
+            (ZoomChange::Out, Some(i)) => steps[i.saturating_sub(1)],
+            (ZoomChange::In | ZoomChange::Out, None) => {
+                crate::keymap_store::nearest_zoom(u64::from(percent))
+            }
+        }
+    }
+}
+
+/// The registry argument of a window.
+fn window_arg(kind: WindowKind) -> &'static str {
+    match kind {
+        WindowKind::Main => "main",
+        WindowKind::Rack => "rack",
+        WindowKind::Console => "mixer",
+    }
 }
 
 /// The entry of `args` that spells `n`.
@@ -593,6 +669,13 @@ impl AppCommand {
             AppCommand::RescanMidi => ("audio.rescan_midi", None),
             AppCommand::RestartAudio => ("audio.restart", None),
             AppCommand::ExportDiagnostics => ("help.export_diagnostics", None),
+            AppCommand::KeyboardShortcuts => ("help.keyboard_shortcuts", None),
+            AppCommand::Documentation => ("help.documentation", None),
+            AppCommand::ReportIssue => ("help.report_issue", None),
+            AppCommand::About => ("help.about", None),
+            AppCommand::SetTheme(t) => ("view.theme", Some(t.id())),
+            AppCommand::AppZoom(z) => ("view.app_zoom", Some(z.arg()?)),
+            AppCommand::FocusWindow(k) => ("view.focus_window", Some(window_arg(*k))),
         })
     }
 
@@ -832,6 +915,15 @@ impl AppCommand {
             ("audio.rescan_midi", None) => AppCommand::RescanMidi,
             ("audio.restart", None) => AppCommand::RestartAudio,
             ("help.export_diagnostics", None) => AppCommand::ExportDiagnostics,
+            ("help.keyboard_shortcuts", None) => AppCommand::KeyboardShortcuts,
+            ("help.documentation", None) => AppCommand::Documentation,
+            ("help.report_issue", None) => AppCommand::ReportIssue,
+            ("help.about", None) => AppCommand::About,
+            ("view.theme", Some(a)) => AppCommand::SetTheme(ThemeChoice::from_id(a)?),
+            ("view.app_zoom", Some(a)) => AppCommand::AppZoom(ZoomChange::from_arg(a)?),
+            ("view.focus_window", Some("main")) => AppCommand::FocusWindow(WindowKind::Main),
+            ("view.focus_window", Some("rack")) => AppCommand::FocusWindow(WindowKind::Rack),
+            ("view.focus_window", Some("mixer")) => AppCommand::FocusWindow(WindowKind::Console),
             _ => return None,
         })
     }
@@ -1049,6 +1141,10 @@ pub struct MenuState {
     pub freeze: FreezeMenu,
     /// Automation follows the selection (the View menu item is checked).
     pub follow_selection: bool,
+    /// The colour theme in use (the View ▸ Theme item that is checked).
+    pub theme: ThemeChoice,
+    /// The application zoom in percent (the View ▸ Application Zoom item that is checked).
+    pub app_zoom: u16,
 }
 
 /// What the Mixer menu needs to know for MIDI Learn and the mappings.
@@ -1372,6 +1468,41 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Zoom In", AppCommand::ZoomIn),
                 item("Zoom Out", AppCommand::ZoomOut),
                 item("Actual Size", AppCommand::ZoomReset),
+                MenuEntry::Submenu(Submenu {
+                    label: "Application Zoom",
+                    entries: crate::keymap_store::ZOOM_STEPS
+                        .into_iter()
+                        .map(|p| {
+                            make(
+                                match p {
+                                    75 => "75 %",
+                                    100 => "100 %",
+                                    125 => "125 %",
+                                    150 => "150 %",
+                                    175 => "175 %",
+                                    _ => "200 %",
+                                },
+                                AppCommand::AppZoom(ZoomChange::To(p)),
+                                Some(state.app_zoom == p),
+                                true,
+                            )
+                        })
+                        .collect(),
+                }),
+                MenuEntry::Submenu(Submenu {
+                    label: "Theme",
+                    entries: ThemeChoice::ALL
+                        .into_iter()
+                        .map(|t| {
+                            make(
+                                t.label(),
+                                AppCommand::SetTheme(t),
+                                Some(state.theme == t),
+                                true,
+                            )
+                        })
+                        .collect(),
+                }),
                 MenuEntry::Separator,
                 check("Device Browser", AppCommand::ToggleBrowser, state.browser),
                 check(
@@ -2000,11 +2131,36 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
             ],
         },
         Menu {
+            title: "Window",
+            entries: vec![
+                enabled(
+                    "Main Window",
+                    AppCommand::FocusWindow(WindowKind::Main),
+                    true,
+                ),
+                enabled(
+                    "Rack Window",
+                    AppCommand::FocusWindow(WindowKind::Rack),
+                    state.rack_detached,
+                ),
+                enabled(
+                    "Mixer Window",
+                    AppCommand::FocusWindow(WindowKind::Console),
+                    state.console_detached,
+                ),
+            ],
+        },
+        Menu {
             title: "Help",
-            entries: vec![item(
-                "Export Diagnostics\u{2026}",
-                AppCommand::ExportDiagnostics,
-            )],
+            entries: vec![
+                item("Keyboard Shortcuts", AppCommand::KeyboardShortcuts),
+                item("Documentation", AppCommand::Documentation),
+                item("Report an Issue", AppCommand::ReportIssue),
+                MenuEntry::Separator,
+                item("Export Diagnostics\u{2026}", AppCommand::ExportDiagnostics),
+                MenuEntry::Separator,
+                item("About Atomik Rack", AppCommand::About),
+            ],
         },
     ]
 }
@@ -2080,6 +2236,8 @@ mod tests {
             midi: MidiMenu::default(),
             freeze: FreezeMenu::default(),
             follow_selection: false,
+            theme: ThemeChoice::Dark,
+            app_zoom: 100,
         }
     }
 
@@ -2222,7 +2380,23 @@ mod tests {
             AppCommand::RescanMidi,
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
+            AppCommand::KeyboardShortcuts,
+            AppCommand::Documentation,
+            AppCommand::ReportIssue,
+            AppCommand::About,
+            AppCommand::AppZoom(ZoomChange::In),
+            AppCommand::AppZoom(ZoomChange::Out),
+            AppCommand::AppZoom(ZoomChange::Reset),
+            AppCommand::FocusWindow(WindowKind::Main),
+            AppCommand::FocusWindow(WindowKind::Rack),
+            AppCommand::FocusWindow(WindowKind::Console),
         ];
+        for t in ThemeChoice::ALL {
+            v.push(AppCommand::SetTheme(t));
+        }
+        for p in crate::keymap_store::ZOOM_STEPS {
+            v.push(AppCommand::AppZoom(ZoomChange::To(p)));
+        }
         for rate in [44_100, 48_000, 96_000] {
             v.push(AppCommand::NewAtRate(rate));
             v.push(AppCommand::ConvertRate(rate));
@@ -2437,11 +2611,17 @@ mod tests {
     ) -> Option<AppCommand> {
         use atomik_ui::keymap::{ContextStack, Resolution};
         match keymap.resolve_event(key, modifiers, &ContextStack::global()) {
-            // The file browser and the piano keys are new: they are not part of the old function being compared.
+            // The file browser, the piano keys and the shortcut list (F1) are new: they are not
+            // part of the old function being compared.
             Resolution::Bound(list) => list
                 .iter()
                 .find_map(|r| AppCommand::from_command(&r.command, r.arg.as_deref()))
-                .filter(|c| *c != AppCommand::ToggleFileBrowser),
+                .filter(|c| {
+                    !matches!(
+                        c,
+                        AppCommand::ToggleFileBrowser | AppCommand::KeyboardShortcuts
+                    )
+                }),
             _ => None,
         }
     }
@@ -2605,6 +2785,7 @@ mod tests {
                 "Track",
                 "Audio",
                 "Options",
+                "Window",
                 "Help"
             ]
         );
@@ -2671,6 +2852,16 @@ mod tests {
                 "Zoom In",
                 "Zoom Out",
                 "Actual Size",
+                // Application Zoom, then Theme.
+                "75 %",
+                "100 %",
+                "125 %",
+                "150 %",
+                "175 %",
+                "200 %",
+                "Dark",
+                "Light",
+                "Same as System",
                 "Device Browser",
                 "File Browser",
                 "Piano Keys",
@@ -2839,6 +3030,100 @@ mod tests {
                 "Settings\u{2026}"
             ]
         );
+        assert_eq!(
+            labels(9),
+            ["Main Window", "Rack Window", "Mixer Window"],
+            "the Window menu lists the windows"
+        );
+        assert_eq!(
+            labels(10),
+            [
+                "Keyboard Shortcuts",
+                "Documentation",
+                "Report an Issue",
+                "Export Diagnostics\u{2026}",
+                "About Atomik Rack"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_window_menu_enables_the_detached_windows_only() {
+        let mut on = state();
+        let enabled = |s: &MenuState| {
+            let m = menus(s, &legacy(Os::Windows));
+            let window = m.iter().find(|m| m.title == "Window").unwrap();
+            window.items().map(|i| i.enabled).collect::<Vec<_>>()
+        };
+        assert_eq!(enabled(&on), [true, false, false]);
+        on.rack_detached = true;
+        on.console_detached = true;
+        assert_eq!(enabled(&on), [true, true, true]);
+    }
+
+    #[test]
+    fn the_view_menu_checks_the_theme_and_the_zoom_in_use() {
+        let mut s = state();
+        s.theme = ThemeChoice::Light;
+        s.app_zoom = 150;
+        let m = menus(&s, &legacy(Os::Windows));
+        let view = m.iter().find(|m| m.title == "View").unwrap();
+        let checked = |label: &str| {
+            view.items()
+                .find(|i| i.label.as_ref() == label)
+                .unwrap_or_else(|| panic!("no {label}"))
+                .checked
+        };
+        assert_eq!(checked("Light"), Some(true));
+        assert_eq!(checked("Dark"), Some(false));
+        assert_eq!(checked("150 %"), Some(true));
+        assert_eq!(checked("100 %"), Some(false));
+    }
+
+    #[test]
+    fn the_new_commands_have_ids_and_a_standard_key_for_the_shortcut_list() {
+        assert_eq!(
+            AppCommand::SetTheme(ThemeChoice::System).command_id(),
+            Some(("view.theme", Some("system")))
+        );
+        assert_eq!(
+            AppCommand::from_command("view.app_zoom", Some("in")),
+            Some(AppCommand::AppZoom(ZoomChange::In))
+        );
+        assert_eq!(
+            AppCommand::from_command("view.app_zoom", Some("175")),
+            Some(AppCommand::AppZoom(ZoomChange::To(175)))
+        );
+        assert_eq!(AppCommand::from_command("view.app_zoom", Some("90")), None);
+        assert_eq!(
+            AppCommand::from_command("view.focus_window", Some("mixer")),
+            Some(AppCommand::FocusWindow(WindowKind::Console))
+        );
+        // F1 is the shortcut list in both profiles, as every OS shows it.
+        for profile in [Profile::Standard, Profile::Legacy] {
+            for os in Os::ALL {
+                let keymap = Keymap::bundled(profile, os);
+                assert_eq!(
+                    AppCommand::KeyboardShortcuts
+                        .shortcut_text(&keymap)
+                        .as_deref(),
+                    Some("F1"),
+                    "{profile:?} {os:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_zoom_steps_walk_the_list_and_stop_at_its_ends() {
+        let step = |c: ZoomChange, from: u16| c.apply(from);
+        assert_eq!(step(ZoomChange::In, 100), 125);
+        assert_eq!(step(ZoomChange::In, 200), 200);
+        assert_eq!(step(ZoomChange::Out, 100), 75);
+        assert_eq!(step(ZoomChange::Out, 75), 75);
+        assert_eq!(step(ZoomChange::Reset, 175), 100);
+        assert_eq!(step(ZoomChange::To(150), 75), 150);
+        assert_eq!(step(ZoomChange::To(130), 75), 125, "the nearest step");
     }
 
     #[test]
@@ -2958,6 +3243,8 @@ mod tests {
                     ..FreezeMenu::default()
                 },
                 follow_selection: false,
+                theme: ThemeChoice::Dark,
+                app_zoom: 100,
             },
             &keymap,
         );

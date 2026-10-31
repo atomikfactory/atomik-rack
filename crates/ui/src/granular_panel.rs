@@ -363,7 +363,7 @@ pub(crate) fn paint_panel<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let inner = Rect::new(r.x0 + 6.0, r.y0 + 6.0, r.x1 - 6.0, r.y1 - 6.0);
     let (position, spray) = markers(device, desc, grain.meters);

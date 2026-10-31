@@ -95,7 +95,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
         c.stroke_with(
             Line::new(pt(r.x0, y), pt(r.x1, y)),
             1.0,
-            alpha(Color::WHITE, a),
+            alpha(theme.ink, a),
         );
         db += step;
     }
@@ -105,7 +105,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
         c.stroke_with(
             Line::new(pt(x, r.y0), pt(x, r.y1)),
             1.0,
-            alpha(Color::WHITE, if major { 0.14 } else { 0.05 }),
+            alpha(theme.ink, if major { 0.14 } else { 0.05 }),
         );
     }
     let n = data.trace.len();
@@ -132,7 +132,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
                 c.stroke_with(
                     Line::new(pt(freq_x(r, lo) + 1.0, y), pt(freq_x(r, hi) - 1.0, y)),
                     1.0,
-                    alpha(Color::WHITE, 0.6 * dim),
+                    alpha(theme.ink, 0.6 * dim),
                 );
             }
         }
@@ -161,7 +161,7 @@ pub fn spectrum<C: Canvas + ?Sized>(
             alpha(mix(info.accent, Color::WHITE, 0.35), dim),
         );
         if look.hold && data.peaks.len() == n {
-            c.stroke_with(line(&data.peaks), 1.0, alpha(Color::WHITE, 0.45 * dim));
+            c.stroke_with(line(&data.peaks), 1.0, alpha(theme.ink, 0.45 * dim));
         }
     }
     c.pop_clip();
@@ -292,13 +292,9 @@ fn goniometer<C: Canvas + ?Sized>(
     let rad = (r.width().min(r.height()) / 2.0 - 7.0).max(10.0);
     let dim = if look.bypassed { 0.35 } else { 1.0 };
     c.push_clip(&r.into());
-    c.stroke_with(Circle::new(centre, rad), 1.0, alpha(Color::WHITE, 0.14));
-    c.stroke_with(
-        Circle::new(centre, rad * 0.5),
-        1.0,
-        alpha(Color::WHITE, 0.06),
-    );
-    let axis = alpha(Color::WHITE, 0.1);
+    c.stroke_with(Circle::new(centre, rad), 1.0, alpha(theme.ink, 0.14));
+    c.stroke_with(Circle::new(centre, rad * 0.5), 1.0, alpha(theme.ink, 0.06));
+    let axis = alpha(theme.ink, 0.1);
     c.stroke_with(
         Line::new(pt(centre.x, centre.y - rad), pt(centre.x, centre.y + rad)),
         1.0,
@@ -480,7 +476,7 @@ pub fn phase_meter<C: Canvas + ?Sized>(
             let y = (col.y1 - h(hold)).round();
             c.fill_with(
                 Rect::new(col.x0, y, col.x1, y + 2.0),
-                alpha(Color::WHITE, 0.85 * dim),
+                alpha(theme.ink, 0.85 * dim),
             );
         }
         small(

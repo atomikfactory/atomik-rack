@@ -63,6 +63,12 @@ pub struct PluginBannerView {
 }
 
 impl PluginBannerView {
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.repaint = true;
+    }
+
     /// A hidden banner.
     pub fn new(theme: Theme) -> Self {
         Self {

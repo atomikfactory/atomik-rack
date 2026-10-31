@@ -505,8 +505,7 @@ fn paint_name<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(panel.name.inset(-0.5), 3.5),
         1.0,
-        info.rename
-            .map_or(Color::WHITE.with_alpha(0.07), |_| accent),
+        info.rename.map_or(theme.ink.with_alpha(0.07), |_| accent),
     );
     let (text, col) = match (info.rename, pattern) {
         (Some(t), _) => (format!("{t}|"), accent),
@@ -570,7 +569,7 @@ fn paint_grid<C: Canvas + ?Sized>(
         c.stroke_with(
             RoundedRect::from_rect(m.inset(-0.5), 2.5),
             1.0,
-            Color::WHITE.with_alpha(0.12),
+            theme.ink.with_alpha(0.12),
         );
         if l.mute {
             c.text(
@@ -589,7 +588,7 @@ fn paint_grid<C: Canvas + ?Sized>(
             let base = if beat { 0.07 } else { 0.03 };
             c.fill_with(
                 RoundedRect::from_rect(r, 1.5),
-                Color::WHITE.with_alpha(if live { base } else { 0.0 }),
+                theme.ink.with_alpha(if live { base } else { 0.0 }),
             );
             if cursor == Some(step) {
                 c.fill_with(

@@ -716,10 +716,32 @@ pub struct ConsoleView {
     /// The values the strips show instead of the stored ones (the automation at the playhead,
     /// see [`ConsoleView::set_shown_values`]).
     shown: atomik_model::ShownValues,
+    /// How far a knob or fader has to be dragged to sweep its range.
+    knob_range: widget::KnobRange,
     repaint: bool,
 }
 
 impl ConsoleView {
+    /// Sets how far a knob or fader has to be dragged to sweep its range.
+    pub fn set_knob_range(&mut self, range: widget::KnobRange) {
+        self.knob_range = range;
+    }
+
+    /// Switches to `theme`: the colours are derived again, every strip's recorded lists are
+    /// dropped (they carry the old colours) and the view repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.st = SeqTheme::from_theme(&theme);
+        self.generation += 1;
+        let generation = self.generation;
+        for s in self.strips.iter_mut().chain(self.master.iter_mut()) {
+            if let Some(mut sig) = s.sig.clone() {
+                sig.generation = generation;
+                s.update(sig);
+            }
+        }
+        self.repaint = true;
+    }
+
     /// An empty view; call [`Self::set_bounds`] and [`Self::sync`].
     pub fn new(theme: Theme) -> Self {
         Self {
@@ -766,6 +788,7 @@ impl ConsoleView {
             focused: false,
             midi: crate::MidiMarks::default(),
             shown: Default::default(),
+            knob_range: widget::KnobRange::default(),
             repaint: true,
         }
     }
@@ -2763,7 +2786,7 @@ impl ConsoleView {
                 self.next_merge += 1;
                 self.drag = Drag::VcaFader {
                     index: i,
-                    drag: ValueDrag::new(&VCA_LEVEL, level, ppr),
+                    drag: ValueDrag::new(&VCA_LEVEL, level, ppr * self.knob_range.travel()),
                     merge,
                     last: self.pointer,
                     value: level,
@@ -3074,7 +3097,7 @@ impl ConsoleView {
                 self.drag = Drag::Value {
                     target: t,
                     ctrl: c,
-                    drag: ValueDrag::new(p, value, ppr),
+                    drag: ValueDrag::new(p, value, ppr * self.knob_range.travel()),
                     merge,
                     last: self.pointer,
                     start: value,
@@ -3852,7 +3875,7 @@ impl ConsoleView {
                             t.led_off
                         };
                         c.fill_with(RoundedRect::from_rect(lr, 2.0), face);
-                        let tc = if on { t.plate } else { t.text_muted };
+                        let tc = if on { t.on_accent } else { t.text_muted };
                         c.text(
                             &TextRun::new(text, pt(lr.center().x, lr.center().y + 2.3), 6.0, tc)
                                 .align(Align::Center)

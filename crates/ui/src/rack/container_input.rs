@@ -26,7 +26,6 @@ use atomik_model::{
 };
 use std::borrow::Cow;
 use vello::kurbo::{Point, Rect, RoundedRect, Vec2};
-use vello::peniko::Color;
 
 /// Height of one row of the macro menu.
 const MENU_ROW_H: f64 = 18.0;
@@ -1018,7 +1017,7 @@ impl RackView {
         c.stroke_with(
             RoundedRect::from_rect(m.rect, 4.0),
             1.0,
-            Color::WHITE.with_alpha(0.14),
+            theme.ink.with_alpha(0.14),
         );
         for (k, (_, label)) in m.entries.iter().enumerate() {
             let r = Self::menu_row(m.rect, k);

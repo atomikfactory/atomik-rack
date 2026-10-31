@@ -556,6 +556,10 @@ pub struct RackView {
     rename: Option<Rename>,
     /// The hover tooltips of the BYPASS and EDIT buttons show (the "Show tooltips" setting).
     button_tips: bool,
+    /// Hovering a control shows its name and value, not only while it is automated or driven.
+    value_tips: bool,
+    /// How far a knob or fader has to be dragged to sweep its range.
+    knob_range: widget::KnobRange,
     /// The device the patch browser is aimed at: its patch name is drawn in the browse colour.
     patch_browse: Option<DeviceKey>,
     /// The container whose inside is shown: the local keys from the top level down (empty =
@@ -762,6 +766,8 @@ impl RackView {
             pages: BTreeMap::new(),
             rename: None,
             button_tips: true,
+            value_tips: false,
+            knob_range: widget::KnobRange::default(),
             patch_browse: None,
             scope: Vec::new(),
             scope_names: Vec::new(),
@@ -804,7 +810,9 @@ impl RackView {
         self.synced = false;
         for d in &mut self.devices {
             d.revision += 1;
+            d.lists = [None, None];
         }
+        self.nav_cache = None;
         self.repaint = true;
     }
 
@@ -849,6 +857,20 @@ impl RackView {
             self.button_tips = on;
             self.repaint = true;
         }
+    }
+
+    /// Shows the name and value of every control under the pointer (default: only a control that
+    /// is automated or driven by a macro says so).
+    pub fn set_value_tips(&mut self, on: bool) {
+        if on != self.value_tips {
+            self.value_tips = on;
+            self.repaint = true;
+        }
+    }
+
+    /// Sets how far a knob or fader has to be dragged to sweep its range.
+    pub fn set_knob_range(&mut self, range: widget::KnobRange) {
+        self.knob_range = range;
     }
 
     /// Draws the console links (channel `out` and `send{k}` to the master) as cables, or hides
@@ -2504,17 +2526,20 @@ impl RackView {
                 Some(Hit::Control(i, slot)) => {
                     let (p, _, value) = self.param_of(i, slot)?;
                     let Some(m) = self.driven_by(i, p.key) else {
-                        return self.devices[i]
-                            .automated
-                            .iter()
-                            .any(|k| k == p.key)
-                            .then(|| {
-                                format!(
-                                    "{}  {}  (automated)",
-                                    autolayout::control_label(p),
-                                    widget::format_value(p, value)
-                                )
-                            });
+                        if self.devices[i].automated.iter().any(|k| k == p.key) {
+                            return Some(format!(
+                                "{}  {}  (automated)",
+                                autolayout::control_label(p),
+                                widget::format_value(p, value)
+                            ));
+                        }
+                        return self.value_tips.then(|| {
+                            format!(
+                                "{}  {}",
+                                autolayout::control_label(p),
+                                widget::format_value(p, value)
+                            )
+                        });
                     };
                     Some(format!(
                         "{}  {}  (driven by macro {})",
@@ -3354,7 +3379,7 @@ impl RackView {
                     self.drag = Drag::Value {
                         dev: i,
                         slot,
-                        drag: ValueDrag::new(p, value, ppr),
+                        drag: ValueDrag::new(p, value, ppr * self.knob_range.travel()),
                         merge,
                         last_y: self.pointer.y,
                         start: value,

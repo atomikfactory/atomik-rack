@@ -415,7 +415,7 @@ pub fn scene<C: Canvas + ?Sized>(
     let ph = cycles(phase);
     let st = Stage { r: rect };
     let bright = mix(accent, Color::WHITE, 0.45);
-    let faint = alpha(Color::WHITE, 0.09);
+    let faint = alpha(theme.ink, 0.09);
     c.push_clip(&rect.into());
     let sc = Sc {
         st,
@@ -1156,7 +1156,7 @@ pub fn contact_sheet<C: Canvas + ?Sized>(
         c.stroke_with(
             RoundedRect::from_rect(cell.inset(-0.5), 3.5),
             1.0,
-            alpha(Color::WHITE, 0.07),
+            alpha(theme.ink, 0.07),
         );
         let inner = Rect::new(cell.x0 + 2.0, cell.y0 + 2.0, cell.x1 - 2.0, cell.y1 - 14.0);
         scene(c, theme, inner, i, transform, activity, phase, accent);

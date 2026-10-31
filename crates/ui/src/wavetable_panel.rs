@@ -172,7 +172,7 @@ fn paint_display<C: Canvas + ?Sized>(
     c.stroke_with(
         RoundedRect::from_rect(r.inset(-0.5), 3.5),
         1.0,
-        Color::WHITE.with_alpha(0.07),
+        theme.ink.with_alpha(0.07),
     );
     let inner = r.inset(-5.0);
     // Name and position on the first line, the tick row at the bottom, the curve between.

@@ -199,6 +199,12 @@ impl FileBrowserView {
     /// Narrowest panel width.
     pub const MIN_WIDTH: f64 = 200.0;
 
+    /// Switches to `theme` and repaints.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.dirty = true;
+    }
+
     /// An empty panel; call [`Self::set_bounds`].
     pub fn new(theme: Theme) -> Self {
         let mut v = Self {

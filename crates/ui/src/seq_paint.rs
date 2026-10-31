@@ -82,16 +82,16 @@ pub struct SeqTheme {
 impl SeqTheme {
     /// Derives the sequencer tokens from a rack theme.
     pub fn from_theme(t: &Theme) -> Self {
-        let white = |a: u8| Color::from_rgba8(0xff, 0xff, 0xff, a);
+        let white = |a: u8| t.ink.with_alpha(f32::from(a) / 255.0);
         Self {
             base: t.clone(),
             background: t.background,
             header: mix(t.panel_bottom, t.background, 0.35),
             header_track: t.panel_bottom,
             header_lane: mix(t.panel_bottom, t.background, 0.55),
-            lane: Color::from_rgba8(0x16, 0x18, 0x1c, 0xff),
-            lane_alt: Color::from_rgba8(0x13, 0x15, 0x18, 0xff),
-            lane_auto: Color::from_rgba8(0x11, 0x13, 0x16, 0xff),
+            lane: t.lane,
+            lane_alt: t.lane_alt,
+            lane_auto: t.lane_auto,
             ruler: t.plate,
             grid_bar: white(0x2e),
             grid_beat: white(0x14),
@@ -104,13 +104,13 @@ impl SeqTheme {
             end_shade: Color::from_rgba8(0x00, 0x00, 0x00, 0x4d),
             playhead: t.knob_pointer,
             record: t.cable_audio,
-            mute: Color::from_rgba8(0xe0, 0xa8, 0x3c, 0xff),
+            mute: t.mute,
             solo: t.cable_notes,
             selection: t.highlight,
-            key_white: Color::from_rgba8(0xd9, 0xd5, 0xcc, 0xff),
-            key_black: Color::from_rgba8(0x1b, 0x1d, 0x21, 0xff),
-            row_black: Color::from_rgba8(0x12, 0x14, 0x17, 0xff),
-            outside: Color::from_rgba8(0x0a, 0x0b, 0x0d, 0xa0),
+            key_white: t.key_white,
+            key_black: t.key_black,
+            row_black: t.row_black,
+            outside: t.veil,
             fade_shade: Color::from_rgba8(0x00, 0x00, 0x00, 0x66),
             gain_line: t.highlight,
             handle: t.text,
@@ -263,7 +263,7 @@ pub fn button<C: Canvas + ?Sized>(
         t.bevel_dark,
     );
     if !text.is_empty() {
-        let col = if lit.is_some() { t.plate } else { t.text };
+        let col = if lit.is_some() { t.on_accent } else { t.text };
         c.text(
             &TextRun::new(text, pt(r.center().x, r.center().y + 3.5), 9.5, col)
                 .align(Align::Center)

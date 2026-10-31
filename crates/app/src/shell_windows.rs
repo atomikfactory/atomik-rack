@@ -394,6 +394,7 @@ impl<B: AudioBackend> Shell<B> {
     /// Some modal panel or the Settings dialog is open (they live in the main window).
     pub(super) fn modal_open(&self) -> bool {
         self.dialog.is_some()
+            || self.about.is_some()
             || self.plugin_settings.is_some()
             || self.relink.is_some()
             || self.export.is_some()
