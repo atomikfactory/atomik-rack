@@ -16,6 +16,11 @@ atomik-core.workspace = true
 proptest.workspace = true
 rustfft.workspace = true
 atomik-testkit.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "blocks"
+harness = false
 
 [lints]
 workspace = true

@@ -106,6 +106,16 @@ impl DeviceHarness {
 
     /// Processes one batch under the allocation guard, then advances time by [`BATCH`] frames.
     pub fn process(&mut self) {
+        self.step(true);
+    }
+
+    /// [`DeviceHarness::process`] without the allocation guard, for benchmarks (the guard's
+    /// bookkeeping would be part of the measurement, and a bench binary installs no guard).
+    pub fn process_unguarded(&mut self) {
+        self.step(false);
+    }
+
+    fn step(&mut self, guarded: bool) {
         let sockets = self.device.descriptor().sockets;
         for (i, s) in sockets.iter().enumerate() {
             if s.direction == atomik_device_sdk::Direction::Output {
@@ -121,7 +131,11 @@ impl DeviceHarness {
             &self.connected,
         )
         .with_playback(self.playback.as_deref().unwrap_or(&[]));
-        assert_no_alloc(|| device.process(&mut ctx));
+        if guarded {
+            assert_no_alloc(|| device.process(&mut ctx));
+        } else {
+            device.process(&mut ctx);
+        }
         for (i, s) in sockets.iter().enumerate() {
             if s.direction.is_input() {
                 self.notes[i].clear();

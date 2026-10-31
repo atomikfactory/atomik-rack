@@ -318,6 +318,7 @@ dependencies = [
  "atomik-device-sdk",
  "atomik-dsp",
  "atomik-testkit",
+ "criterion",
  "proptest",
 ]
 
@@ -327,6 +328,7 @@ version = "0.2.0-rc.2"
 dependencies = [
  "atomik-core",
  "atomik-testkit",
+ "criterion",
  "proptest",
  "rustfft",
 ]
