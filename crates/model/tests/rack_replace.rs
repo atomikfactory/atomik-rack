@@ -226,3 +226,29 @@ fn a_frozen_track_cannot_have_its_instrument_replaced() {
     let reason = replace_reason(&frozen, &r, &key("synth"), &typ(WAVETABLE));
     assert!(reason.is_some_and(|m| m.contains("frozen")));
 }
+
+#[test]
+fn an_automation_track_whose_lanes_all_go_is_removed_with_them() {
+    let r = reg();
+    let mut d = Document::new(empty_doc());
+    run(
+        &mut d,
+        &r,
+        [
+            add(0, DELAY, Some("delay")),
+            sc(SongCommand::AddAutomationLane {
+                device: key("delay"),
+                param: "feedback".into(),
+            }),
+        ],
+    );
+    assert_eq!(
+        replace_lost_lanes(d.doc(), &r, &key("delay"), &typ("atomik.reverb")),
+        vec!["feedback".to_owned()]
+    );
+    one_step(&mut d, &r, replace("delay", "atomik.reverb"));
+    assert!(d.doc().song.track(&key("delay")).is_none());
+    assert!(d.doc().validate().is_ok());
+    let text = atomik_model::save_project(d.doc());
+    atomik_model::load_project(&text, &r).expect("the saved project loads");
+}

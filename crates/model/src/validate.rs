@@ -150,6 +150,9 @@ impl RackDoc {
             if self.resolve(&track.device).is_none() {
                 found.add(&at, format!("{} is not in the rack", track.device));
             }
+            if track.lanes.is_empty() {
+                found.add(&at, "a track needs a lane".to_owned());
+            }
             for (l, lane) in track.lanes.iter().enumerate() {
                 let is_automation = matches!(lane.kind, LaneKind::Automation(_));
                 if lane
