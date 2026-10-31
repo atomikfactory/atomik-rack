@@ -728,6 +728,10 @@ pub(crate) fn plan(
         ConsoleCommand::MoveInsert { channel, from, to } => {
             crate::console_insert::move_insert(&mut p, &channel, from, to)?
         }
+        ConsoleCommand::SetAlignReturns(on) => p.push(Edit::AlignReturns {
+            old: console.align_returns,
+            new: on,
+        }),
         ConsoleCommand::SetCompensation(on) => p.push(Edit::Compensation {
             old: console.compensation,
             new: on,

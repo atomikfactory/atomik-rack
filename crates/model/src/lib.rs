@@ -1905,7 +1905,7 @@ pub fn empty_doc() -> RackDoc {
 /// one `atomik.master` device keyed `master` (named "Master") placed first, so it sits directly
 /// under Audio I/O, with the cables `master:main_l -> interface:out_1` and
 /// `master:main_r -> interface:out_2` (the second skipped below two outputs). No channels, no
-/// returns, compensation on, one transport track as in `empty_doc`. It is built by the same code
+/// returns, compensation and return alignment on, one transport track as in `empty_doc`. It is built by the same code
 /// that creates the master with the first channel, is deterministic and saves byte-identically.
 /// It also turns on note tails ([`Song::tails`]). [`empty_doc`] is unchanged; loaders and Open
 /// never call this.
@@ -1914,6 +1914,8 @@ pub fn new_project_doc() -> RackDoc {
     console_cmd::install_starter_master(&mut doc);
     // A new project lets notes ring past the end of their clip; a loaded one keeps its own flag.
     doc.song.tails = true;
+    // ...and aligns FX returns and sidechain keys with the dry path; a loaded one keeps its own.
+    doc.console.align_returns = true;
     doc
 }
 

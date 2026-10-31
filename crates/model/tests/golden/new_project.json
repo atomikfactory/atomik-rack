@@ -20,7 +20,8 @@
     "channels": [],
     "master": "master",
     "returns": [null, null, null, null, null, null, null, null],
-    "compensation": true
+    "compensation": true,
+    "align_returns": true
   },
   "assets": {},
   "song": {

@@ -276,6 +276,11 @@ pub(crate) enum Edit {
         old: Option<DeviceKey>,
         new: Option<DeviceKey>,
     },
+    /// Whether FX returns and sidechain keys are aligned with the dry path.
+    AlignReturns {
+        old: bool,
+        new: bool,
+    },
     /// The delay compensation switch.
     Compensation {
         old: bool,
@@ -675,6 +680,7 @@ impl Edit {
                 new: old,
             },
             Edit::Compensation { old, new } => Edit::Compensation { old: new, new: old },
+            Edit::AlignReturns { old, new } => Edit::AlignReturns { old: new, new: old },
             Edit::Zones { key, old, new } => Edit::Zones {
                 key,
                 old: new,
@@ -1196,6 +1202,10 @@ impl Edit {
                     return fail(format!("there is no FX return {slot}"));
                 };
                 returned.clone_from(new);
+                vec![SyncOp::ConsoleChanged]
+            }
+            Edit::AlignReturns { new, .. } => {
+                doc.console.align_returns = *new;
                 vec![SyncOp::ConsoleChanged]
             }
             Edit::Compensation { new, .. } => {

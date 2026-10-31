@@ -348,5 +348,8 @@ pub(super) fn load_console(
         console.returns[slot] = Some(effect);
     }
     console.compensation = boolean(&obj["compensation"], &path.field("compensation"))?;
+    if let Some(v) = obj.get("align_returns") {
+        console.align_returns = boolean(v, &path.field("align_returns"))?;
+    }
     Ok(console)
 }
