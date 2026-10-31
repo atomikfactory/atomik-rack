@@ -2135,6 +2135,7 @@ impl<B: AudioBackend> Shell<B> {
             midi_song: self.core.can_export_midi(MidiExport::Song),
             export_song: self.core.can_export_audio(ExportScope::Song),
             export_loop: self.core.can_export_audio(ExportScope::Loop),
+            export_stems: self.core.can_export_audio(ExportScope::Stems),
             org: self.core.arrangement().org_menu(),
             lane: self.core.arrangement().lane_menu(),
             audio: self.core.arrangement().audio_menu(),
@@ -4802,6 +4803,7 @@ impl<B: AudioBackend> Shell<B> {
             AppCommand::ExportMidiSong => self.export_midi_request(MidiExport::Song),
             AppCommand::ExportSongAudio => self.export_audio_request(ExportScope::Song),
             AppCommand::ExportLoopAudio => self.export_audio_request(ExportScope::Loop),
+            AppCommand::ExportStems => self.export_audio_request(ExportScope::Stems),
             AppCommand::QuantizeApply => {
                 let pane = self.live_pane(self.focus);
                 self.apply_last_quantize(pane);
@@ -4850,7 +4852,8 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::UnfreezeTrack
             | AppCommand::UnfreezeTrackKeep
             | AppCommand::BounceInPlace
-            | AppCommand::BounceInPlaceMute => {
+            | AppCommand::BounceInPlaceMute
+            | AppCommand::BounceClipDry => {
                 match command {
                     AppCommand::FreezeTrack => self.core.freeze_tracks(FreezeThrough::Track),
                     AppCommand::FreezeTrackToDevice => {
@@ -4861,6 +4864,7 @@ impl<B: AudioBackend> Shell<B> {
                     AppCommand::UnfreezeTrack => self.core.unfreeze_tracks(false),
                     AppCommand::UnfreezeTrackKeep => self.core.unfreeze_tracks(true),
                     AppCommand::BounceInPlace => self.core.bounce_in_place(false),
+                    AppCommand::BounceClipDry => self.core.bounce_clips_dry(),
                     _ => self.core.bounce_in_place(true),
                 }
                 self.menubar.as_mut().map(MenuBar::close);

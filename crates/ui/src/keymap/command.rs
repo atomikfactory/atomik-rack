@@ -771,6 +771,13 @@ const COMMANDS: &[CommandDef] = &[
     )
     .menu(),
     cmd(
+        "file.export_stems",
+        "Export Stems as Audio Files",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd(
         "file.import_archive",
         "Import Project Archive",
         G::Global,
@@ -1339,6 +1346,14 @@ const COMMANDS: &[CommandDef] = &[
     cmd(
         "sequencer.audio_warp_tempo",
         "Warp to Song Tempo",
+        G::Sequencer,
+        C::Sequencer,
+    )
+    .menu()
+    .decline(),
+    cmd(
+        "sequencer.bounce_clip_dry",
+        "Bounce Clips to New Track (Dry)",
         G::Sequencer,
         C::Sequencer,
     )

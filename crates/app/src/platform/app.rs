@@ -911,11 +911,26 @@ impl App {
                         self.shell.export_midi_to(what, &path);
                     }
                 }
+                ShellRequest::PickExportAudio(atomik_ui::ExportScope::Stems) => {
+                    // The folder the stems folder is made in.
+                    let mut dialog = rfd::FileDialog::new().set_title("Export stems to a folder");
+                    if let Some(dir) = self.shell.export_audio_dir() {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    if let Some(w) = self.parent_window() {
+                        dialog = dialog.set_parent(w);
+                    }
+                    if let Some(parent) = dialog.pick_folder() {
+                        let name = self.shell.export_audio_name(atomik_ui::ExportScope::Stems);
+                        self.shell
+                            .export_audio_to(atomik_ui::ExportScope::Stems, &parent.join(name));
+                    }
+                }
                 ShellRequest::PickExportAudio(scope) => {
                     let mut dialog = rfd::FileDialog::new()
                         .set_title(match scope {
-                            atomik_ui::ExportScope::Song => "Export song as audio file",
                             atomik_ui::ExportScope::Loop => "Export loop as audio file",
+                            _ => "Export song as audio file",
                         })
                         .add_filter("WAV audio file", &["wav"])
                         .set_file_name(self.shell.export_audio_name(scope));

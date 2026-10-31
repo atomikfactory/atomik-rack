@@ -99,6 +99,42 @@ fn a_loop_has_no_tail_row() {
 }
 
 #[test]
+fn stems_have_a_folder_a_tail_a_format_and_a_strip_choice() {
+    let mut v = view(ExportScope::Stems);
+    let t = texts(&v);
+    for want in [
+        "EXPORT STEMS",
+        "FILE FORMAT",
+        "WAV",
+        "AIFF",
+        "TAIL",
+        "CHANNELS",
+        "AFTER STRIP",
+        "DRY SOURCE",
+        "One file per strip",
+    ] {
+        assert!(has(&t, want), "{want} in {t:?}");
+    }
+    // The strip choice is for stems only; the format is for every scope.
+    assert!(view(ExportScope::Song).button_rect("DRY SOURCE").is_none());
+    assert!(view(ExportScope::Loop).button_rect("AIFF").is_some());
+    assert!(v.panel().height() > view(ExportScope::Song).panel().height());
+    click(&mut v, "AIFF");
+    click(&mut v, "DRY SOURCE");
+    assert_eq!(v.values().file, atomik_ui::ExportFile::Aiff);
+    assert!(v.values().dry);
+    click(&mut v, "AFTER STRIP");
+    click(&mut v, "WAV");
+    assert_eq!(v.values(), ExportValues::default());
+    for label in ["AIFF", "DRY SOURCE", "AFTER STRIP", "WAV"] {
+        let p = center(&v, label);
+        assert!(v.help_at(p).is_some(), "{label}");
+    }
+    v.show_progress();
+    assert!(has(&texts(&v), "EXPORTING STEMS"));
+}
+
+#[test]
 fn the_buttons_change_the_values() {
     let mut v = view(ExportScope::Song);
     assert_eq!(v.values(), ExportValues::default());
@@ -142,6 +178,7 @@ fn export_starts_with_the_chosen_values_and_cancel_and_escape_cancel() {
             dither: ExportDither::Tpdf,
             rate: Some(96_000),
             tail: true,
+            ..ExportValues::default()
         })]
     );
     assert_eq!(click(&mut v, "CANCEL"), vec![ExportAction::Cancel]);

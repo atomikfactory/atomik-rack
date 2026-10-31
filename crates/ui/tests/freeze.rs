@@ -122,6 +122,7 @@ fn the_freeze_commands_are_registered_with_menu_items() {
         "sequencer.unfreeze_track_keep",
         "sequencer.bounce_in_place",
         "sequencer.bounce_in_place_mute",
+        "sequencer.bounce_clip_dry",
     ] {
         assert!(r.validate(id, None), "{id}");
         assert!(r.get(id).unwrap().menu, "{id} has a menu item");

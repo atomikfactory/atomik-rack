@@ -54,7 +54,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-play` | [crates/play](../crates/play) | core, device-sdk, engine, render, audio-io, midi-io | none | `atomik-play`, a live player for patches |
 | `atomik-ui` | [crates/ui](../crates/ui) | audio-file, library, core, device-sdk, dsp (the wavetable panel's frame display), model | none | Platform-independent views, widgets, display lists, theme |
 | `atomik-app` | [crates/app](../crates/app) | core, device-sdk, devices, dsp, engine, model, audio-file, library, render, ui, audio-io, midi-io, plugin-host, plugin-scan, plugin-hostd, plugin-sandbox | none | The `atomik` application: `AppCore`, `Shell`, background workers (import, onset detection, file browser), the window |
-| `atomik-mcp` | [crates/mcp](../crates/mcp) | core, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
+| `atomik-mcp` | [crates/mcp](../crates/mcp) | core, audio-file, device-sdk, library, model, render, app, ui (feature `cpu-canvas`), plugin-host | none | Development tool, not shipped: the MCP server (bin `atomik-mcp`) that bounces, measures and compares audio and drives a headless `Shell` for QA; see [MCP.md](MCP.md) |
 | `atomik-testkit` | [crates/testkit](../crates/testkit) | core, device-sdk | `src/no_alloc.rs` | Test-only: fakes, signal analysis, the allocation guard, the bench recorder (`bench.rs`) |
 
 Rules (all hold in the `Cargo.toml` files today):
@@ -750,8 +750,9 @@ track, goes with the device when the device is removed (`Planner`), and is copie
 
 ### 2.7a Export as an audio file
 
-File > Export Song as Audio File and Export Loop as Audio File (`file.export_song_audio`,
-`file.export_loop_audio`, remappable, no default keys) write the project as a WAV.
+File > Export Song as Audio File, Export Loop as Audio File and Export Stems as Audio Files
+(`file.export_song_audio`, `file.export_loop_audio`, `file.export_stems`, remappable, no default
+keys) write the project as a WAV or AIFF file, or one file per mixer strip.
 
 ```
  command ─► ShellRequest::PickExportAudio ─► native save dialog ─► Shell::export_audio_to ─► options panel (ExportView)
@@ -780,6 +781,31 @@ File > Export Song as Audio File and Export Loop as Audio File (`file.export_son
   none (the dither applies to 16-bit in the panel). The dither is seeded (`DITHER_SEED`, one stream
   per channel from `Rng`), so the same project exports the same bytes. Silence is dithered too: a
   16-bit file has a noise floor of about -96 dBFS.
+- **Containers.** `ExportFormat::container` is WAV or AIFF. The AIFF writer
+  ([render/src/aiff.rs](../crates/render/src/aiff.rs)) writes 16-bit and 24-bit PCM as plain AIFF
+  and 32-bit float as AIFF-C `fl32`, quantising through the same `Dither` as the WAV writer, so
+  both containers hold the same codes for the same audio (a test decodes both and compares). The
+  file keeps the dialog's name with the extension of the container (`.wav`, `.aif`). FLAC, MP3
+  and tempo chunks are not written yet.
+- **Stems** ([render/src/stems.rs](../crates/render/src/stems.rs),
+  [model/src/stems.rs](../crates/model/src/stems.rs)). `stem_sources` lists the strips of the
+  console in mixer order (channels, buses, FX returns, master) with the sockets that carry each
+  output; the render cables every tap to its own pair of extra interface outputs, as a freeze
+  taps a track, so one pass reads several strips without changing a sample, at most
+  `TAPS_PER_PASS` strips per pass (each stem is written as its pass ends, so memory does not grow
+  with the strip count). `StemStrip::Dry` takes the channels' sources before the strip. The tap sits
+  in front of the master's delay compensation, so each stem is **delayed here** by the latency of
+  the slowest path to the outputs minus the latency of the path to its own tap (`path_latencies`
+  sums the latencies the engine published, along the flat cables, like its compensation does; none
+  when delay compensation is off): stems line up with each other and with the bounce. All the
+  files have the length the song export has (the tail follows the document's own outputs) and are
+  numbered `01 Name` in mixer order in a `Bounced <song>` folder; a stopped or failed export removes
+  the files it wrote. Without sends the channel stems add up to the master within float
+  rounding (tested).
+- **Dry clip bounce.** Track > Bounce Clips to New Track (Dry) (`sequencer.bounce_clip_dry`) is a
+  bounce in place through zero insert effects: the freeze render with `effects: 0` taps the
+  instrument's own output (an audio clip's gain, fades and warp included), so neither the inserts,
+  the fader, the pan nor the sends are in it.
 - **No partial file.** The file is written under `<name>.partial` next to the target and renamed
   when complete, and the render checks the cancel flag once per 64-frame batch: a cancelled or
   failed export removes the temporary file and leaves an existing target untouched.
@@ -794,9 +820,10 @@ File > Export Song as Audio File and Export Loop as Audio File (`file.export_son
   panel is modal and turns into a progress bar with CANCEL (Esc does the same); the result is the
   toast ("Exported mix.wav: 24-bit, 48 kHz, 1:05.3, with 2.4 s of tail"). Opening or creating a
   project cancels a running export. With plugins the worker needs the plugin sandbox, as a freeze
-  does. The last choices (depth, dither, rate, tail, folder) are in `export.json` next to
-  `settings.json`. The QA server has `session_export` (MCP.md): the same render, synchronous, with a
-  report of the file.
+  does. The last choices (depth, dither, rate, tail, container, dry stems, folder) are in
+  `export.json` next to `settings.json`. The stems dialog picks the folder the `Bounced <song>`
+  folder is made in. The QA server has `session_export` (MCP.md): the same render, synchronous,
+  with a report of the file, or with `stems` of every file.
 
 ### 2.8 Tempo, meter and time
 
@@ -3511,7 +3538,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (392) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (394) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

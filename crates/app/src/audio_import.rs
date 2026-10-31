@@ -126,7 +126,7 @@ pub(crate) enum Msg {
     Exported {
         generation: u64,
         job: u64,
-        result: Box<Result<Option<atomik_render::export::ExportReport>, String>>,
+        result: Box<Result<Option<crate::export_worker::Done>, String>>,
     },
     /// The notes of an audio clip were extracted (or it failed): see the Audio to Notes
     /// section of [`crate::AppCore`].

@@ -149,6 +149,7 @@ fn the_track_menu_follows_the_selection() {
             "Cancel Freeze",
             "Bounce in Place",
             "Bounce in Place and Mute Originals",
+            "Bounce Clips to New Track (Dry)",
             "Fold Automation Lanes",
             "Unfold Automation Lanes",
             "Track Height: Small",

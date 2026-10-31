@@ -95,6 +95,7 @@ fn the_track_menu_offers_freeze_and_bounce_by_the_selection() {
         "Cancel Freeze",
         "Bounce in Place",
         "Bounce in Place and Mute Originals",
+        "Bounce Clips to New Track (Dry)",
     ] {
         assert!(!item(&s, label).0, "{label} needs a selection");
     }
