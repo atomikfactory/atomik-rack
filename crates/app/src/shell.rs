@@ -3959,6 +3959,14 @@ impl<B: AudioBackend> Shell<B> {
                 .primary()
                 .is_some_and(|d| doc.song.track(&d).is_some()),
             join: clips.len() >= 2,
+            clip_one: clips.len() == 1,
+            clip_looped: clips.iter().any(|id| {
+                doc.song
+                    .clip(*id)
+                    .is_some_and(|(_, _, c)| c.loop_length.is_some())
+            }),
+            loop_instance: matches!(clips.as_slice(), [id]
+                if doc.song.clip(*id).is_some_and(|(_, _, c)| c.loop_length.is_some())),
             clips_muted: !clips.is_empty()
                 && clips
                     .iter()

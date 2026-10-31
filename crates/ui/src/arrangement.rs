@@ -59,6 +59,8 @@ mod points;
 pub use inspector::{ClipField, INSPECTOR_HEIGHT};
 pub use points::{PointField, PointShown};
 mod lanes;
+mod loops;
+use loops::loop_handle_rect;
 mod markers;
 mod meters;
 mod organise;
@@ -284,6 +286,8 @@ enum ClipPart {
     Gain,
     /// A point of the gain envelope of an audio clip.
     GainPoint(usize),
+    /// The loop handle in the upper right corner of the body.
+    LoopHandle,
     /// The mute button in the header strip.
     Mute,
 }
@@ -537,6 +541,8 @@ enum Drag {
         moved: bool,
         emitted: bool,
         loop_mode: bool,
+        /// The loop handle: the clip grows by repeating what it shows.
+        looping: bool,
         last: (i64, Option<i64>),
     },
     /// The left edge of note and automation clips: the start moves, the end stays.
@@ -2414,6 +2420,16 @@ impl ArrangementView {
                             part,
                         };
                     }
+                    if loop_handle_rect(r, tl, clip)
+                        .is_some_and(|h| h.inflate(1.0, 1.0).contains(pos))
+                    {
+                        return Hit::Clip {
+                            track,
+                            lane,
+                            id,
+                            part: ClipPart::LoopHandle,
+                        };
+                    }
                     let part = match seq_edit::hit_span(pos.x, r.x0, r.x1, EDGE_PX) {
                         Some(SpanPart::End) => ClipPart::Edge,
                         _ if pos.x < r.x0 + EDGE_PX.min(r.width() / 3.0) => ClipPart::EdgeStart,
@@ -3193,7 +3209,7 @@ impl ArrangementView {
             self.selected_track = None;
         }
         match part {
-            ClipPart::Body | ClipPart::Header | ClipPart::AutoBody
+            ClipPart::Body | ClipPart::Header | ClipPart::AutoBody | ClipPart::LoopHandle
                 if button == PointerButton::Secondary =>
             {
                 // A right click works on what it points at: a clip outside the selection
@@ -3381,9 +3397,22 @@ impl ArrangementView {
                     moved: false,
                     emitted: false,
                     loop_mode,
+                    looping: false,
                 };
             }
+            ClipPart::LoopHandle if primary => {
+                self.selection.click(id, modifiers.command(), false);
+                if self.selection.contains(&id) {
+                    self.begin_loop_drag(clip, pos);
+                }
+            }
             ClipPart::Body | ClipPart::Header if primary => {
+                // A double-click on the label types the clip's name.
+                if clicks >= 2 && part == ClipPart::Header && id != FROZEN_CLIP {
+                    self.selection.select_only(id);
+                    self.begin_clip_rename(id);
+                    return;
+                }
                 if clicks >= 2 && matches!(clip.content, ClipContent::Notes(_)) {
                     self.selection.select_only(id);
                     out.push(UiAction::OpenPianoRoll(id));
@@ -3749,6 +3778,7 @@ impl ArrangementView {
                 moved,
                 emitted,
                 loop_mode,
+                looping,
                 last,
             } => {
                 *moved |= pos.distance(*start) > DRAG_THRESHOLD;
@@ -3756,6 +3786,16 @@ impl ArrangementView {
                     return;
                 }
                 let delta = axis.dx_to_ticks(pos.x - start.x);
+                if *looping {
+                    let wanted = loops::loop_drag_wanted(clip, delta, step, min);
+                    if wanted != *last {
+                        out.push(loops::loop_geometry_cmd(clip, wanted.0, wanted.1, *merge));
+                        *last = wanted;
+                        *emitted = true;
+                    }
+                    self.repaint = true;
+                    return;
+                }
                 let wanted = if *loop_mode {
                     let orig = clip.loop_length.unwrap_or(clip.length);
                     let l = seq_edit::drag_length(clip.start, clip.start + orig, delta, step, min);
@@ -4046,7 +4086,7 @@ impl ArrangementView {
                     CursorHint::ResizeHorizontal
                 }
                 Some(Hit::Clip {
-                    part: ClipPart::Edge | ClipPart::EdgeStart,
+                    part: ClipPart::Edge | ClipPart::EdgeStart | ClipPart::LoopHandle,
                     ..
                 }) if tool == Tool::Select => CursorHint::ResizeHorizontal,
                 // The mute button acts the same with every tool.
@@ -4366,6 +4406,9 @@ impl ArrangementView {
             return outcome;
         }
         if let Some(outcome) = self.restructure_command(id, arg) {
+            return outcome;
+        }
+        if let Some(outcome) = self.loop_command(id, arg) {
             return outcome;
         }
         match id {
@@ -4853,6 +4896,21 @@ impl ArrangementView {
             Drag::Marquee { base, .. } => self.selection.set(base),
             Drag::Resize {
                 clip,
+                merge,
+                emitted: true,
+                looping: true,
+                ..
+            } => {
+                out.push(loops::loop_geometry_cmd(
+                    &clip,
+                    clip.length,
+                    clip.loop_length,
+                    merge,
+                ));
+                out.push(UiAction::EndMerge);
+            }
+            Drag::Resize {
+                clip,
                 others,
                 merge,
                 emitted: true,
@@ -5045,6 +5103,10 @@ impl ArrangementView {
                     continue;
                 }
                 let selected = self.selection.contains(&clip.id);
+                // A clip with a colour of its own is drawn in it.
+                let accent = clip
+                    .color
+                    .map_or(accent, |[r, g, b]| Color::from_rgb8(r, g, b));
                 self.paint_clip(c, r, clip, accent, &name, &param, selected, muted, tl);
             }
         }
@@ -5625,7 +5687,10 @@ impl ArrangementView {
         for w in windows.iter().skip(1) {
             let x = self.axis.tick_to_x(w.song_start).round() + 0.5;
             if x > tl.x0 && x < tl.x1 {
+                // A bevelled seam: a dark line with a light one beside it.
                 sp::line(c, x, vis.y0, x, vis.y1, st.base.plate.with_alpha(0.7));
+                sp::line(c, x + 1.0, vis.y0, x + 1.0, vis.y1, st.base.bevel_light);
+                sp::line(c, x - 1.0, vis.y0, x - 1.0, vis.y1, st.base.bevel_dark);
                 let mut notch = BezPath::new();
                 notch.move_to(pt(x, vis.y0));
                 notch.line_to(pt(x + 5.0, vis.y0));
@@ -5660,6 +5725,7 @@ impl ArrangementView {
                 };
             let frozen_name;
             let label = match &clip.content {
+                _ if clip.name.is_some() => clip.name.as_deref().unwrap_or(name),
                 ClipContent::Automation(_) => param.name,
                 ClipContent::Audio(_) if frozen => {
                     frozen_name = format!("{name} (frozen)");
@@ -5678,6 +5744,16 @@ impl ArrangementView {
             );
             self.paint_mute_button(c, b, clip.muted, hover);
         }
+        if !frozen
+            && self.loop_handle_shown(clip)
+            && let Some(h) = loop_handle_rect(r, tl, clip)
+        {
+            let hover = matches!(
+                &self.hover,
+                Some(Hit::Clip { id, part: ClipPart::LoopHandle, .. }) if *id == clip.id
+            );
+            self.paint_loop_handle(c, h, clip.loop_length.is_some(), hover);
+        }
         c.pop_clip();
         let (w, col) = if selected {
             (1.5, st.selection)
@@ -5687,6 +5763,48 @@ impl ArrangementView {
             (1.0, st.base.bevel_dark)
         };
         c.stroke_with(RoundedRect::from_rect(vis, 3.0), w, col);
+    }
+
+    /// The loop handle: a bevelled plate with a loop glyph, lit while the clip loops.
+    fn paint_loop_handle(&self, c: &mut dyn Canvas, h: Rect, on: bool, hover: bool) {
+        let st = &self.st;
+        let shape = RoundedRect::from_rect(h, 2.0);
+        if on {
+            c.fill_with(shape, st.base.highlight);
+        } else {
+            let a = if hover { 0.5 } else { 0.3 };
+            c.fill_with(shape, st.base.plate.with_alpha(a));
+        }
+        sp::line(
+            c,
+            h.x0 + 1.0,
+            h.y0 + 0.5,
+            h.x1 - 1.0,
+            h.y0 + 0.5,
+            st.base.bevel_light,
+        );
+        sp::line(
+            c,
+            h.x0 + 1.0,
+            h.y1 - 0.5,
+            h.x1 - 1.0,
+            h.y1 - 0.5,
+            st.base.bevel_dark,
+        );
+        let ink = if on { st.base.on_accent } else { st.base.text };
+        let centre = h.center();
+        // A ring with an arrow head: the loop.
+        c.stroke(
+            &Circle::new(centre, 2.6).into(),
+            &Stroke::new(1.1),
+            &ink.with_alpha(0.9).into(),
+        );
+        let mut head = BezPath::new();
+        head.move_to(pt(centre.x + 0.4, centre.y - 4.4));
+        head.line_to(pt(centre.x + 3.4, centre.y - 2.6));
+        head.line_to(pt(centre.x + 0.4, centre.y - 1.0));
+        head.close_path();
+        c.fill_with(head, ink.with_alpha(0.9));
     }
 
     /// The "M" toggle of a clip header: lit when the clip itself is muted.

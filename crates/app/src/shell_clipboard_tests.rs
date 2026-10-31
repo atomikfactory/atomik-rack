@@ -708,6 +708,8 @@ fn right_click_on_a_clip_opens_the_clip_menu() {
             "sequencer.open_clip",
             "sequencer.split_at_playhead",
             "sequencer.join",
+            "sequencer.rename_clip",
+            "sequencer.loop_instance",
             "sequencer.reverse_clips",
             "sequencer.save_clip_to_library",
             "sequencer.toggle_mute",

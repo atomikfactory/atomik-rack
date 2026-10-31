@@ -441,7 +441,7 @@ fn automation_clips_edit_like_note_clips() {
 }
 
 #[test]
-fn audio_clips_have_no_offset_or_loop_and_edit_through_the_audio_command() {
+fn audio_clips_have_no_offset_and_edit_through_the_audio_command() {
     let doc = audio_doc();
     let reg = registry();
     let mut arr = audio_arrangement(&doc, &reg);
@@ -449,7 +449,11 @@ fn audio_clips_have_no_offset_or_loop_and_edit_through_the_audio_command() {
     arr.set_inspector(true);
     arr.set_selected_clips(&[ClipId(10)]);
     assert_eq!(arr.inspector_value(ClipField::Offset), FieldValue::Empty);
-    assert_eq!(arr.inspector_value(ClipField::Loop), FieldValue::Empty);
+    assert_ne!(
+        arr.inspector_value(ClipField::Loop),
+        FieldValue::Empty,
+        "audio clips may loop"
+    );
     let at = arr.inspector_part_point(ClipField::Offset, 0).unwrap();
     let mut events = vec![down_mods(at, Modifiers::NONE, 2)];
     events.extend(typed("1"));
