@@ -1,7 +1,8 @@
 //! `LiveSession` tests with a fake backend (no audio or MIDI hardware).
 
 use super::*;
-use crate::settings::HostChoice;
+use crate::midi::PortInput;
+use crate::settings::{HostChoice, MidiInputRole, MidiInputSetting};
 use atomik_audio_io::HostKind;
 use atomik_core::SampleRate;
 use std::cell::{Cell, RefCell};
@@ -14,6 +15,10 @@ struct Fake {
     starts: RefCell<Vec<StreamSpec>>,
     stops: Rc<Cell<usize>>,
     ports: Vec<String>,
+    /// Ports that are unplugged right now (listed in `ports`, not offered or openable).
+    hidden: RefCell<Vec<String>>,
+    /// The open inputs, to send messages through.
+    inputs: FakeInputs,
     opened: RefCell<Vec<String>>,
     closes: Rc<Cell<usize>>,
     telemetry: Rc<Cell<Telemetry>>,
@@ -49,9 +54,12 @@ impl LiveStream for FakeStream {
     }
 }
 
+/// The inputs a fake port has open, by port name.
+type FakeInputs = Rc<RefCell<Vec<(String, Rc<RefCell<PortInput>>)>>>;
+
 struct FakeMidi {
     name: String,
-    link: MidiLink,
+    inputs: FakeInputs,
     closes: Rc<Cell<usize>>,
 }
 
@@ -62,15 +70,44 @@ impl MidiPort for FakeMidi {
     fn dropped(&self) -> u64 {
         0
     }
-    fn close(self) -> MidiLink {
+    fn close(self) {
         self.closes.set(self.closes.get() + 1);
-        self.link
+        self.inputs
+            .borrow_mut()
+            .retain(|(name, _)| *name != self.name);
     }
-    fn send_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        self.link.send_now(target, kind)
+}
+
+impl Fake {
+    /// The names a plugged-in port list shows: every port but the unplugged ones.
+    fn visible(&self) -> Vec<String> {
+        let hidden = self.hidden.borrow();
+        self.ports
+            .iter()
+            .filter(|p| !hidden.contains(p))
+            .cloned()
+            .collect()
     }
-    fn play_now(&mut self, target: Target, kind: NoteKind) -> Result<(), EngineError> {
-        self.link.play_now(target, kind)
+
+    /// Sends `bytes` into the open port `port`, as its MIDI thread would.
+    fn send(&self, port: &str, bytes: &[u8]) {
+        let input = self
+            .inputs
+            .borrow()
+            .iter()
+            .find(|(name, _)| name == port)
+            .map(|(_, input)| Rc::clone(input))
+            .unwrap_or_else(|| panic!("port {port} is not open"));
+        input.borrow_mut().on_message(bytes);
+    }
+
+    /// The names of the open ports.
+    fn open_ports(&self) -> Vec<String> {
+        self.inputs
+            .borrow()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect()
     }
 }
 
@@ -83,7 +120,7 @@ impl AudioBackend for &Fake {
     }
 
     fn list_midi(&self) -> Result<Vec<String>, MidiError> {
-        Ok(self.ports.clone())
+        Ok(self.visible())
     }
 
     fn start(
@@ -139,19 +176,20 @@ impl AudioBackend for &Fake {
         })
     }
 
-    fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, (MidiError, MidiLink)> {
-        match crate::midi::match_port(&self.ports, name) {
-            Ok(i) => {
-                self.opened.borrow_mut().push(self.ports[i].clone());
-                self.targets.borrow_mut().push(Arc::clone(&link.target));
-                Ok(FakeMidi {
-                    name: self.ports[i].clone(),
-                    link,
-                    closes: Rc::clone(&self.closes),
-                })
-            }
-            Err(e) => Err((e, link)),
-        }
+    fn open_midi(&self, name: &str, link: MidiLink) -> Result<FakeMidi, MidiError> {
+        let i = crate::midi::match_port(&self.visible(), name)?;
+        let port = self.visible()[i].clone();
+        self.opened.borrow_mut().push(port.clone());
+        self.targets.borrow_mut().push(Arc::clone(&link.target));
+        self.inputs.borrow_mut().push((
+            port.clone(),
+            Rc::new(RefCell::new(PortInput::new(&port, link))),
+        ));
+        Ok(FakeMidi {
+            name: port,
+            inputs: Rc::clone(&self.inputs),
+            closes: Rc::clone(&self.closes),
+        })
     }
 }
 
@@ -160,7 +198,7 @@ fn settings() -> AudioSettings {
         host: HostChoice::Wasapi,
         output_device: Some("Virtual Cable Input".into()),
         buffer_frames: 256,
-        midi_input: None,
+        midi_inputs: Vec::new(),
         workers: 0,
         worker_linger_spins: 0,
         metronome_gain: 0.5,
@@ -288,7 +326,7 @@ fn the_midi_input_opens_with_the_shared_target() {
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
-            midi_input: Some("Keyboard".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Keyboard")],
             ..settings()
         },
         true,
@@ -300,6 +338,195 @@ fn the_midi_input_opens_with_the_shared_target() {
     assert!(Arc::ptr_eq(&fake.targets.borrow()[0], &shared));
 }
 
+fn inputs(entries: &[(&str, bool, MidiInputRole)]) -> Vec<MidiInputSetting> {
+    entries
+        .iter()
+        .map(|(name, enabled, role)| MidiInputSetting {
+            name: (*name).into(),
+            enabled: *enabled,
+            role: *role,
+        })
+        .collect()
+}
+
+fn two_ports() -> Fake {
+    Fake {
+        ports: vec!["Example Keys".into(), "Example Pads".into()],
+        ..Fake::default()
+    }
+}
+
+fn keys_and_pads() -> AudioSettings {
+    AudioSettings {
+        midi_inputs: inputs(&[
+            ("Example Keys", true, MidiInputRole::Keyboard),
+            ("Example Pads", true, MidiInputRole::Keyboard),
+        ]),
+        ..settings()
+    }
+}
+
+/// Aim the shared target at device 7 and record it, so what the ports play can be read back.
+fn record_device_7(s: &mut LiveSession<&Fake>) {
+    let target = s.note_target().unwrap();
+    target.set(Some((DeviceInstanceId(7), atomik_device_sdk::SocketId(0))));
+    s.set_recording(&[DeviceInstanceId(7)]);
+}
+
+#[test]
+fn every_enabled_midi_input_is_open_at_once_and_plays_the_shared_target() {
+    let fake = two_ports();
+    let mut s = LiveSession::new(&fake, keys_and_pads(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(fake.open_ports(), ["Example Keys", "Example Pads"]);
+    assert_eq!(
+        s.status().midi_port.as_deref(),
+        Some("Example Keys, Example Pads")
+    );
+    assert_eq!(s.status().midi_error, None);
+    assert!(s.midi_complete());
+    record_device_7(&mut s);
+    fake.send("Example Keys", &[0x90, 60, 100]);
+    fake.send("Example Pads", &[0x99, 36, 90]);
+    // The target moves; each note-off still goes where its note-on went.
+    s.note_target()
+        .unwrap()
+        .set(Some((DeviceInstanceId(8), atomik_device_sdk::SocketId(0))));
+    fake.send("Example Pads", &[0x89, 36, 0]);
+    fake.send("Example Keys", &[0x80, 60, 0]);
+    let mut out = Vec::new();
+    s.drain_recorded(&mut out);
+    let keys: Vec<(u8, bool)> = out
+        .iter()
+        .map(|n| match n.kind {
+            NoteKind::On { key, .. } => (key, true),
+            NoteKind::Off { key } => (key, false),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(keys, [(60, true), (36, true), (36, false), (60, false)]);
+    assert!(
+        out.iter().all(|n| n.device == DeviceInstanceId(7)),
+        "{out:?}"
+    );
+    assert!(
+        out.windows(2).all(|w| w[0].frame <= w[1].frame),
+        "one ordered queue: {out:?}"
+    );
+}
+
+#[test]
+fn switching_a_port_off_closes_only_that_port() {
+    let fake = two_ports();
+    let mut s = LiveSession::new(&fake, keys_and_pads(), true);
+    s.reset(&config(48_000.0));
+    let opened = fake.opened.borrow().len();
+    let change = s.set_settings(AudioSettings {
+        midi_inputs: inputs(&[
+            ("Example Keys", true, MidiInputRole::Keyboard),
+            ("Example Pads", false, MidiInputRole::Keyboard),
+        ]),
+        ..settings()
+    });
+    assert_eq!(change, SettingsChange::MidiReopened);
+    assert_eq!(fake.starts.borrow().len(), 1, "no audio restart");
+    assert_eq!(fake.closes.get(), 1);
+    assert_eq!(fake.open_ports(), ["Example Keys"]);
+    assert_eq!(
+        fake.opened.borrow().len(),
+        opened,
+        "the keyboard stayed open"
+    );
+    assert_eq!(s.status().midi_port.as_deref(), Some("Example Keys"));
+    // The closed port is no longer there to play.
+    assert!(s.midi_complete());
+    // Everything off closes the last one.
+    assert_eq!(s.set_settings(settings()), SettingsChange::MidiReopened);
+    assert!(fake.open_ports().is_empty());
+    assert_eq!(s.status().midi_port, None);
+}
+
+#[test]
+fn a_port_plugged_in_later_opens_on_a_rescan() {
+    let fake = two_ports();
+    *fake.hidden.borrow_mut() = vec!["Example Pads".into()];
+    let mut s = LiveSession::new(&fake, keys_and_pads(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(fake.open_ports(), ["Example Keys"]);
+    assert!(
+        s.status().midi_error.is_some(),
+        "the missing pads are named"
+    );
+    assert!(!s.midi_complete());
+    // Still unplugged: nothing changes, and the keyboard is not reopened.
+    s.rescan_midi();
+    assert_eq!(fake.open_ports(), ["Example Keys"]);
+    assert_eq!(fake.opened.borrow().len(), 1);
+    // Plugged in: the rescan opens it and clears the error.
+    fake.hidden.borrow_mut().clear();
+    s.rescan_midi();
+    assert_eq!(fake.open_ports(), ["Example Keys", "Example Pads"]);
+    assert_eq!(fake.opened.borrow().len(), 2);
+    assert_eq!(s.status().midi_error, None);
+    assert!(s.midi_complete());
+}
+
+#[test]
+fn a_mapping_only_port_feeds_the_mappings_and_plays_nothing() {
+    let fake = two_ports();
+    let mut s = LiveSession::new(
+        &fake,
+        AudioSettings {
+            midi_inputs: inputs(&[
+                ("Example Keys", true, MidiInputRole::Keyboard),
+                ("Example Pads", true, MidiInputRole::Mapping),
+            ]),
+            ..settings()
+        },
+        true,
+    );
+    s.reset(&config(48_000.0));
+    record_device_7(&mut s);
+    fake.send("Example Pads", &[0x99, 36, 90]);
+    fake.send("Example Keys", &[0x90, 60, 100]);
+    let mut out = Vec::new();
+    s.drain_recorded(&mut out);
+    assert_eq!(out.len(), 1, "only the keyboard plays: {out:?}");
+    let mut seen = Vec::new();
+    s.hub.drain(&mut seen);
+    assert_eq!(seen.len(), 2, "the mappings hear both ports");
+    // Changing the role reopens just that port.
+    let opened = fake.opened.borrow().len();
+    s.set_settings(AudioSettings {
+        midi_inputs: inputs(&[
+            ("Example Keys", true, MidiInputRole::Keyboard),
+            ("Example Pads", true, MidiInputRole::Keyboard),
+        ]),
+        ..settings()
+    });
+    assert_eq!(fake.opened.borrow().len(), opened + 1);
+    fake.send("Example Pads", &[0x99, 37, 90]);
+    s.drain_recorded(&mut out);
+    assert_eq!(out.len(), 2, "now the pads play too: {out:?}");
+}
+
+#[test]
+fn two_settings_naming_one_port_open_it_once() {
+    let fake = two_ports();
+    let mut s = LiveSession::new(
+        &fake,
+        AudioSettings {
+            midi_inputs: inputs(&[
+                ("Example Keys", true, MidiInputRole::Keyboard),
+                ("Keys", true, MidiInputRole::Keyboard),
+            ]),
+            ..settings()
+        },
+        true,
+    );
+    s.reset(&config(48_000.0));
+    assert_eq!(fake.open_ports(), ["Example Keys"]);
+}
 #[test]
 fn a_missing_port_is_reported_and_a_fix_reopens_midi_without_a_restart() {
     let fake = Fake {
@@ -309,7 +536,7 @@ fn a_missing_port_is_reported_and_a_fix_reopens_midi_without_a_restart() {
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
-            midi_input: Some("Keystation".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Keystation")],
             ..settings()
         },
         true,
@@ -318,7 +545,7 @@ fn a_missing_port_is_reported_and_a_fix_reopens_midi_without_a_restart() {
     assert!(s.status().midi_error.is_some());
     assert_eq!(s.status().midi_port, None);
     let change = s.set_settings(AudioSettings {
-        midi_input: Some("Example".into()),
+        midi_inputs: vec![MidiInputSetting::enabled("Example")],
         ..settings()
     });
     assert_eq!(change, SettingsChange::MidiReopened);
@@ -427,7 +654,7 @@ fn shutdown_closes_midi_and_stops_the_stream() {
     let mut s = LiveSession::new(
         &fake,
         AudioSettings {
-            midi_input: Some("Keyboard".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Keyboard")],
             ..settings()
         },
         true,

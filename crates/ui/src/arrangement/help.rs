@@ -2,8 +2,8 @@
 
 use super::markers::ListHit;
 use super::{
-    ArrangementView, ClipPart, Drag, FolderButton, Hit, LaneButton, RowKind, TrackButton,
-    mute_button_rect,
+    ArrangementView, ClipPart, CornerButton, Drag, FolderButton, Hit, LaneButton, RowKind,
+    TrackButton, mute_button_rect,
 };
 use crate::tooltip::Help;
 use crate::viewport::Tool;
@@ -20,6 +20,9 @@ fn track_button(b: TrackButton, rect: Rect) -> Help {
         TrackButton::AddLane => help("Add an automation lane for a parameter"),
         TrackButton::Input => help("Choose the audio input this track records from"),
         TrackButton::Monitor => help("Input monitoring: click to cycle off, auto, on"),
+        TrackButton::Keys => help(
+            "Master keyboard: the arrow marks the track the keyboard plays; in Separated mode click it to choose",
+        ),
     }
 }
 
@@ -36,6 +39,24 @@ fn lane_button(b: LaneButton, rect: Rect) -> Help {
         LaneButton::Fold => help("Fold the lane to a thin strip, or unfold it"),
         LaneButton::Arm => help("Arm this lane for automation recording"),
         LaneButton::Mode => help("Write mode: click to cycle overwrite, touch, latch"),
+    }
+}
+
+/// The help of a corner button.fn corner_button(b: CornerButton, rect: Rect) -> Help {    match b {        CornerButton::ClearMutes => Help::new(rect, "Clear every mute")            .with_command("sequencer.clear_mutes"),        CornerButton::ClearSolos => Help::new(rect, "Clear every solo")            .with_command("sequencer.clear_solos"),        CornerButton::ManualRec => Help::new(            rect,            "Manual Rec: selecting a track no longer arms it; arm tracks with their R buttons",        )        .with_command("sequencer.manual_rec"),    }}
+/// The help of a corner button.
+fn corner_button(b: CornerButton, rect: Rect) -> Help {
+    match b {
+        CornerButton::ClearMutes => {
+            Help::new(rect, "Clear every mute").with_command("sequencer.clear_mutes")
+        }
+        CornerButton::ClearSolos => {
+            Help::new(rect, "Clear every solo").with_command("sequencer.clear_solos")
+        }
+        CornerButton::ManualRec => Help::new(
+            rect,
+            "Manual Rec: selecting a track no longer arms it; arm tracks with their R buttons",
+        )
+        .with_command("sequencer.manual_rec"),
     }
 }
 
@@ -72,6 +93,7 @@ impl ArrangementView {
                 "Snap grid: click to step to the next value, drag or scroll to choose",
             ),
             Hit::Tool(t) => Some(tool(t, self.tool_rect(t))),
+            Hit::CornerButton(b) => Some(corner_button(b, self.corner_button_rect(b))),
             Hit::Button(track, b) => {
                 let rr = rect_of(track, 0)?;
                 Some(track_button(b, self.track_button_rect(rr, track, b)))

@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Several MIDI inputs at once, master keyboard modes and Manual Rec.** Audio Settings > MIDI
+  inputs lists every port with a switch: all the switched-on ports are open together (a keyboard and
+  a pad controller), and a port can be set to feed mappings only so its notes play nothing. The
+  list refreshes every second while the dialog is open, and Audio > Rescan MIDI Ports opens a
+  switched-on controller that was plugged in later. `settings.json` gets `midi_inputs`; a file with
+  the old single `midi_input` loads as that input, enabled. Notes from the ports are kept in order
+  and never stamped more than two buffers ahead, so one port cannot hold back another. Workflow >
+  **Master keyboard** is Standard (the keyboard follows the selected track) or Separated (it plays
+  the track picked with the arrow on its arrangement header). The arrangement corner has **MAN REC**
+  (selecting a track, or creating one, no longer arms it) and M and S buttons that clear every mute
+  or solo in one undo step; they are also the commands Clear All Mutes, Clear All Solos and Manual
+  Record Arming. `session_midi_input` takes the port a message comes from. No project format change.
 - **An unplugged or stalled audio device is noticed, and a device that fails never becomes the
   setting.** When no audio callback arrives for a quarter of a second (or four buffers, if longer)
   the status bar shows `AUDIO STOPPED`, and a driver that reports the device gone shows

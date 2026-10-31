@@ -1886,6 +1886,31 @@ start-up or in Apply, the session opens the remembered one instead and `Shell` s
 never saved. Without a remembered configuration audio stays off with the error and the file keeps
 the old devices.
 
+**Several MIDI inputs.** `settings.json` holds `midi_inputs`, a list of `{name, enabled, role}`
+(`MidiInputSetting`); every enabled port is open at once. `role` is `keyboard` (its notes play the
+selected device and feed the mappings) or `mapping` (it feeds the mappings only, its notes play
+nothing). A file with the old single `midi_input` and no `midi_inputs` loads as that input,
+enabled, and is saved in the new form. The engine has one live note queue with one producer, so
+every port, the audition path and the Piano Keys push through one `LiveFeed` behind a short mutex
+(`MidiLink` clones share it): the MIDI threads and the UI thread take that lock, the audio thread
+never does. Each port has its own `PortInput` (parser, running status, `NoteRouter`), so a
+note-off goes where its port's note-on went. The feed never stamps a note before one already
+queued and never later than the host frame plus two buffers (`LiveFeed::admit`), so a stamp from a
+stale clock cannot hold back the notes behind it, since the engine only looks at the head of the
+queue. `LiveSession::sync_midi` opens and closes ports to match the settings and leaves the
+others alone; a port that is not there yet is reported in the status and opened by Audio > Rescan
+MIDI Ports (`audio.rescan_midi`) or, while Audio Settings is open, by the one second re-listing
+of the ports. The `session_midi_input` tool takes the name of the port a message comes from.
+
+**Master keyboard.** Workflow, **Master keyboard** (`MasterKeyboard`, in `workflow.json`): in
+Standard mode the live keyboard follows the selected track; in Separated mode it plays the track
+chosen with the arrow on its arrangement header (`AppCore::master_keyboard_track`, session state)
+until the arrow is clicked again. `notes_target` reads that track first. **Manual Rec**
+(`sequencer.manual_rec`, the MAN REC button in the arrangement corner) stops selecting a track from
+arming it, and a track created while it is on is not armed. The corner's M and S buttons
+(`sequencer.clear_mutes`, `sequencer.clear_solos`) clear every mute or solo in one undo step. None
+of this is saved in the project.
+
 ## 5. The engine's console features
 
 [crates/engine/src/console.rs](../crates/engine/src/console.rs), with the devices `atomik.channel` and `atomik.master`.
@@ -3187,7 +3212,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (320) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (324) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary

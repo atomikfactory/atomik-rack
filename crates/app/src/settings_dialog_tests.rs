@@ -1,6 +1,7 @@
 //! Settings dialog tests (headless).
 
 use super::*;
+use crate::settings::{MidiInputRole, MidiInputSetting};
 use atomik_audio_io::{DeviceInfo, HostKind};
 use atomik_ui::{DisplayList, Modifiers};
 
@@ -46,7 +47,7 @@ fn current() -> AudioSettings {
         host: HostChoice::Wasapi,
         output_device: Some("Virtual Cable Input".into()),
         buffer_frames: 256,
-        midi_input: None,
+        midi_inputs: Vec::new(),
         workers: 2,
         worker_linger_spins: 0,
         metronome_gain: 0.5,
@@ -120,7 +121,7 @@ fn the_sections_cover_every_setting() {
             "Output device",
             "Input device",
             "Buffer size (frames)",
-            "MIDI input",
+            "MIDI inputs",
             "Worker threads",
             "Worker linger (spins)",
             "Record offset (frames)",
@@ -157,7 +158,7 @@ fn the_sections_cover_every_setting() {
         labels(&d, "Buffer size (frames)"),
         ["64", "128", "256", "512", "1024", "2048"]
     );
-    assert_eq!(labels(&d, "MIDI input"), ["None", "Example Keyboard"]);
+    assert_eq!(labels(&d, "MIDI inputs"), ["Example Keyboard"]);
     assert_eq!(
         labels(&d, "Worker threads"),
         ["0", "1", "2", "3", "4", "6", "8"]
@@ -175,7 +176,8 @@ fn the_current_values_are_selected() {
     assert!(!d.is_selected(&Choice::Host(HostChoice::Asio)));
     assert!(d.is_selected(&Choice::Device(Some("Virtual Cable Input".into()))));
     assert!(d.is_selected(&Choice::Buffer(256)));
-    assert!(d.is_selected(&Choice::Midi(None)));
+    assert!(!d.is_selected(&Choice::MidiInput("Example Keyboard".into())));
+    assert!(d.draft().midi_inputs.is_empty());
     assert!(d.is_selected(&Choice::Workers(2)));
     assert!(d.is_selected(&Choice::Linger(0)));
     assert!(d.is_selected(&Choice::Input(None)));
@@ -183,13 +185,87 @@ fn the_current_values_are_selected() {
 }
 
 #[test]
+fn several_midi_inputs_can_be_switched_on_and_off() {
+    let mut two = lists();
+    two.midi_ports.push("Example Pads".into());
+    let mut d = SettingsDialog::new(current(), two);
+    assert_eq!(
+        labels(&d, "MIDI inputs"),
+        ["Example Keyboard", "Example Pads"],
+        "there is no None entry: every port is a switch"
+    );
+    pick(&mut d, "Example Keyboard");
+    pick(&mut d, "Example Pads");
+    let names = |d: &SettingsDialog| -> Vec<String> {
+        d.draft()
+            .enabled_midi_inputs()
+            .map(|i| i.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&d), ["Example Keyboard", "Example Pads"]);
+    assert!(d.is_selected(&Choice::MidiInput("Example Pads".into())));
+    // A second click switches it off; the entry stays so it can be switched on again.
+    pick(&mut d, "Example Keyboard");
+    assert_eq!(names(&d), ["Example Pads"]);
+    assert_eq!(d.draft().midi_inputs.len(), 2);
+}
+
+#[test]
+fn an_enabled_input_can_be_made_mapping_only() {
+    let mut d = SettingsDialog::new(current(), lists());
+    let titles = |d: &SettingsDialog| -> Vec<&'static str> {
+        d.sections().iter().map(|s| s.title).collect()
+    };
+    assert!(!titles(&d).contains(&"MIDI inputs for mappings only"));
+    pick(&mut d, "Example Keyboard");
+    assert!(titles(&d).contains(&"MIDI inputs for mappings only"));
+    assert_eq!(
+        labels(&d, "MIDI inputs for mappings only"),
+        ["Example Keyboard"]
+    );
+    // The same label is in both sections; the one of the mapping section is the second.
+    let layout = d.layout(VIEW);
+    let (rect, _, _) = layout
+        .options
+        .iter()
+        .find(|(_, _, c)| matches!(c, Choice::MidiMappingOnly(_)))
+        .unwrap();
+    click(&mut d, rect.center());
+    assert_eq!(d.draft().midi_inputs[0].role, MidiInputRole::Mapping);
+    let layout = d.layout(VIEW);
+    let (rect, _, _) = layout
+        .options
+        .iter()
+        .find(|(_, _, c)| matches!(c, Choice::MidiMappingOnly(_)))
+        .unwrap();
+    click(&mut d, rect.center());
+    assert_eq!(d.draft().midi_inputs[0].role, MidiInputRole::Keyboard);
+}
+
+#[test]
+fn listing_the_ports_again_keeps_the_draft_and_the_stream_notes() {
+    let mut first = lists();
+    first.stream_notes = vec!["Buffer 256 frames".into()];
+    let mut d = SettingsDialog::new(current(), first);
+    pick(&mut d, "512");
+    let mut again = lists();
+    again.midi_ports.push("Example Pads".into());
+    d.set_lists(again);
+    assert_eq!(d.draft().buffer_frames, 512);
+    assert_eq!(
+        labels(&d, "MIDI inputs"),
+        ["Example Keyboard", "Example Pads"]
+    );
+    assert_eq!(d.lists().stream_notes, ["Buffer 256 frames"]);
+}
+#[test]
 fn missing_saved_values_are_still_offered_and_marked() {
     let d = SettingsDialog::new(
         AudioSettings {
             host: HostChoice::Alsa,
             output_device: Some("Gone".into()),
             buffer_frames: 300,
-            midi_input: Some("Old Keys".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Old Keys")],
             workers: 5,
             worker_linger_spins: 7,
             metronome_gain: 0.5,
@@ -200,7 +276,7 @@ fn missing_saved_values_are_still_offered_and_marked() {
     assert!(labels(&d, "Audio host").contains(&"ALSA (not available)".to_string()));
     assert!(labels(&d, "Output device").contains(&"Gone (not found)".to_string()));
     assert!(labels(&d, "Buffer size (frames)").contains(&"300".to_string()));
-    assert!(labels(&d, "MIDI input").contains(&"Old Keys (not found)".to_string()));
+    assert!(labels(&d, "MIDI inputs").contains(&"Old Keys (not found)".to_string()));
     assert!(labels(&d, "Worker threads").contains(&"5".to_string()));
     assert!(labels(&d, "Worker linger (spins)").contains(&"7".to_string()));
 }
@@ -215,7 +291,7 @@ fn choosing_options_edits_the_draft_and_apply_returns_it() {
     let apply = d.layout(VIEW).apply.center();
     let expected = AudioSettings {
         buffer_frames: 512,
-        midi_input: Some("Example Keyboard".into()),
+        midi_inputs: vec![MidiInputSetting::enabled("Example Keyboard")],
         workers: 4,
         output_device: None,
         ..current()

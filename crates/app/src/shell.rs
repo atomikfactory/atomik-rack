@@ -167,6 +167,8 @@ use std::time::SystemTime;
 /// A stalled stream that stays silent this long is reset to the default devices when the
 /// settings ask for it (a lost device is reset at once).
 const AUTO_RESET_SILENCE_MS: u64 = 2_000;
+/// How often the open Audio Settings dialog lists the MIDI ports again.
+const PORT_RELIST_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The keymap profile the app starts with: the standard
 /// keys. The `legacy` profile (the keys of earlier versions) stays selectable in Settings > Keyboard.
@@ -362,6 +364,8 @@ pub struct Shell<B: AudioBackend> {
     /// The open context menu (a right click) and the pane it belongs to.
     context_menu: Option<OpenContextMenu>,
     dialog: Option<SettingsDialog>,
+    /// When the open Audio Settings dialog last listed the MIDI ports again.
+    ports_listed_at: Option<std::time::Instant>,
     settings_path: Option<PathBuf>,
     /// The surface settings the control surface was last set up with.
     surface_applied: SurfaceSettings,
@@ -561,6 +565,7 @@ impl<B: AudioBackend> Shell<B> {
             menubar: options.in_window_menu.then(MenuBar::new),
             context_menu: None,
             dialog: None,
+            ports_listed_at: None,
             settings_path: options.settings_path,
             surface_applied: SurfaceSettings::default(),
             ui_state_path: options.ui_state_path,
@@ -1599,6 +1604,8 @@ impl<B: AudioBackend> Shell<B> {
         self.core.set_record_mode(self.workflow.record_mode);
         self.core.set_keep_events(self.workflow.keep_events);
         self.core.set_warp_imports(self.workflow.warp_imports);
+        self.core
+            .set_master_keyboard_mode(self.workflow.master_keyboard);
         self.core.set_follow(self.workflow.follow_song);
         self.core
             .set_follow_selection(self.workflow.follow_selection);
@@ -4891,6 +4898,22 @@ impl<B: AudioBackend> Shell<B> {
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
             }
+            AppCommand::RescanMidi => {
+                let session = self.core.sink_mut();
+                session.rescan_midi();
+                let message = match (session.midi_complete(), session.status().midi_port.clone()) {
+                    (true, Some(ports)) => format!("MIDI inputs open: {ports}"),
+                    (true, None) => "No MIDI input is switched on in Audio Settings".to_string(),
+                    (false, _) => session
+                        .status()
+                        .midi_error
+                        .clone()
+                        .unwrap_or_else(|| "A MIDI input could not be opened".to_string()),
+                };
+                self.notify(message);
+                self.poll_status();
+                Vec::new()
+            }
             AppCommand::RestartAudio => {
                 self.core.sink_mut().set_enabled(true);
                 self.core.rebuild_engine();
@@ -5297,6 +5320,32 @@ impl<B: AudioBackend> Shell<B> {
         self.core.rebuild_engine();
     }
 
+    /// While the Audio Settings dialog is open, lists the MIDI ports again once a second so a
+    /// controller plugged in or removed shows without reopening the dialog, and opens the
+    /// enabled inputs that have appeared.
+    fn relist_ports(&mut self, at: std::time::Instant) {
+        if self.dialog.is_none() {
+            self.ports_listed_at = None;
+            return;
+        }
+        let due = self
+            .ports_listed_at
+            .is_none_or(|last| at.saturating_duration_since(last) >= PORT_RELIST_EVERY);
+        if !due {
+            return;
+        }
+        self.ports_listed_at = Some(at);
+        let session = self.core.sink_mut();
+        if !session.midi_complete() {
+            session.rescan_midi();
+        }
+        let lists = DeviceLists::query(session.backend());
+        if let Some(dialog) = &mut self.dialog {
+            dialog.set_lists(lists);
+        }
+        self.repaint = true;
+    }
+
     /// Reads audio telemetry into the status bar; true when its text changed.
     pub fn poll_status(&mut self) -> bool {
         self.poll_status_at(crate::session::clock_now())
@@ -5305,6 +5354,7 @@ impl<B: AudioBackend> Shell<B> {
     /// [`Self::poll_status`] with the time the stream liveness is judged at.
     pub fn poll_status_at(&mut self, at: std::time::Instant) -> bool {
         self.reload_keymap_file();
+        self.relist_ports(at);
         let target = self.core.notes_target_device().map(|d| d.name.clone());
         let mut status = self.core.sink_mut().poll_at(at).clone();
         if let Some(notice) = self.core.sink_mut().take_notice() {

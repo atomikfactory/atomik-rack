@@ -1,6 +1,6 @@
 //! Command-line options of `atomik`.
 
-use crate::settings::{AudioSettings, HostChoice};
+use crate::settings::{AudioSettings, HostChoice, MidiInputSetting};
 use crate::windows::WindowKind;
 use atomik_ui::keymap::{Os, Profile, UserKeymap, sheet};
 use clap::Parser;
@@ -26,7 +26,8 @@ pub struct Cli {
     /// Requested buffer size in frames for this run.
     #[arg(long, value_name = "FRAMES")]
     pub buffer: Option<u32>,
-    /// MIDI input port for this run (exact name or unique substring).
+    /// The one MIDI input port for this run, instead of the saved ones (exact name or unique
+    /// substring).
     #[arg(long, value_name = "PORT", conflicts_with = "no_midi")]
     pub midi: Option<String>,
     /// No MIDI input for this run.
@@ -273,10 +274,10 @@ impl Cli {
             s.buffer_frames = buffer;
         }
         if let Some(midi) = &self.midi {
-            s.midi_input = Some(midi.clone());
+            s.midi_inputs = vec![MidiInputSetting::enabled(midi.clone())];
         }
         if self.no_midi {
-            s.midi_input = None;
+            s.midi_inputs.clear();
         }
         if let Some(workers) = self.workers {
             s.workers = workers;
@@ -524,7 +525,7 @@ mod tests {
         let cli = parse(&[]);
         assert_eq!(cli.patch, None);
         let saved = AudioSettings {
-            midi_input: Some("P6".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("P6")],
             ..AudioSettings::default()
         };
         assert_eq!(cli.apply(saved.clone()), saved);
@@ -552,7 +553,7 @@ mod tests {
         assert_eq!(s.host, HostChoice::Wasapi);
         assert_eq!(s.output_device.as_deref(), Some("Virtual Cable Input"));
         assert_eq!(s.buffer_frames, 512);
-        assert_eq!(s.midi_input.as_deref(), Some("Example"));
+        assert_eq!(s.midi_inputs, vec![MidiInputSetting::enabled("Example")]);
         assert_eq!(s.workers, 4);
         assert_eq!(s.worker_linger_spins, 1000);
     }
@@ -561,10 +562,10 @@ mod tests {
     fn no_midi_clears_the_saved_port() {
         let cli = parse(&["--no-midi"]);
         let saved = AudioSettings {
-            midi_input: Some("P6".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("P6")],
             ..AudioSettings::default()
         };
-        assert_eq!(cli.apply(saved).midi_input, None);
+        assert!(cli.apply(saved).midi_inputs.is_empty());
     }
 
     #[test]

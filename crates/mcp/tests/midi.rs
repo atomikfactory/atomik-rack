@@ -446,3 +446,33 @@ fn the_surface_driver_answers_faders_keys_and_sysex_through_the_session() {
     let status = ok(&mut s, "session_status", json!({}));
     assert_eq!(status["midi"]["surface"], Value::Null);
 }
+
+/// Messages name the input port they come from, as with several ports open at once: the last
+/// message is tagged with its port (`mcp` when none is given), so a mapping restricted to one
+/// port can be checked.
+#[test]
+fn messages_come_from_the_named_input_port() {
+    let mut s = server();
+    open_demo(&mut s);
+    let v = input(&mut s, "B0 07 40");
+    assert!(v["last"].as_str().unwrap().starts_with("mcp:"), "{v}");
+    let v = ok(
+        &mut s,
+        "session_midi_input",
+        json!({"messages": "90 3C 64", "port": "Example Pads"}),
+    );
+    assert!(
+        v["last"].as_str().unwrap().starts_with("Example Pads:"),
+        "{v}"
+    );
+    let v = ok(
+        &mut s,
+        "session_midi_input",
+        json!({"messages": "B0 07 41", "port": "Example Keys"}),
+    );
+    assert!(
+        v["last"].as_str().unwrap().starts_with("Example Keys:"),
+        "{v}"
+    );
+    assert_eq!(v["received"], 3);
+}

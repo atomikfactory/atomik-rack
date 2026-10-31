@@ -16,7 +16,10 @@
 //!   "host": "wasapi",
 //!   "output_device": "Virtual Cable Input",
 //!   "buffer_frames": 256,
-//!   "midi_input": "Example Keyboard",
+//!   "midi_inputs": [
+//!     { "name": "Example Keyboard", "enabled": true, "role": "keyboard" },
+//!     { "name": "Example Pads", "enabled": true, "role": "mapping" }
+//!   ],
 //!   "workers": 2,
 //!   "worker_linger_spins": 500000,
 //!   "metronome_gain": 0.5,
@@ -33,7 +36,9 @@
 //! ```
 //!
 //! Every field is optional (missing fields take their defaults; unknown fields are ignored).
-//! `output_device: null` is the host's default output, `midi_input: null` is no MIDI input,
+//! `output_device: null` is the host's default output, `midi_inputs: []` is no MIDI input (every
+//! enabled port is open at once; an older file with one `midi_input` name loads as that input,
+//! enabled, and is saved in the new form),
 //! `worker_linger_spins: 0` is the engine default. `input_device: null` is the device named like
 //! the output when the host lists it as an input, else no input (pick one). A positive
 //! `record_offset_frames` places recordings earlier (see [`crate::audio_record`]).
@@ -204,6 +209,60 @@ pub struct SurfaceSettings {
     pub output: Option<String>,
 }
 
+/// What a MIDI input is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiInputRole {
+    /// Plays the selected device (notes) and feeds the mappings: a keyboard.
+    #[default]
+    Keyboard,
+    /// Feeds the mappings only: its notes never play a device (a pad controller whose pads are
+    /// mapped to transport or parameters).
+    Mapping,
+}
+
+impl MidiInputRole {
+    /// The other role.
+    pub fn flipped(self) -> Self {
+        match self {
+            Self::Keyboard => Self::Mapping,
+            Self::Mapping => Self::Keyboard,
+        }
+    }
+}
+
+/// One MIDI input port of the settings: its name, whether it is open, and what it is for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MidiInputSetting {
+    /// The port name (exact or unique substring).
+    pub name: String,
+    /// The port is opened (a disabled port stays listed so it can be switched on again).
+    pub enabled: bool,
+    /// What the port is for.
+    pub role: MidiInputRole,
+}
+
+impl Default for MidiInputSetting {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            enabled: true,
+            role: MidiInputRole::Keyboard,
+        }
+    }
+}
+
+impl MidiInputSetting {
+    /// An enabled keyboard input named `name`.
+    pub fn enabled(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+}
+
 /// The device part of the audio settings: what a stream last opened with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -261,8 +320,8 @@ pub struct AudioSettings {
     /// Requested buffer size in frames (the host may pick another; the status bar shows the
     /// actual size).
     pub buffer_frames: u32,
-    /// MIDI input port name (exact or unique substring); `None` = no MIDI input.
-    pub midi_input: Option<String>,
+    /// The MIDI input ports: every enabled one is open at once; empty = no MIDI input.
+    pub midi_inputs: Vec<MidiInputSetting>,
     /// Extra engine worker threads (0 = single-threaded).
     pub workers: u16,
     /// Worker linger in spins (0 = engine default).
@@ -295,7 +354,7 @@ impl Default for AudioSettings {
             host: HostChoice::platform_default(),
             output_device: None,
             buffer_frames: 256,
-            midi_input: None,
+            midi_inputs: Vec::new(),
             workers: 2,
             worker_linger_spins: DEFAULT_LINGER_SPINS,
             metronome_gain: DEFAULT_METRONOME_GAIN,
@@ -331,6 +390,17 @@ pub enum SettingsError {
     },
 }
 
+/// The input list without empty names and without a second entry for a port already listed.
+fn clean_inputs(inputs: Vec<MidiInputSetting>) -> Vec<MidiInputSetting> {
+    let mut out: Vec<MidiInputSetting> = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        if !input.name.trim().is_empty() && !out.iter().any(|o| o.name == input.name) {
+            out.push(input);
+        }
+    }
+    out
+}
+
 impl AudioSettings {
     /// Clamps the buffer size to `MIN_BUFFER..=MAX_BUFFER` and workers to `MAX_WORKERS`, and
     /// turns empty device or port names into `None`.
@@ -338,7 +408,7 @@ impl AudioSettings {
         let name = |n: Option<String>| n.filter(|s| !s.trim().is_empty());
         Self {
             output_device: name(self.output_device),
-            midi_input: name(self.midi_input),
+            midi_inputs: clean_inputs(self.midi_inputs),
             input_device: name(self.input_device),
             surface: SurfaceSettings {
                 driver: name(self.surface.driver),
@@ -395,11 +465,44 @@ impl AudioSettings {
         json
     }
 
-    /// Parses settings JSON (missing fields take their defaults), then sanitizes.
+    /// Parses settings JSON (missing fields take their defaults), then sanitizes. A file from
+    /// before several MIDI inputs, with one `midi_input` name and no `midi_inputs`, loads as
+    /// that input, enabled.
     pub fn from_json(json: &str) -> Result<Self, String> {
-        serde_json::from_str::<Self>(json)
-            .map(Self::sanitized)
-            .map_err(|e| e.to_string())
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let legacy = match value.as_object() {
+            Some(o) if !o.contains_key("midi_inputs") => o
+                .get("midi_input")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            _ => None,
+        };
+        let mut settings = serde_json::from_value::<Self>(value).map_err(|e| e.to_string())?;
+        if let Some(name) = legacy {
+            settings.midi_inputs = vec![MidiInputSetting::enabled(name)];
+        }
+        Ok(settings.sanitized())
+    }
+
+    /// The ports to open, in settings order: the enabled ones.
+    pub fn enabled_midi_inputs(&self) -> impl Iterator<Item = &MidiInputSetting> {
+        self.midi_inputs.iter().filter(|i| i.enabled)
+    }
+
+    /// Switches the port `name` on or off, adding it (as a keyboard) when it is not listed yet.
+    pub fn set_midi_input_enabled(&mut self, name: &str, enabled: bool) {
+        match self.midi_inputs.iter_mut().find(|i| i.name == name) {
+            Some(input) => input.enabled = enabled,
+            None if enabled => self.midi_inputs.push(MidiInputSetting::enabled(name)),
+            None => {}
+        }
+    }
+
+    /// Sets what the port `name` is for (a port that is not listed is left alone).
+    pub fn set_midi_input_role(&mut self, name: &str, role: MidiInputRole) {
+        if let Some(input) = self.midi_inputs.iter_mut().find(|i| i.name == name) {
+            input.role = role;
+        }
     }
 
     /// The stream to open for an engine at `sample_rate` with `output_channels` and the
@@ -572,7 +675,7 @@ mod tests {
         assert_eq!(s.host, HostChoice::platform_default());
         assert_eq!(s.output_device, None);
         assert_eq!(s.buffer_frames, 256);
-        assert_eq!(s.midi_input, None);
+        assert!(s.midi_inputs.is_empty());
         assert_eq!(s.workers, 2);
         assert_eq!(s.worker_linger_spins, DEFAULT_LINGER_SPINS);
         assert_eq!(
@@ -704,7 +807,7 @@ mod tests {
             host: HostChoice::Asio,
             output_device: Some("Example USB ASIO".into()),
             buffer_frames: 128,
-            midi_input: Some("Example Keyboard".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Example Keyboard")],
             workers: 4,
             worker_linger_spins: 100_000,
             metronome_gain: 0.25,
@@ -776,7 +879,7 @@ mod tests {
         assert_eq!(s.buffer_frames, MIN_BUFFER);
         assert_eq!(s.workers, MAX_WORKERS);
         assert_eq!(s.output_device, None);
-        assert_eq!(s.midi_input, None);
+        assert!(s.midi_inputs.is_empty());
         let big = AudioSettings {
             buffer_frames: 1 << 20,
             ..AudioSettings::default()
@@ -784,6 +887,80 @@ mod tests {
         assert_eq!(big.sanitized().buffer_frames, MAX_BUFFER);
     }
 
+    /// A settings file from before several inputs, with one `midi_input`, loads as that input,
+    /// enabled, and is saved in the new form.
+    #[test]
+    fn an_old_file_with_one_midi_input_loads_as_that_input_enabled() {
+        let old = r#"{ "host": "wasapi", "buffer_frames": 128, "midi_input": "Example Keyboard" }"#;
+        let s = AudioSettings::from_json(old).unwrap();
+        assert_eq!(
+            s.midi_inputs,
+            vec![MidiInputSetting {
+                name: "Example Keyboard".into(),
+                enabled: true,
+                role: MidiInputRole::Keyboard,
+            }]
+        );
+        assert_eq!(s.buffer_frames, 128);
+        let saved = s.to_json();
+        assert!(!saved.contains("\"midi_input\""), "{saved}");
+        assert!(saved.contains("\"midi_inputs\""), "{saved}");
+        assert_eq!(AudioSettings::from_json(&saved).unwrap(), s);
+        // No input before: none now. A null input stays none.
+        assert!(
+            AudioSettings::from_json("{}")
+                .unwrap()
+                .midi_inputs
+                .is_empty()
+        );
+        let none = AudioSettings::from_json(r#"{ "midi_input": null }"#).unwrap();
+        assert!(none.midi_inputs.is_empty());
+    }
+
+    /// The new list wins over a stale single name, and a file written by this build keeps
+    /// disabled and mapping-only entries.
+    #[test]
+    fn the_midi_input_list_is_read_as_written() {
+        let json = r#"{
+            "midi_input": "Old Keys",
+            "midi_inputs": [
+                { "name": "Keys", "enabled": true },
+                { "name": "Pads", "enabled": false, "role": "mapping" },
+                { "name": "Keys" },
+                { "name": " " }
+            ]
+        }"#;
+        let s = AudioSettings::from_json(json).unwrap();
+        assert_eq!(
+            s.midi_inputs,
+            vec![
+                MidiInputSetting::enabled("Keys"),
+                MidiInputSetting {
+                    name: "Pads".into(),
+                    enabled: false,
+                    role: MidiInputRole::Mapping,
+                },
+            ],
+            "a repeated or empty name is dropped, the stale single name is ignored"
+        );
+        let names: Vec<&str> = s.enabled_midi_inputs().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["Keys"]);
+        assert_eq!(AudioSettings::from_json(&s.to_json()).unwrap(), s);
+    }
+
+    #[test]
+    fn switching_a_port_on_lists_it_and_off_keeps_it() {
+        let mut s = AudioSettings::default();
+        s.set_midi_input_enabled("Keys", true);
+        s.set_midi_input_enabled("Pads", true);
+        s.set_midi_input_role("Pads", MidiInputRole::Mapping);
+        s.set_midi_input_enabled("Keys", false);
+        s.set_midi_input_enabled("Unknown", false);
+        assert_eq!(s.midi_inputs.len(), 2);
+        assert!(!s.midi_inputs[0].enabled && s.midi_inputs[1].enabled);
+        assert_eq!(s.midi_inputs[1].role, MidiInputRole::Mapping);
+        assert_eq!(MidiInputRole::Keyboard.flipped(), MidiInputRole::Mapping);
+    }
     #[test]
     fn the_stream_spec_carries_the_document_rate_and_channel_counts() {
         let s = AudioSettings {
@@ -903,7 +1080,7 @@ mod tests {
         let path = temp("nested/dir/settings.json");
         let _ = std::fs::remove_dir_all(temp("nested"));
         let s = AudioSettings {
-            midi_input: Some("Example Keyboard".into()),
+            midi_inputs: vec![MidiInputSetting::enabled("Example Keyboard")],
             ..AudioSettings::default()
         };
         save(&path, &s).unwrap();

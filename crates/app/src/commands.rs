@@ -332,6 +332,9 @@ pub enum AppCommand {
     AudioSettings,
     /// Audio ▸ Plugins…: the third-party plugin settings, scan and list.
     PluginSettings,
+    /// Audio ▸ Rescan MIDI Ports: open the enabled MIDI inputs that are not open (a controller
+    /// plugged in since).
+    RescanMidi,
     /// Audio ▸ Restart Audio.
     RestartAudio,
     /// Help ▸ Export Diagnostics…: one report (settings, plugin state, counters, the last crash
@@ -528,6 +531,7 @@ impl AppCommand {
             AppCommand::AudioClearEnvelope => ("sequencer.audio_envelope_clear", None),
             AppCommand::AudioSettings => ("audio.settings", None),
             AppCommand::PluginSettings => ("audio.plugins", None),
+            AppCommand::RescanMidi => ("audio.rescan_midi", None),
             AppCommand::RestartAudio => ("audio.restart", None),
             AppCommand::ExportDiagnostics => ("help.export_diagnostics", None),
         })
@@ -751,6 +755,7 @@ impl AppCommand {
             ("sequencer.audio_envelope_clear", None) => AppCommand::AudioClearEnvelope,
             ("audio.settings", None) => AppCommand::AudioSettings,
             ("audio.plugins", None) => AppCommand::PluginSettings,
+            ("audio.rescan_midi", None) => AppCommand::RescanMidi,
             ("audio.restart", None) => AppCommand::RestartAudio,
             ("help.export_diagnostics", None) => AppCommand::ExportDiagnostics,
             _ => return None,
@@ -1612,6 +1617,7 @@ pub fn menus_with_recent(state: &MenuState, keymap: &Keymap, recent: &[String]) 
                 item("Settings\u{2026}", AppCommand::AudioSettings),
                 item("Plugins\u{2026}", AppCommand::PluginSettings),
                 item("Restart Audio", AppCommand::RestartAudio),
+                item("Rescan MIDI Ports", AppCommand::RescanMidi),
                 MenuEntry::Separator,
                 enabled(
                     "Clip Gain: Up 1 dB",
@@ -2006,6 +2012,7 @@ mod tests {
             AppCommand::AudioClearEnvelope,
             AppCommand::AudioSettings,
             AppCommand::PluginSettings,
+            AppCommand::RescanMidi,
             AppCommand::RestartAudio,
             AppCommand::ExportDiagnostics,
         ];
@@ -2536,6 +2543,7 @@ mod tests {
                 "Settings\u{2026}",
                 "Plugins\u{2026}",
                 "Restart Audio",
+                "Rescan MIDI Ports",
                 "Clip Gain: Up 1 dB",
                 "Clip Gain: Down 1 dB",
                 "Clip Gain: Reset",

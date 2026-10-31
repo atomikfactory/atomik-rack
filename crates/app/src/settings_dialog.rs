@@ -21,7 +21,7 @@ use crate::keymap_store::WorkflowPrefs;
 use crate::menubar::text_width;
 use crate::session::AudioBackend;
 use crate::settings::{
-    AudioSettings, BUFFER_CHOICES, HostChoice, LINGER_CHOICES, PRE_COUNT_CHOICES,
+    AudioSettings, BUFFER_CHOICES, HostChoice, LINGER_CHOICES, MidiInputRole, PRE_COUNT_CHOICES,
     RECORD_OFFSET_CHOICES, WORKER_CHOICES,
 };
 use crate::workflow_tab::{WorkflowLayout, WorkflowTab};
@@ -93,8 +93,11 @@ pub enum Choice {
     PreCount(u8),
     /// Buffer size.
     Buffer(u32),
-    /// MIDI input (`None` = none).
-    Midi(Option<String>),
+    /// A MIDI input port: a click switches it on or off (every enabled port is open).
+    MidiInput(String),
+    /// What an enabled MIDI input is for: a click switches it between playing notes (a keyboard)
+    /// and feeding the mappings only.
+    MidiMappingOnly(String),
     /// The control surface driver (`None` = no surface).
     SurfaceDriver(Option<String>),
     /// The control surface's input port (`None` = none).
@@ -241,6 +244,24 @@ impl SettingsDialog {
         self
     }
 
+    /// The ports and devices as last listed.
+    pub fn lists(&self) -> &DeviceLists {
+        &self.lists
+    }
+
+    /// Replaces the device lists (the shell lists the ports again while the dialog is open, so
+    /// a controller plugged in or removed shows without reopening it). The notes about the
+    /// running stream are kept when `lists` has none; the draft and the scroll stay as they are.
+    pub fn set_lists(&mut self, mut lists: DeviceLists) {
+        if lists.input_note.is_none() {
+            lists.input_note = self.lists.input_note.take();
+        }
+        if lists.stream_notes.is_empty() {
+            lists.stream_notes = std::mem::take(&mut self.lists.stream_notes);
+        }
+        self.lists = lists;
+    }
+
     /// The tab that shows.
     pub fn tab(&self) -> Tab {
         self.tab
@@ -321,7 +342,7 @@ impl SettingsDialog {
             }
             Tab::Workflow => {
                 let width = (view.width - 32.0).clamp(240.0, 640.0);
-                let height = (TITLE + 10.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
+                let height = (TITLE + 11.0 * 56.0 + 60.0 + FOOTER).min(view.height - 32.0);
                 let x0 = ((view.width - width) / 2.0).max(0.0);
                 let y0 = ((view.height - height) / 2.0).max(0.0);
                 Rect::new(x0, y0, x0 + width, y0 + height)
@@ -417,23 +438,29 @@ impl SettingsDialog {
                 Choice::Input(Some(saved.clone())),
             ));
         }
-        let mut midi = vec![("None".to_string(), Choice::Midi(None))];
+        // Every port listed is a switch: all the enabled ones are open at once. A saved port
+        // that is not plugged in is still listed (marked) so it can be switched off.
+        let mut midi: Vec<(String, Choice)> = self
+            .lists
+            .midi_ports
+            .iter()
+            .map(|p| (p.clone(), Choice::MidiInput(p.clone())))
+            .collect();
         midi.extend(
-            self.lists
-                .midi_ports
+            d.midi_inputs
                 .iter()
-                .map(|p| (p.clone(), Choice::Midi(Some(p.clone())))),
+                .filter(|i| !self.lists.midi_ports.contains(&i.name))
+                .map(|i| {
+                    (
+                        format!("{} (not found)", i.name),
+                        Choice::MidiInput(i.name.clone()),
+                    )
+                }),
         );
-        if let Some(saved) = d
-            .midi_input
-            .as_ref()
-            .filter(|p| !self.lists.midi_ports.contains(p))
-        {
-            midi.push((
-                format!("{saved} (not found)"),
-                Choice::Midi(Some(saved.clone())),
-            ));
-        }
+        let mapping_only: Vec<(String, Choice)> = d
+            .enabled_midi_inputs()
+            .map(|i| (i.name.clone(), Choice::MidiMappingOnly(i.name.clone())))
+            .collect();
         let with_current = |values: &[u64], current: u64| {
             let mut v = values.to_vec();
             if !v.contains(&current) {
@@ -449,7 +476,7 @@ impl SettingsDialog {
             offsets.push(d.record_offset_frames);
             offsets.sort_unstable();
         }
-        vec![
+        let mut sections = vec![
             Section {
                 title: "Audio host",
                 options: host_options,
@@ -474,7 +501,7 @@ impl SettingsDialog {
                 chips: true,
             },
             Section {
-                title: "MIDI input",
+                title: "MIDI inputs",
                 options: midi,
                 chips: false,
             },
@@ -535,7 +562,18 @@ impl SettingsDialog {
                 ],
                 chips: true,
             },
-        ]
+        ];
+        if !mapping_only.is_empty() {
+            sections.insert(
+                5,
+                Section {
+                    title: "MIDI inputs for mappings only",
+                    options: mapping_only,
+                    chips: false,
+                },
+            );
+        }
+        sections
     }
 
     /// The Surfaces tab: the driver and the two ports. A saved port that is not plugged in is
@@ -620,7 +658,11 @@ impl SettingsDialog {
             Choice::RecordOffset(o) => d.record_offset_frames == *o,
             Choice::PreCount(b) => d.pre_count_bars == *b,
             Choice::Buffer(b) => d.buffer_frames == *b,
-            Choice::Midi(p) => d.midi_input == *p,
+            Choice::MidiInput(p) => d.enabled_midi_inputs().any(|i| i.name == *p),
+            Choice::MidiMappingOnly(p) => d
+                .midi_inputs
+                .iter()
+                .any(|i| i.name == *p && i.role == MidiInputRole::Mapping),
             Choice::SurfaceDriver(n) => d.surface.driver == *n,
             Choice::SurfaceInput(n) => d.surface.input == *n,
             Choice::SurfaceOutput(n) => d.surface.output == *n,
@@ -649,7 +691,17 @@ impl SettingsDialog {
             Choice::RecordOffset(o) => self.draft.record_offset_frames = o,
             Choice::PreCount(b) => self.draft.pre_count_bars = b,
             Choice::Buffer(b) => self.draft.buffer_frames = b,
-            Choice::Midi(p) => self.draft.midi_input = p,
+            Choice::MidiInput(p) => {
+                let on = self.draft.enabled_midi_inputs().any(|i| i.name == p);
+                self.draft.set_midi_input_enabled(&p, !on);
+            }
+            Choice::MidiMappingOnly(p) => {
+                let role = match self.is_selected(&Choice::MidiMappingOnly(p.clone())) {
+                    true => MidiInputRole::Keyboard,
+                    false => MidiInputRole::Mapping,
+                };
+                self.draft.set_midi_input_role(&p, role);
+            }
             Choice::SurfaceDriver(n) => self.draft.surface.driver = n,
             Choice::SurfaceInput(n) => self.draft.surface.input = n,
             Choice::SurfaceOutput(n) => self.draft.surface.output = n,
@@ -672,6 +724,8 @@ impl SettingsDialog {
         }
         let mut notes = vec![
             "Live MIDI notes go to the selected device (else the first device with a notes input)."
+                .to_string(),
+            "Every switched-on MIDI input is open at once; the list refreshes as ports come and go."
                 .to_string(),
         ];
         notes.extend(self.lists.input_note.iter().cloned());
@@ -963,9 +1017,18 @@ impl SettingsDialog {
                 );
             } else {
                 let c = Point::new(r.x0 + 12.0, r.center().y);
-                canvas.stroke_with(Circle::new(c, 5.0), 1.2, theme.text_muted);
-                if selected {
-                    canvas.fill_with(Circle::new(c, 2.8), theme.text);
+                if matches!(choice, Choice::MidiInput(_) | Choice::MidiMappingOnly(_)) {
+                    // Several can be on at once: a square box, not a radio dot.
+                    let b = Rect::new(c.x - 5.0, c.y - 5.0, c.x + 5.0, c.y + 5.0);
+                    canvas.stroke_with(RoundedRect::from_rect(b, 1.5), 1.2, theme.text_muted);
+                    if selected {
+                        canvas.fill_with(b.inset(-2.5), theme.text);
+                    }
+                } else {
+                    canvas.stroke_with(Circle::new(c, 5.0), 1.2, theme.text_muted);
+                    if selected {
+                        canvas.fill_with(Circle::new(c, 2.8), theme.text);
+                    }
                 }
                 canvas.text(&TextRun::new(
                     label.clone(),

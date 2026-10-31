@@ -478,6 +478,9 @@ impl ArrangementView {
         // An audio track's meter sits after the name.
         let base = if tr.is_audio() {
             base.min(super::meters::name_base(hr.height() < super::COMPACT_BELOW))
+        } else if !tr.is_automation_only() && hr.height() >= super::COMPACT_BELOW {
+            // A note track's master keyboard arrow sits after the name.
+            base - 22.0
         } else {
             base
         };

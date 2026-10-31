@@ -87,6 +87,8 @@ pub enum Cycle {
     KeepEvents,
     /// Which imported audio files are warped to the song tempo.
     WarpImports,
+    /// How the master keyboard picks its track.
+    MasterKeyboard,
 }
 
 /// A row with a button that steps through the choices of a setting.
@@ -275,6 +277,12 @@ impl WorkflowTab {
                 "Audio with a tempo or a whole number of bars follows the song tempo; Loops only skips one-shots.",
                 self.prefs.warp_imports.label(),
             ),
+            (
+                Cycle::MasterKeyboard,
+                "Master keyboard",
+                "Standard plays the selected track; Separated plays the track picked with the arrow of its header.",
+                self.prefs.master_keyboard.label(),
+            ),
         ] {
             cycles.push(CycleRow {
                 rect: Rect::new(x0, y, x0 + inner, y + ROW),
@@ -333,6 +341,9 @@ impl WorkflowTab {
                             }
                             Cycle::KeepEvents => {
                                 self.prefs.keep_events = self.prefs.keep_events.next();
+                            }
+                            Cycle::MasterKeyboard => {
+                                self.prefs.master_keyboard = self.prefs.master_keyboard.next();
                             }
                             Cycle::WarpImports => {
                                 self.prefs.warp_imports = self.prefs.warp_imports.next();
