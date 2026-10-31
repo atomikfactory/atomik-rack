@@ -87,7 +87,7 @@ fn a_param_with_a_lane_is_marked_and_the_others_are_not() {
     // The mark is there with the transport stopped and nothing shown.
     let plain = {
         let mut d = doc.clone();
-        d.song.tracks[0].lanes.pop();
+        d.song_mut().tracks[0].lanes.pop();
         let mut u = view(&d, &reg);
         u.sync(&d, &reg);
         u
@@ -100,7 +100,7 @@ fn the_mark_changes_the_look_of_the_panel_only() {
     let (doc, reg, mut v) = rack();
     let marked = paint(&mut v, &doc, &reg).to_json();
     let mut bare = doc.clone();
-    bare.song.tracks[0].lanes.pop();
+    bare.song_mut().tracks[0].lanes.pop();
     let mut u = view(&bare, &reg);
     let unmarked = paint(&mut u, &bare, &reg).to_json();
     assert_ne!(marked, unmarked);
@@ -155,10 +155,10 @@ fn an_automated_panel_front_matches_golden() {
 fn a_console_strip_follows_its_shown_value_and_marks_the_lane() {
     let (mut doc, reg) = (console_doc(), console_registry());
     // A channel strip has an automation track of its own: the lane alone.
-    let mut t = song_doc().song.tracks.remove(0);
+    let mut t = song_doc().song_mut().tracks.remove(0);
     t.device = key("ch-bass");
     t.lanes = vec![atomik_model::Lane::automation("fader")];
-    doc.song.tracks = vec![t];
+    doc.song_mut().tracks = vec![t];
     let mut v = console_view(&doc, &reg);
     assert!(v.is_automated(&key("ch-bass"), "fader"));
     assert!(!v.is_automated(&key("ch-lead"), "fader"));
@@ -183,10 +183,10 @@ fn the_master_section_follows_its_shown_value_and_marks_the_lane() {
     };
     let (plain, without) = paint_master(&doc);
     assert!(!plain.is_automated(&key("master"), "return1.level"));
-    let mut t = song_doc().song.tracks.remove(0);
+    let mut t = song_doc().song_mut().tracks.remove(0);
     t.device = key("master");
     t.lanes = vec![atomik_model::Lane::automation("return1.level")];
-    doc.song.tracks = vec![t];
+    doc.song_mut().tracks = vec![t];
     let (mut v, with) = paint_master(&doc);
     assert!(v.is_automated(&key("master"), "return1.level"));
     assert_ne!(

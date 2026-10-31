@@ -37,7 +37,7 @@ fn song(tails: bool) -> RackDoc {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, 4 * PPQ, 69, 1.0)]),
+                content: ClipContent::Notes(vec![Note::new(0, 4 * PPQ, 69, 1.0)].into()),
             },
         }),
         Command::Song(SongCommand::SetSongEnd(8 * PPQ)),
@@ -46,7 +46,7 @@ fn song(tails: bool) -> RackDoc {
             .unwrap_or_else(|e| panic!("{c:?}: {e}"));
     }
     let mut doc = d.doc().clone();
-    doc.song.tails = tails;
+    doc.song_mut().tails = tails;
     doc
 }
 

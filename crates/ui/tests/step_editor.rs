@@ -77,14 +77,14 @@ fn ends(a: &[UiAction]) -> usize {
 
 fn notes_of(d: &Document) -> Vec<Note> {
     match clip_of(d.doc()).content {
-        ClipContent::Notes(n) => n,
+        ClipContent::Notes(n) => n.to_vec(),
         _ => panic!("note clip"),
     }
 }
 
 fn beat_notes() -> Vec<Note> {
     match beat_clip().content {
-        ClipContent::Notes(n) => n,
+        ClipContent::Notes(n) => n.to_vec(),
         _ => Vec::new(),
     }
 }
@@ -758,12 +758,12 @@ fn open_close_and_presence() {
     assert_eq!(a, vec![UiAction::CloseStepEditor]);
     // A deleted clip or device makes the view absent.
     let mut doc = d.doc().clone();
-    doc.song.tracks[0].lanes[0].clips.clear();
+    doc.song_mut().tracks[0].lanes[0].clips.clear();
     v.sync(&doc, &reg);
     assert!(!v.is_present());
     let mut doc = drum_doc();
     doc.devices.retain(|x| x.key != key("drums"));
-    doc.song.tracks.clear();
+    doc.song_mut().tracks.clear();
     v.sync(&doc, &reg);
     assert!(!v.is_present());
     // Reopening on the real document works; close() empties the view.
@@ -801,7 +801,7 @@ fn resolve_clip_prefers_the_selection_then_the_playhead() {
     let mut second = beat_clip();
     second.id = ClipId(8);
     second.start = 4 * PPQ * 2;
-    doc.song.tracks[0].lanes[0].clips.push(second);
+    doc.song_mut().tracks[0].lanes[0].clips.push(second);
     let dk = key("drums");
     let r = StepEditorView::resolve_clip;
     assert_eq!(
@@ -975,7 +975,7 @@ proptest! {
         let reg = registry();
         let mut doc = drum_doc();
         // A note the grid never shows (key 60 is no pad).
-        if let ClipContent::Notes(n) = &mut doc.song.tracks[0].lanes[0].clips[0].content {
+        if let ClipContent::Notes(n) = &mut doc.song_mut().tracks[0].lanes[0].clips[0].content {
             n.push(Note::new(5, 10, 60, 0.5));
             n.sort_by_key(|n| (n.tick, n.key));
         }

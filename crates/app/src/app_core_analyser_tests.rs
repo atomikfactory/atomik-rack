@@ -279,7 +279,7 @@ fn tone_rack(c: &mut AppCore<OfflineSink>, beats: i64) {
         lane: 0,
         clip: clip(
             beats * PPQ,
-            ClipContent::Notes(vec![Note::new(0, beats * PPQ, 69, 0.9)]),
+            ClipContent::Notes(vec![Note::new(0, beats * PPQ, 69, 0.9)].into()),
         ),
     }))
     .unwrap();
@@ -383,7 +383,7 @@ fn tone_rack_for_probe(c: &mut AppCore<RecordingSink>) {
         lane: 0,
         clip: clip(
             8 * PPQ,
-            ClipContent::Notes(vec![Note::new(0, 8 * PPQ, 69, 0.9)]),
+            ClipContent::Notes(vec![Note::new(0, 8 * PPQ, 69, 0.9)].into()),
         ),
     }))
     .unwrap();

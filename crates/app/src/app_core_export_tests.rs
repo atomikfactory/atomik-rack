@@ -65,10 +65,9 @@ fn core() -> AppCore<RecordingSink> {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(vec![
-                Note::new(0, PPQ, 64, 0.8),
-                Note::new(PPQ, PPQ, 67, 0.8),
-            ]),
+            content: ClipContent::Notes(
+                vec![Note::new(0, PPQ, 64, 0.8), Note::new(PPQ, PPQ, 67, 0.8)].into(),
+            ),
         },
     }))
     .unwrap();

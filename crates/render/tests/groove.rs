@@ -62,7 +62,7 @@ fn synth_doc(notes: Vec<Note>) -> Document {
                 grid: None,
                 scale: None,
                 controllers: Vec::new(),
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }),
     );
@@ -119,7 +119,7 @@ fn quantize(d: &mut Document, q: QuantizeParams) {
 
 fn notes_of(d: &Document) -> Vec<Note> {
     match &d.doc().song.clip(ClipId(1)).unwrap().2.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         _ => unreachable!(),
     }
 }

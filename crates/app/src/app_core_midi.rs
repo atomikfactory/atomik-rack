@@ -269,7 +269,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         let start = if as_song { 0 } else { playhead };
         // A meter that is going to replace the song's decides the bar a short track rounds to.
-        let mut scratch = self.doc().song.clone();
+        let mut scratch = self.doc().song.as_ref().clone();
         if as_song && let Some(meter) = &midi.meter {
             scratch.meter.clone_from(meter);
         }

@@ -437,7 +437,7 @@ fn bouncing_chosen_clips_renders_only_those_through_the_chain() {
     assert!(render.audio.channels[0].iter().any(|x| x.abs() > 0.01));
     // The same as rendering a document that has only that clip.
     let mut only = doc.clone();
-    only.song.tracks[0]
+    only.song_mut().tracks[0]
         .lanes
         .iter_mut()
         .for_each(|l| l.clips.retain(|c| c.id == ids[1]));

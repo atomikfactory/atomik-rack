@@ -326,7 +326,7 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
                 steps: STEPS,
                 swing: SWING,
             }),
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
         },
     }));
     apply(Command::Song(SongCommand::SetSongEnd(length)));
@@ -641,7 +641,7 @@ fn individual_outputs_move_pads_to_their_channels_and_lose_nothing() {
     let mut no_kick_snare = plain;
     {
         let track = no_kick_snare
-            .song
+            .song_mut()
             .tracks
             .iter_mut()
             .find(|t| t.device == key("drums"))
@@ -671,7 +671,7 @@ fn swing_and_choke_change_the_sound() {
     let base = bounce(&doc, 512, 0);
     // Without swing the odd steps move back.
     let mut straight = doc.clone();
-    for t in &mut straight.song.tracks {
+    for t in &mut straight.song_mut().tracks {
         for clip in &mut t.lanes[0].clips {
             clip.grid.as_mut().unwrap().swing = 0;
         }

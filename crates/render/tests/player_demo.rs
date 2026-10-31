@@ -292,7 +292,7 @@ pub fn demo_doc() -> RackDoc {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(chord.to_vec()),
+            content: ClipContent::Notes(chord.to_vec().into()),
         },
     }));
     b.apply(Command::Song(SongCommand::SetSongEnd(length)));
@@ -450,7 +450,7 @@ fn a_sequencer_into_an_arpeggiator_into_a_synth_plays() {
         from: sref(&key("seq"), "notes_out"),
         to: sref(&key("arp"), "notes_in"),
     });
-    doc.song.tracks.clear();
+    doc.song_mut().tracks.clear();
     set_param(&mut doc, "bass", "master.level", -96.0);
     set_param(&mut doc, "arp", "run", 1.0);
     let heard = bounce(&doc, 512, 0);

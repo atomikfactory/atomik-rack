@@ -136,7 +136,7 @@ pub fn render_freeze(
     let mut rendered_doc = doc.clone();
     let any_solo = rendered_doc.song.tracks.iter().any(|t| t.solo);
     if let Some(t) = rendered_doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == request.device)

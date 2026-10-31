@@ -1208,7 +1208,7 @@ mod tests {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, 60, 0.5)]),
+                content: ClipContent::Notes(vec![Note::new(0, PPQ / 2, 60, 0.5)].into()),
             },
         }));
         apply(Command::Song(SongCommand::AddAutomationLane {
@@ -1258,7 +1258,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(chase(&doc), [true, true], "tracks chase by default");
-        doc.song.tracks[1].chase = false;
+        doc.song_mut().tracks[1].chase = false;
         assert_eq!(chase(&doc), [true, false]);
     }
 
@@ -1269,7 +1269,7 @@ mod tests {
         let r = registry();
         let ids = expanded_ids(&doc.expand(&r));
         let point = |tick, value, curve| AutomationPoint { tick, value, curve };
-        doc.song.tracks[0].lanes[0].clips[0].controllers = vec![
+        doc.song_mut().tracks[0].lanes[0].clips[0].controllers = vec![
             ControllerLane::new(
                 ControllerKind::PitchBend,
                 vec![point(0, -0.5, Curve::Linear), point(PPQ, 0.5, Curve::Step)],
@@ -1371,7 +1371,7 @@ mod tests {
         assert!(bare.audio.is_empty() && bare.assets.is_empty());
         // A muted audio track plays nothing.
         let mut muted = doc.clone();
-        muted.song.tracks[0].muted = true;
+        muted.song_mut().tracks[0].muted = true;
         let input = song_input_with_assets(&muted, &r, |k| ids.get(k).copied(), &assets);
         assert!(input.audio.is_empty());
     }
@@ -1393,7 +1393,7 @@ mod tests {
     #[test]
     fn muted_tracks_and_devices_without_ids_are_left_out() {
         let mut doc = doc();
-        doc.song.tracks[0].muted = true;
+        doc.song_mut().tracks[0].muted = true;
         let r = registry();
         let input = song_input(&doc, &r, |k| {
             (k == &key("b")).then_some(DeviceInstanceId(9))

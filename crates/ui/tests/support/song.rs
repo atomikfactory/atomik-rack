@@ -25,7 +25,7 @@ pub fn notes_clip(id: u64, start: i64, length: i64, notes: Vec<Note>) -> Clip {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     }
 }
 
@@ -140,7 +140,7 @@ pub fn song_doc() -> RackDoc {
     let mut keys_track = track("keys", vec![Lane::notes().with_clips(vec![keys_clip])]);
     keys_track.solo = true;
     keys_track.armed = true;
-    doc.song.tracks = vec![
+    doc.song_mut().tracks = vec![
         track(
             "bass",
             vec![
@@ -151,9 +151,9 @@ pub fn song_doc() -> RackDoc {
         lead_track,
         keys_track,
     ];
-    doc.song.loop_range = (0, 4 * BAR);
-    doc.song.loop_enabled = true;
-    doc.song.next_clip_id = 6;
+    doc.song_mut().loop_range = (0, 4 * BAR);
+    doc.song_mut().loop_enabled = true;
+    doc.song_mut().next_clip_id = 6;
     doc
 }
 

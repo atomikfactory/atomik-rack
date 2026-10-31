@@ -77,7 +77,7 @@ fn shell(dir: &Path) -> Shell<NullBackend> {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(vec![Note::new(0, PPQ, 64, 0.8)]),
+            content: ClipContent::Notes(vec![Note::new(0, PPQ, 64, 0.8)].into()),
         },
     }))
     .unwrap();

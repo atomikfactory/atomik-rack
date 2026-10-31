@@ -393,7 +393,7 @@ pub fn add_stress_drums<S: EngineSink>(core: &mut AppCore<S>, dir: &Path) -> Res
                     steps: STRESS_DRUM_STEPS,
                     swing: 25,
                 }),
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }))
         .map_err(|e| format!("{key}: {e}"))?;
@@ -538,7 +538,7 @@ pub fn add_stress_slicers<S: EngineSink>(core: &mut AppCore<S>, dir: &Path) -> R
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }))
         .map_err(|e| format!("{key}: {e}"))?;
@@ -810,7 +810,7 @@ pub fn add_stress_players<S: EngineSink>(core: &mut AppCore<S>) -> Result<(), St
                     scale: None,
                     controllers: Vec::new(),
                     grid: None,
-                    content: ClipContent::Notes(notes),
+                    content: ClipContent::Notes(notes.into()),
                 },
             }),
         )?;
@@ -1022,7 +1022,7 @@ pub fn add_stress_containers<S: EngineSink>(core: &mut AppCore<S>) -> Result<(),
             Command::Song(SongCommand::AddClip {
                 device: cont.clone(),
                 lane: 0,
-                clip: clip(ClipContent::Notes(notes)),
+                clip: clip(ClipContent::Notes(notes.into())),
             }),
         )?;
         for (lane, param, phase) in [(1usize, "macro1", 0i64), (2, "macro2", 2)] {
@@ -1224,7 +1224,7 @@ pub fn add_stress_character<S: EngineSink>(core: &mut AppCore<S>) -> Result<(), 
             Command::Song(SongCommand::AddClip {
                 device: cont.clone(),
                 lane: 0,
-                clip: clip(ClipContent::Notes(notes)),
+                clip: clip(ClipContent::Notes(notes.into())),
             }),
         )?;
         let lanes: [(usize, &str, Vec<AutomationPoint>); 2] = [
@@ -1389,7 +1389,7 @@ fn add_dense_track<S: EngineSink>(
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }),
     )

@@ -287,7 +287,7 @@ pub fn demo_doc() -> RackDoc {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
         },
     }));
     b.apply(Command::Song(SongCommand::AddAutomationLane {
@@ -426,7 +426,7 @@ fn flat_twin(doc: &RackDoc, registry: &atomik_device_sdk::Registry) -> RackDoc {
             *s = through(s);
         }
     }
-    for t in &mut twin.song.tracks {
+    for t in &mut twin.song_mut().tracks {
         t.device = through(&t.device);
     }
     twin
@@ -551,7 +551,7 @@ fn the_container_project_sounds_and_the_split_sends_each_half_to_its_synth() {
 #[test]
 fn macros_change_the_sound_and_a_macro_value_is_its_targets_value() {
     let (registry, mut doc) = registry_and_doc();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         t.lanes.retain(|l| l.kind.is_notes());
     }
     // The stored macro value 0.5 is the targets' value: the same as writing them by hand.
@@ -612,7 +612,7 @@ fn the_expansion_theorem_the_container_bounce_equals_the_hand_built_flat_twin() 
     // The twin has no macro automation lane (it is expanded below), so test a project without
     // it first: notes through the split, macro values applied.
     let mut doc_static = doc.clone();
-    for t in &mut doc_static.song.tracks {
+    for t in &mut doc_static.song_mut().tracks {
         t.lanes.retain(|l| l.kind.is_notes());
     }
     let twin_static = flat_twin(&doc_static, &registry);
@@ -644,7 +644,9 @@ fn a_macro_automation_lane_equals_lanes_written_on_each_target() {
     };
     let mut twin = flat_twin(&doc, &registry);
     // Replace the container track's lane with direct lanes on Low and High.
-    twin.song.tracks[0].lanes.retain(|l| l.kind.is_notes());
+    twin.song_mut().tracks[0]
+        .lanes
+        .retain(|l| l.kind.is_notes());
     let mut d = Document::new(twin.clone());
     let reg = default_registry();
     for (device, min, max) in [
@@ -704,7 +706,9 @@ fn a_macro_automation_lane_equals_lanes_written_on_each_target() {
     }
     // The lane is audible: without it the sound differs.
     let mut still = doc.clone();
-    still.song.tracks[0].lanes.retain(|l| l.kind.is_notes());
+    still.song_mut().tracks[0]
+        .lanes
+        .retain(|l| l.kind.is_notes());
     assert!(bits(&bounce(&still, 512, 0)) != bits(&bounce(&doc, 512, 0)));
 }
 

@@ -234,7 +234,7 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
             vec![
                 Command::Song(SongCommand::SetClipContent {
                     id,
-                    content: ClipContent::Notes(kept),
+                    content: ClipContent::Notes(kept.into()),
                     merge: None,
                 }),
                 Command::Song(SongCommand::AddClip {
@@ -250,7 +250,7 @@ pub fn keep_events_follow_up(doc: &RackDoc, id: ClipId, policy: KeepEvents) -> V
                         grid: clip.grid,
                         scale: clip.scale,
                         controllers: Vec::new(),
-                        content: ClipContent::Notes(moved),
+                        content: ClipContent::Notes(moved.into()),
                     },
                 }),
             ]

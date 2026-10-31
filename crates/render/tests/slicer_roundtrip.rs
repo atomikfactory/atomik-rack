@@ -187,7 +187,7 @@ fn project(f: &Fixture, tempo: f64) -> (RackDoc, Vec<ZoneDoc>) {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
         },
     }));
     apply(Command::SetTempo(tempo));

@@ -30,7 +30,7 @@ fn notes_of(actions: &[UiAction]) -> Vec<Vec<Note>> {
                 id: ClipId(1),
                 content: ClipContent::Notes(n),
                 ..
-            } => Some(n),
+            } => Some(n.into_vec()),
             _ => None,
         })
         .collect()
@@ -59,11 +59,14 @@ fn click(
 
 fn off_grid_doc() -> atomik_model::RackDoc {
     let mut doc = song_doc();
-    doc.song.tracks[0].lanes[0].clips[0].content = ClipContent::Notes(vec![
-        n(100, PPQ, 60, 0.8),
-        n(PPQ - 200, PPQ, 62, 0.8),
-        n(2 * PPQ + 1000, PPQ, 64, 0.8),
-    ]);
+    doc.song_mut().tracks[0].lanes[0].clips[0].content = ClipContent::Notes(
+        vec![
+            n(100, PPQ, 60, 0.8),
+            n(PPQ - 200, PPQ, 62, 0.8),
+            n(2 * PPQ + 1000, PPQ, 64, 0.8),
+        ]
+        .into(),
+    );
     doc
 }
 
@@ -460,7 +463,7 @@ fn toggle_note_mute_flips_only_the_selected_notes_in_one_command() {
 #[test]
 fn toggle_note_mute_unmutes_a_muted_selection_and_is_quiet_without_one() {
     let (mut v, mut doc, reg) = setup();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if let ClipContent::Notes(ns) = &mut c.content
@@ -684,11 +687,11 @@ fn a_step_that_goes_nowhere_or_has_no_notes_is_silent() {
     assert!(v.tick(1.0).is_empty() && v.tick(5.0).is_empty());
 
     let mut empty = song_doc();
-    for t in &mut empty.song.tracks {
+    for t in &mut empty.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(1) {
-                    c.content = ClipContent::Notes(vec![]);
+                    c.content = ClipContent::Notes(vec![].into());
                 }
             }
         }
@@ -714,16 +717,19 @@ fn releasing_the_audition_stops_a_sounding_step_note_at_once() {
 #[test]
 fn notes_at_the_same_tick_go_from_low_to_high_pitch() {
     let mut doc = song_doc();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(1) {
-                    c.content = ClipContent::Notes(vec![
-                        n(0, PPQ, 64, 0.8),
-                        n(0, PPQ, 60, 0.8),
-                        n(0, PPQ, 67, 0.8),
-                        n(PPQ, PPQ, 50, 0.8),
-                    ]);
+                    c.content = ClipContent::Notes(
+                        vec![
+                            n(0, PPQ, 64, 0.8),
+                            n(0, PPQ, 60, 0.8),
+                            n(0, PPQ, 67, 0.8),
+                            n(PPQ, PPQ, 50, 0.8),
+                        ]
+                        .into(),
+                    );
                 }
             }
         }
@@ -774,11 +780,11 @@ fn navigation_scrolls_the_selected_note_into_view() {
 #[test]
 fn an_empty_clip_declines_the_navigation() {
     let mut doc = song_doc();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(1) {
-                    c.content = ClipContent::Notes(Vec::new());
+                    c.content = ClipContent::Notes(Vec::new().into());
                 }
             }
         }

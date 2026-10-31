@@ -1439,7 +1439,7 @@ fn with_clip_and_policy(
 fn set_notes(id: ClipId, notes: Vec<Note>, merge: Option<u64>) -> UiAction {
     UiAction::Command(song(SongCommand::SetClipContent {
         id,
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
         merge,
     }))
 }

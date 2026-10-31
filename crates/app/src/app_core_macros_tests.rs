@@ -360,7 +360,7 @@ fn demo_doc() -> RackDoc {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, length, 60, 0.8)]),
+                content: ClipContent::Notes(vec![Note::new(0, length, 60, 0.8)].into()),
             },
         }),
         Command::Song(SongCommand::SetSongEnd(length)),
@@ -474,7 +474,7 @@ fn the_live_path_plays_a_macro_lane_exactly_like_the_bounce() {
 fn a_static_macro_value_sounds_the_same_live_and_in_the_bounce() {
     let mut doc = demo_doc();
     // Without the lane the macro's own value decides.
-    doc.song.tracks.retain(|t| t.device == key("lead"));
+    doc.song_mut().tracks.retain(|t| t.device == key("lead"));
     let bank = doc.banks().next().unwrap().key.clone();
     doc.device_mut_for_test(&bank)
         .params

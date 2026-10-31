@@ -62,7 +62,7 @@ fn setup() -> Shell<NullBackend> {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(vec![Note::new(0, PPQ, 60, 0.8)]),
+        content: ClipContent::Notes(vec![Note::new(0, PPQ, 60, 0.8)].into()),
     };
     song(
         &mut s,

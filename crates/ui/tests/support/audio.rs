@@ -109,7 +109,7 @@ pub fn audio_doc() -> RackDoc {
         },
     );
     let audio = |clips| vec![Lane::audio().with_clips(clips)];
-    doc.song.tracks = vec![
+    doc.song_mut().tracks = vec![
         track(
             "bass",
             vec![Lane::notes().with_clips(vec![notes_clip(1, 0, 2 * BAR, bass_line())])],
@@ -131,7 +131,7 @@ pub fn audio_doc() -> RackDoc {
         ),
         track("audio-track-2", audio(Vec::new())),
     ];
-    doc.song.next_clip_id = 12;
+    doc.song_mut().next_clip_id = 12;
     doc
 }
 

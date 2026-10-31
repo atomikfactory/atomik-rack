@@ -119,7 +119,7 @@ fn with_asset(mut doc: RackDoc, hash: &str, meta: AssetMeta) -> RackDoc {
     assert_eq!(old.len(), 1, "the example has one asset");
     doc.assets.clear();
     doc.assets.insert(hash.to_owned(), meta);
-    for track in &mut doc.song.tracks {
+    for track in &mut doc.song_mut().tracks {
         for lane in &mut track.lanes {
             for clip in &mut lane.clips {
                 if let atomik_model::ClipContent::Audio(a) = &mut clip.content {
@@ -240,7 +240,7 @@ fn the_audio_demo_plays_its_clips_where_the_song_says() {
     let text = std::fs::read_to_string(demo_file()).unwrap();
     let mut doc = load_project(&text, &registry).unwrap();
     let audio = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.is_audio())

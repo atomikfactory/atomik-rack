@@ -264,7 +264,7 @@ impl Builder {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }));
     }
@@ -542,7 +542,7 @@ pub fn demo_doc(pool: &[(String, AssetMeta)]) -> RackDoc {
                     steps: 16,
                     swing: 0,
                 }),
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }));
         // Bass: eighth notes on the root with octave jumps.

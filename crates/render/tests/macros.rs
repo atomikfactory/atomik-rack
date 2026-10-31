@@ -57,7 +57,7 @@ fn song() -> Document {
             clip: clip(
                 0,
                 length,
-                ClipContent::Notes(vec![Note::new(0, length, 60, 0.8)]),
+                ClipContent::Notes(vec![Note::new(0, length, 60, 0.8)].into()),
             ),
         }),
         Command::Song(SongCommand::SetSongEnd(2 * length)),

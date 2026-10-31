@@ -108,7 +108,7 @@ fn panel_point(s: &Shell<NullBackend>, pad: Option<u8>) -> Point {
 
 fn clip_notes(s: &Shell<NullBackend>, id: ClipId) -> Vec<Note> {
     match &s.core().doc().song.clip(id).unwrap().2.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         _ => unreachable!(),
     }
 }
@@ -362,7 +362,7 @@ fn a_double_click_on_a_drum_clip_opens_the_step_editor_and_a_synth_clip_the_pian
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(vec![Note::new(0, PPQ, 36, 0.8)]),
+        content: ClipContent::Notes(vec![Note::new(0, PPQ, 36, 0.8)].into()),
     };
     let mut ids = Vec::new();
     for k in ["drm", "syn"] {

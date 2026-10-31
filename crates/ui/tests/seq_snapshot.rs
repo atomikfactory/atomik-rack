@@ -71,7 +71,7 @@ fn record_piano_roll() -> DisplayList {
 /// C and G with the odd F, E flat and B flat), the fold and the chord stamp shown.
 fn record_piano_roll_scale(fold: Fold) -> DisplayList {
     let (mut doc, reg) = (song_doc(), registry());
-    doc.song.tracks[0].lanes[0].clips[0].scale = Some(Scale::new(0, ScaleKind::NaturalMinor));
+    doc.song_mut().tracks[0].lanes[0].clips[0].scale = Some(Scale::new(0, ScaleKind::NaturalMinor));
     let mut v = piano_roll(&doc, &reg);
     v.set_fold(fold);
     v.set_snap_to_scale(true);
@@ -87,7 +87,7 @@ fn record_piano_roll_scale(fold: Fold) -> DisplayList {
 fn record_piano_roll_controllers() -> DisplayList {
     let (mut doc, reg) = (song_doc(), registry());
     let pt = |tick, value, curve| atomik_model::AutomationPoint { tick, value, curve };
-    doc.song.tracks[0].lanes[0].clips[0].controllers = vec![
+    doc.song_mut().tracks[0].lanes[0].clips[0].controllers = vec![
         ControllerLane::new(
             ControllerKind::PitchBend,
             vec![

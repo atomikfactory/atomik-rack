@@ -133,7 +133,7 @@ fn clips(c: &AppCore<RecordingSink>) -> Vec<atomik_model::Clip> {
 
 fn notes_of(clip: &atomik_model::Clip) -> Vec<Note> {
     match &clip.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         other => panic!("not notes: {other:?}"),
     }
 }
@@ -583,7 +583,7 @@ fn to_track_adds_a_new_clip_when_the_selected_one_is_not_the_slicers() {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(Vec::new()),
+            content: ClipContent::Notes(Vec::new().into()),
         },
     }))
     .unwrap();
@@ -686,7 +686,7 @@ fn the_editors_are_exclusive_and_a_new_document_closes_the_slice_editor() {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: ClipContent::Notes(Vec::new()),
+            content: ClipContent::Notes(Vec::new().into()),
         },
     }))
     .unwrap();

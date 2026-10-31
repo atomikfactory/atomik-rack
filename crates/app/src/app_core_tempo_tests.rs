@@ -168,9 +168,9 @@ fn the_live_path_plays_a_ramped_project_exactly_like_the_bounce() {
     ];
     let meter = vec![MeterEvent::new(1, 4, 4), MeterEvent::new(3, 3, 4)];
     let mut doc = live_core().doc().clone();
-    doc.song.tempo = map.clone();
+    doc.song_mut().tempo = map.clone();
     doc.tempo_bpm = map[0].bpm;
-    doc.song.meter = meter.clone();
+    doc.song_mut().meter = meter.clone();
     let reference = bounce_of(&doc);
     assert!(reference[0].iter().any(|s| s.abs() > 1e-3));
     assert_ne!(

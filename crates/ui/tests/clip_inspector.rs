@@ -44,7 +44,7 @@ fn texts(bar: &mut TransportBar, doc: &RackDoc) -> Vec<String> {
 }
 
 fn audio_mut(doc: &mut RackDoc, id: u64, mut f: impl FnMut(&mut AudioClipContent)) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(id)

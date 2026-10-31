@@ -290,7 +290,7 @@ mod tests {
             devices: vec![device("a", 0), device("b", 0), device("c", 2)],
             columns: 3,
             cables: Vec::new(),
-            song: atomik_model::empty_song(120.0),
+            song: atomik_model::empty_song(120.0).into(),
             console: atomik_model::Console::default(),
             midi_maps: Vec::new(),
             macros: Default::default(),

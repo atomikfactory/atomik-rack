@@ -71,7 +71,7 @@ fn loose(s: &mut Shell<NullBackend>) -> ClipId {
     s.core_mut()
         .apply_command(Command::Song(SongCommand::SetClipContent {
             id,
-            content: ClipContent::Notes(notes),
+            content: ClipContent::Notes(notes.into()),
             merge: None,
         }))
         .unwrap();
@@ -80,7 +80,7 @@ fn loose(s: &mut Shell<NullBackend>) -> ClipId {
 
 fn notes(s: &Shell<NullBackend>, id: ClipId) -> Vec<Note> {
     match &s.core().doc().song.clip(id).unwrap().2.content {
-        ClipContent::Notes(n) => n.clone(),
+        ClipContent::Notes(n) => n.to_vec(),
         _ => unreachable!(),
     }
 }
@@ -390,10 +390,13 @@ fn a_collision_keeps_both_notes() {
     s.core_mut()
         .apply_command(Command::Song(SongCommand::SetClipContent {
             id,
-            content: ClipContent::Notes(vec![
-                Note::new(line + 100, S, 60, 0.8),
-                Note::new(line + 200, S, 60, 0.8),
-            ]),
+            content: ClipContent::Notes(
+                vec![
+                    Note::new(line + 100, S, 60, 0.8),
+                    Note::new(line + 200, S, 60, 0.8),
+                ]
+                .into(),
+            ),
             merge: None,
         }))
         .unwrap();

@@ -358,7 +358,7 @@ mod tests {
             devices,
             columns,
             cables: Vec::new(),
-            song: atomik_model::empty_song(120.0),
+            song: atomik_model::empty_song(120.0).into(),
             console: atomik_model::Console::default(),
             midi_maps: Vec::new(),
             macros: Default::default(),

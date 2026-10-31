@@ -191,12 +191,9 @@ fn clip_item(dir: &Path) -> PathBuf {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: atomik_model::ClipContent::Notes(vec![atomik_model::Note::new(
-            0,
-            atomik_core::PPQ,
-            60,
-            0.8,
-        )]),
+        content: atomik_model::ClipContent::Notes(
+            vec![atomik_model::Note::new(0, atomik_core::PPQ, 60, 0.8)].into(),
+        ),
     };
     let text = atomik_model::save_clip_file(&atomik_model::ClipFile {
         tempo_bpm: 120.0,

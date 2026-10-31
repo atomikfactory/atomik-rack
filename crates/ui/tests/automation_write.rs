@@ -61,7 +61,7 @@ fn the_mode_button_cycles_overwrite_touch_latch() {
         assert_eq!((device, param.as_str()), (&key("bass"), CUTOFF));
         seen.push(*mode);
         // The app applies it; the view follows the document.
-        doc.song
+        doc.song_mut()
             .lane_write
             .insert((key("bass"), CUTOFF.into()), *mode);
         v.sync(&doc, &reg);
@@ -93,13 +93,13 @@ fn the_header_shows_the_mode_of_the_lane() {
     let mut v = arrangement(&doc, &reg);
     let t = texts(&mut v, &doc);
     assert!(t.iter().any(|s| s == "TCH"), "{t:?}");
-    doc.song
+    doc.song_mut()
         .lane_write
         .insert((key("bass"), CUTOFF.into()), WriteMode::Overwrite);
     v.sync(&doc, &reg);
     let t = texts(&mut v, &doc);
     assert!(t.iter().any(|s| s == "OVR") && !t.iter().any(|s| s == "TCH"));
-    doc.song
+    doc.song_mut()
         .lane_write
         .insert((key("bass"), CUTOFF.into()), WriteMode::Latch);
     v.sync(&doc, &reg);
@@ -201,7 +201,7 @@ fn a_press_on_a_lane_button_picks_the_lane_the_menu_items_act_on() {
     );
     assert_eq!(v.automation_lane_menu(), (true, false, false));
     let t = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("bass"))
@@ -213,7 +213,7 @@ fn a_press_on_a_lane_button_picks_the_lane_the_menu_items_act_on() {
     assert_eq!(v.automation_lane_menu(), (true, true, true));
     // The pick goes with the lane.
     let t = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("bass"))
@@ -234,7 +234,7 @@ fn a_muted_lane_lights_its_mute_button() {
     };
     let idle = paint(&mut v, &doc);
     let t = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("bass"))

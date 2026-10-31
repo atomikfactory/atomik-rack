@@ -44,7 +44,7 @@ fn song(lanes: Vec<ControllerLane>) -> RackDoc {
                 scale: None,
                 controllers: lanes,
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, length, 69, 1.0)]),
+                content: ClipContent::Notes(vec![Note::new(0, length, 69, 1.0)].into()),
             },
         }),
         Command::Song(SongCommand::SetSongEnd(length)),

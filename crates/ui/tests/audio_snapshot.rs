@@ -145,7 +145,7 @@ fn with_peaks_for_b(doc: &RackDoc, reg: &atomik_device_sdk::Registry) -> Arrange
 }
 
 fn set_gain(doc: &mut RackDoc, id: u64, db: f32) {
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(id)
@@ -227,7 +227,7 @@ fn the_waveform_stops_at_the_asset_end_and_the_rest_is_empty() {
 fn the_asset_end_follows_the_tempo_map() {
     let (mut doc, reg) = (audio_doc(), registry());
     // Half speed from bar 3 on: clip 11 starts at bar 5, 2.5 s are now 2.5 beats.
-    doc.song.tempo.push(TempoEvent::step(2 * BAR, 60.0));
+    doc.song_mut().tempo.push(TempoEvent::step(2 * BAR, 60.0));
     let mut v = with_peaks_for_b(&doc, &reg);
     let dl = paint(&mut v, &doc);
     let outside = SeqTheme::from_theme(&Theme::dark()).outside;
@@ -317,7 +317,7 @@ fn audio_clips_use_their_own_body_colour() {
 fn record_track_meters() -> DisplayList {
     use atomik_ui::{MeterSource, TrackLevel};
     let (mut doc, reg) = (audio_doc(), registry());
-    doc.song
+    doc.song_mut()
         .track_heights
         .insert(key("audio-track-2"), atomik_ui::HEIGHT_SMALL);
     let mut v = audio_arrangement(&doc, &reg);

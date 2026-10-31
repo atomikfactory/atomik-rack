@@ -206,7 +206,7 @@ pub fn demo_doc() -> RackDoc {
     );
     // The committed demo predates note tails: it keeps them off so it sounds as it always did.
     let mut doc = d.doc().clone();
-    doc.song.tails = false;
+    doc.song_mut().tails = false;
     doc
 }
 

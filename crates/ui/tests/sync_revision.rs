@@ -12,7 +12,7 @@ fn edited(doc: &atomik_model::RackDoc, reg: &atomik_device_sdk::Registry) -> Doc
     d.apply(
         Command::Song(SongCommand::SetClipContent {
             id: ClipId(1),
-            content: ClipContent::Notes(vec![Note::new(0, 480, 60, 0.5)]),
+            content: ClipContent::Notes(vec![Note::new(0, 480, 60, 0.5)].into()),
             merge: None,
         }),
         reg,

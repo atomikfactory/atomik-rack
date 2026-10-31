@@ -23,7 +23,7 @@ fn contents(actions: &[UiAction]) -> Vec<(Vec<Note>, Option<u64>)> {
                 id: ClipId(1),
                 content: ClipContent::Notes(n),
                 merge,
-            } => Some((n, merge)),
+            } => Some((n.into_vec(), merge)),
             _ => None,
         })
         .collect()
@@ -260,11 +260,14 @@ fn velocity_lane_drag_changes_velocity() {
 
 fn off_grid_doc() -> atomik_model::RackDoc {
     let mut doc = song_doc();
-    doc.song.tracks[0].lanes[0].clips[0].content = ClipContent::Notes(vec![
-        n(100, PPQ, 60, 0.8),
-        n(PPQ - 200, PPQ, 62, 0.8),
-        n(2 * PPQ + 1000, PPQ, 64, 0.8),
-    ]);
+    doc.song_mut().tracks[0].lanes[0].clips[0].content = ClipContent::Notes(
+        vec![
+            n(100, PPQ, 60, 0.8),
+            n(PPQ - 200, PPQ, 62, 0.8),
+            n(2 * PPQ + 1000, PPQ, 64, 0.8),
+        ]
+        .into(),
+    );
     doc
 }
 
@@ -484,7 +487,7 @@ proptest! {
                         prop_assert_eq!(*id, ClipId(1));
                         assert_valid(notes);
                         // Apply it, as the app would.
-                        doc.song.tracks[0].lanes[0].clips[0].content =
+                        doc.song_mut().tracks[0].lanes[0].clips[0].content =
                             ClipContent::Notes(notes.clone());
                     }
                 }
@@ -499,7 +502,7 @@ proptest! {
 /// The song with the bass clip (id 1) moved to bar 2, so content ticks and song ticks differ.
 fn bass_at_bar_two() -> atomik_model::RackDoc {
     let mut doc = song_doc();
-    for t in &mut doc.song.tracks {
+    for t in &mut doc.song_mut().tracks {
         for l in &mut t.lanes {
             for c in &mut l.clips {
                 if c.id == ClipId(1) {

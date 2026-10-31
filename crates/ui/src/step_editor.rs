@@ -835,7 +835,7 @@ impl StepEditorView {
         Some(UiAction::Command(Command::Song(
             SongCommand::SetClipContent {
                 id: self.clip_id?,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
                 merge,
             },
         )))

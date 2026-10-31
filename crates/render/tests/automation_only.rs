@@ -59,11 +59,14 @@ fn song() -> (Document, DeviceKey) {
             clip: clip(
                 0,
                 length,
-                ClipContent::Notes(vec![
-                    Note::new(0, PPQ, 60, 0.8),
-                    Note::new(2 * PPQ, PPQ, 64, 0.8),
-                    Note::new(4 * PPQ, PPQ, 67, 0.8),
-                ]),
+                ClipContent::Notes(
+                    vec![
+                        Note::new(0, PPQ, 60, 0.8),
+                        Note::new(2 * PPQ, PPQ, 64, 0.8),
+                        Note::new(4 * PPQ, PPQ, 67, 0.8),
+                    ]
+                    .into(),
+                ),
             ),
         }),
         Command::Song(SongCommand::SetSongEnd(length)),

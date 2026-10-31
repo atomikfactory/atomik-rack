@@ -117,10 +117,13 @@ fn note_clip(start: i64) -> Clip {
         scale: None,
         controllers: Vec::new(),
         grid: None,
-        content: ClipContent::Notes(vec![
-            Note::new(0, PPQ / 2, 60, 0.8),
-            Note::new(PPQ, PPQ / 2, 64, 0.6),
-        ]),
+        content: ClipContent::Notes(
+            vec![
+                Note::new(0, PPQ / 2, 60, 0.8),
+                Note::new(PPQ, PPQ / 2, 64, 0.6),
+            ]
+            .into(),
+        ),
     }
 }
 

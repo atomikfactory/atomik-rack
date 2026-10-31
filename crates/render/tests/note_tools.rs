@@ -88,7 +88,7 @@ impl Builder {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
             },
         }));
         self.apply(Command::Song(SongCommand::SetSongEnd(BAR)));
@@ -318,7 +318,7 @@ fn generator_into_drums(set: &[(&str, f32)]) -> RackDoc {
     let reg = default_registry();
     let text = std::fs::read_to_string(demo_root().join("drum-demo.atomik")).unwrap();
     let mut doc = atomik_model::load_project(&text, &reg).unwrap();
-    for track in &mut doc.song.tracks {
+    for track in &mut doc.song_mut().tracks {
         for lane in &mut track.lanes {
             lane.clips.clear();
         }

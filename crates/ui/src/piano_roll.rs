@@ -1314,7 +1314,7 @@ impl PianoRollView {
         Some(UiAction::Command(Command::Song(
             SongCommand::SetClipContent {
                 id: self.clip_id?,
-                content: ClipContent::Notes(notes),
+                content: ClipContent::Notes(notes.into()),
                 merge,
             },
         )))
@@ -1949,7 +1949,7 @@ impl PianoRollView {
             id.map(|id| {
                 UiAction::Command(Command::Song(SongCommand::SetClipContent {
                     id,
-                    content: ClipContent::Notes(notes),
+                    content: ClipContent::Notes(notes.into()),
                     merge: Some(merge),
                 }))
             })

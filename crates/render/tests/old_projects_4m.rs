@@ -161,7 +161,7 @@ fn the_starter_bounces_silently_and_one_synth_sounds_on_outputs_one_and_two() {
                 scale: None,
                 controllers: Vec::new(),
                 grid: None,
-                content: ClipContent::Notes(vec![Note::new(0, 2 * PPQ, 60, 0.8)]),
+                content: ClipContent::Notes(vec![Note::new(0, 2 * PPQ, 60, 0.8)].into()),
             },
         }),
         &registry,

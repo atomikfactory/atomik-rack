@@ -829,7 +829,7 @@ fn a_stale_entry_plays_the_track_device_live() {
     add(&mut c, "atomik.stereo-delay", "delay");
     doc.devices
         .push(c.doc().device(&key("delay")).unwrap().clone());
-    doc.song
+    doc.song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("synth"))
@@ -857,12 +857,9 @@ fn the_song_sent_to_the_engine_enters_at_the_player() {
             scale: None,
             controllers: Vec::new(),
             grid: None,
-            content: atomik_model::ClipContent::Notes(vec![atomik_model::Note::new(
-                0,
-                atomik_core::PPQ,
-                60,
-                0.8,
-            )]),
+            content: atomik_model::ClipContent::Notes(
+                vec![atomik_model::Note::new(0, atomik_core::PPQ, 60, 0.8)].into(),
+            ),
         },
     }))
     .unwrap();

@@ -335,7 +335,9 @@ fn double_clicking_the_title_renames_the_asset() {
 fn a_deleted_clip_makes_the_view_not_present() {
     let (d, reg, mut v) = setup();
     let mut doc: RackDoc = d.doc().clone();
-    doc.song.tracks[1].lanes[0].clips.retain(|c| c.id != CLIP);
+    doc.song_mut().tracks[1].lanes[0]
+        .clips
+        .retain(|c| c.id != CLIP);
     v.sync(&doc, &reg);
     assert!(!v.is_present());
 }

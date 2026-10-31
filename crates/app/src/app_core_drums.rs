@@ -184,7 +184,7 @@ impl<S: EngineSink> AppCore<S> {
             scale: None,
             controllers: Vec::new(),
             grid: Some(NEW_GRID),
-            content: ClipContent::Notes(Vec::new()),
+            content: ClipContent::Notes(Vec::new().into()),
         };
         let add_clip = Command::Song(SongCommand::AddClip {
             device: device.clone(),

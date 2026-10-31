@@ -14,7 +14,7 @@ use support::*;
 /// from the start, where its note clip 1 is.
 fn frozen_doc() -> RackDoc {
     let mut doc = audio_doc();
-    doc.song.tracks[0].frozen = Some(Frozen {
+    doc.song_mut().tracks[0].frozen = Some(Frozen {
         start: 0,
         length: 2 * BAR,
         audio: AudioClipContent::new(HASH_A, 0),

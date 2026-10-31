@@ -386,7 +386,7 @@ type Reg = Registry;
 fn setup() -> (RackDoc, Reg, ArrangementView) {
     let (mut doc, reg) = (song_doc(), registry());
     let keys = doc
-        .song
+        .song_mut()
         .tracks
         .iter_mut()
         .find(|t| t.device == key("keys"))
@@ -397,7 +397,7 @@ fn setup() -> (RackDoc, Reg, ArrangementView) {
         BAR,
         vec![n(0, PPQ, 64, 0.7)],
     )]));
-    doc.song.next_clip_id = 12;
+    doc.song_mut().next_clip_id = 12;
     let mut v = arrangement(&doc, &reg);
     v.set_bounds(Rect::new(0.0, 0.0, 1200.0, 800.0));
     v.set_snap(Snap::Bar);

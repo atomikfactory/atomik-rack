@@ -19,13 +19,13 @@ fn clip(start: i64, length: i64, notes: Vec<Note>) -> Clip {
         grid: None,
         scale: None,
         controllers: Vec::new(),
-        content: ClipContent::Notes(notes),
+        content: ClipContent::Notes(notes.into()),
     }
 }
 
 fn doc_with(clips: Vec<Clip>) -> RackDoc {
     let mut doc = empty_doc();
-    doc.song = empty_song(120.0);
+    doc.song = empty_song(120.0).into();
     let clips = clips
         .into_iter()
         .enumerate()
@@ -34,7 +34,7 @@ fn doc_with(clips: Vec<Clip>) -> RackDoc {
             ..c
         })
         .collect();
-    doc.song.tracks.push(Track {
+    doc.song_mut().tracks.push(Track {
         device: DeviceKey("a".into()),
         muted: false,
         solo: false,
