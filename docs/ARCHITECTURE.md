@@ -1269,6 +1269,25 @@ a clip's `StepGrid` swing, which is a different scale and never edits a note.)
   selected clips. The roll has no quantize strength or grid of its own any more.
 - **Inspection.** `project_inspect` and `session_status` list the song's grooves under
   `song.grooves` (name, step, slots), left out when there are none.
+- **Note tools** ([note_tools.rs](../crates/model/src/note_tools.rs)). `ApplyNoteTool` (clips, an optional
+  selection, a tool) edits the notes of several clips, or the selected notes of one clip, in one
+  undo step: `NoteTool` sets, scales, ramps or randomizes velocity, alters notes
+  (each takes, by chance, the pitch of another note of the set), moves pitches at random within a
+  range, or sets one pitch. Audio and automation clips and the compiled clip of a take group are
+  skipped, and a command that changes no note is refused. The random tools take a seed and derive
+  each note's offset from `hash64` of the seed, the clip id and the note's tick and key before the
+  edit, so the same command on the same notes always gives the same notes. The pitch tools keep
+  one note per tick and key: a note that would stack keeps its old key. The roll and the
+  arrangement send the command (`editor.note_tool` and `sequencer.note_tool`, one argument per
+  menu entry, listed in [note_tool_args.rs](../crates/ui/src/note_tool_args.rs)); the roll counts
+  its uses and passes the count as the seed, so each run is a new take, and it computes the same
+  result (`apply_note_tool_indexed`) to keep its selection on the same notes. Legato, join and
+  chop are pure list edits in [seq_edit.rs](../crates/ui/src/seq_edit.rs) (`make_legato`,
+  `join_notes`, `chop_notes`), each one `SetClipContent`. The velocity lane is a pencil on its
+  empty part: a drag sets every bar it passes, Shift draws a straight line from the press and Alt
+  limits the stroke to the selected notes (`velocity_stroke`); a stroke is one merged undo step.
+  `AppCore::sync_roll_labels` names the keys of a drum machine track after its pad files on the
+  roll's keyboard strip (display only; the notes keep their keys).
 
 ### 2.15 MIDI files
 
@@ -3438,7 +3457,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (371) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (377) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
