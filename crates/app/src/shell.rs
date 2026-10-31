@@ -127,6 +127,7 @@
 //! What needs the platform (file dialogs, confirmation, quit) is returned as
 //! [`ShellRequest`]s.
 
+use crate::about_box::{AboutBox, AboutOutcome};
 use crate::app_core::{AppCore, AppError, FreezeThrough, MidiExport, Pane, Revealed};
 use crate::commands::{AppCommand, Menu, MenuState, menus_with_recent};
 use crate::context_menus::{self, MenuEnable};
@@ -266,6 +267,9 @@ pub enum ShellRequest {
     /// Show an open-file dialog for a keymap (the Keyboard tab's Import), then call
     /// [`Shell::import_keymap_from`].
     PickImportKeymap,
+    /// Open an address in the default browser (Help > Documentation, Report an Issue and the
+    /// link of the About box). Only the project's own addresses are ever asked for.
+    OpenUrl(&'static str),
     /// Bring a window to the front and give it the keyboard focus (restoring it if it is
     /// minimised).
     FocusWindow(WindowKind),
@@ -364,6 +368,13 @@ pub struct Shell<B: AudioBackend> {
     /// The open context menu (a right click) and the pane it belongs to.
     context_menu: Option<OpenContextMenu>,
     dialog: Option<SettingsDialog>,
+    /// The About box, while it is open.
+    about: Option<AboutBox>,
+    /// The operating system is set to a dark theme (what the System theme choice follows).
+    system_dark: bool,
+    /// The rack split before a double-click on the divider collapsed the rack: the next
+    /// double-click puts it back.
+    split_before: Option<f64>,
     /// When the open Audio Settings dialog last listed the MIDI ports again.
     ports_listed_at: Option<std::time::Instant>,
     settings_path: Option<PathBuf>,
@@ -567,6 +578,9 @@ impl<B: AudioBackend> Shell<B> {
             menubar: options.in_window_menu.then(MenuBar::new),
             context_menu: None,
             dialog: None,
+            about: None,
+            system_dark: true,
+            split_before: None,
             ports_listed_at: None,
             settings_path: options.settings_path,
             surface_applied: SurfaceSettings::default(),
@@ -1626,7 +1640,104 @@ impl<B: AudioBackend> Shell<B> {
         if !self.workflow.show_tooltips {
             self.clear_tooltip();
         }
+        self.core.set_knob_range(self.workflow.knob_range);
+        self.core
+            .view_mut()
+            .set_value_tips(self.workflow.value_tooltips);
+        self.apply_theme();
         self.layout_view();
+    }
+
+    /// Opens the settings dialog, on `tab` when one is asked for.
+    fn open_settings(&mut self, tab: Option<crate::settings_dialog::Tab>) {
+        let session = self.core.sink();
+        let mut lists = DeviceLists::query(session.backend());
+        lists.input_note = crate::status::input_note(session.status());
+        lists.stream_notes = [
+            crate::status::stream_alert(session.status()),
+            crate::status::latency_note(session.status()),
+            crate::status::drift_note(session.status()),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let mut dialog = SettingsDialog::new(session.settings().clone(), lists).with_preferences(
+            KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
+            self.workflow.clone(),
+        );
+        if let Some(tab) = tab {
+            dialog.show_tab(tab);
+        }
+        self.dialog = Some(dialog);
+        self.menubar.as_mut().map(MenuBar::close);
+    }
+
+    /// The theme in use: the preference, with the System choice following the operating system.
+    pub fn theme(&self) -> atomik_ui::Theme {
+        self.workflow.theme.theme(self.system_dark)
+    }
+
+    /// Tells the shell whether the operating system is set to a dark theme (the platform calls it
+    /// at start and whenever the setting changes); the System choice follows.
+    pub fn set_system_dark(&mut self, dark: bool) {
+        if self.system_dark != dark {
+            self.system_dark = dark;
+            self.apply_theme();
+        }
+    }
+
+    /// Hands the theme to every view the shell and the core hold, when it is not the one they
+    /// already have: a switch is live, nothing keeps the colours of the old one.
+    fn apply_theme(&mut self) {
+        let theme = self.theme();
+        if self.core.view().theme() == &theme {
+            return;
+        }
+        self.core.set_theme(theme.clone());
+        self.banner.set_theme(theme.clone());
+        if let Some(v) = &mut self.plugin_settings {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.relink {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.export {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.midi_maps {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.macros_panel {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.param_search {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.quantize {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.silence {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.notes {
+            v.set_theme(theme.clone());
+        }
+        if let Some(v) = &mut self.warp {
+            v.set_theme(theme);
+        }
+        self.repaint = true;
+    }
+
+    /// The application zoom as a factor (1.0 is 100 %).
+    pub fn app_zoom(&self) -> f64 {
+        f64::from(self.workflow.app_zoom) / 100.0
+    }
+
+    /// The scale the windows' content is drawn at: the display scale `os_scale` times the
+    /// application zoom. The platform gives this, not the display scale, with every window's
+    /// scale and size.
+    pub fn ui_scale(&self, os_scale: f64) -> f64 {
+        os_scale * self.app_zoom()
     }
 
     /// The one-time notice of the keys that moved with the standard keymap: the new chords as this
@@ -1891,6 +2002,8 @@ impl<B: AudioBackend> Shell<B> {
             midi: self.core.midi_menu(),
             freeze: self.core.freeze_menu(),
             follow_selection: self.core.follow_selection(),
+            theme: self.workflow.theme,
+            app_zoom: self.workflow.app_zoom,
         }
     }
 
@@ -2973,6 +3086,17 @@ impl<B: AudioBackend> Shell<B> {
             return Vec::new();
         }
         let size = self.size();
+        if let Some(about) = &mut self.about {
+            self.repaint = true;
+            return match about.handle(event, size) {
+                AboutOutcome::Open => Vec::new(),
+                AboutOutcome::Close => {
+                    self.about = None;
+                    Vec::new()
+                }
+                AboutOutcome::OpenUrl(url) => vec![ShellRequest::OpenUrl(url)],
+            };
+        }
         if let Some(dialog) = &mut self.dialog {
             self.repaint = true;
             // Learning a chord needs the keys as they are pressed (numpad keys included).
@@ -3132,7 +3256,17 @@ impl<B: AudioBackend> Shell<B> {
             None => self.leave_hover(),
             Some(Err(())) => {
                 self.leave_hover();
-                if matches!(event, UiEvent::PointerDown { .. })
+                if matches!(
+                    event,
+                    UiEvent::PointerDown {
+                        button: PointerButton::Primary,
+                        clicks: 2..,
+                        ..
+                    }
+                ) {
+                    self.focused = WindowKind::Main;
+                    self.toggle_rack_collapsed();
+                } else if matches!(event, UiEvent::PointerDown { .. })
                     && let Some(d) = self.layout().divider
                 {
                     self.focused = WindowKind::Main;
@@ -3643,11 +3777,32 @@ impl<B: AudioBackend> Shell<B> {
         let avail = (bottom - top - TRANSPORT_HEIGHT - DIVIDER_HEIGHT).max(2.0);
         let rack_h = (pos.y - grab - top).clamp(0.0, avail);
         let lo = MIN_PANE_HEIGHT.min(avail / 2.0);
-        self.ui.rack_split = rack_h.clamp(lo, avail - lo) / avail;
+        let now = (avail * self.ui.rack_split).clamp(lo, avail - lo);
+        let wanted = rack_h.clamp(lo, avail - lo);
+        // A press that did not move the divider (the first click of a double-click) leaves the
+        // split, and what a collapse remembered, as they are.
+        if (wanted - now).abs() >= 0.5 {
+            self.ui.rack_split = wanted / avail;
+            self.split_before = None;
+        }
         self.layout_view();
         if released {
             self.save_ui_state();
         }
+    }
+
+    /// A double-click on the divider: the rack collapses to its smallest height, so the song
+    /// area has the room; the next double-click puts the split back.
+    fn toggle_rack_collapsed(&mut self) {
+        match self.split_before.take() {
+            Some(split) => self.ui.rack_split = split,
+            None => {
+                self.split_before = Some(self.ui.rack_split);
+                self.ui.rack_split = 0.0;
+            }
+        }
+        self.layout_view();
+        self.save_ui_state();
     }
 
     /// The vertical zooms (track heights, key height) and the piano roll's snap to scale and
@@ -5025,25 +5180,44 @@ impl<B: AudioBackend> Shell<B> {
                 Vec::new()
             }
             AppCommand::AudioSettings => {
-                let session = self.core.sink();
-                let mut lists = DeviceLists::query(session.backend());
-                lists.input_note = crate::status::input_note(session.status());
-                lists.stream_notes = [
-                    crate::status::stream_alert(session.status()),
-                    crate::status::latency_note(session.status()),
-                    crate::status::drift_note(session.status()),
-                ]
-                .into_iter()
-                .flatten()
-                .collect();
-                let dialog = SettingsDialog::new(session.settings().clone(), lists)
-                    .with_preferences(
-                        KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
-                        self.workflow.clone(),
-                    );
-                self.dialog = Some(dialog);
+                self.open_settings(None);
+                Vec::new()
+            }
+            AppCommand::KeyboardShortcuts => {
+                self.open_settings(Some(crate::settings_dialog::Tab::Keyboard));
+                Vec::new()
+            }
+            AppCommand::Documentation => {
+                vec![ShellRequest::OpenUrl(crate::about_box::REPOSITORY_URL)]
+            }
+            AppCommand::ReportIssue => vec![ShellRequest::OpenUrl(crate::about_box::ISSUES_URL)],
+            AppCommand::About => {
+                self.about = Some(AboutBox::new(crate::about_box::VERSION));
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
+            }
+            AppCommand::SetTheme(choice) => {
+                self.workflow.theme = choice;
+                self.save_workflow();
+                self.apply_theme();
+                Vec::new()
+            }
+            AppCommand::AppZoom(change) => {
+                let zoom = change.apply(self.workflow.app_zoom);
+                if zoom != self.workflow.app_zoom {
+                    self.workflow.app_zoom = zoom;
+                    self.save_workflow();
+                    self.clear_tooltip();
+                }
+                Vec::new()
+            }
+            AppCommand::FocusWindow(kind) => {
+                if kind == WindowKind::Main || self.wins.contains_key(&kind) {
+                    vec![ShellRequest::FocusWindow(kind)]
+                } else {
+                    self.notify("That window is not open: detach it from the View menu first");
+                    Vec::new()
+                }
             }
             AppCommand::PluginSettings => {
                 let theme = self.core.view().theme().clone();
@@ -5785,6 +5959,9 @@ impl<B: AudioBackend> Shell<B> {
         if let Some(dialog) = &self.dialog {
             dialog.paint(canvas, &theme, self.size());
         }
+        if let Some(about) = &self.about {
+            about.paint(canvas, &theme, self.size());
+        }
         canvas.pop_transform();
     }
 }
@@ -6087,3 +6264,7 @@ mod save_tests;
 #[cfg(test)]
 #[path = "shell_piano_keys_tests.rs"]
 mod piano_keys_tests;
+
+#[cfg(test)]
+#[path = "shell_interface_tests.rs"]
+mod interface_tests;

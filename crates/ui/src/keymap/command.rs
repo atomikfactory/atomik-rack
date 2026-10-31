@@ -166,6 +166,14 @@ pub const KEYS_NOTE_ARGS: &[&str] = &[
 pub const KEYS_VELOCITY_ARGS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 /// The values of `view.cables`.
 pub const CABLE_ARGS: &[&str] = &["show", "hover", "hide"];
+/// The values of `view.theme`.
+pub const THEME_ARGS: &[&str] = &["dark", "light", "system"];
+/// The values of `view.app_zoom`: the zoom of every window in percent, or a step.
+pub const APP_ZOOM_ARGS: &[&str] = &[
+    "75", "100", "125", "150", "175", "200", "in", "out", "reset",
+];
+/// The values of `view.focus_window`: the window to bring forward.
+pub const WINDOW_ARGS: &[&str] = &["main", "rack", "mixer"];
 /// The values of `transport.input_quantize`.
 pub const QUANTIZE_ARGS: &[&str] = &["off", "eighth", "sixteenth"];
 /// The values of `transport.loop_move`: the loop moves by bars or its length changes by bars.
@@ -738,6 +746,8 @@ const COMMANDS: &[CommandDef] = &[
         C::Files,
     ),
     cmd("files.up", "Previous Item", G::Files, C::Files).rep(),
+    cmd("help.about", "About Atomik Rack", G::Global, C::Global).menu(),
+    cmd("help.documentation", "Documentation", G::Global, C::Global).menu(),
     cmd(
         "help.export_diagnostics",
         "Export Diagnostics",
@@ -745,6 +755,14 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd(
+        "help.keyboard_shortcuts",
+        "Keyboard Shortcuts",
+        G::Global,
+        C::Global,
+    )
+    .menu(),
+    cmd("help.report_issue", "Report an Issue", G::Global, C::Global).menu(),
     cmd("keys.note", "Play Note", G::Keys, C::Keys).arg(KEYS_NOTE_ARGS),
     cmd("keys.octave_down", "Octave Down", G::Keys, C::Keys).rep(),
     cmd("keys.octave_up", "Octave Up", G::Keys, C::Keys).rep(),
@@ -1848,6 +1866,9 @@ const COMMANDS: &[CommandDef] = &[
     )
     .rep(),
     cmd("transport.tempo_up", "Tempo Up", G::Transport, C::Global).rep(),
+    cmd("view.app_zoom", "Application Zoom", G::View, C::Global)
+        .arg(APP_ZOOM_ARGS)
+        .menu(),
     cmd("view.cables", "Cables", G::View, C::Global)
         .arg(CABLE_ARGS)
         .menu(),
@@ -1872,6 +1893,9 @@ const COMMANDS: &[CommandDef] = &[
         G::View,
         C::Global,
     ),
+    cmd("view.focus_window", "Show Window", G::View, C::Global)
+        .arg(WINDOW_ARGS)
+        .menu(),
     cmd(
         "view.follow_selection",
         "Automation Follows Selection",
@@ -1894,6 +1918,9 @@ const COMMANDS: &[CommandDef] = &[
         C::Global,
     )
     .menu(),
+    cmd("view.theme", "Theme", G::View, C::Global)
+        .arg(THEME_ARGS)
+        .menu(),
     cmd("view.toggle_browser", "Device Browser", G::View, C::Global).menu(),
     cmd("view.toggle_console", "Console", G::View, C::Global).menu(),
     cmd(

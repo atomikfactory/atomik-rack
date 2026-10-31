@@ -14,7 +14,9 @@
 use crate::import_warp::WarpImports;
 use crate::master_keyboard::MasterKeyboard;
 use crate::record_over::{KeepEvents, RecordMode};
+use atomik_ui::ThemeChoice;
 use atomik_ui::keymap::UserKeymap;
+use atomik_ui::widget::KnobRange;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -80,8 +82,28 @@ pub struct WorkflowPrefs {
     pub warp_imports: WarpImports,
     /// How the master keyboard picks its track (default Standard: it follows the selection).
     pub master_keyboard: MasterKeyboard,
+    /// The colour theme: dark, light, or whichever the operating system uses (default dark).
+    pub theme: ThemeChoice,
+    /// The size of every window's content in percent: 75 to 200 in steps of 25 (default 100).
+    pub app_zoom: u16,
+    /// How far a knob or fader has to be dragged to sweep its range (default Normal).
+    pub knob_range: KnobRange,
+    /// Hovering any control shows its name and value (default off: only an automated or driven
+    /// control says so).
+    pub value_tooltips: bool,
     /// Fields this build does not know, kept as they were.
     pub extra: BTreeMap<String, Value>,
+}
+
+/// The application zoom steps, in percent.
+pub const ZOOM_STEPS: [u16; 6] = [75, 100, 125, 150, 175, 200];
+
+/// `percent` as the nearest zoom step (the saved value of a hand-edited file may be anything).
+pub fn nearest_zoom(percent: u64) -> u16 {
+    ZOOM_STEPS
+        .into_iter()
+        .min_by_key(|s| u64::from(*s).abs_diff(percent))
+        .unwrap_or(100)
 }
 
 impl Default for WorkflowPrefs {
@@ -102,6 +124,10 @@ impl Default for WorkflowPrefs {
             keep_events: KeepEvents::default(),
             warp_imports: WarpImports::default(),
             master_keyboard: MasterKeyboard::default(),
+            theme: ThemeChoice::default(),
+            app_zoom: 100,
+            knob_range: KnobRange::default(),
+            value_tooltips: false,
             extra: BTreeMap::new(),
         }
     }
@@ -163,6 +189,21 @@ impl WorkflowPrefs {
                 .and_then(Value::as_str)
                 .and_then(MasterKeyboard::from_id)
                 .unwrap_or(defaults.master_keyboard),
+            theme: obj
+                .get("theme")
+                .and_then(Value::as_str)
+                .and_then(ThemeChoice::from_id)
+                .unwrap_or(defaults.theme),
+            app_zoom: obj
+                .get("app_zoom")
+                .and_then(Value::as_u64)
+                .map_or(defaults.app_zoom, nearest_zoom),
+            knob_range: obj
+                .get("knob_range")
+                .and_then(Value::as_str)
+                .and_then(KnobRange::from_id)
+                .unwrap_or(defaults.knob_range),
+            value_tooltips: flag("value_tooltips", defaults.value_tooltips),
             extra: obj
                 .iter()
                 .filter(|(k, _)| {
@@ -183,6 +224,10 @@ impl WorkflowPrefs {
                             | "keep_events"
                             | "warp_imports"
                             | "master_keyboard"
+                            | "theme"
+                            | "app_zoom"
+                            | "knob_range"
+                            | "value_tooltips"
                     )
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -237,6 +282,13 @@ impl WorkflowPrefs {
             "master_keyboard".into(),
             Value::String(self.master_keyboard.id().into()),
         );
+        map.insert("theme".into(), Value::String(self.theme.id().into()));
+        map.insert("app_zoom".into(), Value::from(self.app_zoom));
+        map.insert(
+            "knob_range".into(),
+            Value::String(self.knob_range.id().into()),
+        );
+        map.insert("value_tooltips".into(), Value::Bool(self.value_tooltips));
         if let Some(folder) = &self.library_folder {
             map.insert(
                 "library_folder".into(),
@@ -499,6 +551,74 @@ mod tests {
         };
         assert_eq!(WorkflowPrefs::from_json(&w.to_json()).unwrap(), w);
         assert!(w.to_json().contains("\"keys_notice_seen\": true"));
+    }
+
+    #[test]
+    fn the_interface_preferences_default_to_how_the_app_always_looked_and_round_trip() {
+        let d = WorkflowPrefs::default();
+        assert_eq!(d.theme, ThemeChoice::Dark);
+        assert_eq!(d.app_zoom, 100);
+        assert_eq!(d.knob_range, KnobRange::Normal);
+        assert!(!d.value_tooltips);
+        let w = WorkflowPrefs {
+            theme: ThemeChoice::System,
+            app_zoom: 150,
+            knob_range: KnobRange::VeryPrecise,
+            value_tooltips: true,
+            ..d
+        };
+        let text = w.to_json();
+        for field in [
+            "\"theme\": \"system\"",
+            "\"app_zoom\": 150",
+            "\"knob_range\": \"very_precise\"",
+            "\"value_tooltips\": true",
+        ] {
+            assert!(text.contains(field), "{field} in {text}");
+        }
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap(), w);
+        // Saving again is byte-identical.
+        assert_eq!(WorkflowPrefs::from_json(&text).unwrap().to_json(), text);
+    }
+
+    #[test]
+    fn a_workflow_file_from_before_the_interface_preferences_loads_with_their_defaults() {
+        // What an older build wrote: no interface fields, and a field this build knows nothing of.
+        let old = r#"{
+  "auto_route": false,
+  "autosave_minutes": 10,
+  "follow_song": true,
+  "future_option": [1, 2]
+}"#;
+        let w = WorkflowPrefs::from_json(old).unwrap();
+        assert!(!w.auto_route && w.follow_song && w.autosave_minutes == 10);
+        assert_eq!(
+            (w.theme, w.app_zoom, w.knob_range, w.value_tooltips),
+            (ThemeChoice::Dark, 100, KnobRange::Normal, false)
+        );
+        assert!(w.extra.contains_key("future_option"), "unknown fields stay");
+        let saved = w.to_json();
+        assert!(saved.contains("future_option"));
+        assert_eq!(WorkflowPrefs::from_json(&saved).unwrap(), w);
+    }
+
+    #[test]
+    fn a_hand_edited_interface_preference_falls_back_or_snaps_to_a_choice() {
+        let w = WorkflowPrefs::from_json(
+            r#"{"theme": "sepia", "app_zoom": 130, "knob_range": 3, "value_tooltips": "yes"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            w.theme,
+            ThemeChoice::Dark,
+            "an unknown theme is the default"
+        );
+        assert_eq!(w.app_zoom, 125, "a zoom snaps to the nearest step");
+        assert_eq!(w.knob_range, KnobRange::Normal);
+        assert!(!w.value_tooltips);
+        for (given, want) in [(0, 75), (74, 75), (87, 75), (88, 100), (10_000, 200)] {
+            assert_eq!(nearest_zoom(given), want, "{given}");
+        }
     }
 
     #[test]

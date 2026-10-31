@@ -948,3 +948,91 @@ fn a_detached_rack_repaints_when_the_automation_moves_a_control() {
     s.frame();
     assert!(!s.needs_repaint_in(WindowKind::Rack));
 }
+
+// ------------------------------------------------------------------ the divider
+
+fn double_click(p: Point) -> UiEvent {
+    UiEvent::PointerDown {
+        pos: p,
+        button: PointerButton::Primary,
+        modifiers: Modifiers::NONE,
+        clicks: 2,
+    }
+}
+
+/// A click that may start a double-click: press and release at `p`.
+fn click_divider(s: &mut Shell<NullBackend>, p: Point, clicks: u8) {
+    let down = if clicks == 2 {
+        double_click(p)
+    } else {
+        down_at(p, PointerButton::Primary)
+    };
+    s.handle(&down);
+    s.handle(&up_at(p, PointerButton::Primary));
+}
+
+#[test]
+fn a_double_click_on_the_divider_collapses_the_rack_and_the_next_one_restores_it() {
+    let mut s = shell();
+    let before = s.layout();
+    let d = before
+        .divider
+        .expect("the divider shows with the song area");
+    let at = d.center();
+    click_divider(&mut s, at, 1);
+    click_divider(&mut s, at, 2);
+    let collapsed = s.layout();
+    assert!(
+        collapsed.rack.height() <= MIN_PANE_HEIGHT + 0.5,
+        "the rack is down to its smallest height: {}",
+        collapsed.rack.height()
+    );
+    assert!(collapsed.rack.height() < before.rack.height());
+    assert!(
+        collapsed.song.unwrap().height() > before.song.unwrap().height(),
+        "the song area has the room"
+    );
+    // The divider moved with the rack; the second double-click is on it where it is now.
+    let at = collapsed.divider.unwrap().center();
+    click_divider(&mut s, at, 1);
+    click_divider(&mut s, at, 2);
+    let back = s.layout();
+    assert!(
+        (back.rack.height() - before.rack.height()).abs() < 0.5,
+        "{} then {}",
+        before.rack.height(),
+        back.rack.height()
+    );
+}
+
+#[test]
+fn dragging_the_divider_after_a_collapse_forgets_the_old_split() {
+    let mut s = shell();
+    let before = s.layout();
+    let at = before.divider.unwrap().center();
+    click_divider(&mut s, at, 2);
+    let collapsed = s.layout();
+    let at = collapsed.divider.unwrap().center();
+    // Drag it down 100 px.
+    s.handle(&down_at(at, PointerButton::Primary));
+    s.handle(&moved_to(Point::new(at.x, at.y + 100.0)));
+    s.handle(&up_at(
+        Point::new(at.x, at.y + 100.0),
+        PointerButton::Primary,
+    ));
+    let dragged = s.layout();
+    assert!(dragged.rack.height() > collapsed.rack.height() + 50.0);
+    // A double-click now collapses again instead of restoring the split from before.
+    let at = dragged.divider.unwrap().center();
+    click_divider(&mut s, at, 2);
+    assert!(s.layout().rack.height() <= MIN_PANE_HEIGHT + 0.5);
+}
+
+#[test]
+fn a_single_click_on_the_divider_leaves_the_split_alone() {
+    let mut s = shell();
+    let before = s.layout();
+    let at = before.divider.unwrap().center();
+    click_divider(&mut s, at, 1);
+    assert_eq!(s.layout(), before);
+}

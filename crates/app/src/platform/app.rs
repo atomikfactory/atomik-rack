@@ -275,8 +275,10 @@ pub fn run(cli: Cli) -> Result<(), String> {
         .screenshot_after
         .filter(|s| s.is_finite() && *s >= 0.0)
         .map(|s| now + Duration::from_secs_f64(s));
+    let zoom_applied = shell.app_zoom();
     let mut app = App {
         shell,
+        zoom_applied,
         gpu: GpuContext::new(),
         windows: BTreeMap::new(),
         custom_cursors: BTreeMap::new(),
@@ -349,6 +351,8 @@ struct App {
     last_focused: WindowKind,
     /// The note about drags between windows was said for this drag.
     drag_noted: bool,
+    /// The application zoom the windows were last told (they are told again when it changes).
+    zoom_applied: f64,
     text: TextEngine,
     modifiers: Modifiers,
     /// Emits `UiEvent::ModifiersChanged` once per real modifier change.
@@ -372,6 +376,20 @@ struct App {
 }
 
 /// The monitors as [`MonitorInfo`] and the index of the primary one.
+/// Opens `url` in the default browser. The address is one of the project's own constants
+/// (`ShellRequest::OpenUrl`), never typed by the user or read from a file; a failure is logged.
+fn open_url(url: &str) {
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer.exe").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    if let Err(e) = result {
+        log::warn!("could not open {url}: {e}");
+    }
+}
+
 fn monitors(event_loop: &ActiveEventLoop) -> (Vec<MonitorInfo>, usize) {
     let handles: Vec<_> = event_loop.available_monitors().collect();
     let infos = handles
@@ -528,11 +546,17 @@ impl App {
                 .create_window(attributes)
                 .map_err(|e| e.to_string())?,
         );
-        let scale = window.scale_factor();
+        // The windows are told the display scale times the application zoom: everything the
+        // shell does in logical units follows.
+        let scale = self.shell.ui_scale(window.scale_factor());
         let size = window.inner_size();
         let surface = self
             .gpu
             .create_surface(Arc::clone(&window), size.width, size.height)?;
+        if let Some(theme) = window.theme() {
+            self.shell
+                .set_system_dark(theme == winit::window::Theme::Dark);
+        }
         self.shell.handle_in(kind, &UiEvent::ScaleChanged(scale));
         self.shell
             .handle_in(kind, &UiEvent::Resize(translate::logical_size(size, scale)));
@@ -633,7 +657,10 @@ impl App {
             own.space,
             (own.x, own.y),
             own.scale,
-            (pos.x * own.scale, pos.y * own.scale),
+            (
+                pos.x * own.scale * self.shell.app_zoom(),
+                pos.y * own.scale * self.shell.app_zoom(),
+            ),
         );
         windows::window_under(&rects, point, &self.zorder)
     }
@@ -784,7 +811,26 @@ impl App {
         }
     }
 
+    /// Tells every window its new scale and size when the application zoom changed.
+    fn apply_zoom(&mut self) {
+        let zoom = self.shell.app_zoom();
+        if (zoom - self.zoom_applied).abs() < f64::EPSILON {
+            return;
+        }
+        self.zoom_applied = zoom;
+        for (kind, w) in &self.windows {
+            let scale = self.shell.ui_scale(w.window.scale_factor());
+            let size = w.window.inner_size();
+            self.shell.handle_in(*kind, &UiEvent::ScaleChanged(scale));
+            self.shell.handle_in(
+                *kind,
+                &UiEvent::Resize(translate::logical_size(size, scale)),
+            );
+        }
+    }
+
     fn after_event(&mut self, event_loop: &ActiveEventLoop, requests: Vec<ShellRequest>) {
+        self.apply_zoom();
         self.sync_windows(event_loop);
         self.handle_requests(event_loop, requests);
         self.sync_windows(event_loop);
@@ -1065,6 +1111,7 @@ Yes saves, No discards the changes, Cancel keeps the song open.",
                     self.handle_requests(event_loop, more);
                 }
                 ShellRequest::FocusWindow(kind) => self.focus_window(kind),
+                ShellRequest::OpenUrl(url) => open_url(url),
                 ShellRequest::ToggleMaximise(kind) => {
                     if let Some(w) = self.windows.get(&kind) {
                         w.window.set_maximized(!w.window.is_maximized());
@@ -1155,10 +1202,11 @@ impl ApplicationHandler for App {
             // Anything else ends the group: keep the order of events.
             _ => self.flush_files(event_loop, kind),
         }
+        let zoom = self.shell.app_zoom();
         let Some((scale, pointer)) = self
             .windows
             .get(&kind)
-            .map(|w| (w.window.scale_factor(), w.pointer))
+            .map(|w| (w.window.scale_factor() * zoom, w.pointer))
         else {
             return;
         };
@@ -1188,7 +1236,13 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Moved(_) => self.report_geom(kind),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.ui(event_loop, kind, UiEvent::ScaleChanged(scale_factor));
+                let scale = self.shell.ui_scale(scale_factor);
+                self.ui(event_loop, kind, UiEvent::ScaleChanged(scale));
+            }
+            WindowEvent::ThemeChanged(theme) => {
+                self.shell
+                    .set_system_dark(theme == winit::window::Theme::Dark);
+                self.after_event(event_loop, Vec::new());
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.modifiers = translate::modifiers(m.state());

@@ -149,6 +149,7 @@ fn the_tab_strip_exists_only_with_preferences_and_switches_the_tab() {
             Tab::Audio,
             Tab::Keyboard,
             Tab::Workflow,
+            Tab::Interface,
             Tab::Surfaces,
             Tab::Sync
         ]
@@ -913,6 +914,141 @@ fn golden_workflow() {
     let l = d.workflow_layout(VIEW).unwrap();
     down(&mut d, l.toggles[0].rect.center());
     golden("settings_workflow_auto_route_off", &d);
+}
+
+// ------------------------------------------------------------------ interface
+
+fn right_click(d: &mut SettingsDialog, p: Point) {
+    d.handle(
+        &UiEvent::PointerDown {
+            pos: p,
+            button: PointerButton::Secondary,
+            modifiers: Modifiers::NONE,
+            clicks: 1,
+        },
+        VIEW,
+    );
+}
+
+#[test]
+fn the_interface_tab_steps_the_choices_and_apply_returns_them_with_the_workflow_prefs() {
+    use atomik_ui::ThemeChoice;
+    use atomik_ui::widget::KnobRange;
+    let mut d = dialog();
+    goto(&mut d, Tab::Interface);
+    let l = d.interface_layout(VIEW).unwrap();
+    let labels: Vec<&str> = l.rows.iter().map(|r| r.label).collect();
+    assert_eq!(
+        labels,
+        ["Theme", "Application zoom", "Knob range", "Value tooltips"]
+    );
+    let values: Vec<&str> = l.rows.iter().map(|r| r.value.as_str()).collect();
+    assert_eq!(values, ["Dark", "100 %", "Normal", ""]);
+    assert!(!l.rows[3].on, "value tooltips start off");
+    // The theme steps Dark, Light, System and back with the right button.
+    down(&mut d, l.rows[0].button.center());
+    assert_eq!(d.preferences().unwrap().1.theme, ThemeChoice::Light);
+    down(&mut d, l.rows[0].button.center());
+    assert_eq!(d.preferences().unwrap().1.theme, ThemeChoice::System);
+    right_click(&mut d, l.rows[0].button.center());
+    assert_eq!(d.preferences().unwrap().1.theme, ThemeChoice::Light);
+    // The zoom walks the steps and wraps; the right button goes down.
+    down(&mut d, l.rows[1].button.center());
+    assert_eq!(d.preferences().unwrap().1.app_zoom, 125);
+    right_click(&mut d, l.rows[1].button.center());
+    right_click(&mut d, l.rows[1].button.center());
+    assert_eq!(d.preferences().unwrap().1.app_zoom, 75);
+    right_click(&mut d, l.rows[1].button.center());
+    assert_eq!(d.preferences().unwrap().1.app_zoom, 200, "wraps");
+    down(&mut d, l.rows[2].button.center());
+    down(&mut d, l.rows[2].button.center());
+    assert_eq!(
+        d.preferences().unwrap().1.knob_range,
+        KnobRange::VeryPrecise
+    );
+    down(&mut d, l.rows[3].rect.center());
+    let (_, wf) = d.preferences().unwrap();
+    assert!(wf.value_tooltips);
+    // The Workflow preferences are untouched, and Apply hands everything over.
+    assert_eq!(
+        WorkflowPrefs {
+            theme: ThemeChoice::Dark,
+            app_zoom: 100,
+            knob_range: KnobRange::Normal,
+            value_tooltips: false,
+            ..wf.clone()
+        },
+        WorkflowPrefs::default()
+    );
+    assert!(matches!(
+        press(&mut d, "Return", Os::Windows),
+        DialogOutcome::Apply(_)
+    ));
+    let mut c = dialog();
+    goto(&mut c, Tab::Interface);
+    assert_eq!(press(&mut c, "Escape", Os::Windows), DialogOutcome::Cancel);
+}
+
+#[test]
+fn the_interface_tab_starts_from_the_saved_preferences_and_keeps_the_workflow_drafts() {
+    use atomik_ui::ThemeChoice;
+    let saved = WorkflowPrefs {
+        theme: ThemeChoice::Light,
+        app_zoom: 150,
+        ..WorkflowPrefs::default()
+    };
+    let mut d = SettingsDialog::new(AudioSettings::default(), DeviceLists::default())
+        .with_preferences(
+            KeymapEditor::new(Os::Windows, Profile::Standard, UserKeymap::default()),
+            saved,
+        );
+    goto(&mut d, Tab::Interface);
+    let l = d.interface_layout(VIEW).unwrap();
+    assert_eq!(l.rows[0].value, "Light");
+    assert_eq!(l.rows[1].value, "150 %");
+    // A change on the Workflow tab and one on this tab both reach the result.
+    goto(&mut d, Tab::Workflow);
+    let w = d.workflow_layout(VIEW).unwrap();
+    down(&mut d, w.toggles[0].rect.center());
+    goto(&mut d, Tab::Interface);
+    down(&mut d, l.rows[3].rect.center());
+    let (_, out) = d.preferences().unwrap();
+    assert!(!out.auto_route && out.value_tooltips);
+    assert_eq!((out.theme, out.app_zoom), (ThemeChoice::Light, 150));
+}
+
+#[test]
+fn the_tab_strip_leaves_room_for_the_title_of_every_tab() {
+    for tab in Tab::ALL {
+        let mut d = dialog();
+        goto(&mut d, tab);
+        let strip = d.tab_strip(VIEW);
+        assert_eq!(strip.len(), Tab::ALL.len());
+        let panel = d.panel(VIEW);
+        let first = strip.first().unwrap().0;
+        // The title is drawn at 16 px from the panel's padding; ask for its measured width.
+        let title = crate::menubar::text_width(tab.title()) * 16.0 / 13.0;
+        assert!(
+            first.x0 > panel.x0 + PAD + title + 8.0,
+            "{tab:?}: the tabs start at {} but the title ends at {}",
+            first.x0,
+            panel.x0 + PAD + title
+        );
+        for pair in strip.windows(2) {
+            assert!(pair[0].0.x1 <= pair[1].0.x0, "tabs do not overlap");
+        }
+    }
+}
+
+#[test]
+fn golden_interface() {
+    let mut d = dialog();
+    goto(&mut d, Tab::Interface);
+    golden("settings_interface", &d);
+    let l = d.interface_layout(VIEW).unwrap();
+    down(&mut d, l.rows[0].button.center());
+    down(&mut d, l.rows[3].rect.center());
+    golden("settings_interface_light_tooltips", &d);
 }
 
 #[test]

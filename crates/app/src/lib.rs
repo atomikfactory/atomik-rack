@@ -8,6 +8,7 @@
 //!   [`atomik_model::SyncOp`] into calls on an [`EngineSink`].
 //! - [`EngineSink`] is implemented by the live session and by [`sink::RecordingSink`] in tests.
 
+pub mod about_box;
 pub mod app_core;
 pub mod app_icon;
 pub mod audio_import;
@@ -27,6 +28,7 @@ pub mod export_prefs;
 pub mod export_worker;
 pub mod freeze_worker;
 pub mod import_warp;
+pub mod interface_tab;
 pub mod keyboard_tab;
 pub mod keymap_store;
 pub mod library_store;

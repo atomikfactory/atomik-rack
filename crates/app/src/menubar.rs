@@ -675,6 +675,8 @@ mod tests {
             midi: crate::commands::MidiMenu::default(),
             freeze: crate::commands::FreezeMenu::default(),
             follow_selection: false,
+            theme: atomik_ui::ThemeChoice::Dark,
+            app_zoom: 100,
         }
     }
 
