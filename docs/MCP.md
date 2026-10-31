@@ -330,6 +330,16 @@ The restructuring commands are Edit menu items, so `session_commands` lists them
 
 The model rules are checked in `crates/model/tests/time_edit.rs` and `crates/model/tests/clip_transform.rs`; the playback checks above are hand checks.
 
+### Recipe: loops, clip names and colours
+
+A looped clip, a named clip or a coloured one is listed by `project_inspect` under its lane's `named_clips` (`id`, `name`, `color` as `#rrggbb`, `loop_length`). To QA them:
+
+1. Select a clip with `session_pointer` and set a colour with `session_command` `sequencer.clip_color` and `arg` `green` (`track` goes back to the track's colour); `sequencer.rename_clip` opens the name field, which `session_key` types into and Enter commits. `edit.undo` gives each back.
+2. Drag the loop handle in the upper right corner of the clip's body to the right with `session_pointer` (`session_screenshot` shows it): the clip grows and its `loop_length` appears in `project_inspect`. An audio clip loops the same way; `session_bounce` it and `analyze_audio` shows the source restarting every repetition.
+3. `session_command` `sequencer.convert_loop` with `arg` `separate` (or `single` for a note or automation clip) removes the loop; `session_bounce` before and after is `bit_identical` under `compare_audio`. `sequencer.loop_instance` frees the repetition under the playhead.
+
+The rules are checked in `crates/model/tests/loop_clips.rs`, `crates/model/tests/audio_flatten.rs` and `crates/render/tests/audio_project.rs`; the pointer gestures are `crates/ui/tests/loop_clips.rs`.
+
 ## Limits and notes
 
 - **No live audio.** The session opens no stream, so Play moves nothing audible and the engine telemetry of a live run (xruns, meters under load) is not available. The bounce is the sound check; the live twins are covered by the `app_core_*_tests`.

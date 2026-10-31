@@ -975,6 +975,30 @@ model, the engine, the bounce and the UI call it instead of keeping copies.
   (`SetClipScale` stores a chromatic scale as none and refuses audio and automation clips); it is
   one undo step, reports `SyncOp::SongChanged` like the other clip edits, does not change the notes
   or the engine's view of the clip, and survives split, duplicate and (the first clip's) join.
+- **Clip names and colours.** `Clip::name` (a trimmed text of at most 64 characters) and
+  `Clip::color` are the clip's own label and colour; without them the arrangement draws the
+  generated label and the track's colour. `SongCommand::SetClipMeta { ids, name, color }` sets,
+  clears or keeps each of the two on every listed clip (`MetaChange`), one `Edit::Clip` per clip
+  that changes in one undo step; a blank name clears it. The rule for every copy: a name and a
+  colour are part of the clip, so duplicate, copy and paste, the clip library, a split (both
+  halves) and the first clip of a join keep them; a clip a command makes from nothing (a
+  recording, a slice, a take compiled by a comp) has none. The fields are `"name"` and
+  `"color"` after `"muted"` in the project and the clip file, written only when set, and the
+  MCP `project_inspect` lists them in a lane's `named_clips`. The MIDI export of one clip is
+  named after the clip when it has a name.
+- **Loops turned into clips** ([loop_convert.rs](../crates/model/src/loop_convert.rs)).
+  `WorkflowCommand::ConvertLoop { ids, mode }` turns the loop of every listed clip into one clip
+  (`Single`: the content of every repetition unrolled into a clip without loop or offset, the
+  automation and controller points through the same piece rules the flattening uses) or one clip
+  per repetition (`Separate`: each piece keeps its content window as its offset; the first keeps
+  the id). `DuplicateLoopInstance { id, index }` makes one repetition a clip of its own and leaves
+  the ones before and after it looped. All three keep what the lane plays, which the flatten
+  equivalence tests check; the cases that could not (a clip with swing for `Single`, an audio
+  clip for `Single`, another clip overlapping the looped one) are refused. The arrangement offers
+  them in the clip context menu (`sequencer.convert_loop`, `sequencer.loop_instance` for the
+  repetition under the playhead), a loop handle in the upper right corner of a clip's body
+  (dragging it repeats what the clip shows), `sequencer.clip_color` and `sequencer.rename_clip`
+  (also a double-click on the clip's header strip).
 - **Rows and fold** (`ui/src/key_rows.rs`). `KeyRows` is the list of visible keys, top row first,
   with `row_of` and `key_at_row`; the piano roll's geometry (`key_at`, `key_center_y`, hit testing,
   painting, the scroll range, band select and the key zoom) goes through it, so a folded roll is the
@@ -2677,6 +2701,17 @@ start and length stay in ticks; audio is not stretched. `flatten_audio` turns a 
 (later clips win, except where a crossfade lets two overlap; fades are measured inside the original
 clip).
 
+An audio clip may loop (`Clip::loop_length`, never together with `reverse`, never as a take):
+`flatten_audio` emits one region per repetition, cut at the repetition's boundary ticks and so
+frame-exact through the tempo map. Each repetition restarts the source at the clip's source offset
+and carries its own fades, envelope and warp job (warp buffers of repetitions of one length share a
+key, so one buffer serves a loop of a thousand repetitions), which makes a loop and the same loop
+turned into separate clips (`WorkflowCommand::ConvertLoop`) play the same samples. A looped clip
+crossfades with the clip before it only inside its first repetition. The engine's region lists are
+already explicit, so nothing on the audio thread changes. A looped audio clip splits only where a
+repetition starts. The file format holds an audio loop in the `loop_length` field that every clip
+already had (format 37 reads it, older readers refuse it).
+
 ### The engine side
 
 - **Assets and regions** ([audio.rs](../crates/engine/src/audio.rs)): `SongAsset::Memory` (planar
@@ -3403,7 +3438,7 @@ the context menus in the **Clipboard, selection and context menus** bullet, and 
 creation chain in the **Creation chain** bullet.
 
 - **Registry and keymap data** ([ui/src/keymap](../crates/ui/src/keymap), pure, no window system).
-  `Registry::bundled()` lists every command (352) by a stable dotted id with label, group, default
+  `Registry::bundled()` lists every command (356) by a stable dotted id with label, group, default
   context, an optional choice argument, and the flags `repeatable`, `menu` and `can_decline`.
   `default_keymap.json` (embedded) holds two profiles, `standard` and `legacy` (the keys of earlier
   versions), as `{ command, arg?, context, chords, os? }`. `Cmd` in a chord is the logical primary
@@ -4090,7 +4125,7 @@ items are ordinary project texts, plus one small new file type.
   device with its inside, macros and splits. Any project reader opens an item, and "Open as Project"
   does. A **clip** (`.atomikclip`) is `atomik-clip` version 1
   ([clip_io.rs](../crates/model/src/clip_io.rs)):
-  `{"format": "atomik-clip", "version": 1, "ppq": 15360, "tempo_bpm": 120.0, "meter": {"num": 4, "den": 4}, "clip": {"length", "offset", "loop_length", "muted", "notes": [[tick, length, key, velocity(, true)]], "grid"?, "scale"?, "controllers"?}}`.
+  `{"format": "atomik-clip", "version": 1, "ppq": 15360, "tempo_bpm": 120.0, "meter": {"num": 4, "den": 4}, "clip": {"length", "offset", "loop_length", "muted", "name"?, "color"?, "notes": [[tick, length, key, velocity(, true)]], "grid"?, "scale"?, "controllers"?}}`.
   `"clip"` is a project note clip without `id` and `start`, with its limits and note rules; the
   output is canonical; `tempo_bpm` and `meter` are informational (nothing is rescaled); another
   `ppq`, a newer `version` and an audio clip are refused, errors name the JSON path. A **project**
