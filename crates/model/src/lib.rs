@@ -65,6 +65,7 @@ pub mod slice_edit;
 mod slices;
 mod song_cmd;
 mod song_info;
+pub mod stems;
 mod steps;
 mod steps_cmd;
 pub mod stress;
@@ -137,6 +138,7 @@ pub use song_info::{
     MAX_INFO_AUTHOR_CHARS, MAX_INFO_EMAIL_CHARS, MAX_INFO_NOTES_CHARS, MAX_INFO_TITLE_CHARS,
     MAX_INFO_URL_CHARS, SongInfo,
 };
+pub use stems::{StemKind, StemSource, safe_file_name, stem_file_names, stem_sources};
 pub use steps::{
     MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, PatternDoc, SeqResolution, StepDoc, StepSeqDoc,
     player_data_for,
