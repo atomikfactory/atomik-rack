@@ -422,7 +422,7 @@ pub use seq_panel::SeqButton;
 pub use silence_panel::{SilenceAction, SilenceRow, SilenceValues, SilenceView};
 pub use slice_editor::SliceEditorView;
 pub use step_editor::{StepEditorView, VelocityLevel};
-pub use text::{ShapedGlyph, ShapedRun, TextEngine};
+pub use text::{ShapedGlyph, ShapedRun, SharedText, TextEngine};
 pub use theme::Theme;
 pub use tooltip::{HELP_DELAY, Help, TipTracker};
 pub use transport::{

@@ -476,6 +476,14 @@ may break APIs and the patch and project formats.
   works on the step itself instead of a copy of it, and names for new devices are found without
   scanning the rack once per candidate. Quantizing a pile of notes on one tick no longer walks the
   pile for each note.
+- **Drawing does less when nothing moved.** Text is shaped once and kept in a bounded cache keyed
+  by the string, size, weight and letter spacing, so a label drawn every frame costs a lookup
+  (warm shaping of 300 labels is over 1,000 times cheaper than cold); a waveform column is read
+  once per paint instead of about six times (`paint_channel` takes a third of the time); the
+  arrangement and the piano roll repaint for a moving playhead only when its line crosses a pixel
+  (or a take ghost or tempo readout under it changes); and the controls that follow automation
+  flatten the lanes once per document change and skip the pass while the document, the playhead
+  and the play state are unchanged. The pixels drawn are identical.
 - **The undo history is bounded.** A project keeps the latest 1,000 undo steps and about 512 MiB of
   what they hold; older steps are forgotten, the latest is always kept, and the audio only
   forgotten steps used leaves the project folder at the next save. Saved files, undo results and

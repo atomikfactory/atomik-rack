@@ -917,10 +917,20 @@ impl ArrangementView {
     /// Sets the transport position shown by the playhead (song ticks).
     pub fn set_playhead(&mut self, tick: i64) {
         if tick != self.playhead {
+            let old = self.playhead;
             self.playhead = tick;
-            self.repaint = true;
-            if self.vp.following() {
-                self.axis.page_to(tick, self.bounds.x1);
+            // Everything the playhead draws moves with its physical x (the line, the ruler
+            // flag); a take ghost grows to it and the tempo lane reads the tempo under it.
+            let px = |t: i64| (self.axis.tick_to_x(t) * self.scale).round() as i64;
+            if px(old) != px(tick)
+                || !self.ghosts.is_empty()
+                || crate::tempo_lane::tempo_at(&self.song.tempo, old).to_bits()
+                    != crate::tempo_lane::tempo_at(&self.song.tempo, tick).to_bits()
+            {
+                self.repaint = true;
+            }
+            if self.vp.following() && self.axis.page_to(tick, self.bounds.x1) {
+                self.repaint = true;
             }
         }
     }

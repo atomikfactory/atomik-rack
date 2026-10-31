@@ -114,3 +114,20 @@ paste            10^5    486.9 us    229.3 us
 paste            10^6    11.665 ms   225.2 us
 adddevice in a rack of 100 devices and a full container: 1.945 ms (not measured before)
 ```
+
+## Drawing: text, waveform columns, playhead repaints
+
+Same machine, release profile, medians. Text: 300 distinct labels shaped cold, then again warm
+(`cargo test -p atomik-ui --release --test text_cache -- --ignored --nocapture`). Waveform:
+`cargo test -p atomik-ui --release --test bench_wave -- --ignored --nocapture`, one channel of
+1,920 columns over a peak level with a tempo-mapped source.
+
+```text
+case                                   before      after
+text, 300 labels (cold / warm)         57.9 ms     33 us (warm; the first paint still shapes)
+paint_channel, 1,920 columns           292.8 us    94.1 us
+```
+
+A playhead that moves inside one pixel no longer raises a repaint in the arrangement or the piano
+roll, and `AppCore::frame` skips the shown-value pass while the revision, position and play state
+are unchanged (tests `playhead_repaint`, `app_core::autoview_tests`).

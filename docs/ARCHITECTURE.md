@@ -636,7 +636,7 @@ sound moved. The views show an overlay instead
 
 ```
  AppCore::frame ─► position (the engine's published tick, or the last locate)
-   ─► RackDoc::automation_values_at(tick)      the lanes that play, by the player's own rule
+   ─► AutomationCurves::values_at(tick)         lanes flattened once per revision, the player's own rule
    ─► minus the lanes a take is writing, minus the params edited by hand while stopped
    ─► RackView / ConsoleView / PluginParamsView::set_shown_values   (compared; unchanged = nothing)
    ─► sync: only the panels showing a changed value are re-recorded (each window repaints from its view)

@@ -462,15 +462,19 @@ impl PianoRollView {
     /// Sets the transport position (song ticks), drawn where the clip plays it.
     pub fn set_playhead(&mut self, tick: i64) {
         if tick != self.playhead {
+            let before = self.playhead_content();
             self.playhead = tick;
-            self.repaint = true;
+            // The line is drawn on a whole logical pixel: nothing to paint while it stays put.
+            let after = self.playhead_content();
+            let px = |t: Option<i64>| t.map(|t| self.axis.tick_to_x(t).round() as i64);
+            if px(before) != px(after) {
+                self.repaint = true;
+            }
             if self.vp.following()
-                && let Some(c) = self
-                    .clip
-                    .as_ref()
-                    .and_then(|cl| seq_edit::song_to_content(cl, tick))
+                && let Some(c) = after
+                && self.axis.page_to(c, self.bounds.x1)
             {
-                self.axis.page_to(c, self.bounds.x1);
+                self.repaint = true;
             }
         }
     }

@@ -19,9 +19,10 @@
 //!   the transport stopped a param the user edited keeps their value until the playhead moves or
 //!   the song plays (the audio holds that value too: the player applies lanes only while
 //!   playing).
-//! * **Cost.** One flatten per lane per frame while some lane exists; the views re-record a
-//!   panel only when a value it shows changed (`set_shown_values` reports whether the set
-//!   changed, and an unchanged set costs a comparison).
+//! * **Cost.** The lanes are flattened once per document revision (`AutomationCurves`) and
+//!   evaluated per position; while the revision, the position, the playing flag, the params the
+//!   user holds and the lanes a take writes are all unchanged a frame asks the views for nothing.
+//!   The views re-record a panel only when a value it shows changed.
 
 use super::autorec::LaneId;
 use super::*;
@@ -35,6 +36,22 @@ pub(super) struct AutoView {
     touched: BTreeSet<LaneId>,
     /// `(playing, tick)` of the last look: a change forgets the touched params.
     seen: Option<(bool, i64)>,
+    /// The lanes' flattened points, with the document revision they were read at.
+    curves: Option<(u64, atomik_model::AutomationCurves)>,
+    /// What the views were last given values for: nothing that decides them changed while this
+    /// still matches (see [`Gate`]).
+    gate: Option<Gate>,
+}
+
+/// Everything the shown values are a function of: the document, the position and whether the
+/// song plays, the params the user holds and the lanes a take is writing.
+#[derive(Debug, PartialEq)]
+struct Gate {
+    revision: u64,
+    position: i64,
+    playing: bool,
+    touched: usize,
+    writing: Vec<LaneId>,
 }
 
 impl<S: EngineSink> AppCore<S> {
@@ -48,17 +65,35 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// The values the controls show instead of the stored ones now: what each playing lane gives
-    /// at the transport position, without the lanes a take is writing and the params the user
-    /// edited with the song stopped.
-    pub fn automation_shown(&mut self) -> atomik_model::ShownValues {
+    /// Notes whether the song plays and where the playhead is: a change forgets the params the
+    /// user edited. Returns whether the song plays.
+    fn observe_transport(&mut self) -> bool {
         let playing = self.playing || self.sink.transport_state().playing;
         let seen = (playing, self.position);
         if self.autoview.seen != Some(seen) {
             self.autoview.seen = Some(seen);
             self.autoview.touched.clear();
         }
-        let mut shown = self.doc().automation_values_at(self.position as f64);
+        playing
+    }
+
+    /// The values the controls show instead of the stored ones now: what each playing lane gives
+    /// at the transport position, without the lanes a take is writing and the params the user
+    /// edited with the song stopped.
+    pub fn automation_shown(&mut self) -> atomik_model::ShownValues {
+        self.observe_transport();
+        let revision = self.document.revision();
+        if self
+            .autoview
+            .curves
+            .as_ref()
+            .is_none_or(|c| c.0 != revision)
+        {
+            let curves = self.doc().automation_curves();
+            self.autoview.curves = Some((revision, curves));
+        }
+        let curves = self.autoview.curves.as_ref().map(|c| &c.1);
+        let mut shown = curves.map_or_else(Default::default, |c| c.values_at(self.position as f64));
         if shown.is_empty() {
             return shown;
         }
@@ -75,6 +110,18 @@ impl<S: EngineSink> AppCore<S> {
     /// then syncs the views).
     pub(super) fn update_shown_values(&mut self) -> bool {
         self.prune_override();
+        let playing = self.observe_transport();
+        let gate = Gate {
+            revision: self.document.revision(),
+            position: self.position,
+            playing,
+            touched: self.autoview.touched.len(),
+            writing: self.writing_automation_lanes(),
+        };
+        if self.autoview.gate.as_ref() == Some(&gate) {
+            return false;
+        }
+        self.autoview.gate = Some(gate);
         let shown = self.automation_shown();
         let a = self.view.set_shown_values(&shown);
         let b = self.console.set_shown_values(&shown);

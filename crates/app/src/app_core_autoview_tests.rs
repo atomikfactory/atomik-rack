@@ -332,3 +332,76 @@ fn the_master_follows_its_lane_and_the_rack_panel_of_a_channel_too() {
     let rack = c.view.shown_value(&channel, "fader");
     assert!(rack.is_none_or(|v| (v - 0.5).abs() < 1e-3), "{rack:?}");
 }
+
+// ---- the gates equal an always-sync reference ------------------------------------------------
+
+/// The value the control must show: the uncached model answer for the lane, else the stored one.
+fn reference(c: &AppCore<RecordingSink>, tick: i64) -> f32 {
+    c.doc()
+        .automation_values_at(tick as f64)
+        .get(&(key("a"), CUTOFF.to_string()))
+        .copied()
+        .unwrap_or_else(|| {
+            c.doc()
+                .param_value(&key("a"), CUTOFF, c.registry())
+                .unwrap()
+        })
+}
+
+#[test]
+fn the_gated_values_equal_the_uncached_ones_on_a_random_event_stream() {
+    let mut c = core();
+    let mut rng = 0x2545_F491_4F6C_DD1Du64;
+    let mut next = move |n: u64| {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng % n
+    };
+    let mut muted = false;
+    let mut tick = 0;
+    for step in 0..300 {
+        match next(5) {
+            0 => {
+                muted = !muted;
+                c.apply_command(song(SongCommand::SetTrackFlags {
+                    device: key("a"),
+                    muted,
+                    solo: false,
+                    armed: false,
+                }))
+                .unwrap();
+            }
+            1 => {
+                c.undo();
+            }
+            2 => {
+                c.redo();
+            }
+            _ => tick = next(3 * BAR as u64) as i64,
+        }
+        if next(4) == 0 {
+            // A frame at the same position and revision: the gate holds, the answer is the same.
+            playing_at(&mut c, tick);
+        }
+        playing_at(&mut c, tick);
+        let want = reference(&c, tick);
+        assert!(
+            near(shown(&c), want),
+            "step {step} tick {tick}: {} vs {want}",
+            shown(&c)
+        );
+    }
+}
+
+#[test]
+fn an_unchanged_revision_and_position_asks_the_views_for_nothing() {
+    let mut c = core();
+    playing_at(&mut c, BAR / 2);
+    assert!(!c.update_shown_values(), "nothing moved");
+    c.position = BAR / 2 + 480;
+    assert!(
+        c.update_shown_values(),
+        "a moved playhead changes the values"
+    );
+}
