@@ -78,11 +78,12 @@ impl Canvas for CpuCanvas<'_> {
     fn text(&mut self, run: &TextRun) {
         self.ctx.set_transform(self.current());
         self.ctx.set_paint(vello_cpu::PaintType::Solid(run.color));
-        for r in self.text.shape(run) {
+        let shaped = self.text.shape_shared(run);
+        for r in shaped.runs.iter() {
             let glyphs = r.glyphs.iter().map(|g| vello_cpu::Glyph {
                 id: g.id,
-                x: g.x,
-                y: g.y,
+                x: shaped.x + g.x,
+                y: shaped.y + g.y,
             });
             let _ = self
                 .ctx

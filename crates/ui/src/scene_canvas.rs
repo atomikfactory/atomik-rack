@@ -146,7 +146,8 @@ impl Canvas for SceneCanvas<'_> {
     }
     fn text(&mut self, run: &TextRun) {
         let t = self.current();
-        for r in self.text.shape(run) {
+        let shaped = self.text.shape_shared(run);
+        for r in shaped.runs.iter() {
             self.scene
                 .draw_glyphs(&r.font)
                 .font_size(r.font_size)
@@ -157,8 +158,8 @@ impl Canvas for SceneCanvas<'_> {
                     Fill::NonZero,
                     r.glyphs.iter().map(|g| vello::Glyph {
                         id: g.id,
-                        x: g.x,
-                        y: g.y,
+                        x: shaped.x + g.x,
+                        y: shaped.y + g.y,
                     }),
                 );
         }
