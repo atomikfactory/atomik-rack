@@ -395,32 +395,46 @@ impl Take {
     /// What the take shows while it runs: its start and the notes captured so far, held ones
     /// ending at `now` (song ticks). Not a clip: nothing here is saved or undoable.
     pub fn preview(&self, now: i64) -> TakePreview {
+        TakePreview {
+            start: self.origin.map(|o| o.0),
+            notes: self.preview_notes(None, now),
+        }
+    }
+
+    /// The preview of each armed track: its device, the note lane it records to and the notes
+    /// captured on it so far.
+    pub fn track_previews(&self, now: i64) -> Vec<(DeviceKey, usize, Vec<PreviewNote>)> {
+        self.tracks
+            .iter()
+            .map(|(id, key)| {
+                let lane = self.lanes.get(key).copied().unwrap_or(0);
+                (key.clone(), lane, self.preview_notes(Some(*id), now))
+            })
+            .collect()
+    }
+
+    fn preview_notes(&self, only: Option<DeviceInstanceId>, now: i64) -> Vec<PreviewNote> {
+        let wanted = |d: DeviceInstanceId| only.is_none_or(|o| o == d);
         let mut notes: Vec<PreviewNote> = self
             .notes
-            .values()
-            .flatten()
+            .iter()
+            .filter(|((d, _), _)| wanted(*d))
+            .flat_map(|(_, v)| v)
             .map(|n| PreviewNote {
                 tick: n.tick,
                 length: n.length,
                 key: n.key,
             })
             .collect();
-        notes.extend(
-            self.held
-                .values()
-                .map(|&(_, tick, _)| tick)
-                .zip(self.held.keys())
-                .map(|(tick, (_, key))| PreviewNote {
-                    tick,
-                    length: (now - tick).max(1),
-                    key: *key,
-                }),
-        );
+        notes.extend(self.held.iter().filter(|((d, _), _)| wanted(*d)).map(
+            |((_, key), &(_, tick, _))| PreviewNote {
+                tick,
+                length: (now - tick).max(1),
+                key: *key,
+            },
+        ));
         notes.sort_by_key(|n| (n.tick, n.key));
-        TakePreview {
-            start: self.origin.map(|o| o.0),
-            notes,
-        }
+        notes
     }
 
     fn lap(&self, loop_count: u64) -> u64 {

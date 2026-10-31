@@ -419,7 +419,12 @@ impl AppCommand {
             AppCommand::Transport(TransportAction::ClearOverride) => {
                 ("transport.clear_override", None)
             }
-            AppCommand::Transport(TransportAction::Locate(_)) => return None,
+            AppCommand::Transport(
+                TransportAction::Locate(_)
+                | TransportAction::Bars(_)
+                | TransportAction::GoLocator(_),
+            ) => return None,
+            AppCommand::Transport(TransportAction::TapTempo) => ("transport.tap_tempo", None),
             AppCommand::TogglePreCount => ("transport.pre_count", None),
             AppCommand::ToggleClockOut => ("sync.clock_out", None),
             AppCommand::ToggleClockWhileStopped => ("sync.clock_while_stopped", None),
@@ -602,6 +607,7 @@ impl AppCommand {
             ("view.toggle_sample_editor", None) => AppCommand::ToggleSampleEditor,
             ("view.toggle_step_editor", None) => AppCommand::ToggleStepEditor,
             ("view.toggle_slice_editor", None) => AppCommand::ToggleSliceEditor,
+            ("transport.tap_tempo", None) => AppCommand::Transport(TransportAction::TapTempo),
             ("transport.play", None) => AppCommand::Transport(TransportAction::Play),
             ("transport.stop", None) => AppCommand::Transport(TransportAction::Stop),
             ("transport.play_stop", None) => AppCommand::Transport(TransportAction::TogglePlay),
@@ -2106,6 +2112,7 @@ mod tests {
             TransportAction::Stop,
             TransportAction::TogglePlay,
             TransportAction::ReturnToZero,
+            TransportAction::TapTempo,
             TransportAction::ToggleLoop,
             TransportAction::ToggleRecord,
             TransportAction::ToggleMetronome,

@@ -9,6 +9,9 @@ use super::*;
 use atomik_ui::browser::CreateKind;
 use atomik_ui::keymap::{CommandOutcome, Roles};
 
+/// Merge ids of the tempo taps start here (the views use multiples of 2^40 up to 13).
+const TAP_MERGE_BASE: u64 = 14 << 40;
+
 impl<S: EngineSink> AppCore<S> {
     /// Offers a registry command to the view of `pane`. `None`: the view did not take it
     /// (the next binding runs). A taken command's actions are applied (commands, selection,
@@ -20,6 +23,10 @@ impl<S: EngineSink> AppCore<S> {
         id: &str,
         arg: Option<&str>,
     ) -> Option<Vec<UiAction>> {
+        // Delete while recording throws away the take so far instead of deleting a selection.
+        if id == "edit.delete" && self.discard_take_notes() {
+            return Some(Vec::new());
+        }
         if let Some(actions) = self.clipboard_command(pane, id) {
             return Some(actions);
         }
@@ -138,19 +145,116 @@ impl<S: EngineSink> AppCore<S> {
         }
     }
 
-    /// Changes the tempo (the first tempo event) by `delta` beats per minute, undoable like
-    /// the tempo field.
-    pub fn nudge_tempo(&mut self, delta: f64) {
+    /// The index of the tempo event in effect at the playhead (what the tempo readout edits).
+    fn tempo_event_at_playhead(&self) -> usize {
+        let at = self.position.max(0);
+        self.doc()
+            .song
+            .tempo
+            .partition_point(|e| e.tick <= at)
+            .saturating_sub(1)
+    }
+
+    /// The tempo map with the event in effect at the playhead set to `bpm` (clamped); `None`
+    /// when nothing changes.
+    fn tempo_map_at_playhead(&self, bpm: f64) -> Option<Vec<atomik_model::TempoEvent>> {
         let mut map = self.doc().song.tempo.clone();
-        let Some(first) = map.first_mut() else {
+        let event = map.get_mut(self.tempo_event_at_playhead())?;
+        let bpm = bpm.clamp(atomik_model::TEMPO_MIN, atomik_model::TEMPO_MAX);
+        if !bpm.is_finite() || (bpm - event.bpm).abs() < 1e-9 {
+            return None;
+        }
+        event.bpm = bpm;
+        Some(map)
+    }
+
+    /// Changes the tempo in effect at the playhead by `delta` beats per minute, undoable like
+    /// the tempo field (which edits the same event).
+    pub fn nudge_tempo(&mut self, delta: f64) {
+        let Some(event) = self.doc().song.tempo.get(self.tempo_event_at_playhead()) else {
             return;
         };
-        let bpm = (first.bpm + delta).clamp(atomik_model::TEMPO_MIN, atomik_model::TEMPO_MAX);
-        if (bpm - first.bpm).abs() < 1e-9 {
-            return;
+        let bpm = event.bpm + delta;
+        if let Some(map) = self.tempo_map_at_playhead(bpm) {
+            let _ = self.apply_command(Command::Song(SongCommand::SetTempoMap(map)));
         }
-        first.bpm = bpm;
-        let _ = self.apply_command(Command::Song(SongCommand::SetTempoMap(map)));
+    }
+
+    /// A tap of the tap-tempo button: with two taps or more the tempo in effect at the
+    /// playhead becomes their average. The taps of one sequence are one undo step.
+    pub fn tap_tempo(&mut self) {
+        let bpm = self.tap.tap(self.now_seconds);
+        if self.tap.len() == 1 {
+            self.tap_merge += 1;
+        }
+        let Some(map) = bpm.and_then(|b| self.tempo_map_at_playhead(b)) else {
+            return;
+        };
+        let merge = TAP_MERGE_BASE + self.tap_merge;
+        let _ = self.apply_command(Command::Song(SongCommand::DragTempoMap { map, merge }));
+    }
+
+    /// Per-frame work of the transport bar at `now_seconds` (any monotonic clock): the held
+    /// Rewind and Forward repeat, and the taps of tap tempo are timed by it.
+    pub fn transport_frame(&mut self, now_seconds: f64) {
+        self.now_seconds = now_seconds;
+        for action in self.transport_bar.tick(now_seconds) {
+            self.handle_action(action);
+        }
+    }
+
+    /// Stop returns to where playback started (Workflow preference); the second Stop goes to
+    /// the start.
+    pub fn set_return_to_start_on_stop(&mut self, on: bool) {
+        self.return_to_start_on_stop = on;
+    }
+
+    /// Where playback last started from.
+    pub fn last_start(&self) -> Option<i64> {
+        self.last_start
+    }
+
+    /// What the running take has captured, per armed track (`None` when not recording): shown
+    /// as a growing red clip. Nothing here is saved or undoable.
+    pub fn take_preview(&self) -> Option<Vec<atomik_ui::arrangement::TakeGhost>> {
+        let take = self.take.as_ref()?;
+        let start = take.origin()?.0;
+        let now = self.position;
+        let mut ghosts: Vec<_> = take
+            .track_previews(now)
+            .into_iter()
+            .map(|(device, lane, notes)| atomik_ui::arrangement::TakeGhost {
+                device,
+                lane,
+                start,
+                notes: notes.iter().map(|n| (n.tick, n.length, n.key)).collect(),
+            })
+            .collect();
+        // An audio take shows its span only, on the track's own row.
+        ghosts.extend(self.armed_audio_tracks().into_iter().map(|device| {
+            atomik_ui::arrangement::TakeGhost {
+                device,
+                lane: 0,
+                start,
+                notes: Vec::new(),
+            }
+        }));
+        Some(ghosts)
+    }
+
+    /// Drops the notes the running take captured so far; the transport and the take go on.
+    /// False when nothing is recording.
+    pub fn discard_take_notes(&mut self) -> bool {
+        if self.take.is_none() {
+            return false;
+        }
+        let state = self.sink.transport_state();
+        self.feed_take(&state);
+        if let Some(take) = &mut self.take {
+            take.discard_notes();
+        }
+        self.show_transport();
+        true
     }
 
     /// Gives the time views the modifier role table of the keymap (the alternate tool, snap
