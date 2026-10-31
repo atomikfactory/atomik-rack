@@ -1328,6 +1328,11 @@ impl Engine {
             (None, _) => self.out_fifo.iter_mut().for_each(|b| b.fill(0.0)),
         }
         self.arena.publish_device_values(&self.meters);
+        if crate::timing::enabled() {
+            self.arena.publish_cpu(&self.meters);
+            self.meters
+                .add_cpu_budget(crate::timing::batch_budget_ns(self.config.sample_rate.hz()));
+        }
         let click_delay = self.routing.as_mut().and_then(|r| r.click_delay_mut());
         self.player.mix_metronome(&mut self.out_fifo, click_delay);
         self.preview.mix(&mut self.out_fifo);
@@ -1375,6 +1380,7 @@ impl Engine {
                 if let Some(node) = self.arena.remove(id) {
                     if let Some(slot) = slot {
                         self.meters.clear_device_values(slot);
+                        self.meters.clear_cpu(slot);
                     }
                     self.retire(Garbage::Device(node));
                 }
@@ -1394,6 +1400,7 @@ impl Engine {
                 std::mem::swap(&mut self.arena, &mut swap.arena);
                 std::mem::swap(&mut self.routing, &mut swap.routing);
                 self.meters.clear_all_device_values();
+                self.meters.clear_all_cpu();
                 if let Some(routing) = &self.routing {
                     routing.install(&mut self.arena);
                     self.meters.assign(&routing.console.meter_keys);

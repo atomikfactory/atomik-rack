@@ -438,6 +438,16 @@ impl Arena {
         }
     }
 
+    /// After a batch rendered with the timing on, publishes every device's busy time. One
+    /// atomic pair per device; never allocates.
+    pub(crate) fn publish_cpu(&self, meters: &Meters) {
+        for &(id, slot) in &self.index {
+            if let Some(node) = self.nodes.get(slot).and_then(|n| n.as_deref()) {
+                meters.publish_cpu(slot, id, node.busy_ns);
+            }
+        }
+    }
+
     /// Takes device `id` out of the arena.
     pub(crate) fn remove(&mut self, id: DeviceInstanceId) -> Option<Box<Node>> {
         let k = self.index.binary_search_by_key(&id, |e| e.0).ok()?;
