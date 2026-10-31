@@ -26,11 +26,13 @@ pub enum Role {
     ToggleSelect,
     /// Hold: snap off while dragging.
     DisableSnap,
+    /// Click: a velocity stroke edits only the selected notes.
+    SelectedOnly,
 }
 
 impl Role {
     /// Every role, in listing order.
-    pub const ALL: [Role; 9] = [
+    pub const ALL: [Role; 10] = [
         Role::AlternateTool,
         Role::DisableSnap,
         Role::CopyDrag,
@@ -40,6 +42,7 @@ impl Role {
         Role::FineAdjust,
         Role::ResetParam,
         Role::EditAutomation,
+        Role::SelectedOnly,
     ];
 
     /// The source modules that act on this role. A role with none is not wired: Settings does
@@ -55,6 +58,7 @@ impl Role {
             Role::ResetParam => &["rack/selection", "console"],
             Role::EditAutomation => &["rack/selection", "console"],
             Role::Constrain => &["arrangement", "piano_roll", "audio_editor"],
+            Role::SelectedOnly => &["piano_roll"],
         }
     }
 
@@ -80,6 +84,7 @@ impl Role {
             Role::RangeSelect => "range_select",
             Role::ToggleSelect => "toggle_select",
             Role::DisableSnap => "disable_snap",
+            Role::SelectedOnly => "selected_only",
         }
     }
 }
@@ -102,6 +107,7 @@ impl Role {
             Role::FineAdjust => "Fine adjust",
             Role::ResetParam => "Reset parameter",
             Role::EditAutomation => "Edit automation",
+            Role::SelectedOnly => "Selected notes only",
         }
     }
 }
@@ -182,6 +188,7 @@ impl Roles {
                 G::DragItem,
             ),
             b(R::ToggleSelect, cmd, G::ClickItem),
+            b(R::SelectedOnly, m(false, false, true, false), G::ClickItem),
             b(R::RangeSelect, shift, G::ClickItem),
             b(R::Constrain, shift, G::DragItem),
             b(R::FineAdjust, shift, G::DragControl),

@@ -1681,8 +1681,12 @@ impl PianoRollView {
                     self.vp
                         .roles()
                         .is_active(Role::Constrain, modifiers, GestureClass::DragItem);
-                let only = (modifiers.alt && !self.selection.is_empty())
-                    .then(|| self.selection.items().clone());
+                let only = (self.vp.roles().is_active(
+                    Role::SelectedOnly,
+                    modifiers,
+                    GestureClass::ClickItem,
+                ) && !self.selection.is_empty())
+                .then(|| self.selection.items().clone());
                 let originals = self.notes().to_vec();
                 self.drag = Drag::VelocityDraw {
                     last: originals.clone(),
