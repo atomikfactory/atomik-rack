@@ -4621,7 +4621,12 @@ impl<B: AudioBackend> Shell<B> {
             | AppCommand::ToggleLaneMute
             | AppCommand::ToggleChase
             | AppCommand::FoldLanes(_)
-            | AppCommand::TrackHeight(_) => {
+            | AppCommand::TrackHeight(_)
+            | AppCommand::InsertBars
+            | AppCommand::RemoveBars
+            | AppCommand::ReverseClips(_)
+            | AppCommand::ScaleTempo(_)
+            | AppCommand::ChopClips(_) => {
                 self.track_command(command);
                 self.menubar.as_mut().map(MenuBar::close);
                 Vec::new()
