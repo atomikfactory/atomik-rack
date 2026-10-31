@@ -228,6 +228,50 @@ ignored: [crates/engine/tests/preview_alloc.rs](../crates/engine/tests/preview_a
 the normal suite. A normal `cargo test --workspace` reports these ignored tests besides the
 real-time factor test and the `ignore` code example in the `no_alloc` module docs.
 
+## Benchmarks and the performance job
+
+A performance claim is checked with one command per crate. The benches use `criterion` (a
+dev-dependency, built without its plotting features) as the loop and print their own line per case
+after criterion's report: `median 1.234 ms  p99 1.500 ms  min .. max ..  (n=21)`, the median and
+the 99th percentile of 21 samples (the loop is `atomik_testkit::bench`, see
+[crates/testkit/src/bench.rs](../crates/testkit/src/bench.rs)). A name filter after `--` selects
+cases.
+
+| Command | What it measures |
+|---|---|
+| `cargo bench -p atomik-render --bench render_batch` | Bounce time (build and render) of a generated rack, song, console, automation-heavy and large song, at workers 0 and 2 and block 256 |
+| `ATOMIK_BENCH_FULL=1 cargo bench -p atomik-render --bench render_batch` | The same at workers 0, 1, 2 and 4 and blocks 64, 256 and 1024 |
+| `cargo bench -p atomik-devices --bench process` | The cost of 256 batches of every built-in device |
+| `cargo bench -p atomik-dsp --bench blocks` | A 4096-sample block through a biquad, a state-variable filter, a chorus and a compressor |
+| `cargo bench -p atomik-model --bench document` | Save, load, validate, clone, expand, and an edit with its undo on a rack, a song and a large song |
+
+The documents come from `atomik_model::stress` (`stress_doc`, `stress_song_doc`, `large_song_doc`,
+`lanes_song_doc`, `console_doc`), which the `--stress` options of the app use too, so a bench and a
+stress project are the same document. Benches never change what is rendered: the hash and golden
+tests stay the correctness gate. To compare a change, run the bench before and after on the same
+machine, twice each; the variance between two runs of one case should stay under 5 %, and a
+difference below that is noise. The reference machine and the wall-clock numbers it gave are in
+[perf/BASELINE.md](../perf/BASELINE.md); numbers from another machine are only comparable with
+themselves.
+
+With `ATOMIK_BENCH_ONCE` set a bench runs each scenario once and skips criterion, which is the
+pass an instruction counter wants. The scheduled workflow
+[.github/workflows/perf.yml](../.github/workflows/perf.yml) (weekly and by hand, never on a pull
+request) runs the benches and keeps their output, counts the instructions of each bench binary
+under valgrind with [scripts/perf-gate.sh](../scripts/perf-gate.sh), fails when a count is more
+than 10 % above `perf/baseline-instructions.txt`, and runs `realtime_factor_release` in release.
+The manual run option "inject regression" inflates the counts by 20 % to show that the gate
+fails. valgrind is Linux only: the instruction gate cannot run on Windows or macOS, and until the
+baseline file is committed from a first run it measures and passes. `scripts/perf-gate.sh compare`
+and `inflate` need no valgrind and can be tried anywhere.
+
+The live callback keeps a histogram of its own time and of the level-barrier wait (totals since the
+stream started; recording is two relaxed atomic adds and a maximum, covered by the allocation
+tests). `atomik-play --stats` ends its summary with `cb_p50_us`, `cb_p99_us`, `cb_p999_us`,
+`cb_max_us` and `spins_p99`, each exact to 25 %. Opening a project logs where the time went
+(`opened the project in 123.4 ms (parse .., build .., devices .., compile .., submit .., sync ..)`;
+`AppCore::open_stages` holds the same numbers).
+
 ## Listening check
 
 This is a manual check. A person listens to the slice-demo render and confirms there are no

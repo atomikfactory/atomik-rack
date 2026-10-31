@@ -1,4 +1,4 @@
-//! Support for the `benches/` harnesses: a recorder of per-run wall-clock times that prints the
+//! Support for the `benches/` harnesses: a recorder of per-sample wall-clock times that prints the
 //! median and the 99th percentile next to criterion's own report, and the one-shot mode the
 //! scheduled performance job uses to count instructions.
 //!
@@ -90,10 +90,14 @@ pub fn fmt_time(seconds: f64) -> String {
     }
 }
 
-/// Collects the duration of every individual run a criterion sample makes.
+/// Samples a bench takes (`Criterion::sample_size`) and the median and p99 are taken over.
+pub const SAMPLES: usize = 21;
+
+/// Collects one time per criterion sample: the mean of the runs that sample made (a slow
+/// routine makes one run per sample, a fast one many).
 #[derive(Debug, Default)]
 pub struct Recorder {
-    runs: RefCell<Vec<f64>>,
+    samples: RefCell<Vec<f64>>,
 }
 
 impl Recorder {
@@ -102,29 +106,32 @@ impl Recorder {
         Recorder::default()
     }
 
-    /// The routine for `Bencher::iter_custom`: runs `f` `iters` times, records each run and
-    /// returns the total. The result of `f` is kept alive through `black_box`.
+    /// The routine for `Bencher::iter_custom`: runs `f` `iters` times, records the mean run
+    /// time of the call and returns the total. The result of `f` is kept alive through
+    /// `black_box`.
     pub fn runner<'a, R>(
         &'a self,
         mut f: impl FnMut() -> R + 'a,
     ) -> impl FnMut(u64) -> Duration + 'a {
         move |iters| {
-            let mut total = Duration::ZERO;
+            let start = Instant::now();
             for _ in 0..iters {
-                let start = Instant::now();
                 std::hint::black_box(f());
-                let took = start.elapsed();
-                self.runs.borrow_mut().push(took.as_secs_f64());
-                total += took;
             }
+            let total = start.elapsed();
+            self.samples
+                .borrow_mut()
+                .push(total.as_secs_f64() / iters.max(1) as f64);
             total
         }
     }
 
-    /// The summary of the recorded runs without the first (the warm-up pass), if any remain.
+    /// The summary of the last [`SAMPLES`] samples: criterion warms up first (its calls are
+    /// recorded too) and then takes exactly `sample_size` measured samples, so the last
+    /// [`SAMPLES`] are the measurement. `None` when nothing was recorded.
     pub fn summary(&self) -> Option<Summary> {
-        let runs = self.runs.borrow();
-        Summary::of(runs.get(1..).unwrap_or(&[]))
+        let samples = self.samples.borrow();
+        Summary::of(&samples[samples.len().saturating_sub(SAMPLES)..])
     }
 
     /// Prints `label: <summary line>` to standard output; nothing when no run was timed (a
@@ -168,16 +175,23 @@ mod tests {
     }
 
     #[test]
-    fn the_recorder_counts_every_run_and_drops_the_warm_up() {
+    fn the_recorder_keeps_one_time_per_sample_and_summarises_the_last_21() {
         let rec = Recorder::new();
-        let mut n = 0;
+        assert!(rec.summary().is_none());
+        let n = std::cell::Cell::new(0usize);
         let mut run = rec.runner(|| {
-            n += 1;
-            n
+            n.set(n.get() + 1);
+            n.get()
         });
-        let _ = run(1);
-        let _ = run(5);
-        assert_eq!(rec.summary().unwrap().runs, 5);
+        // Warm-up calls with growing iteration counts, then 21 samples of 3 runs.
+        for iters in [1, 2, 4, 8] {
+            let _ = run(iters);
+        }
+        for _ in 0..SAMPLES {
+            let _ = run(3);
+        }
+        assert_eq!(rec.summary().unwrap().runs, SAMPLES);
+        assert_eq!(n.get(), 1 + 2 + 4 + 8 + 3 * SAMPLES);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use atomik_model::stress::{
     STRESS_CABLES, STRESS_DEVICES, large_song_doc, stress_doc, stress_song_doc,
 };
 use atomik_model::{Command, Document, RackDoc, load_project, save_project};
-use atomik_testkit::bench::{Recorder, once_mode, time_once};
+use atomik_testkit::bench::{Recorder, SAMPLES, once_mode, time_once};
 use criterion::Criterion;
 use std::rc::Rc;
 use std::time::Duration;
@@ -120,7 +120,7 @@ fn main() {
         return;
     }
     let mut c = Criterion::default()
-        .sample_size(21)
+        .sample_size(SAMPLES)
         .warm_up_time(Duration::from_millis(100))
         .measurement_time(Duration::from_millis(500))
         .configure_from_args();

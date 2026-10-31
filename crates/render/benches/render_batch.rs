@@ -28,7 +28,7 @@ use atomik_model::stress::{
 };
 use atomik_render::default_registry;
 use atomik_render::project::{ProjectOptions, render_doc};
-use atomik_testkit::bench::{Recorder, once_mode, time_once};
+use atomik_testkit::bench::{Recorder, SAMPLES, once_mode, time_once};
 use criterion::Criterion;
 use std::num::NonZeroUsize;
 use std::time::Duration;
@@ -87,7 +87,7 @@ fn main() {
         (&[0, 2], &[256])
     };
     let mut c = Criterion::default()
-        .sample_size(21)
+        .sample_size(SAMPLES)
         .warm_up_time(Duration::from_millis(50))
         .measurement_time(Duration::from_millis(500))
         .configure_from_args();

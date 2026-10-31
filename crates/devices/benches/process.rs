@@ -10,7 +10,7 @@
 
 use atomik_core::{BATCH, NoteEvent, NoteKind};
 use atomik_device_sdk::{Registry, SocketKind};
-use atomik_testkit::bench::{Recorder, once_mode, time_once};
+use atomik_testkit::bench::{Recorder, SAMPLES, once_mode, time_once};
 use atomik_testkit::harness::DeviceHarness;
 use criterion::Criterion;
 use std::time::Duration;
@@ -77,7 +77,7 @@ fn main() {
         return;
     }
     let mut c = Criterion::default()
-        .sample_size(21)
+        .sample_size(SAMPLES)
         .warm_up_time(Duration::from_millis(30))
         .measurement_time(Duration::from_millis(300))
         .configure_from_args();
