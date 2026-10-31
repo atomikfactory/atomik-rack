@@ -3455,9 +3455,45 @@ creation chain in the **Creation chain** bullet.
   `keyboard_tab.rs`, `workflow_tab.rs`). Audio (unchanged), Keyboard (a `KeymapEditor`: list by
   area, search, learn by pressing, add, clear, reset one or all, the conflict box with Swap,
   Unassign and Cancel, shadow notes, profile chips, modifier roles, export and import through file
-  pickers) and Workflow (auto-route, create keeps the browser open, follow the song, autosave, the
-  record mode and the keep-events policy; saved in `workflow.json`, unknown fields kept). Nothing is
-  saved until Apply; Cancel and Esc discard every draft.
+  pickers), Workflow (auto-route, create keeps the browser open, follow the song, autosave, the
+  record mode and the keep-events policy; saved in `workflow.json`, unknown fields kept) and
+  Interface (next bullet). Nothing is saved until Apply; Cancel and Esc discard every draft.
+- **Interface preferences** ([app/src/interface_tab.rs](../crates/app/src/interface_tab.rs),
+  [app/src/about_box.rs](../crates/app/src/about_box.rs), [ui/src/theme.rs](../crates/ui/src/theme.rs)).
+  `workflow.json` also holds `theme` (`dark`, `light`, `system`), `app_zoom` (75 to 200 percent in
+  steps of 25; a hand-edited value snaps to the nearest step), `knob_range` (`normal`, `precise`,
+  `very_precise`: the drag a full sweep takes is one, two or four times as long, for the rack, the
+  mixer and the container editor) and `value_tooltips` (hovering any rack control shows its value,
+  not only an automated or driven one); a file from before has the defaults, which are the look and
+  the feel the app always had. The Interface tab edits them in a draft (`UiPrefs`) that
+  `SettingsDialog::preferences` merges into the Workflow draft, and View > Theme and View >
+  Application Zoom (`AppCommand::SetTheme`, `AppCommand::AppZoom`) apply and save at once. None of
+  it touches the project or the engine.
+  - **Theme.** `Theme::dark` and `Theme::light` fill the same tokens. What the sequencer views used
+    to spell as colours (lanes, piano keys, the veil outside a clip, the mute colour) is a token
+    too, faint overlay lines use `Theme::overlay` (white on dark, near-black on light) and the type
+    over a lit control or an accent fill is `on_accent`, so no view keeps a colour of one theme.
+    `ThemeChoice::theme(system_dark)` picks the theme in use; `Shell::set_system_dark` is told the
+    operating system's setting at start and when it changes. `Shell::apply_theme` hands the theme to
+    `AppCore::set_theme` and to every open panel; each view's `set_theme` derives its `SeqTheme`
+    again and drops what was recorded with the old colours (the rack and the console bump the
+    revision of every cached list, the arrangement syncs again). `contrast_ratio` tests in
+    `theme.rs` hold the type, the muted type, the focus ring and the lamp colours of both themes
+    to their WCAG ratios.
+  - **Application zoom.** The shell draws and lays out in logical units at the scale each window
+    was told. The platform tells every window `Shell::ui_scale(display scale)`, the display scale
+    times `Shell::app_zoom`, and works the logical size and the pointer positions out with it, so
+    layout, drawing and hit tests follow with no other change; `App::apply_zoom` tells the windows
+    again when the zoom changed.
+  - **Help, Window and the divider.** F1 (`help.keyboard_shortcuts`, both profiles) opens the
+    settings dialog on the Keyboard tab, the searchable list of every command and its keys.
+    Documentation and Report an Issue are `ShellRequest::OpenUrl` with the project's two public
+    addresses (the platform opens the browser); the About box (`AboutBox`) shows the version of the
+    build, the GPL-3.0-or-later notice, where the third-party notices come from (see
+    [RELEASING.md](RELEASING.md)) and the repository, and nothing about a person. The Window menu
+    brings the main window and a detached rack or mixer forward (`view.focus_window`). A
+    double-click on the divider collapses the rack to its smallest height and the next one restores
+    the split; dragging the divider forgets the remembered split.
 - **Tooltips** ([ui/src/tooltip.rs](../crates/ui/src/tooltip.rs), `help_at` on every view with
   buttons, [app/src/shell_tooltip.rs](../crates/app/src/shell_tooltip.rs)). A view answers
   `help_at(pos) -> Option<Help>` from the same hit test its press uses: `Help` is the button's

@@ -1308,6 +1308,45 @@ These are the hand checks, on every OS (`atomik --detach rack,console` opens bot
 Run on Windows only so far (three windows open, draw, close, quit and restore); macOS, Linux (X11
 and Wayland) and monitors of mixed scale have not been tried.
 
+## Theme, zoom and the Help menu
+
+- `crates/ui/src/theme.rs` holds the contrast tests of both themes (the type, the muted type, the
+  focus ring and the lamps against every surface they sit on) and fails when a token pair of either
+  theme slips under its WCAG ratio.
+- `crates/ui/tests/theme_light.rs` has the display-list goldens of the light rack (front and back),
+  arrangement, piano roll and console (`light_*_1x.json`; regenerate with `ATOMIK_UPDATE_GOLDEN=1`),
+  a test that a view switched live paints exactly what a view built with the other theme paints (so
+  no cached list or derived colour of the old theme survives), a pixel check on the CPU canvas
+  that each theme is light or dark, and an ignored `preview_light_png` that writes three PNGs to
+  `target/preview/` to look at. The dark goldens of every other test are the check that the default
+  look did not move.
+- `crates/ui/tests/interface_prefs.rs` covers the knob range (rack and mixer drags travel two and
+  four times as far) and the value tooltips.
+- `crates/app/src/shell_interface_tests.rs` runs a headless `Shell` through the theme and the System
+  choice, the saved and restored zoom, a window at 150 % laid out as a smaller window at 100 % with
+  pointers landing on the same things, the Help and Window menus, F1 and the About box.
+  `shell_windows_tests.rs` has the divider double-click. `settings_tabs_tests.rs` has the Interface
+  tab and its goldens, `keymap_store.rs` the round trip of the new fields, an old file and a
+  hand-edited one, and `about_box.rs` the text (version and licence, no name, one address) and the
+  golden of the box in both themes (`about_box_*_1x.json`, written with a fixed version).
+
+Hand checks, on every OS:
+
+- Switch the theme in View > Theme and in Settings > Interface with every pane open (rack front and
+  back, arrangement, piano roll, the editors, the mixer, a plugin panel, a detached rack and mixer):
+  nothing keeps dark colours, and text reads everywhere. Choose Same as System, then change the
+  operating system's setting: the app follows without a restart.
+- Zoom to 75, 150 and 200 percent from View > Application Zoom: every window rescales, the pointer
+  lands on what it is over (drag a knob, a clip, a cable, drop a file), text is sharp, and the zoom
+  is the same after a restart. On a HiDPI display and with two monitors of different scales the
+  zoom multiplies each monitor's own scale.
+- Help > Keyboard Shortcuts and F1 open the shortcut list on its Keyboard tab. Documentation and
+  Report an Issue open the project's pages in the browser. About shows the version of the build and
+  the GPL notice, its link opens the repository, and Esc closes it.
+- Window lists the main window, and the Rack and Mixer windows while they are detached; each brings
+  its window forward. Double-click the divider between the rack and the song: the rack collapses;
+  again: the split is back.
+
 ## Hardware and manual tests
 
 Tests that need real hardware or a plugin installed on your machine are `#[ignore]`d and never run
