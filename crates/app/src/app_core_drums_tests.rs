@@ -1010,3 +1010,44 @@ fn the_to_channel_command_gives_a_pad_its_own_channel_and_muting_it_silences_onl
         assert!(worst < 2e-5, "only the kick went: {worst}");
     }
 }
+
+// ------------------------------------------------------------------ roll key names
+
+#[test]
+fn the_piano_roll_names_the_pads_of_a_drum_track_and_nothing_else() {
+    let t = Tmp::new("roll-names");
+    let mut c = drum_core();
+    drop_files(
+        &mut c,
+        vec![wav(&t, "kick_a.wav", 2_400, 1.0)],
+        Some(pad_key(1)),
+    );
+    drop_files(
+        &mut c,
+        vec![wav(&t, "snare.wav", 2_400, 0.25)],
+        Some(pad_key(3)),
+    );
+    let notes = vec![Note::new(0, PPQ, pad_key(1), 0.8)];
+    let clip = add_track_and_clip(&mut c, "drm", note_clip(0, BAR, notes));
+    c.open_piano_roll(clip);
+    let labels = c.piano_roll().key_labels().unwrap().to_vec();
+    assert_eq!(
+        labels,
+        [
+            (pad_key(1), "kick_a".to_string()),
+            (pad_key(3), "snare".to_string())
+        ]
+    );
+    // Only the display is named: the clip keeps its stored keys.
+    assert_eq!(c.piano_roll().notes()[0].key, pad_key(1));
+
+    // A synth track shows note names.
+    add_synth(&mut c);
+    let synth_clip = add_track_and_clip(
+        &mut c,
+        "syn",
+        note_clip(0, BAR, vec![Note::new(0, PPQ, 60, 0.8)]),
+    );
+    c.open_piano_roll(synth_clip);
+    assert!(c.piano_roll().key_labels().is_none());
+}

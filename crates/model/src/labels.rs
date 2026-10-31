@@ -89,6 +89,7 @@ fn song_label(c: &SongCommand) -> &'static str {
         SongCommand::SetLoop { .. } => "Set Loop",
         SongCommand::SetSongEnd(_) => "Set Song End",
         SongCommand::QuantizeNotes { .. } | SongCommand::ApplyQuantize { .. } => "Quantize",
+        SongCommand::ApplyNoteTool { tool, .. } => tool.label(),
         SongCommand::FreezeTrack { .. } => "Freeze Track",
         SongCommand::UnfreezeTrack { .. } => "Unfreeze Track",
         _ => DEFAULT_LABEL,

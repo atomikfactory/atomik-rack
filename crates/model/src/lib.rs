@@ -44,6 +44,7 @@ mod midi_import;
 mod midi_map;
 mod midi_map_io;
 mod midi_out;
+pub mod note_tools;
 pub mod organise;
 mod organise_cmd;
 mod param_search;
@@ -176,6 +177,7 @@ use history::{Edit, song_end_growth};
 pub use labels::DEFAULT_LABEL;
 use labels::Labels;
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
+pub use note_tools::NoteTool;
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
     OutlineKind, TrackGroup, TrackPlace,
@@ -730,6 +732,7 @@ pub enum Command {
 /// | meter (`SetMeter`, `SetMeterMap`, `DragMeterMap`) | `SongChanged` |
 /// | markers and ranges (`SetMarkers`, `DragMarkers`, `SetRanges`, `DragRanges`; also undo/redo) | `ViewChanged` |
 /// | quantize (`ApplyQuantize`, `QuantizeNotes`) | `SongChanged` |
+/// | note tools (`ApplyNoteTool`) | `SongChanged` |
 /// | the groove library (`SetGroove`, `DeleteGroove`, `ExtractGroove`; also undo/redo) | `ViewChanged` |
 /// | track heights (`SetTrackHeights`, `DragTrackHeights`; also undo/redo) | `ViewChanged` |
 /// | track organisation (`GroupTracks`, `Ungroup`, `RenameGroup`, `SetGroupCollapsed`, `SetGroupColor`, `MoveTrack`, `MoveTracks`, `MoveGroup`, `SetTrackColor`, `SetTrackComment`, `SetLaneFolded`, `SetTakesOpen`; also undo/redo) | `ViewChanged`, or `SongChanged` when tracks changed place |

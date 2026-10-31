@@ -61,7 +61,7 @@ pub const HUMANIZE_TIME_TICKS: i64 = PPQ / 4;
 /// What 1.0 of humanize velocity means: plus or minus half the velocity range.
 pub const HUMANIZE_VELOCITY_RANGE: f32 = 0.5;
 /// The lowest velocity quantize leaves a note with (a MIDI velocity of 1).
-const MIN_VELOCITY: f32 = 1.0 / 127.0;
+pub(crate) const MIN_VELOCITY: f32 = 1.0 / 127.0;
 
 /// One slot of a [`Groove`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -278,7 +278,7 @@ pub const fn hash64(seed: u64, a: u64, b: u64) -> u64 {
 }
 
 /// A hash as a value in `[-1, 1)`.
-fn signed_unit(hash: u64) -> f64 {
+pub(crate) fn signed_unit(hash: u64) -> f64 {
     ((hash >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)) * 2.0 - 1.0
 }
 

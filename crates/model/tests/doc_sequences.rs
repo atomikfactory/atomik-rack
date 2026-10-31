@@ -16,8 +16,8 @@ mod common;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     ClipId, ClipSnapshot, Command, CreateOptions, CreateTarget, DeviceKey, DeviceSnapshot,
-    Document, ModelError, NoteSnapshot, QuantizeParams, RackDoc, SongCommand, WorkflowCommand,
-    empty_doc, load_project, save_project, save_project_checked,
+    Document, ModelError, NoteSnapshot, NoteTool, QuantizeParams, RackDoc, SongCommand,
+    WorkflowCommand, empty_doc, load_project, save_project, save_project_checked,
 };
 use common::audio::*;
 use common::console_ops::*;
@@ -67,6 +67,8 @@ enum WfOp {
     AddDevice(usize),
     Connect(usize, usize),
     Quantize(usize, u8, bool),
+    /// A note tool (kind 0..7) on a clip with a seed.
+    NoteTool(usize, u8, u32),
     Player(usize, usize),
     NotesCable(usize, usize),
     /// Warp markers of a clip from tick and frame gaps (0), or a split at them (1), or the name of an asset (2).
@@ -217,6 +219,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12, 0u8..3).prop_map(|(d, p)| WfOp::MidiPort(d, p)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::Connect(a, b)),
         (0usize..6, 0u8..5, any::<bool>()).prop_map(|(c, g, e)| WfOp::Quantize(c, g, e)),
+        (0usize..6, 0u8..7, any::<u32>()).prop_map(|(c, k, s)| WfOp::NoteTool(c, k, s)),
         (0usize..2, 0usize..12).prop_map(|(t, s)| WfOp::Player(t, s)),
         (0usize..12, 0usize..12).prop_map(|(a, b)| WfOp::NotesCable(a, b)),
         (
@@ -632,6 +635,31 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 },
             }
         }
+        WfOp::NoteTool(c, kind, seed) => sc(SongCommand::ApplyNoteTool {
+            clips: vec![pick(&ids, *c)?],
+            selection: None,
+            tool: match kind {
+                0 => NoteTool::SetVelocity(0.3),
+                1 => NoteTool::ScaleVelocity(1.5),
+                2 => NoteTool::RampVelocity {
+                    start: None,
+                    end: Some(0.2),
+                },
+                3 => NoteTool::RandomizeVelocity {
+                    amount: 0.6,
+                    seed: *seed,
+                },
+                4 => NoteTool::AlterNotes {
+                    chance: 0.7,
+                    seed: *seed,
+                },
+                5 => NoteTool::RandomizePitch {
+                    range: 12,
+                    seed: *seed,
+                },
+                _ => NoteTool::SetPitch((*seed % 128) as u8),
+            },
+        }),
         WfOp::Quantize(c, grid, ends) => sc(SongCommand::ApplyQuantize {
             clips: vec![pick(&ids, *c)?],
             quantize: QuantizeParams {

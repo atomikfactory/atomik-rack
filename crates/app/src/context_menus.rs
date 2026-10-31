@@ -222,6 +222,64 @@ fn item(command: &'static str, on: bool) -> Spec {
     Spec::item(command).enabled(on)
 }
 
+/// The note tool submenus of `command` (`editor.note_tool` or `sequencer.note_tool`): a
+/// Velocity submenu holding the four velocity tools, then Alter Notes, Randomize Notes and
+/// Set Pitch. The labels and arguments are the ones of the ui crate.
+fn note_tool_menu(command: &'static str, on: bool) -> Vec<Spec> {
+    let group = |name: &'static str, items: &'static [(&'static str, &'static str)]| {
+        Spec::submenu(
+            name,
+            items
+                .iter()
+                .map(|(arg, label)| meter_item(command, arg, label).enabled(on))
+                .collect(),
+        )
+        .enabled(on)
+    };
+    let mut groups = atomik_ui::note_tool_args::GROUPS.iter();
+    let velocity: Vec<Spec> = groups
+        .by_ref()
+        .take(4)
+        .map(|(name, items)| group(name, items))
+        .collect();
+    let mut v = vec![Spec::submenu("Velocity", velocity).enabled(on)];
+    v.extend(groups.map(|(name, items)| group(name, items)));
+    v
+}
+
+/// The legato and chop entries of the Notes menu.
+fn note_edit_items(on: bool) -> Vec<Spec> {
+    let legato = [
+        ("none", "Make Legato"),
+        ("overlap", "Make Legato with Overlap"),
+        ("gap", "Make Legato with Gap"),
+    ];
+    let chop = [
+        ("snap", "At the Snap Step"),
+        ("quarter", "1/4 Notes"),
+        ("eighth", "1/8 Notes"),
+        ("sixteenth", "1/16 Notes"),
+        ("triplet_eighth", "1/8 Triplets"),
+        ("triplet_sixteenth", "1/16 Triplets"),
+    ];
+    vec![
+        Spec::submenu(
+            "Legato",
+            legato
+                .iter()
+                .map(|(arg, label)| meter_item("editor.legato", arg, label))
+                .collect(),
+        ),
+        item("editor.join_notes", on),
+        Spec::submenu(
+            "Chop Notes",
+            chop.iter()
+                .map(|(arg, label)| meter_item("editor.chop", arg, label))
+                .collect(),
+        ),
+    ]
+}
+
 /// A check item that runs `command` with `arg`.
 fn choice(command: &'static str, arg: &'static str, label: &'static str, on: bool) -> Spec {
     Spec::Item {
@@ -589,6 +647,11 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                         })
                         .collect(),
                 ),
+                Spec::submenu(
+                    "Note Tools",
+                    note_tool_menu("sequencer.note_tool", e.selection),
+                )
+                .enabled(e.selection),
                 item("sequencer.save_clip_to_library", e.save_clip),
                 Spec::Separator,
                 item("sequencer.toggle_mute", e.selection).labelled(if e.clips_muted {
@@ -776,6 +839,12 @@ pub fn specs(target: ContextTarget, e: &MenuEnable) -> Vec<Spec> {
                     "Mute Notes"
                 }),
                 item("edit.select_all", true),
+                item("editor.select_same_pitch", e.selection),
+                Spec::Separator,
+            ]);
+            v.extend(note_edit_items(e.selection));
+            v.extend(note_tool_menu("editor.note_tool", true));
+            v.extend([
                 Spec::Separator,
                 Spec::submenu(
                     "Scale",
@@ -1537,8 +1606,53 @@ mod tests {
         };
         assert_eq!(
             submenu_labels(&specs(ContextTarget::Notes, &e)),
-            ["Scale", "Chord Stamp", "Chords"]
+            [
+                "Legato",
+                "Chop Notes",
+                "Velocity",
+                "Alter Notes",
+                "Randomize Notes",
+                "Set Pitch",
+                "Scale",
+                "Chord Stamp",
+                "Chords"
+            ]
         );
+    }
+
+    #[test]
+    fn the_notes_menu_offers_every_note_tool_argument_once() {
+        let e = MenuEnable {
+            selection: true,
+            ..MenuEnable::default()
+        };
+        let all = walked(ContextTarget::Notes, &e);
+        let args = |cmd: &str| -> Vec<String> {
+            all.iter()
+                .filter(|(c, ..)| *c == cmd)
+                .filter_map(|(_, a, ..)| a.map(str::to_owned))
+                .collect()
+        };
+        assert_eq!(
+            args("editor.note_tool"),
+            atomik_ui::note_tool_args::NOTE_TOOL_ARGS
+        );
+        assert_eq!(
+            args("editor.legato"),
+            atomik_ui::note_tool_args::LEGATO_ARGS
+        );
+        assert_eq!(
+            args("editor.chop"),
+            atomik_ui::note_tool_args::CHOP_NOTE_ARGS
+        );
+        // The clip menu of the arrangement has the same tools for whole clips.
+        let clip = walked(ContextTarget::Clip, &e);
+        let clip_args: Vec<&str> = clip
+            .iter()
+            .filter(|(c, ..)| *c == "sequencer.note_tool")
+            .filter_map(|(_, a, ..)| *a)
+            .collect();
+        assert_eq!(clip_args, atomik_ui::note_tool_args::NOTE_TOOL_ARGS);
     }
 
     #[test]

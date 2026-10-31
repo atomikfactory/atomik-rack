@@ -9,6 +9,22 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Note editing tools.** The Notes menu of the piano roll (right click on the grid) has Legato
+  (the selected notes are stretched to the start of the next one, with an overlap or a gap if you
+  like), Join Notes (Ctrl+J: touching or overlapping notes of one pitch become one), Chop Notes
+  (cut at the snap step, quarters, eighths, sixteenths or triplets), a Velocity submenu (set a
+  value, scale by a percentage, ramp from the first to the last note or fade in and out, randomize),
+  Alter Notes (each note, by chance, takes the pitch of another note of the selection), Randomize
+  Notes (move pitches by up to some semitones) and Set Pitch, and Select Notes of the Same Pitch
+  (a double click on the key column does the same). With nothing selected they work on the whole
+  clip, and each is one undo step. The same velocity, alter and pitch tools are in the Note Tools
+  submenu of the clip menu and then work on every note clip selected in the arrangement; audio
+  clips are skipped. The random tools are repeatable: the result is a function of the settings, the
+  clip and the notes, and each use is a new take. The velocity lane is now a pencil: drag over the
+  empty part of it and every bar you pass takes the height of the pointer, Shift draws a straight
+  ramp from where you pressed, and Alt only changes the selected notes; one stroke is one undo step.
+  On a drum machine track the piano roll keys carry the names of the pad samples. Ctrl+J is also
+  new in the roll; in the arrangement it still joins clips. The project format is unchanged.
 - **Mute, Magnifier and Hand tools.** The arrangement toolbar has three more tools in a second
   row of its corner: Mute (Y) toggles the clip you click, or all the selected clips when it is one
   of them; Magnifier (U) zooms in around the pointer on a click, out with Shift, and to a

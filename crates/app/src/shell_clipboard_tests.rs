@@ -1094,7 +1094,9 @@ fn right_click_on_the_roll_grid_opens_the_notes_menu_and_a_note_still_deletes() 
             "editor.quantize",
             "edit.quantize_options",
             "editor.toggle_note_mute",
-            "edit.select_all"
+            "edit.select_all",
+            "editor.select_same_pitch",
+            "editor.join_notes"
         ]
     );
     assert!(items.iter().find(|(c, _, _)| c == "edit.paste").unwrap().2);
