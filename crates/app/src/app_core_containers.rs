@@ -45,7 +45,8 @@ use super::AppCore;
 use crate::sink::EngineSink;
 use crate::target::Target;
 use atomik_model::{
-    DeviceKey, ExpandedDevice, ExpandedRack, RackDevice, RackDoc, SPLIT_TYPE, SocketRef,
+    Command, ContainerCommand, DeviceKey, ExpandedDevice, ExpandedRack, RackDevice, RackDoc,
+    SPLIT_TYPE, SocketRef,
 };
 use atomik_ui::{ContainerEditorView, ContainerTab};
 use std::collections::BTreeMap;
@@ -63,6 +64,11 @@ pub(super) fn container_of_split(key: &DeviceKey) -> DeviceKey {
     key.0
         .strip_suffix(SPLIT_SUFFIX)
         .map_or_else(|| key.clone(), |container| DeviceKey(container.to_string()))
+}
+
+/// The keys of the devices of the rack itself (the top level, not the insides of containers).
+fn rack_keys(doc: &RackDoc) -> Vec<DeviceKey> {
+    doc.devices.iter().map(|d| d.key.clone()).collect()
 }
 
 /// True when `key` names a container of `doc` (top level or inner).
@@ -200,6 +206,107 @@ impl<S: EngineSink> AppCore<S> {
         self.reject(format!(
             "{name} is inside a container: {what} needs a song track, and only top-level devices have one"
         ));
+        true
+    }
+
+    // ------------------------------------------------------------------ bypass
+
+    /// Removes the engine device of the flat key `flat` and what the app keeps about it.
+    pub(super) fn remove_flat(&mut self, flat: &DeviceKey) {
+        self.fx_meter_seq.remove(flat);
+        self.audio.monitor_sent.remove(flat);
+        self.split_sent.remove(flat);
+        self.plugins_device_removed(flat);
+        if let Some(id) = self.ids.remove(flat) {
+            let result = self.sink.remove_device(id);
+            self.engine_result(result);
+        }
+    }
+
+    /// Follows the `bypass` switch of `container`: the devices of its inside that the expansion
+    /// has now and the engine has not are inserted (switched off), then the routing is
+    /// submitted, then the ones the expansion no longer has are removed (switched on), so the
+    /// routing never names a device the engine lacks. The devices that stay keep their ids.
+    pub(super) fn sync_bypass(
+        &mut self,
+        expanded: &ExpandedRack,
+        container: &DeviceKey,
+        inserted: &mut Vec<DeviceKey>,
+    ) {
+        let wanted: Vec<&ExpandedDevice> = subtree(self.document.doc(), expanded, container);
+        for device in &wanted {
+            if !self.ids.contains_key(&device.key) {
+                self.fx_meter_seq.remove(&device.key);
+                self.audio.monitor_sent.remove(&device.key);
+                self.insert_flat(device);
+                inserted.push(device.key.clone());
+            }
+        }
+        self.submit_routing_with(expanded);
+        let stale: Vec<DeviceKey> = flat_keys_of(&self.ids, container)
+            .into_iter()
+            .filter(|k| !wanted.iter().any(|d| d.key == *k))
+            .collect();
+        for flat in stale {
+            self.remove_flat(&flat);
+        }
+        self.send_macro_values(expanded);
+    }
+
+    // ------------------------------------------------------------------ combine
+
+    /// Rack > Combine: the selected top-level devices go into a new container, in one undo step
+    /// (see [`atomik_model::ContainerCommand::Combine`]); the container is selected after.
+    /// What the combine had to drop is told in the view. False, with the model's reason, when
+    /// nothing is selected or the model refuses.
+    pub fn combine_selection(&mut self) -> bool {
+        let keys = self.view.selection();
+        if keys.is_empty() {
+            self.reject("Select the devices to combine first".into());
+            return false;
+        }
+        let before = rack_keys(self.doc());
+        let command = Command::Container(ContainerCommand::Combine {
+            keys,
+            name: String::new(),
+        });
+        if self.apply_command(command).is_err() {
+            return false;
+        }
+        let created: Vec<DeviceKey> = rack_keys(self.doc())
+            .into_iter()
+            .filter(|k| !before.contains(k) && is_container(self.doc(), k))
+            .collect();
+        self.view.set_selection(&created, created.last());
+        self.after_view_change();
+        true
+    }
+
+    /// Rack > Uncombine: the selected container is dissolved, its devices come back to the rack
+    /// selected, in one undo step (see [`atomik_model::ContainerCommand::Uncombine`]). False,
+    /// with the reason, when no container is selected or the model refuses.
+    pub fn uncombine_selection(&mut self) -> bool {
+        let doc = self.doc();
+        let container = self
+            .view
+            .selection()
+            .into_iter()
+            .find(|k| !k.0.contains('/') && is_container(doc, k));
+        let Some(container) = container else {
+            self.reject("Select a container to uncombine".into());
+            return false;
+        };
+        let before = rack_keys(doc);
+        let command = Command::Container(ContainerCommand::Uncombine { container });
+        if self.apply_command(command).is_err() {
+            return false;
+        }
+        let freed: Vec<DeviceKey> = rack_keys(self.doc())
+            .into_iter()
+            .filter(|k| !before.contains(k))
+            .collect();
+        self.view.set_selection(&freed, freed.last());
+        self.after_view_change();
         true
     }
 

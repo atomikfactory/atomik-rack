@@ -3311,6 +3311,12 @@ impl<B: AudioBackend> Shell<B> {
                 None => self.core.report("Select a device first"),
             },
             ("rack.reset_device", None) => self.core.reset_selected_device(),
+            ("rack.combine", None) => {
+                self.core.combine_selection();
+            }
+            ("rack.uncombine", None) => {
+                self.core.uncombine_selection();
+            }
             ("rack.browse_patch", None) => match self.core.view().primary() {
                 Some(device) => self.browse_patches(&device),
                 None => self.core.report("Select a device first"),

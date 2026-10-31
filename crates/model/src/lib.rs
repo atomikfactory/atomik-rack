@@ -83,7 +83,9 @@ pub use container::{
 pub use curves::{CURVE_VALUE_MAX, CurveDoc, CurvePatternDoc, CurveStepDoc};
 pub use device_patch::MAX_PATCH_NAME_CHARS;
 pub use drums::{DrumDoc, DrumLaneDoc, DrumPatternDoc, DrumStepDoc};
-pub use expand::{ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value};
+pub use expand::{
+    BYPASS_PARAM, ExpandedDevice, ExpandedRack, ResolvedTarget, expand_macro_lane, macro_value,
+};
 pub use freeze::{
     FREEZE_SUFFIX, Frozen, TrackChain, clips_span, freeze_key, freeze_tap, frozen_devices,
     ticks_for_frames, track_chain,
