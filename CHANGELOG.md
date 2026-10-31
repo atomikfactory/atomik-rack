@@ -9,6 +9,27 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Rack editing.** Moving, duplicating and pasting an effect or a note player re-routes it as if
+  it had been created at its new place, in the same undo step: where it was, an insert chain
+  closes up, a send/return slot is freed and the tracks that entered at a player enter at its
+  successor; where it lands, the creation rules run (an effect below an insert joins that chain,
+  below an instrument it goes to its channel, below the master it takes a send, a player feeds the
+  device below it). Shift while dropping, or the Workflow setting Auto-route off, keeps the cables
+  as they are; a device whose cables are not the ones the rules make is only moved. Dropping a
+  device from the browser on the middle of a rack device of the same kind (instrument, effect or
+  note player) replaces it: the new device keeps the key, so the track with its clips, lanes and
+  armed state, the console channel, the sends, the cables that fit its sockets, the note entry and
+  the place in an insert chain all stay; its params start at their defaults and automation lanes
+  for params it lacks are dropped. Console devices, containers and devices of a frozen track are
+  refused. Create > Create Player opens the browser for note players (also in both rack context
+  menus), and Alt on the fold button folds or unfolds the whole column in one undo step. Cables
+  are coloured by what they do (inserts, sends and returns, sidechain keys, audio, notes and
+  control), and the cable display has two more modes, selected devices only and everything but the
+  console's own routing, with a dot on the jacks of a hidden cable; K walks through all five.
+  Edit shows what Undo and Redo will do ("Undo Move Device"), and `session_status` reports it as
+  `undo_label`. The project format is unchanged. Not yet: the "+" handles between devices, the
+  Create submenu, unfolding after hovering a cable drag, and replacing from the track header or a
+  library item.
 - **Restructuring the arrangement.** Edit > Insert Bars at Locators opens the length of the loop
   range at the left locator and Remove Bars at Locators cuts the range out and closes the gap, each
   in one undo step: a clip that straddles the point is split, and the clips, take groups, markers,
