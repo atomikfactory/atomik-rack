@@ -254,6 +254,27 @@ pub enum WorkflowCommand {
         /// Copy the range instead of removing it.
         copy: bool,
     },
+    /// Opens `length` ticks of empty time at `at`: a clip that straddles `at` is split there,
+    /// and everything from `at` on moves `length` later (clips, take groups, markers, ranges,
+    /// tempo and meter changes, the loop and the song End). One undo step; rejected while a
+    /// track is frozen. The exact rules are in the `time_edit` module docs.
+    InsertTime {
+        /// Song tick where the time opens.
+        at: i64,
+        /// Ticks to open (above 0).
+        length: i64,
+    },
+    /// Cuts `[at, at + length)` out of the whole arrangement and closes the gap: the parts of
+    /// clips inside the range go, the rest moves `length` earlier, and the tempo and meter in
+    /// effect at the end of the range carry on from `at`. The inverse of
+    /// [`WorkflowCommand::InsertTime`] for a range that holds nothing. One undo step; rejected
+    /// while a track is frozen.
+    RemoveTime {
+        /// Start of the range, in song ticks.
+        at: i64,
+        /// Length of the range in ticks (above 0).
+        length: i64,
+    },
     /// Merges a recorded take into the note clip under its start (a *Layer* recording): the
     /// clip keeps its id, start and offset, grows to hold the take, keeps every old note, takes
     /// the take's notes (a new note replaces an old one with the same start and key) and, for
@@ -623,6 +644,12 @@ pub(crate) fn plan(
             end,
             copy,
         } => cut_out(doc, &ids, (start, end), copy),
+        WorkflowCommand::InsertTime { at, length } => {
+            crate::time_edit::insert_time(doc, at, length)
+        }
+        WorkflowCommand::RemoveTime { at, length } => {
+            crate::time_edit::remove_time(doc, at, length)
+        }
         WorkflowCommand::LayerRecording { clip, take } => {
             crate::record_over::plan_layer(doc, registry, clip, &take)
         }

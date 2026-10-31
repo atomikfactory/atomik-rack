@@ -63,6 +63,7 @@ pub mod stress;
 pub mod takes;
 mod takes_cmd;
 pub mod theory;
+mod time_edit;
 mod validate;
 pub mod warp;
 mod workflow;

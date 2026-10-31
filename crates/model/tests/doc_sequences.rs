@@ -42,7 +42,8 @@ enum WfOp {
     PasteClips(Vec<usize>, i64, Option<usize>),
     DuplicateClips(Vec<usize>),
     Join(Vec<usize>),
-    /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick.
+    /// Trim (0), delete outside (1), split (2) or cut out (3, 4: copy) of the clips at a tick,
+    /// or insert (5) or remove (6) a bar of time there.
     Gesture(u8, Vec<usize>, i64),
     PasteNotes(usize, Vec<usize>, i64),
     DuplicateNotes(usize, Vec<usize>),
@@ -185,7 +186,7 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         )),
         sel().prop_map(WfOp::DuplicateClips),
         sel().prop_map(WfOp::Join),
-        (0u8..5, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
+        (0u8..7, sel(), -4i64..12).prop_map(|(k, s, t)| WfOp::Gesture(k, s, t * BAR / 4)),
         (0usize..6, sel(), 0i64..16).prop_map(|(c, n, t)| WfOp::PasteNotes(c, n, t * PPQ)),
         (0usize..6, sel()).prop_map(|(c, n)| WfOp::DuplicateNotes(c, n)),
         (0usize..5).prop_map(WfOp::AddDevice),
@@ -319,6 +320,14 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
                 },
                 1 => WorkflowCommand::DeleteOutsideEvents { ids },
                 2 => WorkflowCommand::SplitClips { ids, at: *t },
+                5 => WorkflowCommand::InsertTime {
+                    at: *t,
+                    length: BAR,
+                },
+                6 => WorkflowCommand::RemoveTime {
+                    at: *t,
+                    length: BAR,
+                },
                 k => WorkflowCommand::CutOut {
                     ids,
                     start: *t,
