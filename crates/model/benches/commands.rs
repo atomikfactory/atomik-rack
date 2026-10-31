@@ -108,6 +108,7 @@ fn cases_of(notes: usize, reg: &Rc<Registry>, out: &mut Vec<Case>) {
         out,
         Box::new(move |d| {
             let cmd = Command::Workflow(WorkflowCommand::PasteDevices {
+                route: false,
                 snapshot: snapshot.clone(),
                 container: None,
                 at: usize::MAX,

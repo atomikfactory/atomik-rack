@@ -174,6 +174,7 @@ fn duplicating_the_master_is_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::DuplicateDevices {
+            route: false,
             keys: keys_of(&["master"]),
         }),
     );
@@ -190,6 +191,7 @@ fn a_paste_that_would_duplicate_the_master_is_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot,
             container: None,
             at: 3,
@@ -220,6 +222,7 @@ fn the_master_cannot_be_moved_while_it_is_first() {
         &mut d,
         &r,
         wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: keys_of(&["master"]),
             to: 2,
         }),
@@ -229,6 +232,7 @@ fn the_master_cannot_be_moved_while_it_is_first() {
         &mut d,
         &r,
         wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: keys_of(&["master", "delay"]),
             to: 2,
         }),
@@ -241,6 +245,7 @@ fn the_master_cannot_be_moved_while_it_is_first() {
             &mut d,
             &r,
             wf(WorkflowCommand::MoveDevices {
+                route: false,
                 keys: keys_of(&["delay", "master"]),
                 to,
             }),
@@ -274,6 +279,7 @@ fn nothing_can_be_moved_above_the_master() {
         &mut d,
         &r,
         wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: keys_of(&["delay", "mixer"]),
             to: 0,
         }),
@@ -301,6 +307,7 @@ fn moves_below_the_master_work_as_before() {
         &mut d,
         &r,
         wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: keys_of(&["delay", "synth"]),
             to: 1,
         }),
@@ -408,6 +415,7 @@ fn a_paste_at_the_top_goes_below_the_master() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot,
             container: None,
             at: 0,

@@ -22,6 +22,7 @@ fn snapshot(d: &Document, list: &[&str], tracks: bool) -> DeviceSnapshot {
 
 fn duplicate(list: &[&str]) -> Command {
     wf(WorkflowCommand::DuplicateDevices {
+        route: false,
         keys: keys_of(list),
     })
 }
@@ -298,6 +299,7 @@ fn a_container_copy_beyond_the_inner_device_limit_is_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: Some(key("c")),
             at: 0,
@@ -344,6 +346,7 @@ fn containers_nest_at_most_three_levels_when_pasting() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: Some(key("a/b/c")),
             at: 0,
@@ -366,6 +369,7 @@ fn devices_paste_into_a_container_and_keep_their_inner_cables() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: Some(key("c")),
             at: 2,
@@ -396,6 +400,7 @@ fn a_pasted_device_that_a_container_cannot_hold_is_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: Some(key("c")),
             at: 0,
@@ -463,6 +468,7 @@ fn a_plugin_that_the_registry_does_not_know_cannot_be_pasted() {
         &mut other,
         &r2,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,
@@ -493,6 +499,7 @@ fn a_sampler_with_zones_pastes_where_the_pool_has_the_assets_and_not_elsewhere()
     // A song without the asset refuses it and changes nothing.
     let mut empty = Document::new(empty_doc());
     let paste = wf(WorkflowCommand::PasteDevices {
+        route: false,
         snapshot: s.clone(),
         container: None,
         at: 0,
@@ -522,6 +529,7 @@ fn paste_inserts_at_the_given_rack_index_and_clamps_it() {
     let s = snapshot(&d, &["delay"], false);
     let paste = |at| {
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s.clone(),
             container: None,
             at,
@@ -547,6 +555,7 @@ fn paste_works_across_documents_and_the_snapshot_owns_its_data() {
         &mut b,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,
@@ -571,6 +580,7 @@ fn an_empty_snapshot_and_a_console_device_in_a_snapshot_are_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,
@@ -589,6 +599,7 @@ fn an_empty_snapshot_and_a_console_device_in_a_snapshot_are_rejected() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,
@@ -607,6 +618,7 @@ fn a_snapshot_with_tracks_cannot_paste_into_a_container() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: Some(key("c")),
             at: 0,
@@ -634,6 +646,7 @@ fn a_pasted_cable_that_would_close_a_loop_is_never_produced() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 0,
@@ -783,6 +796,7 @@ fn duplicate_keys_in_a_selection_count_once() {
 
 fn mv(list: &[&str], to: usize) -> Command {
     wf(WorkflowCommand::MoveDevices {
+        route: false,
         keys: keys_of(list),
         to,
     })
@@ -1092,6 +1106,7 @@ fn a_paste_into_something_that_is_not_a_container_is_rejected() {
             &mut d,
             &r,
             wf(WorkflowCommand::PasteDevices {
+                route: false,
                 snapshot: s.clone(),
                 container: Some(key(container)),
                 at: 0,

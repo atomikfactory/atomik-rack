@@ -97,13 +97,16 @@ fn resolve(op: &Op, d: &Document) -> Option<Command> {
             to: *to,
         },
         Op::MoveMany(s, to) => wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: chosen(&keys, s),
             to: *to,
         }),
         Op::Duplicate(s) => wf(WorkflowCommand::DuplicateDevices {
+            route: false,
             keys: chosen(&keys, s),
         }),
         Op::Paste(s, at) => wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: DeviceSnapshot::capture(d.doc(), &chosen(&keys, s), false).ok()?,
             container: None,
             at: *at,

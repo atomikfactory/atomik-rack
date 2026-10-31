@@ -34,6 +34,7 @@ pub mod groove;
 mod groove_cmd;
 mod history;
 mod history_size;
+mod labels;
 mod library_io;
 mod macros;
 mod macros_io;
@@ -54,6 +55,7 @@ mod rate_convert;
 mod read_limit;
 mod record_over;
 mod relink;
+mod replace_device;
 mod rules;
 pub mod slice_edit;
 mod slices;
@@ -119,6 +121,7 @@ pub use read_limit::{
     read_text_limited,
 };
 pub use record_over::{covering_note_clip, layered_clip, merge_laps};
+pub use replace_device::{lost_lanes as replace_lost_lanes, replace_reason};
 pub use slices::{
     MAX_SLICES, SLICE_KEY_BASE, default_loop_beats, grid_markers, markers_of, slices_from_markers,
     to_track_notes,
@@ -166,6 +169,8 @@ pub use controller::{ControllerKind, ControllerLane};
 pub use groove::{Groove, GrooveSlot, QuantizeParams};
 pub use history::InvariantError;
 use history::{Edit, song_end_growth};
+pub use labels::DEFAULT_LABEL;
+use labels::Labels;
 pub use library_io::{ItemKind, ItemSummary, load_device_item, save_device_item, summarize_item};
 pub use organise::{
     MAX_GROUP_DEPTH, MAX_GROUP_NAME, MAX_GROUPS, MAX_TRACK_COMMENT, Organisation, OutlineEntry,
@@ -966,6 +971,8 @@ pub struct Document {
     trial: Vec<Edit>,
     /// The redo history an open trial set aside.
     trial_redo: Vec<Edit>,
+    /// The names of the steps above, in the same order (see [`Document::undo_label`]).
+    labels: Labels,
 }
 
 /// The most undo steps a [`Document`] keeps: with more, the oldest are forgotten.
@@ -1040,6 +1047,7 @@ impl Document {
             revision: next_revision(),
             trial: Vec::new(),
             trial_redo: Vec::new(),
+            labels: Labels::default(),
         }
     }
 
@@ -1053,18 +1061,32 @@ impl Document {
         self.trim_undo();
     }
 
-    /// Records `edit` as the latest undo step and forgets the oldest steps beyond the limits.
-    fn push_undo(&mut self, edit: Edit) {
+    /// Records `edit`, named `label`, as the latest undo step and forgets the oldest steps
+    /// beyond the limits.
+    fn push_undo(&mut self, edit: Edit, label: &'static str) {
         self.undo_bytes += edit.approx_bytes();
         self.undo.push_back(edit);
+        self.labels.undo.push_back(label);
         self.trim_undo();
     }
 
-    /// Takes the latest undo step off the history.
-    fn pop_undo(&mut self) -> Option<Edit> {
+    /// Takes the latest undo step, with its name, off the history.
+    fn pop_undo(&mut self) -> Option<(Edit, &'static str)> {
         let edit = self.undo.pop_back()?;
+        let label = self.labels.undo.pop_back().unwrap_or(DEFAULT_LABEL);
         self.undo_bytes = self.undo_bytes.saturating_sub(edit.approx_bytes());
-        Some(edit)
+        Some((edit, label))
+    }
+
+    /// The name of the step [`Document::undo`] would undo (`"Move Device"`, `"Add Clip"`; a
+    /// step of several drag-merged commands has the name of the first), `None` without one.
+    pub fn undo_label(&self) -> Option<&'static str> {
+        self.labels.undo.back().copied()
+    }
+
+    /// The name of the step [`Document::redo`] would redo, `None` without one.
+    pub fn redo_label(&self) -> Option<&'static str> {
+        self.labels.redo.last().copied()
     }
 
     /// Accounts for the latest undo step having changed from `before` estimated bytes (a merged
@@ -1082,6 +1104,7 @@ impl Document {
         let (steps, bytes) = self.undo_limits;
         while self.undo.len() > 1 && (self.undo.len() > steps || self.undo_bytes > bytes) {
             if let Some(old) = self.undo.pop_front() {
+                self.labels.undo.pop_front();
                 self.undo_bytes = self.undo_bytes.saturating_sub(old.approx_bytes());
             }
         }
@@ -1230,6 +1253,7 @@ impl Document {
             )),
             _ => None,
         };
+        let label = command.label();
         let (edit, new_clip) = Self::plan(&self.doc, command, registry)?;
         let mut ops = edit.perform(&mut self.doc)?;
         let edit = match song_end_growth(&self.doc, &edit) {
@@ -1249,6 +1273,7 @@ impl Document {
             None => edit,
         };
         self.redo.clear();
+        self.labels.redo.clear();
         let merged = merge.is_some() && merge == self.merge;
         let before = if merged {
             self.undo.back().map_or(0, Edit::approx_bytes)
@@ -1314,7 +1339,7 @@ impl Document {
             }
             _ => {
                 pushed = true;
-                self.push_undo(edit);
+                self.push_undo(edit, label);
             }
         }
         if merged && !pushed {
@@ -1341,10 +1366,10 @@ impl Document {
         let ops = self.apply(command, registry)?;
         if depth >= 1
             && self.undo.len() == depth + 1
-            && let Some(latest) = self.pop_undo()
-            && let Some(previous) = self.pop_undo()
+            && let Some((latest, _)) = self.pop_undo()
+            && let Some((previous, label)) = self.pop_undo()
         {
-            self.push_undo(Edit::Compound(vec![previous, latest]));
+            self.push_undo(Edit::Compound(vec![previous, latest]), label);
         }
         self.merge = None;
         Ok(ops)
@@ -1365,6 +1390,7 @@ impl Document {
         registry: &Registry,
     ) -> Result<Vec<SyncOp>, ModelError> {
         let redo = std::mem::take(&mut self.redo);
+        let redo_labels = std::mem::take(&mut self.labels.redo);
         let depth = self.undo.len();
         self.hold_trim = true;
         let applied = self.apply(command, registry);
@@ -1373,19 +1399,23 @@ impl Document {
             Ok(ops) => ops,
             Err(e) => {
                 self.redo = redo;
+                self.labels.redo = redo_labels;
                 return Err(e);
             }
         };
         if self.undo.len() > depth
-            && let Some(step) = self.pop_undo()
+            && let Some((step, label)) = self.pop_undo()
         {
             if self.trial.is_empty() {
                 self.trial_redo = redo;
+                self.labels.trial_redo = redo_labels;
             }
             self.trial.push(step);
+            self.labels.trial.push(label);
         } else if self.trial.is_empty() {
             // The command changed nothing the history records: the redo history stays.
             self.redo = redo;
+            self.labels.redo = redo_labels;
         }
         self.merge = None;
         Ok(ops)
@@ -1400,15 +1430,20 @@ impl Document {
     pub fn commit_trial(&mut self) {
         self.merge = None;
         self.trial_redo.clear();
+        self.labels.trial_redo.clear();
+        let labels = std::mem::take(&mut self.labels.trial);
+        let label = labels.first().copied().unwrap_or(DEFAULT_LABEL);
         match self.trial.len() {
             0 => {}
             1 => {
                 let steps = std::mem::take(&mut self.trial);
-                steps.into_iter().for_each(|step| self.push_undo(step));
+                steps
+                    .into_iter()
+                    .for_each(|step| self.push_undo(step, label));
             }
             _ => {
                 let steps = std::mem::take(&mut self.trial);
-                self.push_undo(Edit::Compound(steps));
+                self.push_undo(Edit::Compound(steps), label);
             }
         }
     }
@@ -1427,7 +1462,10 @@ impl Document {
             let done = step.perform(&mut self.doc);
             step.invert();
             match done {
-                Ok(more) => ops.extend(more),
+                Ok(more) => {
+                    ops.extend(more);
+                    self.labels.trial.pop();
+                }
                 Err(fault) => {
                     self.trial.push(step);
                     return Err(fault.into());
@@ -1435,6 +1473,7 @@ impl Document {
             }
         }
         self.redo = std::mem::take(&mut self.trial_redo);
+        self.labels.redo = std::mem::take(&mut self.labels.trial_redo);
         self.revision = next_revision();
         Ok(ops)
     }
@@ -1462,7 +1501,7 @@ impl Document {
         if self.in_trial() {
             return Ok(None);
         }
-        let Some(mut edit) = self.pop_undo() else {
+        let Some((mut edit, label)) = self.pop_undo() else {
             return Ok(None);
         };
         edit.invert();
@@ -1471,11 +1510,12 @@ impl Document {
         match done {
             Ok(ops) => {
                 self.redo.push(edit);
+                self.labels.redo.push(label);
                 self.revision = next_revision();
                 Ok(Some(ops))
             }
             Err(fault) => {
-                self.push_undo(edit);
+                self.push_undo(edit, label);
                 Err(fault.into())
             }
         }
@@ -1493,14 +1533,16 @@ impl Document {
         let Some(edit) = self.redo.pop() else {
             return Ok(None);
         };
+        let label = self.labels.redo.pop().unwrap_or(DEFAULT_LABEL);
         match edit.perform(&mut self.doc) {
             Ok(ops) => {
-                self.push_undo(edit);
+                self.push_undo(edit, label);
                 self.revision = next_revision();
                 Ok(Some(ops))
             }
             Err(fault) => {
                 self.redo.push(edit);
+                self.labels.redo.push(label);
                 Err(fault.into())
             }
         }

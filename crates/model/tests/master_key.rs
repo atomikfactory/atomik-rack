@@ -215,6 +215,7 @@ fn a_paste_never_reaches_the_master_so_the_key_stays_put() {
         &mut d,
         &r,
         [wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: s,
             container: None,
             at: 9,

@@ -36,6 +36,11 @@ enum WfOp {
     Disconnect(usize),
     DuplicateTrack(usize),
     PasteDevices(Vec<usize>, usize, bool),
+    /// A device is replaced by one of five types (the second value); kinds that do not match
+    /// are rejected, which the sequence tolerates.
+    Replace(usize, u8),
+    /// Folds (`true`) or unfolds several devices.
+    FoldMany(Vec<usize>, bool),
     /// A device takes the patch of another one of its type (the second index; the same device
     /// when none else is of its type), or, for `true`, goes back to a new device's sound.
     ApplyPatch(usize, usize, bool),
@@ -179,6 +184,8 @@ fn wf_op() -> impl Strategy<Value = WfOp> {
         (0usize..12).prop_map(WfOp::Disconnect),
         (0usize..12).prop_map(WfOp::DuplicateTrack),
         (sel(), 0usize..12, any::<bool>()).prop_map(|(s, a, i)| WfOp::PasteDevices(s, a, i)),
+        (0usize..12, 0u8..5).prop_map(|(d, t)| WfOp::Replace(d, t)),
+        (sel(), any::<bool>()).prop_map(|(s, f)| WfOp::FoldMany(s, f)),
         (0usize..12, 0usize..12, any::<bool>()).prop_map(|(a, b, r)| WfOp::ApplyPatch(a, b, r)),
         (sel(), 0i64..12, proptest::option::of(0usize..3)).prop_map(|(s, b, t)| WfOp::PasteClips(
             s,
@@ -257,12 +264,16 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             if keys.is_empty() {
                 return None;
             }
-            wf(WorkflowCommand::DuplicateDevices { keys })
+            wf(WorkflowCommand::DuplicateDevices {
+                keys,
+                route: s.len() % 2 == 0,
+            })
         }
         WfOp::Remove(s) => wf(WorkflowCommand::RemoveDevices {
             keys: chosen(&top, s),
         }),
         WfOp::Move(s, to) => wf(WorkflowCommand::MoveDevices {
+            route: *to % 2 == 0,
             keys: chosen(&top, s),
             to: *to,
         }),
@@ -276,11 +287,31 @@ fn resolve_wf(op: &WfOp, doc: &RackDoc) -> Option<Command> {
             let keys = chosen(&copyable_keys(doc, *inner), s);
             let snapshot = DeviceSnapshot::capture(doc, &keys, !*inner && at % 2 == 0).ok()?;
             wf(WorkflowCommand::PasteDevices {
+                route: at % 3 != 0,
                 snapshot,
                 container: (*inner).then(|| key("c")),
                 at: *at,
             })
         }
+        WfOp::Replace(i, t) => {
+            let types = [
+                SYNTH,
+                "atomik.wavetable-synth",
+                "atomik.fm-synth",
+                DELAY,
+                "atomik.reverb",
+            ];
+            wf(WorkflowCommand::ReplaceDevice {
+                target: pick(&top, *i)?,
+                source: atomik_model::CreateSource::Type(
+                    types[usize::from(*t) % types.len()].into(),
+                ),
+            })
+        }
+        WfOp::FoldMany(s, folded) => wf(WorkflowCommand::SetFoldedMany {
+            keys: chosen(&top, s),
+            folded: *folded,
+        }),
         WfOp::ApplyPatch(target, source, reset) => {
             let device = pick(&top, *target)?;
             if *reset {

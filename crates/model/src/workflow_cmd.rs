@@ -48,10 +48,15 @@ pub enum WorkflowCommand {
         keys: Vec<DeviceKey>,
     },
     /// Copies the devices (with the cables between them) and pastes the copies right after the
-    /// last selected one (after its console channel).
+    /// last selected one (after its console channel). With `route` a copied effect or note
+    /// player that has no cable is routed as if created at its place (see
+    /// [`WorkflowCommand::MoveDevices`]).
     DuplicateDevices {
         /// The devices, in one scope.
         keys: Vec<DeviceKey>,
+        /// Route the copies by the creation rules (the Workflow setting `auto_route`; Shift
+        /// inverts it). Without it the copies are only placed.
+        route: bool,
     },
     /// Pastes a snapshot into the top level (or into `container`, a path key) at rack index `at`
     /// (clamped), keeping the snapshot's order. The copies get fresh keys and names, keep their
@@ -60,7 +65,9 @@ pub enum WorkflowCommand {
     /// gets its console channel and the master when missing; the tracks of the snapshot
     /// come back with fresh clip ids and are not armed; a copied audio track is wired to the
     /// interface inputs like a new one. The container, plugin and inner-device limits apply and
-    /// every asset the snapshot needs must be in the document's pool.
+    /// every asset the snapshot needs must be in the document's pool. With `route` a copied
+    /// effect or note player that ends up without a cable is routed as if created at its place
+    /// (the effect rules of `CreateEffectAt`; a player feeds the device below it).
     PasteDevices {
         /// What to paste.
         snapshot: DeviceSnapshot,
@@ -68,15 +75,26 @@ pub enum WorkflowCommand {
         container: Option<DeviceKey>,
         /// Rack index of the first pasted device.
         at: usize,
+        /// Route the copies (the Workflow setting `auto_route`; Shift inverts it).
+        route: bool,
     },
     /// Moves the devices together: they keep their relative order and end up contiguous with the
     /// first at index `to` among the other devices of the scope (clamped so the group fits). A
     /// move that changes nothing is rejected.
+    ///
+    /// With `route`, each top-level effect and note player whose cables are the ones the
+    /// creation rules make is re-routed as if created at its new place, in the same undo step:
+    /// its path is bridged where it was (an insert chain closes up, a send/return slot is
+    /// freed, the tracks that entered at a player enter at its successor), then the rules of
+    /// `CreateEffectAt` run at the new place (a player feeds the device below it). A route the
+    /// rules refuse leaves the move plain, and devices with other cables are only moved.
     MoveDevices {
         /// The devices, in one scope.
         keys: Vec<DeviceKey>,
         /// Target index.
         to: usize,
+        /// Re-route the devices (the Workflow setting `auto_route`; Shift keeps the cables).
+        route: bool,
     },
     /// Moves the devices together to a rack column slot ([`RackSlot`]): they keep their
     /// relative rack order and end up contiguous at `slot.index` among the devices that stay
@@ -89,6 +107,8 @@ pub enum WorkflowCommand {
         keys: Vec<DeviceKey>,
         /// Target slot.
         slot: RackSlot,
+        /// Re-route the devices, as for [`WorkflowCommand::MoveDevices`].
+        route: bool,
     },
     /// [`WorkflowCommand::PasteDevices`] at a rack column slot: the copies land at
     /// `slot.index` of `slot.column` (a column past the last appends one). Inside a
@@ -100,6 +120,8 @@ pub enum WorkflowCommand {
         container: Option<DeviceKey>,
         /// Where the first copy goes.
         slot: RackSlot,
+        /// Route the copies, as for [`WorkflowCommand::PasteDevices`].
+        route: bool,
     },
     /// [`WorkflowCommand::CreateInstrument`] at a rack column slot (see [`crate::Command::AddDeviceAt`]
     /// for how the slot resolves). The instrument's console channel lands by the console rules.
@@ -128,12 +150,35 @@ pub enum WorkflowCommand {
         /// Routing options (`skip_track` and `disarm` do not apply to effects).
         options: CreateOptions,
     },
+    /// Replaces a top-level instrument, effect or note player by a device of the same kind that
+    /// takes its place, its key and what hangs on it: the song track (clips, lanes, armed
+    /// state), the console channel with its sends, the note entry of every track, the cables
+    /// whose sockets the new device has, the insert-chain or send/return place and the column.
+    /// The params and the sample, pattern and plugin data are the new device's own defaults,
+    /// the cables on sockets it lacks go, and so do the automation lanes of params it lacks
+    /// (see [`crate::replace_lost_lanes`]). A default-named device and channel take the new
+    /// name. Console devices, containers, devices inside a container, devices of a frozen track
+    /// and a replacement of another kind are rejected. One undo step.
+    ReplaceDevice {
+        /// The device to replace.
+        target: DeviceKey,
+        /// What takes its place.
+        source: CreateSource,
+    },
     /// Duplicates a device together with its song track, lanes and clips (fresh clip ids, not
     /// armed, a console channel by the instrument rule), right after the device and its
     /// channel.
     DuplicateTrack {
         /// The device that has the track.
         device: DeviceKey,
+    },
+    /// Folds or unfolds every listed device (any scope) in one undo step; the ones that are in
+    /// that state already are left alone, and a command that changes none is rejected.
+    SetFoldedMany {
+        /// The devices.
+        keys: Vec<DeviceKey>,
+        /// The new state.
+        folded: bool,
     },
     /// Removes every cable of the device (a device without cables is rejected).
     DisconnectDevice {
@@ -582,13 +627,18 @@ pub(crate) fn plan(
         } => plain(workflow_create::create_effect_at(
             doc, registry, slot, &source, key, &options,
         )),
-        WorkflowCommand::MoveDevicesToSlot { keys, slot } => {
-            plain(move_devices(doc, &keys, Placement::Slot(slot)))
-        }
+        WorkflowCommand::MoveDevicesToSlot { keys, slot, route } => plain(move_routed(
+            doc,
+            registry,
+            &keys,
+            Placement::Slot(slot),
+            route,
+        )),
         WorkflowCommand::PasteDevicesAt {
             snapshot,
             container,
             slot,
+            route,
         } => {
             let mut p = Planner::new(doc, registry);
             let (at, column) = match &container {
@@ -598,8 +648,30 @@ pub(crate) fn plan(
                 }
                 Some(_) => (slot.index, None),
             };
-            paste_devices(&mut p, &snapshot, container.as_ref(), at, column)?;
+            let new = paste_devices(&mut p, &snapshot, container.as_ref(), at, column)?;
+            if route && container.is_none() {
+                route_pasted(&mut p, &new);
+            }
             Ok((p.finish(), None))
+        }
+        WorkflowCommand::ReplaceDevice { target, source } => {
+            plain(crate::replace_device::plan(doc, registry, &target, &source))
+        }
+        WorkflowCommand::SetFoldedMany { keys, folded } => {
+            let mut edits = Vec::new();
+            for key in keys {
+                if rules::resolve(doc, &key)?.folded != folded {
+                    edits.push(Edit::Folded {
+                        key,
+                        old: !folded,
+                        new: folded,
+                    });
+                }
+            }
+            if edits.is_empty() {
+                return Err(bad_scope("the devices are already that way"));
+            }
+            plain(Ok(Edit::Compound(edits)))
         }
         WorkflowCommand::AutoRoute { devices, options } => plain(workflow_create::auto_route(
             doc, registry, &devices, &options,
@@ -611,21 +683,29 @@ pub(crate) fn plan(
             workflow_create::disconnect_devices(doc, &keys)
                 .map(|e| workflow_create::with_entries(doc, registry, e)),
         ),
-        WorkflowCommand::DuplicateDevices { keys } => {
-            plain(duplicate_devices(doc, registry, &keys))
+        WorkflowCommand::DuplicateDevices { keys, route } => {
+            plain(duplicate_devices(doc, registry, &keys, route))
         }
         WorkflowCommand::PasteDevices {
             snapshot,
             container,
             at,
+            route,
         } => {
             let mut p = Planner::new(doc, registry);
-            paste_devices(&mut p, &snapshot, container.as_ref(), at, None)?;
+            let new = paste_devices(&mut p, &snapshot, container.as_ref(), at, None)?;
+            if route && container.is_none() {
+                route_pasted(&mut p, &new);
+            }
             Ok((p.finish(), None))
         }
-        WorkflowCommand::MoveDevices { keys, to } => {
-            plain(move_devices(doc, &keys, Placement::Flat(to)))
-        }
+        WorkflowCommand::MoveDevices { keys, to, route } => plain(move_routed(
+            doc,
+            registry,
+            &keys,
+            Placement::Flat(to),
+            route,
+        )),
         WorkflowCommand::ApplyPatch { device, snapshot } => plain(crate::device_patch::plan_apply(
             doc, registry, &device, &snapshot,
         )),
@@ -822,14 +902,103 @@ fn duplicate_devices(
     doc: &RackDoc,
     registry: &Registry,
     keys: &[DeviceKey],
+    route: bool,
 ) -> Result<Edit, ModelError> {
     let snapshot = DeviceSnapshot::capture(doc, keys, false)?;
     let parent = keys.first().and_then(|k| split_path(k).0);
     let last = &snapshot.devices[snapshot.devices.len() - 1].key;
     let at = after_with_channels(doc, parent.as_ref(), last);
     let mut p = Planner::new(doc, registry);
-    paste_devices(&mut p, &snapshot, parent.as_ref(), at, None)?;
+    let new = paste_devices(&mut p, &snapshot, parent.as_ref(), at, None)?;
+    if route && parent.is_none() {
+        route_pasted(&mut p, &new);
+    }
     Ok(p.finish())
+}
+
+/// The plain move of `keys`, or with `route` the move with the effects and note players in it
+/// re-routed at their new place (see [`WorkflowCommand::MoveDevices`]). The routed plan is
+/// tried on a scratch copy; one the document refuses leaves the plain move.
+fn move_routed(
+    doc: &RackDoc,
+    registry: &Registry,
+    keys: &[DeviceKey],
+    place: Placement,
+    route: bool,
+) -> Result<Edit, ModelError> {
+    let plain = move_devices(doc, keys, place)?;
+    if !route {
+        return Ok(plain);
+    }
+    Ok(rerouted_move(doc, registry, keys, &plain).unwrap_or(plain))
+}
+
+fn rerouted_move(
+    doc: &RackDoc,
+    registry: &Registry,
+    keys: &[DeviceKey],
+    plain: &Edit,
+) -> Option<Edit> {
+    if keys.iter().any(|k| k.0.contains('/')) {
+        return None;
+    }
+    let movers: Vec<DeviceKey> = doc
+        .devices
+        .iter()
+        .filter(|d| keys.contains(&d.key) && workflow_create::reroutable(doc, registry, &d.key))
+        .map(|d| d.key.clone())
+        .collect();
+    if movers.is_empty() {
+        return None;
+    }
+    let mut p = Planner::new(doc, registry);
+    for k in &movers {
+        workflow_create::unroute(&mut p, k);
+    }
+    p.push(plain.clone());
+    for k in &movers {
+        route_in_place(&mut p, k);
+    }
+    let edit = p.finish();
+    let mut check = doc.clone();
+    edit.perform(&mut check).ok()?;
+    Some(edit)
+}
+
+/// Routes the effect or note player `key`, at its place on `p`, by the creation rules; nothing
+/// happens when no rule applies or the document refuses the route.
+fn route_in_place(p: &mut Planner<'_>, key: &DeviceKey) {
+    let (doc, registry) = (p.doc(), p.registry);
+    let player = doc
+        .device(key)
+        .and_then(|d| registry.descriptor(&d.type_id))
+        .is_some_and(workflow_create::is_note_player);
+    let edit = if player {
+        workflow_create::route_player_in_place(doc, registry, key)
+    } else {
+        workflow_create::route_effect_in_place(doc, registry, key)
+    };
+    if let Some(edit) = edit {
+        let mut check = doc.clone();
+        if edit.perform(&mut check).is_ok() {
+            p.push(edit);
+        }
+    }
+}
+
+/// Routes the pasted copies `keys` that came without a cable (an effect or a note player of the
+/// paste that is not cabled to another copy), as creating them at their places does.
+fn route_pasted(p: &mut Planner<'_>, keys: &[DeviceKey]) {
+    for k in keys {
+        let doc = p.doc();
+        let loose = !doc
+            .cables
+            .iter()
+            .any(|c| &c.from.device == k || &c.to.device == k);
+        if loose && workflow_create::reroutable(doc, p.registry, k) {
+            route_in_place(p, k);
+        }
+    }
 }
 
 fn duplicate_track(

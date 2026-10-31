@@ -61,6 +61,7 @@ fn valid(d: &Document) {
 
 fn mv(keys: &[&str], to: RackSlot) -> Command {
     wf(WorkflowCommand::MoveDevicesToSlot {
+        route: false,
         keys: keys_of(keys),
         slot: to,
     })
@@ -418,6 +419,7 @@ fn a_flat_group_move_joins_the_column_before_it_and_reports_the_view_only() {
         &mut d,
         &r,
         wf(WorkflowCommand::MoveDevices {
+            route: false,
             keys: keys_of(&["a", "b"]),
             to: 2,
         }),
@@ -741,6 +743,7 @@ fn paste_at_a_slot_puts_the_copies_in_that_column() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevicesAt {
+            route: false,
             snapshot: snap.clone(),
             container: None,
             slot: slot(1, 1),
@@ -767,6 +770,7 @@ fn paste_at_a_slot_puts_the_copies_in_that_column() {
         &mut n,
         &r,
         wf(WorkflowCommand::PasteDevicesAt {
+            route: false,
             snapshot: snap,
             container: None,
             slot: slot(2, 0),
@@ -785,6 +789,7 @@ fn a_flat_paste_and_a_duplicate_take_the_column_of_the_device_before_them() {
     // clipboard says.
     d.apply(
         wf(WorkflowCommand::DuplicateDevices {
+            route: false,
             keys: keys_of(&["b"]),
         }),
         &r,
@@ -794,6 +799,7 @@ fn a_flat_paste_and_a_duplicate_take_the_column_of_the_device_before_them() {
     let snap = DeviceSnapshot::capture(d.doc(), &keys_of(&["b"]), false).unwrap();
     d.apply(
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: snap,
             container: None,
             at: 1,
@@ -819,6 +825,7 @@ fn paste_at_a_slot_is_rejected_for_a_missing_column() {
         &mut d,
         &r,
         wf(WorkflowCommand::PasteDevicesAt {
+            route: false,
             snapshot: snap,
             container: None,
             slot: slot(3, 0),
@@ -865,6 +872,7 @@ fn inside_a_container_only_the_slot_index_counts_and_columns_stay_zero() {
     let snap = DeviceSnapshot::capture(d.doc(), &keys_of(&["c/x"]), false).unwrap();
     d.apply(
         wf(WorkflowCommand::PasteDevicesAt {
+            route: false,
             snapshot: snap,
             container: Some(key("c")),
             slot: slot(4, 0),
@@ -886,6 +894,7 @@ fn pasting_a_device_copied_from_another_column_into_a_container_resets_the_colum
     let snap = DeviceSnapshot::capture(d.doc(), &keys_of(&["b"]), false).unwrap();
     d.apply(
         wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot: snap,
             container: Some(key("c")),
             at: 0,

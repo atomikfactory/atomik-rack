@@ -160,6 +160,7 @@ fn a_copy_of_the_device_keeps_its_port() {
         &mut d,
         &r,
         [wf(WorkflowCommand::PasteDevices {
+            route: false,
             snapshot,
             container: None,
             at: 2,
