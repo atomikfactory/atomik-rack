@@ -134,6 +134,7 @@ fn the_track_menu_follows_the_selection() {
             "Move Track Down",
             "Rename Track\u{2026}",
             "Track Comment\u{2026}",
+            "Delete Track and Device",
             "Add Note Lane",
             "Rename Note Lane\u{2026}",
             "Delete Note Lane",
@@ -152,6 +153,7 @@ fn the_track_menu_follows_the_selection() {
             "Track Height: Medium",
             "Track Height: Large",
             "Track Height: Fit",
+            "Track Height: Minimise / Restore",
         ]
     );
     for label in [
