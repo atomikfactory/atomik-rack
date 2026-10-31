@@ -166,11 +166,12 @@ impl<S: EngineSink> AppCore<S> {
             MidiExport::Clip => {
                 let id = self.midi_clip_source().ok_or(what.needs())?;
                 let (track, _, clip) = song.clip(id).ok_or("the clip is gone")?;
-                Ok(midi_file::clip_file(
-                    song,
-                    clip,
-                    &self.device_name(&track.device),
-                ))
+                // A named clip is exported under its own name.
+                let name = clip
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| self.device_name(&track.device));
+                Ok(midi_file::clip_file(song, clip, &name))
             }
             MidiExport::Track => {
                 let device = self.midi_track_source().ok_or(what.needs())?;

@@ -221,6 +221,29 @@ fn controller_summary(lane: &Lane) -> Vec<Value> {
         .collect()
 }
 
+/// The clips of a lane that carry their own name, colour or loop, in lane order: id, `name` and
+/// `color` (`"#rrggbb"`) when set, and `loop_length` in ticks when the clip loops. Empty when no
+/// clip of the lane has any of them.
+fn clip_meta_summary(lane: &Lane) -> Vec<Value> {
+    lane.clips
+        .iter()
+        .filter(|c| c.name.is_some() || c.color.is_some() || c.loop_length.is_some())
+        .map(|c| {
+            let mut v = json!({"id": c.id.0});
+            if let Some(name) = &c.name {
+                v["name"] = json!(name);
+            }
+            if let Some([r, g, b]) = c.color {
+                v["color"] = json!(format!("#{r:02x}{g:02x}{b:02x}"));
+            }
+            if let Some(n) = c.loop_length {
+                v["loop_length"] = json!(n);
+            }
+            v
+        })
+        .collect()
+}
+
 /// The audio clips of an audio lane, in lane order: id, start and length in ticks, the asset
 /// (its first 8 hex digits), the source offset, the clip gain in dB, the fades, and what audio
 /// editing added when it is in use: `reverse`, the `warp` settings (`enabled`, `mode`, source
@@ -601,6 +624,10 @@ pub fn doc_json(doc: &RackDoc, include_params: bool) -> Value {
                     if let Some(v) = l.static_value {
                         lane["static"] = json!(v);
                     }
+                    let named = clip_meta_summary(l);
+                    if !named.is_empty() {
+                        lane["named_clips"] = Value::Array(named);
+                    }
                     let controllers = controller_summary(l);
                     if !controllers.is_empty() {
                         lane["controllers"] = Value::Array(controllers);
@@ -806,6 +833,8 @@ fn clip_inspect(file: &Path, text: &str) -> Result<ToolOutput, String> {
             "offset": c.offset,
             "loop_length": c.loop_length,
             "muted": c.muted,
+            "name": c.name,
+            "color": c.color.map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}")),
             "notes": notes,
             "grid": c.grid.is_some(),
             "scale": c.scale.is_some(),
