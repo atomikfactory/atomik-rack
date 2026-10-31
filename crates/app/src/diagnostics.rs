@@ -134,6 +134,10 @@ fn session_section(out: &mut String, i: &Inputs) {
         a.output_latency_frames
     ));
     out.push_str(&format!(
+        "stream: {:?}, {} stream errors\n",
+        a.stream_state, a.stream_errors
+    ));
+    out.push_str(&format!(
         "engine faulted: {}{}\n",
         a.faulted,
         a.faulted_name

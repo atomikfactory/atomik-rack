@@ -23,7 +23,12 @@
 //!   "input_device": null,
 //!   "record_offset_frames": 0,
 //!   "pre_count_bars": 0,
-//!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" }
+//!   "surface": { "driver": "mcu", "input": "Example Surface", "output": "Example Surface" },
+//!   "device_loss": {
+//!     "reset_to_default": false,
+//!     "last_good": { "host": "wasapi", "output_device": null, "input_device": null,
+//!                    "buffer_frames": 256 }
+//!   }
 //! }
 //! ```
 //!
@@ -36,7 +41,11 @@
 //! counts that many bars before the song starts, and nothing is recorded during them.
 //! `surface` is the control surface (the Surfaces tab of the settings): a driver id (`"mcu"`, the
 //! eight-fader motor surface; `null` is none) and the MIDI input and output ports it talks through.
-//! It is an app setting, not part of the project. `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
+//! It is an app setting, not part of the project. `device_loss.reset_to_default` makes the app
+//! switch to the host's default devices on its own when the stream is lost (default off: it says
+//! so and offers Audio > Restart Audio); `device_loss.last_good` is the device configuration that
+//! last opened a stream, written when settings are applied: a configuration that fails to open
+//! is replaced by it, and is never saved. `stream_threshold_bytes` (hidden; for tests and the stress run) overrides the size above
 //! which audio assets stream from disk instead of loading into RAM. The file is written only when the user
 //! applies the settings dialog; command-line overrides are never saved. `keymap.json` and
 //! `workflow.json` (the Keyboard and Workflow tabs, see [`crate::keymap_store`]) live next to it.
@@ -195,6 +204,52 @@ pub struct SurfaceSettings {
     pub output: Option<String>,
 }
 
+/// The device part of the audio settings: what a stream last opened with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LastGood {
+    /// Host API.
+    pub host: HostChoice,
+    /// Output device name; `None` = the host default.
+    pub output_device: Option<String>,
+    /// Input device name; `None` = the device named like the output.
+    pub input_device: Option<String>,
+    /// Buffer size in frames.
+    pub buffer_frames: u32,
+}
+
+impl Default for LastGood {
+    fn default() -> Self {
+        let d = AudioSettings::default();
+        Self::of(&d)
+    }
+}
+
+impl LastGood {
+    /// The device configuration of `settings`.
+    pub fn of(settings: &AudioSettings) -> Self {
+        Self {
+            host: settings.host,
+            output_device: settings.output_device.clone(),
+            input_device: settings.input_device.clone(),
+            buffer_frames: settings.buffer_frames,
+        }
+    }
+}
+
+/// What the app does when the audio device stops working, and the configuration to fall back to.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeviceLossSettings {
+    /// Switch to the host's default devices on its own when the stream is lost (the saved
+    /// devices stay as they are for when the interface is back). Off: the app says so and offers
+    /// Audio > Restart Audio.
+    pub reset_to_default: bool,
+    /// The device configuration that last opened a stream. A configuration that fails to open
+    /// (at start-up, or when applied in the settings dialog) is replaced by this one.
+    pub last_good: Option<LastGood>,
+}
+
 /// What the app opens for live audio and MIDI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -230,6 +285,8 @@ pub struct AudioSettings {
     pub plugins: atomik_plugin_host::PluginSettings,
     /// The control surface (the Surfaces tab).
     pub surface: SurfaceSettings,
+    /// Device loss handling and the last working device configuration.
+    pub device_loss: DeviceLossSettings,
 }
 
 impl Default for AudioSettings {
@@ -248,6 +305,7 @@ impl Default for AudioSettings {
             stream_threshold_bytes: None,
             plugins: atomik_plugin_host::PluginSettings::default(),
             surface: SurfaceSettings::default(),
+            device_loss: DeviceLossSettings::default(),
         }
     }
 }
@@ -287,6 +345,15 @@ impl AudioSettings {
                 input: name(self.surface.input),
                 output: name(self.surface.output),
             },
+            device_loss: DeviceLossSettings {
+                last_good: self.device_loss.last_good.map(|g| LastGood {
+                    output_device: name(g.output_device),
+                    input_device: name(g.input_device),
+                    buffer_frames: g.buffer_frames.clamp(MIN_BUFFER, MAX_BUFFER),
+                    ..g
+                }),
+                ..self.device_loss
+            },
             record_offset_frames: self
                 .record_offset_frames
                 .clamp(-MAX_RECORD_OFFSET, MAX_RECORD_OFFSET),
@@ -300,6 +367,24 @@ impl AudioSettings {
             },
             ..self
         }
+    }
+
+    /// Replaces the device configuration (host, devices, buffer) by `good`.
+    pub fn use_devices(&mut self, good: &LastGood) {
+        self.host = good.host;
+        self.output_device = good.output_device.clone();
+        self.input_device = good.input_device.clone();
+        self.buffer_frames = good.buffer_frames;
+    }
+
+    /// True when `self` and `other` differ in anything but the remembered last working
+    /// configuration.
+    pub fn differs_from(&self, other: &Self) -> bool {
+        let mut a = self.clone();
+        let mut b = other.clone();
+        a.device_loss.last_good = None;
+        b.device_loss.last_good = None;
+        a != b
     }
 
     /// Pretty JSON for the settings file.
@@ -577,6 +662,43 @@ mod tests {
     }
 
     #[test]
+    fn device_loss_is_optional_and_the_last_good_devices_are_sanitised() {
+        let none = AudioSettings::from_json("{}").unwrap();
+        assert!(!none.device_loss.reset_to_default, "off by default");
+        assert_eq!(none.device_loss.last_good, None);
+        let s = AudioSettings::from_json(
+            r#"{ "device_loss": { "last_good": { "output_device": " ", "buffer_frames": 1 } } }"#,
+        )
+        .unwrap();
+        let good = s.device_loss.last_good.unwrap();
+        assert_eq!(good.output_device, None, "an empty name is the default");
+        assert_eq!(good.buffer_frames, MIN_BUFFER);
+    }
+
+    #[test]
+    fn using_the_last_good_devices_leaves_everything_else_and_the_diff_ignores_it() {
+        let mut s = AudioSettings {
+            output_device: Some("Broken".into()),
+            metronome_gain: 0.25,
+            ..AudioSettings::default()
+        };
+        let before = s.clone();
+        s.use_devices(&LastGood {
+            host: HostChoice::Alsa,
+            output_device: Some("Working".into()),
+            input_device: Some("Mic".into()),
+            buffer_frames: 512,
+        });
+        assert_eq!(s.output_device.as_deref(), Some("Working"));
+        assert_eq!((s.host, s.buffer_frames), (HostChoice::Alsa, 512));
+        assert_eq!(s.metronome_gain, 0.25);
+        assert!(s.differs_from(&before));
+        let mut remembered = before.clone();
+        remembered.device_loss.last_good = Some(LastGood::of(&before));
+        assert!(!remembered.differs_from(&before), "only last_good differs");
+    }
+
+    #[test]
     fn json_round_trips() {
         let s = AudioSettings {
             host: HostChoice::Asio,
@@ -601,6 +723,15 @@ mod tests {
                 driver: Some("mcu".into()),
                 input: Some("Example Surface".into()),
                 output: Some("Example Surface Out".into()),
+            },
+            device_loss: DeviceLossSettings {
+                reset_to_default: true,
+                last_good: Some(LastGood {
+                    host: HostChoice::Asio,
+                    output_device: Some("Example USB ASIO".into()),
+                    input_device: None,
+                    buffer_frames: 256,
+                }),
             },
         };
         let json = s.to_json();

@@ -78,7 +78,8 @@ impl RingReader {
     }
 
     /// Discards the oldest samples so that at most `keep` remain (bounds drift latency).
-    pub(crate) fn trim(&mut self, keep: usize) {
+    /// Returns how many were discarded.
+    pub(crate) fn trim(&mut self, keep: usize) -> usize {
         let excess = self.available().saturating_sub(keep);
         if excess > 0 {
             let tail = self.0.tail.load(Ordering::Relaxed);
@@ -86,10 +87,10 @@ impl RingReader {
                 .tail
                 .store(tail.wrapping_add(excess), Ordering::Release);
         }
+        excess
     }
 
     /// Samples dropped by the writer because the ring was full.
-    #[cfg(test)]
     pub(crate) fn overruns(&self) -> u64 {
         self.0.overruns.load(Ordering::Relaxed)
     }
@@ -147,12 +148,12 @@ mod tests {
     fn ring_trim_keeps_newest_samples() {
         let (mut w, mut r) = sample_ring(16);
         w.write(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
-        r.trim(2);
+        assert_eq!(r.trim(2), 4);
         assert_eq!(r.available(), 2);
         let mut out = [0.0; 2];
         r.read(&mut out);
         assert_eq!(out.map(f32::to_bits), [5.0f32, 6.0].map(f32::to_bits));
-        r.trim(10); // nothing to trim
+        assert_eq!(r.trim(10), 0); // nothing to trim
         assert_eq!(r.available(), 0);
     }
 

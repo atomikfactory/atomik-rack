@@ -37,6 +37,7 @@ fn lists() -> DeviceLists {
         midi_outputs: vec!["Example Surface".into()],
         errors: vec![],
         input_note: None,
+        stream_notes: vec![],
     }
 }
 
@@ -124,6 +125,7 @@ fn the_sections_cover_every_setting() {
             "Worker linger (spins)",
             "Record offset (frames)",
             "Pre-count (bars)",
+            "If the audio device is lost",
         ]
     );
     assert_eq!(labels(&d, "Pre-count (bars)"), ["Off", "1", "2", "3", "4"]);
@@ -293,7 +295,8 @@ fn a_tall_dialog_scrolls_within_bounds() {
 #[test]
 fn options_and_buttons_do_not_overlap() {
     let d = SettingsDialog::new(current(), lists());
-    let l = d.layout(VIEW);
+    // Tall enough that nothing scrolls: the dialog scrolls its sections in a shorter window.
+    let l = d.layout(Size::new(1000.0, 1200.0));
     for (i, (a, ..)) in l.options.iter().enumerate() {
         assert!(l.panel.contains(a.center()));
         for (b, ..) in &l.options[i + 1..] {
@@ -405,4 +408,26 @@ fn the_pre_count_is_a_chip_row_that_edits_the_draft() {
         panic!("apply");
     };
     assert_eq!(s.pre_count_bars, 2);
+}
+
+#[test]
+fn the_device_loss_choice_is_edited_and_the_stream_notes_are_listed() {
+    let mut d = SettingsDialog::new(current(), lists());
+    assert_eq!(
+        labels(&d, "If the audio device is lost"),
+        ["Offer a restart", "Switch to the default devices"]
+    );
+    assert!(d.is_selected(&Choice::LossReset(false)));
+    d.choose(Choice::LossReset(true));
+    assert!(d.draft().device_loss.reset_to_default);
+    assert!(d.is_selected(&Choice::LossReset(true)));
+    assert!(!d.is_selected(&Choice::LossReset(false)));
+    let mut with_notes = lists();
+    with_notes.stream_notes = vec![
+        "Buffer 256 frames (5.3 ms).".into(),
+        "Warning: drift".into(),
+    ];
+    let notes = SettingsDialog::new(current(), with_notes).notes();
+    assert!(notes.contains(&"Buffer 256 frames (5.3 ms).".to_string()));
+    assert!(notes.contains(&"Warning: drift".to_string()));
 }

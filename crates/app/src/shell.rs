@@ -134,12 +134,13 @@ use crate::export_prefs::ExportPrefs;
 use crate::keymap_store::{self, WorkflowPrefs};
 use crate::menubar::{MENU_BAR_HEIGHT, MenuBar, MenuBarOutcome};
 use crate::session::{AudioBackend, LiveSession, SettingsChange};
-use crate::settings::{self, AudioSettings, SurfaceSettings};
+use crate::settings::{self, AudioSettings, LastGood, SurfaceSettings};
 use crate::settings_dialog::{DeviceLists, DialogOutcome, SettingsDialog};
 use crate::status::{AudioStatus, OverloadStats, status_text};
 use crate::stress::{STRESS_CABLES, STRESS_DEVICES, stress_doc, stress_song_doc};
 use crate::ui_state::UiState;
 use crate::windows::{WindowHit, WindowKind};
+use atomik_audio_io::StreamState;
 use atomik_model::{ClipId, Command, ConsoleCommand, DeviceKey};
 use atomik_ui::ContextTarget;
 use atomik_ui::CursorHint;
@@ -162,6 +163,10 @@ use atomik_ui::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+/// A stalled stream that stays silent this long is reset to the default devices when the
+/// settings ask for it (a lost device is reset at once).
+const AUTO_RESET_SILENCE_MS: u64 = 2_000;
 
 /// The keymap profile the app starts with: the standard
 /// keys. The `legacy` profile (the keys of earlier versions) stays selectable in Settings > Keyboard.
@@ -367,6 +372,10 @@ pub struct Shell<B: AudioBackend> {
     status: String,
     /// The engine fault already announced with a toast (cleared when the fault is).
     fault_announced: bool,
+    /// The dead stream (stalled or lost) already announced with a toast, and already reset to
+    /// the default devices (both cleared when the stream is alive again).
+    stream_announced: bool,
+    stream_reset: bool,
     /// The overload counters of the last status poll, and the ones last written to the log.
     overload: OverloadStats,
     /// The audio status of the last poll, for the diagnostics report.
@@ -559,6 +568,8 @@ impl<B: AudioBackend> Shell<B> {
             wins: BTreeMap::from([(WindowKind::Main, WinState::new(MAIN_SIZE, 1.0, Pane::Rack))]),
             status: String::new(),
             fault_announced: false,
+            stream_announced: false,
+            stream_reset: false,
             overload: OverloadStats::default(),
             audio_status: AudioStatus::default(),
             overload_logged: OverloadStats::default(),
@@ -4852,6 +4863,14 @@ impl<B: AudioBackend> Shell<B> {
                 let session = self.core.sink();
                 let mut lists = DeviceLists::query(session.backend());
                 lists.input_note = crate::status::input_note(session.status());
+                lists.stream_notes = [
+                    crate::status::stream_alert(session.status()),
+                    crate::status::latency_note(session.status()),
+                    crate::status::drift_note(session.status()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
                 let dialog = SettingsDialog::new(session.settings().clone(), lists)
                     .with_preferences(
                         KeymapEditor::new(self.os, self.default_profile, self.user_keymap.clone()),
@@ -5146,10 +5165,29 @@ impl<B: AudioBackend> Shell<B> {
     fn apply_settings(&mut self, settings: AudioSettings) {
         let gain = settings.metronome_gain;
         let pre_count = settings.pre_count_bars;
+        let before = self.core.sink().settings().clone();
         let session = self.core.sink_mut();
-        if session.set_settings(settings.clone()) == SettingsChange::RestartAudio {
+        let restarted = session.set_settings(settings) == SettingsChange::RestartAudio;
+        if restarted {
             session.set_enabled(true);
             self.core.rebuild_engine();
+        }
+        // A configuration that does not open is never saved: the session fell back to the last
+        // one that did (the notice says so), or audio is off and the file keeps the old devices.
+        let session = self.core.sink_mut();
+        let fell_back = session.take_notice();
+        let mut to_save = session.settings().clone();
+        let failed = restarted && !session.is_running();
+        if failed {
+            let why = session.status().error.clone().unwrap_or_default();
+            to_save.use_devices(&LastGood::of(&before));
+            self.notify(format!(
+                "Audio settings not applied: {why}. The saved device settings are unchanged."
+            ));
+        }
+        let kept_old_devices = failed || fell_back.is_some();
+        if let Some(notice) = fell_back {
+            self.notify(notice);
         }
         self.configure_surface();
         if (gain - self.core.metronome_gain()).abs() > f32::EPSILON {
@@ -5158,8 +5196,11 @@ impl<B: AudioBackend> Shell<B> {
         if pre_count != self.core.pre_count_bars() {
             self.core.set_pre_count_bars(pre_count);
         }
+        // Nothing but a rejected device choice changed: the file stays as it is.
+        let unchanged = kept_old_devices && !to_save.differs_from(&before);
         if let Some(path) = &self.settings_path
-            && let Err(e) = settings::save(path, &settings)
+            && !unchanged
+            && let Err(e) = settings::save(path, &to_save)
         {
             let message = format!("settings not saved: {e}");
             self.notify(message);
@@ -5190,11 +5231,89 @@ impl<B: AudioBackend> Shell<B> {
         }
     }
 
+    /// Says so once when the stream stops delivering audio (the device was unplugged, or the
+    /// driver stopped calling back), and, when the settings ask for it, switches to the default
+    /// devices (at once for a lost device, after [`AUTO_RESET_SILENCE_MS`] for a stalled one, which
+    /// may still come back). True when it replaced the stream.
+    fn watch_stream(&mut self, status: &AudioStatus) -> bool {
+        if !status.stream_state.is_dead() {
+            self.stream_announced = false;
+            // Only a stream that runs earns another automatic reset: a default device that
+            // never starts is not retried in a loop.
+            if status.stream_state == StreamState::Running {
+                self.stream_reset = false;
+            }
+            return false;
+        }
+        let device = if status.device.is_empty() {
+            "the audio device"
+        } else {
+            status.device.as_str()
+        };
+        let auto = self.core.sink().settings().device_loss.reset_to_default;
+        let due = status.stream_state == StreamState::Lost
+            || status.stream_silent_ms >= AUTO_RESET_SILENCE_MS;
+        if auto && due && !self.stream_reset {
+            self.stream_reset = true;
+            log::warn!("audio stream lost on {device}: switching to the default devices");
+            self.reset_to_default_devices();
+            let message = match &self.core.sink().status().error {
+                Some(e) => format!(
+                    "Audio device lost: {device}. The default devices did not open either: {e}"
+                ),
+                None => format!(
+                    "Audio device lost: {device}. Switched to the default devices; pick it \
+                     again in Audio > Settings when it is back."
+                ),
+            };
+            self.notify(message);
+            self.stream_announced = true;
+            return true;
+        }
+        if !self.stream_announced {
+            self.stream_announced = true;
+            log::warn!("audio stream {:?} on {device}", status.stream_state);
+            let what = if status.stream_state == StreamState::Lost {
+                format!("Audio device lost: {device} is no longer available")
+            } else {
+                format!("Audio stopped: {device} is not delivering audio")
+            };
+            self.notify(format!(
+                "{what}. Audio > Restart Audio tries it again; Audio > Settings chooses another device."
+            ));
+        }
+        false
+    }
+
+    /// Opens the host's default devices instead of the chosen ones. The chosen devices stay in
+    /// the settings file until the settings are applied again.
+    fn reset_to_default_devices(&mut self) {
+        let mut settings = self.core.sink().settings().clone();
+        settings.output_device = None;
+        settings.input_device = None;
+        let session = self.core.sink_mut();
+        session.set_settings(settings);
+        session.set_enabled(true);
+        self.core.rebuild_engine();
+    }
+
     /// Reads audio telemetry into the status bar; true when its text changed.
     pub fn poll_status(&mut self) -> bool {
+        self.poll_status_at(crate::session::clock_now())
+    }
+
+    /// [`Self::poll_status`] with the time the stream liveness is judged at.
+    pub fn poll_status_at(&mut self, at: std::time::Instant) -> bool {
         self.reload_keymap_file();
         let target = self.core.notes_target_device().map(|d| d.name.clone());
-        let mut status = self.core.sink_mut().poll().clone();
+        let mut status = self.core.sink_mut().poll_at(at).clone();
+        if let Some(notice) = self.core.sink_mut().take_notice() {
+            self.notify(notice);
+        }
+        if self.watch_stream(&status) {
+            // The stream was replaced: show what is true now.
+            status = self.core.sink().status().clone();
+        }
         status.notes_target = target;
         status.streaming = self.core.song_assets().values().any(|a| a.is_stream());
         status.faulted_name = status
@@ -5628,6 +5747,10 @@ mod bypass_tests;
 #[cfg(test)]
 #[path = "shell_diagnostics_tests.rs"]
 mod diagnostics_tests;
+
+#[cfg(test)]
+#[path = "shell_device_loss_tests.rs"]
+mod device_loss_tests;
 
 #[cfg(test)]
 #[path = "shell_drums_tests.rs"]

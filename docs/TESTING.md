@@ -1432,3 +1432,32 @@ Hand checks (a person at the machine):
 - Unset `APPDATA` (Windows) or `HOME` and `XDG_CONFIG_HOME` (Linux, macOS) and start: a toast says
   there is no config folder, and plugin scanning, the journal and recovery still work for the run,
   in the temp folder.
+
+## Device loss and stalled streams
+
+`crates/audio-io/src/liveness.rs` has the pure liveness tests (the `max(4 periods, 250 ms)`
+threshold, `stalled_stream_is_reported` with a simulated timeline, a stream that never starts, a
+lost device) and `stream.rs` the error-callback test (only a gone or invalid device is a loss, and
+the loss is sticky) and the input-overrun counting on a starved ring. `crates/app/src/session_tests.rs`
+drives `LiveSession` through a fake stream whose callbacks stop (`stalled_stream_is_reported`,
+`a_reset_restores_the_callbacks_of_a_stalled_stream`), the counters in the overload block and the
+fall back to the last working configuration. `crates/app/src/shell_device_loss_tests.rs` covers the
+shell: `failed_apply_keeps_last_good_settings` (the settings file is byte for byte unchanged), the
+toast once per stall, the reset to the default devices only when the setting is on, and
+`status.rs` the status-bar strings and the dialog's drift warning (different devices warn, one
+device does not). No test unplugs a device; the callbacks stay allocation-free under the existing
+`audio-io` allocation tests.
+
+Hand checks, not automated (they need an audio interface and your hands):
+
+- Play the stress song through a USB interface, unplug it, and look at the status bar and the
+  toast: `AUDIO DEVICE LOST` (or `AUDIO STOPPED` on a driver that just goes quiet) within about half
+  a second. Audio > Restart Audio with the interface still out reports why audio is off; plug it
+  back in and Restart Audio plays again.
+- Turn on Audio Settings > If the audio device is lost > Switch to the default devices, repeat: the
+  app moves to the default output by itself with a toast, and `settings.json` still names the
+  interface. Do it once for each host (WASAPI, ASIO where built, CoreAudio, ALSA).
+- Apply a device that cannot open (an exclusive-mode device held by another program): a toast says
+  so, the previous device keeps playing and `settings.json` is unchanged.
+- Choose an input and an output on two different interfaces and record for a minute: the dialog
+  warns about drift, and `input overruns` appears in the status bar when the clocks slip.

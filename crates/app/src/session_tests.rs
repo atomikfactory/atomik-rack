@@ -6,6 +6,7 @@ use atomik_audio_io::HostKind;
 use atomik_core::SampleRate;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Fake {
@@ -24,6 +25,8 @@ struct Fake {
     fail_input: Cell<bool>,
     /// The host opens at most this many input channels.
     host_inputs: Cell<Option<u16>>,
+    /// Every start naming this output device fails (`"*"`: every start fails).
+    broken_device: RefCell<Option<String>>,
 }
 
 struct FakeStream {
@@ -93,6 +96,16 @@ impl AudioBackend for &Fake {
         if let Some(e) = self.fail_start.borrow_mut().take() {
             return Err(e);
         }
+        let broken = self.broken_device.borrow();
+        if let Some(name) = broken.as_deref()
+            && (name == "*" || spec.device.as_deref() == Some(name))
+        {
+            let device = spec.device.as_deref().unwrap_or("the default device");
+            return Err(IoError::UnsupportedConfig(format!(
+                "{device} cannot be opened"
+            )));
+        }
+        drop(broken);
         if spec.input_channels > 0 && self.fail_input.get() {
             self.starts.borrow_mut().push(spec.clone());
             self.input_devices
@@ -157,6 +170,7 @@ fn settings() -> AudioSettings {
         stream_threshold_bytes: None,
         plugins: atomik_plugin_host::PluginSettings::default(),
         surface: crate::settings::SurfaceSettings::default(),
+        device_loss: crate::settings::DeviceLossSettings::default(),
     }
 }
 
@@ -642,4 +656,202 @@ fn the_streaming_threshold_comes_from_the_settings_override() {
         false,
     );
     assert_eq!(s.stream_threshold_bytes(), Some(1_000));
+}
+
+fn quiet() -> Telemetry {
+    Telemetry {
+        callbacks: 10,
+        buffer_frames: 480,
+        ..Telemetry::default()
+    }
+}
+
+#[test]
+fn stalled_stream_is_reported() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(s.status().stream_state, StreamState::Starting);
+    let t0 = clock_now();
+    fake.telemetry.set(quiet());
+    assert_eq!(s.poll_at(t0).stream_state, StreamState::Running);
+    // The callbacks stop: a stall once max(4 periods, 250 ms) went by without one.
+    let st = s.poll_at(t0 + Duration::from_millis(200)).clone();
+    assert_eq!(st.stream_state, StreamState::Running);
+    let st = s.poll_at(t0 + Duration::from_millis(400)).clone();
+    assert_eq!(st.stream_state, StreamState::Stalled);
+    assert!(st.stream_silent_ms >= 400, "{}", st.stream_silent_ms);
+    assert!(
+        crate::status::stream_alert(&st)
+            .unwrap()
+            .contains("AUDIO STOPPED")
+    );
+    // They come back by themselves: no longer stalled.
+    fake.telemetry.set(Telemetry {
+        callbacks: 11,
+        ..quiet()
+    });
+    assert_eq!(
+        s.poll_at(t0 + Duration::from_millis(450)).stream_state,
+        StreamState::Running
+    );
+}
+
+#[test]
+fn a_reset_restores_the_callbacks_of_a_stalled_stream() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    let t0 = clock_now();
+    fake.telemetry.set(quiet());
+    s.poll_at(t0);
+    assert!(
+        s.poll_at(t0 + Duration::from_secs(1))
+            .stream_state
+            .is_dead()
+    );
+    s.reset(&config(48_000.0));
+    assert_eq!(fake.starts.borrow().len(), 2, "a new stream was opened");
+    // The new stream's callbacks count from zero again and arrive.
+    fake.telemetry.set(Telemetry {
+        callbacks: 3,
+        ..quiet()
+    });
+    let t1 = clock_now();
+    assert_eq!(s.poll_at(t1).stream_state, StreamState::Running);
+    assert_eq!(s.status().stream_silent_ms, 0);
+}
+
+#[test]
+fn a_lost_device_is_reported_at_once_and_stream_errors_are_shown() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    fake.telemetry.set(Telemetry {
+        stream_errors: 2,
+        device_lost: true,
+        ..quiet()
+    });
+    let st = s.poll_at(clock_now()).clone();
+    assert_eq!(st.stream_state, StreamState::Lost);
+    assert_eq!(st.stream_errors, 2);
+    let text = crate::status::status_text(&st);
+    assert!(
+        text.contains("stream errors 2 \u{b7} AUDIO DEVICE LOST"),
+        "{text}"
+    );
+}
+
+#[test]
+fn input_overruns_and_stalled_control_pushes_reach_the_overload_counters() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    fake.telemetry.set(Telemetry {
+        input_overruns: 7,
+        ..quiet()
+    });
+    assert_eq!(s.poll().overload.input_overruns, 7);
+    assert_eq!(s.poll().overload.control_stalled, 0);
+    // Nothing renders in the test, so the control queue fills up and then refuses.
+    let id = DeviceInstanceId(1);
+    let mut refused = 0;
+    for _ in 0..100_000 {
+        if s.set_param(id, ParamId(0), 0.5) == Err(EngineError::QueueFull) {
+            refused += 1;
+            if refused == 3 {
+                break;
+            }
+        }
+    }
+    assert_eq!(refused, 3, "the queue fills up");
+    assert_eq!(s.poll().overload.control_stalled, 3);
+    assert!(
+        crate::status::status_text(s.status()).contains("control stalled 3"),
+        "{}",
+        crate::status::status_text(s.status())
+    );
+}
+
+#[test]
+fn a_configuration_that_does_not_open_falls_back_to_the_last_working_one() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert_eq!(
+        s.settings()
+            .device_loss
+            .last_good
+            .as_ref()
+            .unwrap()
+            .output_device
+            .as_deref(),
+        Some("Virtual Cable Input")
+    );
+    let change = s.set_settings(AudioSettings {
+        output_device: Some("Unplugged".into()),
+        ..settings()
+    });
+    assert_eq!(change, SettingsChange::RestartAudio);
+    *fake.broken_device.borrow_mut() = Some("Unplugged".into());
+    s.reset(&config(48_000.0));
+    assert!(s.is_running(), "the last working configuration opened");
+    assert_eq!(
+        s.settings().output_device.as_deref(),
+        Some("Virtual Cable Input")
+    );
+    assert_eq!(s.status().device, "Virtual Cable Input");
+    let notice = s.take_notice().expect("the fallback is announced");
+    assert!(
+        notice.contains("Unplugged") && notice.contains("Virtual Cable Input"),
+        "{notice}"
+    );
+    assert_eq!(s.take_notice(), None, "once");
+}
+
+#[test]
+fn without_a_working_configuration_to_fall_back_to_audio_stays_off_with_the_error() {
+    let fake = Fake::default();
+    *fake.broken_device.borrow_mut() = Some("Virtual Cable Input".into());
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    assert!(!s.is_running());
+    assert!(
+        s.status()
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Virtual Cable Input")
+    );
+    assert_eq!(s.take_notice(), None);
+    assert_eq!(s.settings().device_loss.last_good, None);
+}
+
+#[test]
+fn a_failing_fallback_keeps_the_settings_and_the_first_error() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    s.set_settings(AudioSettings {
+        output_device: Some("Unplugged".into()),
+        ..settings()
+    });
+    // Both fail (say the document's rate is not supported by either).
+    *fake.broken_device.borrow_mut() = Some("*".into());
+    s.reset(&config(48_000.0));
+    assert!(!s.is_running());
+    assert_eq!(s.settings().output_device.as_deref(), Some("Unplugged"));
+    assert!(s.status().error.as_deref().unwrap().contains("Unplugged"));
+    assert_eq!(s.take_notice(), None);
+}
+
+#[test]
+fn the_dialogs_copy_never_replaces_the_remembered_configuration() {
+    let fake = Fake::default();
+    let mut s = LiveSession::new(&fake, settings(), true);
+    s.reset(&config(48_000.0));
+    let remembered = s.settings().device_loss.last_good.clone();
+    assert!(remembered.is_some());
+    s.set_settings(settings());
+    assert_eq!(s.settings().device_loss.last_good, remembered);
 }
