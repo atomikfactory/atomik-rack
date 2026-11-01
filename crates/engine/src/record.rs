@@ -1,9 +1,14 @@
 //! The record tap: a lock-free path that copies selected host input
-//! channels out of the audio callback, tagged with the engine frame of every batch, for a
-//! non-RT writer thread (the app writes WAV files from it).
+//! channels, or the outputs of routed devices, out of the audio callback, tagged with the engine
+//! frame of every batch, for a non-RT writer thread (the app writes WAV files from it).
 //!
 //! # Design
 //!
+//! * A channel of a gained tap can read an output socket of a routed device instead of a host
+//!   input ([`TapChannel::source`], resampling). The tap runs at the *end* of the batch, after
+//!   the whole routing, so such a channel holds the 64 frames the device rendered in that batch
+//!   (its latency against the song timeline is the path's delay compensation, which the app
+//!   reads from the [`crate::PdcReport`]). A source that is not routed reads silence.
 //! * `EngineHandle::record_tap(channels, capacity_frames)` (non-RT) allocates an SPSC ring of
 //!   `u32` words and queues a [`TapRt`] through the ordered control queue, so the tap starts at
 //!   a batch boundary; `EngineHandle::stop_record_tap` queues its removal the same way (the
@@ -23,19 +28,48 @@
 //!   the returned start tag is exact; a gap (overflow) ends the run, and the next call starts
 //!   at the first frame after the gap.
 
+use crate::arena::Arena;
+use crate::graph::DeviceInstanceId;
 use atomik_core::{BATCH, Batch};
+use atomik_device_sdk::SocketId;
 use rtrb::{Consumer, Producer, RingBuffer};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-/// One channel of a gained tap: the host input it reads and the strip it goes through.
+/// One channel of a gained tap: the host input (or device output) it reads and the strip it
+/// goes through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TapChannel {
-    /// Host input channel (0-based; a channel past the engine's inputs reads silence).
+    /// Host input channel (0-based; a channel past the engine's inputs reads silence). Unused
+    /// when `source` is set.
     pub host: usize,
     /// The strip (the recorded track) whose gain and limiter the channel goes through. The
     /// channels of one strip are limited together, so a stereo take keeps its image.
     pub strip: usize,
+    /// An output socket of a routed device to read instead of a host input (resampling): the
+    /// tap copies it at the end of every batch, after the whole routing has run. A device that
+    /// is not in the arena or not routed, or a socket that is not an output, reads silence.
+    pub source: Option<(DeviceInstanceId, SocketId)>,
+}
+
+impl TapChannel {
+    /// A host input channel.
+    pub fn host(host: usize, strip: usize) -> Self {
+        Self {
+            host,
+            strip,
+            source: None,
+        }
+    }
+
+    /// The output `socket` of `device`.
+    pub fn source(device: DeviceInstanceId, socket: SocketId, strip: usize) -> Self {
+        Self {
+            host: 0,
+            strip,
+            source: Some((device, socket)),
+        }
+    }
 }
 
 /// The live settings of the strips of a gained record tap: written by the app (any thread, any
@@ -198,7 +232,7 @@ impl Strips {
 /// The audio-thread half of a tap (travels through the control queue).
 pub(crate) struct TapRt {
     tx: Producer<u32>,
-    channels: Vec<usize>,
+    channels: Vec<TapChannel>,
     record: Vec<u32>,
     overflow: Arc<AtomicU64>,
     /// Gain and limiter per strip; `None`: the plain copy.
@@ -206,8 +240,10 @@ pub(crate) struct TapRt {
 }
 
 impl TapRt {
-    /// Appends the batch starting at engine frame `frame`. Never allocates or blocks.
-    pub(crate) fn capture(&mut self, frame: u64, inputs: &[Batch]) {
+    /// Appends the batch starting at engine frame `frame`: host channels from `inputs`, source
+    /// channels from the outputs the routing just wrote into `arena`, so call it after the
+    /// batch has run. Never allocates or blocks.
+    pub(crate) fn capture(&mut self, frame: u64, inputs: &[Batch], arena: &Arena) {
         if self.tx.slots() < self.record.len() {
             self.overflow.fetch_add(BATCH as u64, Ordering::Relaxed);
             return;
@@ -217,9 +253,13 @@ impl TapRt {
         if let Some(st) = &mut self.strips {
             st.glide();
         }
-        for (k, &ch) in self.channels.iter().enumerate() {
+        for (k, channel) in self.channels.iter().enumerate() {
             let dst = &mut self.record[2 + k * BATCH..2 + (k + 1) * BATCH];
-            match (inputs.get(ch), &self.strips) {
+            let src = match channel.source {
+                Some((device, socket)) => arena.output(device, socket),
+                None => inputs.get(channel.host),
+            };
+            match (src, &self.strips) {
                 (Some(src), Some(st)) => {
                     let (from, to) = (st.gain[st.of[k]], st.next[st.of[k]]);
                     for (n, (d, s)) in dst.iter_mut().zip(src).enumerate() {
@@ -263,19 +303,19 @@ impl std::fmt::Debug for RecordTap {
 }
 
 /// Creates both halves: the tap sized for `capacity_frames` (rounded up to whole batches, at
-/// least one) of `channels`.
+/// least one) of host `channels`.
 pub(crate) fn new_tap(channels: &[usize], capacity_frames: usize) -> (Box<TapRt>, RecordTap) {
+    let channels: Vec<TapChannel> = channels.iter().map(|&h| TapChannel::host(h, 0)).collect();
     new_tap_with(channels, None, capacity_frames)
 }
 
-/// [`new_tap`] with strips: channel `k` reads host `channels[k].host` and goes through strip
-/// `channels[k].strip` of `controls` (a strip past the last one uses the last).
+/// [`new_tap`] with strips: channel `k` reads host `channels[k].host` (or its `source`) and goes
+/// through strip `channels[k].strip` of `controls` (a strip past the last one uses the last).
 pub(crate) fn new_gained_tap(
     channels: &[TapChannel],
     controls: Arc<TapControls>,
     capacity_frames: usize,
 ) -> (Box<TapRt>, RecordTap) {
-    let hosts: Vec<usize> = channels.iter().map(|c| c.host).collect();
     let n = controls.len();
     let of: Vec<usize> = channels
         .iter()
@@ -289,11 +329,11 @@ pub(crate) fn new_gained_tap(
         limit: vec![1.0; n],
         fresh: true,
     });
-    new_tap_with(&hosts, strips, capacity_frames)
+    new_tap_with(channels.to_vec(), strips, capacity_frames)
 }
 
 fn new_tap_with(
-    channels: &[usize],
+    channels: Vec<TapChannel>,
     strips: Option<Strips>,
     capacity_frames: usize,
 ) -> (Box<TapRt>, RecordTap) {
@@ -301,16 +341,17 @@ fn new_tap_with(
     let records = capacity_frames.div_ceil(BATCH).max(1);
     let (tx, rx) = RingBuffer::new(records * words);
     let overflow = Arc::new(AtomicU64::new(0));
+    let count = channels.len();
     let rt = TapRt {
         tx,
-        channels: channels.to_vec(),
+        channels,
         record: vec![0; words],
         overflow: Arc::clone(&overflow),
         strips,
     };
     let tap = RecordTap {
         rx,
-        channels: channels.len(),
+        channels: count,
         overflow,
         record: vec![0; words],
     };
@@ -384,10 +425,11 @@ mod tests {
 
     #[test]
     fn drain_returns_contiguous_runs_with_exact_tags_and_counts_overflow() {
+        let arena = Arena::new(0);
         let (mut rt, mut tap) = new_tap(&[1, 0], 3 * BATCH);
         let inputs = [batch(0.25), batch(-0.5)];
         for k in 0..5u64 {
-            rt.capture(k * BATCH as u64, &inputs);
+            rt.capture(k * BATCH as u64, &inputs, &arena);
         }
         // Room for three batches: two were dropped.
         assert_eq!(tap.overflow_frames(), 2 * BATCH as u64);
@@ -401,9 +443,9 @@ mod tests {
         assert!(out[1].iter().all(|s| s.to_bits() == 0.25f32.to_bits()));
         assert_eq!(tap.drain(&mut out), None);
         // After the overflow a gap: the run restarts at the new tag.
-        rt.capture(7 * BATCH as u64, &inputs);
-        rt.capture(8 * BATCH as u64, &inputs);
-        rt.capture(10 * BATCH as u64, &inputs);
+        rt.capture(7 * BATCH as u64, &inputs, &arena);
+        rt.capture(8 * BATCH as u64, &inputs, &arena);
+        rt.capture(10 * BATCH as u64, &inputs, &arena);
         let mut again = Vec::new();
         assert_eq!(tap.drain(&mut again), Some((7 * BATCH as u64, 2 * BATCH)));
         assert_eq!(tap.drain(&mut again), Some((10 * BATCH as u64, BATCH)));
@@ -414,7 +456,7 @@ mod tests {
     fn frame_tags_use_both_words_and_missing_channels_read_zero() {
         let (mut rt, mut tap) = new_tap(&[5], 2 * BATCH);
         let big = (1u64 << 40) + 192;
-        rt.capture(big, &[batch(1.0)]);
+        rt.capture(big, &[batch(1.0)], &Arena::new(0));
         let mut out = Vec::new();
         assert_eq!(tap.drain(&mut out), Some((big, BATCH)));
         assert!(out[0].iter().all(|s| s.to_bits() == 0));

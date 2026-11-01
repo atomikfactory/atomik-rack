@@ -1058,3 +1058,117 @@ fn toggle_chase_flips_the_selected_note_track_and_declines_for_audio_and_no_trac
     assert_eq!(v.chase_menu(), (false, true), "an audio track has no notes");
     assert_eq!(run(&mut v), CommandOutcome::Declined);
 }
+
+// ---------------------------------------------------------------- recording a console strip
+
+/// [`audio_doc`] with a console: one channel ("Guitar mix") fed by the guitar track, a bus
+/// "Drums" and a master.
+fn console_audio_doc() -> atomik_model::RackDoc {
+    use atomik_model::console::{ConsoleBus, ConsoleChannel};
+    let mut doc = audio_doc();
+    doc.devices
+        .push(device("channel", "atomik.channel", "Guitar mix"));
+    doc.devices.push(device("bus", "atomik.bus", "Drums"));
+    doc.devices.push(device("master", "atomik.master", "Main"));
+    doc.console.channels.push(ConsoleChannel {
+        channel: key("channel"),
+        source: Some(key("audio-track")),
+    });
+    doc.console.buses.push(ConsoleBus {
+        bus: key("bus"),
+        name: "Drums".into(),
+    });
+    doc.console.master = Some(key("master"));
+    doc
+}
+
+fn pick_from(doc: &atomik_model::RackDoc, device_key: &str, label: &str) -> Vec<String> {
+    use atomik_ui::TrackButton::Input;
+    let reg = registry();
+    let mut v = audio_arrangement(doc, &reg);
+    let p = v.track_button_center(&key(device_key), Input).unwrap();
+    let _ = click(&mut v, doc, &reg, p);
+    let i = v.menu_labels().iter().position(|l| l == label).unwrap();
+    let row = v.param_menu_row_center(i).unwrap();
+    let a = click(&mut v, doc, &reg, row);
+    commands(&a)
+        .into_iter()
+        .flat_map(|c| match c {
+            atomik_model::Command::Batch(cs) => cs,
+            other => panic!("expected a batch, got {other:?}"),
+        })
+        .map(|c| match c {
+            atomik_model::Command::Disconnect { to } => format!("-{}", to.socket),
+            atomik_model::Command::Connect(c) => format!("{}>{}", c.from.socket, c.to.socket),
+            atomik_model::Command::SetParam { param, value, .. } => format!("{param}={value}"),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn the_input_menu_offers_every_strip_after_the_inputs_and_picking_one_sets_the_source() {
+    use atomik_ui::TrackButton::Input;
+    let (doc, reg) = (console_audio_doc(), registry());
+    let mut v = audio_arrangement(&doc, &reg);
+    let p = v.track_button_center(&key("audio-track"), Input).unwrap();
+    let _ = click(&mut v, &doc, &reg, p);
+    assert_eq!(
+        v.menu_labels(),
+        [
+            "Off",
+            "In 1",
+            "In 2",
+            "In 3",
+            "In 4",
+            "In 1+2",
+            "In 3+4",
+            "Channel: Guitar mix",
+            "Bus: Drums",
+            "Master: Main"
+        ]
+    );
+    assert_eq!(
+        v.menu_current(),
+        Some(5),
+        "the inputs are still what it records"
+    );
+    assert_eq!(
+        pick_from(&doc, "audio-track-2", "Channel: Guitar mix"),
+        ["rec_source=1"]
+    );
+    assert_eq!(
+        pick_from(&doc, "audio-track-2", "Bus: Drums"),
+        ["rec_source=1001"]
+    );
+    assert_eq!(
+        pick_from(&doc, "audio-track-2", "Master: Main"),
+        ["rec_source=2000"]
+    );
+}
+
+#[test]
+fn a_track_that_records_a_strip_shows_it_and_going_back_to_an_input_clears_the_source() {
+    use atomik_ui::TrackButton::Input;
+    let mut doc = console_audio_doc();
+    doc.devices[2].params.insert("rec_source".into(), 1001.0);
+    let reg = registry();
+    let mut v = audio_arrangement(&doc, &reg);
+    assert!(
+        header_texts(&mut v, &doc)
+            .iter()
+            .any(|t| t.contains("Bus: Drums")),
+        "the header names the strip"
+    );
+    let p = v.track_button_center(&key("audio-track-2"), Input).unwrap();
+    let _ = click(&mut v, &doc, &reg, p);
+    let at = v.menu_labels().iter().position(|l| l == "Bus: Drums");
+    assert_eq!(v.menu_current(), at, "the strip is the checked row");
+    // Picking the strip again changes nothing; an input puts the source back to the inputs
+    // first, in the same undo step.
+    assert!(pick_from(&doc, "audio-track-2", "Bus: Drums").is_empty());
+    assert_eq!(
+        pick_from(&doc, "audio-track-2", "In 2"),
+        ["rec_source=0", "in_2>in_l", "in_2>in_r"]
+    );
+}

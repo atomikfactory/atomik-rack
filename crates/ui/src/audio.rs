@@ -9,7 +9,7 @@ use atomik_core::{Tempo, TempoPoint, TempoTable};
 use atomik_model::song::{AUDIO_GAIN_DB_MAX, AUDIO_GAIN_DB_MIN};
 use atomik_model::{
     AudioClipContent, Cable, Command, DeviceKey, GainPoint, INTERFACE_KEY, MAX_GAIN_POINTS,
-    SocketRef, TempoEvent, WarpMarker, WarpSettings, slice_envelope,
+    RecSource, SocketRef, TempoEvent, WarpMarker, WarpSettings, slice_envelope,
 };
 
 /// The song tempo map (steps and ramps) for fractional tick / frame conversions, the maths of
@@ -444,13 +444,16 @@ pub enum InputSel {
         /// Input cabled to `in_r`.
         right: Option<u16>,
     },
+    /// Not an input: the track records the output of a console strip (resampling). It never
+    /// comes out of the cables; the menu offers it and the header shows it.
+    Source(RecSource),
 }
 
 impl InputSel {
     /// The inputs feeding `(in_l, in_r)`.
     pub fn sides(self) -> (Option<u16>, Option<u16>) {
         match self {
-            InputSel::Off => (None, None),
+            InputSel::Off | InputSel::Source(_) => (None, None),
             InputSel::Mono(k) => (Some(k), Some(k)),
             InputSel::Pair(a, b) => (Some(a), Some(b)),
             InputSel::Partial { left, right } => (left, right),
@@ -504,6 +507,41 @@ pub fn input_label(sel: InputSel) -> String {
             _ => "Off".to_string(),
         },
         InputSel::Off => "Off".to_string(),
+        InputSel::Source(source) => atomik_model::source_label(source),
+    }
+}
+
+/// The commands that make `track` record `target` when it records `source` now and has the
+/// input selection `current` on its cables: a strip is one `SetParam` (the cables stay, so the
+/// inputs come back with one click); an input also puts the source back to the inputs.
+pub fn source_change(
+    track: &DeviceKey,
+    source: RecSource,
+    current: InputSel,
+    target: InputSel,
+) -> Vec<Command> {
+    let set = |value: RecSource| Command::SetParam {
+        key: track.clone(),
+        param: atomik_core::REC_SOURCE_PARAM.to_string(),
+        value: value.value(),
+        merge: None,
+    };
+    match target {
+        InputSel::Source(s) => {
+            if s == source {
+                Vec::new()
+            } else {
+                vec![set(s)]
+            }
+        }
+        input => {
+            let mut out = Vec::new();
+            if source.is_strip() {
+                out.push(set(RecSource::Interface));
+            }
+            out.extend(input_change(track, current, input));
+            out
+        }
     }
 }
 

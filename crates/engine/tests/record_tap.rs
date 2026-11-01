@@ -188,7 +188,7 @@ fn record_gained(
 }
 
 fn ch(host: usize, strip: usize) -> TapChannel {
-    TapChannel { host, strip }
+    TapChannel::host(host, strip)
 }
 
 #[test]
@@ -363,4 +363,134 @@ fn controls_clamp_and_report_what_was_set() {
     assert_eq!(c.get(1), Some((1.0, false)));
     c.set(9, 2.0, true); // no such strip: ignored
     assert_eq!(c.get(9), None);
+}
+
+// ---------------------------------------------------------------- resampling a device output
+
+use atomik_engine::{Graph, RenderPlan};
+use atomik_testkit::fakes::Passthrough;
+
+/// `in_1 -> passthrough (gain) -> out_1`; returns the plan and the device.
+fn gain_plan(gain: f32) -> (RenderPlan, atomik_engine::DeviceInstanceId) {
+    let mut g = Graph::new(&cfg(1, 1));
+    let p = g.add_device(Passthrough::boxed(gain));
+    g.connect(iface(&g, "in_1"), ep(p, Passthrough::AUDIO_IN))
+        .unwrap();
+    g.connect(ep(p, Passthrough::AUDIO_OUT), iface(&g, "out_1"))
+        .unwrap();
+    (g.compile().unwrap(), p)
+}
+
+/// Renders `frames` frames through `in_1 -> x0.5 -> out_1` with a source tap on the device
+/// output, in host blocks of `block`, on `threads` workers. Returns the tapped signal and the
+/// host output.
+fn resample(threads: u16, block: usize, frames: usize) -> (Vec<f32>, Vec<f32>) {
+    let (mut engine, mut handle) = engine_with(cfg(1, 1), threads, None);
+    let (plan, p) = gain_plan(0.5);
+    handle.submit_plan(plan).unwrap();
+    let controls = Arc::new(TapControls::new(1));
+    let mut tap = handle
+        .record_tap_gained(
+            &[TapChannel::source(p, Passthrough::AUDIO_OUT, 0)],
+            8_192,
+            Arc::clone(&controls),
+        )
+        .unwrap();
+    let inputs = [input(0)];
+    let (mut runs, mut out) = (Vec::new(), Vec::new());
+    let mut done = 0;
+    while done < frames {
+        let n = block.min(frames - done);
+        let ins = vec![inputs[0][done..done + n].to_vec()];
+        out.extend(render_block(&mut engine, &ins, 1, n).remove(0));
+        drain_all(&mut tap, &mut runs);
+        done += n;
+    }
+    assert_eq!(tap.overflow_frames(), 0);
+    let mut taken = Vec::new();
+    let mut expect = 0u64;
+    for (start, run) in runs {
+        assert_eq!(start, expect, "contiguous tags");
+        expect += run[0].len() as u64;
+        taken.extend_from_slice(&run[0]);
+    }
+    (taken, out)
+}
+
+#[test]
+fn a_source_tap_equals_the_rendered_output_sample_for_sample() {
+    // The host output lags the render by the engine's one-batch FIFO, so the tap, which reads the
+    // device output of the batch the moment it ran, is the output 64 frames earlier.
+    for (threads, block) in [(0u16, 64usize), (0, 1), (0, 333), (2, 64), (2, 1_000)] {
+        let (taken, out) = resample(threads, block, TOTAL);
+        let whole = TOTAL / 64 * 64;
+        assert_eq!(taken.len(), whole, "{threads} workers, block {block}");
+        let x = input(0);
+        for (i, v) in taken.iter().enumerate() {
+            assert_eq!(v.to_bits(), (x[i] * 0.5).to_bits(), "frame {i}");
+            if i + 64 < out.len() {
+                assert_eq!(v.to_bits(), out[i + 64].to_bits(), "null test at frame {i}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_source_that_is_not_routed_or_not_an_output_reads_silence() {
+    let (mut engine, mut handle) = new_engine(cfg(1, 1));
+    let (plan, p) = gain_plan(0.5);
+    handle.submit_plan(plan).unwrap();
+    let controls = Arc::new(TapControls::new(1));
+    let unknown = atomik_engine::DeviceInstanceId(99);
+    let mut tap = handle
+        .record_tap_gained(
+            &[
+                TapChannel::source(unknown, Passthrough::AUDIO_OUT, 0),
+                // An input socket is not a source.
+                TapChannel::source(p, Passthrough::AUDIO_IN, 0),
+                TapChannel::source(p, Passthrough::AUDIO_OUT, 0),
+            ],
+            4_096,
+            controls,
+        )
+        .unwrap();
+    let ins = [vec![1.0f32; 640]];
+    render_blocks(&mut engine, &ins, 1, 640, 64);
+    let mut out = Vec::new();
+    tap.drain(&mut out).unwrap();
+    assert!(out[0].iter().all(|s| s.to_bits() == 0));
+    assert!(out[1].iter().all(|s| s.to_bits() == 0));
+    assert!(out[2].iter().all(|s| s.to_bits() == 0.5f32.to_bits()));
+}
+
+#[test]
+fn a_source_and_a_host_channel_share_one_tap_and_the_strip_gain_applies() {
+    let (mut engine, mut handle) = new_engine(cfg(1, 1));
+    let (plan, p) = gain_plan(0.5);
+    handle.submit_plan(plan).unwrap();
+    let controls = Arc::new(TapControls::new(2));
+    controls.set(0, 1.0, false);
+    controls.set(1, 4.0, false);
+    let mut tap = handle
+        .record_tap_gained(
+            &[
+                TapChannel::host(0, 0),
+                TapChannel::source(p, Passthrough::AUDIO_OUT, 1),
+            ],
+            4_096,
+            controls,
+        )
+        .unwrap();
+    let ins = [vec![0.25f32; 1_280]];
+    render_blocks(&mut engine, &ins, 1, 1_280, 64);
+    let mut out = Vec::new();
+    tap.drain(&mut out).unwrap();
+    assert!(
+        out[0].iter().all(|s| s.to_bits() == 0.25f32.to_bits()),
+        "the host input, untouched"
+    );
+    assert!(
+        out[1].iter().all(|s| s.to_bits() == 0.5f32.to_bits()),
+        "0.25 x 0.5 x 4"
+    );
 }

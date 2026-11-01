@@ -127,6 +127,12 @@ pub const VCA_MAX_DB: f32 = 12.0;
 pub const REC_GAIN_PARAM: &str = "rec_gain";
 /// Key of the audio track device's clip-safe switch param.
 pub const REC_CLIP_SAFE_PARAM: &str = "rec_clip_safe";
+/// Key of the audio track device's recording source param: 0 records the Audio I/O inputs
+/// the track is cabled to, a larger value records the output of a console strip (see
+/// `RecSource` in the model).
+pub const REC_SOURCE_PARAM: &str = "rec_source";
+/// Highest value of [`REC_SOURCE_PARAM`].
+pub const REC_SOURCE_MAX: f32 = 2000.0;
 /// Lowest recording input gain in dB: the bottom of the range is off.
 pub const REC_GAIN_MIN_DB: f32 = -60.0;
 /// Highest recording input gain in dB.

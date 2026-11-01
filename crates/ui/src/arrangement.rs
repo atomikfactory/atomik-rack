@@ -42,8 +42,8 @@ use atomik_core::ParamDescriptor;
 use atomik_device_sdk::Registry;
 use atomik_model::{
     AssetMeta, AudioClipContent, AutomationPoint, Clip, ClipContent, ClipId, ClipMove, Command,
-    Curve, DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, Song, SongCommand, TempoEvent,
-    WorkflowCommand, WriteMode,
+    Curve, DeviceKey, FadeCurve, LaneKind, MeterEvent, RackDoc, RecSource, Song, SongCommand,
+    TempoEvent, WorkflowCommand, WriteMode,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -823,6 +823,8 @@ pub struct ArrangementView {
     outer: Rect,
     input_channels: u16,
     audio_headers: Vec<AudioHeader>,
+    /// The console strips an audio track can record, with their menu labels.
+    rec_sources: Vec<(RecSource, String)>,
     drop_hover: Option<DropHover>,
     /// A library clip hovering over a note lane: track, lane and snapped tick.
     clip_hover: Option<(DeviceKey, usize, i64)>,
@@ -833,6 +835,8 @@ pub struct ArrangementView {
 struct AudioHeader {
     device: DeviceKey,
     input: InputSel,
+    /// What the track records: the inputs it is cabled to, or a console strip.
+    source: RecSource,
     /// Monitor mode: 0 off, 1 auto, 2 on.
     monitor: u8,
 }
@@ -925,6 +929,7 @@ impl ArrangementView {
             outer: Rect::new(0.0, 0.0, 800.0, 300.0),
             input_channels: 0,
             audio_headers: Vec::new(),
+            rec_sources: Vec::new(),
             drop_hover: None,
             clip_hover: None,
         }
@@ -1779,6 +1784,7 @@ impl ArrangementView {
             .map(|t| AudioHeader {
                 device: t.device.clone(),
                 input: audio::input_selection(&doc.cables, &t.device),
+                source: atomik_model::rec_source(doc, &t.device, registry),
                 monitor: doc
                     .param_value(&t.device, "monitor", registry)
                     .map_or(MONITOR_AUTO, |v| v.round().clamp(0.0, 2.0) as u8),
@@ -1796,8 +1802,14 @@ impl ArrangementView {
                 Some((t.device.clone(), color))
             })
             .collect();
+        let sources = if headers.is_empty() {
+            Vec::new()
+        } else {
+            atomik_model::source_options(doc)
+        };
         if self.synced
             && (Arc::ptr_eq(&self.song, &doc.song) || self.song == doc.song)
+            && self.rec_sources == sources
             && self.vca_chips == chips
             && self.device_sig == sig
             && self.assets == doc.assets
@@ -1807,6 +1819,7 @@ impl ArrangementView {
             return;
         }
         self.audio_headers = headers;
+        self.rec_sources = sources;
         let takes_changed = self.song.org.open_takes != doc.song.org.open_takes;
         self.song = doc.song.clone();
         if takes_changed {
@@ -2733,11 +2746,13 @@ impl ArrangementView {
                         }));
                     }
                     MenuKind::Input(options) => {
-                        let current = self
+                        let (current, source) = self
                             .audio_header(&m.device)
-                            .map_or(InputSel::Off, |h| h.input);
+                            .map_or((InputSel::Off, RecSource::Interface), |h| {
+                                (h.input, h.source)
+                            });
                         // One undo step for the whole change.
-                        let cables = audio::input_change(&m.device, current, options[i]);
+                        let cables = audio::source_change(&m.device, source, current, options[i]);
                         if !cables.is_empty() {
                             out.push(UiAction::Command(Command::Batch(cables)));
                         }
@@ -3213,10 +3228,26 @@ impl ArrangementView {
             }
             TrackButton::Input => {
                 let device = t.device.clone();
-                let current = self
+                let (input, source) = self
                     .audio_header(&device)
-                    .map_or(InputSel::Off, |h| h.input);
-                let options = audio::input_options(self.input_channels);
+                    .map_or((InputSel::Off, RecSource::Interface), |h| {
+                        (h.input, h.source)
+                    });
+                // Recording a strip shows as the one checked row; else the cables' selection.
+                let current = if source.is_strip() {
+                    InputSel::Source(source)
+                } else {
+                    input
+                };
+                let mut options = audio::input_options(self.input_channels);
+                let mut items: Vec<(String, String)> = options
+                    .iter()
+                    .map(|o| (audio::input_label(*o), audio::input_label(*o)))
+                    .collect();
+                for (s, label) in &self.rec_sources {
+                    options.push(InputSel::Source(*s));
+                    items.push((label.clone(), label.clone()));
+                }
                 let Some(row) = self.row_of(track, 0) else {
                     return;
                 };
@@ -3224,10 +3255,7 @@ impl ArrangementView {
                 let menu = Menu {
                     device,
                     kind: MenuKind::Input(options.clone()),
-                    items: options
-                        .iter()
-                        .map(|o| (audio::input_label(*o), audio::input_label(*o)))
-                        .collect(),
+                    items,
                     origin: Point::new(br.x0, br.y1 + 2.0),
                     scroll: 0,
                     hover: None,
@@ -6593,9 +6621,22 @@ impl ArrangementView {
         if tr.is_audio() {
             let header = self.audio_header(&tr.device);
             let input = header.map_or(InputSel::Off, |h| h.input);
+            let source = header.map_or(RecSource::Interface, |h| h.source);
             let ir = self.track_button_rect(hr, track, TrackButton::Input);
             sp::lcd(c, st, ir, hovered(TrackButton::Input).then_some(t.focus));
-            let label = fit_label(&audio::input_label(input), ir.width() - 8.0, 9.0);
+            // A strip shows with its name (`Channel: Bass`), the inputs by their number.
+            let text = if source.is_strip() {
+                self.rec_sources
+                    .iter()
+                    .find(|(s, _)| *s == source)
+                    .map_or_else(
+                        || audio::input_label(InputSel::Source(source)),
+                        |(_, n)| n.clone(),
+                    )
+            } else {
+                audio::input_label(input)
+            };
+            let label = fit_label(&text, ir.width() - 8.0, 9.0);
             sp::label(
                 c,
                 &label,

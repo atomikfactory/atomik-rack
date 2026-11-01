@@ -913,10 +913,7 @@ fn the_record_tap_needs_a_running_engine() {
     let mut s = LiveSession::new(&fake, settings(), false);
     s.reset(&config_in(48_000.0, 2));
     let controls = Arc::new(TapControls::new(1));
-    let both = [
-        TapChannel { host: 0, strip: 0 },
-        TapChannel { host: 1, strip: 0 },
-    ];
+    let both = [TapChannel::host(0, 0), TapChannel::host(1, 0)];
     assert!(
         s.start_audio_record(&both, 4_096, controls.clone())
             .is_none()

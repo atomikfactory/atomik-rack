@@ -386,7 +386,7 @@ session bundle and loaded by the same adopt worker a library item's audio uses, 
 ```
  Engine::run_batch (audio thread)
    1. apply control messages due now   (inserts, routing swaps, song snapshots, transport, tap, tempo)
-   2. record tap: copy the host input batch into the tap ring, tagged with the engine frame
+   2. (nothing: the record tap runs after the routing, as step 6a)
    3. apply queued params
    4. song player: advance the transport (loop wraps, locates); derive the batch's TimeInfo
         (tick, ticks_per_frame, loop_wrap; song-less: a free-running tick at the engine tempo);
@@ -398,6 +398,8 @@ session bundle and loaded by the same adopt worker a library item's audio uses, 
         gather inputs (summing inputs add in source order; PDC delay lines on summing cables)
         Device::process_stage (audio-track: out = playback + monitored input)
         scatter outputs, publish meters
+   6a. record tap: copy the host input batch and the tapped device outputs (a console strip being
+        resampled) into the tap ring, tagged with the engine frame
    7. mix the metronome (and a pre-count's click, see 2.6) into the host outputs; frame += 64
 ```
 
@@ -500,6 +502,27 @@ a second Stop to bar 1. While recording, `Take::preview` feeds a translucent red
 with the playhead on each armed track (`TakeGhost`, drawn only: not saved, not undoable; an audio
 take draws its span), and `edit.delete` calls `Take::discard_notes`: the notes captured so far
 are dropped and the take and the transport run on. Nothing here changes the project format.
+
+**Resampling a console strip.** An audio track's stored `rec_source` param (0 to 2000, additive: a
+project without it records the inputs, and no project format change) says what a take records:
+0 the Audio I/O inputs it is cabled to, otherwise the stereo output of a console strip, by position
+(`atomik_model::RecSource`: channels 1..=999 in console order, buses 1001..=1999, the master 2000).
+The track header's input menu lists `Channel: name`, `Bus: name` and `Master: name` after the
+inputs, and each is one `SetParam`. A take that records a strip puts `TapChannel::source(device,
+socket)` channels in the same tap as the host channels, so inputs and strips can be recorded in one
+take, each track through its own gain and clip-safe strip. The engine reads the strip's `out_l` and
+`out_r` (the master's `main_l` and `main_r`) at the end of the batch, so the recorded frames are
+bit-identical to what the routing rendered (the null test compares them with the host output, one
+batch later). Placement uses the **path's latency** as the take's compensation instead of the
+hardware round trip: the strip's readout from the delay compensation report (the master's is the
+report's output latency), set per track in `WriterTrack` through `TrackInput::Source { latency }`, so
+a clip lands where the strip's audio sits on the timeline. A delay that a strip adds without
+reporting it (a positive `latency.adjust`) is part of what is heard, so it is part of the clip; a
+negative `latency.adjust` is phantom latency and is counted as a delay. **Cycle rule:** a track
+cannot record a strip it feeds (`atomik_model::source_refusal` walks the cables upstream from the
+strip, stopping at the Audio I/O device and treating a master send bus as feeding only its FX send):
+that take records nothing and the message says why (send the track's channel to an Audio I/O pair,
+or pick another source). The header and transport meters of such a track show the strip's output.
 
 **Input gain, clip-safe and the input meter.** Each armed audio track has two stored params on its
 device, `rec_gain` (dB, -60 is off, up to +24, default 0) and `rec_clip_safe` (off). They are plain
@@ -2869,7 +2892,9 @@ already had (format 37 reads it, older readers refuse it).
   tap; `RecordTap::drain` returns only runs that are contiguous in engine frames, so a start tag is
   always exact; an overflow is counted in frames and never blocks.
   `EngineHandle::record_tap_gained(channels, capacity, controls)` is the same tap with a gain and a
-  clip-safe limiter per strip (`TapChannel { host, strip }`, `TapControls`); the plain tap copies
+  clip-safe limiter per strip (`TapChannel`, `TapControls`); a channel reads a host input or, for
+  resampling, an output socket of a routed device (`TapChannel::source`, `Arena::output`), read at
+  the end of the batch, after the routing, with no allocation; the plain tap copies
   bit for bit as before.
 - **The device** `atomik.audio-track` ([audio_track.rs](../crates/devices/src/audio_track.rs)):
   `out = playback + input × monitor_gain`. `monitor` is off, auto or on; with auto the app's

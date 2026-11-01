@@ -1278,9 +1278,6 @@ impl Engine {
     fn run_batch(&mut self) {
         self.player.begin_batch();
         self.apply_control();
-        if let Some(tap) = &mut self.tap {
-            tap.capture(self.frame, &self.in_fifo);
-        }
         self.apply_params();
         let bt = self.player.run(
             &mut self.arena,
@@ -1326,6 +1323,11 @@ impl Engine {
                 self.last_render_spins = self.last_render_spins.saturating_add(spins);
             }
             (None, _) => self.out_fifo.iter_mut().for_each(|b| b.fill(0.0)),
+        }
+        // The record tap reads the host inputs of this batch and, for a resampling channel, the
+        // outputs the routing has just written (so it needs the whole batch to have run).
+        if let Some(tap) = &mut self.tap {
+            tap.capture(self.frame, &self.in_fifo, &self.arena);
         }
         self.arena.publish_device_values(&self.meters);
         if crate::timing::enabled() {
