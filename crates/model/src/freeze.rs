@@ -666,8 +666,9 @@ pub fn ticks_for_frames(
     sample_rate: u32,
 ) -> i64 {
     use crate::song::MAX_TICK;
-    let base = song.frame_at(start_tick, sample_rate);
-    let covers = |len: i64| song.frame_at(start_tick + len, sample_rate) - base >= frames;
+    let clock = song.frame_clock(sample_rate);
+    let base = clock.at(start_tick);
+    let covers = |len: i64| clock.at(start_tick + len) - base >= frames;
     // Grow until it covers, then bisect: `frame_at` never decreases with the tick.
     let (mut lo, mut hi) = (0_i64, 1_i64);
     while !covers(hi) {
