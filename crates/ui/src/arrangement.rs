@@ -66,6 +66,7 @@ mod lane_move;
 mod markers;
 mod meters;
 mod organise;
+mod paint_cache;
 mod restructure;
 mod takes;
 mod tempo;
@@ -777,7 +778,14 @@ pub struct ArrangementView {
     /// The tempo lane is armed for recording (fed by the app).
     tempo_armed: bool,
     focused: bool,
+    /// Something the cached layers draw changed: they are recorded again.
     repaint: bool,
+    /// Only what is drawn live over the cached layers moved (the playhead and what reads it).
+    playhead_dirty: bool,
+    /// Only the track meters changed: the track list is recorded again, the lanes are not.
+    headers_dirty: bool,
+    /// The recorded lanes and track list.
+    pc: paint_cache::PaintCache,
     peaks: BTreeMap<String, Arc<PeakPyramid>>,
     /// The samples of the assets held in RAM, for the waveform below the finest peak level.
     samples: BTreeMap<String, Arc<[Vec<f32>]>>,
@@ -891,6 +899,9 @@ impl ArrangementView {
             tempo_armed: false,
             focused: false,
             repaint: true,
+            playhead_dirty: false,
+            headers_dirty: false,
+            pc: paint_cache::PaintCache::default(),
             peaks: BTreeMap::new(),
             samples: BTreeMap::new(),
             assets: BTreeMap::new(),
@@ -973,12 +984,14 @@ impl ArrangementView {
             // Everything the playhead draws moves with its physical x (the line, the ruler
             // flag); a take ghost grows to it and the tempo lane reads the tempo under it.
             let px = |t: i64| (self.axis.tick_to_x(t) * self.scale).round() as i64;
-            if px(old) != px(tick)
-                || !self.ghosts.is_empty()
+            if !self.ghosts.is_empty() {
+                self.repaint = true;
+            } else if px(old) != px(tick)
                 || crate::tempo_lane::tempo_at(&self.song.tempo, old).to_bits()
                     != crate::tempo_lane::tempo_at(&self.song.tempo, tick).to_bits()
             {
-                self.repaint = true;
+                // The cached lanes and track list stay as they are.
+                self.playhead_dirty = true;
             }
             if self.vp.following() && self.axis.page_to(tick, self.bounds.x1) {
                 self.repaint = true;
@@ -1095,12 +1108,24 @@ impl ArrangementView {
 
     /// True when something changed since the last [`Self::paint`].
     pub fn needs_repaint(&self) -> bool {
-        self.repaint
+        self.repaint || self.playhead_dirty || self.headers_dirty
     }
 
-    /// Forces a repaint.
+    /// Forces a repaint (the cached layers are recorded again).
     pub fn request_repaint(&mut self) {
         self.repaint = true;
+    }
+
+    /// How many times the lanes layer and the track list layer were recorded: a paint that
+    /// replays them leaves both unchanged.
+    pub fn layer_records(&self) -> (u64, u64) {
+        self.pc.records()
+    }
+
+    /// Records every layer on every paint (and `false` caches them again): the reference the
+    /// cached paint is compared with in tests.
+    pub fn set_layer_cache(&mut self, on: bool) {
+        self.pc.off = !on;
     }
 
     /// The snap resolution.
@@ -5228,11 +5253,17 @@ impl ArrangementView {
         canvas.push_clip(&self.outer.into());
         sp::rect(canvas, self.outer, self.st.background);
         let tl = self.timeline_rect();
-        self.paint_lanes(canvas, doc, tl);
+        let stamp = paint_cache::Stamp::new(self.bounds, self.outer, self.scale, self.doc_rev);
+        let mut cache = std::mem::take(&mut self.pc);
+        self.paint_lanes(canvas, doc, tl, &mut cache, stamp);
         self.paint_marker_strip(canvas);
         self.paint_tempo_lane(canvas);
         self.paint_ruler(canvas);
-        self.paint_track_list(canvas, doc);
+        let list = cache.headers(stamp, self.repaint || self.headers_dirty, |l| {
+            self.paint_track_list(l, doc);
+        });
+        canvas.draw_list(list);
+        self.pc = cache;
         self.paint_corner(canvas);
         self.paint_hscroll(canvas);
         let sep = self.st.separator;
@@ -5257,6 +5288,8 @@ impl ArrangementView {
         canvas.pop_clip();
         canvas.pop_transform();
         self.repaint = false;
+        self.playhead_dirty = false;
+        self.headers_dirty = false;
     }
 
     fn visible_rows(&self) -> impl Iterator<Item = (&Row, Rect)> {
@@ -5268,9 +5301,40 @@ impl ArrangementView {
         })
     }
 
-    fn paint_lanes(&self, c: &mut dyn Canvas, doc: &RackDoc, tl: Rect) {
+    /// The lanes: everything under the playhead comes from the cached layer, the playhead line
+    /// is drawn over it, inside the same clip.
+    fn paint_lanes(
+        &self,
+        c: &mut dyn Canvas,
+        doc: &RackDoc,
+        tl: Rect,
+        cache: &mut paint_cache::PaintCache,
+        stamp: paint_cache::Stamp,
+    ) {
         let st = &self.st;
         c.push_clip(&tl.into());
+        c.draw_list(cache.lanes(stamp, self.repaint, |l| self.record_lanes(l, doc, tl)));
+        let col = if self.recording {
+            st.record
+        } else {
+            st.playhead
+        };
+        let x = self.axis.tick_to_x(self.playhead);
+        if x >= tl.x0 - 1.0 && x <= tl.x1 + 1.0 {
+            let x = x.round() + 0.5;
+            c.stroke_with(
+                vello::kurbo::Line::new(pt(x, tl.y0), pt(x, tl.y1)),
+                1.5,
+                col,
+            );
+        }
+        c.pop_clip();
+    }
+
+    /// Records what the lanes show under the playhead: lane backgrounds, grid, clips, drags and
+    /// ghosts.
+    fn record_lanes(&self, c: &mut dyn Canvas, doc: &RackDoc, tl: Rect) {
+        let st = &self.st;
         for (row, rr) in self.visible_rows() {
             let lr = Rect::new(tl.x0, rr.y0, tl.x1, rr.y1);
             match &row.kind {
@@ -5414,21 +5478,6 @@ impl ArrangementView {
         self.paint_clip_drop_hint(c, doc, tl);
         self.paint_marker_lines(c, tl);
         self.paint_ghosts(c);
-        let col = if self.recording {
-            st.record
-        } else {
-            st.playhead
-        };
-        let x = self.axis.tick_to_x(self.playhead);
-        if x >= tl.x0 - 1.0 && x <= tl.x1 + 1.0 {
-            let x = x.round() + 0.5;
-            c.stroke_with(
-                vello::kurbo::Line::new(pt(x, tl.y0), pt(x, tl.y1)),
-                1.5,
-                col,
-            );
-        }
-        c.pop_clip();
     }
 
     /// The rubber band, and where a copy or a lane change would drop the dragged clips.
