@@ -9,6 +9,20 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Mix channels, parallel channels and sends that follow the bus.** Create > Create Mixer
+  Channel makes a channel with no instrument behind it, wired to the master, whose inputs are
+  its Direct In: cable a track or an effect there. Mixer > Create Parallel Channel adds, for each
+  selected strip, a channel fed from the strip's new parallel output (taken before the fader and the
+  pan), named `P1: name`, played into the same bus as the strip. The name follows the strip's renames,
+  removing the strip removes its copies, and soloing the strip leaves its copy audible. A copy can
+  have copies; a compressed copy blended in matches the strip's own parallel compressor. Mixer >
+  Delete Channel (and Delete in the mixer) removes the selected strips: a strip with no instrument
+  goes with its copies, a strip an instrument feeds goes with the instrument and its track, asking
+  first (choose it again to confirm) when the track holds clips. Mixer > Sends Follow Bus makes the
+  post-fader sends of a strip that plays into a bus follow the bus fader and mute, through nested
+  buses too; pre-fader sends are unchanged. It is on in a new project and off in a project saved
+  before, which bounces exactly as before. The project format is 39: `send_follow` and `parallels`
+  in the console, each written only when set.
 - **Utility devices.** The palette gains eight small devices. Gain Tool (gain, balance, width and
   mute, with an aux input to add or cross-fade in and CV on gain and balance), Stereo Tool
   (polarity, width with a bass bypass, balance, mono and mid/side encode and decode), Gate (a
