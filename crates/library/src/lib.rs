@@ -38,6 +38,6 @@ pub use item::{
 };
 pub use path_key::PathKey;
 pub use query::Query;
-pub use row::{AudioFormat, AudioInfo, FileKind, FileRow, classify};
+pub use row::{AudioFormat, AudioInfo, FileKind, FileRow, MIDI_EXTENSIONS, classify};
 pub use sort::{SortKey, natural_cmp, sort_rows};
 pub use tag::{MAX_TAG_CHARS, Tag, TagError};

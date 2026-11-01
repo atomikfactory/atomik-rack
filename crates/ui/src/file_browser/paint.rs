@@ -690,18 +690,24 @@ impl FileBrowserView {
             );
             return;
         }
+        let midi = r.kind == FileKind::Midi;
         let secs = r.info.as_ref().and_then(|i| i.duration_secs());
         let known = secs.is_some();
         c.text(
             &TextRun::new(
-                lay::format_duration(secs),
+                // A MIDI file has no audio header: its own label stands where the length is.
+                if midi {
+                    "MIDI".to_string()
+                } else {
+                    lay::format_duration(secs)
+                },
                 pt(cols.duration.1, baseline(rect, SMALL_FONT)),
                 SMALL_FONT,
                 if known { t.text } else { t.text_muted },
             )
             .align(Align::End),
         );
-        if let Some(rate) = cols.rate {
+        if let Some(rate) = cols.rate.filter(|_| !midi) {
             let text = r.info.as_ref().map_or_else(
                 || "\u{2014}".to_string(),
                 |i| lay::format_rate(i.sample_rate),
