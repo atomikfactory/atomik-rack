@@ -9,6 +9,13 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **MIDI files in the browser.** The file browser now lists `.mid` and `.midi` files (with a MIDI
+  label, and `kind:midi` in the search field). Double-click or Enter, or Import in the row menu,
+  imports one as File > Import MIDI does. Drag one from the browser or the system onto the
+  arrangement: on a note lane it becomes one clip on that lane at the snapped drop position (a
+  file with several tracks is merged into the one clip), below the tracks or on another kind of
+  lane it makes new tracks from the drop position. Dropped anywhere else it still makes new
+  tracks at the playhead.
 - **Spectrum EQ window.** View > Spectrum EQ (F2) opens a floating, resizable window with a
   real-time analyser of the selected mixer strip, measured after its EQ and before its fader, and
   the strip's filters and EQ drawn as a response curve. Drag the HF, HMF, LMF and LF points (Shift
