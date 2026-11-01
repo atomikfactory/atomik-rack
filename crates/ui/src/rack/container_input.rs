@@ -399,6 +399,21 @@ impl RackView {
                 device: k(device),
                 at_key,
             },
+            UiAction::SampleInto { device, at_key } => UiAction::SampleInto {
+                device: k(device),
+                at_key,
+            },
+            UiAction::EditSample {
+                device,
+                zone,
+                all_uses,
+                edit,
+            } => UiAction::EditSample {
+                device: k(device),
+                zone,
+                all_uses,
+                edit,
+            },
             UiAction::OpenSampleEditor(d) => UiAction::OpenSampleEditor(k(d)),
             UiAction::OpenSliceEditor(d) => UiAction::OpenSliceEditor(k(d)),
             UiAction::OpenStepEditor { device, clip } => UiAction::OpenStepEditor {

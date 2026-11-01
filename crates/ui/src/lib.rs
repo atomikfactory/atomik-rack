@@ -381,7 +381,8 @@ pub mod widget;
 pub mod zone_edit;
 
 pub use action::{
-    BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SliceMode, TransportAction, UiAction,
+    BrowseAction, ContextTarget, ImportTarget, PatchOp, Place, SampleOp, SliceMode,
+    TransportAction, UiAction,
 };
 pub use arrangement::{
     ArrangementView, AudioHandle, ClipField, CornerButton, HEIGHT_LARGE, HEIGHT_SMALL,

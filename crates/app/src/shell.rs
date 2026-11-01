@@ -3329,6 +3329,11 @@ impl<B: AudioBackend> Shell<B> {
                 self.forward(Pane::Transport, &text_form(event));
                 return Vec::new();
             }
+            // Esc throws a running sampling away.
+            if *pressed && *key == Key::Escape && self.core.sampling_device().is_some() {
+                self.core.cancel_sampling();
+                return Vec::new();
+            }
             if *pressed && self.patch_browse_key(key) {
                 return Vec::new();
             }

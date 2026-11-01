@@ -266,6 +266,8 @@ pub struct AppCore<S: EngineSink> {
     analysers: analysers::Analysers,
     /// The audio track tuners that show and what the engine was told about them.
     tuners: tuner::Tuners,
+    /// The SAMPLE button's recording and input choice.
+    sampling: sampling::Sampling,
     /// The pattern clipboard both sequencer views last agreed on.
     pattern_clip_seen: Option<atomik_model::PatternDoc>,
     transport_bar: TransportBar,
@@ -486,6 +488,7 @@ impl<S: EngineSink> AppCore<S> {
             vca_sent: BTreeMap::new(),
             analysers: analysers::Analysers::default(),
             tuners: tuner::Tuners::default(),
+            sampling: sampling::Sampling::default(),
             pattern_clip_seen: None,
             transport_bar: TransportBar::new(theme.clone()),
             console: ConsoleView::new(theme.clone()),
@@ -821,6 +824,14 @@ impl<S: EngineSink> AppCore<S> {
             UiAction::ClosePianoRoll => self.close_piano_roll(),
             UiAction::OpenSampleEditor(key) => self.open_sample_editor(key),
             UiAction::SetTuner { device, on } => self.set_tuner(device, on),
+            UiAction::SampleInto { device, at_key } => self.sample_into(device, at_key),
+            UiAction::CycleSamplingInput => self.cycle_sampling_input(),
+            UiAction::EditSample {
+                device,
+                zone,
+                all_uses,
+                edit,
+            } => self.edit_sample(&device, zone, all_uses, edit),
             UiAction::CloseSampleEditor => self.close_sample_editor(),
             UiAction::OpenStepEditor { device, clip } => self.open_step_editor(device, clip),
             UiAction::CloseStepEditor => self.close_step_editor(),
@@ -1326,6 +1337,7 @@ impl<S: EngineSink> AppCore<S> {
         }
         self.cancel_automation_take();
         self.cancel_audio_recording();
+        self.cancel_sampling();
         self.playing = false;
         self.pending_play = None;
         self.pending_pre_roll = None;
@@ -1390,6 +1402,7 @@ impl<S: EngineSink> AppCore<S> {
         self.sink.collect_garbage();
         self.plugins_frame();
         self.poll_background();
+        self.feed_sampling();
         // A device latency changed (e.g. a channel's `latency.adjust`): recompile with it.
         if self.sink.latency_epoch() != self.latency_epoch {
             self.submit_routing();
@@ -3072,6 +3085,13 @@ mod players;
 mod analysers;
 pub use analysers::{MeterReadout, PHASE_VALUE_NAMES};
 
+#[path = "app_core_sample_edit.rs"]
+mod sample_edit;
+
+#[path = "app_core_sampling.rs"]
+mod sampling;
+pub use sampling::{SAMPLE_SECONDS, SamplingInput, TRIGGER_DB, sampling_inputs};
+
 #[path = "app_core_tuner.rs"]
 mod tuner;
 
@@ -3193,6 +3213,14 @@ mod rec_audio_tests;
 #[cfg(test)]
 #[path = "app_core_rate_tests.rs"]
 mod rate_tests;
+
+#[cfg(test)]
+#[path = "app_core_sample_edit_tests.rs"]
+mod sample_edit_tests;
+
+#[cfg(test)]
+#[path = "app_core_sampling_tests.rs"]
+mod sampling_tests;
 
 #[cfg(test)]
 #[path = "app_core_tuner_tests.rs"]

@@ -142,6 +142,13 @@ pub(crate) enum Msg {
         job: u64,
         result: Result<Vec<u64>, String>,
     },
+    /// An offline edit of a sample made a new asset (or failed): see the sample edit section of
+    /// [`crate::AppCore`].
+    Edited {
+        generation: u64,
+        job: u64,
+        result: Result<Box<Loaded>, String>,
+    },
     /// An audio take was written and stored (or failed): see [`crate::audio_writer`].
     Recorded {
         generation: u64,
@@ -612,6 +619,63 @@ pub(crate) fn spawn_sample_load(
             }
         })
         .map(|_| ())
+}
+
+/// Starts the worker `atomik-sample-edit`: reads asset `hash` of `bundle`, applies `edit` with
+/// the pure functions of `atomik_audio_file::edit`, stores the result as a new asset named `name`
+/// (hashed, with its peaks) and answers with [`Msg::Edited`]. The audio stays in RAM: samplers
+/// play from RAM.
+pub(crate) fn spawn_sample_edit(
+    tx: Sender<Msg>,
+    generation: u64,
+    job: u64,
+    mut bundle: Bundle,
+    hash: String,
+    edit: atomik_ui::SampleOp,
+    name: String,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("atomik-sample-edit".into())
+        .spawn(move || {
+            let _done = DoneGuard(tx.clone(), Some(Msg::LoadDone));
+            let result = edit_asset(&mut bundle, &hash, edit, &name).map(Box::new);
+            let _ = tx.send(Msg::Edited {
+                generation,
+                job,
+                result,
+            });
+        })
+        .map(|_| ())
+}
+
+fn edit_asset(
+    bundle: &mut Bundle,
+    hash: &str,
+    edit: atomik_ui::SampleOp,
+    name: &str,
+) -> Result<Loaded, String> {
+    use atomik_audio_file::{FadeShape, crop, fade_in, fade_out, normalise, reverse};
+    use atomik_ui::SampleOp;
+    let data = bundle.load(hash).map_err(|e| e.to_string())?;
+    let edited = match edit {
+        SampleOp::Crop { from, to } => crop(&data, from, to),
+        SampleOp::Normalise { from, to } => normalise(&data, from, to, 0.0),
+        SampleOp::Reverse { from, to } => reverse(&data, from, to),
+        SampleOp::FadeIn { from, to } => fade_in(&data, from, to, FadeShape::Linear),
+        SampleOp::FadeOut { from, to } => fade_out(&data, from, to, FadeShape::Linear),
+    }
+    .map_err(|e| e.to_string())?;
+    let info = bundle
+        .add_recording(&edited, name)
+        .map_err(|e| e.to_string())?;
+    let peaks = Arc::new(bundle.load_peaks(&info.hash).map_err(|e| e.to_string())?);
+    Ok(Loaded {
+        hash: info.hash.clone(),
+        info: Some(info),
+        asset: SongAsset::memory(Arc::from(edited.channels)),
+        peaks,
+        meta: Default::default(),
+    })
 }
 
 #[cfg(test)]
