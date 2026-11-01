@@ -15,7 +15,7 @@ use crate::decode::decode_file_with;
 use crate::error::{AudioFileError, Result};
 use crate::hash::content_hash;
 use crate::peaks::PeakPyramid;
-use crate::resample::resample;
+use crate::resample::resample_owned;
 use crate::wav::{WavStreamReader, read_wav_f32, write_wav_f32};
 
 const AUDIO_DIR: &str = "Audio";
@@ -186,13 +186,14 @@ impl Bundle {
     /// infinite samples are stored as silence (counted in [`AssetInfo::replaced_samples`]).
     pub fn import(&mut self, src: &Path, session_rate: u32) -> Result<AssetInfo> {
         let decoded = decode_file_with(src, crate::DEFAULT_MAX_SAMPLES)?;
-        let data = resample(&decoded.audio, session_rate)?;
+        let replaced = decoded.replaced;
+        let data = resample_owned(decoded.audio, session_rate)?;
         let name = src.file_name().map_or_else(
             || src.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
         let mut info = self.store(&data, &name)?;
-        info.replaced_samples = decoded.replaced;
+        info.replaced_samples = replaced;
         Ok(info)
     }
 
@@ -207,7 +208,7 @@ impl Bundle {
     /// info.
     pub fn convert_rate(&mut self, hash: &str, rate: u32, name: &str) -> Result<AssetInfo> {
         let data = self.load(hash)?;
-        let converted = resample(&data, rate)?;
+        let converted = resample_owned(data, rate)?;
         self.store(&converted, name)
     }
 

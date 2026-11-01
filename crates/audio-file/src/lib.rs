@@ -24,11 +24,12 @@ pub use bundle::{AssetInfo, Bundle, is_valid_hash, save_text_atomic};
 pub use data::AudioData;
 pub use decode::{
     DEFAULT_MAX_SAMPLES, Decoded, decode_bytes, decode_bytes_with, decode_file, decode_file_with,
+    decode_vec_with,
 };
 pub use error::{AudioFileError, Result};
 pub use hash::content_hash;
 pub use meta::{FileMeta, parse_meta, read_file_meta};
 pub use peaks::{FINEST_PEAK_FRAMES, PEAK_LEVELS, PeakPyramid, Peaks, compute_peaks, raw_min_max};
-pub use resample::resample;
+pub use resample::{resample, resample_owned};
 pub use stream_decode::{StreamDecoder, probe_file};
 pub use wav::{WavStreamReader, read_wav_f32, read_wav_f32_limited, write_wav_f32};

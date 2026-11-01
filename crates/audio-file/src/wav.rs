@@ -1,7 +1,7 @@
 //! 32-bit float WAV I/O and the seekable streaming reader.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::data::AudioData;
@@ -26,6 +26,47 @@ pub fn write_wav_f32(path: &Path, data: &AudioData) -> Result<()> {
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
+    let frames = data.frames();
+    let nch = data.channels.len();
+    let data_bytes = frames as u64 * nch as u64 * 4;
+    // The header comes from hound (an empty file), so its bytes are the ones hound would write;
+    // the two size fields are patched here. Data that does not fit a 32-bit size keeps the
+    // sample-at-a-time path and its error.
+    let mut head = std::io::Cursor::new(Vec::new());
+    hound::WavWriter::new(&mut head, spec)
+        .and_then(hound::WavWriter::finalize)
+        .map_err(map_hound)?;
+    let mut head = head.into_inner();
+    let head_len = head.len();
+    if head_len < 8 || data_bytes + head_len as u64 - 8 > u64::from(u32::MAX) {
+        return write_wav_f32_slow(path, data, spec);
+    }
+    head[4..8].copy_from_slice(&((head_len as u64 - 8 + data_bytes) as u32).to_le_bytes());
+    head[head_len - 4..].copy_from_slice(&(data_bytes as u32).to_le_bytes());
+    let mut file = File::create(path)?;
+    file.write_all(&head)?;
+    let mut block = vec![0u8; 4 * nch * WRITE_FRAMES.min(frames.max(1))];
+    let mut at = 0;
+    while at < frames {
+        let take = (frames - at).min(WRITE_FRAMES);
+        let bytes = &mut block[..take * nch * 4];
+        for (c, ch) in data.channels.iter().enumerate() {
+            for (i, s) in ch[at..at + take].iter().enumerate() {
+                let o = (i * nch + c) * 4;
+                bytes[o..o + 4].copy_from_slice(&s.to_le_bytes());
+            }
+        }
+        file.write_all(bytes)?;
+        at += take;
+    }
+    file.flush()?;
+    Ok(())
+}
+
+/// Frames converted per write: 64 KiB of stereo.
+const WRITE_FRAMES: usize = 8192;
+
+fn write_wav_f32_slow(path: &Path, data: &AudioData, spec: hound::WavSpec) -> Result<()> {
     let mut w = hound::WavWriter::create(path, spec).map_err(map_hound)?;
     for i in 0..data.frames() {
         for ch in &data.channels {
@@ -73,9 +114,10 @@ pub fn read_wav_f32_limited(path: &Path, max_samples: u64) -> Result<Decoded> {
     }
     match (spec.sample_format, spec.bits_per_sample) {
         (hound::SampleFormat::Float, 32) => {
-            for (i, s) in r.samples::<f32>().enumerate() {
-                channels[i % nch].push(s.map_err(map_hound)?);
-            }
+            // The reader sits at the first sample: take the raw interleaved bytes in blocks.
+            let claimed = r.len() as usize;
+            let mut src = r.into_inner();
+            read_interleaved_f32(&mut src, claimed, &mut channels)?;
         }
         (hound::SampleFormat::Int, bits @ 8..=32) => {
             let scale = 2f64.powi(i32::from(bits) - 1);
@@ -93,6 +135,45 @@ pub fn read_wav_f32_limited(path: &Path, max_samples: u64) -> Result<Decoded> {
     let (audio, replaced) = AudioData::new_counted(spec.sample_rate, channels)?;
     Ok(Decoded { audio, replaced })
 }
+
+/// Reads `samples` interleaved little-endian `f32` from `src` into `channels` (the sample at
+/// index `i` goes to channel `i % channels.len()`), 64 KiB at a time. A source that ends early
+/// is an I/O error, as it is for the sample-at-a-time reader.
+fn read_interleaved_f32(
+    src: &mut impl Read,
+    samples: usize,
+    channels: &mut [Vec<f32>],
+) -> Result<()> {
+    let nch = channels.len();
+    let frames = samples / nch;
+    let mut block = vec![0u8; 4 * nch * READ_FRAMES.min(frames.max(1))];
+    let mut done = 0;
+    while done < frames {
+        let take = (frames - done).min(READ_FRAMES);
+        let bytes = &mut block[..take * nch * 4];
+        src.read_exact(bytes)?;
+        let (raw, _) = bytes.as_chunks::<4>();
+        for (c, ch) in channels.iter_mut().enumerate() {
+            ch.extend(
+                raw.iter()
+                    .skip(c)
+                    .step_by(nch)
+                    .map(|b| f32::from_le_bytes(*b)),
+            );
+        }
+        done += take;
+    }
+    // A trailing partial frame: the channels end up of unequal length and the caller reports it.
+    for ch in channels.iter_mut().take(samples % nch) {
+        let mut b = [0u8; 4];
+        src.read_exact(&mut b)?;
+        ch.push(f32::from_le_bytes(b));
+    }
+    Ok(())
+}
+
+/// Frames converted per block when reading: 64 KiB of stereo.
+const READ_FRAMES: usize = 8192;
 
 /// Frames read from the file per system call by [`WavStreamReader`].
 const STREAM_CHUNK_FRAMES: usize = 4096;
@@ -223,8 +304,13 @@ pub struct WavStreamReader {
     data_start: u64,
     /// The frame the file position is at, when known (the next sequential read needs no seek).
     position: Option<u64>,
-    /// Bytes read from the file before they are split into channels.
+    /// Bytes read from the file before they are split into channels: a read-ahead block that
+    /// holds the frames `ahead_start..ahead_start + ahead_frames`.
     scratch: Vec<u8>,
+    ahead_start: u64,
+    ahead_frames: usize,
+    /// Read system calls made.
+    reads: u64,
 }
 
 impl std::fmt::Debug for WavStreamReader {
@@ -250,6 +336,9 @@ impl WavStreamReader {
             data_start: layout.data_start,
             position: None,
             scratch: vec![0; 4 * layout.channels * STREAM_CHUNK_FRAMES],
+            ahead_start: 0,
+            ahead_frames: 0,
+            reads: 0,
         })
     }
 
@@ -266,6 +355,42 @@ impl WavStreamReader {
     /// Total frames in the file.
     pub fn frames(&self) -> u64 {
         self.frames
+    }
+
+    /// Number of read system calls made so far (diagnostics: sequential playback in chunks
+    /// smaller than the read-ahead block costs one call per block, not one per chunk).
+    pub fn read_calls(&self) -> u64 {
+        self.reads
+    }
+
+    /// Reads the block of frames starting at `frame` into `scratch` (the read-ahead). Seeks only
+    /// when the file cursor is elsewhere. Never allocates.
+    fn fill(&mut self, frame: u64) -> Result<()> {
+        // Nothing is buffered, and the cursor is unknown, until the read succeeds.
+        self.ahead_frames = 0;
+        let want = usize::try_from(self.frames - frame)
+            .unwrap_or(usize::MAX)
+            .min(STREAM_CHUNK_FRAMES);
+        if self.position != Some(frame) {
+            self.position = None;
+            self.file.seek(SeekFrom::Start(
+                self.data_start + frame * 4 * self.channels as u64,
+            ))?;
+        }
+        self.position = None;
+        let bytes = &mut self.scratch[..want * 4 * self.channels];
+        self.reads += 1;
+        self.file.read_exact(bytes).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                AudioFileError::Decode("WAV data truncated".into())
+            } else {
+                AudioFileError::Io(e)
+            }
+        })?;
+        self.ahead_start = frame;
+        self.ahead_frames = want;
+        self.position = Some(frame + want as u64);
+        Ok(())
     }
 
     /// Reads frames starting at `start_frame` into `out` (one `Vec` per channel).
@@ -291,26 +416,19 @@ impl WavStreamReader {
         let avail = self.frames.saturating_sub(start_frame);
         let n = want.min(usize::try_from(avail).unwrap_or(usize::MAX));
         if n > 0 {
-            let frame_bytes = 4 * self.channels as u64;
-            if self.position != Some(start_frame) {
-                // The cursor is unknown from here until the read succeeds.
-                self.position = None;
-                self.file
-                    .seek(SeekFrom::Start(self.data_start + start_frame * frame_bytes))?;
-            }
-            self.position = None;
+            let frame_bytes = 4 * self.channels;
             let mut done = 0;
             while done < n {
-                let take = (n - done).min(STREAM_CHUNK_FRAMES);
-                let bytes = &mut self.scratch[..take * 4 * self.channels];
-                self.file.read_exact(bytes).map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                        AudioFileError::Decode("WAV data truncated".into())
-                    } else {
-                        AudioFileError::Io(e)
-                    }
-                })?;
-                for (i, frame) in bytes.chunks_exact(4 * self.channels).enumerate() {
+                let frame = start_frame + done as u64;
+                let in_ahead = frame >= self.ahead_start
+                    && frame < self.ahead_start + self.ahead_frames as u64;
+                if !in_ahead {
+                    self.fill(frame)?;
+                }
+                let first = (frame - self.ahead_start) as usize;
+                let take = (n - done).min(self.ahead_frames - first);
+                let bytes = &self.scratch[first * frame_bytes..(first + take) * frame_bytes];
+                for (i, frame) in bytes.chunks_exact(frame_bytes).enumerate() {
                     let (samples, _) = frame.as_chunks::<4>();
                     for (ch, raw) in out.iter_mut().zip(samples) {
                         let s = f32::from_le_bytes(*raw);
@@ -319,7 +437,6 @@ impl WavStreamReader {
                 }
                 done += take;
             }
-            self.position = Some(start_frame + n as u64);
         }
         for ch in out.iter_mut() {
             ch[n..].fill(0.0);

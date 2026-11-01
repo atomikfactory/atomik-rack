@@ -58,7 +58,20 @@ impl AudioData {
 
     /// Checks the invariants of a value built through the public fields.
     pub fn validate(&self) -> Result<()> {
-        Self::new(self.sample_rate, self.channels.clone()).map(|_| ())
+        // By inspection: the same checks as `new_counted`, without copying the buffer.
+        if self.sample_rate == 0 {
+            return Err(AudioFileError::InvalidData("sample rate is zero".into()));
+        }
+        let Some(first) = self.channels.first() else {
+            return Err(AudioFileError::InvalidData("no channels".into()));
+        };
+        if u16::try_from(self.channels.len()).is_err() {
+            return Err(AudioFileError::InvalidData("too many channels".into()));
+        }
+        if self.channels.iter().any(|c| c.len() != first.len()) {
+            return Err(AudioFileError::InvalidData("channel lengths differ".into()));
+        }
+        Ok(())
     }
 }
 
