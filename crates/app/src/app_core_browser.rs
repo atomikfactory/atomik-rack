@@ -845,10 +845,16 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     fn hand_over_snapshot(&mut self) {
-        let json = self.browser.db.to_json();
         self.browser.dirty = false;
-        if let Some(saver) = self.browser.saver() {
-            saver.save(json);
+        // An encoding failure must never reach the file: an empty snapshot would erase the
+        // library. The file on disk stays as it was and the user is told.
+        match self.browser.db.to_json() {
+            Ok(json) => {
+                if let Some(saver) = self.browser.saver() {
+                    saver.save(json);
+                }
+            }
+            Err(e) => self.report(format!("the library file was not saved: {e}")),
         }
     }
 

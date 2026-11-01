@@ -177,6 +177,8 @@ fn library_list(server: &mut Server, args: &Args) -> Result<ToolOutput, String> 
                 item: Some(ItemInfo::default()),
                 favorite: false,
                 tags: Vec::new(),
+                author: String::new(),
+                categories: Vec::new(),
             };
             if !query.matches(&row) {
                 continue;

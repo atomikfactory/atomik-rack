@@ -27,6 +27,8 @@ fn row(name: &str, kind: FileKind, tags: &[&str], favorite: bool, info: bool) ->
         item: None,
         favorite,
         tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 

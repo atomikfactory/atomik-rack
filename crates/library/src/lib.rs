@@ -12,8 +12,10 @@
 //!   sections, virtual device paths and file naming.
 //! - [`PathKey`]: the normalised path used as the database key (lexical, never touches disk).
 //! - [`Tag`]: a validated, case-insensitive tag name.
-//! - [`LibraryDb`]: favourites, tags and bookmarked places, saved as deterministic JSON.
-//! - [`Query`]: the search field language (`words`, `#tag`, `fav`), allocation-free per row.
+//! - [`LibraryDb`]: favourites, tags, authors, categories, named favourite lists and bookmarked
+//!   places, saved as deterministic JSON (version 2; version 1 files migrate on load).
+//! - [`Query`]: the search field language (`words`, `#tag`, `fav`, `kind:`, `cat:`, `author:`,
+//!   `in:`), allocation-free per row.
 //! - [`natural_cmp`] / [`sort_rows`]: natural, total, deterministic ordering of rows.
 //!
 //! Collections are ordered (`BTreeMap`), so output never depends on hash order.
@@ -29,7 +31,7 @@ mod row;
 mod sort;
 mod tag;
 
-pub use db::{LIBRARY_VERSION, LibraryDb, LibraryError, Mark};
+pub use db::{LIBRARY_VERSION, LibraryDb, LibraryError, MAX_AUTHOR_CHARS, Mark, NamedList};
 pub use item::{
     CLIP_EXT, CONTAINER_EXT, DEVICE_URI_PREFIX, ItemInfo, LibrarySection, PATCH_EXT, PROJECT_EXT,
     device_type_of, device_uri, unique_name,

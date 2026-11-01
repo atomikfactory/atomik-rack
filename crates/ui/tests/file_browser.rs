@@ -52,6 +52,8 @@ fn audio(name: &str) -> FileRow {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -65,6 +67,8 @@ fn folder(name: &str) -> FileRow {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -1376,6 +1380,8 @@ fn device_row(type_id: &str, name: &str, category: &str) -> FileRow {
         }),
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     }
 }
 
@@ -1915,6 +1921,8 @@ fn take_info_requests_polls_visible_rows_without_an_event() {
         item: None,
         favorite: false,
         tags: Vec::new(),
+        author: String::new(),
+        categories: Vec::new(),
     };
     v.set_rows(vec![row]);
     assert_eq!(

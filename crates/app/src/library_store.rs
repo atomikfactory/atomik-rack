@@ -49,6 +49,8 @@ pub fn load(path: &Path) -> Loaded {
             moved_to: quarantine(path),
             detail,
         },
+        // Reading never encodes; if it ever did, the file is left alone.
+        Err(e @ LibraryError::Encode(_)) => Loaded::Unreadable(e.to_string()),
     }
 }
 
@@ -200,7 +202,7 @@ mod tests {
         let mut saver = LibrarySaver::spawn(file.clone());
         let mut db = LibraryDb::new();
         db.add_place(Path::new("/music"));
-        saver.save(db.to_json());
+        saver.save(db.to_json().unwrap());
         saver.wait_idle();
         assert!(!saver.in_flight());
         assert_eq!(saver.writes(), 1);
