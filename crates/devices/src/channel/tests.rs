@@ -141,6 +141,11 @@ fn descriptor_keys_match_contract_exactly() {
     for k in 1..=8 {
         sockets.push(format!("send{k}_level_cv_in"));
     }
+    sockets.extend([
+        "parallel_out_l".into(),
+        "parallel_out_r".into(),
+        "follow_in".into(),
+    ]);
     let p: Vec<&str> = params.iter().map(String::as_str).collect();
     let s: Vec<&str> = sockets.iter().map(String::as_str).collect();
     crate::test_support::assert_keys(&DESCRIPTOR, &p, &s);
@@ -154,6 +159,7 @@ fn descriptor_socket_kinds_and_directions() {
         let input = s.key.starts_with("in_")
             || s.key == "key_in"
             || s.key.starts_with("insert_return")
+            || s.key == "follow_in"
             || s.key.ends_with("_cv_in");
         let want = if input {
             Direction::Input
@@ -161,7 +167,7 @@ fn descriptor_socket_kinds_and_directions() {
             Direction::Output
         };
         assert_eq!(s.direction, want, "{}", s.key);
-        let kind = if s.key == "gr_cv_out" || s.key.ends_with("_cv_in") {
+        let kind = if s.key == "gr_cv_out" || s.key.ends_with("_cv_in") || s.key == "follow_in" {
             SocketKind::Cv
         } else {
             SocketKind::Audio
@@ -911,6 +917,11 @@ fn stage_table_matches_plan_section_9() {
     for k in 1..=8 {
         stage1.push(format!("send{k}_level_cv_in"));
     }
+    stage1.extend([
+        "parallel_out_l".into(),
+        "parallel_out_r".into(),
+        "follow_in".into(),
+    ]);
     crate::test_support::assert_stages(
         &DESCRIPTOR,
         &[
@@ -1524,4 +1535,83 @@ fn the_parallel_compressor_taps_the_signal_after_the_insert_return() {
         "the return {} is compressed",
         o[0]
     );
+}
+
+#[test]
+fn follow_in_scales_the_post_fader_sends_only() {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.5);
+    dc(&mut h, "follow_in", 0.5);
+    h.set_param("send1.on", 1.0); // post
+    h.set_param("send2.on", 1.0);
+    h.set_param("send2.pre", 1.0);
+    let o = settled(&mut h, &["out_l", "send1_l", "send2_l"]);
+    assert!(approx(o[1], 0.25, 1e-5), "the post send follows: {o:?}");
+    assert!(approx(o[2], 0.5, 1e-5), "the pre send does not: {o:?}");
+    let main = settled(&mut channel_with_input(), &["out_l"]);
+    assert!(
+        approx(o[0], main[0], 0.0),
+        "the main output does not: {o:?}"
+    );
+    // A follow of 0 (a muted bus) silences the post send and nothing else.
+    dc(&mut h, "follow_in", 0.0);
+    let o = settled(&mut h, &["send1_l", "send2_l"]);
+    assert!(o[0].abs() < 1e-9 && approx(o[1], 0.5, 1e-5), "{o:?}");
+}
+
+fn channel_with_input() -> DeviceHarness {
+    let mut h = channel();
+    dc(&mut h, "in_l", 0.5);
+    h
+}
+
+#[test]
+fn an_uncabled_follow_in_changes_nothing_bit_for_bit() {
+    let run = |cable: bool| {
+        let mut h = channel_with_input();
+        if cable {
+            // Cabled at unity: the same value, bit for bit, as the plain strip.
+            dc(&mut h, "follow_in", 1.0);
+        }
+        h.set_param("send1.on", 1.0);
+        h.set_param("send1.level", -6.0);
+        h.set_param("send3.on", 1.0);
+        h.set_param("send3.pre", 1.0);
+        h.render(30, &["out_l", "out_r", "send1_l", "send3_l"])
+            .iter()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect::<Vec<u32>>()
+    };
+    assert_eq!(run(false), run(true));
+}
+
+#[test]
+fn parallel_out_is_the_widened_signal_before_the_fader_and_the_pan() {
+    let mut h = channel_with_input();
+    h.set_connected("parallel_out_l", true);
+    h.set_connected("parallel_out_r", true);
+    h.set_param("fader", 0.2);
+    h.set_param("pan", -1.0);
+    let o = settled(&mut h, &["parallel_out_l", "parallel_out_r", "out_r"]);
+    assert!(approx(o[0], 0.5, 1e-6) && approx(o[1], 0.5, 1e-6), "{o:?}");
+    assert!(o[2].abs() < 1e-6, "the main output is panned away: {o:?}");
+    // Width acts on it; the mute silences it.
+    h.set_param("width", 0.0);
+    dc(&mut h, "in_r", 0.0);
+    let o = settled(&mut h, &["parallel_out_l", "parallel_out_r"]);
+    assert!(
+        approx(o[0], 0.25, 1e-6) && approx(o[1], 0.25, 1e-6),
+        "{o:?}"
+    );
+    h.set_param("mute", 1.0);
+    let o = settled(&mut h, &["parallel_out_l"]);
+    assert!(o[0].abs() < 1e-9, "{o:?}");
+}
+
+#[test]
+fn nothing_is_written_to_the_parallel_out_while_it_is_not_cabled() {
+    let mut h = channel_with_input();
+    let o = settled(&mut h, &["parallel_out_l", "parallel_out_r"]);
+    assert!(o.iter().all(|v| *v == 0.0), "{o:?}");
 }

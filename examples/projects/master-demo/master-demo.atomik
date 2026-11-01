@@ -120,7 +120,8 @@
     "master": "master",
     "returns": ["hall", null, null, null, null, null, null, null],
     "compensation": true,
-    "align_returns": true
+    "align_returns": true,
+    "send_follow": true
   },
   "assets": {},
   "song": {

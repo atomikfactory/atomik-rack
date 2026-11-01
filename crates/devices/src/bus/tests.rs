@@ -76,8 +76,11 @@ fn sockets_are_the_channels_with_a_summing_input_in_place_of_in_l_r() {
         })
         .collect();
     let got: Vec<&str> = DESCRIPTOR.sockets.iter().map(|s| s.key).collect();
+    // `follow_out` comes after the channel's sockets.
+    assert_eq!(got.last(), Some(&"follow_out"));
+    let got = &got[..got.len() - 1];
     assert_eq!(got, want);
-    for s in DESCRIPTOR.sockets {
+    for s in &DESCRIPTOR.sockets[..CHANNEL.sockets.len()] {
         let c = CHANNEL.sockets.iter().find(|c| c.id == s.id).unwrap();
         assert_eq!((s.kind, s.id), (c.kind, c.id), "{}", s.key);
         if s.key.starts_with("bus_") {
@@ -104,18 +107,20 @@ fn params_are_the_channels_exactly_including_internal_ones() {
 }
 
 #[test]
-fn stage_table_is_the_channels_with_the_bus_input_in_stage_0() {
-    for s in DESCRIPTOR.sockets {
-        assert_eq!(
-            DESCRIPTOR.stage_of(s.id),
-            CHANNEL.stage_of(s.id),
-            "{}",
-            s.key
-        );
+fn stage_table_is_the_channels_moved_up_by_one_with_the_follow_gain_in_stage_0() {
+    for s in &DESCRIPTOR.sockets[..CHANNEL.sockets.len()] {
+        let want = if s.key == "follow_in" {
+            0
+        } else {
+            CHANNEL.stage_of(s.id) + 1
+        };
+        assert_eq!(DESCRIPTOR.stage_of(s.id), want, "{}", s.key);
     }
     let id = |k: &str| DESCRIPTOR.socket_by_key(k).unwrap().id;
-    assert_eq!(DESCRIPTOR.stage_of(id("bus_l")), 0);
-    assert_eq!(DESCRIPTOR.stage_of(id("out_l")), 1);
+    assert_eq!(DESCRIPTOR.stage_of(id("follow_out")), 0);
+    assert_eq!(DESCRIPTOR.stage_count(), 3);
+    assert_eq!(DESCRIPTOR.stage_of(id("bus_l")), 1);
+    assert_eq!(DESCRIPTOR.stage_of(id("out_l")), 2);
 }
 
 #[test]
@@ -261,4 +266,123 @@ fn output_does_not_depend_on_the_length_of_the_run() {
     for (l, s) in long.iter().zip(&short) {
         assert_eq!(&l[..s.len()], &s[..]);
     }
+}
+
+/// The last sample of each of `outs` after 20 batches (past the 5 ms ramps).
+fn settled(h: &mut DeviceHarness, outs: &[&str]) -> Vec<f32> {
+    h.render(20, outs)
+        .iter()
+        .map(|o| *o.last().unwrap())
+        .collect()
+}
+
+#[test]
+fn follow_out_is_the_fader_times_the_mute() {
+    let mut h = bus();
+    h.set_connected("follow_out", true);
+    *h.input_mut("bus_l") = [0.5; BATCH];
+    let o = settled(&mut h, &["follow_out"]);
+    assert!((o[0] - atomik_dsp::fader_gain(0.75)).abs() < 1e-6, "{o:?}");
+    h.set_param("fader", 0.4);
+    let o = settled(&mut h, &["follow_out", "out_l"]);
+    let want = atomik_dsp::fader_gain(0.4);
+    assert!((o[0] - want).abs() < 1e-6, "{o:?}");
+    // The audio stage applies the very gain the follow output carried (the pan is the only
+    // other factor on the main output).
+    let pan = std::f32::consts::FRAC_1_SQRT_2;
+    assert!((o[1] - 0.5 * want * pan).abs() < 1e-5, "{o:?}");
+    h.set_param("mute", 1.0);
+    let o = settled(&mut h, &["follow_out"]);
+    assert!(o[0].abs() < 1e-9, "a muted bus follows at 0: {o:?}");
+    h.set_param("mute", 0.0);
+    h.set_param("internal.solo_silence", 1.0);
+    assert!(settled(&mut h, &["follow_out"])[0].abs() < 1e-9);
+}
+
+#[test]
+fn follow_out_is_sample_aligned_with_the_main_output_while_the_fader_ramps() {
+    let mut h = bus();
+    h.set_connected("follow_out", true);
+    h.set_param("pan", -1.0); // the left output carries no pan attenuation
+    *h.input_mut("bus_l") = [1.0; BATCH];
+    h.render(20, &["out_l"]);
+    h.set_param("fader", 0.1);
+    let o = h.render(2, &["follow_out", "out_l"]);
+    for (i, (f, m)) in o[0].iter().zip(&o[1]).enumerate() {
+        assert!((f - m).abs() < 1e-6, "sample {i}: {f} vs {m}");
+    }
+    assert!(o[0].first() != o[0].last(), "the fader really ramped");
+}
+
+#[test]
+fn follow_out_cascades_the_bus_above() {
+    let mut h = bus();
+    h.set_connected("follow_out", true);
+    dc_in(&mut h, "follow_in", 0.5);
+    let o = settled(&mut h, &["follow_out"]);
+    assert!(
+        (o[0] - 0.5 * atomik_dsp::fader_gain(0.75)).abs() < 1e-6,
+        "{o:?}"
+    );
+}
+
+fn dc_in(h: &mut DeviceHarness, key: &str, v: f32) {
+    *h.input_mut(key) = [v; BATCH];
+}
+
+#[test]
+fn the_sends_of_a_bus_follow_the_bus_above_and_nothing_is_written_uncabled() {
+    let mut h = bus();
+    dc_in(&mut h, "bus_l", 0.5);
+    h.set_param("send1.on", 1.0);
+    dc_in(&mut h, "follow_in", 0.25);
+    let o = settled(&mut h, &["send1_l", "follow_out"]);
+    assert!((o[0] - 0.125).abs() < 1e-5, "{o:?}");
+    assert_eq!(o[1], 0.0, "follow_out is not written while uncabled");
+}
+
+#[test]
+fn processing_by_stages_matches_the_one_call() {
+    use atomik_device_sdk::{ProcessContext, SocketKind};
+    // The engine runs stage 0 (follow), 1 (input) and 2 (output) one after the other.
+    let desc = DESCRIPTOR.sockets;
+    let n = desc.len();
+    let mut signals = vec![[0.0f32; BATCH]; n];
+    let mut notes: Vec<_> = (0..n)
+        .map(|_| atomik_core::NoteBuffer::with_capacity(0))
+        .collect();
+    let mut connected = vec![false; n];
+    let id = |k: &str| DESCRIPTOR.socket_by_key(k).unwrap().id.0 as usize;
+    connected[id("bus_l")] = true;
+    connected[id("follow_out")] = true;
+    signals[id("bus_l")] = [0.5; BATCH];
+    assert!(desc.iter().all(|s| s.kind != SocketKind::Notes));
+    let mut d = new();
+    d.prepare(&atomik_device_sdk::PrepareInfo {
+        sample_rate: atomik_core::SampleRate::new(48_000.0).unwrap(),
+        seed: 0,
+    });
+    for _ in 0..20 {
+        for stage in 0..3u8 {
+            let mut ctx = ProcessContext::new(
+                atomik_core::TimeInfo::at(
+                    0,
+                    atomik_core::SampleRate::new(48_000.0).unwrap(),
+                    atomik_core::Tempo::new(120.0).unwrap(),
+                    true,
+                ),
+                &mut signals,
+                &mut notes,
+                &connected,
+            );
+            d.process_stage(stage, &mut ctx);
+        }
+    }
+    let follow = signals[id("follow_out")][BATCH - 1];
+    assert!(
+        (follow - atomik_dsp::fader_gain(0.75)).abs() < 1e-6,
+        "{follow}"
+    );
+    let out = signals[id("out_l")][BATCH - 1];
+    assert!(out > 0.1, "the audio stages ran: {out}");
 }
