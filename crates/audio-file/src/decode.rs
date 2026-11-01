@@ -69,7 +69,17 @@ pub fn decode_bytes_with(
     ext_hint: Option<&str>,
     max_samples: u64,
 ) -> Result<Decoded> {
-    decode_source(Box::new(Cursor::new(bytes.to_vec())), ext_hint, max_samples)
+    decode_vec_with(bytes.to_vec(), ext_hint, max_samples)
+}
+
+/// [`decode_bytes_with`] for a caller that owns the bytes: they are decoded in place, with no
+/// second copy of the file.
+pub fn decode_vec_with(
+    bytes: Vec<u8>,
+    ext_hint: Option<&str>,
+    max_samples: u64,
+) -> Result<Decoded> {
+    decode_source(Box::new(Cursor::new(bytes)), ext_hint, max_samples)
 }
 
 fn decode_source(
@@ -143,6 +153,7 @@ fn decode_inner(
     max_samples: u64,
 ) -> Result<Decoded> {
     precheck_wav(source.as_mut())?;
+    let source_bytes = source.byte_len();
     let mss = MediaSourceStream::new(source, Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = ext {
@@ -200,6 +211,20 @@ fn decode_inner(
         if channels.is_empty() {
             rate = r;
             channels = vec![Vec::new(); n];
+            // The container's frame count sizes the buffers once, so decoding never doubles
+            // them while it grows. The claim is believed only up to what the file's own size
+            // could plausibly hold (a hostile header must not reserve more); beyond that the
+            // buffers grow as usual.
+            if let Some(declared) = declared_frames
+                && let Some(len) = source_bytes
+                && declared.saturating_mul(n as u64) <= max_samples
+                && declared.saturating_mul(n as u64) <= len.saturating_mul(16)
+                && let Ok(declared) = usize::try_from(declared)
+            {
+                for ch in &mut channels {
+                    let _ = ch.try_reserve_exact(declared);
+                }
+            }
         } else if r != rate || n != channels.len() {
             return Err(AudioFileError::InvalidData(
                 "stream changes format mid-way".into(),

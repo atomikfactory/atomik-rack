@@ -697,15 +697,15 @@ pub(crate) fn split_pair(doc: &RackDoc, c: &Clip, at: i64) -> Result<(Clip, Clip
         // The right half starts the frames between the two ticks later in the asset
         // (tempo map and document sample rate), at most at the asset end. No fade is
         // invented at the cut: the left half keeps the fade in, the right the fade out.
-        let delta = song.frame_at(at, doc.sample_rate) - song.frame_at(c.start, doc.sample_rate);
+        let clock = song.frame_clock(doc.sample_rate);
+        let delta = clock.at(at) - clock.at(c.start);
         let asset_frames = doc.assets.get(&a.asset).map_or(u64::MAX, |m| m.frames);
         let mut r = a.clone();
         r.fade_in = 0;
         let left_frames = delta;
         if a.reverse {
             // Backwards, the left half plays the upper part of the span.
-            let right_frames =
-                song.frame_at(c.end(), doc.sample_rate) - song.frame_at(at, doc.sample_rate);
+            let right_frames = clock.at(c.end()) - clock.at(at);
             if let ClipContent::Audio(l) = &mut left.content {
                 l.source_offset = a
                     .source_offset
@@ -776,8 +776,9 @@ fn strip_silence_edit(
         )));
     }
     let sr = doc.sample_rate;
-    let clip_start = song.frame_at(c.start, sr);
-    let clip_frames = song.frame_at(c.end(), sr) - clip_start;
+    let clock = song.frame_clock(sr);
+    let clip_start = clock.at(c.start);
+    let clip_frames = clock.at(c.end()) - clip_start;
     if pieces.is_empty() {
         return Err(bad("strip silence needs at least one piece to keep"));
     }
@@ -825,8 +826,8 @@ fn strip_silence_edit(
     let mut edits = Vec::new();
     let mut last_id = None;
     for (k, &(start, end)) in cuts.iter().enumerate() {
-        let from = song.frame_at(start, sr) - clip_start;
-        let to = song.frame_at(end, sr) - clip_start;
+        let from = clock.at(start) - clip_start;
+        let to = clock.at(end) - clip_start;
         let mut content = a.clone();
         if a.reverse {
             content.source_offset = (a.source_offset + (clip_frames - to)).min(asset_frames);

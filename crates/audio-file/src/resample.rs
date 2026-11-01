@@ -62,15 +62,34 @@ fn alignment(src: u128, dst: u128, rubato_trim: usize) -> (usize, usize) {
 /// Converts `data` to `target_rate`. A no-op copy when the rates are equal. The output has
 /// `round(frames * target / source)` frames and is time-aligned with the input (no delay).
 pub fn resample(data: &AudioData, target_rate: u32) -> Result<AudioData> {
+    check(data, target_rate)?;
+    if data.sample_rate == target_rate {
+        return Ok(data.clone());
+    }
+    convert(data, target_rate)
+}
+
+/// [`resample`] for a caller that is done with its input: when the rates are equal the input
+/// itself is returned, so an import at the session rate never holds a second copy.
+pub fn resample_owned(data: AudioData, target_rate: u32) -> Result<AudioData> {
+    check(&data, target_rate)?;
+    if data.sample_rate == target_rate {
+        return Ok(data);
+    }
+    convert(&data, target_rate)
+}
+
+fn check(data: &AudioData, target_rate: u32) -> Result<()> {
     data.validate()?;
     if target_rate == 0 {
         return Err(AudioFileError::InvalidData(
             "target sample rate is zero".into(),
         ));
     }
-    if data.sample_rate == target_rate {
-        return Ok(data.clone());
-    }
+    Ok(())
+}
+
+fn convert(data: &AudioData, target_rate: u32) -> Result<AudioData> {
     let frames = data.frames();
     let nch = data.channel_count();
     let (src, dst) = (u128::from(data.sample_rate), u128::from(target_rate));

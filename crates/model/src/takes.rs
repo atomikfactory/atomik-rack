@@ -345,6 +345,8 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
     let rate = doc.sample_rate;
     let n = group.comp.len();
     let xin: Vec<i64> = (0..n).map(|i| crossfade_in(group, i)).collect();
+    // Compiled on the first audio segment, once for the whole group.
+    let clock = std::cell::OnceCell::new();
     let mut out = Vec::new();
     for (i, seg) in group.comp.iter().enumerate() {
         let Some(take) = group.takes.get(seg.take) else {
@@ -365,9 +367,10 @@ pub fn comp_clips(doc: &RackDoc, group: &TakeGroup) -> Vec<Clip> {
             ..take.clone()
         };
         if let ClipContent::Audio(src) = &take.content {
-            let delta = song.frame_at(a, rate) - song.frame_at(take.start, rate);
+            let clock = clock.get_or_init(|| song.frame_clock(rate));
+            let delta = clock.at(a) - clock.at(take.start);
             let asset_frames = doc.assets.get(&src.asset).map_or(u64::MAX, |m| m.frames);
-            let frames = song.frame_at(b, rate) - song.frame_at(a, rate);
+            let frames = clock.at(b) - clock.at(a);
             let (cut_in, cut_out) = (a > take.start, b < take.end());
             let cap = (frames / 2).max(1);
             let (source_offset, markers) =

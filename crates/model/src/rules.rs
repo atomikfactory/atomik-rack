@@ -215,6 +215,105 @@ pub(crate) fn check_cable(
     Ok(())
 }
 
+/// Whether `cables` can all be added, in any order, to the (so far cable-less) top-level rack of
+/// `doc`: the rules of [`check_cable`] judged once over the whole set with indexes, instead of
+/// once per cable against all the cables before it. The loader uses it to take a file of
+/// thousands of cables in linear time.
+///
+/// A `true` means every cable passes [`check_cable`] whatever its position in the list (a
+/// violation needs two cables, or a loop, so it shows in the whole set whenever it would show in
+/// a prefix). A `false` only says "check them one by one": it also answers for anything this
+/// pass does not model (a container, an unknown device or socket, a duplicate key).
+pub(crate) fn cables_fit(doc: &RackDoc, registry: &Registry, cables: &[Cable]) -> bool {
+    if doc.has_containers() || !doc.cables.is_empty() {
+        return false;
+    }
+    // Stage nodes: device `i` owns `first[i] .. first[i] + stages[i]`.
+    let mut index: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut descs: Vec<&DeviceDescriptor> = Vec::with_capacity(doc.devices.len());
+    let mut first: Vec<usize> = Vec::with_capacity(doc.devices.len() + 1);
+    let mut nodes = 0usize;
+    for (i, d) in doc.devices.iter().enumerate() {
+        let Ok(desc) = descriptor(registry, &d.type_id) else {
+            return false;
+        };
+        if index.insert(d.key.0.as_str(), i).is_some() {
+            return false;
+        }
+        descs.push(desc);
+        first.push(nodes);
+        nodes += usize::from(desc.stage_count());
+    }
+    first.push(nodes);
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); nodes];
+    for span in first.windows(2) {
+        // Stage `s` of a device feeds its stage `s + 1`.
+        for (n, out) in edges[span[0]..span[1]].iter_mut().enumerate() {
+            if span[0] + n + 1 < span[1] {
+                out.push(span[0] + n + 1);
+            }
+        }
+    }
+    let mut plain_inputs: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut summed: BTreeSet<(&str, &str, &str, &str)> = BTreeSet::new();
+    for cable in cables {
+        let (Ok(from), Ok(to)) = (
+            socket(doc, registry, &cable.from),
+            socket(doc, registry, &cable.to),
+        ) else {
+            return false;
+        };
+        if check_endpoints(from, to, cable, &[]).is_err() {
+            return false;
+        }
+        let to_key = (cable.to.device.0.as_str(), cable.to.socket.as_str());
+        if to.1 == Direction::Input && !plain_inputs.insert(to_key) {
+            return false;
+        }
+        if to.1 == Direction::SummingInput
+            && !summed.insert((
+                cable.from.device.0.as_str(),
+                cable.from.socket.as_str(),
+                to_key.0,
+                to_key.1,
+            ))
+        {
+            return false;
+        }
+        if cable.from.device.0 == INTERFACE_KEY || cable.to.device.0 == INTERFACE_KEY {
+            continue; // the interface is a pure sink: no loop runs through it
+        }
+        let node = |at: &SocketRef| -> Option<usize> {
+            let i = *index.get(at.device.0.as_str())?;
+            let s = descs[i].socket_by_key(&at.socket)?;
+            Some(first[i] + usize::from(descs[i].stage_of(s.id)))
+        };
+        let (Some(a), Some(b)) = (node(&cable.from), node(&cable.to)) else {
+            return false;
+        };
+        edges[a].push(b);
+    }
+    // Kahn: every node leaves the queue unless a loop holds it back.
+    let mut indegree = vec![0u32; nodes];
+    for list in &edges {
+        for &n in list {
+            indegree[n] += 1;
+        }
+    }
+    let mut ready: Vec<usize> = (0..nodes).filter(|&n| indegree[n] == 0).collect();
+    let mut done = 0;
+    while let Some(n) = ready.pop() {
+        done += 1;
+        for &next in &edges[n] {
+            indegree[next] -= 1;
+            if indegree[next] == 0 {
+                ready.push(next);
+            }
+        }
+    }
+    done == nodes
+}
+
 impl RackDoc {
     /// Whether `cable` could be added to the top-level rack: the same rules `Command::Connect`
     /// applies (kinds, directions, no cycle), judged without changing anything. With

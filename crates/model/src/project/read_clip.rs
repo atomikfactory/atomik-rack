@@ -152,35 +152,20 @@ pub(super) fn load_clip(
             // `None`: a dead plugin param, whose values are kept as they are.
             let pd = desc.param_by_key(param);
             let mut points: Vec<AutomationPoint> = Vec::with_capacity(items.len());
+            let lazy = JsonPath::lazy();
             for (i, item) in items.iter().enumerate() {
-                let p = content_path.index(i);
-                let a = tuple(item, &p, 3, "a point [tick, value, curve]")?;
-                let t = tick(&a[0], &p.index(0))?;
-                let value = number(&a[1], &p.index(1))? as f32;
-                let value = match pd {
-                    Some(pd) => pd.clamp(value),
-                    None if value.is_finite() => value,
-                    None => return Err(p.index(1).error(format!("{value} is out of range"))),
-                };
-                let curve = match string(&a[2], &p.index(2))? {
-                    "linear" => Curve::Linear,
-                    "step" => Curve::Step,
-                    other => {
-                        return Err(p
-                            .index(2)
-                            .error(format!("expected \"linear\" or \"step\", found {other:?}")));
-                    }
+                let point = match read_point(item, &lazy, pd) {
+                    Ok(point) => point,
+                    Err(_) => read_point(item, &content_path.index(i), pd)?,
                 };
                 if let Some(prev) = points.last()
-                    && prev.tick >= t
+                    && prev.tick >= point.tick
                 {
-                    return Err(p.error("points must be sorted by tick without duplicates"));
+                    return Err(content_path
+                        .index(i)
+                        .error("points must be sorted by tick without duplicates"));
                 }
-                points.push(AutomationPoint {
-                    tick: t,
-                    value,
-                    curve,
-                });
+                points.push(point);
             }
             ClipContent::Automation(points)
         }
@@ -210,6 +195,33 @@ pub(super) fn load_clip(
     })
 }
 
+/// One point of an automation clip, checked on its own. `pd` is the automated param, `None` for a
+/// dead plugin param whose values are kept as they are.
+fn read_point(
+    item: &Value,
+    p: &JsonPath,
+    pd: Option<&atomik_core::ParamDescriptor>,
+) -> Result<AutomationPoint, ModelError> {
+    let a = tuple(item, p, 3, "a point [tick, value, curve]")?;
+    let tick = tick(&a[0], &p.index(0))?;
+    let value = number(&a[1], &p.index(1))? as f32;
+    let value = match pd {
+        Some(pd) => pd.clamp(value),
+        None if value.is_finite() => value,
+        None => return Err(p.index(1).error(format!("{value} is out of range"))),
+    };
+    let curve = match string(&a[2], &p.index(2))? {
+        "linear" => Curve::Linear,
+        "step" => Curve::Step,
+        other => {
+            return Err(p
+                .index(2)
+                .error(format!("expected \"linear\" or \"step\", found {other:?}")));
+        }
+    };
+    Ok(AutomationPoint { tick, value, curve })
+}
+
 /// A clip's `"length"`, optional `"offset"` and optional `"loop_length"` (`null` is none), with
 /// the repetition limit of a looped clip. Shared by the project and clip file loaders.
 pub(crate) fn clip_span(
@@ -237,35 +249,48 @@ pub(crate) fn clip_span(
     Ok((len, offset, loop_length))
 }
 
+/// One note of a `"notes"` list, checked on its own.
+fn read_note(item: &Value, p: &JsonPath, version: u64) -> Result<Note, ModelError> {
+    let n = note_tuple(item, p, version)?;
+    let note = Note {
+        muted: match n.get(4) {
+            Some(m) => boolean(m, &p.index(4))?,
+            None => false,
+        },
+        ..Note::new(
+            tick(&n[0], &p.index(0))?,
+            length(&n[1], &p.index(1))?,
+            uint(&n[2], &p.index(2), 127)? as u8,
+            number(&n[3], &p.index(3))? as f32,
+        )
+    };
+    check_note(note.tick, note.length, note.key, note.velocity).map_err(|m| p.index(3).error(m))?;
+    Ok(note)
+}
+
 /// Reads a note clip's `"notes"` list (`path` is the list's path): each note is checked and
 /// the list must be sorted by `(tick, key)` without duplicates.
+///
+/// A note is read with a lazy path (no text is built); one that fails is read again with its
+/// real path, so the error names it exactly.
 pub(crate) fn load_notes(
     items: &[Value],
     content_path: &JsonPath,
     version: u64,
 ) -> Result<Vec<Note>, ModelError> {
+    let lazy = JsonPath::lazy();
     let mut notes: Vec<Note> = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
-        let p = content_path.index(i);
-        let n = note_tuple(item, &p, version)?;
-        let note = Note {
-            muted: match n.get(4) {
-                Some(m) => boolean(m, &p.index(4))?,
-                None => false,
-            },
-            ..Note::new(
-                tick(&n[0], &p.index(0))?,
-                length(&n[1], &p.index(1))?,
-                uint(&n[2], &p.index(2), 127)? as u8,
-                number(&n[3], &p.index(3))? as f32,
-            )
+        let note = match read_note(item, &lazy, version) {
+            Ok(note) => note,
+            Err(_) => read_note(item, &content_path.index(i), version)?,
         };
-        check_note(note.tick, note.length, note.key, note.velocity)
-            .map_err(|m| p.index(3).error(m))?;
         if let Some(prev) = notes.last()
             && (prev.tick, prev.key) >= (note.tick, note.key)
         {
-            return Err(p.error("notes must be sorted by (tick, key) without duplicates"));
+            return Err(content_path
+                .index(i)
+                .error("notes must be sorted by (tick, key) without duplicates"));
         }
         notes.push(note);
     }

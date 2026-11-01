@@ -180,3 +180,24 @@ render/console-64/workers0/block256    1.486 s       1.565 s
 The rack case is 100 cheap devices, so it is the worst case for the overhead: about 70 ns per
 device per 64-frame batch, which is 0.5 % of the 1.33 ms callback at 48 kHz for 100 devices. With
 the readout off a device call pays two relaxed atomic loads.
+
+## I/O speed
+
+Same machine, release test profile (`cargo test -p atomik-model --release --test load_speed --
+--ignored --nocapture`, best of 5; the import peak is `cargo test -p atomik-audio-file --test
+import_peak -- --nocapture`, a 20 s stereo file; the WAV figures are `cargo test -p
+atomik-audio-file --release --test wav_io -- --ignored --nocapture`, one minute of stereo).
+
+```text
+case                                           before        after
+open 200 000 notes (100 tracks, 500 clips)     291 ms        78 ms
+  allocations per note                         6.31          1.31
+document/large/load (2 000 notes)              39.0 ms       7.7 ms
+import peak, 44.1 and 48 kHz, in decoded sizes 3.23x         1.03x
+write_wav_f32, one minute of stereo            31.6 ms       15.1 ms
+read_wav_f32, one minute of stereo             70.4 ms       13.1 ms
+reads per 256-frame chunk, sequential stream   1             1/16
+```
+
+The write figure before is hound's sample-at-a-time loop into memory, so it leaves the disk out of
+the old side only.

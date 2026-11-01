@@ -601,6 +601,21 @@ impl TempoEvent {
     }
 }
 
+/// A song's tick-to-frame conversion with its tempo map compiled once (see
+/// [`Song::frame_clock`]).
+#[derive(Debug, Clone)]
+pub struct FrameClock {
+    table: TempoTable,
+    sample_rate: f64,
+}
+
+impl FrameClock {
+    /// The song frame of a tick: what [`Song::frame_at`] returns.
+    pub fn at(&self, tick: i64) -> u64 {
+        self.table.map().song_frame(tick, self.sample_rate)
+    }
+}
+
 /// The song: tracks, tempo map, meter, loop.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Song {
@@ -1597,6 +1612,16 @@ impl Song {
     /// invalid map reads as 4/4.
     pub fn meter_table(&self) -> MeterTable {
         MeterTable::new(&self.meter).unwrap_or_else(|_| MeterTable::constant(4, 4))
+    }
+
+    /// The song's tick-to-frame conversion at `sample_rate`, with the tempo map compiled once:
+    /// [`Self::frame_at`] compiles the map on every call, so a planner that converts many ticks
+    /// takes one of these instead.
+    pub fn frame_clock(&self, sample_rate: u32) -> FrameClock {
+        FrameClock {
+            table: self.tempo_table(),
+            sample_rate: f64::from(sample_rate),
+        }
     }
 
     /// The song frame of a tick: `round(seconds(tick) * sample_rate)` with the tempo map

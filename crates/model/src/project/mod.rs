@@ -540,8 +540,7 @@ pub(crate) fn load_with_warnings(
     let mut warnings = Vec::new();
     // A file from a newer build that says an older reader may skip its additions.
     if schema::admit_newer(&mut value, &mut warnings)? {
-        let text = value.to_string();
-        let doc = load_value(&value, &text, registry, &mut warnings)?;
+        let doc = load_value(&value, registry, &mut warnings)?;
         return Ok((doc, warnings));
     }
     // A file older than version 8 may use `boundary` as a device key; it is reserved now.
@@ -550,21 +549,19 @@ pub(crate) fn load_with_warnings(
         .and_then(Value::as_u64)
         .is_some_and(|v| v < 8);
     if old && rename_boundary(&mut value, &mut warnings) {
-        let text = value.to_string();
         let doc = if value.get("format").and_then(Value::as_str) == Some(PATCH_FORMAT) {
-            crate::patch::load(&text, registry)?
+            crate::patch::load_value(&value, registry)?
         } else {
-            load_value(&value, &text, registry, &mut warnings)?
+            load_value(&value, registry, &mut warnings)?
         };
         return Ok((doc, warnings));
     }
-    let doc = load_value(&value, json, registry, &mut warnings)?;
+    let doc = load_value(&value, registry, &mut warnings)?;
     Ok((doc, warnings))
 }
 
 fn load_value(
     value: &Value,
-    json: &str,
     registry: &Registry,
     warnings: &mut Vec<String>,
 ) -> Result<RackDoc, ModelError> {
@@ -576,7 +573,7 @@ fn load_value(
     let format_path = root.field("format");
     let format = string(obj.get("format").unwrap_or(&null), &format_path)?;
     if format == PATCH_FORMAT {
-        return crate::patch::load(json, registry);
+        return crate::patch::load_value(value, registry);
     }
     if format != PROJECT_FORMAT {
         return Err(format_path.error(format!(

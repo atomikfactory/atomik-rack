@@ -345,6 +345,14 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
 Messages carry a generation number, so work for a document that was replaced is dropped. A
 `DoneGuard` always sends the completion message, even if a worker panics.
 
+The decoded audio is moved, never copied, along that chain: `Bundle::import` hands the decoded
+buffer to `resample_owned` (a file already at the session rate comes back as it is), `validate`
+checks the invariants by inspection, and the decoder sizes its buffers once from the container's
+frame count (believed only as far as the file's own size allows). An import therefore peaks at
+about the decoded size; `crates/audio-file/tests/import_peak.rs` holds the figure. WAV files are
+written and read in 64 KiB blocks, and a `WavStreamReader` reads ahead 4,096 frames, so sequential
+playback in small chunks costs one read per block (`read_calls` counts them).
+
 **The project's sample rate and channel counts** are document fields with commands.
 `Command::SetInputChannels` and `SetOutputChannels` change a count (cables to the channels that go
 away leave in the same step). File > New at Sample Rate starts a project at 44.1, 48 or 96 kHz.

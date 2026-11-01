@@ -201,7 +201,7 @@ pub use slice_edit::SliceError;
 pub use song::envelope_gain;
 pub use song::{
     AudioClipContent, AudioRegion, AutomationPoint, Clip, ClipContent, ClipId, Curve,
-    DEFAULT_TRACK_HEIGHT, FadeCurve, GainPoint, Lane, LaneKind, MAX_CLIP_NAME_CHARS,
+    DEFAULT_TRACK_HEIGHT, FadeCurve, FrameClock, GainPoint, Lane, LaneKind, MAX_CLIP_NAME_CHARS,
     MAX_GAIN_POINTS, MAX_LANE_NAME_CHARS, MAX_MARKER_NAME, MAX_NOTE_LANES, MAX_TICK,
     MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT, Marker, MetaChange, MeterEvent, Note, NoteList,
     RangeMarker, Song, SongCommand, StepGrid, StepResolution, TempoEvent, Track, clip_name_ok,
