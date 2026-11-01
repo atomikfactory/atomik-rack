@@ -4393,6 +4393,16 @@ winit and GPU code is not (it needs a window and a GPU).
   Every window has its own `Scene` and `SceneCache`; the `TextEngine` is shared. `render_offscreen`
   (`--screenshot`) is separate and writes one PNG per open window (`shot.png`, `shot-rack.png`,
   `shot-console.png`).
+- **The arrangement keeps two recorded layers.** `ArrangementView` records the lanes (backgrounds,
+  grid, clips, waveforms, drags, take ghosts) and the track list into `DisplayList`s stamped with
+  a process-unique revision ([paint_cache.rs](../crates/ui/src/arrangement/paint_cache.rs)), so a
+  backend that caches lists by id and revision (`SceneCanvas` with a `SceneCache`) reuses their
+  encoding. The view's `repaint` flag (raised by every state change) and a stamp of the view
+  rectangles, scale and document revision re-record them; a playhead that crossed a pixel raises
+  only `playhead_dirty`, a moving track meter only `headers_dirty`. The playhead line, ruler flag,
+  marker strip, tempo lane, scrollbar, overlays and menus are drawn live in the same order as
+  before, so the recorded op stream does not change (`ArrangementView::layer_records` counts the
+  recordings; the test `arrangement_layers` compares the cached paint with an uncached one).
 - **Windows are reconciled.** `App.windows` maps each `WindowKind` to an `AppWindow` (window,
   surface, scene, cache, pointer, file drag, cursor, title) and `ids` maps winit's `WindowId` back.
   After every call into the shell `sync_windows` compares the open windows with `windows_wanted()`

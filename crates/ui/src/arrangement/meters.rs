@@ -218,7 +218,7 @@ impl ArrangementView {
             }
         }
         if self.meters_shown() != before {
-            self.repaint = true;
+            self.headers_dirty = true;
         }
     }
 
@@ -285,7 +285,7 @@ impl ArrangementView {
         {
             m.latched[source.index()] = false;
             m.bars = [Ballistic::new(); 2];
-            self.repaint = true;
+            self.headers_dirty = true;
         }
     }
 
@@ -325,7 +325,7 @@ impl ArrangementView {
         m.bars = [Ballistic::new(); 2];
         let source = m.source;
         self.mt.cleared.push((device, source));
-        self.repaint = true;
+        self.headers_dirty = true;
     }
 
     /// The tooltip of the meter of track `track`.
