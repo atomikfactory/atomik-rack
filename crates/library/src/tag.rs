@@ -55,13 +55,20 @@ impl Tag {
 
     /// The case-folded form used for comparison (per-character lower-casing).
     pub fn folded(&self) -> String {
-        self.0.chars().flat_map(char::to_lowercase).collect()
+        self.fold().collect()
+    }
+
+    /// The characters of [`Self::folded`], without building the string.
+    fn fold(&self) -> impl Iterator<Item = char> + '_ {
+        self.0.chars().flat_map(char::to_lowercase)
     }
 }
 
+// Comparisons walk the folded characters instead of allocating two strings: character order is
+// the byte order of the UTF-8 text, so the result is the one `folded()` gives.
 impl PartialEq for Tag {
     fn eq(&self, other: &Self) -> bool {
-        self.folded() == other.folded()
+        self.fold().eq(other.fold())
     }
 }
 
@@ -75,7 +82,7 @@ impl PartialOrd for Tag {
 
 impl Ord for Tag {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.folded().cmp(&other.folded())
+        self.fold().cmp(other.fold())
     }
 }
 
@@ -154,5 +161,19 @@ mod tests {
         assert_eq!(back.as_str(), "Snare");
         assert!(serde_json::from_str::<Tag>("\"a#b\"").is_err());
         assert!(serde_json::from_str::<Tag>("\"\"").is_err());
+    }
+
+    #[test]
+    fn comparison_without_allocating_matches_the_folded_strings() {
+        let names = [
+            "Kick", "kick", "KICK 2", "kick 10", "Ärger", "ärger", "Zebra", "808", "ß",
+        ];
+        for a in names {
+            for b in names {
+                let (ta, tb) = (Tag::new(a).unwrap(), Tag::new(b).unwrap());
+                assert_eq!(ta == tb, ta.folded() == tb.folded(), "{a} == {b}");
+                assert_eq!(ta.cmp(&tb), ta.folded().cmp(&tb.folded()), "{a} <=> {b}");
+            }
+        }
     }
 }
