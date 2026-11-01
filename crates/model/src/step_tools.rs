@@ -82,8 +82,8 @@ pub fn pads_in_use(notes: &[Note], grid: StepGrid) -> u16 {
 }
 
 /// A uniform number in `0..1` for `(seed, pad, step)`, from the top 53 bits of the hash.
-fn unit(seed: u32, pad: u8, step: i64, salt: u64) -> f64 {
-    let h = hash64(u64::from(seed) ^ salt, u64::from(pad), step as u64);
+fn unit(seed: u32, pad: u8, step: i64, stream: u64) -> f64 {
+    let h = hash64(u64::from(seed) ^ stream, u64::from(pad), step as u64);
     (h >> 11) as f64 / (1u64 << 53) as f64
 }
 
