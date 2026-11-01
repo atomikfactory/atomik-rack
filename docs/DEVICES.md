@@ -1721,6 +1721,7 @@ and dropping files create it with its track and its input cables. Source:
 | `internal.tuner_live` | 0 or 1 | 0 | toggle | Linear | yes |
 | `tuner_mute` | 0 or 1 | 1 | toggle | Linear | yes |
 | `tuner_ref` | 415..466 Hz | 440 | Hz | Linear | yes |
+| `rec_source` | 0..2000 | 0 | none | Linear | yes |
 
 `internal.monitor_live` is set by the app (1 while the track is armed). The UI hides it and it is
 neither saved nor undoable, like `internal.solo_silence`.
@@ -1735,6 +1736,12 @@ tuner shows).
 undoable params, set from the transport bar while the track is armed (see below). A project written
 before they existed has neither stored and loads at 0 dB with clip-safe off, which records and
 monitors exactly as it did.
+
+`rec_source` says what a take records: 0 the cabled inputs, otherwise the stereo output of a console
+strip (1..=999 a channel in console order, 1001..=1999 a bus, 2000 the master; the track header's
+input menu sets it). The device ignores it: the app reads it when a take starts, and the engine's
+record tap copies the strip's output at the end of every batch. A track cannot record a strip it
+feeds. Additive and stored like the other settings; a project written before it records the inputs.
 
 ### Behaviour (as built)
 

@@ -9,6 +9,18 @@ may break APIs and the patch and project formats.
 ## [Unreleased]
 
 ### Added
+- **Resampling.** An audio track can record the output of a mixer strip instead of its inputs: the
+  input menu in the track header lists `Channel: name`, `Bus: name` and `Master: name` after the
+  inputs, and arming and recording then prints that strip. The engine copies the strip's output at
+  the end of each batch, so the clip is sample-identical to what the mixer rendered, and it is
+  placed by the strip's own delay (a strip behind a latent effect lands where you hear it on the
+  timeline). Inputs and strips can be recorded in one take, each track with its own input gain and
+  clip-safe. A track cannot record a strip it feeds (its own channel, or a bus or the master it
+  plays into): that take records nothing and the message says to send the track's channel to an
+  Audio I/O pair or pick another source. The choice is a new `rec_source` setting of the audio
+  track (not a project format change; a project without it records the inputs as before).
+  Recording a player's generated notes, Send to Track and the player stack header are not in this
+  version.
 - **Mix channels, parallel channels and sends that follow the bus.** Create > Create Mixer
   Channel makes a channel with no instrument behind it, wired to the master, whose inputs are
   its Direct In: cable a track or an effect there. Mixer > Create Parallel Channel adds, for each
