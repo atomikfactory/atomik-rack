@@ -1842,7 +1842,7 @@ impl<S: EngineSink> AppCore<S> {
     }
 
     /// Gives the parameter pane the presets of the plugin it shows and the one loaded last.
-    fn feed_preset_bar(&mut self) {
+    pub(super) fn feed_preset_bar(&mut self) {
         if !self.plugin_params_open {
             return;
         }

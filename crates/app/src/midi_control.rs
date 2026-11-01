@@ -139,6 +139,7 @@ mod tests {
             port: Some("Pad".into()),
             channel: Some(2),
             kind: SourceKind::Cc(7),
+            surface: None,
         }]);
         assert!(hub.consumes("Pad", &msg));
         assert!(!hub.consumes("Other", &msg));

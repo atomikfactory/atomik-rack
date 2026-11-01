@@ -168,6 +168,12 @@ impl SurfaceLink for LoopbackSurface {
 
 /// A driver with its ports and the feedback throttle.
 pub struct SurfaceHost {
+    /// The surface's name (its settings name): what mappings and locks refer to.
+    pub(crate) id: String,
+    /// The input port's name, as the mappings of a generic controller see it.
+    pub(crate) port: std::sync::Arc<str>,
+    /// Running status of the messages of a generic controller.
+    pub(crate) parser: atomik_midi_io::RunningStatus,
     pub(crate) driver: Box<dyn SurfaceDriver>,
     pub(crate) link: Box<dyn SurfaceLink>,
     /// The time before which no feedback is sent.
@@ -190,9 +196,13 @@ impl std::fmt::Debug for SurfaceHost {
 }
 
 impl SurfaceHost {
-    /// A host that connects the driver on its first frame.
+    /// A host that connects the driver on its first frame, named after its driver.
     pub fn new(driver: Box<dyn SurfaceDriver>, link: Box<dyn SurfaceLink>) -> Self {
+        let id = driver.name().to_owned();
         Self {
+            port: std::sync::Arc::from(id.as_str()),
+            id,
+            parser: atomik_midi_io::RunningStatus::default(),
             driver,
             link,
             next_feedback: 0.0,
@@ -200,6 +210,20 @@ impl SurfaceHost {
             received: 0,
             connected: false,
         }
+    }
+
+    /// Names the surface `id` (the name of its settings entry) and its input port `port`, which
+    /// the mappings of a generic controller see messages arrive from.
+    #[must_use]
+    pub fn named(mut self, id: impl Into<String>, port: &str) -> Self {
+        self.id = id.into();
+        self.port = std::sync::Arc::from(port);
+        self
+    }
+
+    /// The surface's name.
+    pub fn id(&self) -> &str {
+        &self.id
     }
 
     /// The driver's short name.

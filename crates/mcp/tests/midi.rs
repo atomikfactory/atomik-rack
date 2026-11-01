@@ -447,6 +447,63 @@ fn the_surface_driver_answers_faders_keys_and_sysex_through_the_session() {
     assert_eq!(status["midi"]["surface"], Value::Null);
 }
 
+#[test]
+fn several_generic_surfaces_can_be_attached_locked_and_released_through_the_session() {
+    let mut s = server();
+    open_demo(&mut s);
+    let v = ok(
+        &mut s,
+        "session_surface",
+        json!({"action": "attach", "driver": "generic", "name": "Pads"}),
+    );
+    assert_eq!(v["surfaces"].as_array().unwrap().len(), 1);
+    let v = ok(
+        &mut s,
+        "session_surface",
+        json!({"action": "attach", "driver": "generic", "name": "Faders"}),
+    );
+    let names: Vec<&str> = v["surfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Pads", "Faders"]);
+    assert_eq!(v["surfaces"][0]["driver"], "generic");
+    assert_eq!(v["sent_count"], 0, "a generic controller shows nothing");
+    // A message to a generic surface reaches the control path (nothing is mapped: no change).
+    let v = ok(
+        &mut s,
+        "session_surface",
+        json!({"action": "send", "name": "Pads", "messages": "B0 14 7F"}),
+    );
+    assert_eq!(v["surfaces"][0]["received"], 1);
+    assert_eq!(v["surfaces"][1]["received"], 0);
+    // A lock is per surface and `unlock` releases it.
+    let v = ok(
+        &mut s,
+        "session_surface",
+        json!({"action": "lock", "name": "Pads", "device": "channel"}),
+    );
+    assert_eq!(v["surfaces"][0]["locked_to"], "channel");
+    assert_eq!(v["surfaces"][1]["locked_to"], Value::Null);
+    let v = ok(
+        &mut s,
+        "session_surface",
+        json!({"action": "unlock", "name": "Pads"}),
+    );
+    assert_eq!(v["surfaces"][0]["locked_to"], Value::Null);
+    // An unknown surface is refused, and detach lets everything go.
+    let r = call(
+        &mut s,
+        "session_surface",
+        json!({"action": "lock", "name": "Nobody", "device": "channel"}),
+    );
+    assert!(r.is_error, "{}", r.first_text());
+    let v = ok(&mut s, "session_surface", json!({"action": "detach"}));
+    assert!(v["surfaces"].as_array().unwrap().is_empty());
+}
+
 /// Messages name the input port they come from, as with several ports open at once: the last
 /// message is tagged with its port (`mcp` when none is given), so a mapping restricted to one
 /// port can be checked.
