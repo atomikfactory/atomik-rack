@@ -119,7 +119,7 @@ impl PluginDoc {
 /// [`PluginCommand::SyncState`] and [`PluginCommand::SyncLayout`], which are not undo steps (like
 /// `RegisterAsset`): they report data the plugin owns, so undoing other edits never rolls a
 /// patch back. Neither returns a sync op, leaves the redo history alone and ends no drag-merge
-/// group. A patch or preset change inside the plugin's own window is not undoable.
+/// group. A patch or preset change is one undo step through [`PluginCommand::SetState`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum PluginCommand {
     /// Add a plugin device at rack `index` (clamped), at the top level or inside `container` (a
@@ -159,6 +159,18 @@ pub enum PluginCommand {
         path_hint: Option<String>,
         /// Explicit (local) key, or `None` to generate one.
         key: Option<DeviceKey>,
+    },
+    /// Replace the plugin's state blob as one undo step (a preset loaded, a patch changed in the
+    /// plugin's own window): undo and redo hand the blob back to the live instance. Commands
+    /// that carry the same `merge` id and follow each other fold into one step; the limits of
+    /// [`PluginCommand::SyncState`] apply.
+    SetState {
+        /// The plugin device (path key allowed).
+        device: DeviceKey,
+        /// The new state.
+        state: PluginStateBlob,
+        /// Gesture id: consecutive commands with the same id are one undo step.
+        merge: Option<u64>,
     },
     /// Store the plugin's state blob (not an undo step; refused above 16 MiB per blob or 128 MiB
     /// per project). The app sends it after every capture.

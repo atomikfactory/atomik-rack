@@ -76,6 +76,7 @@ pub(crate) fn plan(
                 key: device,
             })
         }
+        PluginCommand::SetState { device, state, .. } => set_state(doc, device, state),
         PluginCommand::SetPower { device, powered } => {
             let (_, p) = plugin_device(doc, &device)?;
             Ok(Edit::PluginPower {
@@ -315,10 +316,11 @@ fn macro_targets_of(doc: &RackDoc, device: &DeviceKey) -> Vec<(DeviceKey, u8, St
 // ----------------------------------------------------------------------------- data syncs
 
 /// `PluginCommand::SyncState`: stores the blob (not an undo step).
-pub(crate) fn sync_state(
-    doc: &mut RackDoc,
+/// Refuses a state that is not for a plugin device or that is over a limit.
+fn check_state_size(
+    doc: &RackDoc,
     device: &DeviceKey,
-    state: PluginStateBlob,
+    state: &PluginStateBlob,
 ) -> Result<(), ModelError> {
     plugin_device(doc, device)?;
     let len = state.0.len() as u64;
@@ -334,6 +336,26 @@ pub(crate) fn sync_state(
             others + len
         )));
     }
+    Ok(())
+}
+
+/// `PluginCommand::SetState`: one undo step that swaps the stored blob.
+fn set_state(doc: &RackDoc, device: DeviceKey, state: PluginStateBlob) -> Result<Edit, ModelError> {
+    check_state_size(doc, &device, &state)?;
+    let (_, p) = plugin_device(doc, &device)?;
+    Ok(Edit::PluginState {
+        old: p.state.clone(),
+        new: Some(Arc::new(state)),
+        key: device,
+    })
+}
+
+pub(crate) fn sync_state(
+    doc: &mut RackDoc,
+    device: &DeviceKey,
+    state: PluginStateBlob,
+) -> Result<(), ModelError> {
+    check_state_size(doc, device, &state)?;
     let p = doc
         .resolve_mut(device)
         .and_then(|d| d.plugin.as_mut())

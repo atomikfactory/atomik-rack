@@ -51,6 +51,7 @@ impl Command {
                 "Add Plugin"
             }
             Command::Plugin(PluginCommand::Relink { .. }) => "Relink Plugin",
+            Command::Plugin(PluginCommand::SetState { .. }) => "Change Plugin Patch",
             Command::Batch(commands) => commands.first().map_or(DEFAULT_LABEL, Command::label),
             Command::SetZones { .. } => "Edit Zones",
             Command::SetPattern { .. } | Command::AddPattern { .. } => "Edit Pattern",
