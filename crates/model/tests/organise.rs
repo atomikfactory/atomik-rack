@@ -1260,3 +1260,48 @@ fn can_move_agrees_with_the_commands() {
     );
     assert!(d.doc().song.can_move_track(&key("lead"), false));
 }
+
+// ---- moving past a collapsed folder ---------------------------------------------------------
+
+#[test]
+fn a_track_hops_over_a_collapsed_folder_instead_of_vanishing_into_it() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    let g = group(&mut d, &reg, &["a", "b"], "Keys");
+    run(
+        &mut d,
+        &reg,
+        SongCommand::SetGroupCollapsed {
+            group: g,
+            collapsed: true,
+        },
+    );
+    // Down from above the folder: past all its tracks, not into it.
+    mv(&mut d, &reg, "lead", true);
+    assert_eq!(order(&d), ["synth", "a", "b", "lead", "c", "d"]);
+    assert_eq!(d.doc().song.track_group(&key("lead")), None);
+    // Up from below: back past the whole folder.
+    mv(&mut d, &reg, "lead", false);
+    assert_eq!(order(&d), ["synth", "lead", "a", "b", "c", "d"]);
+    assert_eq!(
+        d.doc().song.group_tracks(g),
+        vec![2, 3],
+        "the folder keeps its tracks"
+    );
+    // One undo step per press.
+    d.undo(&reg).unwrap();
+    assert_eq!(order(&d), ["synth", "a", "b", "lead", "c", "d"]);
+}
+
+#[test]
+fn an_open_folder_is_still_entered_by_one_press() {
+    let reg = registry();
+    let mut d = doc(&reg);
+    let g = group(&mut d, &reg, &["a", "b"], "Keys");
+    mv(&mut d, &reg, "lead", true);
+    assert_eq!(d.doc().song.track_group(&key("lead")), Some(g));
+    assert_eq!(
+        outline(&d),
+        ["synth", "[Keys", "  lead", "  a", "  b", "c", "d"]
+    );
+}

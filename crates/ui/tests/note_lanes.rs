@@ -342,8 +342,9 @@ fn creating_a_clip_by_double_click_on_a_note_lane_makes_a_notes_clip() {
 }
 
 #[test]
-fn drawing_a_clip_on_a_note_lane_makes_a_notes_clip() {
+fn the_pencil_on_a_note_lane_makes_a_notes_clip() {
     let (doc, reg, mut v) = setup();
+    v.set_tool(atomik_ui::Tool::Pencil);
     let y = v.lane_rect(&key("keys"), 1).unwrap().center().y;
     let (a, b) = (v.tick_to_x(5 * BAR), v.tick_to_x(7 * BAR));
     let acts = run(

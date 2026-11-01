@@ -321,6 +321,22 @@ pub(crate) fn plan(doc: &RackDoc, command: SongCommand) -> Result<Edit, ModelErr
                         set(&mut members, outer(&mine));
                     } else if theirs.len() == mine.len() {
                         new_order.swap(i, j);
+                    } else if org.collapsed(theirs[mine.len()]) {
+                        // A collapsed folder shows none of its tracks, so entering it would
+                        // look like nothing happened: the track hops over the whole folder.
+                        let folder = theirs[mine.len()];
+                        let mut end = j;
+                        loop {
+                            let k = if down { end + 1 } else { end.wrapping_sub(1) };
+                            if k >= order.len() || !chain_of(k).contains(&folder) {
+                                break;
+                            }
+                            end = k;
+                        }
+                        // Moving down, taking the track out shifts the far end one place
+                        // earlier and it lands right after it; moving up, it lands before it.
+                        let moved = new_order.remove(i);
+                        new_order.insert(end, moved);
                     } else {
                         set(&mut members, Some(theirs[mine.len()]));
                     }

@@ -278,13 +278,13 @@ fn reference_default_table_of_the_plan() {
             None,
         ),
         (
-            "Cmd+Alt+Up",
+            "Cmd+Shift+Alt+Up",
             &[Context::Sequencer],
             "sequencer.move_track_up",
             None,
         ),
         (
-            "Cmd+Alt+Down",
+            "Cmd+Shift+Alt+Down",
             &[Context::Sequencer],
             "sequencer.move_track_down",
             None,
@@ -331,13 +331,13 @@ fn reference_default_table_of_the_plan() {
             None,
         ),
         (
-            "Cmd+Alt+Left",
+            "Cmd+Shift+Alt+Left",
             &[Context::Editor],
             "editor.nudge_left_tick",
             None,
         ),
         (
-            "Cmd+Alt+Right",
+            "Cmd+Shift+Alt+Right",
             &[Context::Editor],
             "editor.nudge_right_tick",
             None,
@@ -856,7 +856,7 @@ fn reference_keys_hold_on_linux_and_mac_with_only_the_listed_exceptions() {
             "sequencer.group_tracks",
         ),
         (
-            "Cmd+Alt+Up",
+            "Cmd+Shift+Alt+Up",
             &[Context::Sequencer],
             "sequencer.move_track_up",
         ),

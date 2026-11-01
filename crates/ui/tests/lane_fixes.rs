@@ -268,3 +268,27 @@ fn a_followed_lane_the_project_folds_folds_back_after_a_click_without_a_command(
     v.sync(d.doc(), &reg);
     assert_eq!(v.lane_rect(&key("bass"), lane).unwrap().height(), open);
 }
+
+#[test]
+fn a_drag_on_an_empty_automation_lane_with_select_is_a_band_not_a_clip() {
+    let (d, reg, mut v) = setup();
+    let lane = d
+        .doc()
+        .song
+        .track(&key("bass"))
+        .unwrap()
+        .automation_lane(RESO)
+        .unwrap();
+    let r = v.lane_rect(&key("bass"), lane).unwrap();
+    let y = r.y0 + 10.0;
+    let (a, b) = (v.tick_to_x(2 * BAR), v.tick_to_x(3 * BAR));
+    let acts = run(
+        |e| v.handle(e, d.doc(), &reg),
+        &[
+            down(Point::new(a, y)),
+            mv(Point::new(b, y)),
+            up(Point::new(b, y)),
+        ],
+    );
+    assert!(commands(&acts).is_empty(), "{acts:?}");
+}

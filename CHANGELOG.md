@@ -799,6 +799,25 @@ may break APIs and the patch and project formats.
   the skipped fields of a newer file.
 
 ### Fixed
+- **Nudge and track move keys no longer use Ctrl+Alt.** Graphics drivers can take Ctrl+Alt with the
+  arrow keys on Windows (they rotate the screen), so the app may never see them. The
+  tick nudge of clips and notes is now Ctrl+Shift+Alt+Left and Right (Cmd+Shift+Opt on macOS), and
+  Move Track Up and Down are Ctrl+Shift+Alt+Up and Down. Ctrl+Left and Right (the snap step) and
+  Ctrl+Shift+Left and Right (one beat) are unchanged and now have tests that drive the real key
+  path.
+- **A track moved up or down never vanishes into a collapsed folder.** The move keys used to put
+  the track inside a collapsed folder, where it was hidden; it now hops over the whole folder. A
+  track at the edge of an open folder leaves it in one press, above the folder or below its last
+  track, and a track above an open folder moves into it.
+- **Join Notes joins across a gap.** Ctrl+J in the note editor (and the Join Notes menu item) merges the
+  selected notes of one key into one note from the first start to the last end, where it used to
+  do nothing unless the notes touched. Make Legato, which stretches each note to the next one,
+  has a key of its own, Ctrl+Shift+J.
+- **The Select tool never creates a clip by dragging.** A plain drag on an empty lane is the rubber
+  band, across lanes and tracks, like the piano roll's (Shift or Ctrl adds to the selection, a
+  plain band replaces it). A click on empty lane area clears the clip selection (an empty
+  automation lane still takes the point). Clips come from the Pencil tool, from holding the
+  alternate-tool key (Alt) over the Select tool, or from a double-click on the lane.
 - **Delete on a lane deletes the lane.** With an automation lane header picked, Edit > Delete (and the
   Delete key) removes that lane alone, as one undo step; an extra note lane goes the same way, and
   a track is only removed when its own header is picked.

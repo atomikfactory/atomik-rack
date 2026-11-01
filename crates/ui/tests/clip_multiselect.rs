@@ -5,6 +5,7 @@
 mod support;
 
 use atomik_model::{ClipId, Command, Document, SongCommand, WorkflowCommand};
+use atomik_ui::Tool;
 use atomik_ui::kurbo::{Point, Vec2};
 use atomik_ui::timeline::Snap;
 use atomik_ui::{ArrangementView, Modifiers, PointerButton, UiAction, UiEvent};
@@ -162,8 +163,9 @@ fn shift_dragging_on_a_lane_selects_the_clips_inside_and_adds_to_the_selection()
 }
 
 #[test]
-fn a_plain_drag_on_a_lane_still_draws_and_ctrl_drag_selects_without_drawing() {
+fn the_pencil_draws_by_dragging_on_a_lane_and_ctrl_drag_selects_without_drawing() {
     let (mut v, doc, reg) = setup();
+    v.set_tool(Tool::Pencil);
     let keys = v.lane_rect(&key("keys"), 0).unwrap();
     let a = Point::new(keys.x0 + 600.0, keys.center().y);
     let b = a + Vec2::new(120.0, 0.0);
@@ -186,6 +188,7 @@ fn a_plain_drag_on_a_lane_still_draws_and_ctrl_drag_selects_without_drawing() {
             .any(|c| matches!(c, Command::Song(SongCommand::AddClip { .. }))),
         "{drawn:?}"
     );
+    v.set_tool(Tool::Select);
     let selected = run_events(
         &mut v,
         &doc,
@@ -239,6 +242,139 @@ fn dragging_below_the_last_track_selects_with_a_plain_drag_and_a_plain_click_cle
         ],
     );
     assert!(v.selected_clips().is_empty());
+}
+
+fn drag(
+    v: &mut ArrangementView,
+    doc: &atomik_model::RackDoc,
+    reg: &atomik_device_sdk::Registry,
+    from: Point,
+    to: Point,
+    m: Modifiers,
+) -> Vec<UiAction> {
+    run_events(
+        v,
+        doc,
+        reg,
+        &[
+            ev_down(from, m),
+            UiEvent::PointerMove {
+                pos: to,
+                modifiers: m,
+            },
+            ev_up(to, m),
+        ],
+    )
+}
+
+fn no_add_clip(acts: &[UiAction]) -> bool {
+    !commands(acts)
+        .iter()
+        .any(|c| matches!(c, Command::Song(SongCommand::AddClip { .. })))
+}
+
+#[test]
+fn the_select_tool_drags_a_band_across_lanes_and_creates_no_clip() {
+    let (mut v, doc, reg) = setup();
+    assert_eq!(v.tool(), Tool::Select);
+    let keys = v.lane_rect(&key("keys"), 0).unwrap();
+    let lead = v.clip_rect(ClipId(2)).unwrap();
+    let keys_clip = v.clip_rect(ClipId(3)).unwrap();
+    let start = Point::new(keys_clip.x1 + 40.0, keys.center().y);
+    let end = Point::new(lead.x0 + 10.0, lead.center().y);
+    let acts = drag(&mut v, &doc, &reg, start, end, Modifiers::NONE);
+    assert!(commands(&acts).is_empty(), "{acts:?}");
+    let sel = v.selected_clips();
+    assert!(
+        sel.contains(&ClipId(2)) && sel.contains(&ClipId(3)),
+        "{sel:?}"
+    );
+    // A second plain band replaces the selection.
+    let keys = v.lane_rect(&key("keys"), 0).unwrap();
+    let from = Point::new(keys.x0 + 700.0, keys.center().y);
+    let acts = drag(
+        &mut v,
+        &doc,
+        &reg,
+        from,
+        Point::new(from.x + 30.0, from.y + 2.0),
+        Modifiers::NONE,
+    );
+    assert!(commands(&acts).is_empty(), "{acts:?}");
+    assert!(
+        v.selected_clips().is_empty(),
+        "a band over nothing selects nothing"
+    );
+}
+
+#[test]
+fn shift_and_ctrl_add_to_the_selection_like_the_piano_roll() {
+    for m in [Modifiers::SHIFT, ctrl()] {
+        let (mut v, doc, reg) = setup();
+        let keys = v.lane_rect(&key("keys"), 0).unwrap();
+        let keys_clip = v.clip_rect(ClipId(3)).unwrap();
+        click(&mut v, &doc, &reg, 5, Modifiers::NONE);
+        let a = Point::new(keys_clip.x1 + 40.0, keys.center().y);
+        let acts = drag(
+            &mut v,
+            &doc,
+            &reg,
+            a,
+            Point::new(a.x - 20.0 - keys_clip.width(), a.y),
+            m,
+        );
+        assert!(no_add_clip(&acts) && commands(&acts).is_empty(), "{acts:?}");
+        let sel = v.selected_clips();
+        assert!(
+            sel.contains(&ClipId(5)) && sel.contains(&ClipId(3)),
+            "{m:?} {sel:?}"
+        );
+    }
+}
+
+#[test]
+fn a_click_on_an_empty_lane_with_select_clears_the_selection_and_creates_nothing() {
+    let (mut v, doc, reg) = setup();
+    click(&mut v, &doc, &reg, 3, Modifiers::NONE);
+    assert!(!v.selected_clips().is_empty());
+    let keys = v.lane_rect(&key("keys"), 0).unwrap();
+    let at = Point::new(keys.x0 + 700.0, keys.center().y);
+    let acts = run_events(
+        &mut v,
+        &doc,
+        &reg,
+        &[ev_down(at, Modifiers::NONE), ev_up(at, Modifiers::NONE)],
+    );
+    assert!(commands(&acts).is_empty(), "{acts:?}");
+    assert!(v.selected_clips().is_empty());
+}
+
+#[test]
+fn the_alternate_tool_role_and_a_double_click_still_create_clips_with_select() {
+    let (mut v, doc, reg) = setup();
+    let keys = v.lane_rect(&key("keys"), 0).unwrap();
+    let a = Point::new(keys.x0 + 600.0, keys.center().y);
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::NONE
+    };
+    let acts = drag(&mut v, &doc, &reg, a, a + Vec2::new(120.0, 0.0), alt);
+    assert!(!no_add_clip(&acts), "Alt switches to the pencil: {acts:?}");
+    let dbl = run_events(
+        &mut v,
+        &doc,
+        &reg,
+        &[
+            UiEvent::PointerDown {
+                pos: a,
+                button: PointerButton::Primary,
+                modifiers: Modifiers::NONE,
+                clicks: 2,
+            },
+            ev_up(a, Modifiers::NONE),
+        ],
+    );
+    assert!(!no_add_clip(&dbl), "{dbl:?}");
 }
 
 // ------------------------------------------------------------------ lane drags

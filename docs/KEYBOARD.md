@@ -123,8 +123,8 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Group Tracks | - | `Ctrl+Shift+T` (sequencer) |
 | Join | - | `Ctrl+J` (sequencer) |
 | Merge Note Lanes | - | `Ctrl+R` (sequencer) |
-| Move Track Down | - | `Ctrl+Alt+Down` (sequencer) |
-| Move Track Up | - | `Ctrl+Alt+Up` (sequencer) |
+| Move Track Down | - | `Ctrl+Alt+Shift+Down` (sequencer) |
+| Move Track Up | - | `Ctrl+Alt+Shift+Up` (sequencer) |
 | Open Clip | - | `Enter` (sequencer) |
 | Reset Track Heights | - | `Alt+Z` (sequencer) |
 | Select Next Clip | - | `Right` (sequencer) |
@@ -143,12 +143,13 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Extend Selection to Previous Note | - | `Shift+Left` (editor) |
 | Fold | - | `Shift+F` (editor) |
 | Join Notes | - | `Ctrl+J` (editor) |
+| Make Legato (none) | - | `Ctrl+Shift+J` (editor) |
 | Nudge Left | `Left` (editor) | `Ctrl+Left` (editor) |
 | Nudge Left by Beat | `Shift+Left` (editor) | `Ctrl+Shift+Left` (editor) |
-| Nudge Left by Tick | `Alt+Left` (editor) | `Ctrl+Alt+Left` (editor) |
+| Nudge Left by Tick | `Alt+Left` (editor) | `Ctrl+Alt+Shift+Left` (editor) |
 | Nudge Right | `Right` (editor) | `Ctrl+Right` (editor) |
 | Nudge Right by Beat | `Shift+Right` (editor) | `Ctrl+Shift+Right` (editor) |
-| Nudge Right by Tick | `Alt+Right` (editor) | `Ctrl+Alt+Right` (editor) |
+| Nudge Right by Tick | `Alt+Right` (editor) | `Ctrl+Alt+Shift+Right` (editor) |
 | Quantize | `Q`, `Shift+Q` (editor) | `Ctrl+K` (sequencer, editor) |
 | Reset Key Height | - | `Shift+Z` (editor) |
 | Select Next Note | - | `Right` (editor) |
@@ -292,15 +293,15 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Group Tracks | sequencer | `Ctrl+Shift+T` | `Cmd+Shift+T` | `Ctrl+Shift+T` |
 | Join | sequencer | `Ctrl+J` | `Cmd+J` | `Ctrl+J` |
 | Merge Note Lanes | sequencer | `Ctrl+R` | `Cmd+R` | `Ctrl+R` |
-| Move Track Down | sequencer | `Ctrl+Alt+Down` | `Cmd+Opt+Down` | `Ctrl+Alt+Down` |
-| Move Track Up | sequencer | `Ctrl+Alt+Up` | `Cmd+Opt+Up` | `Ctrl+Alt+Up` |
+| Move Track Down | sequencer | `Ctrl+Alt+Shift+Down` | `Cmd+Opt+Shift+Down` | `Ctrl+Alt+Shift+Down` |
+| Move Track Up | sequencer | `Ctrl+Alt+Shift+Up` | `Cmd+Opt+Shift+Up` | `Ctrl+Alt+Shift+Up` |
 | Mute Clips | sequencer | `M` | `M` | `M` |
 | Nudge Clips Left | sequencer | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
 | Nudge Clips Left by Beat | sequencer | `Ctrl+Shift+Left` | `Cmd+Shift+Left` | `Ctrl+Shift+Left` |
-| Nudge Clips Left by Tick | sequencer | `Ctrl+Alt+Left` | `Cmd+Opt+Left` | `Ctrl+Alt+Left` |
+| Nudge Clips Left by Tick | sequencer | `Ctrl+Alt+Shift+Left` | `Cmd+Opt+Shift+Left` | `Ctrl+Alt+Shift+Left` |
 | Nudge Clips Right | sequencer | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
 | Nudge Clips Right by Beat | sequencer | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
-| Nudge Clips Right by Tick | sequencer | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
+| Nudge Clips Right by Tick | sequencer | `Ctrl+Alt+Shift+Right` | `Cmd+Opt+Shift+Right` | `Ctrl+Alt+Shift+Right` |
 | Open Clip | sequencer | `Enter` | `Enter` | `Enter` |
 | Reset Track Heights | sequencer | `Alt+Z` | `Opt+Z` | `Alt+Z` |
 | Select Next Clip | sequencer | `Right` | `Right` | `Right` |
@@ -329,13 +330,14 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Extend Selection to Previous Note | editor | `Shift+Left` | `Shift+Left` | `Shift+Left` |
 | Fold | editor | `Shift+F` | `Shift+F` | `Shift+F` |
 | Join Notes | editor | `Ctrl+J` | `Cmd+J` | `Ctrl+J` |
+| Make Legato (none) | editor | `Ctrl+Shift+J` | `Cmd+Shift+J` | `Ctrl+Shift+J` |
 | Mute Notes | editor | `M` | `M` | `M` |
 | Nudge Left | editor | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
 | Nudge Left by Beat | editor | `Ctrl+Shift+Left` | `Cmd+Shift+Left` | `Ctrl+Shift+Left` |
-| Nudge Left by Tick | editor | `Ctrl+Alt+Left` | `Cmd+Opt+Left` | `Ctrl+Alt+Left` |
+| Nudge Left by Tick | editor | `Ctrl+Alt+Shift+Left` | `Cmd+Opt+Shift+Left` | `Ctrl+Alt+Shift+Left` |
 | Nudge Right | editor | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
 | Nudge Right by Beat | editor | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
-| Nudge Right by Tick | editor | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
+| Nudge Right by Tick | editor | `Ctrl+Alt+Shift+Right` | `Cmd+Opt+Shift+Right` | `Ctrl+Alt+Shift+Right` |
 | Quantize | sequencer | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
 | Quantize | editor | `Ctrl+K` | `Cmd+K` | `Ctrl+K` |
 | Reset Key Height | editor | `Shift+Z` | `Shift+Z` | `Shift+Z` |
@@ -463,7 +465,7 @@ Resting the pointer on a button for about 0.6 seconds shows a one-line tooltip u
 | Speaker Tool | sequencer | `T` | `T` | `T` |
 | Speaker Tool | editor | `T` | `T` | `T` |
 
-Commands without a key in this profile (menus and Settings still reach them): Input Channels, Output Channels, Plugins, Rescan MIDI Ports, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Create Player, Copy Settings, Paste Settings, Quantize Options, Arpeggiate Selection, Add Markers at Transients, Revert Markers, Split Clip at Markers, Clip to Loop Slicer, Chop Notes, Conform Selection to Scale, Detect Scale from Notes, Extract Notes to a New Lane, Set Fold, Make Legato, Note Tool, Select Notes of the Same Pitch, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Alter Steps, Invert Steps, Randomise Steps, Shift Steps, Strum Selection, Cancel Project Archive, Clear Recent Songs, Convert Sample Rate, Reset Default Song, Use Song as Default Song, Export Project Archive, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Export Stems as Audio Files, Import Project Archive, Import MIDI, Import MIDI as Song, New at Sample Rate, New from Template, Open Recent, Relink Missing Audio, Save as Template, Show Template Folder, Song Information, Stress Rack, Stress Song, About Atomik Rack, Documentation, Export Diagnostics, Report an Issue, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Clear Inserts, Compare A/B, Copy Channel Settings, Copy Channel Inserts, Copy Channel Levels, Copy Channel Mute and Solo, Copy Channel Sends, Create Parallel Channel, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Paste Channel Settings, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Delete Channel, Remove from VCA, Reset Channel, Store Snapshot, Delay Compensation, Toggle Polarity, Align Returns, Sends Follow Bus, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Patch Jack, Pick MIDI Out Port, Choose MIDI Out Port, Move Out of Container, Pick Patch, Remove Column, Reset Device, Save Patch, Save to Library, Add Note Lane, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce Clips to New Track (Dry), Bounce in Place, Bounce in Place and Mute Originals, Bypass All Players, Chop Clips To, Cleanup Automation, Clear Static Value, Clear All Mutes, Clear All Solos, Clip Colour, Convert Loop, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Delete Track and Device, Direct Record, Explode Notes to Lanes, Fold Automation Lanes, Fold All Players, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Insert Bars at Locators, Set Left Locator Here, Set Right Locator Here, Make Loop Instance Independent, Manual Record Arming, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Mute Automation Lane, Note Tool on Clips, Remove Bars at Locators, Rename Clip..., Rename Folder..., Rename Note Lane..., Rename Track..., Reverse Clips, Save Clip to Library, Scale Tempo, Send Players to Track, Set Static Value, Set Snap, Set Snap Mode, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, MIDI Clock Out, Send Clock While Stopped, Follow MIDI Clock, Add Range Marker from Loop, Auto-create Lanes, Clear Override, Input Quantize, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Tap Tempo, Application Zoom, Cables, Show Window, Automation Follows Selection, Show Automation Lane, Theme, Big Meter, Show Console Devices in Rack, Show Console Links, CPU Meters, Inspector, Marker List, Marker Strip, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
+Commands without a key in this profile (menus and Settings still reach them): Input Channels, Output Channels, Plugins, Rescan MIDI Ports, Restart Audio, Clear Automation, Edit Automation, Set Static Automation Value, Create Player, Copy Settings, Paste Settings, Quantize Options, Arpeggiate Selection, Add Markers at Transients, Revert Markers, Split Clip at Markers, Clip to Loop Slicer, Chop Notes, Conform Selection to Scale, Detect Scale from Notes, Extract Notes to a New Lane, Set Fold, Note Tool, Select Notes of the Same Pitch, Set Arpeggio Gate, Set Arpeggio Octaves, Set Arpeggio Pattern, Set Chord, Set Chord Inversion, Set Scale, Set Scale Root, Set Strum Amount, Set Strum Direction, Alter Steps, Invert Steps, Randomise Steps, Shift Steps, Strum Selection, Cancel Project Archive, Clear Recent Songs, Convert Sample Rate, Reset Default Song, Use Song as Default Song, Export Project Archive, Export Loop as Audio File, Export MIDI Clip, Export MIDI Song, Export MIDI Track, Export Patch, Export Song as Audio File, Export Stems as Audio Files, Import Project Archive, Import MIDI, Import MIDI as Song, New at Sample Rate, New from Template, Open Recent, Relink Missing Audio, Save as Template, Show Template Folder, Song Information, Stress Rack, Stress Song, About Atomik Rack, Documentation, Export Diagnostics, Report an Issue, Assign to Macro, Assign to New Macro Bank, New Macro Bank, Macros..., Remove from Macro, Clear MIDI Mappings, Export MIDI Mapping Preset..., Forget MIDI, Import MIDI Mapping Preset..., MIDI Learn, Learn MIDI, MIDI Mappings..., Add Channel, Add to VCA, Bypass All Inserts, Clear Inserts, Compare A/B, Copy Channel Settings, Copy Channel Inserts, Copy Channel Levels, Copy Channel Mute and Solo, Copy Channel Sends, Create Parallel Channel, Create VCA from Selection, Delete Snapshot, Delete VCA, End Compare, Paste Channel Settings, Recall Next Snapshot, Recall Previous Snapshot, Recall Snapshot, Delete Channel, Remove from VCA, Reset Channel, Store Snapshot, Delay Compensation, Toggle Polarity, Align Returns, Sends Follow Bus, Update Snapshot, Add Column, Use as Send Effect, Auto-route, Disconnect, Go to Track, Patch Jack, Pick MIDI Out Port, Choose MIDI Out Port, Move Out of Container, Pick Patch, Remove Column, Reset Device, Save Patch, Save to Library, Add Note Lane, Clear Gain Envelope, Audio Fade Shape, Audio Fades, Audio Clip Gain, Normalise Audio, Quantize Audio, Reverse Audio, Strip Silence, Audio to Notes, Transpose Audio, Warp Audio, Warp Loop as Bars, Warp Mode, Warp Settings, Warp to Song Tempo, Bounce Clips to New Track (Dry), Bounce in Place, Bounce in Place and Mute Originals, Bypass All Players, Chop Clips To, Cleanup Automation, Clear Static Value, Clear All Mutes, Clear All Solos, Clip Colour, Convert Loop, Delete Automation Lane, Delete Note Lane, Delete Events Outside Clips, Delete Track and Device, Direct Record, Explode Notes to Lanes, Fold Automation Lanes, Fold All Players, Cancel Freeze, Freeze with Tail, Freeze Track, Freeze Track up to Selected Device, Insert Bars at Locators, Set Left Locator Here, Set Right Locator Here, Make Loop Instance Independent, Manual Record Arming, Add Marker Here, Marker Colour, Delete Marker, Set End Marker Here, Loop This Range, Add Range Marker from Selection, Rename Marker..., Select Clips in Range, Delete Meter Change, Insert Meter Change, Set Meter, Mute Automation Lane, Note Tool on Clips, Remove Bars at Locators, Rename Clip..., Rename Folder..., Rename Note Lane..., Rename Track..., Reverse Clips, Save Clip to Library, Scale Tempo, Send Players to Track, Set Static Value, Set Snap, Set Snap Mode, Add Tempo Point, Delete Tempo Point, Set Tempo..., Ramp to Next, Chase Notes, Collapse or Expand Folder, Mute Lane, Track Colour, Track Comment..., Unfreeze Track, Unfreeze Track and Keep Audio, Ungroup, MIDI Clock Out, Send Clock While Stopped, Follow MIDI Clock, Add Range Marker from Loop, Auto-create Lanes, Clear Override, Input Quantize, Set End Marker at Playhead, Set Left Locator at Playhead, Set Right Locator at Playhead, Tap Tempo, Application Zoom, Cables, Show Window, Automation Follows Selection, Show Automation Lane, Theme, Big Meter, Show Console Devices in Rack, Show Console Links, CPU Meters, Inspector, Marker List, Marker Strip, Piano Roll, Rack Navigator, Sample Editor, Slice Editor, Arrangement, Step Editor, Tempo Lane.
 
 ## Atomik legacy keys
 
@@ -539,10 +541,10 @@ Commands without a key in this profile (menus and Settings still reach them): In
 | Mute Clips | sequencer | `M` | `M` | `M` |
 | Nudge Clips Left | sequencer | `Ctrl+Left` | `Cmd+Left` | `Ctrl+Left` |
 | Nudge Clips Left by Beat | sequencer | `Ctrl+Shift+Left` | `Cmd+Shift+Left` | `Ctrl+Shift+Left` |
-| Nudge Clips Left by Tick | sequencer | `Ctrl+Alt+Left` | `Cmd+Opt+Left` | `Ctrl+Alt+Left` |
+| Nudge Clips Left by Tick | sequencer | `Ctrl+Alt+Shift+Left` | `Cmd+Opt+Shift+Left` | `Ctrl+Alt+Shift+Left` |
 | Nudge Clips Right | sequencer | `Ctrl+Right` | `Cmd+Right` | `Ctrl+Right` |
 | Nudge Clips Right by Beat | sequencer | `Ctrl+Shift+Right` | `Cmd+Shift+Right` | `Ctrl+Shift+Right` |
-| Nudge Clips Right by Tick | sequencer | `Ctrl+Alt+Right` | `Cmd+Opt+Right` | `Ctrl+Alt+Right` |
+| Nudge Clips Right by Tick | sequencer | `Ctrl+Alt+Shift+Right` | `Cmd+Opt+Shift+Right` | `Ctrl+Alt+Shift+Right` |
 | Split at Playhead | sequencer | `Ctrl+E` | `Cmd+E` | `Ctrl+E` |
 
 ### Editor

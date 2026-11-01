@@ -3960,6 +3960,17 @@ impl ArrangementView {
             self.locator_move(pos, modifiers, out);
             return;
         }
+        // The Select tool's plain press on an empty lane is a click until the pointer travels;
+        // then it is the rubber band (only the pencil draws a clip by dragging).
+        if let Drag::Draw {
+            start,
+            pencil: false,
+            ..
+        } = self.drag
+            && pos.distance(start) > DRAG_THRESHOLD
+        {
+            self.start_marquee(start, false);
+        }
         if matches!(self.drag, Drag::Marquee { .. }) {
             self.marquee_move(pos);
             return;

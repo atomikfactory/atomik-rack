@@ -222,7 +222,7 @@ fn group_tracks_in_the_menu_and_by_key_makes_a_folder_in_one_undo_step() {
     );
     assert_eq!(
         shortcut(&s, "Move Track Up").as_deref(),
-        Some("Ctrl+Alt+Up")
+        Some("Ctrl+Alt+Shift+Up")
     );
     assert_eq!(shortcut(&s, "Ungroup"), None, "no default key");
     let undo_depth = |s: &Shell<NullBackend>| s.core().document().can_undo();
@@ -249,7 +249,7 @@ fn the_move_keys_and_menu_items_move_the_track_and_the_folder() {
     s.core_mut()
         .arrangement_mut()
         .set_selected_track(Some(key("c")));
-    tap(&mut s, "Ctrl+Alt+Up");
+    tap(&mut s, "Ctrl+Shift+Alt+Up");
     assert_eq!(order(&s), ["a", "c", "b", "d"]);
     s.execute(AppCommand::MoveTrackDown);
     assert_eq!(order(&s), ["a", "b", "c", "d"]);
@@ -257,7 +257,7 @@ fn the_move_keys_and_menu_items_move_the_track_and_the_folder() {
     select_ab(&mut s);
     s.execute(AppCommand::GroupTracks);
     s.core_mut().arrangement_mut().set_selected_group(Some(1));
-    tap(&mut s, "Ctrl+Alt+Down");
+    tap(&mut s, "Ctrl+Shift+Alt+Down");
     assert_eq!(order(&s), ["c", "a", "b", "d"]);
 }
 
@@ -544,4 +544,101 @@ fn ctrl_r_merges_the_note_lanes_of_the_selected_track_in_one_undo_step() {
             .note_lane_count(),
         2
     );
+}
+
+// ------------------------------------------------------------------ moving tracks in folders
+
+/// Puts the tracks `names` (consecutive, in order) into one folder with the Group Tracks command.
+fn folder_of(s: &mut Shell<NullBackend>, names: &[&str]) {
+    let arr = s.core_mut().arrangement_mut();
+    arr.set_selected_track(Some(key(names[0])));
+    for n in &names[1..] {
+        arr.toggle_selected_track(&key(n));
+    }
+    s.execute(AppCommand::GroupTracks);
+}
+
+/// The rows of the arrangement in display order: track names, `[folder]` for a header.
+fn rows(s: &Shell<NullBackend>) -> Vec<String> {
+    use atomik_model::OutlineKind;
+    let song = &s.core().doc().song;
+    song.outline()
+        .iter()
+        .map(|e| match e.kind {
+            OutlineKind::Folder(_) => "[folder]".to_string(),
+            OutlineKind::Track(i) => song.tracks[i].device.0.clone(),
+        })
+        .collect()
+}
+
+fn pick(s: &mut Shell<NullBackend>, k: &str) {
+    let at = header(s, k);
+    press(s, at, PointerButton::Primary, Modifiers::NONE);
+    s.set_focus(Pane::Arrangement);
+}
+
+#[test]
+fn a_track_in_the_middle_of_a_folder_moves_up_and_down_inside_it() {
+    let mut s = shell();
+    folder_of(&mut s, &["a", "b", "c"]);
+    assert_eq!(rows(&s), ["[folder]", "a", "b", "c", "d"]);
+    pick(&mut s, "b");
+    tap(&mut s, "Ctrl+Shift+Alt+Up");
+    assert_eq!(rows(&s), ["[folder]", "b", "a", "c", "d"]);
+    assert_eq!(s.core().doc().song.track_group(&key("b")), Some(1));
+    tap(&mut s, "Ctrl+Shift+Alt+Down");
+    assert_eq!(rows(&s), ["[folder]", "a", "b", "c", "d"]);
+    assert_eq!(s.core().doc().song.track_group(&key("b")), Some(1));
+}
+
+#[test]
+fn the_first_track_of_a_folder_leaves_it_and_moves_above_the_header_in_one_press() {
+    let mut s = shell();
+    folder_of(&mut s, &["b", "c"]);
+    assert_eq!(rows(&s), ["a", "[folder]", "b", "c", "d"]);
+    pick(&mut s, "b");
+    tap(&mut s, "Ctrl+Shift+Alt+Up");
+    assert_eq!(rows(&s), ["a", "b", "[folder]", "c", "d"]);
+    assert_eq!(s.core().doc().song.track_group(&key("b")), None);
+    assert!(s.core_mut().undo(), "one undo step");
+    assert_eq!(rows(&s), ["a", "[folder]", "b", "c", "d"]);
+}
+
+#[test]
+fn the_last_track_of_a_folder_leaves_it_below_the_members_in_one_press() {
+    let mut s = shell();
+    folder_of(&mut s, &["b", "c"]);
+    pick(&mut s, "c");
+    tap(&mut s, "Ctrl+Shift+Alt+Down");
+    assert_eq!(rows(&s), ["a", "[folder]", "b", "c", "d"]);
+    assert_eq!(s.core().doc().song.track_group(&key("c")), None);
+    tap(&mut s, "Ctrl+Shift+Alt+Down");
+    assert_eq!(rows(&s), ["a", "[folder]", "b", "d", "c"]);
+}
+
+#[test]
+fn a_track_above_a_folder_moves_down_into_it() {
+    let mut s = shell();
+    folder_of(&mut s, &["c", "d"]);
+    pick(&mut s, "b");
+    tap(&mut s, "Ctrl+Shift+Alt+Down");
+    assert_eq!(rows(&s), ["a", "[folder]", "b", "c", "d"]);
+    assert_eq!(s.core().doc().song.track_group(&key("b")), Some(1));
+}
+
+#[test]
+fn clicking_a_track_name_after_a_folder_header_moves_the_track_not_the_folder() {
+    let mut s = shell();
+    folder_of(&mut s, &["b", "c"]);
+    // The folder header was picked (the folder was just created and is selected).
+    let toggle = s.core().arrangement().folder_toggle_center(1).unwrap();
+    press(
+        &mut s,
+        Point::new(toggle.x + 40.0, toggle.y),
+        PointerButton::Primary,
+        Modifiers::NONE,
+    );
+    pick(&mut s, "c");
+    tap(&mut s, "Ctrl+Shift+Alt+Up");
+    assert_eq!(rows(&s), ["a", "[folder]", "c", "b", "d"]);
 }
