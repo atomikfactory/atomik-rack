@@ -4385,6 +4385,15 @@ impl ArrangementView {
             Drag::Razor { .. } => CursorHint::Razor,
             Drag::Audition => CursorHint::Speaker,
             Drag::Pan { .. } => CursorHint::Grabbing,
+            // Clips, tracks and note lanes carried to another place: the closed hand, or the
+            // copy cursor while the drop leaves the originals where they are.
+            Drag::TrackMove | Drag::LaneMove => CursorHint::Dragging,
+            Drag::Move {
+                moved: true,
+                copy: true,
+                ..
+            } => CursorHint::Copy,
+            Drag::Move { moved: true, .. } => CursorHint::Dragging,
             Drag::Zoom { .. } => CursorHint::Magnifier,
             Drag::Marquee { erase: true, .. } => CursorHint::Eraser,
             Drag::Audio {

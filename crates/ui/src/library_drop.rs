@@ -28,6 +28,13 @@ pub(crate) fn patch_item(paths: &[PathBuf]) -> Option<&PathBuf> {
         .find(|p| classify(p, false) == Some(FileKind::Patch))
 }
 
+/// The device type a patch file holds, when it holds exactly one device (what decides whether
+/// the patch can be loaded into a device it is dropped on). Reads the file, so callers cache it.
+pub(crate) fn patch_device_type(path: &Path) -> Option<String> {
+    let text = atomik_model::read_document_text(path).ok()?;
+    atomik_model::summarize_item(atomik_model::ItemKind::Patch, &text)?.device_type
+}
+
 /// The first note clip item.
 pub(crate) fn clip_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     paths
