@@ -145,6 +145,7 @@ fn validate_does_not_copy_the_buffer() {
 /// prints the time of the bulk writer and reader against the sample-at-a-time loops.
 #[test]
 #[ignore = "timing"]
+#[allow(clippy::disallowed_methods)]
 fn bulk_io_is_several_times_faster_than_sample_at_a_time() {
     use std::time::Instant;
     let data = signal(2, 44_100 * 60);
