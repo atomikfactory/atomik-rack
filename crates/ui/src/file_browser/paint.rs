@@ -416,6 +416,7 @@ impl FileBrowserView {
                 }
                 Some(Place::Favorites) => self.paint_place_title(c, bar, "Favourites"),
                 Some(Place::Tag(tag)) => self.paint_place_title(c, bar, &format!("#{tag}")),
+                Some(Place::List(list)) => self.paint_place_title(c, bar, list),
                 Some(Place::Library(section)) => self.paint_place_title(c, bar, section.title()),
                 None => self.paint_place_title(c, bar, "No folder"),
             }

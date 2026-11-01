@@ -102,6 +102,7 @@ fn places() -> PlacesData {
     PlacesData {
         favorites: 3,
         tags: vec![("808".into(), 4), ("snare".into(), 2)],
+        lists: Vec::new(),
         bookmarks: vec![PathBuf::from("/music/drums")],
         roots: vec![PathBuf::from("/"), PathBuf::from("/home/me")],
     }

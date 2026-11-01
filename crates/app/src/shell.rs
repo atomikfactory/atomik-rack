@@ -239,6 +239,9 @@ pub enum ShellRequest {
     /// Show a folder in the file manager (File > New from Template > Show Template Folder). The
     /// folder is one the app made itself.
     ShowFolder(PathBuf),
+    /// Show a file in the file manager with the file selected where the system allows (the file
+    /// browser's Show in Folder). The path is a row the browser listed.
+    Reveal(PathBuf),
     /// Show a save dialog for a MIDI mapping preset (Mixer > Export MIDI Mapping Preset, the
     /// panel's EXPORT), starting in [`Shell::midi_preset_dir`], then call
     /// [`Shell::export_midi_preset_to`] with the path.
@@ -4469,6 +4472,9 @@ impl<B: AudioBackend> Shell<B> {
                     self.save_ui_state();
                 }
                 UiAction::Browse(BrowseAction::SetAutoPreview(_)) => self.save_ui_state(),
+                UiAction::Browse(BrowseAction::Reveal(path)) => {
+                    self.pending.push(ShellRequest::Reveal(path.clone()));
+                }
                 // The audition ended in the file browser: the folder it used is remembered.
                 UiAction::Browse(BrowseAction::Load(_) | BrowseAction::Cancel) => {
                     self.save_ui_state();

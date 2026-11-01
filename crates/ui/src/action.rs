@@ -635,6 +635,8 @@ pub enum Place {
     /// [`crate::device_rows`]) or the items saved in `<library folder>/<Section>` (listed
     /// recursively; a missing folder is an empty list).
     Library(atomik_library::LibrarySection),
+    /// Every file in the named favourite list (see `atomik_library::LibraryDb::lists`).
+    List(String),
 }
 
 /// A request from [`crate::FileBrowserView`] (see [`UiAction::Browse`]).
@@ -690,6 +692,48 @@ pub enum BrowseAction {
     },
     /// Delete a tag everywhere.
     DeleteTag(String),
+    /// Set the author of these files (text as typed; empty clears it).
+    SetAuthor {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// Author as typed (the app cleans it with `LibraryDb::set_author`).
+        author: String,
+    },
+    /// Replace the categories of these files.
+    SetCategories {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// Category names separated by commas, as typed (the app validates each with
+        /// `atomik_library::Tag::new`; empty clears them).
+        categories: String,
+    },
+    /// Put these files into a named favourite list; the list is made when it does not exist.
+    AddToList {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// List name as typed.
+        list: String,
+    },
+    /// Take these files out of a named favourite list.
+    RemoveFromList {
+        /// Files.
+        paths: Vec<PathBuf>,
+        /// List name.
+        list: String,
+    },
+    /// Make an empty named favourite list.
+    NewList(String),
+    /// Rename a favourite list.
+    RenameList {
+        /// Current name.
+        from: String,
+        /// New name as typed.
+        to: String,
+    },
+    /// Delete a favourite list (its files stay).
+    DeleteList(String),
+    /// Show this file in the system file manager (Show in Folder).
+    Reveal(PathBuf),
     /// Bookmark a folder under Places.
     AddPlace(PathBuf),
     /// Remove a bookmark.

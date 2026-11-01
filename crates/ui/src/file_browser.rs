@@ -67,6 +67,8 @@ pub struct PlacesData {
     pub favorites: usize,
     /// Every tag in use with its file count, in display order.
     pub tags: Vec<(String, usize)>,
+    /// Named favourite lists with their file counts, in the order they were made.
+    pub lists: Vec<(String, usize)>,
     /// Bookmarked folders, in order (expandable).
     pub bookmarks: Vec<PathBuf>,
     /// Drives / file-system roots and the home folder (expandable).
@@ -493,6 +495,24 @@ impl FileBrowserView {
         for (row, k) in self.find_rows(wanted) {
             self.rows[row].favorite = marks[k].1;
             self.rows[row].tags.clone_from(&marks[k].2);
+        }
+        if !self.query_empty {
+            self.refilter();
+        }
+        self.dirty = true;
+    }
+
+    /// Updates the author and categories of rows after a library change (`(path, author,
+    /// categories)`).
+    pub fn patch_meta(&mut self, meta: &[(PathBuf, String, Vec<String>)]) {
+        let wanted: BTreeMap<&Path, usize> = meta
+            .iter()
+            .enumerate()
+            .map(|(i, (p, _, _))| (p.as_path(), i))
+            .collect();
+        for (row, k) in self.find_rows(wanted) {
+            self.rows[row].author.clone_from(&meta[k].1);
+            self.rows[row].categories.clone_from(&meta[k].2);
         }
         if !self.query_empty {
             self.refilter();

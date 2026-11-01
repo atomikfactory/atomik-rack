@@ -53,6 +53,7 @@ pub(crate) enum ViewCall {
     SetRows(Vec<FileRow>),
     AppendRows(Vec<FileRow>),
     PatchMarks(Vec<(PathBuf, bool, Vec<String>)>),
+    PatchMeta(Vec<(PathBuf, String, Vec<String>)>),
     PatchInfo(Vec<(PathBuf, AudioInfo)>),
     PatchItemInfo(Vec<(PathBuf, ItemInfo)>),
     SetPlaces(PlacesData),
@@ -450,6 +451,49 @@ impl<S: EngineSink> AppCore<S> {
                     }
                 }
             }
+            BrowseAction::SetAuthor { paths, author } => {
+                let mut changed = false;
+                for path in &paths {
+                    changed |= self.browser.db.set_author(path, &author);
+                }
+                if changed {
+                    self.library_changed(&paths);
+                }
+            }
+            BrowseAction::SetCategories { paths, categories } => {
+                self.set_categories(&paths, &categories);
+            }
+            BrowseAction::AddToList { paths, list } => {
+                if let Some(name) = self.valid_tag(&list)
+                    && self.browser.db.add_to_list(&name, &paths)
+                {
+                    self.library_changed(&[]);
+                }
+            }
+            BrowseAction::RemoveFromList { paths, list } => {
+                if let Ok(name) = Tag::new(&list)
+                    && self.browser.db.remove_from_list(&name, &paths)
+                {
+                    self.library_changed(&[]);
+                }
+            }
+            BrowseAction::NewList(list) => {
+                if let Some(name) = self.valid_tag(&list) {
+                    if self.browser.db.create_list(&name) {
+                        self.library_changed(&[]);
+                    } else {
+                        self.report(format!("there is already a list called {}", name.as_str()));
+                    }
+                }
+            }
+            BrowseAction::RenameList { from, to } => self.rename_list(&from, &to),
+            BrowseAction::DeleteList(list) => {
+                if let Ok(name) = Tag::new(&list)
+                    && self.browser.db.delete_list(&name)
+                {
+                    self.library_changed(&[]);
+                }
+            }
             BrowseAction::AddPlace(path) => {
                 if self.browser.db.add_place(&path) {
                     self.library_changed(&[]);
@@ -461,8 +505,10 @@ impl<S: EngineSink> AppCore<S> {
                 }
             }
             BrowseAction::RequestInfo(paths) => self.queue_probe(paths),
+            // Show in Folder is a request the shell hands to the platform.
             BrowseAction::SetAutoPreview(_)
             | BrowseAction::DragFiles(_)
+            | BrowseAction::Reveal(_)
             | BrowseAction::LayoutChanged => {}
             // Loading, opening and renaming library items is the library work of the app.
             // Aimed at a device, a patch is for that device: it is applied and accepted.
@@ -577,6 +623,18 @@ impl<S: EngineSink> AppCore<S> {
                 self.show_collection(generation, paths);
             }
             Place::Library(section) => self.show_library(generation, section),
+            Place::List(name) => {
+                let paths: Vec<PathBuf> = Tag::new(&name)
+                    .ok()
+                    .and_then(|tag| {
+                        self.browser
+                            .db
+                            .list(&tag)
+                            .map(|l| l.paths().iter().map(path_of).collect())
+                    })
+                    .unwrap_or_default();
+                self.show_collection(generation, paths);
+            }
         }
     }
 
@@ -614,7 +672,7 @@ impl<S: EngineSink> AppCore<S> {
 
     /// Lists a collection again after the library changed under it.
     fn reshow_collection(&mut self) {
-        if let Some(place @ (Place::Favorites | Place::Tag(_))) =
+        if let Some(place @ (Place::Favorites | Place::Tag(_) | Place::List(_))) =
             self.file_browser.location().cloned()
         {
             self.show(place);
@@ -791,6 +849,55 @@ impl<S: EngineSink> AppCore<S> {
         self.library_changed(&affected);
     }
 
+    /// Replaces the categories of `paths` with the comma-separated names in `text`. A name that
+    /// is not a valid category stops the whole change and is reported.
+    fn set_categories(&mut self, paths: &[PathBuf], text: &str) {
+        let mut categories = Vec::new();
+        for name in text.split(',').filter(|n| !n.trim().is_empty()) {
+            match Tag::new(name) {
+                Ok(tag) => categories.push(tag),
+                Err(e) => {
+                    self.report(format!("invalid category: {e}"));
+                    return;
+                }
+            }
+        }
+        let mut changed = false;
+        for path in paths {
+            changed |= self.browser.db.set_categories(path, &categories);
+        }
+        if changed {
+            self.library_changed(paths);
+        }
+    }
+
+    fn rename_list(&mut self, from: &str, to: &str) {
+        let Ok(from_tag) = Tag::new(from) else {
+            return;
+        };
+        let Some(to_tag) = self.valid_tag(to) else {
+            return;
+        };
+        if !self.browser.db.rename_list(&from_tag, &to_tag) {
+            if from_tag != to_tag && self.browser.db.list(&to_tag).is_some() {
+                self.report(format!(
+                    "there is already a list called {}",
+                    to_tag.as_str()
+                ));
+            }
+            return;
+        }
+        let shown = matches!(
+            self.file_browser.location(),
+            Some(Place::List(name)) if Tag::new(name).is_ok_and(|t| t == from_tag)
+        );
+        if shown {
+            self.file_browser
+                .set_location(Place::List(to_tag.as_str().to_owned()));
+        }
+        self.library_changed(&[]);
+    }
+
     /// The shown rows that carry `tag` now.
     fn tagged_shown(&self, tag: &Tag) -> Vec<PathBuf> {
         let keys: std::collections::BTreeSet<PathKey> =
@@ -822,6 +929,23 @@ impl<S: EngineSink> AppCore<S> {
             #[cfg(test)]
             self.browser.trace.push(ViewCall::PatchMarks(marks.clone()));
             self.file_browser.patch_marks(&marks);
+            let meta: Vec<(PathBuf, String, Vec<String>)> = paths
+                .iter()
+                .map(|p| {
+                    let mark = self.browser.db.mark(p);
+                    (
+                        p.clone(),
+                        mark.author.clone(),
+                        mark.categories
+                            .iter()
+                            .map(|t| t.as_str().to_owned())
+                            .collect(),
+                    )
+                })
+                .collect();
+            #[cfg(test)]
+            self.browser.trace.push(ViewCall::PatchMeta(meta.clone()));
+            self.file_browser.patch_meta(&meta);
         }
         self.refresh_places();
         self.reshow_collection();
@@ -835,6 +959,11 @@ impl<S: EngineSink> AppCore<S> {
                 .all_tags()
                 .into_iter()
                 .map(|(tag, count)| (tag.as_str().to_owned(), count))
+                .collect(),
+            lists: db
+                .lists()
+                .iter()
+                .map(|l| (l.name().as_str().to_owned(), l.paths().len()))
                 .collect(),
             bookmarks: db.places().to_vec(),
             roots: self.browser.roots.clone(),
