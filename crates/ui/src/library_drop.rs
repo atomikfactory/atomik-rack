@@ -35,6 +35,19 @@ pub(crate) fn patch_device_type(path: &Path) -> Option<String> {
     atomik_model::summarize_item(atomik_model::ItemKind::Patch, &text)?.device_type
 }
 
+/// The MIDI files among `paths`, but only when every path is one (a mixed drop is the
+/// shell's to split first): what the arrangement imports at the drop position.
+pub(crate) fn midi_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    if paths
+        .iter()
+        .all(|p| classify(p, false) == Some(FileKind::Midi))
+    {
+        paths.to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
 /// The first note clip item.
 pub(crate) fn clip_item(paths: &[PathBuf]) -> Option<&PathBuf> {
     paths
@@ -77,6 +90,22 @@ mod tests {
             None
         );
         assert_eq!(rack_item(&[]), None);
+    }
+
+    #[test]
+    fn midi_files_are_taken_only_from_a_pure_midi_drop() {
+        let pure = paths(&["a.mid", "B.MIDI"]);
+        assert_eq!(midi_files(&pure), pure);
+        assert!(midi_files(&paths(&["a.mid", "b.wav"])).is_empty());
+        assert!(midi_files(&paths(&["a.wav"])).is_empty());
+        assert!(
+            midi_files(&[]).is_empty(),
+            "nothing dropped is nothing to import"
+        );
+        assert!(
+            !is_library(Path::new("a.mid")),
+            "MIDI is not a library item"
+        );
     }
 
     #[test]

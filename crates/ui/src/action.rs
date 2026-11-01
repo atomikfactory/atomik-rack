@@ -140,6 +140,19 @@ pub enum UiAction {
     /// for [`UiAction::ImportAudio`] with the selected audio track (or new tracks) and the
     /// playhead as `tick`. The arrangement view itself has no menu and never emits this.
     ImportAudioDialog,
+    /// MIDI files were dropped on the arrangement at the snapped song tick `tick` (never
+    /// negative). With `lane` (the track's instrument and an index into its lanes, always a
+    /// note lane) each file becomes one clip on that lane starting at `tick`; with `None`
+    /// (dropped anywhere else in the track area) each file makes new tracks starting at `tick`.
+    /// One undo step per file.
+    ImportMidi {
+        /// The dropped `.mid` / `.midi` files, in drop order.
+        paths: Vec<PathBuf>,
+        /// The note lane under the pointer, if it was on one.
+        lane: Option<(DeviceKey, usize)>,
+        /// Song tick of the first clip.
+        tick: i64,
+    },
     /// The TUNER button of an audio track panel: show (`on`) or hide that track's tuner. The app
     /// then reads the track's input at the display rate and feeds the panel with
     /// [`crate::RackView::set_analyser`]; the track is muted while it shows when its

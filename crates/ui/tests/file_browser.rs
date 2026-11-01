@@ -2313,3 +2313,86 @@ fn the_search_field_filters_with_kind_in_author_and_cat() {
     typed(&mut v, "in:nowhere");
     assert!(shown(&mut v).is_empty());
 }
+
+// ----- MIDI files --------------------------------------------------------------------------
+
+fn midi_row(name: &str) -> FileRow {
+    FileRow {
+        kind: FileKind::Midi,
+        info: None,
+        size: 1500,
+        ..audio(name)
+    }
+}
+
+/// Sorted order: 0 groove.mid, 1 kick.wav.
+fn midi_view() -> FileBrowserView {
+    let mut v = view();
+    v.set_rows(vec![audio("kick.wav"), midi_row("groove.mid")]);
+    settled(v)
+}
+
+#[test]
+fn a_midi_row_is_labelled_and_is_never_probed_for_a_header() {
+    let mut v = midi_view();
+    let acts = run(&mut v, &[mv(Point::new(1.0, 1.0))]);
+    assert!(acts.is_empty(), "no info request for a MIDI file: {acts:?}");
+    let dl = paint(&mut v);
+    let t = dl.texts();
+    assert!(t.contains(&"groove.mid") && t.contains(&"MIDI"), "{t:?}");
+    assert!(t.contains(&"3.0s"), "the audio row still shows its length");
+}
+
+#[test]
+fn double_click_and_enter_on_a_midi_row_load_it_and_a_single_click_only_selects() {
+    let mut v = midi_view();
+    assert!(
+        click(&mut v, 0).is_empty(),
+        "a click neither previews nor loads"
+    );
+    assert_eq!(
+        run(
+            &mut v,
+            &[down_with(row_pt(0), Modifiers::NONE, 2), up(row_pt(0))]
+        ),
+        vec![BrowseAction::Load(p("groove.mid"))]
+    );
+    click(&mut v, 0);
+    assert_eq!(
+        run(&mut v, &[key(Key::Enter)]),
+        vec![BrowseAction::Load(p("groove.mid"))]
+    );
+}
+
+#[test]
+fn space_on_a_midi_row_previews_nothing() {
+    let mut v = midi_view();
+    click(&mut v, 0);
+    let acts = run(&mut v, &[key(Key::Space)]);
+    assert!(
+        !acts.iter().any(|a| matches!(a, BrowseAction::Preview(_))),
+        "{acts:?}"
+    );
+}
+
+#[test]
+fn the_row_menu_of_a_midi_file_offers_import_and_the_type_filter_finds_it() {
+    let mut v = midi_view();
+    let at = row_pt(0);
+    run(&mut v, &[right(at)]);
+    let texts: Vec<String> = paint(&mut v)
+        .texts()
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    assert!(texts.iter().any(|t| t == "Import"), "{texts:?}");
+    assert!(!texts.iter().any(|t| t == "Load" || t == "Rename..."));
+    assert_eq!(
+        run(&mut v, &[down(menu_item(at, 0))]),
+        vec![BrowseAction::Load(p("groove.mid"))]
+    );
+    v.focus_search();
+    typed(&mut v, "kind:midi");
+    let dl = paint(&mut v);
+    assert!(dl.texts().contains(&"groove.mid") && !dl.texts().contains(&"kick.wav"));
+}

@@ -38,7 +38,7 @@ The picture shows the main arrows only; the table below is exact.
 | `atomik-dsp` | [crates/dsp](../crates/dsp) | core | none | Oscillators, the FM synth's routings and bandwidth limiter (`fm.rs`), the band-limited factory wavetables (`wavetable.rs`: twelve generated tables and a 32-wave additive bank, mip levels by FFT truncation), filters, the 24 dB ladder with an anti-aliased drive (`ladder.rs`), envelopes, delay line, dynamics, EQ, fader and pan laws, the Hermite sample reader and the loop and reverse playhead (`sample_read.rs`), the granular sampler's windows, grain pool, clock and anti-aliased read (`grain.rs`), offline onset detection (`onset.rs`), the integer hash `rng::hash64` for position-derived randomness, the seeded requantiser with TPDF dither of an audio export (`dither`), the analyser display (`spectrum`: windowed FFT, one-third-octave bands, peak hold) and the stereo statistics (`stereo_meter`: correlation, balance, width) |
 | `atomik-devices` | [crates/devices](../crates/devices) | core, device-sdk, dsp | none | `poly-synth` (and the `mono-bass` and `dual-layer` built on its voice), `wavetable-synth`, `fm-synth`, `sampler`, `granular`, `drum-machine`, `loop-slicer`, `line-mixer`, `stereo-delay`, the `echo`, the six effects, the `guitar-amp`, `step-sequencer`, `arpeggiator`, `channel`, `master`, `audio-track`, the `spectrum` and `phase-meter` analysers (see [DEVICES.md](DEVICES.md)) |
 | `atomik-engine` | [crates/engine](../crates/engine) | core, device-sdk | none | Graph and topology, compile, the real-time `Engine`, the non-RT `EngineHandle`, workers, the song player, console features, audio playback, streaming, the record tap, sample-map swaps (`ControlOp::Samples`), pattern-data swaps (`ControlOp::PlayerData`), the musical position of each batch (`BatchTime`), the scope taps of metering devices (in `Meters`) |
-| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
+| `atomik-library` | [crates/library](../crates/library) | none (serde, serde_json, thiserror) | none | The data behind the file browser and the library, pure and headless: file kinds (audio, MIDI and the library items), `LibrarySection`, device URIs, free item names, rows, `PathKey`, `Tag`, `LibraryDb` (favourites, tags, bookmarked folders; JSON), the search `Query`, natural sort |
 | `atomik-audio-file` | [crates/audio-file](../crates/audio-file) | library (symphonia, rubato, hound, sha2, thiserror) | none | Decode, resample, WAV I/O, content hash, peaks, the project audio bundle, the header probe and the streaming decoder of the file browser, the tempo metadata of a WAV file |
 | `atomik-model` | [crates/model](../crates/model) | core, device-sdk | none | The document: rack, cables, console, song, sample pool, sampler zones, clip step grids; commands, undo, `.atomik` files (format v39), track folders, colours and comments (`organise.rs`), the music theory of the note editors (`theory.rs`), sequencer patterns (`steps.rs`), auto-mapping, pad helpers and slicing helpers (`slices.rs`), the generated documents of the stress options and benches (`stress.rs`) |
 | `atomik-audio-io` | [crates/audio-io](../crates/audio-io) | core, engine | none | cpal streams driving the engine, duplex input, telemetry |
@@ -1423,8 +1423,15 @@ of them touching the engine or the audio thread.
   track (the track selected in the arrangement, the track of a selected or open clip, or the
   selected rack device) at the snapped playhead, and makes new tracks (a poly synth each) at the
   playhead when no note track is selected; File > Import MIDI as Song makes new tracks from tick 0
-  and also takes the tempo map, meter map and markers; a `.mid` or `.midi` file dropped on the
-  window always makes new tracks at the playhead (audio files in the same drop go on as before).
+  and also takes the tempo map, meter map and markers. The file browser lists `.mid` and `.midi`
+  files (`FileKind::Midi`, the extensions are `atomik_library::MIDI_EXTENSIONS`, shared with the
+  import dialog) with a MIDI label, and a double click or Enter on one is File > Import MIDI. A
+  MIDI file dropped from the browser or the system on the arrangement goes where it lands
+  (`UiAction::ImportMidi`, `AppCore::import_midi_at`): on a note lane it is one clip on that lane
+  at the snapped drop tick (a file of several tracks is merged into that one clip, as the import
+  does), elsewhere in the track area it makes new tracks from the drop tick; dropped anywhere else
+  in the window (the rack included, an instrument there is not a target) it makes new tracks at the
+  playhead (audio files in the same drop go on as before).
   File > Export MIDI Clip, Track and Song are disabled while there is nothing to write (a note clip
   selected or open, a note track selected, a note track in the song). The dialogs are
   `ShellRequest::PickImportMidi` and `PickExportMidi`; the file is read and converted before
