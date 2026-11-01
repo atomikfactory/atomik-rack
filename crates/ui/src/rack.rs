@@ -298,6 +298,12 @@ struct DeviceView {
     cv: [bool; 2],
     /// Character panel: how often a feed changed the display (the screen animation phase).
     anim: u32,
+    /// How many of the `revision` bumps were live display feeds (meters, scopes, analysers):
+    /// `revision - live` only moves when the panel's picture changes for another reason, which
+    /// is what the navigator's miniature follows.
+    live: u64,
+    /// The panel recorded for the navigator (see [`navigator`]).
+    mini: Option<navigator::Mini>,
     /// Params a macro of an enclosing container drives (key, macro 0-based): drawn locked.
     driven: Vec<(String, u8)>,
     /// Params with an automation lane (keys): their controls are marked.
@@ -341,6 +347,17 @@ fn descriptor_id(registry: &Registry, d: &RackDevice) -> usize {
 }
 
 impl DeviceView {
+    /// Counts a display feed (meter, scope or analyser values) as a revision of the panel.
+    fn bump_live(&mut self) {
+        self.revision += 1;
+        self.live += 1;
+    }
+
+    /// The panel's revision without the live display feeds.
+    fn still_revision(&self) -> u64 {
+        self.revision.saturating_sub(self.live)
+    }
+
     /// The panel has the BYPASS switch of the name strip (see
     /// [`autolayout::has_strip_bypass`]).
     fn has_strip_bypass(&self) -> bool {
@@ -1315,6 +1332,8 @@ impl RackView {
             sc: None,
             cv: [false; 2],
             anim: 0,
+            live: 0,
+            mini: None,
             driven: Vec::new(),
             automated: Vec::new(),
             has_channel: false,
@@ -1407,6 +1426,8 @@ impl RackView {
             let mut prev = old.remove(&d.key);
             let meters = prev.as_ref().map(|p| p.meters.clone()).unwrap_or_default();
             let anim = prev.as_ref().map_or(0, |p| p.anim);
+            let live = prev.as_ref().map_or(0, |p| p.live);
+            let mini = prev.as_mut().and_then(|p| p.mini.take());
             let scope = prev
                 .as_mut()
                 .map(|p| std::mem::take(&mut p.scope))
@@ -1478,6 +1499,8 @@ impl RackView {
                 sc,
                 cv,
                 anim,
+                live,
+                mini,
                 driven,
                 automated,
                 has_channel,
@@ -1532,6 +1555,8 @@ impl RackView {
                 sc: None,
                 cv: [false; 2],
                 anim: 0,
+                live: 0,
+                mini: None,
                 driven: Vec::new(),
                 automated: Vec::new(),
                 has_channel: false,
@@ -4223,78 +4248,7 @@ impl RackView {
                 .as_ref()
                 .is_none_or(|l| l.revision() != d.revision);
             if stale {
-                let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
-                let info = PanelInfo {
-                    name: &d.name,
-                    editing_name: self
-                        .rename
-                        .as_ref()
-                        .filter(|r| r.dev == i && r.kind == RenameKind::Device)
-                        .map(|r| r.text.as_str()),
-                    caption: &d.caption,
-                    accent: d.accent,
-                    desc: d.desc.as_ref(),
-                    device: d.device.as_ref(),
-                    spec: &d.spec,
-                    side: self.flip,
-                    folded: d.folded,
-                    height: d.height,
-                    patch_browse: self.patch_browse.as_ref() == Some(&d.key),
-                    seed: paint::seed_of(&d.key.0),
-                    pad: d.pad,
-                    pad_names: &d.pad_names,
-                    pad_cabled: d.pad_cabled[usize::from(d.pad - 1)],
-                    sensitivity: d.sens,
-                    fx_meters: &d.meters,
-                    analyser: &d.analyser,
-                    sc_source: d.sc.as_deref(),
-                    fx_cv: d.cv,
-                    fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
-                    player: PlayerInfo {
-                        edit: d.edit,
-                        meters: &d.meters,
-                        page: d.page,
-                        fx_mode: d.fx_mode,
-                        pad_names: &d.pad_names,
-                        scope: d.spec.modsrc.is_some().then_some(&d.scope),
-                        rename: self
-                            .rename
-                            .as_ref()
-                            .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
-                            .map(|r| r.text.as_str()),
-                    },
-                    plugin: PluginInfo {
-                        status: &d.plugin_status,
-                        meters: &d.meters,
-                        has_channel: d.has_channel,
-                    },
-                    container: ContainerInfo {
-                        rename: self
-                            .rename
-                            .as_ref()
-                            .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
-                            .map(|r| (usize::from(r.index), r.text.as_str())),
-                        has_channel: d.has_channel,
-                    },
-                    driven: &d.driven,
-                    automated: &d.automated,
-                    io: self.io.info(),
-                    master: d.master.info(),
-                    from_clip: self.clip_scale.is_some(),
-                    sampling: self.sampling.as_ref() == Some(&d.key),
-                    grain: crate::granular_panel::GrainInfo {
-                        meters: &d.meters,
-                        sample: d.sample.as_ref(),
-                        peaks: d
-                            .device
-                            .as_ref()
-                            .filter(|_| d.spec.granular.is_some())
-                            .and_then(|dev| crate::granular_panel::shown_zone(dev, &d.meters))
-                            .and_then(|z| self.sample_peaks.get(&z.asset))
-                            .map(|p| &**p),
-                    },
-                };
-                paint::record_panel(&mut list, &self.theme, &info);
+                let list = self.record_panel_list(i, side);
                 self.devices[i].lists[side] = Some(list);
             }
             let d = &self.devices[i];
@@ -4324,6 +4278,85 @@ impl RackView {
         canvas.pop_transform();
         self.tree.clear_dirty();
         self.repaint = false;
+    }
+
+    /// Records the panel of device `i` as seen from `side` into a display list stamped for the
+    /// panel cache (the rack paints it, the navigator draws it scaled down).
+    fn record_panel_list(&self, i: usize, side: usize) -> DisplayList {
+        let d = &self.devices[i];
+        let mut list = DisplayList::cached(d.cache_id * 2 + side as u64, d.revision);
+        let info = PanelInfo {
+            name: &d.name,
+            editing_name: self
+                .rename
+                .as_ref()
+                .filter(|r| r.dev == i && r.kind == RenameKind::Device)
+                .map(|r| r.text.as_str()),
+            caption: &d.caption,
+            accent: d.accent,
+            desc: d.desc.as_ref(),
+            device: d.device.as_ref(),
+            spec: &d.spec,
+            side: self.flip,
+            folded: d.folded,
+            height: d.height,
+            patch_browse: self.patch_browse.as_ref() == Some(&d.key),
+            seed: paint::seed_of(&d.key.0),
+            pad: d.pad,
+            pad_names: &d.pad_names,
+            pad_cabled: d.pad_cabled[usize::from(d.pad - 1)],
+            sensitivity: d.sens,
+            fx_meters: &d.meters,
+            analyser: &d.analyser,
+            sc_source: d.sc.as_deref(),
+            fx_cv: d.cv,
+            fx_phase: (f64::from(d.anim) * 0.03).rem_euclid(1.0) as f32,
+            player: PlayerInfo {
+                edit: d.edit,
+                meters: &d.meters,
+                page: d.page,
+                fx_mode: d.fx_mode,
+                pad_names: &d.pad_names,
+                scope: d.spec.modsrc.is_some().then_some(&d.scope),
+                rename: self
+                    .rename
+                    .as_ref()
+                    .filter(|r| r.dev == i && r.kind == RenameKind::Pattern)
+                    .map(|r| r.text.as_str()),
+            },
+            plugin: PluginInfo {
+                status: &d.plugin_status,
+                meters: &d.meters,
+                has_channel: d.has_channel,
+            },
+            container: ContainerInfo {
+                rename: self
+                    .rename
+                    .as_ref()
+                    .filter(|r| r.dev == i && r.kind == RenameKind::Macro)
+                    .map(|r| (usize::from(r.index), r.text.as_str())),
+                has_channel: d.has_channel,
+            },
+            driven: &d.driven,
+            automated: &d.automated,
+            io: self.io.info(),
+            master: d.master.info(),
+            from_clip: self.clip_scale.is_some(),
+            sampling: self.sampling.as_ref() == Some(&d.key),
+            grain: crate::granular_panel::GrainInfo {
+                meters: &d.meters,
+                sample: d.sample.as_ref(),
+                peaks: d
+                    .device
+                    .as_ref()
+                    .filter(|_| d.spec.granular.is_some())
+                    .and_then(|dev| crate::granular_panel::shown_zone(dev, &d.meters))
+                    .and_then(|z| self.sample_peaks.get(&z.asset))
+                    .map(|p| &**p),
+            },
+        };
+        paint::record_panel(&mut list, &self.theme, &info);
+        list
     }
 
     /// The marks of the mapped controls of the front panels in view.
