@@ -8,14 +8,25 @@
 //! from `d` samples ago (`d = 1` is the most recent write). Values written with magnitude below
 //! 1e-20 are stored as 0 (denormal flush for feedback loops).
 
+/// Ring length for a line of `max_delay`: a power of two, so the index wraps with a mask (the
+/// delays that can be read are unchanged; the extra length is never read).
+fn ring_for(max_delay: usize) -> usize {
+    (max_delay.max(1) + 2).next_power_of_two()
+}
+
 /// Fractional delay line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DelayLine {
     /// The whole allocation (zeroed, so the operating system commits its pages when first
     /// written).
     buf: Vec<f32>,
-    /// Length of the ring in use (`<= buf.len()`); the rest is a reserve for [`DelayLine::grow`].
+    /// Length of the ring in use (a power of two, `<= buf.len()`); the rest is a reserve for
+    /// [`DelayLine::grow`].
     active: usize,
+    /// Longest delay that can be read.
+    max: usize,
+    /// Longest delay [`DelayLine::grow`] can reach.
+    reserve: usize,
     write: usize,
 }
 
@@ -28,10 +39,13 @@ impl DelayLine {
     /// Allocates room for delays up to `reserve` samples but starts as a line of `max_delay`
     /// (the reserve is only touched once [`DelayLine::grow`] puts it to use). Non-RT.
     pub fn with_reserve(max_delay: usize, reserve: usize) -> Self {
-        let len = max_delay.max(1) + 2;
+        let max = max_delay.max(1);
+        let reserve = reserve.max(max);
         Self {
-            buf: vec![0.0; len.max(reserve.max(1) + 2)],
-            active: len,
+            buf: vec![0.0; ring_for(reserve)],
+            active: ring_for(max),
+            max,
+            reserve,
             write: 0,
         }
     }
@@ -44,21 +58,22 @@ impl DelayLine {
     /// Longest supported delay in samples (of the part in use).
     #[inline]
     pub fn max_delay(&self) -> usize {
-        self.active - 2
+        self.max
     }
 
     /// Longest delay [`DelayLine::grow`] can reach.
     pub fn reserve(&self) -> usize {
-        self.buf.len() - 2
+        self.reserve
     }
 
     /// Puts the reserve to use for delays up to `max_delay` (clamped to the reserve) and
     /// clears the content, so the history starts silent. Never allocates; does nothing when the
     /// line already reaches `max_delay`.
     pub fn grow(&mut self, max_delay: usize) {
-        let len = max_delay.min(self.reserve()).max(1) + 2;
-        if len > self.active {
-            self.active = len;
+        let max = max_delay.min(self.reserve).max(1);
+        if max > self.max {
+            self.max = max;
+            self.active = ring_for(max);
             self.clear();
         }
     }
@@ -73,7 +88,7 @@ impl DelayLine {
     /// Reads the input from `delay` samples ago (clamped to `1..=max_delay`), linearly interpolated.
     #[inline]
     pub fn read(&self, delay: f32) -> f32 {
-        let max = self.max_delay() as f32;
+        let max = self.max as f32;
         let d = if delay.is_nan() {
             1.0
         } else {
@@ -82,9 +97,10 @@ impl DelayLine {
         let whole = d.floor();
         let frac = d - whole;
         let len = self.active;
+        let mask = len - 1;
         // `whole + 1 <= max + 1 < len`, so the subtraction below never underflows.
-        let i0 = (self.write + len - whole as usize) % len;
-        let i1 = if i0 == 0 { len - 1 } else { i0 - 1 };
+        let i0 = (self.write + len - whole as usize) & mask;
+        let i1 = i0.wrapping_sub(1) & mask;
         let a = self.buf[i0];
         a + (self.buf[i1] - a) * frac
     }
@@ -93,10 +109,7 @@ impl DelayLine {
     #[inline]
     pub fn write(&mut self, x: f32) {
         self.buf[self.write] = if x.abs() < 1e-20 { 0.0 } else { x };
-        self.write += 1;
-        if self.write == self.active {
-            self.write = 0;
-        }
+        self.write = (self.write + 1) & (self.active - 1);
     }
 }
 
@@ -182,5 +195,36 @@ mod tests {
             b.write(0.0);
         }
         assert_eq!(b.read(1_000.0).to_bits(), 1.0f32.to_bits());
+    }
+}
+
+#[cfg(test)]
+mod ring_tests {
+    use super::*;
+
+    /// The masked ring reads exactly what a plain modulo ring of the old length read.
+    #[test]
+    fn the_power_of_two_ring_reads_what_the_modulo_ring_did() {
+        for max in [1usize, 5, 8, 100, 1_000] {
+            let mut d = DelayLine::new(max);
+            let len = max + 2;
+            let mut old = vec![0.0f32; len];
+            let mut w = 0usize;
+            for n in 0..3_000usize {
+                let x = ((n * 37 % 101) as f32 - 50.0) * 0.013;
+                let delay = 1.0 + (n % (max * 4)) as f32 * 0.37;
+                let want = {
+                    let dd = delay.clamp(1.0, max as f32);
+                    let whole = dd.floor();
+                    let i0 = (w + len - whole as usize) % len;
+                    let i1 = if i0 == 0 { len - 1 } else { i0 - 1 };
+                    old[i0] + (old[i1] - old[i0]) * (dd - whole)
+                };
+                assert_eq!(d.read(delay).to_bits(), want.to_bits(), "max {max} n {n}");
+                d.write(x);
+                old[w] = if x.abs() < 1e-20 { 0.0 } else { x };
+                w = (w + 1) % len;
+            }
+        }
     }
 }

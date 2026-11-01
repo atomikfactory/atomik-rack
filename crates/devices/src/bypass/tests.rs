@@ -339,10 +339,16 @@ fn every_effect_descriptor_ends_with_the_host_style_bypass_param() {
     let r = registry();
     for id in effect_ids() {
         let d = r.descriptor(id).unwrap();
-        let p = d.params.last().unwrap();
+        // Trailing `internal.` params (display switches the app sets) may follow it.
+        let at = d
+            .params
+            .iter()
+            .rposition(|q| !q.key.starts_with("internal."))
+            .unwrap();
+        let p = &d.params[at];
         assert_eq!(p.key, "bypass", "{id}");
         assert_eq!(p.name, "Bypass");
-        assert_eq!(p.id.0 as usize, d.params.len() - 1, "{id}");
+        assert_eq!(p.id.0 as usize, at, "{id}");
         assert_eq!((p.min, p.max, p.default), (0.0, 1.0, 0.0));
         assert_eq!(p.unit, atomik_core::Unit::Toggle);
         assert!(p.discrete);
@@ -409,5 +415,85 @@ fn the_ring_covers_the_largest_latency_at_every_rate() {
         let lat = h.device().latency_frames() as usize;
         let need = (sr * RING_SECONDS) as usize;
         assert!(lat * 4 < need.max(MIN_RING), "{sr}: {lat}");
+    }
+}
+
+/// Batches in the two seconds after which a fully bypassed effect stops, at the test rate.
+const STOP_BATCHES: usize = (SR * 2.0 / BATCH as f64) as usize;
+
+#[test]
+fn a_bypassed_effect_stops_after_two_seconds_and_only_the_dry_remains() {
+    let mut h = wrapped("atomik.compressor");
+    h.set_param("threshold", -40.0);
+    h.set_param("ratio", 10.0);
+    h.set_param("bypass", 1.0);
+    let mut n = Noise::new();
+    let mut gr_seen = 0.0f32;
+    for k in 0..STOP_BATCHES + 20 {
+        let (i, o) = step(&mut h, &mut n, 0.8);
+        // The output is the dry input all along, the stop changes nothing audible.
+        assert_eq!(bits(&o[0]), bits(&i[0]), "batch {k}");
+        assert_eq!(bits(&o[1]), bits(&i[1]), "batch {k}");
+        let gr = h
+            .output("gr_cv_out")
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()));
+        if k < STOP_BATCHES - 2 {
+            gr_seen = gr_seen.max(gr);
+        } else if k > STOP_BATCHES + 1 {
+            assert_eq!(gr, 0.0, "the gain reduction CV is silent once stopped");
+        }
+    }
+    assert!(gr_seen > 0.0, "the effect ran while the bypass settled");
+    let mut m = [0.0f32; 8];
+    let n = h.device().meter_values(&mut m);
+    assert!(m[..n].iter().all(|v| *v == 0.0), "{m:?}");
+}
+
+#[test]
+fn switching_a_stopped_effect_back_on_starts_it_from_the_reset_state() {
+    for id in ["atomik.compressor", "atomik.reverb", "atomik.eq"] {
+        let mut a = wrapped(id);
+        let mut b = wrapped(id);
+        a.set_param("bypass", 1.0);
+        let mut na = Noise::new();
+        for _ in 0..STOP_BATCHES + 10 {
+            step(&mut a, &mut na, 0.6);
+        }
+        a.set_param("bypass", 0.0);
+        // `b` is a fresh effect that sees the same input from here on.
+        let mut feed = Noise::new();
+        for _ in 0..(STOP_BATCHES + 10) * BATCH {
+            feed.0.next_bipolar();
+            feed.1.next_bipolar();
+        }
+        let mut fb = Noise(feed.0, feed.1);
+        // Past the 5 ms fade the wet path is bit-identical to a fresh effect.
+        for k in 0..40 {
+            let (_, oa) = step(&mut a, &mut feed, 0.6);
+            let (_, ob) = step(&mut b, &mut fb, 0.6);
+            if k >= 8 {
+                assert_eq!(bits(&oa[0]), bits(&ob[0]), "{id} batch {k}");
+                assert_eq!(bits(&oa[1]), bits(&ob[1]), "{id} batch {k}");
+            }
+        }
+    }
+}
+
+#[test]
+fn stopping_and_restarting_every_effect_never_allocates_or_goes_wrong() {
+    for id in effect_ids() {
+        let mut h = wrapped(id);
+        let mut n = Noise::new();
+        h.set_param("bypass", 1.0);
+        for _ in 0..STOP_BATCHES + 5 {
+            let (_, o) = step(&mut h, &mut n, 0.5);
+            assert!(o[0].iter().chain(&o[1]).all(|s| s.is_finite()), "{id}");
+        }
+        h.set_param("bypass", 0.0);
+        for _ in 0..30 {
+            let (_, o) = step(&mut h, &mut n, 0.5);
+            assert!(o[0].iter().chain(&o[1]).all(|s| s.is_finite()), "{id}");
+        }
     }
 }
