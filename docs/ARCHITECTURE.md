@@ -209,12 +209,18 @@ WAV ◄──wav::write── Vec<Vec<f32>> ◄──render_offline── Engine
   narrow to leave the rack 240 px hides it. It draws one uniform-scale overview of the whole
   content: the narrower of "all columns fit the width" and "the whole height fits", so the strip
   always shows every column and the viewport rectangle (the rack area's part of the rack, with the
-  zoom) is the only moving part; a very tall rack gets small blocks (at least 1.5 px high), not a
-  scrolling overview. Blocks are the rectangles `column_device_rects` reports (device colour, folded
-  heights, the Audio I/O strip on column 0, an empty column as an empty slot) and are recorded once
-  into a cached `DisplayList` keyed by the layout revision (bumped by `rebuild`) and the strip
-  geometry; scrolling, selecting and hovering redraw only the viewport rectangle and the selection
-  outlines, and no device panel is painted. A press outside the viewport rectangle centres it on the
+  zoom) is the only moving part; a very tall rack gets small pictures, not a scrolling overview. Each
+  device is a miniature of its real panel: the panel's own display list (`record_panel_list`, the
+  list the rack caches; one the rack already recorded is reused) is replayed under a scale
+  transform by `replay_scaled`, which drops fills too small to see, keeps text of 4 px or more,
+  draws smaller text as a bar of its colour and drops text under 1.4 px. A folded panel is drawn
+  folded, the Audio I/O strip tops column 0, and a panel shorter than 4 px is a flat block of its
+  device colour (at least 1.5 px high). Each panel is recorded for the strip once per picture
+  change (`Mini`, keyed by `still_revision`: the panel revision without the live meter, scope and
+  analyser feeds counted by `bump_live`, so playback never records it again), and the miniature is one
+  cached `DisplayList` keyed by those stamps, the layout revision (bumped by `rebuild`), the shown
+  side and the strip geometry; scrolling, selecting and hovering redraw only the viewport
+  rectangle and the selection outlines. A press outside the viewport rectangle centres it on the
   point, a press inside keeps the grab point, a drag follows the pointer (`Drag::Navigator`, also
   outside the strip, clamped to the content), the wheel scrolls as over the rack (Shift sideways).
   The strip never starts a device drag, and a device or browser row released over it is dropped.
