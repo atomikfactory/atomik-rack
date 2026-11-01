@@ -55,7 +55,9 @@ impl Command {
             Command::Batch(commands) => commands.first().map_or(DEFAULT_LABEL, Command::label),
             Command::SetZones { .. } => "Edit Zones",
             Command::SetPattern { .. } | Command::AddPattern { .. } => "Edit Pattern",
-            Command::SetDrumStep { .. } | Command::SetDrumPattern { .. } => "Edit Drum Pattern",
+            Command::SetDrumStep { .. }
+            | Command::SetDrumStepFx { .. }
+            | Command::SetDrumPattern { .. } => "Edit Drum Pattern",
             Command::SetCurves { .. } => "Edit Curves",
             Command::Workflow(c) => workflow_label(c),
             _ => DEFAULT_LABEL,

@@ -15,8 +15,12 @@ use std::sync::Arc;
 use crate::RackDevice;
 use crate::curves::{CurveDoc, flat_data};
 
-/// Patterns per sequencer.
+/// Patterns per step sequencer.
 pub const MAX_PATTERNS: usize = 8;
+/// Patterns per CV sequencer (four banks of eight).
+pub const MAX_CV_PATTERNS: usize = 32;
+/// Patterns per drum generator.
+pub const MAX_DRUM_PATTERNS: usize = 32;
 /// Steps stored per pattern.
 pub const MAX_STEPS: usize = 64;
 /// Longest pattern name, in characters.
@@ -251,7 +255,8 @@ impl Default for PatternDoc {
 /// The patterns of one step sequencer device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepSeqDoc {
-    /// 1..=[`MAX_PATTERNS`] patterns; the device's `pattern` param (1-based) selects one.
+    /// 1..=[`MAX_CV_PATTERNS`] patterns (a step sequencer holds at most [`MAX_PATTERNS`]); the
+    /// device's `pattern` param (1-based) selects one.
     pub patterns: Vec<PatternDoc>,
 }
 
@@ -268,9 +273,9 @@ impl StepSeqDoc {
     /// Validates the pattern count and every pattern. On failure the message names the
     /// pattern, e.g. `pattern 2: swing 80 is outside 0..=75`.
     pub fn check(&self) -> Result<(), String> {
-        if !(1..=MAX_PATTERNS).contains(&self.patterns.len()) {
+        if !(1..=MAX_CV_PATTERNS).contains(&self.patterns.len()) {
             return Err(format!(
-                "{} patterns is outside 1..={MAX_PATTERNS}",
+                "{} patterns is outside 1..={MAX_CV_PATTERNS}",
                 self.patterns.len()
             ));
         }
@@ -292,8 +297,20 @@ impl StepSeqDoc {
         for (slot, pattern) in seq.patterns.iter_mut().zip(&self.patterns) {
             *slot = pattern.to_data();
         }
-        seq.count = self.patterns.len().clamp(1, MAX_PATTERNS) as u8;
+        seq.count = self.patterns.len().clamp(1, MAX_CV_PATTERNS) as u8;
         seq
+    }
+}
+
+/// How many patterns a device of `type_id` may hold: [`MAX_CV_PATTERNS`] for a type that takes
+/// curves, [`MAX_PATTERNS`] for a step sequencer. (A drum generator has [`MAX_DRUM_PATTERNS`].)
+pub fn pattern_cap(registry: &Registry, type_id: &str) -> usize {
+    if registry.takes_drums(type_id) {
+        MAX_DRUM_PATTERNS
+    } else if registry.takes_curves(type_id) {
+        MAX_CV_PATTERNS
+    } else {
+        MAX_PATTERNS
     }
 }
 

@@ -1,6 +1,6 @@
 //! Drum generator patterns in the document.
 //!
-//! A [`DrumDoc`] holds up to [`MAX_PATTERNS`] [`DrumPatternDoc`]s of a device that takes drum
+//! A [`DrumDoc`] holds up to [`MAX_DRUM_PATTERNS`] [`DrumPatternDoc`]s of a device that takes drum
 //! data (`Registry::takes_drums`): a name, a length, a resolution, a swing, [`DRUM_LANES`] lanes
 //! (the key each plays, its role and its mute) and [`MAX_STEPS`] steps per lane. A pattern always
 //! holds all of them, so its length can grow again without losing data; steps at or beyond
@@ -8,10 +8,11 @@
 //! hand-over value from the document.
 
 use atomik_device_sdk::{
-    DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole, DrumStep, PlayerData,
+    DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole, DrumStep, MAX_FLAM, MAX_RATCHET,
+    PlayerData,
 };
 
-use crate::steps::{MAX_NAME_CHARS, MAX_PATTERNS, MAX_STEPS, SeqResolution};
+use crate::steps::{MAX_DRUM_PATTERNS, MAX_NAME_CHARS, MAX_STEPS, SeqResolution};
 
 /// One step of a drum lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,20 +21,45 @@ pub struct DrumStepDoc {
     pub velocity: u8,
     /// Probability in percent, 0..=100.
     pub prob: u8,
+    /// Flam, 0..=[`MAX_FLAM`] percent of the step (0 = none).
+    pub flam: u8,
+    /// Ratchet, 0..=[`MAX_RATCHET`] hits per step (0 and 1 = a single hit).
+    pub ratchet: u8,
 }
 
 impl Default for DrumStepDoc {
-    /// No hit, probability 100 %.
+    /// No hit, probability 100 %, no flam, no ratchet.
     fn default() -> Self {
         Self {
             velocity: 0,
             prob: 100,
+            flam: 0,
+            ratchet: 0,
         }
     }
 }
 
 impl DrumStepDoc {
+    /// A step with a velocity and a probability and no flam or ratchet.
+    pub const fn hit(velocity: u8, prob: u8) -> Self {
+        Self {
+            velocity,
+            prob,
+            flam: 0,
+            ratchet: 0,
+        }
+    }
+
     pub(crate) fn check(&self) -> Result<(), String> {
+        if self.flam > MAX_FLAM {
+            return Err(format!("flam {} is outside 0..={MAX_FLAM}", self.flam));
+        }
+        if self.ratchet > MAX_RATCHET {
+            return Err(format!(
+                "ratchet {} is outside 0..={MAX_RATCHET}",
+                self.ratchet
+            ));
+        }
         if self.velocity > 127 {
             return Err(format!("velocity {} is outside 0..=127", self.velocity));
         }
@@ -161,6 +187,8 @@ impl DrumPatternDoc {
                 *slot = DrumStep {
                     velocity: s.velocity,
                     prob: s.prob,
+                    flam: s.flam,
+                    ratchet: s.ratchet,
                 };
             }
         }
@@ -191,6 +219,8 @@ impl DrumPatternDoc {
                         .map(|s| DrumStepDoc {
                             velocity: s.velocity,
                             prob: s.prob,
+                            flam: s.flam,
+                            ratchet: s.ratchet,
                         })
                         .collect()
                 })
@@ -217,7 +247,7 @@ impl Default for DrumPatternDoc {
 /// The patterns of one drum generator device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrumDoc {
-    /// 1..=[`MAX_PATTERNS`] patterns; the device's `pattern` param (1-based) selects one.
+    /// 1..=[`MAX_DRUM_PATTERNS`] patterns; the device's `pattern` param (1-based) selects one.
     pub patterns: Vec<DrumPatternDoc>,
 }
 
@@ -233,9 +263,9 @@ impl Default for DrumDoc {
 impl DrumDoc {
     /// Validates the pattern count and every pattern. On failure the message names the pattern.
     pub fn check(&self) -> Result<(), String> {
-        if !(1..=MAX_PATTERNS).contains(&self.patterns.len()) {
+        if !(1..=MAX_DRUM_PATTERNS).contains(&self.patterns.len()) {
             return Err(format!(
-                "{} patterns is outside 1..={MAX_PATTERNS}",
+                "{} patterns is outside 1..={MAX_DRUM_PATTERNS}",
                 self.patterns.len()
             ));
         }
@@ -252,7 +282,7 @@ impl DrumDoc {
         for (slot, p) in d.patterns.iter_mut().zip(&self.patterns) {
             *slot = p.to_data();
         }
-        d.count = self.patterns.len().clamp(1, MAX_PATTERNS) as u8;
+        d.count = self.patterns.len().clamp(1, MAX_DRUM_PATTERNS) as u8;
         PlayerData::Drums(d)
     }
 }

@@ -22,8 +22,9 @@ pub use midi_tap::{MIDI_TAP_EVENTS, MidiEvent, MidiTap, releases as midi_release
 pub use panel::{ControlKind, PanelControl, PanelLayout, PanelSocket, RACK_UNIT, RACK_WIDTH};
 pub use player::{
     CURVE_ROWS, CurveStep, CvSeqData, DRUM_LANES, DrumData, DrumLane, DrumPattern, DrumRole,
-    DrumStep, MAX_PATTERNS, MAX_STEPS, PatternData, PlayerData, PlayerDataRef, SeqResolution,
-    StepData, StepSeqData,
+    DrumStep, MAX_CV_PATTERNS, MAX_DRUM_PATTERNS, MAX_FLAM, MAX_PATTERNS, MAX_RATCHET,
+    MAX_STEP_PATTERNS, MAX_STEPS, PatternData, PlayerData, PlayerDataRef, SeqResolution, StepData,
+    StepSeqData,
 };
 pub use plugin::{
     CLAP_PREFIX, Channels, MAX_INTERNED_DESCRIPTORS, MAX_PLUGIN_PARAMS, PluginFormat,

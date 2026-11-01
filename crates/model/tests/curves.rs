@@ -199,7 +199,7 @@ fn the_loader_checks_curve_shapes_and_ranges() {
             v["devices"][1]["curves"]["patterns"] = json!([]);
         }),
         "devices[1].curves.patterns",
-        "outside 1..=8",
+        "outside 1..=32",
     );
     reject(
         &edited(&text, |v| {

@@ -1,6 +1,6 @@
 //! CV sequencer curves in the document.
 //!
-//! A [`CurveDoc`] holds, for up to [`MAX_PATTERNS`] patterns of a device that takes curves
+//! A [`CurveDoc`] holds, for up to [`MAX_CV_PATTERNS`] patterns of a device that takes curves
 //! (`Registry::takes_curves`), two rows A and B of [`MAX_STEPS`] [`CurveStepDoc`]s each. Pattern
 //! `i` of the curves goes with pattern `i` of the device's [`crate::StepSeqDoc`]; a pattern the
 //! document holds no curves for plays flat zeros. Like the notes, a row always holds all
@@ -9,7 +9,8 @@
 
 use atomik_device_sdk::{CURVE_ROWS, CurveStep};
 
-use crate::steps::{MAX_PATTERNS, MAX_STEPS};
+use crate::steps::{MAX_CV_PATTERNS, MAX_STEPS};
+use atomik_device_sdk::MAX_PATTERNS;
 
 /// Largest magnitude of a curve value, in percent.
 pub const CURVE_VALUE_MAX: i8 = 100;
@@ -91,7 +92,7 @@ impl CurvePatternDoc {
 /// The curves of one CV sequencer device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurveDoc {
-    /// 1..=[`MAX_PATTERNS`] patterns, by pattern index.
+    /// 1..=[`MAX_CV_PATTERNS`] patterns, by pattern index.
     pub patterns: Vec<CurvePatternDoc>,
 }
 
@@ -107,9 +108,9 @@ impl Default for CurveDoc {
 impl CurveDoc {
     /// Validates the pattern count and every pattern; the message names the pattern.
     pub fn check(&self) -> Result<(), String> {
-        if !(1..=MAX_PATTERNS).contains(&self.patterns.len()) {
+        if !(1..=MAX_CV_PATTERNS).contains(&self.patterns.len()) {
             return Err(format!(
-                "{} patterns is outside 1..={MAX_PATTERNS}",
+                "{} patterns is outside 1..={MAX_CV_PATTERNS}",
                 self.patterns.len()
             ));
         }

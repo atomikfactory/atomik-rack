@@ -363,6 +363,7 @@ pub(crate) fn guard(doc: &RackDoc, command: &Command) -> Result<(), ModelError> 
             | Command::SetPattern { device, .. }
             | Command::SetCurves { device, .. }
             | Command::SetDrumStep { device, .. }
+            | Command::SetDrumStepFx { device, .. }
             | Command::SetDrumLane { device, .. }
             | Command::SetDrumPattern { device, .. }
             | Command::AddDrumPattern { device }
