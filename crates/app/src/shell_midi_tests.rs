@@ -173,3 +173,83 @@ fn a_midi_file_dropped_on_the_window_imports_as_tracks() {
     assert_eq!(s.core().doc().song.tracks.len(), 2);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+fn add_note_track(s: &mut Shell<NullBackend>, name: &str) -> atomik_model::DeviceKey {
+    let key = atomik_model::DeviceKey(name.to_owned());
+    let core = s.core_mut();
+    core.apply_command(atomik_model::Command::AddDevice {
+        index: usize::MAX,
+        type_id: "atomik.poly-synth".to_owned(),
+        key: Some(key.clone()),
+    })
+    .unwrap();
+    core.apply_command(atomik_model::Command::Song(
+        atomik_model::SongCommand::AddTrack {
+            device: key.clone(),
+        },
+    ))
+    .unwrap();
+    key
+}
+
+#[test]
+fn a_midi_file_dropped_on_a_note_lane_becomes_a_clip_there_and_hovers_with_the_lane_marker() {
+    let mut s = shell();
+    let path = midi_file("drop-lane");
+    let pad = add_note_track(&mut s, "pad");
+    let other = add_note_track(&mut s, "other");
+    let lane = s
+        .core()
+        .arrangement()
+        .lane_rect(&pad, 0)
+        .expect("the lane is shown");
+    let at = atomik_ui::kurbo::Point::new(lane.x0 + 300.0, lane.center().y);
+    s.handle(&UiEvent::FileHover {
+        pos: at,
+        paths: vec![path.clone()],
+    });
+    assert!(s.core().arrangement().clip_drop_hover().is_some());
+    s.handle(&UiEvent::FileDrop {
+        pos: at,
+        paths: vec![path.clone()],
+    });
+    assert!(s.core().arrangement().clip_drop_hover().is_none());
+    let song = &s.core().doc().song;
+    assert_eq!(
+        song.tracks.len(),
+        2,
+        "no new track: the clip goes on the lane"
+    );
+    let clips = &song.track(&pad).unwrap().lanes[0].clips;
+    assert_eq!(clips.len(), 1);
+    assert!(clips[0].start > 0, "at the drop position, not the playhead");
+    assert!(song.track(&other).unwrap().lanes[0].clips.is_empty());
+    assert!(s.core_mut().undo());
+    assert!(
+        s.core().doc().song.track(&pad).unwrap().lanes[0]
+            .clips
+            .is_empty()
+    );
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn a_midi_file_dropped_below_the_tracks_makes_new_tracks_at_the_drop_position() {
+    let mut s = shell();
+    let path = midi_file("drop-below");
+    let pad = add_note_track(&mut s, "pad");
+    let lane = s.core().arrangement().lane_rect(&pad, 0).unwrap();
+    // Well below the last track row, inside the arrangement.
+    let below = s.layout().song.expect("the arrangement shows");
+    let at = atomik_ui::kurbo::Point::new(lane.x0 + 300.0, below.y1 - 6.0);
+    assert!(at.y > lane.y1);
+    s.handle(&UiEvent::FileDrop {
+        pos: at,
+        paths: vec![path.clone()],
+    });
+    let song = &s.core().doc().song;
+    assert_eq!(song.tracks.len(), 2, "one new track made from the file");
+    assert!(song.track(&pad).unwrap().lanes[0].clips.is_empty());
+    assert!(song.tracks[1].lanes[0].clips[0].start > 0);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

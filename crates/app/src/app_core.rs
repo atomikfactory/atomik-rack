@@ -922,6 +922,11 @@ impl<S: EngineSink> AppCore<S> {
                 target,
                 tick,
             } => self.import_audio(paths, target, tick),
+            UiAction::ImportMidi { paths, lane, tick } => {
+                for path in &paths {
+                    self.import_midi_at(path, lane.clone(), tick);
+                }
+            }
             UiAction::InsertLibrary {
                 path,
                 container,
